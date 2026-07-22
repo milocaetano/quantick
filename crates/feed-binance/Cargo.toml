@@ -1,0 +1,9 @@
+[package]
+name = "quantick-feed-binance"
+description = "Live aggTrades feed from Binance public endpoints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
