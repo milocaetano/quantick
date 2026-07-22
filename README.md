@@ -54,7 +54,7 @@ quantick exists to change that: **a free, open, programmable implementation of t
 
 ## Contributing
 
-The whole point of this project is to open up tooling that has historically been private. Ideas, use cases and design discussion are welcome right now — open an issue, even before there's code to review.
+The whole point of this project is to open up tooling that has historically been private. Ideas, use cases and design discussion are welcome right now — [start a discussion](https://github.com/milocaetano/quantick/discussions), even before there's code to review. Ready to contribute code? See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
 
 ## License
 
