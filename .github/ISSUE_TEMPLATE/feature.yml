@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a new capability or improvement
+labels: ["type:feat"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What problem does this solve? Why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: What is in scope — and what is explicitly out?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know it's done? One checkbox per criterion.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - engine
+        - feed-binance
+        - app
+        - project / tooling
+    validations:
+      required: true
