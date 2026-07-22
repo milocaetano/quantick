@@ -1,0 +1,8 @@
+[package]
+name = "quantick-engine"
+description = "Deterministic alternative-bar engine: raw trades in, bars out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
