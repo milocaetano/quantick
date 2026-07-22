@@ -26,8 +26,18 @@ Dependency direction is one-way: `app` / `feed-binance` → `engine`. Never add 
 - **Data honesty**: inferred or incomplete data is labeled as such, never silently patched.
 - **Small and focused**: this is not a trading platform. Build bars, show bars, expose bars to code.
 
+## Verification loop (mandatory)
+
+Every change must pass all four checks before commit — no exceptions:
+
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --workspace --all-targets -- -D warnings`
+3. `cargo build --workspace`
+4. `cargo test --workspace`
+
+CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on pushes to `main`. After pushing a PR, watch CI with `gh pr checks <n> --watch` and fix any failure before requesting review or merging. A PR with red CI is never merged.
+
 ## Workflow
 
 - Engine code is developed test-first: write fixture trades + expected bars, then implement until green.
-- Run `cargo test --workspace` and clippy before any commit.
 - Branches: `feat/<desc>`, `fix/<desc>`, `docs/<desc>`. Commit messages: conventional style (`feat: ...`, `fix: ...`), imperative mood, English.
