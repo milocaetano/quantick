@@ -25,6 +25,9 @@ pub enum FeedEvent {
     /// The whole backfilled history, delivered as one batch.
     Backfilled(Vec<Trade>),
     /// Older history pulled on demand, to prepend in front of what's loaded.
+    /// Empty when the request finished with nothing to prepend (no older
+    /// history, or the fetch failed) — the reply itself is the signal that
+    /// loading ended.
     HistoryPrepended(Vec<Trade>),
     /// One live trade.
     Live(Trade),
@@ -148,6 +151,12 @@ async fn feed_task(
 /// Fetch `count` trades older than `earliest`, send them to the UI, and return
 /// the new earliest agg_id (unchanged if nothing older was available or a fetch
 /// failed). `None` earliest means there is no history to page back from.
+///
+/// Every call answers the UI with exactly one [`FeedEvent::HistoryPrepended`] —
+/// empty when nothing older exists or the fetch failed — mirroring how a failed
+/// initial backfill still sends an empty [`FeedEvent::Backfilled`]. The UI keys
+/// its loading indicator on that reply, so a silent no-answer would leave a
+/// spinner running forever.
 async fn load_older(
     http: &BinanceHttp,
     symbol: &str,
@@ -157,6 +166,7 @@ async fn load_older(
 ) -> Option<u64> {
     let Some(before) = earliest else {
         warn!(target: "quantick::app", "load older ignored: no history to page back from");
+        let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
         return None;
     };
     match backfill_before(http, symbol, before, count).await {
@@ -170,10 +180,12 @@ async fn load_older(
         }
         Ok(_) => {
             info!(target: "quantick::app", symbol, "no older history available");
+            let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
             earliest
         }
         Err(e) => {
             error!(target: "quantick::app", symbol, %e, "load older failed");
+            let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
             earliest
         }
     }

@@ -95,6 +95,13 @@ pub struct QuantickApp {
     // trades have been backfilled in total (for the readout).
     history_step: usize,
     history_trades: usize,
+    // How many history loads (initial backfill + queued "load older"
+    // requests) are still unanswered; the loading indicator shows while > 0.
+    // A count, not a flag: several requests can be queued (the command
+    // channel holds 16), and the first reply must not hide the indicator
+    // while others are still in flight. The feed answers every request with
+    // exactly one event, so the count always drains back to zero.
+    pending_history_loads: usize,
 
     // Bar-type selector state (one parameter retained per kind).
     kind: BarKind,
@@ -153,6 +160,9 @@ impl QuantickApp {
             symbol: symbol.into(),
             history_step: 2000,
             history_trades: 0,
+            // The feed starts backfilling the moment it is spawned, so the
+            // chart opens with that one load already in flight.
+            pending_history_loads: 1,
             tick_n,
             volume_units,
             dollar_notional,
@@ -265,11 +275,14 @@ impl QuantickApp {
         match self.commands.try_send(FeedCommand::LoadOlder {
             count: self.history_step.max(1),
         }) {
-            Ok(()) => tracing::info!(
-                target: "quantick::app",
-                count = self.history_step,
-                "requested older history"
-            ),
+            Ok(()) => {
+                self.pending_history_loads += 1;
+                tracing::info!(
+                    target: "quantick::app",
+                    count = self.history_step,
+                    "requested older history"
+                );
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 tracing::debug!(target: "quantick::app", "older-history request already pending");
             }
@@ -327,6 +340,7 @@ impl QuantickApp {
         loop {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
+                    self.pending_history_loads = self.pending_history_loads.saturating_sub(1);
                     if let Some(last) = trades.last() {
                         self.latest_trade_ms = Some(last.timestamp_ms);
                     }
@@ -334,6 +348,9 @@ impl QuantickApp {
                     self.state.ingest_backfill(&trades);
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
+                    // The reply — even an empty one — answers exactly one
+                    // pending load; the indicator survives until the last one.
+                    self.pending_history_loads = self.pending_history_loads.saturating_sub(1);
                     // Older bars shift every index up; keep the view steady.
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
@@ -813,6 +830,31 @@ impl QuantickApp {
             y += line_h;
         }
     }
+
+    /// A discreet "history is loading" indicator centred at the chart's top: a
+    /// small spinner plus a tiny label, shown while the initial backfill or an
+    /// on-demand "load older" request is in flight. Centred so it never covers
+    /// the symbol tag at the top-left or the perf overlay at the top-right.
+    fn draw_history_loader(&self, ui: &mut egui::Ui, area: egui::Rect) {
+        if self.pending_history_loads == 0 {
+            return;
+        }
+        let size = 12.0;
+        let gap = 6.0;
+        let galley = ui.painter().layout_no_wrap(
+            "loading history…".to_owned(),
+            egui::FontId::proportional(10.0),
+            MUTED,
+        );
+        // Centre spinner + gap + label as one group on the chart's mid-line.
+        let total_w = size + gap + galley.size().x;
+        let left = area.center().x - total_w / 2.0;
+        let top = area.top() + 8.0;
+        let spinner_rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(size, size));
+        ui.put(spinner_rect, egui::Spinner::new().size(size).color(MUTED));
+        let text_pos = egui::pos2(left + size + gap, top + (size - galley.size().y) / 2.0);
+        ui.painter().galley(text_pos, galley, MUTED);
+    }
 }
 
 impl eframe::App for QuantickApp {
@@ -844,6 +886,7 @@ impl eframe::App for QuantickApp {
                 self.handle_navigation(ui, area);
                 self.draw_chart(ui.painter(), area);
                 self.draw_overlay(ui.painter(), area);
+                self.draw_history_loader(ui, area);
             });
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -889,5 +932,69 @@ fn draw_candle(
         );
     } else {
         painter.rect_filled(body, egui::Rounding::ZERO, color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An app wired to in-memory channels, plus the test's ends of them: send
+    /// feed events in, observe feed commands out. No egui, no network.
+    fn test_app() -> (
+        QuantickApp,
+        mpsc::Sender<FeedEvent>,
+        mpsc::Receiver<FeedCommand>,
+    ) {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let app = QuantickApp::new(
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                commands: cmd_tx,
+            },
+        );
+        (app, evt_tx, cmd_rx)
+    }
+
+    #[test]
+    fn loader_survives_until_every_pending_load_is_answered() {
+        // Two "load older" clicks land while the initial backfill is still in
+        // flight: three loads pending. The first reply must NOT hide the
+        // indicator - only the last one may.
+        let (mut app, evt_tx, _cmd_rx) = test_app();
+        assert_eq!(app.pending_history_loads, 1, "backfill in flight at start");
+
+        app.request_older_history();
+        app.request_older_history();
+        assert_eq!(app.pending_history_loads, 3);
+
+        evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
+        app.drain_feed();
+        assert_eq!(app.pending_history_loads, 2, "older loads still pending");
+
+        evt_tx
+            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+            .unwrap();
+        app.drain_feed();
+        assert_eq!(app.pending_history_loads, 1, "one reply answers one load");
+
+        evt_tx
+            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+            .unwrap();
+        app.drain_feed();
+        assert_eq!(app.pending_history_loads, 0, "last reply hides the loader");
+    }
+
+    #[test]
+    fn rejected_request_does_not_arm_the_loader() {
+        // With the command channel closed the request never reaches the feed,
+        // so no reply will ever come - the count must not grow.
+        let (mut app, _evt_tx, cmd_rx) = test_app();
+        drop(cmd_rx);
+        app.request_older_history();
+        assert_eq!(app.pending_history_loads, 1, "only the initial backfill");
     }
 }
