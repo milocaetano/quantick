@@ -14,27 +14,29 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use tokio::sync::mpsc;
 
-use quantick_engine::Bar;
+use quantick_feed_binance::depth::DepthEvent;
 
-use crate::chart::{PriceScale, to_f64};
-use crate::feed::{FeedCommand, FeedEvent, FeedHandle};
+use crate::candle_view::{draw_candle, draw_style_window};
+use crate::chart::PriceScale;
+use crate::config::{AppConfig, ProviderKind};
+use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle};
 use crate::metrics::{self, FrameStats};
+use crate::orderflow_view::OrderflowView;
 use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState};
-use crate::style::CandleStyle;
+use crate::style::{CandlePreset, ChartStyle};
 use crate::timezone::TzOffset;
 use crate::viewport::Viewport;
 
-/// Convert an sRGB `[u8; 3]` style colour to an egui `Color32`.
-fn color32([r, g, b]: [u8; 3]) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
+/// Convert an explicit unmultiplied RGBA style colour to egui.
+fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
 const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
 const OVERLAY: egui::Color32 = egui::Color32::from_rgb(210, 218, 226);
 const WARN: egui::Color32 = egui::Color32::from_rgb(255, 99, 71);
-const GRID: egui::Color32 = egui::Color32::from_rgb(35, 41, 54);
 const CROSSHAIR: egui::Color32 = egui::Color32::from_rgb(110, 120, 135);
 const TAG_BG: egui::Color32 = egui::Color32::from_rgb(55, 63, 80);
 
@@ -45,6 +47,13 @@ const TIME_STRIP: f32 = 22.0;
 
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
+/// Coalesce slider drags into one diagnostic event after the value settles.
+const STYLE_LOG_DEBOUNCE: Duration = Duration::from_millis(350);
+/// Each UI capture epoch reserves room for reconnect generations. This keeps
+/// late events from an aborted task below the next accepted generation floor.
+const BOOK_GENERATION_STRIDE: u64 = 1_000_000;
+/// Bound depth work per frame so a burst cannot starve egui input/rendering.
+const BOOK_DRAIN_BUDGET: usize = 2_048;
 
 /// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
 fn dec_from_f64(x: f64) -> Decimal {
@@ -91,8 +100,20 @@ fn fmt_time(ms: i64, tz: TzOffset) -> String {
 pub struct QuantickApp {
     state: ChartState,
     events: mpsc::Receiver<FeedEvent>,
+    book_events: mpsc::Receiver<DepthEvent>,
     commands: mpsc::Sender<FeedCommand>,
+    orderflow: OrderflowView,
+    book_capture_epoch: u64,
+    book_channel_closed_reported: bool,
+
+    // Feed & asset selection, driven by the configuration. `feed_id`/`symbol`
+    // are what the selectors show (the desired selection); `active` is what the
+    // running feed thread is actually streaming. When they diverge, the feed is
+    // respawned. Nothing here is hard-coded — it all comes from `config`.
+    config: AppConfig,
+    feed_id: String,
     symbol: String,
+    active: (String, String),
 
     // How many older trades to pull per "load older" click, and how many
     // trades have been backfilled in total (for the readout).
@@ -126,8 +147,11 @@ pub struct QuantickApp {
     hover_pos: Option<egui::Pos2>,
 
     // Candle appearance + whether the style panel is open.
-    style: CandleStyle,
+    style: ChartStyle,
     show_style: bool,
+    style_revision: u64,
+    style_log_pending: bool,
+    last_style_change: Option<Instant>,
     // Whether the perf overlay (fps / frame time / feed lag) is drawn.
     show_overlay: bool,
 
@@ -143,9 +167,18 @@ pub struct QuantickApp {
 }
 
 impl QuantickApp {
-    /// Create the app for `symbol` starting from `spec`, draining `events`.
+    /// Create the app on `config`, opening on `feed_id`/`symbol` (already
+    /// streaming through `feed`) and bar `spec`.
     #[must_use]
-    pub fn new(symbol: impl Into<String>, spec: BarSpec, feed: FeedHandle) -> Self {
+    pub fn new(
+        config: AppConfig,
+        feed_id: impl Into<String>,
+        symbol: impl Into<String>,
+        spec: BarSpec,
+        feed: FeedHandle,
+    ) -> Self {
+        let feed_id = feed_id.into();
+        let symbol = symbol.into();
         // Defaults for every kind, with the initial spec's parameter applied.
         let mut tick_n = 50;
         let mut volume_units = 5.0;
@@ -164,8 +197,15 @@ impl QuantickApp {
             kind: spec.kind(),
             state: ChartState::new(spec),
             events: feed.events,
+            book_events: feed.book_events,
             commands: feed.commands,
-            symbol: symbol.into(),
+            orderflow: OrderflowView::new(symbol.clone()),
+            book_capture_epoch: 0,
+            book_channel_closed_reported: false,
+            active: (feed_id.clone(), symbol.clone()),
+            config,
+            feed_id,
+            symbol,
             history_step: 2000,
             history_trades: 0,
             // The feed starts backfilling the moment it is spawned, so the
@@ -181,8 +221,11 @@ impl QuantickApp {
             last_auto_range: None,
             last_chart_height: 1.0,
             hover_pos: None,
-            style: CandleStyle::default(),
+            style: ChartStyle::default(),
             show_style: false,
+            style_revision: 0,
+            style_log_pending: false,
+            last_style_change: None,
             show_overlay: true,
             tz: TzOffset::default(),
             frames: FrameStats::new(120),
@@ -205,9 +248,81 @@ impl QuantickApp {
         }
     }
 
+    /// The display name of the currently selected feed, or its id as a fallback.
+    fn feed_display_name(&self) -> String {
+        self.config
+            .feed(&self.feed_id)
+            .map_or_else(|| self.feed_id.clone(), |f| f.name.clone())
+    }
+
+    /// Keep `symbol` valid for the selected feed: if the feed changed and no
+    /// longer offers the current symbol, fall back to its first symbol.
+    fn ensure_symbol_valid(&mut self) {
+        let valid = self
+            .config
+            .feed(&self.feed_id)
+            .is_some_and(|f| f.symbols.contains(&self.symbol));
+        if !valid
+            && let Some(first) = self
+                .config
+                .feed(&self.feed_id)
+                .and_then(|f| f.symbols.first())
+                .cloned()
+        {
+            self.symbol = first;
+        }
+    }
+
+    /// The feed + symbol selectors, both populated from the configuration.
+    fn draw_feed_selectors(&mut self, ui: &mut egui::Ui) {
+        // Pre-collect owned option lists so the combo closures don't borrow
+        // `self.config` while they mutate `self.feed_id` / `self.symbol`.
+        // Providers that aren't streaming yet are labelled "(soon)" so the menu
+        // is honest about what actually connects.
+        let feeds: Vec<(String, String)> = self
+            .config
+            .feeds
+            .iter()
+            .map(|f| {
+                let label = if f.provider.is_implemented() {
+                    f.name.clone()
+                } else {
+                    format!("{} (soon)", f.name)
+                };
+                (f.id.clone(), label)
+            })
+            .collect();
+        ui.label("feed:");
+        egui::ComboBox::from_id_salt("feed_sel")
+            .selected_text(self.feed_display_name())
+            .show_ui(ui, |ui| {
+                for (id, name) in &feeds {
+                    ui.selectable_value(&mut self.feed_id, id.clone(), name);
+                }
+            });
+        // A newly picked feed may not offer the current symbol.
+        self.ensure_symbol_valid();
+
+        let symbols: Vec<String> = self
+            .config
+            .feed(&self.feed_id)
+            .map(|f| f.symbols.clone())
+            .unwrap_or_default();
+        ui.label("symbol:");
+        egui::ComboBox::from_id_salt("symbol_sel")
+            .selected_text(&self.symbol)
+            .show_ui(ui, |ui| {
+                for s in &symbols {
+                    ui.selectable_value(&mut self.symbol, s.clone(), s);
+                }
+            });
+    }
+
     /// The bar-type selector: a combo for the kind and a drag for its parameter.
     fn draw_controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            self.draw_feed_selectors(ui);
+            ui.separator();
             ui.label("bar type:");
             egui::ComboBox::from_id_salt("bar_kind")
                 .selected_text(self.kind.label())
@@ -272,8 +387,39 @@ impl QuantickApp {
             }
             ui.label(format!("({} trades)", self.history_trades));
             ui.separator();
-            if ui.button("⚙ style").clicked() {
+            if ui
+                .button("🎨 candle")
+                .on_hover_text("candle transparency, outlines, colours and presets")
+                .clicked()
+            {
                 self.show_style = !self.show_style;
+            }
+            ui.separator();
+            let supports_book = matches!(
+                self.config.provider_of(&self.feed_id),
+                Some(ProviderKind::Binance)
+            );
+            let mut book_enabled = self.orderflow.enabled();
+            let toggle = ui.add_enabled(
+                supports_book,
+                egui::Checkbox::new(&mut book_enabled, "book heatmap"),
+            );
+            if toggle
+                .on_hover_text(if supports_book {
+                    "capture synchronized live L2 depth; history starts when enabled"
+                } else {
+                    "order-book capture is not available for this provider"
+                })
+                .changed()
+            {
+                self.request_book_capture(book_enabled);
+            }
+            if ui
+                .add_enabled(supports_book, egui::Button::new("⚙ book"))
+                .on_hover_text("heatmap retention, price grouping and intensity")
+                .clicked()
+            {
+                self.orderflow.toggle_settings();
             }
             ui.separator();
             ui.checkbox(&mut self.show_overlay, "📈 perf")
@@ -305,46 +451,217 @@ impl QuantickApp {
         }
     }
 
-    /// The current background colour as an egui `Color32`.
-    fn bg(&self) -> egui::Color32 {
-        color32(self.style.background)
+    /// Allocate a capture generation well above all reconnect generations from
+    /// the previous UI capture epoch.
+    fn next_book_generation(&mut self) -> u64 {
+        self.book_capture_epoch = self.book_capture_epoch.saturating_add(1);
+        self.book_capture_epoch
+            .saturating_mul(BOOK_GENERATION_STRIDE)
     }
 
-    /// The floating candle-style settings panel (shown when `show_style`).
-    fn draw_style_panel(&mut self, ctx: &egui::Context) {
-        let mut open = self.show_style;
-        egui::Window::new("candle style")
-            .open(&mut open)
-            .resizable(false)
-            .show(ctx, |ui| {
-                let s = &mut self.style;
-                ui.horizontal(|ui| {
-                    ui.label("up (bull)");
-                    ui.color_edit_button_srgb(&mut s.bull);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("down (bear)");
-                    ui.color_edit_button_srgb(&mut s.bear);
-                });
-                ui.checkbox(&mut s.show_wicks, "show wicks");
-                ui.checkbox(&mut s.wick_matches_body, "wick matches body");
-                if !s.wick_matches_body {
-                    ui.horizontal(|ui| {
-                        ui.label("wick");
-                        ui.color_edit_button_srgb(&mut s.wick);
-                    });
-                }
-                ui.add(egui::Slider::new(&mut s.body_width_frac, 0.1..=1.0).text("body width"));
-                ui.horizontal(|ui| {
-                    ui.label("background");
-                    ui.color_edit_button_srgb(&mut s.background);
-                });
-                ui.separator();
-                if ui.button("reset to defaults").clicked() {
-                    *s = CandleStyle::default();
-                }
-            });
-        self.show_style = open;
+    /// Start or stop the independent depth pipeline without touching aggTrades
+    /// or candle construction. UI state changes only if the command is queued.
+    fn request_book_capture(&mut self, enabled: bool) {
+        if !matches!(
+            self.config.provider_of(&self.feed_id),
+            Some(ProviderKind::Binance)
+        ) {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_PROVIDER_UNSUPPORTED",
+                feed = self.feed_id.as_str(),
+                symbol = self.symbol.as_str(),
+                enabled,
+                action = "leave_capture_disabled",
+                "selected provider has no order-book pipeline"
+            );
+            return;
+        }
+
+        let generation = self.next_book_generation();
+        let command = FeedCommand::SetBookCapture {
+            enabled,
+            initial_generation: generation,
+        };
+        match self.commands.try_send(command) {
+            Ok(()) => self.orderflow.set_enabled(enabled, generation),
+            Err(mpsc::error::TrySendError::Full(_)) => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_COMMAND_BACKPRESSURE",
+                symbol = self.symbol.as_str(),
+                enabled,
+                generation,
+                action = "retry_on_next_user_action",
+                "book capture command channel is full"
+            ),
+            Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_COMMAND_CHANNEL_CLOSED",
+                symbol = self.symbol.as_str(),
+                enabled,
+                generation,
+                action = "keep_current_capture_state",
+                "book capture command channel is closed"
+            ),
+        }
+    }
+
+    /// Restart capture after a semantic configuration change such as price
+    /// grouping. The history has already been reset explicitly by the view.
+    fn restart_book_capture(&mut self) {
+        if !self.orderflow.enabled() {
+            return;
+        }
+        let generation = self.next_book_generation();
+        match self.commands.try_send(FeedCommand::RestartBookCapture {
+            initial_generation: generation,
+        }) {
+            Ok(()) => self
+                .orderflow
+                .prepare_restart(generation, "configuration_restart"),
+            Err(mpsc::error::TrySendError::Full(_)) => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_RESTART_BACKPRESSURE",
+                symbol = self.symbol.as_str(),
+                generation,
+                action = "keep_existing_capture",
+                "book restart command channel is full"
+            ),
+            Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_RESTART_CHANNEL_CLOSED",
+                symbol = self.symbol.as_str(),
+                generation,
+                action = "keep_existing_capture",
+                "book restart command channel is closed"
+            ),
+        }
+    }
+
+    /// Respawn the feed and reset the chart when the selected feed or symbol
+    /// differs from what is currently streaming. A no-op otherwise.
+    fn maybe_switch_feed(&mut self) {
+        if self.active == (self.feed_id.clone(), self.symbol.clone()) {
+            return;
+        }
+        let Some(provider) = self.config.provider_of(&self.feed_id) else {
+            tracing::warn!(
+                target: "quantick::app",
+                feed = %self.feed_id,
+                "selected feed is not in the config; ignoring switch"
+            );
+            // Snap the selection back to what is actually running.
+            (self.feed_id, self.symbol) = self.active.clone();
+            return;
+        };
+        let resume_book_capture = self.orderflow.enabled() && provider == ProviderKind::Binance;
+
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_SWITCH",
+            feed = %self.feed_id,
+            symbol = %self.symbol,
+            provider = ?provider,
+            resume_book_capture,
+            action = "reset_market_state",
+            "switching feed/symbol; resetting chart"
+        );
+
+        // Dropping the old handle stops the old feed thread. The new feed starts
+        // with a fresh backfill in flight.
+        let handle = feed::spawn(provider, &self.symbol, &self.config);
+        self.events = handle.events;
+        self.book_events = handle.book_events;
+        self.commands = handle.commands;
+        self.book_channel_closed_reported = false;
+
+        // Rebuild the chart from scratch for the new stream, keeping the current
+        // bar spec. Retained trades from the old symbol must not leak in.
+        self.state = ChartState::new(self.current_spec());
+        self.viewport = Viewport::new();
+        self.price_view = PriceView::new();
+        self.last_auto_range = None;
+        self.hover_pos = None;
+        self.history_trades = 0;
+        self.pending_history_loads = 1;
+        self.latest_trade_ms = None;
+        self.orderflow.reset_for_symbol(self.symbol.clone());
+
+        self.active = (self.feed_id.clone(), self.symbol.clone());
+        if resume_book_capture {
+            self.request_book_capture(true);
+        }
+    }
+
+    /// The current background colour as an egui `Color32`.
+    fn bg(&self) -> egui::Color32 {
+        color32(self.style.canvas.background_rgba())
+    }
+
+    /// Window chrome stays opaque even when the plot canvas is transparent;
+    /// otherwise toolbar labels would depend on the platform clear colour.
+    fn chrome_bg(&self) -> egui::Color32 {
+        let [r, g, b] = self.style.canvas.background;
+        egui::Color32::from_rgb(r, g, b)
+    }
+
+    /// The current chart-grid colour. `TRANSPARENT` disables grid painting
+    /// without branching throughout the axis code.
+    fn grid(&self) -> egui::Color32 {
+        self.style
+            .canvas
+            .grid_rgba()
+            .map_or(egui::Color32::TRANSPARENT, color32)
+    }
+
+    /// Draw the modular candle-appearance panel and debounce its diagnostic
+    /// event so dragging a slider cannot flood logs at frame rate.
+    fn draw_style_panel(&mut self, ctx: &egui::Context, now: Instant) {
+        let response = draw_style_window(ctx, &mut self.show_style, &mut self.style);
+        if response.changed {
+            self.style_revision = self.style_revision.saturating_add(1);
+            self.style_log_pending = true;
+            self.last_style_change = Some(now);
+        }
+
+        let settled = self
+            .last_style_change
+            .is_some_and(|changed| now.saturating_duration_since(changed) >= STYLE_LOG_DEBOUNCE);
+        if self.style_log_pending && (settled || !self.show_style) {
+            self.emit_style_changed(response.applied_preset);
+        }
+    }
+
+    fn emit_style_changed(&mut self, applied_preset: Option<CandlePreset>) {
+        let candles = &self.style.candles;
+        let preset = applied_preset
+            .or_else(|| CandlePreset::detect(candles))
+            .map_or("custom", CandlePreset::log_value);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "CANDLE_STYLE_CHANGED",
+            revision = self.style_revision,
+            preset,
+            body_mode = ?candles.body_mode,
+            fill_opacity = candles.fill_opacity,
+            outline_opacity = candles.outline_opacity,
+            outline_width_px = candles.outline_width,
+            body_width_fraction = candles.body_width_frac,
+            wick_mode = ?candles.wick_color_mode,
+            wick_width_px = candles.wick_width,
+            chart_background_enabled = self.style.canvas.background_enabled,
+            chart_grid_enabled = self.style.canvas.grid_enabled,
+            action = "redraw_only",
+            "candle appearance changed"
+        );
+        self.style_log_pending = false;
     }
 
     /// A floating timezone picker anchored to the bottom-right corner. The time
@@ -397,9 +714,35 @@ impl QuantickApp {
                     self.latest_trade_ms = Some(trade.timestamp_ms);
                     self.live_trades += 1;
                     self.trades_since_summary += 1;
+                    self.orderflow.record_trade(&trade);
                     self.state.ingest_live(&trade);
                 }
                 Err(_) => break,
+            }
+        }
+    }
+
+    /// Drain a bounded number of synchronized depth events. The separate
+    /// channel and budget ensure heatmap work cannot block candle ingestion.
+    fn drain_book_feed(&mut self) {
+        for _ in 0..BOOK_DRAIN_BUDGET {
+            match self.book_events.try_recv() {
+                Ok(event) => self.orderflow.handle_depth_event(event),
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    if self.orderflow.enabled() && !self.book_channel_closed_reported {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "HEATMAP_EVENT_CHANNEL_CLOSED",
+                            symbol = self.symbol.as_str(),
+                            action = "retain_last_book_and_wait_for_feed_switch",
+                            "depth event channel closed"
+                        );
+                        self.book_channel_closed_reported = true;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -415,9 +758,17 @@ impl QuantickApp {
         let avg = self.frames.avg_ms().unwrap_or(0.0);
         let worst = self.frames.worst_ms().unwrap_or(0.0);
         let fps = self.frames.fps().unwrap_or(0.0);
+        let book = self.orderflow.health();
+        let book_lag = metrics::feed_lag_ms(metrics::wall_clock_ms(), book.last_event_ms);
+        let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
+        let book_queue_len = self.book_events.len();
+        let candle_preset =
+            CandlePreset::detect(&self.style.candles).map_or("custom", CandlePreset::log_value);
 
         tracing::info!(
             target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "APP_HEALTH_SUMMARY",
             fps = fps as i64,
             frame_avg_ms = avg,
             frame_worst_ms = worst,
@@ -425,13 +776,55 @@ impl QuantickApp {
             trades_per_s = rate,
             live_trades = self.live_trades,
             bar_spec = self.state.spec().summary(),
-            "perf summary"
+            book_enabled = book.enabled,
+            book_status = book.status,
+            book_generation = book.generation,
+            book_last_update_id = book.last_update_id,
+            book_last_event_ms = book.last_event_ms,
+            book_snapshot_observed_ms = book.last_snapshot_observed_ms,
+            book_lag_ms = book_lag,
+            book_updates_per_s = book_rate,
+            book_updates_total = book.depth_updates,
+            book_queue_len,
+            book_channel_closed = self.book_channel_closed_reported,
+            book_bid_levels = book.bid_levels,
+            book_ask_levels = book.ask_levels,
+            heatmap_active_levels = book.active_levels,
+            heatmap_archived_runs = book.archived_runs,
+            aggression_count = book.aggression_count,
+            heatmap_history_bytes = book.history_bytes,
+            heatmap_cells = book.projection_cells,
+            heatmap_aggressions = book.projection_aggressions,
+            heatmap_dropped_cells = book.dropped_cells,
+            heatmap_dropped_aggressions = book.dropped_aggressions,
+            heatmap_projection_ms = book.projection_ms,
+            heatmap_projection_builds = book.projection_builds,
+            heatmap_projection_cache_hits = book.projection_cache_hits,
+            heatmap_config_revision = book.config_revision,
+            heatmap_snapshots = book.snapshots,
+            heatmap_gaps = book.gaps,
+            candle_style_revision = self.style_revision,
+            candle_preset,
+            candle_body_mode = ?self.style.candles.body_mode,
+            candle_fill_opacity = self.style.candles.fill_opacity,
+            candle_outline_opacity = self.style.candles.outline_opacity,
+            candle_outline_width_px = self.style.candles.outline_width,
+            chart_background_enabled = self.style.canvas.background_enabled,
+            chart_grid_enabled = self.style.canvas.grid_enabled,
+            action = "observe",
+            "application health summary"
         );
         if avg > metrics::SLOW_FRAME_MS {
             tracing::warn!(
                 target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "APP_SLOW_FRAMES",
                 frame_avg_ms = avg,
                 threshold_ms = metrics::SLOW_FRAME_MS,
+                heatmap_enabled = book.enabled,
+                heatmap_projection_ms = book.projection_ms,
+                heatmap_cells = book.projection_cells,
+                action = "inspect_render_budget",
                 "slow frames: the chart is not keeping up"
             );
         }
@@ -440,13 +833,45 @@ impl QuantickApp {
         {
             tracing::warn!(
                 target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "APP_HIGH_TRADE_LAG",
                 feed_lag_ms = l,
                 threshold_ms = metrics::HIGH_LAG_MS,
+                action = "inspect_trade_connection",
                 "high feed lag: trades are arriving well behind their timestamps"
+            );
+        }
+        if let Some(l) = book_lag
+            && book.enabled
+            && l > metrics::HIGH_LAG_MS
+        {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_HIGH_LAG",
+                symbol = self.symbol.as_str(),
+                book_lag_ms = l,
+                threshold_ms = metrics::HIGH_LAG_MS,
+                book_status = book.status,
+                action = "inspect_depth_connection",
+                "order-book events are behind wall clock"
+            );
+        }
+        if book.dropped_cells > 0 || book.dropped_aggressions > 0 {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_PROJECTION_CAPPED",
+                symbol = self.symbol.as_str(),
+                dropped_cells = book.dropped_cells,
+                dropped_aggressions = book.dropped_aggressions,
+                action = "increase_grouping_or_reduce_retention",
+                "heatmap primitive cap was reached"
             );
         }
 
         self.trades_since_summary = 0;
+        self.orderflow.reset_summary_counters();
         self.last_summary = now;
     }
 
@@ -541,6 +966,8 @@ impl QuantickApp {
         let closed = self.state.bars();
         let partial = self.state.partial();
         let total = closed.len() + usize::from(partial.is_some());
+        let areas = plot_split(area);
+        let chart_rect = areas.chart;
         if total == 0 {
             painter.text(
                 area.center(),
@@ -549,11 +976,9 @@ impl QuantickApp {
                 egui::FontId::proportional(16.0),
                 MUTED,
             );
+            self.orderflow.draw_status_badge(painter, chart_rect);
             return;
         }
-
-        let areas = plot_split(area);
-        let chart_rect = areas.chart;
 
         let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
 
@@ -578,8 +1003,22 @@ impl QuantickApp {
         let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
 
         let cw = self.viewport.candle_width();
-        let half = (cw * self.style.clamped_width_frac() / 2.0).max(0.5);
+        let half = (cw * self.style.candles.clamped_width_frac() / 2.0).max(0.5);
         let right = chart_rect.right();
+
+        // Resting liquidity is the bottom visual layer. Projection is pure with
+        // respect to candles and uses the same bar-warped viewport coordinates.
+        let orderflow_frame = self.orderflow.project_visible(
+            closed_start,
+            visible_closed,
+            partial_visible,
+            end == total,
+            scale.range(),
+        );
+        if let Some(frame) = &orderflow_frame {
+            self.orderflow
+                .draw_background(painter, chart_rect, &self.viewport, total, frame);
+        }
 
         // Grid + price labels first, behind the candles.
         self.draw_price_axis(painter, chart_rect, &scale);
@@ -589,17 +1028,22 @@ impl QuantickApp {
         for (offset, bar) in visible_closed.iter().enumerate() {
             let index = closed_start + offset;
             let xc = self.viewport.x_center(index, right, total);
-            draw_candle(&clip, xc, half, &scale, bar, false, &self.style);
+            draw_candle(&clip, xc, half, &scale, bar, false, &self.style.candles);
         }
         if let Some(partial) = partial_visible {
             let xc = self.viewport.x_center(closed.len(), right, total);
-            draw_candle(&clip, xc, half, &scale, partial, true, &self.style);
+            draw_candle(&clip, xc, half, &scale, partial, true, &self.style.candles);
+        }
+        if let Some(frame) = &orderflow_frame {
+            self.orderflow
+                .draw_aggressions(painter, chart_rect, &self.viewport, total, frame);
         }
 
         self.draw_backfill_divider(painter, chart_rect, total, cw);
         self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
         self.draw_crosshair(painter, chart_rect, &scale);
         self.draw_header(painter, chart_rect);
+        self.orderflow.draw_status_badge(painter, chart_rect);
 
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
@@ -623,7 +1067,7 @@ impl QuantickApp {
                 egui::pos2(strip.left(), strip.top()),
                 egui::pos2(strip.right(), strip.top()),
             ],
-            egui::Stroke::new(1.0_f32, GRID),
+            egui::Stroke::new(1.0_f32, self.grid()),
         );
         let font = egui::FontId::monospace(10.0);
         let y = strip.center().y;
@@ -665,7 +1109,7 @@ impl QuantickApp {
                     egui::pos2(chart_rect.left(), y),
                     egui::pos2(chart_rect.right(), y),
                 ],
-                egui::Stroke::new(1.0_f32, GRID),
+                egui::Stroke::new(1.0_f32, self.grid()),
             );
             painter.text(
                 egui::pos2(chart_rect.right() + 6.0, y),
@@ -681,7 +1125,7 @@ impl QuantickApp {
                 egui::pos2(chart_rect.right(), chart_rect.top()),
                 egui::pos2(chart_rect.right(), chart_rect.bottom()),
             ],
-            egui::Stroke::new(1.0_f32, GRID),
+            egui::Stroke::new(1.0_f32, self.grid()),
         );
     }
 
@@ -910,18 +1354,24 @@ impl eframe::App for QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_feed();
+        self.drain_book_feed();
         self.maybe_emit_summary(now);
 
         let bg = self.bg();
         egui::TopBottomPanel::top("controls")
-            .frame(egui::Frame::none().fill(bg).inner_margin(8.0))
+            .frame(egui::Frame::none().fill(self.chrome_bg()).inner_margin(8.0))
             .show(ctx, |ui| {
                 ui.visuals_mut().override_text_color = Some(OVERLAY);
                 self.draw_controls(ui);
             });
-        // Apply any selector change (no-op if unchanged).
+        // Respawn the feed if the feed/symbol selection changed (resets the
+        // chart), then apply any bar-type change (no-op if unchanged).
+        self.maybe_switch_feed();
         self.state.set_spec(self.current_spec());
-        self.draw_style_panel(ctx);
+        self.draw_style_panel(ctx, now);
+        if self.orderflow.draw_settings(ctx) {
+            self.restart_book_capture();
+        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
@@ -938,51 +1388,26 @@ impl eframe::App for QuantickApp {
     }
 }
 
-/// Draw one candlestick. A `forming` candle is outlined and translucent so it
-/// reads as "still open" versus a solid closed candle.
-fn draw_candle(
-    painter: &egui::Painter,
-    xc: f32,
-    half: f32,
-    scale: &PriceScale,
-    bar: &Bar,
-    forming: bool,
-    style: &CandleStyle,
-) {
-    let up = bar.close >= bar.open;
-    let color = color32(style.body_color(up));
-
-    if style.show_wicks {
-        painter.line_segment(
-            [
-                egui::pos2(xc, scale.y(to_f64(bar.high))),
-                egui::pos2(xc, scale.y(to_f64(bar.low))),
-            ],
-            egui::Stroke::new(1.0_f32, color32(style.wick_color(up))),
-        );
-    }
-
-    let y_open = scale.y(to_f64(bar.open));
-    let y_close = scale.y(to_f64(bar.close));
-    let top = y_open.min(y_close);
-    let bottom = y_open.max(y_close).max(top + 1.0);
-    let body = egui::Rect::from_min_max(egui::pos2(xc - half, top), egui::pos2(xc + half, bottom));
-
-    if forming {
-        painter.rect_filled(body, egui::Rounding::ZERO, color.gamma_multiply(0.35));
-        painter.rect_stroke(
-            body,
-            egui::Rounding::ZERO,
-            egui::Stroke::new(1.5_f32, color),
-        );
-    } else {
-        painter.rect_filled(body, egui::Rounding::ZERO, color);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::config::{FeedConfig, ProviderKind};
+
+    /// A minimal one-feed, two-symbol config for the app tests.
+    fn test_config() -> AppConfig {
+        AppConfig {
+            default_feed: "binance".to_string(),
+            default_symbol: "TESTUSDT".to_string(),
+            feeds: vec![FeedConfig {
+                id: "binance".to_string(),
+                name: "Binance".to_string(),
+                provider: ProviderKind::Binance,
+                symbols: vec!["TESTUSDT".to_string(), "ETHUSDT".to_string()],
+            }],
+            metatrader: Default::default(),
+        }
+    }
 
     /// An app wired to in-memory channels, plus the test's ends of them: send
     /// feed events in, observe feed commands out. No egui, no network.
@@ -990,18 +1415,23 @@ mod tests {
         QuantickApp,
         mpsc::Sender<FeedEvent>,
         mpsc::Receiver<FeedCommand>,
+        mpsc::Sender<DepthEvent>,
     ) {
         let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
         let app = QuantickApp::new(
+            test_config(),
+            "binance",
             "TESTUSDT",
             BarSpec::Tick(50),
             FeedHandle {
                 events: evt_rx,
+                book_events: book_rx,
                 commands: cmd_tx,
             },
         );
-        (app, evt_tx, cmd_rx)
+        (app, evt_tx, cmd_rx, book_tx)
     }
 
     #[test]
@@ -1009,7 +1439,7 @@ mod tests {
         // Two "load older" clicks land while the initial backfill is still in
         // flight: three loads pending. The first reply must NOT hide the
         // indicator - only the last one may.
-        let (mut app, evt_tx, _cmd_rx) = test_app();
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
         assert_eq!(app.pending_history_loads, 1, "backfill in flight at start");
 
         app.request_older_history();
@@ -1037,10 +1467,164 @@ mod tests {
     fn rejected_request_does_not_arm_the_loader() {
         // With the command channel closed the request never reaches the feed,
         // so no reply will ever come - the count must not grow.
-        let (mut app, _evt_tx, cmd_rx) = test_app();
+        let (mut app, _evt_tx, cmd_rx, _book_tx) = test_app();
         drop(cmd_rx);
         app.request_older_history();
         assert_eq!(app.pending_history_loads, 1, "only the initial backfill");
+    }
+
+    #[test]
+    fn changing_feed_falls_back_to_a_valid_symbol() {
+        // Two feeds with disjoint symbol lists: switching to a feed that does
+        // not offer the current symbol must snap to that feed's first symbol.
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let config = AppConfig {
+            default_feed: "a".to_string(),
+            default_symbol: "AAA".to_string(),
+            feeds: vec![
+                FeedConfig {
+                    id: "a".to_string(),
+                    name: "A".to_string(),
+                    provider: ProviderKind::Binance,
+                    symbols: vec!["AAA".to_string()],
+                },
+                FeedConfig {
+                    id: "b".to_string(),
+                    name: "B".to_string(),
+                    provider: ProviderKind::Binance,
+                    symbols: vec!["BBB".to_string()],
+                },
+            ],
+            metatrader: Default::default(),
+        };
+        let mut app = QuantickApp::new(
+            config,
+            "a",
+            "AAA",
+            BarSpec::Tick(10),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                commands: cmd_tx,
+            },
+        );
+
+        app.feed_id = "b".to_string();
+        app.ensure_symbol_valid();
+        assert_eq!(app.symbol, "BBB", "symbol snaps to feed b's first symbol");
+
+        // A symbol already valid for the feed is left untouched.
+        app.symbol = "BBB".to_string();
+        app.ensure_symbol_valid();
+        assert_eq!(app.symbol, "BBB");
+    }
+
+    #[test]
+    fn capture_toggle_commits_only_after_command_is_queued() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        assert!(!app.orderflow.enabled());
+
+        app.request_book_capture(true);
+        let command = cmd_rx.try_recv().expect("capture command");
+        let generation = match command {
+            FeedCommand::SetBookCapture {
+                enabled: true,
+                initial_generation,
+            } => initial_generation,
+            _ => panic!("unexpected command"),
+        };
+        assert_eq!(generation, BOOK_GENERATION_STRIDE);
+        assert!(app.orderflow.enabled());
+
+        drop(cmd_rx);
+        app.request_book_capture(false);
+        assert!(
+            app.orderflow.enabled(),
+            "closed command channel must preserve current capture state"
+        );
+    }
+
+    #[test]
+    fn depth_channel_updates_heatmap_without_mutating_candles() {
+        use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
+
+        let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
+        app.request_book_capture(true);
+        let generation = match cmd_rx.try_recv().unwrap() {
+            FeedCommand::SetBookCapture {
+                enabled: true,
+                initial_generation,
+            } => initial_generation,
+            _ => panic!("unexpected command"),
+        };
+        let bars_before = app.state.bars().len();
+        book_tx
+            .try_send(DepthEvent::Snapshot {
+                symbol: "TESTUSDT".to_owned(),
+                generation,
+                observed_at_ms: 1_100,
+                effective_at_ms: 999,
+                snapshot: BookSnapshot::new(
+                    10,
+                    vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],
+                    vec![BookLevel::new(Decimal::from(101), Decimal::from(6)).unwrap()],
+                    BookCoverage::Limited {
+                        levels_per_side: 1_000,
+                    },
+                ),
+            })
+            .unwrap();
+
+        app.drain_book_feed();
+        let book = app.orderflow.health();
+        assert_eq!(book.bid_levels, 1);
+        assert_eq!(book.ask_levels, 1);
+        assert_eq!(app.state.bars().len(), bars_before);
+    }
+
+    #[test]
+    fn candle_appearance_change_is_render_only() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        app.request_book_capture(true);
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(FeedCommand::SetBookCapture { enabled: true, .. })
+        ));
+        let capture_epoch = app.book_capture_epoch;
+        let bar_spec = app.state.spec().clone();
+
+        app.style.candles = CandlePreset::OutlineOnly.style();
+        app.style_revision = app.style_revision.saturating_add(1);
+        app.emit_style_changed(Some(CandlePreset::OutlineOnly));
+
+        assert_eq!(app.state.spec(), &bar_spec);
+        assert!(app.orderflow.enabled());
+        assert_eq!(app.book_capture_epoch, capture_epoch);
+        assert!(
+            matches!(cmd_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+            "appearance changes must not restart or reconfigure market data"
+        );
+    }
+
+    #[test]
+    fn closed_depth_channel_is_reported_once_per_feed_handle() {
+        let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
+        app.request_book_capture(true);
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(FeedCommand::SetBookCapture { enabled: true, .. })
+        ));
+        drop(book_tx);
+
+        app.drain_book_feed();
+        assert!(app.book_channel_closed_reported);
+        app.drain_book_feed();
+        assert!(
+            app.book_channel_closed_reported,
+            "subsequent frames keep the one-shot diagnostic latched"
+        );
     }
 
     #[test]

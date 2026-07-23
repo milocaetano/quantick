@@ -1,0 +1,47 @@
+# quantick — feed & asset configuration.
+#
+# The chart reads its available feeds and symbols from this file instead of
+# hard-coding them. Edit it to change what the feed/symbol selectors offer.
+#
+# Resolution order at startup (first hit wins):
+#   1. the file named by the QUANTICK_CONFIG environment variable
+#   2. `quantick.toml` in the current working directory
+#   3. this file, compiled into the binary as the built-in default
+#
+# `default_feed` / `default_symbol` pick what the chart opens on; both must
+# refer to a feed/symbol that actually exists below.
+default_feed = "binance"
+default_symbol = "BTCUSDT"
+
+# Each [[feeds]] entry is one selectable feed.
+#   id       — stable identifier, referenced by `default_feed` (unique).
+#   name     — label shown in the feed selector.
+#   provider — which backend streams it; maps to a code path.
+#              Supported today: "binance". Planned: "metatrader".
+#   symbols  — the assets offered for this feed (first is its fallback).
+[[feeds]]
+id = "binance"
+name = "Binance"
+provider = "binance"
+symbols = ["BTCUSDT", "ETHUSDT"]
+
+# MetaTrader 5, via the QuantickBridge EA (see bridge/mt5/README.md for the
+# one-time setup). The EA streams the chart it is attached to; the symbol
+# selected here must match that chart. B3 continuous contracts: WIN$N (mini
+# índice), WDO$N (mini dólar).
+[[feeds]]
+id = "metatrader"
+name = "MetaTrader 5"
+provider = "metatrader"
+symbols = ["WIN$N", "WDO$N"]
+
+# MetaTrader bridge settings (defaults shown; the section is optional).
+#   listen_addr — where quantick listens; the EA dials this address.
+#   side_source — "tick_rule" (safe default) or "flags". MT5 aggressor flags
+#                 are broker-dependent: the B3 broker probed on 2026-07-23
+#                 stamped BUY on every tick, so flags there would chart 100%
+#                 buys. Verify a broker with tools/mt5/record_ticks.py before
+#                 switching to "flags".
+[metatrader]
+listen_addr = "127.0.0.1:9100"
+side_source = "tick_rule"
