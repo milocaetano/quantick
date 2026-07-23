@@ -1,50 +1,52 @@
-//! The scrollable/zoomable viewport over the bar series.
+//! The scrollable/zoomable viewport over the bar series (TradingView-style).
 //!
-//! Exocharts-style navigation: drag to pan through history, scroll to zoom.
-//! This is the pure state behind that — how many bars are visible (zoom) and
-//! which absolute bar sits at the right edge (pan) — with no egui or input
-//! handling, so it's unit-tested in CI.
-//!
-//! When the viewport is *following* the live edge, new bars keep it pinned to
-//! the newest bar; once you pan back into history it holds an absolute right
-//! edge, so incoming bars don't drift the view.
+//! Candles have a **fixed pixel width** (the zoom); the newest bar sits near the
+//! right edge, and the view is a window that can pan freely — through history and
+//! into empty space past the newest bar — so dragging always moves the chart,
+//! even when there are only a handful of bars. This is the pure state behind
+//! that (candle width + the fractional bar index at the right edge + a follow
+//! flag), unit-tested in CI with no egui or input handling.
 
-/// Fewest bars that can fill the width (max zoom-in).
-pub const MIN_VISIBLE: f32 = 8.0;
-/// Most bars that can fill the width (max zoom-out).
-pub const MAX_VISIBLE: f32 = 5000.0;
+/// Narrowest a candle slot can be, in pixels (max zoom-out).
+pub const MIN_CANDLE_WIDTH: f32 = 2.0;
+/// Widest a candle slot can be, in pixels (max zoom-in).
+pub const MAX_CANDLE_WIDTH: f32 = 64.0;
+/// How many empty bar-slots past the newest bar you may pan into.
+const FUTURE_MARGIN_BARS: f32 = 20.0;
 
 /// The visible window over a bar series.
 #[derive(Debug, Clone, Copy)]
 pub struct Viewport {
-    visible_bars: f32,
-    /// Absolute index of the rightmost visible bar (used only when not
-    /// following). Stored as `f32` so panning is smooth sub-bar.
-    right_index: f32,
+    /// Pixels per bar slot — the zoom.
+    candle_width: f32,
+    /// Fractional bar index at the right edge (used when not following). May
+    /// exceed `total - 1` to show empty space past the newest bar.
+    right_bar: f32,
+    /// Whether the right edge is pinned to the newest bar.
     follow: bool,
 }
 
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            visible_bars: 150.0,
-            right_index: 0.0,
+            candle_width: 8.0,
+            right_bar: 0.0,
             follow: true,
         }
     }
 }
 
 impl Viewport {
-    /// A viewport following the live edge, showing ~150 bars.
+    /// A viewport following the live edge at the default zoom.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// How many bars currently fill the width (fractional; drives candle width).
+    /// Pixels per bar slot (drives candle width and the pan/zoom maths).
     #[must_use]
-    pub fn visible_bars(&self) -> f32 {
-        self.visible_bars
+    pub fn candle_width(&self) -> f32 {
+        self.candle_width
     }
 
     /// Whether the right edge is pinned to the newest bar.
@@ -53,30 +55,42 @@ impl Viewport {
         self.follow
     }
 
-    /// Zoom by a multiplicative factor: `< 1` zooms in (fewer, larger bars),
-    /// `> 1` zooms out. Anchored to the right edge.
+    /// Zoom by a multiplicative factor on the candle width: `> 1` widens the
+    /// candles (zoom in), `< 1` narrows them (zoom out). Anchored to the right
+    /// edge — the newest bar stays put.
     pub fn zoom(&mut self, factor: f32) {
         if factor > 0.0 && factor.is_finite() {
-            self.visible_bars = (self.visible_bars * factor).clamp(MIN_VISIBLE, MAX_VISIBLE);
+            self.candle_width =
+                (self.candle_width * factor).clamp(MIN_CANDLE_WIDTH, MAX_CANDLE_WIDTH);
         }
     }
 
-    /// Pan by `drag_bars`: positive drags the content right, revealing older
-    /// bars (the right edge moves into the past); negative moves toward the
-    /// present. Reaching the newest bar resumes following.
-    pub fn pan(&mut self, drag_bars: f32, total: usize) {
-        if total == 0 {
+    /// The bar index at the right edge for a series of `total` bars.
+    #[must_use]
+    pub fn right_edge_bar(&self, total: usize) -> f32 {
+        if self.follow {
+            total.saturating_sub(1) as f32
+        } else {
+            self.right_bar
+        }
+    }
+
+    /// Pan by `dx` pixels (a drag delta). Positive `dx` (drag right) reveals
+    /// older bars — the right edge moves into the past; negative moves toward
+    /// the present. Reaching the newest bar resumes following.
+    pub fn pan_pixels(&mut self, dx: f32, total: usize) {
+        if total == 0 || self.candle_width <= 0.0 || dx == 0.0 {
             return;
         }
         let newest = (total - 1) as f32;
-        let current = if self.follow {
-            newest
-        } else {
-            self.right_index
-        };
-        let next = (current - drag_bars).clamp(0.0, newest);
-        self.right_index = next;
-        self.follow = next >= newest - 0.5;
+        let current = self.right_edge_bar(total);
+        let next = current - dx / self.candle_width;
+        let max_right = newest + FUTURE_MARGIN_BARS;
+        self.right_bar = next.clamp(0.0, max_right);
+        // Follow only when the right edge is essentially *at* the newest bar.
+        // Panning into the empty future (right_bar past newest) keeps that
+        // margin instead of snapping back to live.
+        self.follow = (self.right_bar - newest).abs() <= 0.5;
     }
 
     /// Pin the right edge back to the newest bar.
@@ -84,20 +98,27 @@ impl Viewport {
         self.follow = true;
     }
 
-    /// The `[start, end)` absolute bar indices visible for a series of `total`
-    /// bars. `end` is exclusive.
+    /// The x-pixel centre of bar `index`, given the chart's right edge x and the
+    /// series length. The newest bar sits half a candle in from `chart_right`.
     #[must_use]
-    pub fn visible_range(&self, total: usize) -> (usize, usize) {
-        if total == 0 {
+    pub fn x_center(&self, index: usize, chart_right: f32, total: usize) -> f32 {
+        let right_bar = self.right_edge_bar(total);
+        chart_right - (right_bar - index as f32 + 0.5) * self.candle_width
+    }
+
+    /// The `[start, end)` bar indices at least partly visible in a chart `width`
+    /// pixels wide over `total` bars. Generous by up to a bar at each edge (the
+    /// caller clips), so nothing pops in late.
+    #[must_use]
+    pub fn visible_range(&self, width: f32, total: usize) -> (usize, usize) {
+        if total == 0 || self.candle_width <= 0.0 {
             return (0, 0);
         }
-        let vis = (self.visible_bars.round() as usize).max(1);
-        let end = if self.follow {
-            total
-        } else {
-            (self.right_index.round() as usize + 1).min(total)
-        };
-        let start = end.saturating_sub(vis);
+        let right_bar = self.right_edge_bar(total);
+        let bars_across = width / self.candle_width;
+        let start = (right_bar - bars_across).floor().max(0.0) as usize;
+        let end = (right_bar.floor() as i64 + 2).clamp(0, total as i64) as usize;
+        let start = start.min(end);
         (start, end)
     }
 }
@@ -107,72 +128,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_follows_live_and_shows_the_newest() {
+    fn new_follows_live() {
         let v = Viewport::new();
         assert!(v.follows_live());
-        let (start, end) = v.visible_range(1000);
-        assert_eq!(end, 1000, "right edge at the newest");
-        assert_eq!(end - start, 150, "default ~150 visible");
+        assert_eq!(v.right_edge_bar(500), 499.0);
     }
 
     #[test]
-    fn fewer_bars_than_the_window_shows_them_all() {
-        let v = Viewport::new();
-        assert_eq!(v.visible_range(10), (0, 10));
-    }
-
-    #[test]
-    fn zoom_clamps_between_min_and_max() {
+    fn zoom_clamps_candle_width() {
         let mut v = Viewport::new();
-        for _ in 0..100 {
-            v.zoom(0.5);
-        }
-        assert!((v.visible_bars() - MIN_VISIBLE).abs() < 0.001);
         for _ in 0..100 {
             v.zoom(2.0);
         }
-        assert!((v.visible_bars() - MAX_VISIBLE).abs() < 0.001);
+        assert!((v.candle_width() - MAX_CANDLE_WIDTH).abs() < 0.001);
+        for _ in 0..100 {
+            v.zoom(0.5);
+        }
+        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
     }
 
     #[test]
-    fn panning_into_the_past_stops_following_and_holds() {
-        let mut v = Viewport::new();
-        // 500 bars, drag right by 100 bars -> right edge at index 399.
-        v.pan(100.0, 500);
-        assert!(!v.follows_live());
-        let (_, end) = v.visible_range(500);
-        assert_eq!(end, 400, "right edge index 399, exclusive end 400");
-
-        // New bars arrive (total 520) while not following: the view holds.
-        let (_, end2) = v.visible_range(520);
-        assert_eq!(end2, 400, "held view does not drift with new bars");
+    fn x_centres_are_one_candle_apart_and_newest_is_near_the_right() {
+        let v = Viewport::new(); // candle_width 8, following
+        let right = 1000.0;
+        // Newest bar (index 9 of 10) sits half a candle in from the right edge.
+        assert!((v.x_center(9, right, 10) - (right - 4.0)).abs() < 0.001);
+        // Adjacent bars are one candle_width apart.
+        let a = v.x_center(5, right, 10);
+        let b = v.x_center(6, right, 10);
+        assert!((b - a - v.candle_width()).abs() < 0.001);
     }
 
     #[test]
-    fn panning_back_to_the_edge_resumes_following() {
+    fn dragging_right_reveals_the_past_even_with_few_bars() {
         let mut v = Viewport::new();
-        v.pan(100.0, 500);
+        // 10 bars. Drag right by 24px (= 3 candles at width 8): right edge moves
+        // back 3 bars, so the newest is no longer at the edge.
+        v.pan_pixels(24.0, 10);
         assert!(!v.follows_live());
-        v.pan(-100.0, 500); // drag left back to the present
+        assert!((v.right_edge_bar(10) - (9.0 - 3.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn dragging_back_to_the_edge_resumes_following() {
+        let mut v = Viewport::new();
+        v.pan_pixels(24.0, 10);
+        assert!(!v.follows_live());
+        v.pan_pixels(-24.0, 10); // drag left back toward the present
         assert!(v.follows_live());
+    }
+
+    #[test]
+    fn can_pan_into_empty_space_past_the_newest() {
+        let mut v = Viewport::new();
+        // Drag left hard (toward the future) — the right edge can move a bounded
+        // margin past the newest bar.
+        v.pan_pixels(-10_000.0, 10);
+        let edge = v.right_edge_bar(10);
+        assert!(edge > 9.0, "panned into empty future: {edge}");
+        assert!(edge <= 9.0 + FUTURE_MARGIN_BARS + 0.001);
+    }
+
+    #[test]
+    fn visible_range_follows_the_newest() {
+        let v = Viewport::new(); // width 8
+        // 1000 bars, chart 800px wide => ~100 bars across, ending at the newest.
+        let (start, end) = v.visible_range(800.0, 1000);
+        assert_eq!(end, 1000);
+        // ~100 bars across (800px / 8px), generous by about a bar at the left.
+        assert!(
+            start < end && (898..=900).contains(&start),
+            "start = {start}"
+        );
     }
 
     #[test]
     fn snap_to_live_resumes_following() {
         let mut v = Viewport::new();
-        v.pan(50.0, 500);
+        v.pan_pixels(50.0, 500);
         assert!(!v.follows_live());
         v.snap_to_live();
         assert!(v.follows_live());
-        assert_eq!(v.visible_range(500).1, 500);
-    }
-
-    #[test]
-    fn pan_cannot_go_before_the_first_bar() {
-        let mut v = Viewport::new();
-        v.pan(10_000.0, 500); // absurd drag into the past
-        let (start, end) = v.visible_range(500);
-        assert_eq!(end, 1, "right edge clamped to the first bar");
-        assert_eq!(start, 0);
     }
 }

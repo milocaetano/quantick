@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use quantick_engine::Bar;
 
-use crate::chart::{PriceScale, TimeAxis, to_f64};
+use crate::chart::{PriceScale, to_f64};
 use crate::feed::FeedEvent;
 use crate::metrics::{self, FrameStats};
 use crate::price_view::PriceView;
@@ -39,6 +39,8 @@ const TAG_BG: egui::Color32 = egui::Color32::from_rgb(55, 63, 80);
 
 /// Width of the right-hand price-axis gutter, in pixels.
 const AXIS_GUTTER: f32 = 60.0;
+/// Height of the bottom time-axis strip, in pixels.
+const TIME_STRIP: f32 = 22.0;
 
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
@@ -48,14 +50,38 @@ fn dec_from_f64(x: f64) -> Decimal {
     Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
 }
 
-/// Split the padded plot area into the candle chart (left) and the right price
-/// gutter, so both the input handler and the renderer agree on the boundary.
-fn plot_split(area: egui::Rect) -> (egui::Rect, egui::Rect) {
+/// Split the padded plot area into the candle chart, the right price gutter and
+/// the bottom time strip, so the input handler and the renderer agree on the
+/// boundaries.
+fn plot_split(area: egui::Rect) -> PlotAreas {
     let plot = area.shrink(16.0);
     let split_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
-    let chart = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, plot.bottom()));
-    let gutter = egui::Rect::from_min_max(egui::pos2(split_x, plot.top()), plot.max);
-    (chart, gutter)
+    let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
+    PlotAreas {
+        chart: egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y)),
+        price_gutter: egui::Rect::from_min_max(
+            egui::pos2(split_x, plot.top()),
+            egui::pos2(plot.right(), split_y),
+        ),
+        time_strip: egui::Rect::from_min_max(
+            egui::pos2(plot.left(), split_y),
+            egui::pos2(split_x, plot.bottom()),
+        ),
+    }
+}
+
+/// The three interactive regions of the plot.
+struct PlotAreas {
+    chart: egui::Rect,
+    price_gutter: egui::Rect,
+    time_strip: egui::Rect,
+}
+
+/// Format an epoch-millisecond timestamp as `HH:MM:SS` (UTC) for the time axis.
+fn fmt_time(ms: i64) -> String {
+    let secs = ms.div_euclid(1000).rem_euclid(86_400);
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    format!("{h:02}:{m:02}:{s:02}")
 }
 
 /// The quantick chart window.
@@ -309,33 +335,28 @@ impl QuantickApp {
     }
 
     /// Handle mouse navigation, TradingView-style:
-    /// - drag the chart area → pan time (x) and price (y);
+    /// - drag the chart → pan time (x, moves the whole chart) and price (y);
     /// - scroll over the chart → zoom time;
-    /// - drag the right price gutter → zoom the price scale (stretch candles);
-    /// - scroll over the gutter → zoom the price scale;
+    /// - drag the bottom time strip left/right → zoom time (spread candles);
+    /// - drag the right price gutter up/down → zoom the price scale;
+    /// - scroll over either axis → zoom that axis;
     /// - double-click → reset to the live edge and auto-fit price.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
-        let (chart_rect, axis_rect) = plot_split(area);
+        let areas = plot_split(area);
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
+        let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
 
+        // Chart body: drag pans both axes; scroll zooms time.
         let chart = ui.interact(
-            chart_rect,
+            areas.chart,
             egui::Id::new("chart_nav"),
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
-
-        let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
-
         if total > 0 && chart.dragged() {
             let drag = chart.drag_delta();
-            // Horizontal → time pan.
-            let slot = chart_rect.width() / self.viewport.visible_bars().max(1.0);
-            if slot > 0.0 {
-                self.viewport.pan(drag.x / slot, total);
-            }
-            // Vertical → price pan. Dragging down moves the view to higher prices.
+            self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
                 && drag.y != 0.0
                 && height > 1.0
@@ -352,27 +373,44 @@ impl QuantickApp {
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                // Scroll up (positive) zooms in; each notch is a gentle step.
-                self.viewport.zoom(2.0_f32.powf(-scroll / 300.0));
+                // Scroll up (positive) zooms in — wider candles.
+                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+            }
+        }
+
+        // Bottom time strip: drag or scroll to zoom the candle spacing.
+        let time = ui.interact(
+            areas.time_strip,
+            egui::Id::new("time_nav"),
+            egui::Sense::click_and_drag(),
+        );
+        if time.dragged() {
+            // Drag right → wider candles (zoom in); left → narrower (zoom out).
+            self.viewport.zoom((time.drag_delta().x / 120.0).exp());
+        }
+        if time.hovered() {
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
             }
         }
 
         // Right price gutter: drag or scroll to zoom the price scale.
-        let axis = ui.interact(
-            axis_rect,
-            egui::Id::new("axis_nav"),
+        let price = ui.interact(
+            areas.price_gutter,
+            egui::Id::new("price_nav"),
             egui::Sense::click_and_drag(),
         );
         if let Some(auto) = auto {
-            if axis.dragged() {
-                // Drag down → expand span (smaller candles); up → compress (bigger).
-                let factor = f64::from(axis.drag_delta().y / 150.0).exp();
-                self.price_view.zoom(factor, auto);
+            if price.dragged() {
+                // Drag up → compress span (bigger candles); down → expand.
+                self.price_view
+                    .zoom(f64::from(price.drag_delta().y / 150.0).exp(), auto);
             }
-            if axis.double_clicked() {
+            if price.double_clicked() {
                 self.price_view.reset();
             }
-            if axis.hovered() {
+            if price.hovered() {
                 let scroll = ui.input(|i| i.raw_scroll_delta.y);
                 if scroll.abs() > 0.0 {
                     self.price_view.zoom(f64::from(-scroll / 200.0).exp(), auto);
@@ -398,10 +436,10 @@ impl QuantickApp {
             return;
         }
 
-        let (chart_rect, _axis_rect) = plot_split(area);
+        let areas = plot_split(area);
+        let chart_rect = areas.chart;
 
-        let (start, end) = self.viewport.visible_range(total);
-        let visible_count = end.saturating_sub(start).max(1);
+        let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
 
         // The visible closed bars, plus the partial if it falls in view.
         let closed_start = start.min(closed.len());
@@ -423,34 +461,27 @@ impl QuantickApp {
         let (lo, hi) = self.price_view.resolve(auto_range);
         let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
 
-        let axis = TimeAxis::new(
-            chart_rect.left(),
-            chart_rect.right(),
-            visible_count,
-            self.style.clamped_width_frac(),
-            24.0,
-        );
+        let cw = self.viewport.candle_width();
+        let half = (cw * self.style.clamped_width_frac() / 2.0).max(0.5);
+        let right = chart_rect.right();
 
         // Grid + price labels first, behind the candles.
         self.draw_price_axis(painter, chart_rect, &scale);
 
+        // Candles, clipped to the chart body so they don't spill into the axes.
+        let clip = painter.with_clip_rect(chart_rect);
         for (offset, bar) in visible_closed.iter().enumerate() {
-            let local = (closed_start - start) + offset;
-            draw_candle(painter, &axis, &scale, local, bar, false, &self.style);
+            let index = closed_start + offset;
+            let xc = self.viewport.x_center(index, right, total);
+            draw_candle(&clip, xc, half, &scale, bar, false, &self.style);
         }
         if let Some(partial) = partial_visible {
-            draw_candle(
-                painter,
-                &axis,
-                &scale,
-                closed.len() - start,
-                partial,
-                true,
-                &self.style,
-            );
+            let xc = self.viewport.x_center(closed.len(), right, total);
+            draw_candle(&clip, xc, half, &scale, partial, true, &self.style);
         }
 
-        self.draw_backfill_divider(painter, &axis, chart_rect, start, end);
+        self.draw_backfill_divider(painter, chart_rect, total, cw);
+        self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
         self.draw_crosshair(painter, chart_rect, &scale);
         self.draw_header(painter, chart_rect);
 
@@ -458,6 +489,50 @@ impl QuantickApp {
         // runs before the draw and needs them for pixel↔price conversion.
         self.last_auto_range = Some(auto_range);
         self.last_chart_height = chart_rect.height();
+    }
+
+    /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
+    /// visible bars. Draggable left/right to zoom the candle spacing.
+    fn draw_time_strip(
+        &self,
+        painter: &egui::Painter,
+        strip: egui::Rect,
+        closed: &[quantick_engine::Bar],
+        start: usize,
+        end: usize,
+        total: usize,
+    ) {
+        painter.line_segment(
+            [
+                egui::pos2(strip.left(), strip.top()),
+                egui::pos2(strip.right(), strip.top()),
+            ],
+            egui::Stroke::new(1.0_f32, GRID),
+        );
+        let font = egui::FontId::monospace(10.0);
+        let y = strip.center().y;
+        // Up to ~6 evenly-spaced labels across the visible closed bars.
+        let visible = end.saturating_sub(start);
+        if visible == 0 {
+            return;
+        }
+        let step = (visible / 6).max(1);
+        let mut index = start;
+        while index < end {
+            if let Some(bar) = closed.get(index) {
+                let x = self.viewport.x_center(index, strip.right(), total);
+                if strip.x_range().contains(x) {
+                    painter.text(
+                        egui::pos2(x, y),
+                        egui::Align2::CENTER_CENTER,
+                        fmt_time(bar.open_time),
+                        font.clone(),
+                        MUTED,
+                    );
+                }
+            }
+            index += step;
+        }
     }
 
     /// Right-hand price axis: round-number gridlines and labels.
@@ -535,24 +610,25 @@ impl QuantickApp {
     }
 
     /// A vertical marker separating backfilled history (left) from live (right),
-    /// drawn only when the boundary falls in the visible `[start, end)` window.
+    /// drawn only when the boundary falls inside the chart body.
     fn draw_backfill_divider(
         &self,
         painter: &egui::Painter,
-        axis: &TimeAxis,
         chart_rect: egui::Rect,
-        start: usize,
-        end: usize,
+        total: usize,
+        candle_width: f32,
     ) {
         let Some(boundary) = self.state.backfill_boundary() else {
             return;
         };
-        if boundary == 0 || boundary < start || boundary > end {
-            return; // nothing backfilled, or the divider is off-screen
+        if boundary == 0 {
+            return; // nothing backfilled
         }
-        let x = axis
-            .x_left(boundary - start)
-            .clamp(chart_rect.left(), chart_rect.right());
+        // The divider sits at the left edge of the first live bar.
+        let x = self.viewport.x_center(boundary, chart_rect.right(), total) - candle_width / 2.0;
+        if x < chart_rect.left() || x > chart_rect.right() {
+            return; // off-screen
+        }
         painter.line_segment(
             [
                 egui::pos2(x, chart_rect.top()),
@@ -716,15 +792,13 @@ impl eframe::App for QuantickApp {
 /// reads as "still open" versus a solid closed candle.
 fn draw_candle(
     painter: &egui::Painter,
-    axis: &TimeAxis,
+    xc: f32,
+    half: f32,
     scale: &PriceScale,
-    index: usize,
     bar: &Bar,
     forming: bool,
     style: &CandleStyle,
 ) {
-    let xc = axis.x_center(index);
-    let half = axis.bar_width() / 2.0;
     let up = bar.close >= bar.open;
     let color = color32(style.body_color(up));
 
