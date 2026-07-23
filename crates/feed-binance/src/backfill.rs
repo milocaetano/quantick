@@ -210,6 +210,76 @@ pub async fn backfill<S: AggTradeSource>(
     Ok(trades)
 }
 
+/// Backfill up to `count` trades *older than* `before_id`, ascending by agg_id.
+///
+/// Pages backward from `before_id` (exclusive) until `count` older trades are
+/// collected or the earliest trade is reached. Returns the trades closest to
+/// `before_id` so they sit contiguously in front of the history already loaded;
+/// returns fewer than `count` (or empty) when there is not that much older
+/// history. Deduping through a [`BTreeMap`] keeps the merge ordered and
+/// deterministic.
+///
+/// # Errors
+///
+/// Returns [`FeedError`] on any fetch/decode/map failure. Mapping fails fast: a
+/// malformed price is surfaced, never silently dropped (data-honesty rule).
+#[instrument(target = "quantick::feed", skip(source), fields(pages = tracing::field::Empty))]
+pub async fn backfill_before<S: AggTradeSource>(
+    source: &S,
+    symbol: &str,
+    before_id: u64,
+    count: usize,
+) -> Result<Vec<Trade>, FeedError> {
+    if before_id == 0 || count == 0 {
+        return Ok(Vec::new()); // nothing older exists, or nothing requested
+    }
+    let mut collected: BTreeMap<u64, AggTrade> = BTreeMap::new();
+    let mut pages = 0u32;
+    // Exclusive upper bound of the region still to fetch.
+    let mut cursor = before_id;
+
+    while collected.len() < count && cursor > 0 {
+        let from = cursor.saturating_sub(u64::from(MAX_PAGE_LIMIT));
+        let batch = source.fetch(symbol, Some(from), MAX_PAGE_LIMIT).await?;
+        pages += 1;
+        let before = collected.len();
+        for t in batch {
+            if t.agg_id < before_id {
+                collected.entry(t.agg_id).or_insert(t);
+            }
+        }
+        if from == 0 {
+            break; // reached the very first trade
+        }
+        if collected.len() == before {
+            debug!(target: "quantick::feed", "no new older trades from page; stopping");
+            break; // no progress; avoid looping forever
+        }
+        cursor = from;
+    }
+
+    // Keep the `count` closest to `before_id` (the most recent of the older
+    // trades), ascending, and map to engine trades.
+    let all: Vec<&AggTrade> = collected.values().collect();
+    let start = all.len().saturating_sub(count);
+    let trades = all[start..]
+        .iter()
+        .map(|a| a.to_trade())
+        .collect::<Result<Vec<Trade>, _>>()?;
+
+    tracing::Span::current().record("pages", pages);
+    info!(
+        target: "quantick::feed",
+        symbol,
+        before_id,
+        count,
+        fetched = trades.len(),
+        pages,
+        "older backfill complete"
+    );
+    Ok(trades)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +379,97 @@ mod tests {
             }],
         };
         let err = backfill(&source, "BTCUSDT", 10).await.unwrap_err();
+        assert!(matches!(err, FeedError::Map(_)), "{err}");
+    }
+
+    #[tokio::test]
+    async fn backfill_before_returns_the_trades_just_before_the_id() {
+        let source = FakeSource::with_count(2500);
+        // The 500 trades immediately older than id 2000 are ids 1500..=1999.
+        let trades = backfill_before(&source, "BTCUSDT", 2000, 500)
+            .await
+            .unwrap();
+        assert_eq!(trades.len(), 500);
+        assert_eq!(trades.first().unwrap().agg_id, 1500);
+        assert_eq!(trades.last().unwrap().agg_id, 1999);
+        for pair in trades.windows(2) {
+            assert!(pair[1].agg_id > pair[0].agg_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn backfill_before_pages_backward_across_multiple_requests() {
+        let source = FakeSource::with_count(2500);
+        // 1500 older than 2000 spans two pages: ids 500..=1999.
+        let trades = backfill_before(&source, "BTCUSDT", 2000, 1500)
+            .await
+            .unwrap();
+        assert_eq!(trades.len(), 1500);
+        assert_eq!(trades.first().unwrap().agg_id, 500);
+        assert_eq!(trades.last().unwrap().agg_id, 1999);
+    }
+
+    #[tokio::test]
+    async fn backfill_before_returns_all_when_older_history_is_short() {
+        let source = FakeSource::with_count(30);
+        // Only ids 1..=9 are older than 10, fewer than the 100 requested.
+        let trades = backfill_before(&source, "BTCUSDT", 10, 100).await.unwrap();
+        assert_eq!(trades.len(), 9);
+        assert_eq!(trades.first().unwrap().agg_id, 1);
+        assert_eq!(trades.last().unwrap().agg_id, 9);
+    }
+
+    #[tokio::test]
+    async fn backfill_before_the_first_trade_is_empty() {
+        let source = FakeSource::with_count(500);
+        assert!(
+            backfill_before(&source, "BTCUSDT", 1, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            backfill_before(&source, "BTCUSDT", 0, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_before_zero_count_is_empty() {
+        let source = FakeSource::with_count(500);
+        assert!(
+            backfill_before(&source, "BTCUSDT", 200, 0)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn backfill_before_fails_fast_on_bad_data() {
+        let source = FakeSource {
+            trades: vec![
+                AggTrade {
+                    agg_id: 1,
+                    price: "oops".to_string(),
+                    quantity: "1.0".to_string(),
+                    trade_time_ms: 0,
+                    is_buyer_maker: false,
+                },
+                AggTrade {
+                    agg_id: 2,
+                    price: "100.0".to_string(),
+                    quantity: "1.0".to_string(),
+                    trade_time_ms: 1,
+                    is_buyer_maker: false,
+                },
+            ],
+        };
+        let err = backfill_before(&source, "BTCUSDT", 2, 10)
+            .await
+            .unwrap_err();
         assert!(matches!(err, FeedError::Map(_)), "{err}");
     }
 

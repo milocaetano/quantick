@@ -43,7 +43,7 @@ fn main() -> eframe::Result {
         "starting quantick"
     );
 
-    let events = feed::spawn(SYMBOL);
+    let feed = feed::spawn(SYMBOL);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -59,7 +59,7 @@ fn main() -> eframe::Result {
             Ok(Box::new(app::QuantickApp::new(
                 SYMBOL,
                 BarSpec::Tick(TICK_SIZE),
-                events,
+                feed,
             )))
         }),
     )

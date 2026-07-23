@@ -98,6 +98,16 @@ impl Viewport {
         self.follow = true;
     }
 
+    /// Account for `added` bars newly prepended at the front of the series: shift
+    /// the right-edge bar index by the same amount so the visible window keeps
+    /// showing the same bars instead of jumping. A no-op while following live —
+    /// the newest bar, and thus the right edge, is unchanged.
+    pub fn shift_right_edge(&mut self, added: usize) {
+        if !self.follow && added > 0 {
+            self.right_bar += added as f32;
+        }
+    }
+
     /// The x-pixel centre of bar `index`, given the chart's right edge x and the
     /// series length. The newest bar sits half a candle in from `chart_right`.
     #[must_use]
@@ -200,6 +210,24 @@ mod tests {
             start < end && (898..=900).contains(&start),
             "start = {start}"
         );
+    }
+
+    #[test]
+    fn shift_right_edge_keeps_the_history_view_steady() {
+        let mut v = Viewport::new();
+        v.pan_pixels(24.0, 10); // leave follow; right edge at bar 6 of 10
+        let before = v.right_edge_bar(10);
+        v.shift_right_edge(100); // 100 older bars prepended (total now 110)
+        assert!(!v.follows_live());
+        assert!((v.right_edge_bar(110) - (before + 100.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn shift_right_edge_is_a_noop_while_following() {
+        let mut v = Viewport::new(); // follows the newest
+        v.shift_right_edge(100);
+        assert!(v.follows_live());
+        assert_eq!(v.right_edge_bar(110), 109.0);
     }
 
     #[test]
