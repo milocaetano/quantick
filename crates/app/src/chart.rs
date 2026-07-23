@@ -169,49 +169,6 @@ fn nice_num(range: f64, round: bool) -> f64 {
     nice * 10f64.powf(exp)
 }
 
-/// Horizontal bar-index → x-pixel mapping, packing `count` bars into a width.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TimeAxis {
-    left: f32,
-    step: f32,
-    bar_width: f32,
-}
-
-impl TimeAxis {
-    /// Fit `count` bars between `left` and `right`. Each bar occupies a `step`
-    /// slot; its drawn body is `body_frac` of the slot, capped at `max_width`.
-    #[must_use]
-    pub fn new(left: f32, right: f32, count: usize, body_frac: f32, max_width: f32) -> Self {
-        let slots = count.max(1) as f32;
-        let step = (right - left) / slots;
-        let bar_width = (step * body_frac).min(max_width).max(1.0);
-        Self {
-            left,
-            step,
-            bar_width,
-        }
-    }
-
-    /// The x-pixel of the centre of bar `index`.
-    #[must_use]
-    pub fn x_center(&self, index: usize) -> f32 {
-        self.left + self.step * (index as f32 + 0.5)
-    }
-
-    /// The x-pixel of the left edge of bar `index`'s slot — used to draw the
-    /// divider *between* bar `index - 1` and bar `index`.
-    #[must_use]
-    pub fn x_left(&self, index: usize) -> f32 {
-        self.left + self.step * index as f32
-    }
-
-    /// The width of a candle body in pixels.
-    #[must_use]
-    pub fn bar_width(&self) -> f32 {
-        self.bar_width
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,33 +222,6 @@ mod tests {
         let bars = vec![bar("100.0", "100.0")];
         let scale = PriceScale::auto(&bars, None, 0.0, 100.0, 0.0).unwrap();
         assert!((scale.y(100.0) - 50.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn time_axis_centers_are_ordered_and_within_bounds() {
-        let axis = TimeAxis::new(0.0, 100.0, 10, 0.7, 20.0);
-        let mut last = f32::NEG_INFINITY;
-        for i in 0..10 {
-            let x = axis.x_center(i);
-            assert!(x > last, "centres increase");
-            assert!(x > 0.0 && x < 100.0, "within bounds: {x}");
-            last = x;
-        }
-        assert!(axis.bar_width() > 0.0);
-    }
-
-    #[test]
-    fn x_left_sits_between_adjacent_centres() {
-        let axis = TimeAxis::new(0.0, 100.0, 10, 0.7, 20.0);
-        // The divider before bar 3 is left of bar 3's centre and right of bar 2's.
-        let left = axis.x_left(3);
-        assert!(axis.x_center(2) < left && left < axis.x_center(3));
-    }
-
-    #[test]
-    fn time_axis_handles_empty() {
-        let axis = TimeAxis::new(0.0, 100.0, 0, 0.7, 20.0);
-        assert!(axis.bar_width() >= 1.0);
     }
 
     #[test]
