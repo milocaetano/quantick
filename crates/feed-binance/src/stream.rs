@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 use quantick_engine::Trade;
 
 use crate::backfill::FeedError;
+use crate::continuity::ContinuityTracker;
 use crate::wire;
 
 /// Binance's public single-stream WebSocket base URL.
@@ -40,15 +41,23 @@ pub fn decode_text(text: &str) -> Result<Trade, FeedError> {
 
 /// Connect to `url` and forward decoded trades on `tx` until the socket closes.
 ///
-/// Server pings are answered with pongs (Binance disconnects otherwise). A frame
-/// that fails to decode is logged and skipped rather than tearing down the whole
-/// stream. Returns `Ok(())` on a clean server close or when the consumer drops
-/// `tx`; returns [`FeedError`] on a transport error.
+/// Each trade is passed through `tracker` first, so gaps, reorders and
+/// duplicates are detected and logged (the tracker is owned by the reconnect
+/// loop, so it spans reconnects). Server pings are answered with pongs (Binance
+/// disconnects otherwise). A frame that fails to decode is logged and skipped
+/// rather than tearing down the whole stream.
+///
+/// Returns the number of trades forwarded — on a clean server close, or when the
+/// consumer drops `tx`. Returns [`FeedError`] on a transport error.
 ///
 /// # Errors
 ///
 /// Returns [`FeedError::Http`] on connection or socket errors.
-pub async fn run_agg_trade_stream(url: &str, tx: &Sender<Trade>) -> Result<(), FeedError> {
+pub async fn run_agg_trade_stream(
+    url: &str,
+    tx: &Sender<Trade>,
+    tracker: &mut ContinuityTracker,
+) -> Result<u64, FeedError> {
     info!(target: "quantick::feed", url, "connecting aggTrade websocket");
     let (mut ws, _resp) = tokio_tungstenite::connect_async(url)
         .await
@@ -61,10 +70,13 @@ pub async fn run_agg_trade_stream(url: &str, tx: &Sender<Trade>) -> Result<(), F
         match msg {
             Message::Text(text) => match decode_text(text.as_str()) {
                 Ok(trade) => {
+                    // Detect (and log) any sequence anomaly, but still forward
+                    // the trade — labelling a hole, not patching it.
+                    let _ = tracker.observe(&trade);
                     forwarded += 1;
                     if tx.send(trade).await.is_err() {
                         debug!(target: "quantick::feed", forwarded, "consumer dropped; stopping stream");
-                        return Ok(());
+                        return Ok(forwarded);
                     }
                 }
                 Err(error) => {
@@ -78,13 +90,13 @@ pub async fn run_agg_trade_stream(url: &str, tx: &Sender<Trade>) -> Result<(), F
             }
             Message::Close(frame) => {
                 info!(target: "quantick::feed", ?frame, forwarded, "server closed the websocket");
-                return Ok(());
+                return Ok(forwarded);
             }
             Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
         }
     }
     debug!(target: "quantick::feed", forwarded, "websocket stream ended");
-    Ok(())
+    Ok(forwarded)
 }
 
 #[cfg(test)]
@@ -124,7 +136,10 @@ mod tests {
     async fn live_stream_forwards_a_few_trades() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let url = agg_trade_url(BINANCE_WS_BASE, "BTCUSDT");
-        let handle = tokio::spawn(async move { run_agg_trade_stream(&url, &tx).await });
+        let handle = tokio::spawn(async move {
+            let mut tracker = ContinuityTracker::new();
+            run_agg_trade_stream(&url, &tx, &mut tracker).await
+        });
 
         let mut seen = 0;
         while seen < 5 {
