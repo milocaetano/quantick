@@ -15,6 +15,7 @@ mod chart;
 mod feed;
 mod metrics;
 mod state;
+mod style;
 mod viewport;
 
 const SYMBOL: &str = "BTCUSDT";
