@@ -10,6 +10,8 @@
 //! later milestones.
 
 pub mod backfill;
+pub mod stream;
 pub mod wire;
 
 pub use backfill::{AggTradeSource, BinanceHttp, FeedError, backfill};
+pub use stream::{BINANCE_WS_BASE, agg_trade_url, run_agg_trade_stream};
