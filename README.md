@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo/logo.png" alt="quantick logo" width="220">
+</p>
+
 # quantick
 
 **Real-time alternative bar charts for order flow trading — and one engine to take your research from chart to backtest to bot.**
