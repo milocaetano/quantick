@@ -15,7 +15,7 @@
 //| JSON object with an event_code, so logs are machine-readable.      |
 //+------------------------------------------------------------------+
 #property copyright "quantick"
-#property version   "1.000"
+#property version   "1.001"
 #property description "Streams ticks to the quantick chart over a local socket"
 
 input string InpHost             = "127.0.0.1"; // Feed host (quantick listener)
@@ -23,10 +23,11 @@ input int    InpPort             = 9100;        // Feed port
 input int    InpBackfillMinutes  = 30;          // History to send on connect
 input int    InpHeartbeatSeconds = 5;           // Heartbeat interval
 input int    InpRetrySeconds     = 5;           // Reconnect backoff
+input int    InpSendTimeoutMs    = 5000;        // Max ms one send may block
 
 #define SCHEMA_VERSION 1
 #define BRIDGE_NAME    "quantick-mt5-bridge"
-#define BRIDGE_VERSION "0.1.0"
+#define BRIDGE_VERSION "0.1.1"
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -47,6 +48,12 @@ void LogEvent(const string event_code, const string detail)
 
 //+------------------------------------------------------------------+
 //| Send one NDJSON line. False = socket is broken.                   |
+//|                                                                   |
+//| SocketSend runs on the terminal's main thread and may write only  |
+//| part of the buffer (send timeout, full OS buffer — quantick not   |
+//| reading). Each attempt is bounded by SocketTimeouts (set at       |
+//| connect); the remainder is retried so a slow read never corrupts  |
+//| line framing, and zero progress means the socket is gone.         |
 //+------------------------------------------------------------------+
 bool SendLine(string payload)
   {
@@ -57,7 +64,23 @@ bool SendLine(string payload)
    int len = StringToCharArray(payload, bytes, 0, WHOLE_ARRAY, CP_UTF8) - 1;
    if(len <= 0)
       return(true);
-   return(SocketSend(g_socket, bytes, len) == len);
+   int sent = 0;
+   while(sent < len)
+     {
+      int wrote;
+      if(sent == 0)
+         wrote = SocketSend(g_socket, bytes, len);
+      else
+        {
+         uchar rest[];
+         ArrayCopy(rest, bytes, 0, sent, len - sent);
+         wrote = SocketSend(g_socket, rest, len - sent);
+        }
+      if(wrote <= 0)
+         return(false);
+      sent += wrote;
+     }
+   return(true);
   }
 
 //+------------------------------------------------------------------+
@@ -192,6 +215,9 @@ void TryConnect()
       g_next_retry = TimeLocal() + InpRetrySeconds;
       return;
      }
+   // Bound every send: without this, a stalled reader can freeze the
+   // terminal's main thread inside SocketSend indefinitely.
+   SocketTimeouts(g_socket, (uint)InpSendTimeoutMs, (uint)InpSendTimeoutMs);
    if(!StartSession())
       Disconnect("send failed during session start");
   }
