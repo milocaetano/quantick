@@ -17,6 +17,7 @@ mod metrics;
 mod price_view;
 mod state;
 mod style;
+mod timezone;
 mod viewport;
 
 const SYMBOL: &str = "BTCUSDT";
