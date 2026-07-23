@@ -11,6 +11,7 @@
 
 pub mod backfill;
 pub mod continuity;
+pub mod depth;
 pub mod reconnect;
 pub mod stream;
 pub mod wire;
