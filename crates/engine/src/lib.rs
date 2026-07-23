@@ -27,9 +27,11 @@ mod builder;
 pub mod threshold;
 mod tick;
 mod trade;
+mod volume;
 
 pub use bar::Bar;
 pub use builder::BarBuilder;
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
 pub use trade::{Side, Trade};
+pub use volume::{VolumeBarBuilder, VolumeMeasure};
