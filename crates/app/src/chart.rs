@@ -72,6 +72,82 @@ impl PriceScale {
         let frac = ((self.hi - price) / span) as f32;
         self.top + frac * (self.bottom - self.top)
     }
+
+    /// The price at a given y-pixel — the inverse of [`y`](PriceScale::y), for a
+    /// crosshair readout.
+    #[must_use]
+    pub fn price_at(&self, y: f32) -> f64 {
+        let height = self.bottom - self.top;
+        if height.abs() < f32::EPSILON {
+            return f64::midpoint(self.lo, self.hi);
+        }
+        let frac = f64::from((y - self.top) / height); // 0 at top (hi), 1 at bottom (lo)
+        self.hi - frac * (self.hi - self.lo)
+    }
+
+    /// The padded `(lo, hi)` price range this scale covers.
+    #[must_use]
+    pub fn range(&self) -> (f64, f64) {
+        (self.lo, self.hi)
+    }
+}
+
+/// Round "nice" price ticks spanning `[lo, hi]`, aiming for about `target`
+/// labels, using Heckbert's nice-numbers algorithm so labels land on values
+/// like 100, 102.5, 105 rather than 100.37, 102.71, ….
+#[must_use]
+pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
+    if hi <= lo || target == 0 {
+        return Vec::new();
+    }
+    let step = nice_num(nice_num(hi - lo, false) / target as f64, true);
+    if step <= 0.0 || !step.is_finite() {
+        return Vec::new();
+    }
+    let first = (lo / step).ceil() * step;
+    let mut ticks = Vec::new();
+    let mut v = first;
+    // Guard the loop count in case of pathological inputs.
+    for _ in 0..(target * 4 + 8) {
+        if v > hi + step * 0.001 {
+            break;
+        }
+        if v >= lo - step * 0.001 {
+            ticks.push(v);
+        }
+        v += step;
+    }
+    ticks
+}
+
+/// A "nice" number near `range`: 1, 2, 5 or 10 × a power of ten. When `round`,
+/// picks the nearest nice value; otherwise the smallest nice value ≥ `range`.
+fn nice_num(range: f64, round: bool) -> f64 {
+    if range <= 0.0 || !range.is_finite() {
+        return 0.0;
+    }
+    let exp = range.log10().floor();
+    let frac = range / 10f64.powf(exp);
+    let nice = if round {
+        if frac < 1.5 {
+            1.0
+        } else if frac < 3.0 {
+            2.0
+        } else if frac < 7.0 {
+            5.0
+        } else {
+            10.0
+        }
+    } else if frac <= 1.0 {
+        1.0
+    } else if frac <= 2.0 {
+        2.0
+    } else if frac <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    nice * 10f64.powf(exp)
 }
 
 /// Horizontal bar-index → x-pixel mapping, packing `count` bars into a width.
@@ -197,5 +273,40 @@ mod tests {
     fn time_axis_handles_empty() {
         let axis = TimeAxis::new(0.0, 100.0, 0, 0.7, 20.0);
         assert!(axis.bar_width() >= 1.0);
+    }
+
+    #[test]
+    fn price_at_is_the_inverse_of_y() {
+        let bars = vec![bar("100.0", "110.0")];
+        let scale = PriceScale::auto(&bars, None, 0.0, 100.0, 0.0).unwrap();
+        for price in [100.0, 103.0, 107.5, 110.0] {
+            let y = scale.y(price);
+            assert!(
+                (scale.price_at(y) - price).abs() < 1e-6,
+                "price_at(y({price})) != {price}"
+            );
+        }
+    }
+
+    #[test]
+    fn nice_ticks_are_round_and_in_range() {
+        let ticks = nice_ticks(100.0, 110.0, 5);
+        assert!(!ticks.is_empty());
+        for t in &ticks {
+            assert!(*t >= 100.0 && *t <= 110.0, "tick {t} out of range");
+        }
+        let step = ticks[1] - ticks[0];
+        for pair in ticks.windows(2) {
+            assert!((pair[1] - pair[0] - step).abs() < 1e-9);
+        }
+        // 100..110 targeting ~5 gives a round 2.0 step: 100,102,...,110.
+        assert!((step - 2.0).abs() < 1e-9, "step = {step}");
+    }
+
+    #[test]
+    fn nice_ticks_handles_degenerate_ranges() {
+        assert!(nice_ticks(100.0, 100.0, 5).is_empty());
+        assert!(nice_ticks(110.0, 100.0, 5).is_empty());
+        assert!(nice_ticks(100.0, 110.0, 0).is_empty());
     }
 }

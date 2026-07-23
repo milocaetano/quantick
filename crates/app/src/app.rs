@@ -29,6 +29,12 @@ const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
 const OVERLAY: egui::Color32 = egui::Color32::from_rgb(210, 218, 226);
 const WARN: egui::Color32 = egui::Color32::from_rgb(255, 99, 71);
+const GRID: egui::Color32 = egui::Color32::from_rgb(35, 41, 54);
+const CROSSHAIR: egui::Color32 = egui::Color32::from_rgb(110, 120, 135);
+const TAG_BG: egui::Color32 = egui::Color32::from_rgb(55, 63, 80);
+
+/// Width of the right-hand price-axis gutter, in pixels.
+const AXIS_GUTTER: f32 = 60.0;
 
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
@@ -53,6 +59,8 @@ pub struct QuantickApp {
 
     // Pan/zoom navigation over the bar series.
     viewport: Viewport,
+    // Pointer position over the plot this frame, for the crosshair.
+    hover_pos: Option<egui::Pos2>,
 
     frames: FrameStats,
     last_frame: Option<Instant>,
@@ -92,6 +100,7 @@ impl QuantickApp {
             dollar_notional,
             time_interval_ms,
             viewport: Viewport::new(),
+            hover_pos: None,
             frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_ms: None,
@@ -228,15 +237,17 @@ impl QuantickApp {
     /// double-click to snap back to the live edge.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
         let plot = area.shrink(16.0);
-        let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
-        if total == 0 {
-            return;
-        }
         let response = ui.interact(
             plot,
             egui::Id::new("chart_nav"),
             egui::Sense::click_and_drag(),
         );
+        self.hover_pos = response.hover_pos();
+
+        let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
+        if total == 0 {
+            return;
+        }
 
         if response.dragged() {
             let slot = plot.width() / self.viewport.visible_bars().max(1.0);
@@ -274,6 +285,15 @@ impl QuantickApp {
             return;
         }
 
+        // Reserve a gutter on the right for the price axis.
+        let chart_rect = egui::Rect::from_min_max(
+            plot.min,
+            egui::pos2(
+                (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0),
+                plot.bottom(),
+            ),
+        );
+
         let (start, end) = self.viewport.visible_range(total);
         let visible_count = end.saturating_sub(start).max(1);
 
@@ -286,13 +306,22 @@ impl QuantickApp {
         let Some(scale) = PriceScale::auto(
             visible_closed,
             partial_visible,
-            plot.top(),
-            plot.bottom(),
+            chart_rect.top(),
+            chart_rect.bottom(),
             0.05,
         ) else {
             return;
         };
-        let axis = TimeAxis::new(plot.left(), plot.right(), visible_count, 0.7, 24.0);
+        let axis = TimeAxis::new(
+            chart_rect.left(),
+            chart_rect.right(),
+            visible_count,
+            0.7,
+            24.0,
+        );
+
+        // Grid + price labels first, behind the candles.
+        self.draw_price_axis(painter, chart_rect, &scale);
 
         for (offset, bar) in visible_closed.iter().enumerate() {
             let local = (closed_start - start) + offset;
@@ -302,8 +331,83 @@ impl QuantickApp {
             draw_candle(painter, &axis, &scale, closed.len() - start, partial, true);
         }
 
-        self.draw_backfill_divider(painter, &axis, plot, start, end);
+        self.draw_backfill_divider(painter, &axis, chart_rect, start, end);
+        self.draw_crosshair(painter, chart_rect, &scale);
         self.draw_header(painter, plot);
+    }
+
+    /// Right-hand price axis: round-number gridlines and labels.
+    fn draw_price_axis(&self, painter: &egui::Painter, chart_rect: egui::Rect, scale: &PriceScale) {
+        let (lo, hi) = scale.range();
+        let font = egui::FontId::monospace(11.0);
+        for tick in crate::chart::nice_ticks(lo, hi, 8) {
+            let y = scale.y(tick);
+            if y < chart_rect.top() || y > chart_rect.bottom() {
+                continue;
+            }
+            painter.line_segment(
+                [
+                    egui::pos2(chart_rect.left(), y),
+                    egui::pos2(chart_rect.right(), y),
+                ],
+                egui::Stroke::new(1.0_f32, GRID),
+            );
+            painter.text(
+                egui::pos2(chart_rect.right() + 6.0, y),
+                egui::Align2::LEFT_CENTER,
+                format!("{tick:.2}"),
+                font.clone(),
+                MUTED,
+            );
+        }
+        // The axis dividing line.
+        painter.line_segment(
+            [
+                egui::pos2(chart_rect.right(), chart_rect.top()),
+                egui::pos2(chart_rect.right(), chart_rect.bottom()),
+            ],
+            egui::Stroke::new(1.0_f32, GRID),
+        );
+    }
+
+    /// Crosshair following the pointer, with the price shown on the axis.
+    fn draw_crosshair(&self, painter: &egui::Painter, chart_rect: egui::Rect, scale: &PriceScale) {
+        let Some(pos) = self.hover_pos else {
+            return;
+        };
+        if !chart_rect.contains(pos) {
+            return;
+        }
+        let stroke = egui::Stroke::new(1.0_f32, CROSSHAIR);
+        painter.line_segment(
+            [
+                egui::pos2(pos.x, chart_rect.top()),
+                egui::pos2(pos.x, chart_rect.bottom()),
+            ],
+            stroke,
+        );
+        painter.line_segment(
+            [
+                egui::pos2(chart_rect.left(), pos.y),
+                egui::pos2(chart_rect.right(), pos.y),
+            ],
+            stroke,
+        );
+
+        // Price tag on the axis at the cursor height.
+        let price = scale.price_at(pos.y);
+        let galley = painter.layout_no_wrap(
+            format!("{price:.2}"),
+            egui::FontId::monospace(11.0),
+            egui::Color32::WHITE,
+        );
+        let text_pos = egui::pos2(chart_rect.right() + 6.0, pos.y - galley.size().y / 2.0);
+        let bg = egui::Rect::from_min_size(
+            text_pos - egui::vec2(3.0, 1.0),
+            galley.size() + egui::vec2(6.0, 2.0),
+        );
+        painter.rect_filled(bg, egui::Rounding::same(2.0), TAG_BG);
+        painter.galley(text_pos, galley, egui::Color32::WHITE);
     }
 
     /// A vertical marker separating backfilled history (left) from live (right),
@@ -312,7 +416,7 @@ impl QuantickApp {
         &self,
         painter: &egui::Painter,
         axis: &TimeAxis,
-        plot: egui::Rect,
+        chart_rect: egui::Rect,
         start: usize,
         end: usize,
     ) {
@@ -324,21 +428,24 @@ impl QuantickApp {
         }
         let x = axis
             .x_left(boundary - start)
-            .clamp(plot.left(), plot.right());
+            .clamp(chart_rect.left(), chart_rect.right());
         painter.line_segment(
-            [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
+            [
+                egui::pos2(x, chart_rect.top()),
+                egui::pos2(x, chart_rect.bottom()),
+            ],
             egui::Stroke::new(1.0_f32, DIVIDER),
         );
         let font = egui::FontId::proportional(11.0);
         painter.text(
-            egui::pos2(x - 4.0, plot.bottom() - 4.0),
+            egui::pos2(x - 4.0, chart_rect.bottom() - 4.0),
             egui::Align2::RIGHT_BOTTOM,
             "backfill",
             font.clone(),
             MUTED,
         );
         painter.text(
-            egui::pos2(x + 4.0, plot.bottom() - 4.0),
+            egui::pos2(x + 4.0, chart_rect.bottom() - 4.0),
             egui::Align2::LEFT_BOTTOM,
             "live",
             font,
