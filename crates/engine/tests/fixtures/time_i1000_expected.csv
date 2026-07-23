@@ -1,0 +1,11 @@
+# Expected time bars for time_trades.csv with interval = 1000 ms. Hand-computed.
+#   Bar 0 = bucket [1000,2000), trades 1,2: high 101.0 low 100.0 close 101.0.
+#   Bar 1 = bucket [2000,3000), trade 3.
+#   Bar 2 = bucket [4000,5000), trades 4,5: high 104.0 low 103.0 close 104.0.
+# Bucket [3000,4000) is empty and, per the skip policy, has NO row here — the
+# gap between close_time 2100 and open_time 4200 is the honest record of it.
+# Trade 6 leaves a partial at [5000,6000) and is not a closed bar.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1000,1500,100.0,101.0,100.0,101.0,1.0,2.0,2
+2100,2100,102.0,102.0,102.0,102.0,1.0,0,1
+4200,4800,103.0,104.0,103.0,104.0,1.0,3.0,2

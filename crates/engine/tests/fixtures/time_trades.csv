@@ -1,0 +1,12 @@
+# Trades for the time-bar golden test, interval = 1000 ms.
+# Buckets: [1000,2000) has trades 1,2; [2000,3000) has trade 3;
+#   [3000,4000) is EMPTY; [4000,5000) has trades 4,5; [5000,6000) has trade 6.
+# With the skip-empty policy, the empty [3000,4000) bucket produces NO bar, so
+# the closed sequence jumps 2000 -> 4000. Trade 6 leaves a partial at 5000.
+agg_id,timestamp_ms,price,quantity,side
+1,1000,100.0,1.0,buy
+2,1500,101.0,2.0,sell
+3,2100,102.0,1.0,buy
+4,4200,103.0,3.0,sell
+5,4800,104.0,1.0,buy
+6,5300,105.0,1.0,buy
