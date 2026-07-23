@@ -24,11 +24,16 @@ use std::str::FromStr as _;
 
 use rust_decimal::Decimal;
 
-use crate::{Side, Trade};
+use crate::{Bar, Side, Trade};
 
-/// The canonical header line, written by [`write_trades`] and skipped by
-/// [`parse_trades`].
+/// The canonical trade-fixture header line, written by [`write_trades`] and
+/// skipped by [`parse_trades`].
 pub const HEADER: &str = "agg_id,timestamp_ms,price,quantity,side";
+
+/// The canonical bar-fixture header line, written by [`write_bars`] and skipped
+/// by [`parse_bars`].
+pub const BAR_HEADER: &str =
+    "open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count";
 
 /// An error encountered while parsing a trade fixture.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,12 +138,112 @@ pub fn write_trades(trades: &[Trade]) -> String {
     out
 }
 
+/// Parse expected bars from CSV fixture text.
+///
+/// Same conventions as [`parse_trades`]: blank lines and `#` comments are
+/// skipped, and a leading [`BAR_HEADER`] line is optional. This is the
+/// golden-output side of the determinism contract — a committed expected-bars
+/// file the harness compares produced bars against.
+///
+/// # Errors
+///
+/// Returns a [`ParseError`] on the first malformed row.
+pub fn parse_bars(text: &str) -> Result<Vec<Bar>, ParseError> {
+    let mut bars = Vec::new();
+    for (idx, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line == BAR_HEADER {
+            continue;
+        }
+        bars.push(parse_bar_line(line, idx + 1)?);
+    }
+    Ok(bars)
+}
+
+fn parse_bar_line(line: &str, line_no: usize) -> Result<Bar, ParseError> {
+    let mkerr = |message: String| ParseError {
+        line: line_no,
+        message,
+    };
+    let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+    if fields.len() != 9 {
+        return Err(mkerr(format!(
+            "expected 9 comma-separated fields, found {}",
+            fields.len()
+        )));
+    }
+    let int = |value: &str, name: &str| -> Result<i64, ParseError> {
+        value
+            .parse::<i64>()
+            .map_err(|e| mkerr(format!("{name} `{value}`: {e}")))
+    };
+    let dec = |value: &str, name: &str| -> Result<Decimal, ParseError> {
+        Decimal::from_str(value).map_err(|e| mkerr(format!("{name} `{value}`: {e}")))
+    };
+    Ok(Bar {
+        open_time: int(fields[0], "open_time")?,
+        close_time: int(fields[1], "close_time")?,
+        open: dec(fields[2], "open")?,
+        high: dec(fields[3], "high")?,
+        low: dec(fields[4], "low")?,
+        close: dec(fields[5], "close")?,
+        buy_volume: dec(fields[6], "buy_volume")?,
+        sell_volume: dec(fields[7], "sell_volume")?,
+        trade_count: fields[8]
+            .parse::<u64>()
+            .map_err(|e| mkerr(format!("trade_count `{}`: {e}", fields[8])))?,
+    })
+}
+
+/// Serialise bars to CSV fixture text, including the [`BAR_HEADER`] line.
+///
+/// The inverse of [`parse_bars`]. Output is deterministic (fixed field order,
+/// `Decimal`'s canonical `Display`), so it doubles as the byte-identical
+/// representation the golden harness diffs two runs against.
+#[must_use]
+pub fn write_bars(bars: &[Bar]) -> String {
+    let mut out = String::with_capacity(BAR_HEADER.len() + 1 + bars.len() * 80);
+    out.push_str(BAR_HEADER);
+    out.push('\n');
+    for b in bars {
+        writeln!(
+            out,
+            "{},{},{},{},{},{},{},{},{}",
+            b.open_time,
+            b.close_time,
+            b.open,
+            b.high,
+            b.low,
+            b.close,
+            b.buy_volume,
+            b.sell_volume,
+            b.trade_count
+        )
+        .expect("writing to a String is infallible");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
+    }
+
+    fn sample_bar() -> Bar {
+        Bar {
+            open_time: 1_700_000_000_000,
+            close_time: 1_700_000_000_450,
+            open: dec("36000.10"),
+            high: dec("36000.20"),
+            low: dec("36000.00"),
+            close: dec("36000.00"),
+            buy_volume: dec("0.015"),
+            sell_volume: dec("0.250"),
+            trade_count: 3,
+        }
     }
 
     #[test]
@@ -218,5 +323,26 @@ agg_id,timestamp_ms,price,quantity,side
         let text = "1,1,1.0,1.0,buy\nnot,a,valid,trade,row,extra\n";
         let err = parse_trades(text).unwrap_err();
         assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn bars_round_trip_through_write_and_parse() {
+        let bars = vec![sample_bar()];
+        let text = write_bars(&bars);
+        assert!(text.starts_with(BAR_HEADER));
+        assert_eq!(parse_bars(&text).unwrap(), bars);
+    }
+
+    #[test]
+    fn bar_write_is_deterministic() {
+        let bars = vec![sample_bar()];
+        assert_eq!(write_bars(&bars), write_bars(&bars));
+    }
+
+    #[test]
+    fn rejects_bar_with_wrong_field_count() {
+        let err = parse_bars("1,2,3\n").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert!(err.message.contains("found 3"), "{}", err.message);
     }
 }

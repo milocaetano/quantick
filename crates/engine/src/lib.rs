@@ -20,9 +20,12 @@
 //! replay to guard determinism.
 
 pub mod fixture;
+pub mod golden;
 
 mod bar;
+mod builder;
 mod trade;
 
 pub use bar::Bar;
+pub use builder::BarBuilder;
 pub use trade::{Side, Trade};
