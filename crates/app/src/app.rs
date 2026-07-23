@@ -20,6 +20,7 @@ use crate::chart::{PriceScale, TimeAxis, to_f64};
 use crate::feed::FeedEvent;
 use crate::metrics::{self, FrameStats};
 use crate::state::{BarKind, BarSpec, ChartState};
+use crate::viewport::Viewport;
 
 const UP: egui::Color32 = egui::Color32::from_rgb(38, 166, 154);
 const DOWN: egui::Color32 = egui::Color32::from_rgb(239, 83, 80);
@@ -49,6 +50,9 @@ pub struct QuantickApp {
     volume_units: f64,
     dollar_notional: f64,
     time_interval_ms: i64,
+
+    // Pan/zoom navigation over the bar series.
+    viewport: Viewport,
 
     frames: FrameStats,
     last_frame: Option<Instant>,
@@ -87,6 +91,7 @@ impl QuantickApp {
             volume_units,
             dollar_notional,
             time_interval_ms,
+            viewport: Viewport::new(),
             frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_ms: None,
@@ -219,15 +224,46 @@ impl QuantickApp {
         self.last_summary = now;
     }
 
+    /// Handle mouse navigation over the plot: drag to pan, scroll to zoom,
+    /// double-click to snap back to the live edge.
+    fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
+        let plot = area.shrink(16.0);
+        let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
+        if total == 0 {
+            return;
+        }
+        let response = ui.interact(
+            plot,
+            egui::Id::new("chart_nav"),
+            egui::Sense::click_and_drag(),
+        );
+
+        if response.dragged() {
+            let slot = plot.width() / self.viewport.visible_bars().max(1.0);
+            if slot > 0.0 {
+                self.viewport.pan(response.drag_delta().x / slot, total);
+            }
+        }
+        if response.double_clicked() {
+            self.viewport.snap_to_live();
+        }
+        if response.hovered() {
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                // Scroll up (positive) zooms in; each notch is a gentle step.
+                self.viewport.zoom(2.0_f32.powf(-scroll / 300.0));
+            }
+        }
+    }
+
     fn draw_chart(&self, painter: &egui::Painter, area: egui::Rect) {
         painter.rect_filled(area, egui::Rounding::ZERO, BACKGROUND);
         let plot = area.shrink(16.0);
 
-        let bars = self.state.bars();
+        let closed = self.state.bars();
         let partial = self.state.partial();
-        let count = bars.len() + usize::from(partial.is_some());
-
-        let Some(scale) = PriceScale::auto(bars, partial, plot.top(), plot.bottom(), 0.05) else {
+        let total = closed.len() + usize::from(partial.is_some());
+        if total == 0 {
             painter.text(
                 area.center(),
                 egui::Align2::CENTER_CENTER,
@@ -236,29 +272,59 @@ impl QuantickApp {
                 MUTED,
             );
             return;
+        }
+
+        let (start, end) = self.viewport.visible_range(total);
+        let visible_count = end.saturating_sub(start).max(1);
+
+        // The visible closed bars, plus the partial if it falls in view.
+        let closed_start = start.min(closed.len());
+        let closed_end = end.min(closed.len());
+        let visible_closed = &closed[closed_start..closed_end];
+        let partial_visible = partial.filter(|_| closed.len() >= start && closed.len() < end);
+
+        let Some(scale) = PriceScale::auto(
+            visible_closed,
+            partial_visible,
+            plot.top(),
+            plot.bottom(),
+            0.05,
+        ) else {
+            return;
         };
-        let axis = TimeAxis::new(plot.left(), plot.right(), count, 0.7, 24.0);
+        let axis = TimeAxis::new(plot.left(), plot.right(), visible_count, 0.7, 24.0);
 
-        for (index, bar) in bars.iter().enumerate() {
-            draw_candle(painter, &axis, &scale, index, bar, false);
+        for (offset, bar) in visible_closed.iter().enumerate() {
+            let local = (closed_start - start) + offset;
+            draw_candle(painter, &axis, &scale, local, bar, false);
         }
-        if let Some(partial) = partial {
-            draw_candle(painter, &axis, &scale, bars.len(), partial, true);
+        if let Some(partial) = partial_visible {
+            draw_candle(painter, &axis, &scale, closed.len() - start, partial, true);
         }
 
-        self.draw_backfill_divider(painter, &axis, plot);
+        self.draw_backfill_divider(painter, &axis, plot, start, end);
         self.draw_header(painter, plot);
     }
 
-    /// A vertical marker separating backfilled history (left) from live (right).
-    fn draw_backfill_divider(&self, painter: &egui::Painter, axis: &TimeAxis, plot: egui::Rect) {
+    /// A vertical marker separating backfilled history (left) from live (right),
+    /// drawn only when the boundary falls in the visible `[start, end)` window.
+    fn draw_backfill_divider(
+        &self,
+        painter: &egui::Painter,
+        axis: &TimeAxis,
+        plot: egui::Rect,
+        start: usize,
+        end: usize,
+    ) {
         let Some(boundary) = self.state.backfill_boundary() else {
             return;
         };
-        if boundary == 0 {
-            return; // nothing was backfilled
+        if boundary == 0 || boundary < start || boundary > end {
+            return; // nothing backfilled, or the divider is off-screen
         }
-        let x = axis.x_left(boundary).clamp(plot.left(), plot.right());
+        let x = axis
+            .x_left(boundary - start)
+            .clamp(plot.left(), plot.right());
         painter.line_segment(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
             egui::Stroke::new(1.0_f32, DIVIDER),
@@ -286,12 +352,18 @@ impl QuantickApp {
             Some(b) => (b, bars.len().saturating_sub(b)),
             None => (0, bars.len()),
         };
+        let mode = if self.viewport.follows_live() {
+            "● live"
+        } else {
+            "history · double-click for live"
+        };
         let header = format!(
-            "{} · {} · {} backfilled + {} live bars",
+            "{} · {} · {} backfilled + {} live bars · {}",
             self.symbol,
             self.state.spec().summary(),
             backfilled,
-            live
+            live,
+            mode
         );
         painter.text(
             egui::pos2(plot.left(), plot.top()),
@@ -392,6 +464,7 @@ impl eframe::App for QuantickApp {
             .frame(egui::Frame::none().fill(BACKGROUND))
             .show(ctx, |ui| {
                 let area = ui.available_rect_before_wrap();
+                self.handle_navigation(ui, area);
                 self.draw_chart(ui.painter(), area);
                 self.draw_overlay(ui.painter(), area);
             });

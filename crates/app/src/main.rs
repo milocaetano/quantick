@@ -15,6 +15,7 @@ mod chart;
 mod feed;
 mod metrics;
 mod state;
+mod viewport;
 
 const SYMBOL: &str = "BTCUSDT";
 const TICK_SIZE: u64 = 50;
