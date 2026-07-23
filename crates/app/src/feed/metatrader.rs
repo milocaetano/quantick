@@ -15,6 +15,13 @@
 //!   [`FeedEvent::HistoryPrepended`] — but only while no trade has been
 //!   forwarded yet; after that, recovered history is forwarded as live to
 //!   keep the retained stream ordered (logged as such, never silent).
+//! - **Reconnect overlap is dropped, not double-counted**: the bridge
+//!   re-sends its recent-history window on every session, and synthetic ids
+//!   restart, so the only stable cross-session key is time. Recovered trades
+//!   are forwarded only when strictly newer than the last forwarded trade;
+//!   the dropped overlap count is logged. (Trades sharing the last forwarded
+//!   millisecond are dropped too — losing a same-ms tick to a reconnect is
+//!   honest; silently inflating bars is not.)
 //! - **"Load older" is unsupported**: every request is answered with an empty
 //!   reply plus a structured warning, so the UI's loader always resolves.
 //! - Order-book capture is unsupported (the UI already disables the heatmap
@@ -87,6 +94,9 @@ async fn feed_task(
     // Whether any trade reached the UI yet: the first non-empty history block
     // may be prepended only into an empty chart (see module docs).
     let mut forwarded_any = false;
+    // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
+    // what was already streamed live; only strictly-newer trades pass.
+    let mut last_forwarded_ms = i64::MIN;
 
     loop {
         tokio::select! {
@@ -98,23 +108,35 @@ async fn feed_task(
                             continue;
                         }
                         if forwarded_any {
-                            // Reconnect history: forwarding as live keeps the
-                            // retained stream ordered. Labelled, not hidden.
+                            // Reconnect history: forward only what the UI has
+                            // not already seen. Labelled, not hidden.
+                            let resent = batch.len();
+                            let fresh: Vec<_> = batch
+                                .into_iter()
+                                .filter(|t| t.timestamp_ms > last_forwarded_ms)
+                                .collect();
                             info!(
                                 target: "quantick::app",
                                 schema_version = 1_u8,
                                 event_code = "MT5_RECOVERED_HISTORY_AS_LIVE",
                                 symbol = %symbol,
-                                count = batch.len(),
-                                "bridge re-sent history after a reconnect; forwarding in stream order"
+                                count = fresh.len(),
+                                overlap_dropped = resent - fresh.len(),
+                                "bridge re-sent history after a reconnect; forwarding the unseen tail as live"
                             );
-                            for trade in batch {
+                            for trade in fresh {
+                                last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
                                 if tx.send(FeedEvent::Live(trade)).await.is_err() {
                                     break;
                                 }
                             }
                         } else {
                             forwarded_any = true;
+                            last_forwarded_ms = batch
+                                .iter()
+                                .map(|t| t.timestamp_ms)
+                                .max()
+                                .unwrap_or(last_forwarded_ms);
                             info!(
                                 target: "quantick::app",
                                 schema_version = 1_u8,
@@ -130,6 +152,7 @@ async fn feed_task(
                     }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;
+                        last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
                         if tx.send(FeedEvent::Live(trade)).await.is_err() {
                             break; // UI gone
                         }
@@ -389,5 +412,94 @@ mod tests {
         };
         assert_eq!(trade.agg_id, 3);
         assert_eq!(trade.side, quantick_engine::Side::Sell);
+    }
+
+    #[tokio::test]
+    async fn reconnect_history_overlap_is_dropped_not_double_counted() {
+        // The bridge re-sends its recent-history window on every session; the
+        // overlap with trades already forwarded must not inflate the bars.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19172".to_string(),
+            side_source: Mt5SideSource::TickRule,
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        async fn connect() -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                match tokio::net::TcpStream::connect("127.0.0.1:19172").await {
+                    Ok(s) => return s,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+            panic!("could not reach the feed listener");
+        }
+
+        fn tick(seq: u64, time_ms: i64, last: &str) -> String {
+            format!(
+                "{{\"type\":\"tick\",\"seq\":{seq},\"time_ms\":{time_ms},\"bid\":\"0\",\
+                 \"ask\":\"0\",\"last\":\"{last}\",\"volume\":1,\"flags\":1080}}\n"
+            )
+        }
+        const HELLO: &str = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"WIN$N\",\"broker_symbol\":\"WINQ26\",\"digits\":0,",
+            "\"server_utc_offset_s\":-10800}\n",
+        );
+
+        // Session 1: history (1000, 1001) then a live tick at 1002.
+        let mut sock = connect().await;
+        let mut script = String::from(HELLO);
+        script.push_str("{\"type\":\"backfill_start\",\"count_hint\":2}\n");
+        script.push_str(&tick(1, 1000, "100"));
+        script.push_str(&tick(2, 1001, "101"));
+        script.push_str("{\"type\":\"backfill_end\"}\n");
+        script.push_str(&tick(3, 1002, "100"));
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        let Some(FeedEvent::HistoryPrepended(history)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for history")
+        else {
+            panic!("expected the bridge history as a prepend");
+        };
+        assert_eq!(history.len(), 1);
+        let Some(FeedEvent::Live(live)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the live trade")
+        else {
+            panic!("expected the live trade");
+        };
+        assert_eq!(live.timestamp_ms, 1002 + 10_800_000);
+
+        // Session 2 (reconnect): the re-sent window overlaps everything the
+        // UI already has, plus one genuinely new tick at 1003.
+        drop(sock);
+        let mut sock = connect().await;
+        let mut script = String::from(HELLO);
+        script.push_str("{\"type\":\"backfill_start\",\"count_hint\":4}\n");
+        script.push_str(&tick(1, 1000, "100"));
+        script.push_str(&tick(2, 1001, "101"));
+        script.push_str(&tick(3, 1002, "100"));
+        script.push_str(&tick(4, 1003, "102"));
+        script.push_str("{\"type\":\"backfill_end\"}\n");
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        // Only the unseen tail arrives; the overlap is dropped, not replayed.
+        let Some(FeedEvent::Live(fresh)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the post-reconnect trade")
+        else {
+            panic!("expected the unseen tail as a live trade");
+        };
+        assert_eq!(fresh.timestamp_ms, 1003 + 10_800_000);
+        assert_eq!(fresh.agg_id, 4);
     }
 }

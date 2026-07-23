@@ -45,6 +45,11 @@ struct ProjectionLayout {
     first_bar_index: usize,
     slot_count: usize,
     extend_live_end: bool,
+    // Cell y-positions are normalized against the price window at build
+    // time, so a cached frame is only valid for the exact same window
+    // (bit-compared: any pan/zoom or auto-fit shift must rebuild).
+    price_low_bits: u64,
+    price_high_bits: u64,
 }
 
 struct ProjectionCache {
@@ -447,6 +452,8 @@ impl OrderflowView {
             first_bar_index,
             slot_count: closed.len() + usize::from(partial.is_some()),
             extend_live_end,
+            price_low_bits: price_range.0.to_bits(),
+            price_high_bits: price_range.1.to_bits(),
         };
         let now = Instant::now();
         if let Some(cache) = &self.projection_cache
@@ -1012,6 +1019,14 @@ mod tests {
         assert_eq!(view.projection_builds, 1);
         assert_eq!(view.projection_cache_hits, 1);
 
+        // A price-window change (pan/zoom, auto-fit shift) must rebuild:
+        // cached cell positions are normalized against the old window.
+        let panned = view
+            .project_visible(0, &bars, None, true, (97.0, 103.0))
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first, &panned));
+        assert_eq!(view.projection_builds, 2);
+
         view.handle_depth_event(DepthEvent::Status {
             symbol: "BTCUSDT".to_owned(),
             generation: 10,
@@ -1027,7 +1042,7 @@ mod tests {
             .project_visible(0, &bars, None, true, (98.0, 102.0))
             .unwrap();
         assert!(!Arc::ptr_eq(&first, &after_gap));
-        assert_eq!(view.projection_builds, 2);
+        assert_eq!(view.projection_builds, 3);
     }
 
     #[test]
