@@ -1,2 +1,4 @@
 /target
 *.log
+# Compiled MQL5 binaries (build artifacts of bridge/mt5/*.mq5)
+*.ex5

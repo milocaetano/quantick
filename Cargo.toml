@@ -4,6 +4,7 @@ members = [
     "crates/engine",
     "crates/orderbook",
     "crates/feed-binance",
+    "crates/feed-mt5",
     "crates/app",
 ]
 
