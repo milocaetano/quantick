@@ -2246,7 +2246,10 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "quantick-engine",
+ "quantick-feed-binance",
  "rust_decimal",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
