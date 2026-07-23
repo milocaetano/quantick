@@ -8,6 +8,8 @@
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+use crate::state::BarSpec;
+
 mod app;
 mod chart;
 mod feed;
@@ -50,6 +52,12 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "quantick",
         options,
-        Box::new(move |_cc| Ok(Box::new(app::QuantickApp::new(SYMBOL, TICK_SIZE, events)))),
+        Box::new(move |_cc| {
+            Ok(Box::new(app::QuantickApp::new(
+                SYMBOL,
+                BarSpec::Tick(TICK_SIZE),
+                events,
+            )))
+        }),
     )
 }

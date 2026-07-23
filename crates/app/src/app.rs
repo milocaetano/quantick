@@ -1,14 +1,17 @@
-//! The egui application: drains the live feed, renders bars, surfaces metrics.
+//! The egui application: drains the live feed, renders bars, surfaces metrics,
+//! and lets the user switch bar type live.
 //!
 //! Coordinate math lives in [`crate::chart`] (pure, tested), trade → bar logic
-//! in [`crate::state`] (pure, tested), and metric math in [`crate::metrics`]
-//! (pure, tested). This layer owns the clocks and the tracing, drains the feed
-//! channel each frame, and turns everything into egui shapes — candles, the
-//! backfill/live divider, and a performance overlay.
+//! and the bar-type dispatch in [`crate::state`] (pure, tested), and metric math
+//! in [`crate::metrics`] (pure, tested). This layer owns the clocks, the tracing
+//! and the widgets, drains the feed each frame, and turns everything into egui
+//! shapes.
 
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use tokio::sync::mpsc;
 
 use quantick_engine::Bar;
@@ -16,7 +19,7 @@ use quantick_engine::Bar;
 use crate::chart::{PriceScale, TimeAxis, to_f64};
 use crate::feed::FeedEvent;
 use crate::metrics::{self, FrameStats};
-use crate::state::ChartState;
+use crate::state::{BarKind, BarSpec, ChartState};
 
 const UP: egui::Color32 = egui::Color32::from_rgb(38, 166, 154);
 const DOWN: egui::Color32 = egui::Color32::from_rgb(239, 83, 80);
@@ -29,12 +32,23 @@ const WARN: egui::Color32 = egui::Color32::from_rgb(255, 99, 71);
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
+fn dec_from_f64(x: f64) -> Decimal {
+    Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
+}
+
 /// The quantick chart window.
 pub struct QuantickApp {
     state: ChartState,
     events: mpsc::Receiver<FeedEvent>,
     symbol: String,
-    tick_size: u64,
+
+    // Bar-type selector state (one parameter retained per kind).
+    kind: BarKind,
+    tick_n: u64,
+    volume_units: f64,
+    dollar_notional: f64,
+    time_interval_ms: i64,
 
     frames: FrameStats,
     last_frame: Option<Instant>,
@@ -45,19 +59,34 @@ pub struct QuantickApp {
 }
 
 impl QuantickApp {
-    /// Create the app for `symbol`, building tick bars of `tick_size`, draining
-    /// `events` from the feed thread.
+    /// Create the app for `symbol` starting from `spec`, draining `events`.
     #[must_use]
     pub fn new(
         symbol: impl Into<String>,
-        tick_size: u64,
+        spec: BarSpec,
         events: mpsc::Receiver<FeedEvent>,
     ) -> Self {
+        // Defaults for every kind, with the initial spec's parameter applied.
+        let mut tick_n = 50;
+        let mut volume_units = 5.0;
+        let mut dollar_notional = 500_000.0;
+        let mut time_interval_ms = 1_000;
+        match &spec {
+            BarSpec::Tick(n) => tick_n = *n,
+            BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
+            BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
+            BarSpec::Time(ms) => time_interval_ms = *ms,
+        }
+
         Self {
-            state: ChartState::new(tick_size),
+            kind: spec.kind(),
+            state: ChartState::new(spec),
             events,
             symbol: symbol.into(),
-            tick_size,
+            tick_n,
+            volume_units,
+            dollar_notional,
+            time_interval_ms,
             frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_ms: None,
@@ -65,6 +94,61 @@ impl QuantickApp {
             trades_since_summary: 0,
             last_summary: Instant::now(),
         }
+    }
+
+    /// The bar spec implied by the current selector state.
+    fn current_spec(&self) -> BarSpec {
+        match self.kind {
+            BarKind::Tick => BarSpec::Tick(self.tick_n.max(1)),
+            BarKind::Volume => BarSpec::Volume(dec_from_f64(self.volume_units)),
+            BarKind::Dollar => BarSpec::Dollar(dec_from_f64(self.dollar_notional)),
+            BarKind::Time => BarSpec::Time(self.time_interval_ms.max(1)),
+        }
+    }
+
+    /// The bar-type selector: a combo for the kind and a drag for its parameter.
+    fn draw_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("bar type:");
+            egui::ComboBox::from_id_salt("bar_kind")
+                .selected_text(self.kind.label())
+                .show_ui(ui, |ui| {
+                    for kind in BarKind::ALL {
+                        ui.selectable_value(&mut self.kind, kind, kind.label());
+                    }
+                });
+            ui.separator();
+            match self.kind {
+                BarKind::Tick => {
+                    ui.label("N trades");
+                    ui.add(egui::DragValue::new(&mut self.tick_n).range(1.0..=5000.0));
+                }
+                BarKind::Volume => {
+                    ui.label("units");
+                    ui.add(
+                        egui::DragValue::new(&mut self.volume_units)
+                            .range(0.1..=1000.0)
+                            .speed(0.1),
+                    );
+                }
+                BarKind::Dollar => {
+                    ui.label("notional");
+                    ui.add(
+                        egui::DragValue::new(&mut self.dollar_notional)
+                            .range(1000.0..=1_000_000_000.0)
+                            .speed(1000.0),
+                    );
+                }
+                BarKind::Time => {
+                    ui.label("interval ms");
+                    ui.add(
+                        egui::DragValue::new(&mut self.time_interval_ms)
+                            .range(100.0..=600_000.0)
+                            .speed(100.0),
+                    );
+                }
+            }
+        });
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
@@ -84,7 +168,6 @@ impl QuantickApp {
                     self.trades_since_summary += 1;
                     self.state.ingest_live(&trade);
                 }
-                // Empty (nothing pending) or Disconnected (feed gone): stop.
                 Err(_) => break,
             }
         }
@@ -110,6 +193,7 @@ impl QuantickApp {
             feed_lag_ms = lag,
             trades_per_s = rate,
             live_trades = self.live_trades,
+            bar_spec = self.state.spec().summary(),
             "perf summary"
         );
         if avg > metrics::SLOW_FRAME_MS {
@@ -203,8 +287,11 @@ impl QuantickApp {
             None => (0, bars.len()),
         };
         let header = format!(
-            "{} · tick({}) · {} backfilled + {} live bars",
-            self.symbol, self.tick_size, backfilled, live
+            "{} · {} · {} backfilled + {} live bars",
+            self.symbol,
+            self.state.spec().summary(),
+            backfilled,
+            live
         );
         painter.text(
             egui::pos2(plot.left(), plot.top()),
@@ -291,6 +378,15 @@ impl eframe::App for QuantickApp {
 
         self.drain_feed();
         self.maybe_emit_summary(now);
+
+        egui::TopBottomPanel::top("controls")
+            .frame(egui::Frame::none().fill(BACKGROUND).inner_margin(8.0))
+            .show(ctx, |ui| {
+                ui.visuals_mut().override_text_color = Some(OVERLAY);
+                self.draw_controls(ui);
+            });
+        // Apply any selector change (no-op if unchanged).
+        self.state.set_spec(self.current_spec());
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(BACKGROUND))
