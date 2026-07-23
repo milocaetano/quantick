@@ -89,7 +89,7 @@ fn draw_candle(
             egui::pos2(xc, scale.y(to_f64(bar.high))),
             egui::pos2(xc, scale.y(to_f64(bar.low))),
         ],
-        egui::Stroke::new(1.0, color),
+        egui::Stroke::new(1.0_f32, color),
     );
 
     // Body: open → close, with a minimum height so a doji is still visible.
@@ -101,7 +101,11 @@ fn draw_candle(
 
     if forming {
         painter.rect_filled(body, egui::Rounding::ZERO, color.gamma_multiply(0.35));
-        painter.rect_stroke(body, egui::Rounding::ZERO, egui::Stroke::new(1.5, color));
+        painter.rect_stroke(
+            body,
+            egui::Rounding::ZERO,
+            egui::Stroke::new(1.5_f32, color),
+        );
     } else {
         painter.rect_filled(body, egui::Rounding::ZERO, color);
     }
