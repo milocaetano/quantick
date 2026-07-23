@@ -14,7 +14,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use quantick_engine::{
-    BarBuilder, DollarBarBuilder, Side, TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
+    BarBuilder, DollarBarBuilder, ImbalanceBarBuilder, Side, TickBarBuilder, TimeBarBuilder, Trade,
+    VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
 
@@ -79,4 +80,5 @@ fn main() {
         &trades,
     );
     bench("time(1000ms)", TimeBarBuilder::new(1000), &trades);
+    bench("imbalance(100)", ImbalanceBarBuilder::new(100), &trades);
 }

@@ -11,7 +11,8 @@
 //! unit-tested in CI.
 
 use quantick_engine::{
-    Bar, BarBuilder, DollarBarBuilder, TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
+    Bar, BarBuilder, DollarBarBuilder, ImbalanceBarBuilder, TickBarBuilder, TimeBarBuilder, Trade,
+    VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
 
@@ -26,15 +27,19 @@ pub enum BarKind {
     Dollar,
     /// Close every N milliseconds of trade time.
     Time,
+    /// Close when aggressor imbalance beats an adaptive threshold
+    /// (López de Prado tick imbalance bars).
+    Imbalance,
 }
 
 impl BarKind {
     /// All bar kinds, for building a selector.
-    pub const ALL: [BarKind; 4] = [
+    pub const ALL: [BarKind; 5] = [
         BarKind::Tick,
         BarKind::Volume,
         BarKind::Dollar,
         BarKind::Time,
+        BarKind::Imbalance,
     ];
 
     /// A short display label.
@@ -45,6 +50,7 @@ impl BarKind {
             BarKind::Volume => "volume",
             BarKind::Dollar => "dollar",
             BarKind::Time => "time",
+            BarKind::Imbalance => "imbalance",
         }
     }
 }
@@ -60,6 +66,8 @@ pub enum BarSpec {
     Dollar(Decimal),
     /// N milliseconds per bar.
     Time(i64),
+    /// Target trades per bar for the adaptive imbalance rule.
+    Imbalance(u64),
 }
 
 impl BarSpec {
@@ -71,6 +79,7 @@ impl BarSpec {
             BarSpec::Volume(_) => BarKind::Volume,
             BarSpec::Dollar(_) => BarKind::Dollar,
             BarSpec::Time(_) => BarKind::Time,
+            BarSpec::Imbalance(_) => BarKind::Imbalance,
         }
     }
 
@@ -83,6 +92,7 @@ impl BarSpec {
             BarSpec::Volume(units) => Box::new(VolumeBarBuilder::new(*units)),
             BarSpec::Dollar(notional) => Box::new(DollarBarBuilder::new(*notional)),
             BarSpec::Time(ms) => Box::new(TimeBarBuilder::new(*ms)),
+            BarSpec::Imbalance(target) => Box::new(ImbalanceBarBuilder::new(*target)),
         }
     }
 
@@ -94,6 +104,7 @@ impl BarSpec {
             BarSpec::Volume(u) => format!("volume({u})"),
             BarSpec::Dollar(d) => format!("dollar({d})"),
             BarSpec::Time(ms) => format!("time({ms}ms)"),
+            BarSpec::Imbalance(target) => format!("imbalance({target})"),
         }
     }
 }
@@ -262,19 +273,20 @@ mod tests {
 
     #[test]
     fn build_dispatches_every_kind() {
-        // Tick(1) closes on the first trade; the others simply must build and
-        // accept a trade without panicking.
+        // Tick(1) and Imbalance(1) close on the first trade; the others simply
+        // must build and accept a trade without panicking.
         for spec in [
             BarSpec::Tick(1),
             BarSpec::Volume(dec("1.0")),
             BarSpec::Dollar(dec("100")),
             BarSpec::Time(1),
+            BarSpec::Imbalance(1),
         ] {
             let kind = spec.kind();
             let mut builder = spec.build();
             let closed = builder.push(&trade(1));
-            if kind == BarKind::Tick {
-                assert!(closed.is_some(), "tick(1) closes immediately");
+            if matches!(kind, BarKind::Tick | BarKind::Imbalance) {
+                assert!(closed.is_some(), "{kind:?}(1) closes immediately");
             }
         }
     }

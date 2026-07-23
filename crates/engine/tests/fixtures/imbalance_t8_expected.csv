@@ -1,0 +1,17 @@
+# Expected imbalance bars for imbalance_trades.csv with target_trades = 8.
+# bar[0]: warm-up, closes at exactly the 8-trade target.
+# bar[1]: sell regime the threshold has adapted to — full-length bar.
+# bar[2]: contrary 2-buy burst beats the adapted threshold — early close.
+# bar[3..]: choppy two-way flow right after a regime flip: expectations are
+# stale, thresholds are small, and the rule samples every trade until the
+# EWMAs re-converge. Recorded as-is — this is the algorithm's real dynamic.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1700000000000,1700000001750,36010.00,36010.00,36000.00,36000.00,0,2.25,8
+1700000002000,1700000003750,35998.00,35998.00,35986.50,35986.50,0,5.40,8
+1700000004000,1700000004250,35990.00,35994.50,35990.00,35994.50,2.20,0,2
+1700000004500,1700000004500,35997.00,35997.00,35997.00,35997.00,0.30,0,1
+1700000004750,1700000004750,35995.50,35995.50,35995.50,35995.50,0,0.20,1
+1700000005000,1700000005000,35998.50,35998.50,35998.50,35998.50,0.45,0,1
+1700000005250,1700000005250,35996.00,35996.00,35996.00,35996.00,0,0.35,1
+1700000005500,1700000005500,36000.00,36000.00,36000.00,36000.00,0.55,0,1
+1700000005750,1700000005750,36002.50,36002.50,36002.50,36002.50,0.60,0,1
