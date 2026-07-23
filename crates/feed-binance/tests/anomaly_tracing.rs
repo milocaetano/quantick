@@ -41,20 +41,23 @@ fn trade(agg_id: u64, ts: i64) -> Trade {
 
 fn capture(body: impl FnOnce()) -> String {
     let buf = Arc::new(Mutex::new(Vec::new()));
+    // Disable ANSI explicitly: a workspace build can unify the `ansi` feature
+    // into tracing-subscriber (the app pulls it), and colour codes would split
+    // `key=value` fields and break the substring assertions below. Off here, the
+    // output is plain regardless of which features other crates enable.
     let subscriber = tracing_subscriber::fmt()
         .with_writer(SharedBuf(buf.clone()))
         .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
         .finish();
     tracing::subscriber::with_default(subscriber, body);
     String::from_utf8(buf.lock().unwrap().clone()).unwrap()
 }
 
-// Both anomalies are checked in ONE test on purpose. The two checks share the
-// `warn!` callsite, and `tracing` caches callsite interest globally; running two
-// capture tests in parallel races on that cache (concurrent `with_default`
-// swaps can cache the callsite as "not interested" and drop the events). A
-// single sequential test touches the callsite from one thread only, so it's
-// deterministic. See #40.
+// Both anomalies are checked in one sequential test: they share the `warn!`
+// callsite, and keeping them on one thread avoids any interaction with
+// tracing's global callsite-interest cache. Robustness against ANSI output is
+// handled in `capture` above (`.with_ansi(false)`). See #40.
 #[test]
 fn anomalies_are_logged_with_structured_fields() {
     // A gap: 2,3,4 missing between agg_id 1 and 5.
