@@ -49,29 +49,42 @@ fn capture(body: impl FnOnce()) -> String {
     String::from_utf8(buf.lock().unwrap().clone()).unwrap()
 }
 
+// Both anomalies are checked in ONE test on purpose. The two checks share the
+// `warn!` callsite, and `tracing` caches callsite interest globally; running two
+// capture tests in parallel races on that cache (concurrent `with_default`
+// swaps can cache the callsite as "not interested" and drop the events). A
+// single sequential test touches the callsite from one thread only, so it's
+// deterministic. See #40.
 #[test]
-fn a_gap_is_logged_with_structured_fields() {
-    let out = capture(|| {
+fn anomalies_are_logged_with_structured_fields() {
+    // A gap: 2,3,4 missing between agg_id 1 and 5.
+    let gap = capture(|| {
         let mut t = ContinuityTracker::new();
         t.observe(&trade(1, 10));
-        t.observe(&trade(5, 20)); // gap: 2,3,4 missing
+        t.observe(&trade(5, 20));
     });
+    assert!(gap.contains("quantick::feed"), "target missing: {gap}");
+    assert!(gap.contains("aggTrade gap"), "message missing: {gap}");
+    assert!(gap.contains("expected_agg_id=2"), "field missing: {gap}");
+    assert!(gap.contains("got_agg_id=5"), "field missing: {gap}");
+    assert!(gap.contains("missing=3"), "field missing: {gap}");
 
-    assert!(out.contains("quantick::feed"), "target missing: {out}");
-    assert!(out.contains("aggTrade gap"), "message missing: {out}");
-    assert!(out.contains("expected_agg_id=2"), "field missing: {out}");
-    assert!(out.contains("got_agg_id=5"), "field missing: {out}");
-    assert!(out.contains("missing=3"), "field missing: {out}");
-}
-
-#[test]
-fn a_backwards_timestamp_is_logged() {
-    let out = capture(|| {
+    // A backwards timestamp: 90 arrives after 100.
+    let backwards = capture(|| {
         let mut t = ContinuityTracker::new();
         t.observe(&trade(1, 100));
-        t.observe(&trade(2, 90)); // timestamp goes backwards
+        t.observe(&trade(2, 90));
     });
-    assert!(out.contains("backwards"), "message missing: {out}");
-    assert!(out.contains("last_ms=100"), "field missing: {out}");
-    assert!(out.contains("got_ms=90"), "field missing: {out}");
+    assert!(
+        backwards.contains("backwards"),
+        "message missing: {backwards}"
+    );
+    assert!(
+        backwards.contains("last_ms=100"),
+        "field missing: {backwards}"
+    );
+    assert!(
+        backwards.contains("got_ms=90"),
+        "field missing: {backwards}"
+    );
 }
