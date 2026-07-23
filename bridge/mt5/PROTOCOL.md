@@ -84,8 +84,11 @@ Clean goodbye (EA removed, terminal closing). Anything after it is ignored.
 ## Error handling contract
 
 - Unknown **fields** in a known message: ignored (forward compatibility).
-- Unknown message **type** / malformed line: the feed skips and counts it
-  (`MT5_UNDECODABLE_LINE`), the session survives.
+- Unknown message **type** / malformed line / invalid UTF-8 line: the feed
+  skips and counts it (`MT5_UNDECODABLE_LINE`), the session survives.
+- A line longer than **64 KiB** (orders of magnitude above any protocol
+  line): the session is dropped (`MT5_LINE_TOO_LONG`) — an unbounded buffer
+  would let any local process exhaust the feed's memory.
 - Wrong first message, schema or symbol mismatch: session refused, feed keeps
   listening.
 - A session that dies mid-backfill discards the partial block; the next

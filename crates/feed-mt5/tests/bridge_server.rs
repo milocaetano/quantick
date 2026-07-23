@@ -160,6 +160,66 @@ async fn garbage_lines_are_skipped_not_fatal() {
 }
 
 #[tokio::test]
+async fn multibyte_garbage_is_skipped_without_panicking() {
+    // Regression: `snippet` used to slice at byte 120, panicking (and killing
+    // the whole listener) when that byte fell inside a multibyte char.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut script = String::new();
+    script.push_str(&hello("WIN$N"));
+    script.push_str(&tick(1, "100", 1));
+    script.push_str(&format!("x{}\n", "é".repeat(200))); // byte 120 mid-char
+    script.push_str(&tick(2, "101", 1)); // still classified: buy
+    sock.write_all(script.as_bytes()).await.unwrap();
+
+    let _ = next_event(&mut rx).await; // Connected
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("expected the trade after the multibyte garbage");
+    };
+    assert_eq!(trade.agg_id, 2);
+}
+
+#[tokio::test]
+async fn an_invalid_utf8_line_is_skipped_not_fatal() {
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut script = Vec::new();
+    script.extend_from_slice(hello("WIN$N").as_bytes());
+    script.extend_from_slice(tick(1, "100", 1).as_bytes());
+    script.extend_from_slice(&[0xff, 0xfe, 0xfd, b'\n']); // not UTF-8
+    script.extend_from_slice(tick(2, "101", 1).as_bytes());
+    sock.write_all(&script).await.unwrap();
+
+    let _ = next_event(&mut rx).await; // Connected
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("expected the trade after the invalid utf-8 line");
+    };
+    assert_eq!(trade.agg_id, 2);
+}
+
+#[tokio::test]
+async fn an_oversized_line_ends_the_session_but_not_the_server() {
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello("WIN$N").as_bytes()).await.unwrap();
+    let _ = next_event(&mut rx).await; // Connected
+
+    // 65 KiB without a newline: crosses the 64 KiB cap, yet small enough to
+    // fit in the OS socket buffers so this write never races the server
+    // closing the connection.
+    let flood = vec![b'a'; 65 * 1024];
+    sock.write_all(&flood).await.unwrap();
+
+    let Mt5Event::Status(Mt5Status::Lost { reason }) = next_event(&mut rx).await else {
+        panic!("expected the oversized line to end the session");
+    };
+    assert_eq!(reason, "oversized line");
+    let Mt5Event::Status(Mt5Status::Waiting { .. }) = next_event(&mut rx).await else {
+        panic!("expected the server back in waiting");
+    };
+}
+
+#[tokio::test]
 async fn a_silent_bridge_is_dropped_and_the_server_waits_again() {
     let (addr, mut rx) = start_server("WIN$N").await;
     let mut sock = TcpStream::connect(&addr).await.unwrap();
