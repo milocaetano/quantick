@@ -95,6 +95,10 @@ pub struct QuantickApp {
     // trades have been backfilled in total (for the readout).
     history_step: usize,
     history_trades: usize,
+    // Whether a history load (initial backfill or "load older") is in flight;
+    // drives the discreet top-left loading indicator. The feed answers every
+    // request with exactly one event, so this flag always clears.
+    loading_history: bool,
 
     // Bar-type selector state (one parameter retained per kind).
     kind: BarKind,
@@ -153,6 +157,9 @@ impl QuantickApp {
             symbol: symbol.into(),
             history_step: 2000,
             history_trades: 0,
+            // The feed starts backfilling the moment it is spawned, so the
+            // chart opens in the loading state.
+            loading_history: true,
             tick_n,
             volume_units,
             dollar_notional,
@@ -265,11 +272,14 @@ impl QuantickApp {
         match self.commands.try_send(FeedCommand::LoadOlder {
             count: self.history_step.max(1),
         }) {
-            Ok(()) => tracing::info!(
-                target: "quantick::app",
-                count = self.history_step,
-                "requested older history"
-            ),
+            Ok(()) => {
+                self.loading_history = true;
+                tracing::info!(
+                    target: "quantick::app",
+                    count = self.history_step,
+                    "requested older history"
+                );
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 tracing::debug!(target: "quantick::app", "older-history request already pending");
             }
@@ -327,6 +337,7 @@ impl QuantickApp {
         loop {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
+                    self.loading_history = false;
                     if let Some(last) = trades.last() {
                         self.latest_trade_ms = Some(last.timestamp_ms);
                     }
@@ -334,6 +345,8 @@ impl QuantickApp {
                     self.state.ingest_backfill(&trades);
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
+                    // The reply — even an empty one — means loading finished.
+                    self.loading_history = false;
                     // Older bars shift every index up; keep the view steady.
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
@@ -813,6 +826,28 @@ impl QuantickApp {
             y += line_h;
         }
     }
+
+    /// A discreet "history is loading" indicator at the chart's top-left: a
+    /// small spinner plus a tiny label, shown while the initial backfill or an
+    /// on-demand "load older" request is in flight.
+    fn draw_history_loader(&self, ui: &mut egui::Ui, area: egui::Rect) {
+        if !self.loading_history {
+            return;
+        }
+        let size = 12.0;
+        let spinner_rect = egui::Rect::from_min_size(
+            area.left_top() + egui::vec2(10.0, 8.0),
+            egui::vec2(size, size),
+        );
+        ui.put(spinner_rect, egui::Spinner::new().size(size).color(MUTED));
+        ui.painter().text(
+            spinner_rect.right_center() + egui::vec2(6.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            "loading history…",
+            egui::FontId::proportional(10.0),
+            MUTED,
+        );
+    }
 }
 
 impl eframe::App for QuantickApp {
@@ -844,6 +879,7 @@ impl eframe::App for QuantickApp {
                 self.handle_navigation(ui, area);
                 self.draw_chart(ui.painter(), area);
                 self.draw_overlay(ui.painter(), area);
+                self.draw_history_loader(ui, area);
             });
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
