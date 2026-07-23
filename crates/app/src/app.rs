@@ -22,6 +22,7 @@ use crate::metrics::{self, FrameStats};
 use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState};
 use crate::style::CandleStyle;
+use crate::timezone::TzOffset;
 use crate::viewport::Viewport;
 
 /// Convert an sRGB `[u8; 3]` style colour to an egui `Color32`.
@@ -77,9 +78,11 @@ struct PlotAreas {
     time_strip: egui::Rect,
 }
 
-/// Format an epoch-millisecond timestamp as `HH:MM:SS` (UTC) for the time axis.
-fn fmt_time(ms: i64) -> String {
-    let secs = ms.div_euclid(1000).rem_euclid(86_400);
+/// Format a UTC epoch-millisecond timestamp as `HH:MM:SS` in the display
+/// timezone `tz`, for the time axis.
+fn fmt_time(ms: i64, tz: TzOffset) -> String {
+    let local = ms.saturating_add(tz.offset_ms());
+    let secs = local.div_euclid(1000).rem_euclid(86_400);
     let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
     format!("{h:02}:{m:02}:{s:02}")
 }
@@ -125,6 +128,11 @@ pub struct QuantickApp {
     // Candle appearance + whether the style panel is open.
     style: CandleStyle,
     show_style: bool,
+    // Whether the perf overlay (fps / frame time / feed lag) is drawn.
+    show_overlay: bool,
+
+    // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
+    tz: TzOffset,
 
     frames: FrameStats,
     last_frame: Option<Instant>,
@@ -175,6 +183,8 @@ impl QuantickApp {
             hover_pos: None,
             style: CandleStyle::default(),
             show_style: false,
+            show_overlay: true,
+            tz: TzOffset::default(),
             frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_ms: None,
@@ -265,6 +275,9 @@ impl QuantickApp {
             if ui.button("⚙ style").clicked() {
                 self.show_style = !self.show_style;
             }
+            ui.separator();
+            ui.checkbox(&mut self.show_overlay, "📈 perf")
+                .on_hover_text("show fps / frame time / feed lag (bottom-left)");
         });
     }
 
@@ -332,6 +345,30 @@ impl QuantickApp {
                 }
             });
         self.show_style = open;
+    }
+
+    /// A floating timezone picker anchored to the bottom-right corner. The time
+    /// axis relabels immediately on selection; the engine is untouched.
+    fn draw_timezone_selector(&mut self, ctx: &egui::Context) {
+        egui::Area::new(egui::Id::new("tz_selector"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-10.0, -8.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(egui::Color32::from_black_alpha(150))
+                    .show(ui, |ui| {
+                        ui.visuals_mut().override_text_color = Some(OVERLAY);
+                        ui.horizontal(|ui| {
+                            ui.label("🕑");
+                            egui::ComboBox::from_id_salt("tz_combo")
+                                .selected_text(self.tz.label())
+                                .show_ui(ui, |ui| {
+                                    for tz in TzOffset::ALL {
+                                        ui.selectable_value(&mut self.tz, tz, tz.label());
+                                    }
+                                });
+                        });
+                    });
+            });
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
@@ -604,7 +641,7 @@ impl QuantickApp {
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
-                        fmt_time(bar.open_time),
+                        fmt_time(bar.open_time, self.tz),
                         font.clone(),
                         MUTED,
                     );
@@ -766,9 +803,14 @@ impl QuantickApp {
         );
     }
 
-    /// A top-right overlay with FPS, frame time and feed lag; values that breach
-    /// a threshold are drawn in the warning colour.
+    /// A bottom-left overlay with FPS, frame time and feed lag; values that
+    /// breach a threshold are drawn in the warning colour. Sits in the empty
+    /// lower-left of the chart so it doesn't cover the candles, and is toggled by
+    /// the "perf" checkbox in the controls bar.
     fn draw_overlay(&self, painter: &egui::Painter, area: egui::Rect) {
+        if !self.show_overlay {
+            return;
+        }
         let avg = self.frames.avg_ms();
         let lag = metrics::feed_lag_ms(metrics::wall_clock_ms(), self.latest_trade_ms);
 
@@ -809,8 +851,10 @@ impl QuantickApp {
         let line_h = 16.0;
         let box_w = 180.0;
         let box_h = lines.len() as f32 * line_h + pad;
-        let top_right = egui::pos2(area.right() - 8.0 - box_w, area.top() + 8.0);
-        let backdrop = egui::Rect::from_min_size(top_right, egui::vec2(box_w, box_h));
+        // Anchor to the empty lower-left of the chart body, above the time strip.
+        let chart = plot_split(area).chart;
+        let bottom_left = egui::pos2(chart.left() + 8.0, chart.bottom() - 8.0 - box_h);
+        let backdrop = egui::Rect::from_min_size(bottom_left, egui::vec2(box_w, box_h));
         painter.rect_filled(
             backdrop,
             egui::Rounding::same(4.0),
@@ -818,11 +862,11 @@ impl QuantickApp {
         );
 
         let mut y = backdrop.top() + pad / 2.0;
-        let right = backdrop.right() - pad;
+        let left = backdrop.left() + pad;
         for (text, color) in &lines {
             painter.text(
-                egui::pos2(right, y),
-                egui::Align2::RIGHT_TOP,
+                egui::pos2(left, y),
+                egui::Align2::LEFT_TOP,
                 text,
                 font.clone(),
                 *color,
@@ -888,6 +932,7 @@ impl eframe::App for QuantickApp {
                 self.draw_overlay(ui.painter(), area);
                 self.draw_history_loader(ui, area);
             });
+        self.draw_timezone_selector(ctx);
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
     }
@@ -996,5 +1041,20 @@ mod tests {
         drop(cmd_rx);
         app.request_older_history();
         assert_eq!(app.pending_history_loads, 1, "only the initial backfill");
+    }
+
+    #[test]
+    fn fmt_time_in_utc() {
+        // Epoch: 1970-01-01 00:00:00 UTC, then +1h 2m 3s.
+        assert_eq!(fmt_time(0, TzOffset::new(0)), "00:00:00");
+        assert_eq!(fmt_time(3_723_000, TzOffset::new(0)), "01:02:03");
+    }
+
+    #[test]
+    fn fmt_time_applies_the_offset() {
+        // UTC midnight shown in UTC−03:00 is 21:00 of the previous day.
+        assert_eq!(fmt_time(0, TzOffset::new(-180)), "21:00:00");
+        // UTC midnight in UTC+05:30 is 05:30.
+        assert_eq!(fmt_time(0, TzOffset::new(330)), "05:30:00");
     }
 }
