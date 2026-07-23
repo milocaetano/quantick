@@ -33,16 +33,25 @@
 //! |---|---|---|
 //! | `MT5_LISTENING` | feed is up, waiting | attach the EA to a chart |
 //! | `MT5_BIND_FAILED` | can't open the port | another quantick running; change `listen_addr` |
+//! | `MT5_ACCEPT_FAILED` | one accept failed; still listening | transient OS error |
 //! | `MT5_BRIDGE_CONNECTED` | socket open, no hello yet | — |
 //! | `MT5_HELLO_TIMEOUT` | connected but silent | wrong client dialed the port |
 //! | `MT5_SCHEMA_MISMATCH` | bridge too old/new | recompile the EA from this repo |
 //! | `MT5_SYMBOL_MISMATCH` | EA runs on another symbol's chart | attach it to the configured symbol |
 //! | `MT5_HELLO_OK` | session established | — |
 //! | `MT5_BACKFILL_START`/`_END` | history block | — |
+//! | `MT5_PARTIAL_BACKFILL_DISCARDED` | session died mid-history | next connection re-sends it |
+//! | `MT5_HEARTBEAT` | liveness + fresh offset (debug level) | — |
 //! | `MT5_SEQ_GAP` | ticks lost in transport | terminal overloaded? check EA logs |
+//! | `MT5_SEQ_NOT_MONOTONIC` | seq went backwards/repeated | EA bug or duplicated stream |
 //! | `MT5_BRIDGE_SILENT` | no data within timeout | terminal closed / market halted / EA removed |
+//! | `MT5_BRIDGE_EOF` | peer closed the socket | terminal closing or EA reload |
 //! | `MT5_BRIDGE_BYE` | clean shutdown | EA detached or terminal closing |
-//! | `MT5_UNDECODABLE_LINE` | garbage on the wire | bridge/feed version skew |
+//! | `MT5_BRIDGE_LOST` | session over; back to waiting | see the paired reason field |
+//! | `MT5_SOCKET_ERROR` | read failed mid-session | network stack; session restarts |
+//! | `MT5_PROTOCOL_VIOLATION` | message out of place | bridge/feed version skew |
+//! | `MT5_UNDECODABLE_LINE` | garbage on the wire (skipped, counted) | bridge/feed version skew |
+//! | `MT5_LINE_TOO_LONG` | line over 64 KiB; session dropped | not the bridge talking to us |
 //! | `MT5_MAP_SUMMARY` | per-session mapping ledger | audit drops & side sources here |
 //!
 //! A `MT5_MAP_SUMMARY` where `side_from_flag` is ~100% buys would reveal the

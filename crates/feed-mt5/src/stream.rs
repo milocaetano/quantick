@@ -26,6 +26,11 @@ use crate::session::SeqTracker;
 /// Default address the feed listens on for the bridge.
 pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:9100";
 
+/// Longest line the server will buffer. Protocol lines are a few hundred
+/// bytes; anything larger is not the bridge, and an unbounded buffer would let
+/// any local process exhaust memory by streaming bytes without a newline.
+const MAX_LINE_BYTES: usize = 64 * 1024;
+
 /// How the bridge server behaves for one symbol.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -135,12 +140,20 @@ pub async fn run_bridge_server(
     config: ServerConfig,
     tx: mpsc::Sender<Mt5Event>,
 ) -> Result<(), Mt5Error> {
-    let listener = TcpListener::bind(&config.listen_addr)
-        .await
-        .map_err(|e| Mt5Error::Bind {
+    let listener = TcpListener::bind(&config.listen_addr).await.map_err(|e| {
+        warn!(
+            target: "quantick::feed",
+            schema_version = 1_u8,
+            event_code = "MT5_BIND_FAILED",
+            addr = %config.listen_addr,
+            error = %e,
+            "cannot bind the bridge listen address"
+        );
+        Mt5Error::Bind {
             addr: config.listen_addr.clone(),
             message: e.to_string(),
-        })?;
+        }
+    })?;
     let bound = listener
         .local_addr()
         .map(|a| a.to_string())
@@ -216,7 +229,7 @@ async fn serve_connection(
     config: &ServerConfig,
     tx: &mpsc::Sender<Mt5Event>,
 ) -> ConnEnd {
-    let mut lines = BufReader::new(stream).lines();
+    let mut lines = BoundedLineReader::new(stream);
 
     // 1. The first message must be a hello that matches what we expect.
     let hello = match tokio::time::timeout(config.hello_timeout, lines.next_line()).await {
@@ -240,7 +253,7 @@ async fn serve_connection(
             );
             return ConnEnd::BridgeGone(format!("socket error before hello: {e}"));
         }
-        Ok(Ok(None)) => {
+        Ok(Ok(BoundedLine::Eof)) => {
             info!(
                 target: "quantick::feed",
                 schema_version = 1_u8,
@@ -249,7 +262,28 @@ async fn serve_connection(
             );
             return ConnEnd::BridgeGone("closed before hello".to_string());
         }
-        Ok(Ok(Some(line))) => match protocol::parse_line(&line) {
+        Ok(Ok(BoundedLine::TooLong)) => {
+            warn!(
+                target: "quantick::feed",
+                schema_version = 1_u8,
+                event_code = "MT5_LINE_TOO_LONG",
+                max_bytes = MAX_LINE_BYTES as u64,
+                "first line exceeded the size cap; dropping the connection"
+            );
+            return ConnEnd::BridgeGone("oversized hello".to_string());
+        }
+        Ok(Ok(BoundedLine::NotUtf8 { len })) => {
+            warn!(
+                target: "quantick::feed",
+                schema_version = 1_u8,
+                event_code = "MT5_UNDECODABLE_LINE",
+                error = "invalid utf-8",
+                line_bytes = len as u64,
+                "first line was not valid protocol; dropping the connection"
+            );
+            return ConnEnd::BridgeGone("undecodable hello".to_string());
+        }
+        Ok(Ok(BoundedLine::Line(line))) => match protocol::parse_line(&line) {
             Ok(BridgeMsg::Hello(h)) => h,
             Ok(other) => {
                 warn!(
@@ -351,7 +385,7 @@ async fn serve_connection(
                 );
                 break ConnEnd::BridgeGone(format!("socket error: {e}"));
             }
-            Ok(Ok(None)) => {
+            Ok(Ok(BoundedLine::Eof)) => {
                 info!(
                     target: "quantick::feed",
                     schema_version = 1_u8,
@@ -360,7 +394,30 @@ async fn serve_connection(
                 );
                 break ConnEnd::BridgeGone("eof".to_string());
             }
-            Ok(Ok(Some(line))) => line,
+            Ok(Ok(BoundedLine::TooLong)) => {
+                warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_LINE_TOO_LONG",
+                    max_bytes = MAX_LINE_BYTES as u64,
+                    "peer streamed an oversized line; dropping the session"
+                );
+                break ConnEnd::BridgeGone("oversized line".to_string());
+            }
+            Ok(Ok(BoundedLine::NotUtf8 { len })) => {
+                undecodable += 1;
+                warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_UNDECODABLE_LINE",
+                    error = "invalid utf-8",
+                    line_bytes = len as u64,
+                    total_undecodable = undecodable,
+                    "skipping an undecodable line"
+                );
+                continue;
+            }
+            Ok(Ok(BoundedLine::Line(line))) => line,
         };
         if line.trim().is_empty() {
             continue;
@@ -398,6 +455,7 @@ async fn serve_connection(
                 }
                 debug!(
                     target: "quantick::feed",
+                    schema_version = 1_u8,
                     event_code = "MT5_HEARTBEAT",
                     seq_last = hb.seq_last,
                     ticks_sent = hb.ticks_sent,
@@ -460,7 +518,127 @@ async fn serve_connection(
     end
 }
 
-/// First 120 chars of a line, for log context without flooding.
+/// First 120 chars of a line, for log context without flooding. Truncates on
+/// a char boundary: a byte-index slice would panic mid-codepoint.
 fn snippet(line: &str) -> &str {
-    &line[..line.len().min(120)]
+    match line.char_indices().nth(120) {
+        Some((i, _)) => &line[..i],
+        None => line,
+    }
+}
+
+/// One read from the bounded line reader.
+enum BoundedLine {
+    /// A complete UTF-8 line (terminator stripped).
+    Line(String),
+    /// A complete line that was not valid UTF-8; skippable, per PROTOCOL.md.
+    NotUtf8 {
+        /// Length of the rejected line, in bytes.
+        len: usize,
+    },
+    /// The peer streamed more than [`MAX_LINE_BYTES`] without a newline.
+    TooLong,
+    /// The peer closed the connection.
+    Eof,
+}
+
+/// What one `fill_buf` round decided (split out so the borrow of the reader's
+/// internal buffer ends before `consume`).
+enum ReadStep {
+    Eof,
+    Line(usize),
+    TooLong(usize),
+    More(usize),
+}
+
+/// A newline-delimited reader that never buffers more than
+/// [`MAX_LINE_BYTES`], unlike `AsyncBufReadExt::lines`. Cancel-safe: the only
+/// await is `fill_buf`, and bytes move out of the socket buffer and into the
+/// line buffer within a single poll.
+struct BoundedLineReader {
+    reader: BufReader<TcpStream>,
+    buf: Vec<u8>,
+}
+
+impl BoundedLineReader {
+    fn new(stream: TcpStream) -> Self {
+        Self {
+            reader: BufReader::new(stream),
+            buf: Vec::new(),
+        }
+    }
+
+    async fn next_line(&mut self) -> std::io::Result<BoundedLine> {
+        loop {
+            let step = {
+                let available = self.reader.fill_buf().await?;
+                if available.is_empty() {
+                    ReadStep::Eof
+                } else if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+                    if self.buf.len() + pos > MAX_LINE_BYTES {
+                        ReadStep::TooLong(pos + 1)
+                    } else {
+                        self.buf.extend_from_slice(&available[..pos]);
+                        ReadStep::Line(pos + 1)
+                    }
+                } else if self.buf.len() + available.len() > MAX_LINE_BYTES {
+                    ReadStep::TooLong(available.len())
+                } else {
+                    self.buf.extend_from_slice(available);
+                    ReadStep::More(available.len())
+                }
+            };
+            match step {
+                ReadStep::Eof => {
+                    // A trailing unterminated line still counts, like
+                    // `lines()` behaves.
+                    if self.buf.is_empty() {
+                        return Ok(BoundedLine::Eof);
+                    }
+                    return Ok(Self::finish(std::mem::take(&mut self.buf)));
+                }
+                ReadStep::Line(consume) => {
+                    self.reader.consume(consume);
+                    return Ok(Self::finish(std::mem::take(&mut self.buf)));
+                }
+                ReadStep::TooLong(consume) => {
+                    self.reader.consume(consume);
+                    self.buf.clear();
+                    return Ok(BoundedLine::TooLong);
+                }
+                ReadStep::More(consume) => self.reader.consume(consume),
+            }
+        }
+    }
+
+    fn finish(mut line: Vec<u8>) -> BoundedLine {
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        match String::from_utf8(line) {
+            Ok(text) => BoundedLine::Line(text),
+            Err(e) => BoundedLine::NotUtf8 {
+                len: e.as_bytes().len(),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snippet;
+
+    #[test]
+    fn snippet_truncates_on_char_boundaries() {
+        // 1 ASCII byte then two-byte chars: byte 120 falls mid-codepoint,
+        // which the old byte slice panicked on.
+        let line = format!("x{}", "é".repeat(200));
+        assert_eq!(snippet(&line).chars().count(), 120);
+
+        let short = "short line";
+        assert_eq!(snippet(short), short);
+
+        let exact: String = "a".repeat(120);
+        assert_eq!(snippet(&exact), exact);
+    }
 }
