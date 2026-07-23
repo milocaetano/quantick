@@ -5,25 +5,36 @@
 //! and slower when it's quiet, so each bar carries a comparable amount of
 //! trading activity.
 //!
-//! This is the first real [`BarBuilder`], and it establishes the builder
-//! skeleton — accumulate an in-progress [`Bar`], finalise and emit it when the
-//! bucket fills — that volume and dollar bars reuse via the generic threshold
-//! accumulator (#6).
+//! Tick bars are the [generic threshold accumulator](crate::ThresholdBarBuilder)
+//! with the measure "1 per trade" ([`TickMeasure`]). This module is the thin
+//! tick-specific layer: an integer `N` and a convenient constructor.
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, Side, Trade};
+use crate::{Bar, BarBuilder, ThresholdBarBuilder, Trade, threshold::Measure};
+
+/// The tick measure: every trade contributes exactly 1.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TickMeasure;
+
+impl Measure for TickMeasure {
+    fn of(&self, _trade: &Trade) -> Decimal {
+        Decimal::ONE
+    }
+}
 
 /// Builds tick bars: one closed [`Bar`] per `N` trades.
 ///
-/// Feed trades in order with [`push`](BarBuilder::push); every `N`th trade
-/// returns a closed bar. The in-progress bar is available via
-/// [`partial`](BarBuilder::partial) for rendering the forming bar on a chart.
+/// A thin wrapper over [`ThresholdBarBuilder`] with [`TickMeasure`]. Feed trades
+/// in order with [`push`](BarBuilder::push); every `N`th trade returns a closed
+/// bar. The in-progress bar is available via [`partial`](BarBuilder::partial).
+///
+/// Because the measure is exactly 1 per trade, tick bars close precisely at `N`
+/// and never overshoot (unlike volume and dollar bars).
 #[derive(Debug, Clone)]
 pub struct TickBarBuilder {
     n: u64,
-    count: u64,
-    current: Option<Bar>,
+    inner: ThresholdBarBuilder<TickMeasure>,
 }
 
 impl TickBarBuilder {
@@ -38,8 +49,7 @@ impl TickBarBuilder {
         assert!(n >= 1, "tick bar size N must be >= 1, got {n}");
         Self {
             n,
-            count: 0,
-            current: None,
+            inner: ThresholdBarBuilder::new(Decimal::from(n), TickMeasure),
         }
     }
 
@@ -52,64 +62,18 @@ impl TickBarBuilder {
 
 impl BarBuilder for TickBarBuilder {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
-        match &mut self.current {
-            None => self.current = Some(open_bar(trade)),
-            Some(bar) => extend_bar(bar, trade),
-        }
-        self.count += 1;
-        if self.count >= self.n {
-            self.count = 0;
-            self.current.take()
-        } else {
-            None
-        }
+        self.inner.push(trade)
     }
 
     fn partial(&self) -> Option<&Bar> {
-        self.current.as_ref()
-    }
-}
-
-/// Start a fresh one-trade bar from `trade`.
-fn open_bar(trade: &Trade) -> Bar {
-    let (buy_volume, sell_volume) = split_volume(trade);
-    Bar {
-        open_time: trade.timestamp_ms,
-        close_time: trade.timestamp_ms,
-        open: trade.price,
-        high: trade.price,
-        low: trade.price,
-        close: trade.price,
-        buy_volume,
-        sell_volume,
-        trade_count: 1,
-    }
-}
-
-/// Fold `trade` into the in-progress `bar`.
-fn extend_bar(bar: &mut Bar, trade: &Trade) {
-    bar.high = bar.high.max(trade.price);
-    bar.low = bar.low.min(trade.price);
-    bar.close = trade.price;
-    bar.close_time = trade.timestamp_ms;
-    match trade.side {
-        Side::Buy => bar.buy_volume += trade.quantity,
-        Side::Sell => bar.sell_volume += trade.quantity,
-    }
-    bar.trade_count += 1;
-}
-
-/// A trade contributes its quantity to exactly one side.
-fn split_volume(trade: &Trade) -> (Decimal, Decimal) {
-    match trade.side {
-        Side::Buy => (trade.quantity, Decimal::ZERO),
-        Side::Sell => (Decimal::ZERO, trade.quantity),
+        self.inner.partial()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Side;
     use std::str::FromStr as _;
 
     fn trade(agg_id: u64, ts: i64, price: &str, qty: &str, side: Side) -> Trade {
@@ -126,6 +90,11 @@ mod tests {
     #[should_panic(expected = "tick bar size N must be >= 1")]
     fn rejects_zero_size() {
         let _ = TickBarBuilder::new(0);
+    }
+
+    #[test]
+    fn size_reports_configured_n() {
+        assert_eq!(TickBarBuilder::new(7).size(), 7);
     }
 
     #[test]
