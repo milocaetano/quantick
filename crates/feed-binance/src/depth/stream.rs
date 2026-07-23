@@ -310,6 +310,10 @@ pub fn decode_depth_text(text: &str) -> Result<DepthUpdate, DepthWireError> {
 /// [`run_depth_with_reconnect`](super::reconnect::run_depth_with_reconnect) for
 /// a persistent feed.
 ///
+/// `synchronized` is set to `true` once the snapshot and stream bridge —
+/// the reconnect loop uses it to reset its backoff after a healthy session,
+/// so only sustained failure escalates the delay.
+///
 /// # Errors
 ///
 /// Returns [`DepthSessionError`] and never publishes an unbridged snapshot.
@@ -320,6 +324,7 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
     events: &Sender<DepthEvent>,
     config: DepthSessionConfig,
     generation: u64,
+    synchronized: &mut bool,
 ) -> Result<(), DepthSessionError> {
     let config = config.normalized();
     let symbol = symbol.to_uppercase();
@@ -421,6 +426,7 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
         .await?
         {
             BridgeOutcome::Synchronized => {
+                *synchronized = true;
                 return run_synchronized(&mut ws, &mut synchronizer, events, &symbol, generation)
                     .await;
             }
@@ -891,7 +897,18 @@ mod tests {
         };
         let url = format!("ws://{address}");
         let session = tokio::spawn(async move {
-            run_depth_session(&url, "BTCUSDT", &source, &events_tx, config, 40).await
+            let mut synchronized = false;
+            let result = run_depth_session(
+                &url,
+                "BTCUSDT",
+                &source,
+                &events_tx,
+                config,
+                40,
+                &mut synchronized,
+            )
+            .await;
+            (result, synchronized)
         });
 
         assert!(matches!(
@@ -959,11 +976,13 @@ mod tests {
         ));
 
         drop(events_rx);
-        let result = tokio::time::timeout(std::time::Duration::from_secs(1), session)
-            .await
-            .expect("session responds to consumer cancellation")
-            .unwrap();
+        let (result, synchronized) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), session)
+                .await
+                .expect("session responds to consumer cancellation")
+                .unwrap();
         assert_eq!(result, Err(DepthSessionError::ConsumerClosed));
+        assert!(synchronized, "the reconnect loop resets backoff on this");
         server.abort();
     }
 }

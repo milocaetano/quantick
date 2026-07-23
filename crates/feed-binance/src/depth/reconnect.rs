@@ -18,6 +18,10 @@ use super::stream::{
 /// `config.initial_generation` is used verbatim for the first connection and
 /// incremented for every reconnect. A UI controller should seed it with its own
 /// monotonic capture epoch when depth is disabled and later re-enabled.
+///
+/// A session that reached synchronization resets the backoff (mirroring the
+/// aggTrade path), so only sustained failure escalates the reconnect delay —
+/// hours of healthy streaming never make the next blip wait longer.
 pub async fn run_depth_with_reconnect<S: DepthSnapshotSource>(
     ws_base_url: &str,
     symbol: &str,
@@ -31,7 +35,20 @@ pub async fn run_depth_with_reconnect<S: DepthSnapshotSource>(
     let mut generation = config.initial_generation;
 
     loop {
-        let result = run_depth_session(&url, &symbol, source, events, config, generation).await;
+        let mut synchronized = false;
+        let result = run_depth_session(
+            &url,
+            &symbol,
+            source,
+            events,
+            config,
+            generation,
+            &mut synchronized,
+        )
+        .await;
+        if synchronized {
+            backoff.reset();
+        }
         let error = match result {
             Ok(()) => {
                 // The current session runner is intentionally open-ended, but
