@@ -1,0 +1,9 @@
+[package]
+name = "quantick-orderbook"
+description = "Pure deterministic local order-book state and sequence validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rust_decimal = "1"
