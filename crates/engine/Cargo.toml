@@ -7,3 +7,7 @@ license.workspace = true
 
 [dependencies]
 rust_decimal = "1"
+
+[[bench]]
+name = "hot_path"
+harness = false
