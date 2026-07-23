@@ -27,6 +27,7 @@ mod builder;
 mod dollar;
 pub mod threshold;
 mod tick;
+mod time;
 mod trade;
 mod volume;
 
@@ -35,5 +36,6 @@ pub use builder::BarBuilder;
 pub use dollar::{DollarBarBuilder, DollarMeasure};
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
+pub use time::TimeBarBuilder;
 pub use trade::{Side, Trade};
 pub use volume::{VolumeBarBuilder, VolumeMeasure};
