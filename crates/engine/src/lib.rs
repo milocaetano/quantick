@@ -24,10 +24,12 @@ pub mod golden;
 
 mod bar;
 mod builder;
+pub mod threshold;
 mod tick;
 mod trade;
 
 pub use bar::Bar;
 pub use builder::BarBuilder;
-pub use tick::TickBarBuilder;
+pub use threshold::{Measure, ThresholdBarBuilder};
+pub use tick::{TickBarBuilder, TickMeasure};
 pub use trade::{Side, Trade};
