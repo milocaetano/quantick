@@ -102,6 +102,7 @@ pub struct QuantickApp {
     volume_units: f64,
     dollar_notional: f64,
     time_interval_ms: i64,
+    imbalance_target: u64,
 
     // Pan/zoom navigation over the bar series.
     viewport: Viewport,
@@ -135,11 +136,13 @@ impl QuantickApp {
         let mut volume_units = 5.0;
         let mut dollar_notional = 500_000.0;
         let mut time_interval_ms = 1_000;
+        let mut imbalance_target = 100;
         match &spec {
             BarSpec::Tick(n) => tick_n = *n,
             BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
             BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
             BarSpec::Time(ms) => time_interval_ms = *ms,
+            BarSpec::Imbalance(target) => imbalance_target = *target,
         }
 
         Self {
@@ -154,6 +157,7 @@ impl QuantickApp {
             volume_units,
             dollar_notional,
             time_interval_ms,
+            imbalance_target,
             viewport: Viewport::new(),
             price_view: PriceView::new(),
             last_auto_range: None,
@@ -177,6 +181,7 @@ impl QuantickApp {
             BarKind::Volume => BarSpec::Volume(dec_from_f64(self.volume_units)),
             BarKind::Dollar => BarSpec::Dollar(dec_from_f64(self.dollar_notional)),
             BarKind::Time => BarSpec::Time(self.time_interval_ms.max(1)),
+            BarKind::Imbalance => BarSpec::Imbalance(self.imbalance_target.max(1)),
         }
     }
 
@@ -220,6 +225,14 @@ impl QuantickApp {
                             .range(100.0..=600_000.0)
                             .speed(100.0),
                     );
+                }
+                BarKind::Imbalance => {
+                    ui.label("target trades");
+                    ui.add(egui::DragValue::new(&mut self.imbalance_target).range(2.0..=5000.0))
+                        .on_hover_text(
+                            "expected trades per bar in balanced flow; \
+                             one-sided aggression closes bars sooner",
+                        );
                 }
             }
             ui.separator();
