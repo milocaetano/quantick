@@ -1,0 +1,9 @@
+# Expected volume bars for volume_trades.csv with threshold = 5.0. Hand-computed.
+#   Bar 0 = trades 1,2,3: vol 5.5 (overshoot 0.5), buy 2.0+1.5=3.5, sell 2.0,
+#           high 101.0, low 100.0, close 100.5.
+#   Bar 1 = trade 4 alone: the 8.0-unit trade crosses the threshold whole and
+#           forms a single overshooting bar (vol 8.0, sell 8.0). Not split.
+# Trades 5,6 remain a 3.0-unit partial and are not a closed bar.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1000,1200,100.0,101.0,100.0,100.5,3.5,2.0,3
+1300,1300,102.0,102.0,102.0,102.0,0,8.0,1
