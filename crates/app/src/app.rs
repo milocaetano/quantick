@@ -20,11 +20,14 @@ use crate::chart::{PriceScale, TimeAxis, to_f64};
 use crate::feed::FeedEvent;
 use crate::metrics::{self, FrameStats};
 use crate::state::{BarKind, BarSpec, ChartState};
+use crate::style::CandleStyle;
 use crate::viewport::Viewport;
 
-const UP: egui::Color32 = egui::Color32::from_rgb(38, 166, 154);
-const DOWN: egui::Color32 = egui::Color32::from_rgb(239, 83, 80);
-const BACKGROUND: egui::Color32 = egui::Color32::from_rgb(19, 23, 34);
+/// Convert an sRGB `[u8; 3]` style colour to an egui `Color32`.
+fn color32([r, g, b]: [u8; 3]) -> egui::Color32 {
+    egui::Color32::from_rgb(r, g, b)
+}
+
 const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
 const OVERLAY: egui::Color32 = egui::Color32::from_rgb(210, 218, 226);
@@ -61,6 +64,10 @@ pub struct QuantickApp {
     viewport: Viewport,
     // Pointer position over the plot this frame, for the crosshair.
     hover_pos: Option<egui::Pos2>,
+
+    // Candle appearance + whether the style panel is open.
+    style: CandleStyle,
+    show_style: bool,
 
     frames: FrameStats,
     last_frame: Option<Instant>,
@@ -101,6 +108,8 @@ impl QuantickApp {
             time_interval_ms,
             viewport: Viewport::new(),
             hover_pos: None,
+            style: CandleStyle::default(),
+            show_style: false,
             frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_ms: None,
@@ -162,7 +171,53 @@ impl QuantickApp {
                     );
                 }
             }
+            ui.separator();
+            if ui.button("⚙ style").clicked() {
+                self.show_style = !self.show_style;
+            }
         });
+    }
+
+    /// The current background colour as an egui `Color32`.
+    fn bg(&self) -> egui::Color32 {
+        color32(self.style.background)
+    }
+
+    /// The floating candle-style settings panel (shown when `show_style`).
+    fn draw_style_panel(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_style;
+        egui::Window::new("candle style")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let s = &mut self.style;
+                ui.horizontal(|ui| {
+                    ui.label("up (bull)");
+                    ui.color_edit_button_srgb(&mut s.bull);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("down (bear)");
+                    ui.color_edit_button_srgb(&mut s.bear);
+                });
+                ui.checkbox(&mut s.show_wicks, "show wicks");
+                ui.checkbox(&mut s.wick_matches_body, "wick matches body");
+                if !s.wick_matches_body {
+                    ui.horizontal(|ui| {
+                        ui.label("wick");
+                        ui.color_edit_button_srgb(&mut s.wick);
+                    });
+                }
+                ui.add(egui::Slider::new(&mut s.body_width_frac, 0.1..=1.0).text("body width"));
+                ui.horizontal(|ui| {
+                    ui.label("background");
+                    ui.color_edit_button_srgb(&mut s.background);
+                });
+                ui.separator();
+                if ui.button("reset to defaults").clicked() {
+                    *s = CandleStyle::default();
+                }
+            });
+        self.show_style = open;
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
@@ -268,7 +323,7 @@ impl QuantickApp {
     }
 
     fn draw_chart(&self, painter: &egui::Painter, area: egui::Rect) {
-        painter.rect_filled(area, egui::Rounding::ZERO, BACKGROUND);
+        painter.rect_filled(area, egui::Rounding::ZERO, self.bg());
         let plot = area.shrink(16.0);
 
         let closed = self.state.bars();
@@ -316,7 +371,7 @@ impl QuantickApp {
             chart_rect.left(),
             chart_rect.right(),
             visible_count,
-            0.7,
+            self.style.clamped_width_frac(),
             24.0,
         );
 
@@ -325,10 +380,18 @@ impl QuantickApp {
 
         for (offset, bar) in visible_closed.iter().enumerate() {
             let local = (closed_start - start) + offset;
-            draw_candle(painter, &axis, &scale, local, bar, false);
+            draw_candle(painter, &axis, &scale, local, bar, false, &self.style);
         }
         if let Some(partial) = partial_visible {
-            draw_candle(painter, &axis, &scale, closed.len() - start, partial, true);
+            draw_candle(
+                painter,
+                &axis,
+                &scale,
+                closed.len() - start,
+                partial,
+                true,
+                &self.style,
+            );
         }
 
         self.draw_backfill_divider(painter, &axis, chart_rect, start, end);
@@ -558,17 +621,19 @@ impl eframe::App for QuantickApp {
         self.drain_feed();
         self.maybe_emit_summary(now);
 
+        let bg = self.bg();
         egui::TopBottomPanel::top("controls")
-            .frame(egui::Frame::none().fill(BACKGROUND).inner_margin(8.0))
+            .frame(egui::Frame::none().fill(bg).inner_margin(8.0))
             .show(ctx, |ui| {
                 ui.visuals_mut().override_text_color = Some(OVERLAY);
                 self.draw_controls(ui);
             });
         // Apply any selector change (no-op if unchanged).
         self.state.set_spec(self.current_spec());
+        self.draw_style_panel(ctx);
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(BACKGROUND))
+            .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
                 let area = ui.available_rect_before_wrap();
                 self.handle_navigation(ui, area);
@@ -589,18 +654,22 @@ fn draw_candle(
     index: usize,
     bar: &Bar,
     forming: bool,
+    style: &CandleStyle,
 ) {
     let xc = axis.x_center(index);
     let half = axis.bar_width() / 2.0;
-    let color = if bar.close >= bar.open { UP } else { DOWN };
+    let up = bar.close >= bar.open;
+    let color = color32(style.body_color(up));
 
-    painter.line_segment(
-        [
-            egui::pos2(xc, scale.y(to_f64(bar.high))),
-            egui::pos2(xc, scale.y(to_f64(bar.low))),
-        ],
-        egui::Stroke::new(1.0_f32, color),
-    );
+    if style.show_wicks {
+        painter.line_segment(
+            [
+                egui::pos2(xc, scale.y(to_f64(bar.high))),
+                egui::pos2(xc, scale.y(to_f64(bar.low))),
+            ],
+            egui::Stroke::new(1.0_f32, color32(style.wick_color(up))),
+        );
+    }
 
     let y_open = scale.y(to_f64(bar.open));
     let y_close = scale.y(to_f64(bar.close));
