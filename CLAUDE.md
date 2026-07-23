@@ -14,11 +14,12 @@ Real-time alternative bar charts (tick / volume / dollar / imbalance bars) for o
 Cargo workspace, crates under `crates/`:
 
 - `engine` (package `quantick-engine`) — raw trades in, alternative bars out. Headless and deterministic: no UI, no network, no async. Everything else depends on it; it depends on nothing else in the workspace.
-- `feed-binance` (package `quantick-feed-binance`) — live aggTrades feed from Binance public endpoints; produces the trade stream the engine consumes.
+- `orderbook` (package `quantick-orderbook`) — deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. A pure domain crate like `engine` (no network, no async, no clock); depends on nothing else in the workspace.
+- `feed-binance` (package `quantick-feed-binance`) — live aggTrades feed from Binance public endpoints; produces the trade stream the engine consumes. Also captures synchronized L2 depth into `orderbook` state.
 - `feed-mt5` (package `quantick-feed-mt5`) — MetaTrader 5 tick feed. Listens on a local TCP socket for the QuantickBridge EA (`bridge/mt5/`, MQL5) running inside the logged-in terminal; no credentials anywhere. Side inference policy, synthetic ids and server-time conversion are documented in its `lib.rs`.
 - `app` (package `quantick-app`) — desktop chart (egui/wgpu planned). A consumer of the engine, never the other way around. Feeds and symbols come from config (`crates/app/config/feeds.toml`, overridable via `QUANTICK_CONFIG` or `./quantick.toml`), never hardcoded.
 
-Dependency direction is one-way: `app` / `feed-*` → `engine`. Never add a reverse edge. Feed crates never depend on each other.
+Dependency direction is one-way: `app` / `feed-*` → `engine` / `orderbook` (the domain crates). Never add a reverse edge. Feed crates never depend on each other.
 
 ## Non-negotiable design rules
 
