@@ -827,26 +827,29 @@ impl QuantickApp {
         }
     }
 
-    /// A discreet "history is loading" indicator at the chart's top-left: a
+    /// A discreet "history is loading" indicator centred at the chart's top: a
     /// small spinner plus a tiny label, shown while the initial backfill or an
-    /// on-demand "load older" request is in flight.
+    /// on-demand "load older" request is in flight. Centred so it never covers
+    /// the symbol tag at the top-left or the perf overlay at the top-right.
     fn draw_history_loader(&self, ui: &mut egui::Ui, area: egui::Rect) {
         if !self.loading_history {
             return;
         }
         let size = 12.0;
-        let spinner_rect = egui::Rect::from_min_size(
-            area.left_top() + egui::vec2(10.0, 8.0),
-            egui::vec2(size, size),
-        );
-        ui.put(spinner_rect, egui::Spinner::new().size(size).color(MUTED));
-        ui.painter().text(
-            spinner_rect.right_center() + egui::vec2(6.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            "loading history…",
+        let gap = 6.0;
+        let galley = ui.painter().layout_no_wrap(
+            "loading history…".to_owned(),
             egui::FontId::proportional(10.0),
             MUTED,
         );
+        // Centre spinner + gap + label as one group on the chart's mid-line.
+        let total_w = size + gap + galley.size().x;
+        let left = area.center().x - total_w / 2.0;
+        let top = area.top() + 8.0;
+        let spinner_rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(size, size));
+        ui.put(spinner_rect, egui::Spinner::new().size(size).color(MUTED));
+        let text_pos = egui::pos2(left + size + gap, top + (size - galley.size().y) / 2.0);
+        ui.painter().galley(text_pos, galley, MUTED);
     }
 }
 
