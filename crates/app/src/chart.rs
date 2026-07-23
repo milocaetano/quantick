@@ -103,6 +103,13 @@ impl TimeAxis {
         self.left + self.step * (index as f32 + 0.5)
     }
 
+    /// The x-pixel of the left edge of bar `index`'s slot — used to draw the
+    /// divider *between* bar `index - 1` and bar `index`.
+    #[must_use]
+    pub fn x_left(&self, index: usize) -> f32 {
+        self.left + self.step * index as f32
+    }
+
     /// The width of a candle body in pixels.
     #[must_use]
     pub fn bar_width(&self) -> f32 {
@@ -176,6 +183,14 @@ mod tests {
             last = x;
         }
         assert!(axis.bar_width() > 0.0);
+    }
+
+    #[test]
+    fn x_left_sits_between_adjacent_centres() {
+        let axis = TimeAxis::new(0.0, 100.0, 10, 0.7, 20.0);
+        // The divider before bar 3 is left of bar 3's centre and right of bar 2's.
+        let left = axis.x_left(3);
+        assert!(axis.x_center(2) < left && left < axis.x_center(3));
     }
 
     #[test]

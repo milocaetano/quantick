@@ -7,7 +7,10 @@ license.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
+quantick-feed-binance = { path = "../feed-binance" }
 rust_decimal = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time"] }
+tracing = "0.1"
 eframe = { version = "0.29", default-features = false, features = [
     "glow",
     "wayland",
