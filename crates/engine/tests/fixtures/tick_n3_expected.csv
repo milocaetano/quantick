@@ -1,0 +1,7 @@
+# Expected tick bars for tick_trades.csv with N=3. Hand-computed.
+#   Bar 0 = trades 1,2,3: high=101.0 low=100.0 close=100.5, buy 1.0+2.0=3.0, sell 1.5
+#   Bar 1 = trades 4,5,6: high=103.0 low=101.5 close=101.5, buy 0.5+1.0=1.5, sell 2.0
+# Trade 7 stays a partial and is not a closed bar here.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1000,1200,100.0,101.0,100.0,100.5,3.0,1.5,3
+1300,1500,102.0,103.0,101.5,101.5,1.5,2.0,3

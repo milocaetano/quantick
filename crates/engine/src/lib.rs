@@ -24,8 +24,10 @@ pub mod golden;
 
 mod bar;
 mod builder;
+mod tick;
 mod trade;
 
 pub use bar::Bar;
 pub use builder::BarBuilder;
+pub use tick::TickBarBuilder;
 pub use trade::{Side, Trade};

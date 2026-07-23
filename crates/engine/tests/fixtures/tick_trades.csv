@@ -1,0 +1,10 @@
+# Trades for the tick-bar golden test. Seven trades; with N=3 this closes two
+# bars (trades 1-3, 4-6) and leaves trade 7 as an in-progress partial.
+agg_id,timestamp_ms,price,quantity,side
+1,1000,100.0,1.0,buy
+2,1100,101.0,2.0,buy
+3,1200,100.5,1.5,sell
+4,1300,102.0,0.5,buy
+5,1400,103.0,1.0,buy
+6,1500,101.5,2.0,sell
+7,1600,100.0,0.5,sell
