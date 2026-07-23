@@ -1,0 +1,4 @@
+# Normalise line endings to LF on every platform. Golden fixtures and the
+# byte-identical determinism checks must compare equal whether checked out on
+# Windows (dev) or Linux (CI); CRLF drift would break them silently.
+* text=auto eol=lf
