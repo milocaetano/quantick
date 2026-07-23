@@ -20,6 +20,64 @@ quantick exists to change that: **a free, open, programmable implementation of t
 2. **Research.** Study setups directly on the charts: how does absorption look on volume bars? Where does CVD diverge? Chart-driven analysis is where strategy ideas are born.
 3. **Build.** The same engine that draws your chart feeds your backtests and your bots. The bars your strategy trades live are byte-identical to the bars you researched and backtested — parity by construction, not by discipline.
 
+## Candle appearance
+
+Open **🎨 candle** from the chart toolbar to tune candle rendering without
+changing bars, feeds or order-book capture. The default **Order flow** preset
+uses a low-opacity body and a strong directional outline so liquidity and
+aggression remain visible.
+
+- Presets: **Order flow**, **Glass**, **Outline only** and **Classic**.
+- Independent bull/bear colours for the body fill and outline.
+- Body fill opacity, outline opacity/thickness, body width, corner radius and
+  minimum doji height.
+- Optional wicks with directional or custom colour, opacity and thickness.
+- A forming-candle opacity control.
+- **Outline only** removes the candle body fill entirely; this is the clearest
+  mode for dense heatmaps.
+- Canvas background and grid can be recoloured, faded or disabled independently.
+
+The settings window includes a live preview. Candle paint is intentionally
+layered after resting liquidity and before aggression bubbles:
+`heatmap → candle → aggression`. Appearance changes only trigger a redraw and
+never restart the market-data pipelines.
+
+## Optional L2 heatmap
+
+The chart can capture Binance Spot level-2 order-book depth and render a Bookmap-style liquidity heatmap. It is **disabled by default** and must be enabled from the chart controls.
+
+The visualization follows a few data-honesty rules:
+
+- History begins at the first successfully synchronized live snapshot/update sequence. Binance does not provide historical L2 backfill through this feed, so candles before that point are marked as unavailable instead of being reconstructed.
+- Depth update IDs are checked continuously. A disconnect, sequence gap or resynchronization closes the current liquidity runs, marks the affected interval with subtle shading and dashed vertical boundaries, and starts again from a fresh snapshot. Stale book state is never stretched across a gap.
+- Heatmap quantities are resting bid/ask amounts from the snapshot plus absolute depth updates, limited to the configured number of price levels on each side. Liquidity outside that coverage is unknown.
+- Optional `aggTrade` bubbles show confirmed market aggression as a factual overlay. They never subtract quantity from the book: a depth reduction can be an execution, cancellation, replacement or a combination of those events.
+- Captured history is bounded and kept in memory only. Restarting the application starts a new capture.
+
+The chart exposes these settings:
+
+| Setting | Default | Range / behavior |
+| --- | ---: | --- |
+| L2 heatmap | Off | Starts live capture when enabled |
+| Retention | 30 minutes | 1–1,440 minutes |
+| Price bucket | `0.01` | Any positive value; changing it resets heatmap history and restarts capture |
+| Opacity | `0.72` | `0.0`–`1.0` |
+| Gamma | `0.75` | `0.1`–`3.0` |
+| Intensity scale | Visible P99 | Automatic visible-window P99 or a fixed full-intensity quantity |
+| Aggression bubbles | On | Can be hidden independently of the heatmap |
+
+The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 100,000 aggression records, 50,000 projected visible cells and 2,000 projected bubbles. Old history is pruned and excess render primitives are dropped within those limits; the associated counters are emitted in diagnostic logs. The exact RLE history remains independent from rendering: visible projection is refreshed at the 100 ms depth cadence and its heat cells are submitted as one batched mesh.
+
+### L2 and logging environment variables
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `QUANTICK_BOOK_DEPTH` | `1000` | Binance snapshot depth per side. Numeric values are clamped to `1`–`5000`; a missing or invalid value uses the default. Higher values increase initial REST payload, synchronization work and memory use. |
+| `QUANTICK_LOG_FORMAT` | `text` | Set to `json` for newline-delimited JSON diagnostic logs on stderr. |
+| `RUST_LOG` | `quantick=info` | Standard tracing filter; for example, use `quantick=debug` for deeper diagnostics. |
+
+JSON logs include stable fields such as `schema_version`, `event_code`, symbol, connection generation, update IDs, recovery action and health counters so synchronization and coverage gaps can be investigated without inferring state from prose.
+
 ## Who it's for
 
 - **Flow traders** who want professional bar types without platform lock-in

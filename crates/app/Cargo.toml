@@ -8,10 +8,14 @@ license.workspace = true
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-feed-binance = { path = "../feed-binance" }
+quantick-feed-mt5 = { path = "../feed-mt5" }
+quantick-orderbook = { path = "../orderbook" }
 rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"] }
 eframe = { version = "0.29", default-features = false, features = [
     "glow",
     "wayland",

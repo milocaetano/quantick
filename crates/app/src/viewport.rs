@@ -112,8 +112,19 @@ impl Viewport {
     /// series length. The newest bar sits half a candle in from `chart_right`.
     #[must_use]
     pub fn x_center(&self, index: usize, chart_right: f32, total: usize) -> f32 {
+        self.x_at_bar_position(index as f32, chart_right, total)
+    }
+
+    /// Map a fractional bar-centre coordinate to x pixels.
+    ///
+    /// Integer positions are candle centres, `index - 0.5` is the left edge of
+    /// a slot and `index + 0.5` is its right edge. Order-book timestamps use
+    /// these fractional positions so several depth updates can be shown inside
+    /// one activity-sampled bar without changing candle spacing.
+    #[must_use]
+    pub fn x_at_bar_position(&self, bar_position: f32, chart_right: f32, total: usize) -> f32 {
         let right_bar = self.right_edge_bar(total);
-        chart_right - (right_bar - index as f32 + 0.5) * self.candle_width
+        chart_right - (right_bar - bar_position + 0.5) * self.candle_width
     }
 
     /// The `[start, end)` bar indices at least partly visible in a chart `width`
@@ -167,6 +178,17 @@ mod tests {
         let a = v.x_center(5, right, 10);
         let b = v.x_center(6, right, 10);
         assert!((b - a - v.candle_width()).abs() < 0.001);
+    }
+
+    #[test]
+    fn fractional_positions_map_to_candle_edges() {
+        let v = Viewport::new();
+        let right = 1000.0;
+        let center = v.x_center(5, right, 10);
+        let left = v.x_at_bar_position(4.5, right, 10);
+        let right_edge = v.x_at_bar_position(5.5, right, 10);
+        assert!((center - left - v.candle_width() / 2.0).abs() < 0.001);
+        assert!((right_edge - center - v.candle_width() / 2.0).abs() < 0.001);
     }
 
     #[test]

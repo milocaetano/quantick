@@ -111,6 +111,156 @@ impl PriceScale {
     }
 }
 
+/// An axis-aligned candle body in pixel coordinates.
+///
+/// [`candle_geometry`] guarantees finite coordinates ordered as
+/// `left <= right` and `top <= bottom`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PixelRect {
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl PixelRect {
+    /// Width of the rectangle in pixels.
+    #[must_use]
+    pub fn width(self) -> f32 {
+        self.right - self.left
+    }
+
+    /// Height of the rectangle in pixels.
+    #[must_use]
+    pub fn height(self) -> f32 {
+        self.bottom - self.top
+    }
+}
+
+/// One vertical wick segment in pixel coordinates.
+///
+/// Wicks are split around the body instead of being drawn through it. A
+/// zero-length segment is omitted by [`candle_geometry`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VerticalSegment {
+    pub x: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+impl VerticalSegment {
+    /// Length of the segment in pixels.
+    #[must_use]
+    pub fn length(self) -> f32 {
+        self.bottom - self.top
+    }
+}
+
+/// Renderer-independent geometry for one candlestick.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CandleGeometry {
+    pub body: PixelRect,
+    pub upper_wick: Option<VerticalSegment>,
+    pub lower_wick: Option<VerticalSegment>,
+}
+
+// Constraining intermediates keeps additions and subtractions finite even for
+// hostile inputs close to `f32::MAX`.
+const SAFE_PIXEL_LIMIT: f32 = f32::MAX / 8.0;
+const FALLBACK_HALF_WIDTH: f32 = 0.5;
+const FALLBACK_BODY_HEIGHT: f32 = 1.0;
+
+fn safe_pixel(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(-SAFE_PIXEL_LIMIT, SAFE_PIXEL_LIMIT)
+    } else {
+        fallback
+    }
+}
+
+fn scale_fallback_y(scale: &PriceScale) -> f32 {
+    match (scale.top.is_finite(), scale.bottom.is_finite()) {
+        (true, true) => safe_pixel(f32::midpoint(scale.top, scale.bottom), 0.0),
+        (true, false) => safe_pixel(scale.top, 0.0),
+        (false, true) => safe_pixel(scale.bottom, 0.0),
+        (false, false) => 0.0,
+    }
+}
+
+fn safe_scaled_y(scale: &PriceScale, price: rust_decimal::Decimal) -> f32 {
+    safe_pixel(scale.y(to_f64(price)), scale_fallback_y(scale))
+}
+
+/// Map one OHLC bar into safe, renderer-independent pixel geometry.
+///
+/// A sub-pixel body is expanded symmetrically around the open/close midpoint
+/// until it reaches `min_body_height`. Upper and lower wicks are separate
+/// segments ending at the body edges, so neither can show through a transparent
+/// or outline-only body. Invalid dimensions receive visible finite fallbacks.
+#[must_use]
+pub fn candle_geometry(
+    scale: &PriceScale,
+    bar: &Bar,
+    xc: f32,
+    half_width: f32,
+    min_body_height: f32,
+) -> CandleGeometry {
+    let xc = safe_pixel(xc, 0.0);
+    let half_width = if half_width.is_finite() {
+        half_width
+            .abs()
+            .clamp(FALLBACK_HALF_WIDTH, SAFE_PIXEL_LIMIT)
+    } else {
+        FALLBACK_HALF_WIDTH
+    };
+    let min_body_height = if min_body_height.is_finite() && min_body_height >= 0.0 {
+        min_body_height.min(SAFE_PIXEL_LIMIT)
+    } else {
+        FALLBACK_BODY_HEIGHT
+    };
+
+    let y_open = safe_scaled_y(scale, bar.open);
+    let y_close = safe_scaled_y(scale, bar.close);
+    let raw_top = y_open.min(y_close);
+    let raw_bottom = y_open.max(y_close);
+    let raw_height = raw_bottom - raw_top;
+    let (body_top, body_bottom) = if raw_height < min_body_height {
+        let center = f32::midpoint(raw_top, raw_bottom);
+        let half_height = min_body_height / 2.0;
+        (center - half_height, center + half_height)
+    } else {
+        (raw_top, raw_bottom)
+    };
+
+    let body = PixelRect {
+        left: xc - half_width,
+        right: xc + half_width,
+        top: body_top,
+        bottom: body_bottom,
+    };
+
+    let high_y = safe_scaled_y(scale, bar.high);
+    let low_y = safe_scaled_y(scale, bar.low);
+    let upper_top = high_y.min(body.top);
+    let lower_bottom = low_y.max(body.bottom);
+    let upper_wick = (upper_top < body.top).then_some(VerticalSegment {
+        x: xc,
+        top: upper_top,
+        bottom: body.top,
+    });
+    let lower_wick = (lower_bottom > body.bottom).then_some(VerticalSegment {
+        x: xc,
+        top: body.bottom,
+        bottom: lower_bottom,
+    });
+
+    CandleGeometry {
+        body,
+        upper_wick,
+        lower_wick,
+    }
+}
+
 /// Round "nice" price ticks spanning `[lo, hi]`, aiming for about `target`
 /// labels, using Heckbert's nice-numbers algorithm so labels land on values
 /// like 100, 102.5, 105 rather than 100.37, 102.71, ….
@@ -191,6 +341,20 @@ mod tests {
         }
     }
 
+    fn ohlc(open: &str, high: &str, low: &str, close: &str) -> Bar {
+        Bar {
+            open_time: 0,
+            close_time: 0,
+            open: Decimal::from_str(open).unwrap(),
+            high: Decimal::from_str(high).unwrap(),
+            low: Decimal::from_str(low).unwrap(),
+            close: Decimal::from_str(close).unwrap(),
+            buy_volume: Decimal::ZERO,
+            sell_volume: Decimal::ZERO,
+            trade_count: 1,
+        }
+    }
+
     #[test]
     fn empty_range_has_no_scale() {
         assert!(PriceScale::auto(&[], None, 0.0, 100.0, 0.05).is_none());
@@ -257,5 +421,139 @@ mod tests {
         assert!(nice_ticks(100.0, 100.0, 5).is_empty());
         assert!(nice_ticks(110.0, 100.0, 5).is_empty());
         assert!(nice_ticks(100.0, 110.0, 0).is_empty());
+    }
+
+    #[test]
+    fn bull_and_bear_bodies_share_the_same_price_bounds() {
+        let scale = PriceScale::from_range(90.0, 120.0, 0.0, 300.0);
+        let bull = candle_geometry(&scale, &ohlc("100", "115", "95", "110"), 50.0, 3.0, 1.0);
+        let bear = candle_geometry(&scale, &ohlc("110", "115", "95", "100"), 50.0, 3.0, 1.0);
+
+        assert_eq!(bull.body, bear.body);
+        assert_eq!(bull.upper_wick, bear.upper_wick);
+        assert_eq!(bull.lower_wick, bear.lower_wick);
+        assert_eq!(
+            bull.body,
+            PixelRect {
+                left: 47.0,
+                right: 53.0,
+                top: 100.0,
+                bottom: 200.0,
+            }
+        );
+    }
+
+    #[test]
+    fn doji_body_has_centered_minimum_height() {
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 200.0);
+        let geometry = candle_geometry(&scale, &ohlc("100", "105", "95", "100"), 25.0, 2.0, 3.0);
+
+        assert!((geometry.body.top - 98.5).abs() < 0.001);
+        assert!((geometry.body.bottom - 101.5).abs() < 0.001);
+        assert!((geometry.body.bottom - geometry.body.top - 3.0).abs() < 0.001);
+        assert_eq!(geometry.upper_wick.unwrap().bottom, geometry.body.top);
+        assert_eq!(geometry.lower_wick.unwrap().top, geometry.body.bottom);
+    }
+
+    #[test]
+    fn short_body_expands_around_its_original_midpoint() {
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 200.0);
+        let bar = ohlc("100", "105", "95", "100.1");
+        let raw_midpoint = f32::midpoint(scale.y(100.0), scale.y(100.1));
+        let geometry = candle_geometry(&scale, &bar, 25.0, 2.0, 4.0);
+
+        assert!((geometry.body.bottom - geometry.body.top - 4.0).abs() < 0.001);
+        assert!(
+            (f32::midpoint(geometry.body.top, geometry.body.bottom) - raw_midpoint).abs() < 0.001
+        );
+    }
+
+    #[test]
+    fn zero_length_wicks_are_omitted() {
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 200.0);
+        let geometry = candle_geometry(&scale, &ohlc("100", "105", "100", "105"), 25.0, 2.0, 1.0);
+
+        assert!(geometry.upper_wick.is_none());
+        assert!(geometry.lower_wick.is_none());
+    }
+
+    #[test]
+    fn wick_segments_end_at_body_edges_and_never_cross_it() {
+        let scale = PriceScale::from_range(90.0, 120.0, 0.0, 300.0);
+        let geometry = candle_geometry(&scale, &ohlc("100", "115", "95", "110"), 50.0, 3.0, 1.0);
+        let upper = geometry.upper_wick.unwrap();
+        let lower = geometry.lower_wick.unwrap();
+
+        assert!(upper.bottom - upper.top > 0.0);
+        assert!(upper.top < upper.bottom);
+        assert_eq!(upper.bottom, geometry.body.top);
+        assert!(lower.bottom - lower.top > 0.0);
+        assert!(lower.top < lower.bottom);
+        assert_eq!(lower.top, geometry.body.bottom);
+    }
+
+    #[test]
+    fn minimum_body_can_cover_wick_prices_without_crossing_segments() {
+        let scale = PriceScale::from_range(99.0, 101.0, 0.0, 20.0);
+        let geometry = candle_geometry(
+            &scale,
+            &ohlc("100", "100.05", "99.95", "100"),
+            10.0,
+            2.0,
+            4.0,
+        );
+
+        assert_eq!(geometry.body.bottom - geometry.body.top, 4.0);
+        assert!(geometry.upper_wick.is_none());
+        assert!(geometry.lower_wick.is_none());
+    }
+
+    #[test]
+    fn non_finite_dimensions_and_scale_produce_finite_safe_geometry() {
+        let invalid_scale = PriceScale {
+            lo: f64::NAN,
+            hi: f64::INFINITY,
+            top: f32::NAN,
+            bottom: f32::INFINITY,
+        };
+        let geometry = candle_geometry(
+            &invalid_scale,
+            &ohlc("100", "110", "90", "105"),
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        );
+
+        for value in [
+            geometry.body.left,
+            geometry.body.right,
+            geometry.body.top,
+            geometry.body.bottom,
+        ] {
+            assert!(value.is_finite(), "{value} must be finite");
+        }
+        assert!(geometry.body.right - geometry.body.left >= 1.0);
+        assert!(geometry.body.bottom - geometry.body.top >= 1.0);
+        assert!(geometry.upper_wick.is_none());
+        assert!(geometry.lower_wick.is_none());
+    }
+
+    #[test]
+    fn extreme_finite_x_and_negative_width_stay_finite_and_ordered() {
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 200.0);
+        let geometry = candle_geometry(
+            &scale,
+            &ohlc("100", "105", "95", "100"),
+            f32::MAX,
+            -f32::MAX,
+            f32::MAX,
+        );
+
+        assert!(geometry.body.left.is_finite());
+        assert!(geometry.body.right.is_finite());
+        assert!(geometry.body.top.is_finite());
+        assert!(geometry.body.bottom.is_finite());
+        assert!(geometry.body.left <= geometry.body.right);
+        assert!(geometry.body.top <= geometry.body.bottom);
     }
 }
