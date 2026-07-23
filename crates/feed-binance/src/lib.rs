@@ -4,8 +4,12 @@
 //! key: Binance market-data endpoints are public.
 //!
 //! The [`wire`] module is the pure, deterministic translation layer from
-//! Binance's aggTrade JSON to the engine's [`quantick_engine::Trade`]. Network
-//! code (REST backfill, live WebSocket, reconnect) builds on top of it in later
-//! milestones.
+//! Binance's aggTrade JSON to the engine's [`quantick_engine::Trade`]. The
+//! [`backfill`] module fetches recent history over REST so the chart opens
+//! populated. The live WebSocket stream and reconnect handling build on top in
+//! later milestones.
 
+pub mod backfill;
 pub mod wire;
+
+pub use backfill::{AggTradeSource, BinanceHttp, FeedError, backfill};
