@@ -1,0 +1,9 @@
+# sample_trades.csv — a short recorded burst of BTCUSDT aggTrades.
+# Format: agg_id,timestamp_ms,price,quantity,side  (side = aggressor)
+agg_id,timestamp_ms,price,quantity,side
+1,1700000000000,36000.10,0.005,buy
+2,1700000000200,36000.20,0.010,buy
+3,1700000000450,36000.00,0.250,sell
+4,1700000000700,35999.80,1.200,sell
+5,1700000000950,36000.30,0.030,buy
+6,1700000001100,36000.30,0.007,buy
