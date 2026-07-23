@@ -22,3 +22,6 @@ eframe = { version = "0.29", default-features = false, features = [
     "x11",
     "default_fonts",
 ] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
