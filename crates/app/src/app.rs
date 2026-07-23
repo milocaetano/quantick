@@ -19,6 +19,7 @@ use quantick_engine::Bar;
 use crate::chart::{PriceScale, TimeAxis, to_f64};
 use crate::feed::FeedEvent;
 use crate::metrics::{self, FrameStats};
+use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState};
 use crate::style::CandleStyle;
 use crate::viewport::Viewport;
@@ -47,6 +48,16 @@ fn dec_from_f64(x: f64) -> Decimal {
     Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
 }
 
+/// Split the padded plot area into the candle chart (left) and the right price
+/// gutter, so both the input handler and the renderer agree on the boundary.
+fn plot_split(area: egui::Rect) -> (egui::Rect, egui::Rect) {
+    let plot = area.shrink(16.0);
+    let split_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
+    let chart = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, plot.bottom()));
+    let gutter = egui::Rect::from_min_max(egui::pos2(split_x, plot.top()), plot.max);
+    (chart, gutter)
+}
+
 /// The quantick chart window.
 pub struct QuantickApp {
     state: ChartState,
@@ -62,6 +73,12 @@ pub struct QuantickApp {
 
     // Pan/zoom navigation over the bar series.
     viewport: Viewport,
+    // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
+    price_view: PriceView,
+    // Last frame's auto-fit price range and chart height, for pixel↔price maths
+    // in the input handler (which runs before the draw computes them).
+    last_auto_range: Option<(f64, f64)>,
+    last_chart_height: f32,
     // Pointer position over the plot this frame, for the crosshair.
     hover_pos: Option<egui::Pos2>,
 
@@ -107,6 +124,9 @@ impl QuantickApp {
             dollar_notional,
             time_interval_ms,
             viewport: Viewport::new(),
+            price_view: PriceView::new(),
+            last_auto_range: None,
+            last_chart_height: 1.0,
             hover_pos: None,
             style: CandleStyle::default(),
             show_style: false,
@@ -288,43 +308,81 @@ impl QuantickApp {
         self.last_summary = now;
     }
 
-    /// Handle mouse navigation over the plot: drag to pan, scroll to zoom,
-    /// double-click to snap back to the live edge.
+    /// Handle mouse navigation, TradingView-style:
+    /// - drag the chart area → pan time (x) and price (y);
+    /// - scroll over the chart → zoom time;
+    /// - drag the right price gutter → zoom the price scale (stretch candles);
+    /// - scroll over the gutter → zoom the price scale;
+    /// - double-click → reset to the live edge and auto-fit price.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
-        let plot = area.shrink(16.0);
-        let response = ui.interact(
-            plot,
+        let (chart_rect, axis_rect) = plot_split(area);
+        let auto = self.last_auto_range;
+        let height = self.last_chart_height;
+
+        let chart = ui.interact(
+            chart_rect,
             egui::Id::new("chart_nav"),
             egui::Sense::click_and_drag(),
         );
-        self.hover_pos = response.hover_pos();
+        self.hover_pos = chart.hover_pos();
 
         let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
-        if total == 0 {
-            return;
-        }
 
-        if response.dragged() {
-            let slot = plot.width() / self.viewport.visible_bars().max(1.0);
+        if total > 0 && chart.dragged() {
+            let drag = chart.drag_delta();
+            // Horizontal → time pan.
+            let slot = chart_rect.width() / self.viewport.visible_bars().max(1.0);
             if slot > 0.0 {
-                self.viewport.pan(response.drag_delta().x / slot, total);
+                self.viewport.pan(drag.x / slot, total);
+            }
+            // Vertical → price pan. Dragging down moves the view to higher prices.
+            if let Some(auto) = auto
+                && drag.y != 0.0
+                && height > 1.0
+            {
+                let (lo, hi) = self.price_view.resolve(auto);
+                let price_per_px = (hi - lo) / f64::from(height);
+                self.price_view.pan(f64::from(drag.y) * price_per_px, auto);
             }
         }
-        if response.double_clicked() {
+        if chart.double_clicked() {
             self.viewport.snap_to_live();
+            self.price_view.reset();
         }
-        if response.hovered() {
+        if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
                 // Scroll up (positive) zooms in; each notch is a gentle step.
                 self.viewport.zoom(2.0_f32.powf(-scroll / 300.0));
             }
         }
+
+        // Right price gutter: drag or scroll to zoom the price scale.
+        let axis = ui.interact(
+            axis_rect,
+            egui::Id::new("axis_nav"),
+            egui::Sense::click_and_drag(),
+        );
+        if let Some(auto) = auto {
+            if axis.dragged() {
+                // Drag down → expand span (smaller candles); up → compress (bigger).
+                let factor = f64::from(axis.drag_delta().y / 150.0).exp();
+                self.price_view.zoom(factor, auto);
+            }
+            if axis.double_clicked() {
+                self.price_view.reset();
+            }
+            if axis.hovered() {
+                let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                if scroll.abs() > 0.0 {
+                    self.price_view.zoom(f64::from(-scroll / 200.0).exp(), auto);
+                }
+            }
+        }
     }
 
-    fn draw_chart(&self, painter: &egui::Painter, area: egui::Rect) {
+    fn draw_chart(&mut self, painter: &egui::Painter, area: egui::Rect) {
         painter.rect_filled(area, egui::Rounding::ZERO, self.bg());
-        let plot = area.shrink(16.0);
 
         let closed = self.state.bars();
         let partial = self.state.partial();
@@ -340,14 +398,7 @@ impl QuantickApp {
             return;
         }
 
-        // Reserve a gutter on the right for the price axis.
-        let chart_rect = egui::Rect::from_min_max(
-            plot.min,
-            egui::pos2(
-                (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0),
-                plot.bottom(),
-            ),
-        );
+        let (chart_rect, _axis_rect) = plot_split(area);
 
         let (start, end) = self.viewport.visible_range(total);
         let visible_count = end.saturating_sub(start).max(1);
@@ -358,7 +409,8 @@ impl QuantickApp {
         let visible_closed = &closed[closed_start..closed_end];
         let partial_visible = partial.filter(|_| closed.len() >= start && closed.len() < end);
 
-        let Some(scale) = PriceScale::auto(
+        // Auto-fit the visible bars, then apply any manual price pan/zoom.
+        let Some(auto_scale) = PriceScale::auto(
             visible_closed,
             partial_visible,
             chart_rect.top(),
@@ -367,6 +419,10 @@ impl QuantickApp {
         ) else {
             return;
         };
+        let auto_range = auto_scale.range();
+        let (lo, hi) = self.price_view.resolve(auto_range);
+        let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
+
         let axis = TimeAxis::new(
             chart_rect.left(),
             chart_rect.right(),
@@ -396,7 +452,12 @@ impl QuantickApp {
 
         self.draw_backfill_divider(painter, &axis, chart_rect, start, end);
         self.draw_crosshair(painter, chart_rect, &scale);
-        self.draw_header(painter, plot);
+        self.draw_header(painter, chart_rect);
+
+        // Cache the auto range + height for next frame's input handler, which
+        // runs before the draw and needs them for pixel↔price conversion.
+        self.last_auto_range = Some(auto_range);
+        self.last_chart_height = chart_rect.height();
     }
 
     /// Right-hand price axis: round-number gridlines and labels.
@@ -527,13 +588,19 @@ impl QuantickApp {
         } else {
             "history · double-click for live"
         };
+        let price_mode = if self.price_view.is_auto() {
+            ""
+        } else {
+            " · price: manual (double-click to auto-fit)"
+        };
         let header = format!(
-            "{} · {} · {} backfilled + {} live bars · {}",
+            "{} · {} · {} backfilled + {} live bars · {}{}",
             self.symbol,
             self.state.spec().summary(),
             backfilled,
             live,
-            mode
+            mode,
+            price_mode
         );
         painter.text(
             egui::pos2(plot.left(), plot.top()),

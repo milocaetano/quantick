@@ -14,6 +14,7 @@ mod app;
 mod chart;
 mod feed;
 mod metrics;
+mod price_view;
 mod state;
 mod style;
 mod viewport;
