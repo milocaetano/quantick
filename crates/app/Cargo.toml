@@ -7,3 +7,10 @@ license.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
+rust_decimal = "1"
+eframe = { version = "0.29", default-features = false, features = [
+    "glow",
+    "wayland",
+    "x11",
+    "default_fonts",
+] }
