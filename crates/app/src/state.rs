@@ -143,6 +143,30 @@ impl ChartState {
         self.refresh_partial();
     }
 
+    /// Prepend older backfilled history to the front of the retained stream.
+    ///
+    /// `trades` must be strictly older than everything already retained (the
+    /// feed guarantees this by paging backward from the earliest known
+    /// `agg_id`). Because count-based bars (tick/volume/dollar) are grouped from
+    /// the first trade, adding older trades re-aligns every bar — so this rebuilds
+    /// the whole series through the same deterministic engine path rather than
+    /// pretending the existing bars are untouched (data-honesty rule). The
+    /// backfill/live boundary is recomputed. Returns how many net bars were added
+    /// so the caller can keep the visible window steady.
+    pub fn prepend_history(&mut self, trades: &[Trade]) -> usize {
+        if trades.is_empty() {
+            return 0;
+        }
+        let bars_before = self.bars.len();
+        let mut combined = Vec::with_capacity(trades.len() + self.trades.len());
+        combined.extend_from_slice(trades);
+        combined.append(&mut self.trades);
+        self.trades = combined;
+        self.backfill_trade_count += trades.len();
+        self.rebuild();
+        self.bars.len().saturating_sub(bars_before)
+    }
+
     /// Ingest one live trade, incrementally (no full rebuild).
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
@@ -295,6 +319,36 @@ mod tests {
         s.set_spec(BarSpec::Tick(4));
         assert_eq!(s.bars().len(), 1);
         assert_eq!(s.backfill_boundary(), Some(0));
+    }
+
+    #[test]
+    fn prepend_history_adds_older_bars_and_keeps_boundary() {
+        let mut s = ChartState::new(BarSpec::Tick(2));
+        s.ingest_backfill(&[trade(5), trade(6), trade(7), trade(8)]); // 2 bars
+        s.ingest_live(&trade(9)); // opens a partial, still 2 closed bars
+        assert_eq!(s.bars().len(), 2);
+        assert_eq!(s.backfill_boundary(), Some(2));
+
+        // Pull in the four older trades 1..=4.
+        let added = s.prepend_history(&[trade(1), trade(2), trade(3), trade(4)]);
+        // tick(2) over 1..=8 backfill = 4 closed bars; trade 9 is the partial.
+        assert_eq!(s.bars().len(), 4);
+        assert_eq!(added, 2, "two net bars were prepended");
+        assert_eq!(
+            s.backfill_boundary(),
+            Some(4),
+            "all eight retained backfill trades are history"
+        );
+    }
+
+    #[test]
+    fn prepend_empty_history_is_a_noop() {
+        let mut s = ChartState::new(BarSpec::Tick(2));
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        let before = s.bars().len();
+        let added = s.prepend_history(&[]);
+        assert_eq!(added, 0);
+        assert_eq!(s.bars().len(), before);
     }
 
     #[test]

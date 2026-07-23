@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use quantick_engine::Bar;
 
 use crate::chart::{PriceScale, to_f64};
-use crate::feed::FeedEvent;
+use crate::feed::{FeedCommand, FeedEvent, FeedHandle};
 use crate::metrics::{self, FrameStats};
 use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState};
@@ -88,7 +88,13 @@ fn fmt_time(ms: i64) -> String {
 pub struct QuantickApp {
     state: ChartState,
     events: mpsc::Receiver<FeedEvent>,
+    commands: mpsc::Sender<FeedCommand>,
     symbol: String,
+
+    // How many older trades to pull per "load older" click, and how many
+    // trades have been backfilled in total (for the readout).
+    history_step: usize,
+    history_trades: usize,
 
     // Bar-type selector state (one parameter retained per kind).
     kind: BarKind,
@@ -123,11 +129,7 @@ pub struct QuantickApp {
 impl QuantickApp {
     /// Create the app for `symbol` starting from `spec`, draining `events`.
     #[must_use]
-    pub fn new(
-        symbol: impl Into<String>,
-        spec: BarSpec,
-        events: mpsc::Receiver<FeedEvent>,
-    ) -> Self {
+    pub fn new(symbol: impl Into<String>, spec: BarSpec, feed: FeedHandle) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
         let mut tick_n = 50;
         let mut volume_units = 5.0;
@@ -143,8 +145,11 @@ impl QuantickApp {
         Self {
             kind: spec.kind(),
             state: ChartState::new(spec),
-            events,
+            events: feed.events,
+            commands: feed.commands,
             symbol: symbol.into(),
+            history_step: 2000,
+            history_trades: 0,
             tick_n,
             volume_units,
             dollar_notional,
@@ -218,10 +223,47 @@ impl QuantickApp {
                 }
             }
             ui.separator();
+            // History: pull older trades on demand, N per click.
+            ui.label("history +");
+            ui.add(
+                egui::DragValue::new(&mut self.history_step)
+                    .range(500.0..=50_000.0)
+                    .speed(100.0),
+            );
+            if ui
+                .button("⟲ load older")
+                .on_hover_text("fetch older trades and prepend them")
+                .clicked()
+            {
+                self.request_older_history();
+            }
+            ui.label(format!("({} trades)", self.history_trades));
+            ui.separator();
             if ui.button("⚙ style").clicked() {
                 self.show_style = !self.show_style;
             }
         });
+    }
+
+    /// Ask the feed thread to fetch and prepend `history_step` older trades.
+    /// Non-blocking: if a request is already queued, this frame's click is
+    /// dropped rather than piling up commands.
+    fn request_older_history(&mut self) {
+        match self.commands.try_send(FeedCommand::LoadOlder {
+            count: self.history_step.max(1),
+        }) {
+            Ok(()) => tracing::info!(
+                target: "quantick::app",
+                count = self.history_step,
+                "requested older history"
+            ),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::debug!(target: "quantick::app", "older-history request already pending");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!(target: "quantick::app", "feed command channel closed");
+            }
+        }
     }
 
     /// The current background colour as an egui `Color32`.
@@ -275,7 +317,14 @@ impl QuantickApp {
                     if let Some(last) = trades.last() {
                         self.latest_trade_ms = Some(last.timestamp_ms);
                     }
+                    self.history_trades += trades.len();
                     self.state.ingest_backfill(&trades);
+                }
+                Ok(FeedEvent::HistoryPrepended(trades)) => {
+                    // Older bars shift every index up; keep the view steady.
+                    self.history_trades += trades.len();
+                    let added = self.state.prepend_history(&trades);
+                    self.viewport.shift_right_edge(added);
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     self.latest_trade_ms = Some(trade.timestamp_ms);
