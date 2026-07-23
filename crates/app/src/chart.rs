@@ -62,6 +62,25 @@ impl PriceScale {
         })
     }
 
+    /// A scale over an explicit `[lo, hi]` price range mapped to `[top, bottom]`
+    /// pixels. Used when the price axis is under manual pan/zoom rather than
+    /// auto-fitting the visible bars.
+    #[must_use]
+    pub fn from_range(lo: f64, hi: f64, top: f32, bottom: f32) -> Self {
+        // Guard against an inverted or zero span.
+        let (lo, hi) = if hi > lo {
+            (lo, hi)
+        } else {
+            (lo - 0.5, lo + 0.5)
+        };
+        Self {
+            lo,
+            hi,
+            top,
+            bottom,
+        }
+    }
+
     /// The y-pixel for `price`.
     #[must_use]
     pub fn y(&self, price: f64) -> f32 {
