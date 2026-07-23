@@ -1,0 +1,12 @@
+# Trades for the dollar-bar golden test, threshold = 500 notional.
+# Notionals use realistic BTCUSDT-shaped decimals so the exact-arithmetic
+# property matters (these products are not representable in binary float):
+#   1: 36000.10 * 0.005 = 180.00050   acc 180.00050
+#   2: 36000.30 * 0.010 = 360.00300   acc 540.00350 >= 500 -> close bar 0
+#   3: 40000.00 * 0.020 = 800.00000   crosses 500 ALONE -> close bar 1, overshoot
+#   4: 36000.00 * 0.001 =  36.00000   acc 36 -> partial
+agg_id,timestamp_ms,price,quantity,side
+1,1000,36000.10,0.005,buy
+2,1200,36000.30,0.010,sell
+3,1400,40000.00,0.020,buy
+4,1600,36000.00,0.001,sell

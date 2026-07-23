@@ -1,0 +1,9 @@
+# Expected dollar bars for dollar_trades.csv with threshold = 500 notional.
+#   Bar 0 = trades 1,2: notional 540.00350 (exact), high 36000.30, low 36000.10,
+#           close 36000.30, buy 0.005, sell 0.010.
+#   Bar 1 = trade 3 alone: 800 notional crosses 500 whole -> one overshooting
+#           bar, buy 0.020.
+# Trade 4 (36 notional) remains a partial.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1000,1200,36000.10,36000.30,36000.10,36000.30,0.005,0.010,2
+1400,1400,40000.00,40000.00,40000.00,40000.00,0.020,0,1
