@@ -16,7 +16,10 @@ use quantick_feed_binance::depth::DepthEvent;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use crate::orderflow::{DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode};
+use crate::orderflow::{
+    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS,
+    MIN_BUBBLE_MAX_RADIUS,
+};
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
     ProjectionRequest, VisibleOrderflow,
@@ -52,7 +55,10 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
-    show_settings: bool,
+    /// Whether the docked L2 (liquidity map) settings panel is open.
+    show_l2_panel: bool,
+    /// Whether the docked aggression-bubble settings panel is open.
+    show_bubbles_panel: bool,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
     last_requested_layout: Option<ProjectionLayout>,
@@ -71,7 +77,8 @@ impl OrderflowView {
             config,
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
-            show_settings: false,
+            show_l2_panel: false,
+            show_bubbles_panel: false,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
             last_requested_layout: None,
@@ -95,9 +102,28 @@ impl OrderflowView {
         }
     }
 
+    /// Whether L2 depth capture is on. Says nothing about the bubble layer.
     #[must_use]
     pub fn enabled(&self) -> bool {
         self.config.enabled
+    }
+
+    /// Whether the aggression layer is on. Independent of the depth map: it
+    /// reads the trade stream the chart already consumes.
+    #[must_use]
+    pub fn bubbles_enabled(&self) -> bool {
+        self.config.show_aggressions
+    }
+
+    /// Toggle the aggression layer without touching L2 capture. No feed
+    /// command is needed — aggregate trades already flow for the candles.
+    pub fn set_bubbles_enabled(&mut self, enabled: bool) {
+        if self.config.show_aggressions == enabled {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_aggressions = enabled;
+        self.commit_config_changes(before);
     }
 
     /// Latest exchange timestamp for which live book state is known, while
@@ -111,17 +137,29 @@ impl OrderflowView {
         self.published.live_end_ms
     }
 
-    pub fn toggle_settings(&mut self) {
-        self.show_settings = !self.show_settings;
+    pub fn toggle_l2_panel(&mut self) {
+        self.show_l2_panel = !self.show_l2_panel;
+    }
+
+    pub fn toggle_bubbles_panel(&mut self) {
+        self.show_bubbles_panel = !self.show_bubbles_panel;
     }
 
     #[must_use]
-    pub fn settings_button_label(&self) -> String {
+    pub fn l2_button_label(&self) -> String {
         match self.config.display_grouping {
             DisplayGrouping::Adaptive { .. } => "⚙ L2 · auto".to_owned(),
             DisplayGrouping::Native => "⚙ L2 · 1×".to_owned(),
             DisplayGrouping::Multiple(multiple) => format!("⚙ L2 · {multiple}×"),
         }
+    }
+
+    #[must_use]
+    pub fn bubbles_button_label(&self) -> String {
+        format!(
+            "⚙ bubbles · {}",
+            cluster_label(self.config.bubble_cluster_ms)
+        )
     }
 
     #[cfg(test)]
@@ -225,7 +263,7 @@ impl OrderflowView {
 
     /// Record a factual aggregate trade for the aggression overlay.
     pub fn record_trade(&mut self, trade: &Trade) {
-        if self.config.enabled {
+        if self.config.any_layer_enabled() {
             self.worker.send(BookCommand::Trade(trade.clone()));
         }
     }
@@ -247,7 +285,7 @@ impl OrderflowView {
         extend_live_end: bool,
         price_range: (f64, f64),
     ) -> Option<Arc<VisibleOrderflow>> {
-        if !self.config.enabled {
+        if !self.config.any_layer_enabled() {
             return None;
         }
         self.sync_published();
@@ -355,37 +393,43 @@ impl OrderflowView {
         self.worker.send(BookCommand::ResetSummaryCounters);
     }
 
-    /// Draw the floating settings window and return whether capture must
+    /// Draw the docked order-flow panels and return whether capture must
     /// restart because the base capture resolution changed.
-    pub fn draw_settings(&mut self, ctx: &egui::Context) -> bool {
-        if !self.show_settings {
+    ///
+    /// The L2 map and the aggression bubbles get one panel each, so neither
+    /// configuration hides behind the other's switch.
+    pub fn draw_panels(&mut self, ctx: &egui::Context) -> bool {
+        if !self.show_l2_panel && !self.show_bubbles_panel {
             return false;
         }
         self.sync_published();
         let before = self.config.clone();
-        let mut open = self.show_settings;
-        egui::Window::new("order flow · liquidity map")
-            .open(&mut open)
-            .default_width(420.0)
+        self.draw_l2_panel(ctx);
+        self.draw_bubbles_panel(ctx);
+        self.commit_config_changes(before)
+    }
+
+    /// Left dock for everything the depth map owns.
+    fn draw_l2_panel(&mut self, ctx: &egui::Context) {
+        if !self.show_l2_panel {
+            return;
+        }
+        let mut open = true;
+        egui::SidePanel::left("orderflow_l2_panel")
             .resizable(true)
+            .default_width(340.0)
+            .width_range(300.0..=620.0)
             .show(ctx, |ui| {
+                panel_header(ui, "L2 · LIQUIDITY MAP", &mut open);
                 egui::ScrollArea::vertical()
-                    .id_salt("orderflow_settings_scroll")
-                    .max_height(560.0)
+                    .id_salt("orderflow_l2_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("BOOKMAP VIEW")
-                            .strong()
-                            .color(egui::Color32::from_rgb(255, 222, 92)),
-                    );
-                    ui.label(
-                        egui::RichText::new(self.published.status.label())
-                            .small()
-                            .color(status_color(&self.published.status)),
-                    );
-                });
+                ui.label(
+                    egui::RichText::new(self.published.status.label())
+                        .small()
+                        .color(status_color(&self.published.status)),
+                );
                 ui.small(
                     "Brightness is resting liquidity. Green/red bubbles are confirmed trades.",
                 );
@@ -480,33 +524,6 @@ impl OrderflowView {
                     egui::Slider::new(&mut self.config.gamma, 0.25..=2.0)
                         .text("quiet liquidity"),
                 );
-
-                ui.separator();
-                ui.strong("aggression bubbles");
-                ui.checkbox(&mut self.config.show_aggressions, "show confirmed executions")
-                    .on_hover_text("confirmed Binance aggTrades; color is the aggressor side");
-                ui.add_enabled_ui(self.config.show_aggressions, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("cluster");
-                        egui::ComboBox::from_id_salt("heatmap_bubble_cluster")
-                            .selected_text(cluster_label(self.config.bubble_cluster_ms))
-                            .show_ui(ui, |ui| {
-                                for (milliseconds, label) in [
-                                    (0, "Raw"),
-                                    (50, "50 ms"),
-                                    (100, "100 ms"),
-                                    (200, "200 ms"),
-                                    (500, "500 ms"),
-                                ] {
-                                    ui.selectable_value(
-                                        &mut self.config.bubble_cluster_ms,
-                                        milliseconds,
-                                        label,
-                                    );
-                                }
-                            });
-                    });
-                });
 
                 ui.separator();
                 ui.strong("liquidity response");
@@ -617,22 +634,117 @@ impl OrderflowView {
                     "effective range {} · {}× base",
                     health.effective_grouping, health.effective_grouping_multiple
                 ));
-                if ui.button("reset Bookmap visuals").clicked() {
-                    let enabled = self.config.enabled;
+                if ui.button("reset L2 visuals").clicked() {
                     let price_grouping = self.config.price_grouping;
                     self.capture_grouping_draft =
                         price_grouping.to_f64().unwrap_or(self.capture_grouping_draft);
                     self.config = HeatmapConfig {
-                        enabled,
+                        enabled: self.config.enabled,
                         price_grouping,
+                        // The bubble layer owns its own panel and its own reset.
+                        show_aggressions: self.config.show_aggressions,
+                        bubble_cluster_ms: self.config.bubble_cluster_ms,
+                        bubble_opacity: self.config.bubble_opacity,
+                        bubble_max_radius: self.config.bubble_max_radius,
                         ..HeatmapConfig::default()
                     };
                 }
                     });
             });
-        self.show_settings = open;
+        self.show_l2_panel = open;
+    }
 
-        self.commit_config_changes(before)
+    /// Left dock for the aggression layer. Everything here is independent of
+    /// L2 capture: bubbles are built from the aggregate-trade stream.
+    fn draw_bubbles_panel(&mut self, ctx: &egui::Context) {
+        if !self.show_bubbles_panel {
+            return;
+        }
+        let mut open = true;
+        egui::SidePanel::left("orderflow_bubbles_panel")
+            .resizable(true)
+            .default_width(300.0)
+            .width_range(260.0..=520.0)
+            .show(ctx, |ui| {
+                panel_header(ui, "AGGRESSION BUBBLES", &mut open);
+                egui::ScrollArea::vertical()
+                    .id_salt("orderflow_bubbles_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.small(
+                            "Confirmed executions from the trade stream. Colour is the aggressor side; area is quantity.",
+                        );
+                        ui.small(
+                            "This layer is independent: it keeps drawing with L2 capture off.",
+                        );
+                        ui.separator();
+
+                        ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
+                            .on_hover_text(
+                                "records and projects confirmed trades; does not start or stop L2 depth capture",
+                            );
+                        ui.add_enabled_ui(self.config.show_aggressions, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("cluster");
+                                egui::ComboBox::from_id_salt("heatmap_bubble_cluster")
+                                    .selected_text(cluster_label(self.config.bubble_cluster_ms))
+                                    .show_ui(ui, |ui| {
+                                        for (milliseconds, label) in [
+                                            (0, "Raw"),
+                                            (50, "50 ms"),
+                                            (100, "100 ms"),
+                                            (200, "200 ms"),
+                                            (500, "500 ms"),
+                                        ] {
+                                            ui.selectable_value(
+                                                &mut self.config.bubble_cluster_ms,
+                                                milliseconds,
+                                                label,
+                                            );
+                                        }
+                                    });
+                            })
+                            .response
+                            .on_hover_text(
+                                "merge compatible prints inside this window into one bubble; Raw keeps one bubble per trade",
+                            );
+                            ui.add(
+                                egui::Slider::new(&mut self.config.bubble_opacity, 0.05..=1.0)
+                                    .text("bubble opacity"),
+                            );
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut self.config.bubble_max_radius,
+                                    MIN_BUBBLE_MAX_RADIUS..=MAX_BUBBLE_MAX_RADIUS,
+                                )
+                                .text("largest bubble px"),
+                            )
+                            .on_hover_text(
+                                "area stays quantity-proportional; this only sets how big the biggest print draws",
+                            );
+                        });
+
+                        ui.separator();
+                        let health = &self.published.health;
+                        ui.label(format!(
+                            "{} bubbles projected · {} aggressions retained",
+                            health.projection_aggressions, health.aggression_count
+                        ));
+                        if health.dropped_aggressions > 0 {
+                            ui.small(format!(
+                                "{} bubbles above the primitive cap were not drawn",
+                                health.dropped_aggressions
+                            ));
+                        }
+                        if ui.button("reset bubble visuals").clicked() {
+                            let defaults = HeatmapConfig::default();
+                            self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
+                            self.config.bubble_opacity = defaults.bubble_opacity;
+                            self.config.bubble_max_radius = defaults.bubble_max_radius;
+                        }
+                    });
+            });
+        self.show_bubbles_panel = open;
     }
 
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
@@ -660,6 +772,28 @@ impl OrderflowView {
         }
         restart_required
     }
+}
+
+/// Title row shared by the docked panels, with the close affordance a floating
+/// window used to provide.
+fn panel_header(ui: &mut egui::Ui, title: &str, open: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .strong()
+                .color(egui::Color32::from_rgb(255, 222, 92)),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .small_button("✕")
+                .on_hover_text("close this panel")
+                .clicked()
+            {
+                *open = false;
+            }
+        });
+    });
+    ui.separator();
 }
 
 fn theme_label(theme: HeatmapTheme) -> &'static str {
@@ -753,6 +887,39 @@ mod tests {
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
+    }
+
+    #[test]
+    fn bubbles_project_while_book_capture_stays_off() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_bubbles_enabled(true);
+        assert!(!view.enabled(), "the bubble layer must not start capture");
+
+        view.record_trade(&Trade {
+            agg_id: 1,
+            timestamp_ms: 1_000,
+            price: Decimal::new(1_005, 1),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        });
+        view.flush_for_test();
+        assert_eq!(view.health().aggression_count, 1);
+
+        let bars = [bar(900, 1_100)];
+        view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        view.flush_for_test();
+        let frame = view
+            .project_visible(0, &bars, None, true, (98.0, 102.0))
+            .expect("published frame");
+        assert_eq!(frame.projection.aggressions.len(), 1);
+        assert!(frame.projection.cells.is_empty(), "no map without capture");
+
+        // Turning the bubbles off closes the pipeline again.
+        view.set_bubbles_enabled(false);
+        assert!(
+            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+                .is_none()
+        );
     }
 
     #[test]

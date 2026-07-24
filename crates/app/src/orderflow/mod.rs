@@ -15,7 +15,10 @@ pub mod timeline;
 // This facade is intentionally wider than the first UI integration. Keeping
 // the public DTOs here gives later renderers one stable import surface.
 #[allow(unused_imports)]
-pub use config::{DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode};
+pub use config::{
+    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS,
+    MIN_BUBBLE_MAX_RADIUS,
+};
 #[allow(unused_imports)]
 pub use grouping::{
     EffectiveGrouping, GroupedLiquidity, GroupingWindow, LiquidityTransition, VisualLiquidityRun,

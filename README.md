@@ -120,9 +120,23 @@ never restart the market-data pipelines.
 
 The chart can capture Binance Spot level-2 order-book depth and render a
 Bookmap-inspired liquidity map. It is **disabled by default** and must be
-enabled from the chart controls. The **⚙ L2** panel includes a deterministic
-preview of every visual state, so themes and grouping can be tuned without
-waiting for a rare live-book event.
+enabled from the chart controls. The **⚙ L2** button docks a settings panel to
+the left of the chart — the chart keeps the remaining width instead of being
+covered — including a deterministic preview of every visual state, so themes
+and grouping can be tuned without waiting for a rare live-book event.
+
+The order flow splits into two independent layers, each with its own toolbar
+switch and its own docked panel:
+
+- **book heatmap** (**⚙ L2**) — resting liquidity and liquidity-response
+  markers, built from the synchronized L2 depth pipeline.
+- **bubbles** (**⚙ bubbles**) — confirmed aggressive executions, built from the
+  aggregate-trade stream the chart already consumes.
+
+Neither switch touches the other. Bubbles render with L2 capture off (and for
+providers without a depth pipeline at all), and stopping the book leaves the
+bubbles running. Turning L2 capture off hides the map without discarding
+retained L2 history.
 
 The visualization follows a few data-honesty rules:
 
@@ -148,8 +162,10 @@ The chart exposes these settings:
 | Brightness | `0.9` | `0.05`–`1.0` |
 | Quiet liquidity curve | `1.8` | `0.25`–`2.0`; above one sinks quiet liquidity into the dark canvas so only real walls glow |
 | Intensity scale | Visible P99 | Automatic visible-window P99 or a fixed full-intensity quantity |
-| Aggression bubbles | On | Can be hidden independently of the heatmap |
+| Aggression bubbles | Off | Own toolbar switch and own panel; records and projects without L2 depth capture |
 | Bubble clustering | 200 ms | Raw, 50, 100, 200 or 500 ms |
+| Bubble opacity | `0.78` | `0.05`–`1.0` |
+| Largest bubble | `15 px` | `4`–`48 px`; area stays quantity-proportional |
 | Liquidity response | On / 250 ms | Bite or withdrawal-tail markers with a configurable 25–1,000 ms evidence window |
 | Legend | On | Explains liquidity brightness, buy/sell aggression, aligned depletion, unattributed reduction and L2 gaps |
 

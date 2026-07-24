@@ -157,7 +157,7 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
         // (layout equality + depth-cadence interval) decides whether this is
         // a real rebuild or a no-op, so a chatty batch stays cheap.
         if let Some(request) = &last_request
-            && engine.enabled()
+            && engine.any_layer_enabled()
         {
             engine.project(request);
         }

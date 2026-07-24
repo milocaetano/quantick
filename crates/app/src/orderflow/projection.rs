@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use super::config::IntensityMode;
-use super::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
+use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
 use super::interaction::{
@@ -225,30 +225,42 @@ pub fn project(
         config.price_grouping,
         prices.high - prices.low,
     );
-    if !config.enabled {
+    if !config.any_layer_enabled() {
         return HeatmapProjection::empty(false, effective_grouping);
     }
     let Some((time_start, time_end)) = timeline.timestamp_range() else {
         return HeatmapProjection::empty(true, effective_grouping);
     };
 
+    // The depth layer is projected only while L2 capture is on. Retained runs
+    // survive a capture toggle untouched — they simply stop being drawn, so the
+    // aggression layer can keep rendering without the map behind it.
+    let depth_enabled = config.enabled;
     let retained_start = history
         .retention_start_ms()
         .map_or(time_start, |start| start.max(time_start));
     let open_run_end_ms = history.latest_book_ms().unwrap_or(time_end);
-    let coverage: Vec<_> = history.coverage_segments().cloned().collect();
-    let grouped = sweep_grouped_runs(
-        history.runs_intersecting(retained_start, time_end),
-        coverage.iter(),
-        effective_grouping,
-        GroupingWindow {
-            start_ms: retained_start,
-            end_ms: time_end,
-            open_run_end_ms,
-            price_low: prices.low,
-            price_high: prices.high,
-        },
-    );
+    let coverage: Vec<_> = if depth_enabled {
+        history.coverage_segments().cloned().collect()
+    } else {
+        Vec::new()
+    };
+    let grouped = if depth_enabled {
+        sweep_grouped_runs(
+            history.runs_intersecting(retained_start, time_end),
+            coverage.iter(),
+            effective_grouping,
+            GroupingWindow {
+                start_ms: retained_start,
+                end_ms: time_end,
+                open_run_end_ms,
+                price_low: prices.low,
+                price_high: prices.high,
+            },
+        )
+    } else {
+        GroupedLiquidity::default()
+    };
 
     let mut drafts = Vec::new();
     for run in &grouped.runs {
@@ -450,53 +462,62 @@ pub fn project(
         })
         .collect();
 
-    let mut gaps: Vec<GapPrimitive> = history
-        .coverage_gaps()
-        .filter_map(|gap| {
-            let gap_end = gap.end_ms.unwrap_or(time_end);
-            if gap_end <= time_start || gap.start_ms >= time_end {
-                return None;
-            }
-            let x0 = timeline.locate_clamped(gap.start_ms.max(time_start))?;
-            let x1 = timeline.locate_clamped(gap_end.min(time_end))?;
-            (x1.normalized > x0.normalized).then(|| GapPrimitive {
-                from_generation: gap.from_generation,
-                to_generation: gap.to_generation,
-                x0: x0.normalized,
-                x1: x1.normalized,
-                reason: gap.reason.clone(),
+    // Coverage primitives describe the depth layer. With L2 capture off there
+    // is no map whose absence needs explaining, so a bubbles-only frame stays
+    // free of gap hatching.
+    let mut gaps: Vec<GapPrimitive> = if depth_enabled {
+        history
+            .coverage_gaps()
+            .filter_map(|gap| {
+                let gap_end = gap.end_ms.unwrap_or(time_end);
+                if gap_end <= time_start || gap.start_ms >= time_end {
+                    return None;
+                }
+                let x0 = timeline.locate_clamped(gap.start_ms.max(time_start))?;
+                let x1 = timeline.locate_clamped(gap_end.min(time_end))?;
+                (x1.normalized > x0.normalized).then(|| GapPrimitive {
+                    from_generation: gap.from_generation,
+                    to_generation: gap.to_generation,
+                    x0: x0.normalized,
+                    x1: x1.normalized,
+                    reason: gap.reason.clone(),
+                })
             })
-        })
-        .collect();
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     // Historical trades can precede the first locally captured L2 snapshot.
     // Make that absence an explicit primitive instead of a transparent region
     // that could be mistaken for zero resting liquidity.
-    match history.coverage_segments().next() {
-        Some(first_coverage) if first_coverage.start_ms > time_start => {
-            let unavailable_end = first_coverage.start_ms.min(time_end);
-            if let (Some(x0), Some(x1)) = (
-                timeline.locate_clamped(time_start),
-                timeline.locate_clamped(unavailable_end),
-            ) && x1.normalized > x0.normalized
-            {
-                gaps.push(GapPrimitive {
-                    from_generation: None,
-                    to_generation: Some(first_coverage.generation),
-                    x0: x0.normalized,
-                    x1: x1.normalized,
-                    reason: "book_unavailable_before_capture".to_owned(),
-                });
+    if depth_enabled {
+        match history.coverage_segments().next() {
+            Some(first_coverage) if first_coverage.start_ms > time_start => {
+                let unavailable_end = first_coverage.start_ms.min(time_end);
+                if let (Some(x0), Some(x1)) = (
+                    timeline.locate_clamped(time_start),
+                    timeline.locate_clamped(unavailable_end),
+                ) && x1.normalized > x0.normalized
+                {
+                    gaps.push(GapPrimitive {
+                        from_generation: None,
+                        to_generation: Some(first_coverage.generation),
+                        x0: x0.normalized,
+                        x1: x1.normalized,
+                        reason: "book_unavailable_before_capture".to_owned(),
+                    });
+                }
             }
+            None => gaps.push(GapPrimitive {
+                from_generation: None,
+                to_generation: None,
+                x0: 0.0,
+                x1: 1.0,
+                reason: "book_unavailable_before_capture".to_owned(),
+            }),
+            Some(_) => {}
         }
-        None => gaps.push(GapPrimitive {
-            from_generation: None,
-            to_generation: None,
-            x0: 0.0,
-            x1: 1.0,
-            reason: "book_unavailable_before_capture".to_owned(),
-        }),
-        Some(_) => {}
     }
     gaps.sort_by(|a, b| a.x0.total_cmp(&b.x0).then_with(|| a.x1.total_cmp(&b.x1)));
 
@@ -618,6 +639,7 @@ mod tests {
     fn config() -> HeatmapConfig {
         HeatmapConfig {
             enabled: true,
+            show_aggressions: true,
             price_grouping: Decimal::ONE,
             ..HeatmapConfig::default()
         }
@@ -1025,6 +1047,77 @@ mod tests {
     }
 
     #[test]
+    fn bubbles_project_with_l2_capture_off() {
+        // The aggression layer only needs the trade stream. With depth capture
+        // off there is no map and no coverage story to tell, so cells and gap
+        // primitives stay empty while bubbles still project.
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            enabled: false,
+            bubble_cluster_ms: 0,
+            ..config()
+        });
+        for (id, price) in [(1_u64, "99.5"), (2, "100.5")] {
+            history.record_aggression(&Trade {
+                agg_id: id,
+                timestamp_ms: 200 + id as i64,
+                price: dec(price),
+                quantity: Decimal::ONE,
+                side: Side::Buy,
+            });
+        }
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("99"), dec("102")).unwrap(),
+        );
+        assert!(projection.enabled);
+        assert_eq!(projection.aggressions.len(), 2);
+        assert!(projection.cells.is_empty());
+        assert!(projection.gaps.is_empty());
+    }
+
+    #[test]
+    fn turning_l2_capture_off_hides_the_map_without_touching_bubbles_or_history() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            ..config()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 200,
+            price: dec("100.5"),
+            quantity: Decimal::ONE,
+            side: Side::Buy,
+        });
+        history
+            .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+            .unwrap();
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("99"), dec("102")).unwrap();
+        let before = project(&history, &timeline, prices);
+        assert!(!before.cells.is_empty());
+        assert_eq!(before.aggressions.len(), 1);
+        let runs_before = history.runs().count();
+
+        history
+            .update_config(HeatmapConfig {
+                enabled: false,
+                bubble_cluster_ms: 0,
+                ..config()
+            })
+            .unwrap();
+        let after = project(&history, &timeline, prices);
+        assert!(after.cells.is_empty(), "the map stops drawing");
+        assert_eq!(after.aggressions.len(), 1, "bubbles are untouched");
+        assert_eq!(
+            history.runs().count(),
+            runs_before,
+            "retained L2 history survives the toggle"
+        );
+    }
+
+    #[test]
     fn primitive_caps_report_dropped_items() {
         let limited = HeatmapConfig {
             max_visible_cells: 1,
@@ -1130,6 +1223,7 @@ mod tests {
     fn projects_partial_and_full_reductions_with_conserved_aggression_evidence() {
         let event_config = HeatmapConfig {
             enabled: true,
+            show_aggressions: true,
             price_grouping: Decimal::ONE,
             display_grouping: DisplayGrouping::Native,
             bubble_cluster_ms: 100,

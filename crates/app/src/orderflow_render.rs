@@ -104,13 +104,15 @@ impl Default for OrderflowRenderStyle {
 
 impl OrderflowRenderStyle {
     /// Resolve the renderer-owned choices that have a corresponding user
-    /// setting. Bubble geometry remains independent so it can later be exposed
-    /// without growing the domain configuration again.
+    /// setting. Bubble alpha and maximum radius now come from the aggression
+    /// panel; the remaining geometry stays renderer-owned.
     #[must_use]
     pub(crate) fn from_config(config: &HeatmapConfig, canvas_background: egui::Color32) -> Self {
         Self {
             theme: config.theme,
             show_legend: config.show_legend,
+            bubble_opacity: config.bubble_opacity,
+            bubble_max_radius: config.bubble_max_radius,
             canvas_background,
             ..Self::default()
         }

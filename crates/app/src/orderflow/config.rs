@@ -32,6 +32,14 @@ pub const MAX_BUBBLE_CLUSTER_MS: i64 = 2_000;
 pub const DEFAULT_LIQUIDITY_CORRELATION_MS: i64 = 250;
 /// Safe upper bound for depth/aggression correlation.
 pub const MAX_LIQUIDITY_CORRELATION_MS: i64 = 10_000;
+/// Default alpha applied to aggression bubbles.
+pub const DEFAULT_BUBBLE_OPACITY: f32 = 0.78;
+/// Default on-screen radius, in points, of the largest aggression bubble.
+pub const DEFAULT_BUBBLE_MAX_RADIUS: f32 = 15.0;
+/// Smallest accepted maximum bubble radius.
+pub const MIN_BUBBLE_MAX_RADIUS: f32 = 4.0;
+/// Largest accepted maximum bubble radius.
+pub const MAX_BUBBLE_MAX_RADIUS: f32 = 48.0;
 
 /// Renderer-only price grouping layered over the exact capture buckets.
 ///
@@ -108,11 +116,19 @@ impl IntensityMode {
 
 /// Settings shared by history retention and the pure projection layer.
 ///
-/// The default is deliberately disabled: merely adding the feature cannot
-/// change feed load, memory use or rendering behaviour of the existing chart.
+/// The two visual layers are independent switches: [`enabled`](Self::enabled)
+/// owns the L2 depth map, [`show_aggressions`](Self::show_aggressions) owns the
+/// aggression bubbles. Bubbles are built from the aggregate-trade stream the
+/// chart already consumes, so they never need the depth pipeline.
+///
+/// Both default to disabled: merely adding the feature cannot change feed load,
+/// memory use or rendering behaviour of the existing chart.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeatmapConfig {
-    /// Whether capture/projection is enabled.
+    /// Whether L2 depth capture/projection is enabled.
+    ///
+    /// Only the depth map depends on this: the aggression layer keeps working
+    /// with capture off.
     pub enabled: bool,
     /// Maximum age retained in memory, measured in exchange milliseconds.
     pub retention_ms: i64,
@@ -127,14 +143,20 @@ pub struct HeatmapConfig {
     pub opacity: f32,
     /// Colour-curve exponent. Values below one make quieter liquidity visible.
     pub gamma: f32,
-    /// Whether retained aggressive executions are projected.
+    /// Whether aggressive executions are retained and projected.
     ///
-    /// Hiding bubbles is a visual choice and never discards factual history.
+    /// This is the aggression layer's own switch: it needs the trade stream
+    /// only, so it turns on and off without touching L2 depth capture. Hiding
+    /// bubbles is a visual choice and never discards factual history.
     pub show_aggressions: bool,
     /// Temporal window used to cluster compatible aggressive prints.
     ///
     /// Zero keeps raw, one-trade-per-bubble projection.
     pub bubble_cluster_ms: i64,
+    /// Maximum alpha contributed by an aggression bubble.
+    pub bubble_opacity: f32,
+    /// On-screen radius, in points, of the largest aggression bubble.
+    pub bubble_max_radius: f32,
     /// Whether factual displayed-liquidity reductions are projected.
     pub show_liquidity_events: bool,
     /// Smallest reduction fraction whose *unattributed* (depth-only) marker is
@@ -181,8 +203,10 @@ impl Default for HeatmapConfig {
             // real walls glow — the Bookmap contrast. Below one paints a dense
             // book edge-to-edge (no walls stand out).
             gamma: 1.8,
-            show_aggressions: true,
+            show_aggressions: false,
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
+            bubble_opacity: DEFAULT_BUBBLE_OPACITY,
+            bubble_max_radius: DEFAULT_BUBBLE_MAX_RADIUS,
             show_liquidity_events: true,
             min_unattributed_reduction: 0.5,
             min_unattributed_pull_share: 0.25,
@@ -200,6 +224,15 @@ impl Default for HeatmapConfig {
 }
 
 impl HeatmapConfig {
+    /// Whether any order-flow layer asks for capture and projection.
+    ///
+    /// The depth map and the aggression bubbles are independent: either one
+    /// alone keeps the pipeline alive, and neither can switch the other off.
+    #[must_use]
+    pub fn any_layer_enabled(&self) -> bool {
+        self.enabled || self.show_aggressions
+    }
+
     /// Return a copy whose numeric values are safe for allocation and math.
     #[must_use]
     pub fn sanitized(mut self) -> Self {
@@ -232,6 +265,16 @@ impl HeatmapConfig {
         }
         self.min_unattributed_pull_share = self.min_unattributed_pull_share.clamp(0.0, 1.0);
         self.bubble_cluster_ms = self.bubble_cluster_ms.clamp(0, MAX_BUBBLE_CLUSTER_MS);
+        if !self.bubble_opacity.is_finite() {
+            self.bubble_opacity = DEFAULT_BUBBLE_OPACITY;
+        }
+        self.bubble_opacity = self.bubble_opacity.clamp(0.05, 1.0);
+        if !self.bubble_max_radius.is_finite() {
+            self.bubble_max_radius = DEFAULT_BUBBLE_MAX_RADIUS;
+        }
+        self.bubble_max_radius = self
+            .bubble_max_radius
+            .clamp(MIN_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MAX_RADIUS);
         self.liquidity_correlation_ms = self
             .liquidity_correlation_ms
             .clamp(0, MAX_LIQUIDITY_CORRELATION_MS);
@@ -263,8 +306,11 @@ mod tests {
         );
         assert!((0.0..=1.0).contains(&config.opacity));
         assert!(config.gamma > 0.0);
-        assert!(config.show_aggressions);
+        assert!(!config.show_aggressions);
+        assert!(!config.any_layer_enabled());
         assert_eq!(config.bubble_cluster_ms, DEFAULT_BUBBLE_CLUSTER_MS);
+        assert_eq!(config.bubble_opacity, DEFAULT_BUBBLE_OPACITY);
+        assert_eq!(config.bubble_max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
         assert!(config.show_liquidity_events);
         assert_eq!(
             config.liquidity_correlation_ms,
@@ -286,6 +332,8 @@ mod tests {
             opacity: f32::NAN,
             gamma: -1.0,
             bubble_cluster_ms: i64::MAX,
+            bubble_opacity: f32::NAN,
+            bubble_max_radius: 900.0,
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,
             max_history_bytes: 0,
@@ -304,6 +352,8 @@ mod tests {
         assert_eq!(config.opacity, 0.9);
         assert_eq!(config.gamma, 1.0);
         assert_eq!(config.bubble_cluster_ms, MAX_BUBBLE_CLUSTER_MS);
+        assert_eq!(config.bubble_opacity, DEFAULT_BUBBLE_OPACITY);
+        assert_eq!(config.bubble_max_radius, MAX_BUBBLE_MAX_RADIUS);
         assert_eq!(config.liquidity_correlation_ms, 0);
         assert_eq!(config.max_history_runs, 1);
         assert_eq!(config.max_history_bytes, 1_024);
@@ -311,6 +361,23 @@ mod tests {
         assert_eq!(config.max_visible_cells, 1);
         assert_eq!(config.max_aggression_primitives, 1);
         assert_eq!(config.intensity_mode, IntensityMode::VisibleP99);
+    }
+
+    #[test]
+    fn each_visual_layer_switches_on_its_own() {
+        let bubbles_only = HeatmapConfig {
+            show_aggressions: true,
+            ..HeatmapConfig::default()
+        };
+        assert!(!bubbles_only.enabled);
+        assert!(bubbles_only.any_layer_enabled());
+
+        let depth_only = HeatmapConfig {
+            enabled: true,
+            ..HeatmapConfig::default()
+        };
+        assert!(!depth_only.show_aggressions);
+        assert!(depth_only.any_layer_enabled());
     }
 
     #[test]
