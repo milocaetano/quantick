@@ -12,3 +12,15 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+
+# `cargo run` is how the chart is actually used day to day, and a dense L2
+# book pushes tens of thousands of cells/runs through hot loops per frame.
+# Unoptimized dev builds render that at slideshow speed, so keep light
+# optimization for workspace code and full optimization for dependencies
+# (egui tessellation, Decimal math); debuggability of our own code survives
+# opt-level 1, and `cargo test` stays fast enough.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

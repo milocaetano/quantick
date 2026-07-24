@@ -2,3 +2,7 @@
 *.log
 # Compiled MQL5 binaries (build artifacts of bridge/mt5/*.mq5)
 *.ex5
+# Local feed/asset override (see README: ./quantick.toml or QUANTICK_CONFIG)
+/quantick.toml
+# Python bytecode from the design lab
+__pycache__/

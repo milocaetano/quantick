@@ -1,202 +1,97 @@
-//! egui adapter for the pure order-flow history and projection modules.
+//! egui facade for the asynchronous order-flow heatmap.
 //!
-//! Feed synchronization, deterministic book mutation and renderer-independent
-//! geometry remain outside this file. This layer owns only UI configuration,
-//! status presentation and conversion of normalized primitives into egui
-//! shapes, keeping the existing candle path isolated.
+//! All book state (history, synchronization, projection) lives in
+//! [`crate::orderflow_engine::BookEngine`] on the worker thread owned by
+//! [`crate::orderflow_worker::BookWorker`]. This layer only forwards commands,
+//! mirrors the published snapshot for the current frame and converts
+//! normalized primitives into egui shapes. Nothing here can block the UI on a
+//! dense book: drawing always uses the latest already-built frame.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use eframe::egui;
-use quantick_engine::{Bar, Side, Trade};
-use quantick_feed_binance::depth::{DepthEvent, DepthResyncReason, DepthStatus};
-use quantick_orderbook::BookSide;
+use quantick_engine::{Bar, Trade};
+use quantick_feed_binance::depth::DepthEvent;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use crate::orderflow::{
-    BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, IntensityMode, LiquidityHistory,
-    PriceWindow, project,
+use crate::orderflow::{DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode};
+use crate::orderflow_engine::{
+    BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
+    ProjectionRequest, VisibleOrderflow,
 };
+use crate::orderflow_render::{
+    OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
+    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview,
+};
+use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
-const BID_LOW: [u8; 3] = [14, 40, 82];
-const BID_MID: [u8; 3] = [0, 184, 224];
-const ASK_LOW: [u8; 3] = [78, 20, 42];
-const ASK_MID: [u8; 3] = [255, 84, 42];
-const HEAT_HIGH: [u8; 3] = [255, 222, 72];
-const BUY_PRINT: egui::Color32 = egui::Color32::from_rgb(55, 226, 176);
-const SELL_PRINT: egui::Color32 = egui::Color32::from_rgb(255, 91, 105);
-const GAP_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(55, 63, 78, 34);
-const GAP_BOUNDARY: egui::Color32 = egui::Color32::from_rgba_premultiplied(135, 145, 160, 90);
-const PROJECTION_INTERVAL: Duration = Duration::from_millis(100);
-
-/// One visible, already-projected order-flow frame.
-#[derive(Clone)]
-pub struct VisibleOrderflow {
-    projection: Arc<HeatmapProjection>,
-    first_bar_index: usize,
-    slot_count: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ProjectionLayout {
-    first_bar_index: usize,
-    slot_count: usize,
-    extend_live_end: bool,
-    // Cell y-positions are normalized against the price window at build
-    // time, so a cached frame is only valid for the exact same window
-    // (bit-compared: any pan/zoom or auto-fit shift must rebuild).
-    price_low_bits: u64,
-    price_high_bits: u64,
-}
-
-struct ProjectionCache {
-    built_at: Instant,
-    layout: ProjectionLayout,
-    frame: Arc<VisibleOrderflow>,
-}
-
-/// Health data consumed by the periodic AI-first application summary.
-#[derive(Debug, Clone)]
-pub struct OrderflowHealth {
-    pub enabled: bool,
-    pub status: &'static str,
-    pub generation: Option<u64>,
-    pub last_update_id: Option<u64>,
-    pub last_event_ms: Option<i64>,
-    pub bid_levels: usize,
-    pub ask_levels: usize,
-    pub active_levels: usize,
-    pub archived_runs: usize,
-    pub aggression_count: usize,
-    pub history_bytes: usize,
-    pub projection_cells: usize,
-    pub projection_aggressions: usize,
-    pub dropped_cells: usize,
-    pub dropped_aggressions: usize,
-    pub projection_ms: f32,
-    pub projection_builds: u64,
-    pub projection_cache_hits: u64,
-    pub config_revision: u64,
-    pub last_snapshot_observed_ms: Option<i64>,
-    pub depth_updates: u64,
-    pub depth_updates_since_summary: u64,
-    pub snapshots: u64,
-    pub gaps: u64,
-}
-
-#[derive(Debug, Clone)]
-enum CaptureStatus {
-    Disabled,
-    Connecting,
-    Buffering,
-    SnapshotFetching,
-    Live {
-        generation: u64,
-        last_update_id: u64,
-    },
-    Resyncing {
-        reason: &'static str,
-    },
-    Disconnected {
-        error_class: &'static str,
-    },
-    Error,
-}
-
-impl CaptureStatus {
-    fn label(&self) -> String {
-        match self {
-            Self::Disabled => "book off".to_owned(),
-            Self::Connecting => "book connecting".to_owned(),
-            Self::Buffering => "book buffering".to_owned(),
-            Self::SnapshotFetching => "book syncing".to_owned(),
-            Self::Live {
-                generation,
-                last_update_id,
-            } => format!("book live · gen {generation} · #{last_update_id}"),
-            Self::Resyncing { reason } => format!("book resync · {reason}"),
-            Self::Disconnected { error_class } => format!("book down · {error_class}"),
-            Self::Error => "book error".to_owned(),
+fn status_color(status: &CaptureStatus) -> egui::Color32 {
+    match status {
+        CaptureStatus::Live { .. } => egui::Color32::from_rgb(45, 205, 145),
+        CaptureStatus::Connecting | CaptureStatus::Buffering | CaptureStatus::SnapshotFetching => {
+            egui::Color32::from_rgb(240, 185, 11)
         }
-    }
-
-    fn code(&self) -> &'static str {
-        match self {
-            Self::Disabled => "disabled",
-            Self::Connecting => "connecting",
-            Self::Buffering => "buffering",
-            Self::SnapshotFetching => "snapshot_fetching",
-            Self::Live { .. } => "live",
-            Self::Resyncing { .. } => "resyncing",
-            Self::Disconnected { .. } => "disconnected",
-            Self::Error => "error",
-        }
-    }
-
-    fn color(&self) -> egui::Color32 {
-        match self {
-            Self::Live { .. } => egui::Color32::from_rgb(45, 205, 145),
-            Self::Connecting | Self::Buffering | Self::SnapshotFetching => {
-                egui::Color32::from_rgb(240, 185, 11)
-            }
-            Self::Disabled => egui::Color32::from_rgb(145, 155, 170),
-            Self::Resyncing { .. } | Self::Disconnected { .. } | Self::Error => {
-                egui::Color32::from_rgb(255, 99, 71)
-            }
-        }
+        CaptureStatus::Disabled => egui::Color32::from_rgb(145, 155, 170),
+        CaptureStatus::Resyncing { .. }
+        | CaptureStatus::Disconnected { .. }
+        | CaptureStatus::Error => egui::Color32::from_rgb(255, 99, 71),
     }
 }
 
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
     symbol: String,
+    /// UI mirror of the engine configuration. The engine owns
+    /// `price_grouping` (auto-base can rewrite it); the mirror adopts engine
+    /// changes through [`Self::sync_published`].
     config: HeatmapConfig,
-    history: LiquidityHistory,
+    worker: BookWorker,
+    published: BookPublished,
+    /// Engine bucket last adopted into the mirror, to detect auto-base moves.
+    last_seen_base: Decimal,
     show_settings: bool,
-    status: CaptureStatus,
-    generation_floor: u64,
-    latest_generation: Option<u64>,
-    last_snapshot_observed_ms: Option<i64>,
-    depth_updates: u64,
-    depth_updates_since_summary: u64,
-    config_revision: u64,
-    last_projection_cells: usize,
-    last_projection_aggressions: usize,
-    last_dropped_cells: usize,
-    last_dropped_aggressions: usize,
-    last_projection_ms: f32,
-    projection_builds: u64,
-    projection_cache_hits: u64,
-    projection_cache: Option<ProjectionCache>,
+    capture_grouping_draft: f64,
+    pending_capture_grouping_previous: Option<Decimal>,
+    last_requested_layout: Option<ProjectionLayout>,
+    last_request_at: Option<Instant>,
 }
 
 impl OrderflowView {
     #[must_use]
     pub fn new(symbol: impl Into<String>) -> Self {
+        let symbol = symbol.into();
         let config = HeatmapConfig::default();
+        let base_grouping = config.price_grouping;
         Self {
-            symbol: symbol.into(),
-            history: LiquidityHistory::new(config.clone()),
+            worker: BookWorker::spawn(&symbol),
+            symbol,
             config,
+            published: BookPublished::initial(),
+            last_seen_base: base_grouping,
             show_settings: false,
-            status: CaptureStatus::Disabled,
-            generation_floor: 0,
-            latest_generation: None,
-            last_snapshot_observed_ms: None,
-            depth_updates: 0,
-            depth_updates_since_summary: 0,
-            config_revision: 0,
-            last_projection_cells: 0,
-            last_projection_aggressions: 0,
-            last_dropped_cells: 0,
-            last_dropped_aggressions: 0,
-            last_projection_ms: 0.0,
-            projection_builds: 0,
-            projection_cache_hits: 0,
-            projection_cache: None,
+            capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
+            pending_capture_grouping_previous: None,
+            last_requested_layout: None,
+            last_request_at: None,
+        }
+    }
+
+    /// Pull the newest worker snapshot into this frame's mirror. Cheap: one
+    /// mutex lock and a small clone (frames are shared through `Arc`).
+    fn sync_published(&mut self) {
+        self.published = self.worker.published();
+        let base = self.published.base_price_grouping;
+        if base != self.last_seen_base {
+            self.last_seen_base = base;
+            // The engine auto-sized the capture bucket from live data; adopt
+            // it unless the user has a competing change staged.
+            if self.pending_capture_grouping_previous.is_none() {
+                self.config.price_grouping = base;
+                self.capture_grouping_draft = base.to_f64().unwrap_or(self.capture_grouping_draft);
+            }
         }
     }
 
@@ -205,8 +100,51 @@ impl OrderflowView {
         self.config.enabled
     }
 
+    /// Latest exchange timestamp for which live book state is known, while
+    /// capture is active. Drives how wide the forming bar's live tail grows.
+    #[must_use]
+    pub fn live_end_ms(&mut self) -> Option<i64> {
+        if !self.config.enabled {
+            return None;
+        }
+        self.sync_published();
+        self.published.live_end_ms
+    }
+
     pub fn toggle_settings(&mut self) {
         self.show_settings = !self.show_settings;
+    }
+
+    #[must_use]
+    pub fn settings_button_label(&self) -> String {
+        match self.config.display_grouping {
+            DisplayGrouping::Adaptive { .. } => "⚙ L2 · auto".to_owned(),
+            DisplayGrouping::Native => "⚙ L2 · 1×".to_owned(),
+            DisplayGrouping::Multiple(multiple) => format!("⚙ L2 · {multiple}×"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
+        let before = self.config.clone();
+        self.config.price_grouping = grouping;
+        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
+        self.commit_config_changes(before)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn base_capture_grouping_for_test(&mut self) -> Decimal {
+        self.flush_for_test();
+        self.published.base_price_grouping
+    }
+
+    /// Wait until the worker has applied and published everything sent so
+    /// far, then adopt the result. Makes the async pipeline deterministic in
+    /// tests; production code never blocks on the worker.
+    #[cfg(test)]
+    pub(crate) fn flush_for_test(&mut self) {
+        self.worker.flush();
+        self.sync_published();
     }
 
     /// Reset market-specific history while preserving visual/retention
@@ -215,21 +153,12 @@ impl OrderflowView {
     pub fn reset_for_symbol(&mut self, symbol: impl Into<String>) {
         self.symbol = symbol.into();
         self.config.enabled = false;
-        self.history = LiquidityHistory::new(self.config.clone());
-        self.status = CaptureStatus::Disabled;
-        self.generation_floor = 0;
-        self.latest_generation = None;
-        self.last_snapshot_observed_ms = None;
-        self.depth_updates = 0;
-        self.depth_updates_since_summary = 0;
-        self.last_projection_cells = 0;
-        self.last_projection_aggressions = 0;
-        self.last_dropped_cells = 0;
-        self.last_dropped_aggressions = 0;
-        self.last_projection_ms = 0.0;
-        self.projection_builds = 0;
-        self.projection_cache_hits = 0;
-        self.projection_cache = None;
+        self.pending_capture_grouping_previous = None;
+        self.last_requested_layout = None;
+        self.last_request_at = None;
+        self.published = BookPublished::initial();
+        self.worker
+            .send(BookCommand::ResetForSymbol(self.symbol.clone()));
     }
 
     /// Commit a capture toggle only after its feed command was accepted.
@@ -237,206 +166,79 @@ impl OrderflowView {
         if self.config.enabled == enabled {
             return;
         }
-        if !enabled {
-            self.mark_gap_at_latest("capture_disabled");
-        }
         self.config.enabled = enabled;
-        self.generation_floor = generation_floor;
-        self.invalidate_projection();
-        self.status = if enabled {
-            CaptureStatus::Connecting
-        } else {
-            CaptureStatus::Disabled
-        };
-        self.apply_non_grouping_config();
-        self.config_revision = self.config_revision.saturating_add(1);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "HEATMAP_CAPTURE_CHANGED",
-            symbol = self.symbol.as_str(),
+        if !enabled {
+            // Drop the local frame immediately; the worker clears its own.
+            self.published.frame = None;
+        }
+        self.worker.send(BookCommand::SetEnabled {
             enabled,
             generation_floor,
-            config_revision = self.config_revision,
-            action = if enabled { "start_capture" } else { "stop_capture" },
-            "book heatmap capture changed"
-        );
+        });
     }
 
     /// Mark the existing generation discontinuous before the feed is restarted.
     pub fn prepare_restart(&mut self, generation_floor: u64, reason: &'static str) {
-        self.mark_gap_at_latest(reason);
-        self.generation_floor = generation_floor;
-        self.status = CaptureStatus::Connecting;
-        self.invalidate_projection();
+        self.worker.send(BookCommand::PrepareRestart {
+            generation_floor,
+            reason,
+        });
+    }
+
+    /// Commit a staged base-grouping change only after the feed accepted its
+    /// restart command. Until this point the old history and capture remain
+    /// fully usable.
+    pub fn accept_capture_grouping_restart(&mut self, generation_floor: u64) {
+        match self.pending_capture_grouping_previous.take() {
+            Some(_previous) => {
+                self.last_seen_base = self.config.price_grouping;
+                self.worker.send(BookCommand::AcceptGroupingRestart {
+                    grouping: self.config.price_grouping,
+                    generation_floor,
+                });
+            }
+            None => self.prepare_restart(generation_floor, "configuration_restart"),
+        }
+    }
+
+    /// Roll back a staged base-grouping change when the feed command could not
+    /// be queued. The engine never saw the change, so only the mirror moves.
+    pub fn reject_capture_grouping_restart(&mut self, reason: &'static str) {
+        let Some(previous) = self.pending_capture_grouping_previous.take() else {
+            return;
+        };
+        let requested = self.config.price_grouping;
+        self.config.price_grouping = previous;
+        self.capture_grouping_draft = previous.to_f64().unwrap_or(self.capture_grouping_draft);
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "HEATMAP_GROUPING_ROLLED_BACK",
+            symbol = self.symbol.as_str(),
+            previous_grouping = %previous,
+            requested_grouping = %requested,
+            reason,
+            action = "keep_existing_capture_and_history",
+            "base grouping change was rolled back because capture restart was not queued"
+        );
     }
 
     /// Record a factual aggregate trade for the aggression overlay.
     pub fn record_trade(&mut self, trade: &Trade) {
         if self.config.enabled {
-            self.history.record_aggression(trade);
+            self.worker.send(BookCommand::Trade(trade.clone()));
         }
     }
 
-    /// Apply one already-synchronized feed event.
+    /// Forward one feed event to the book thread. Generation and symbol
+    /// filtering happen engine-side.
     pub fn handle_depth_event(&mut self, event: DepthEvent) {
-        let (symbol, generation) = match &event {
-            DepthEvent::Status {
-                symbol, generation, ..
-            }
-            | DepthEvent::Snapshot {
-                symbol, generation, ..
-            }
-            | DepthEvent::Update {
-                symbol, generation, ..
-            } => (symbol, *generation),
-        };
-        if !self.config.enabled {
-            return;
-        }
-        if !symbol.eq_ignore_ascii_case(&self.symbol) {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HEATMAP_SYMBOL_MISMATCH",
-                expected_symbol = self.symbol.as_str(),
-                got_symbol = symbol.as_str(),
-                generation,
-                action = "ignore_event",
-                "ignored order-book event for another symbol"
-            );
-            return;
-        }
-        let minimum_generation = self
-            .latest_generation
-            .unwrap_or(self.generation_floor)
-            .max(self.generation_floor);
-        if generation < minimum_generation {
-            tracing::debug!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HEATMAP_STALE_GENERATION",
-                symbol = self.symbol.as_str(),
-                generation,
-                generation_floor = self.generation_floor,
-                latest_generation = self.latest_generation,
-                minimum_generation,
-                action = "ignore_event",
-                "ignored queued event from a stopped depth task"
-            );
-            return;
-        }
-        self.latest_generation = Some(generation);
-
-        match event {
-            DepthEvent::Status { status, .. } => self.handle_status(generation, status),
-            DepthEvent::Snapshot {
-                observed_at_ms,
-                effective_at_ms,
-                snapshot,
-                ..
-            } => {
-                self.invalidate_projection();
-                self.last_snapshot_observed_ms = Some(observed_at_ms);
-                if let Err(error) =
-                    self.history
-                        .install_snapshot(effective_at_ms, generation, snapshot)
-                {
-                    self.log_history_error("snapshot", generation, &error);
-                    self.mark_gap_at_latest("snapshot_rejected");
-                    self.status = CaptureStatus::Error;
-                } else {
-                    tracing::info!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "HEATMAP_SNAPSHOT_APPLIED",
-                        symbol = self.symbol.as_str(),
-                        generation,
-                        observed_at_ms,
-                        effective_at_ms,
-                        bid_levels = self.history.book().bid_count(),
-                        ask_levels = self.history.book().ask_count(),
-                        coverage = ?self.history.book().coverage(),
-                        action = "open_coverage",
-                        "book snapshot installed in heatmap history"
-                    );
-                }
-            }
-            DepthEvent::Update {
-                event_time_ms,
-                delta,
-                ..
-            } => match self.history.apply_delta(event_time_ms, &delta) {
-                Ok(_) => {
-                    self.depth_updates = self.depth_updates.saturating_add(1);
-                    self.depth_updates_since_summary =
-                        self.depth_updates_since_summary.saturating_add(1);
-                }
-                Err(error) => {
-                    self.log_history_error("delta", generation, &error);
-                    self.mark_gap_at_latest("delta_rejected");
-                    self.status = CaptureStatus::Error;
-                }
-            },
-        }
+        self.worker.send(BookCommand::Depth(event));
     }
 
-    fn handle_status(&mut self, generation: u64, status: DepthStatus) {
-        self.status = match status {
-            DepthStatus::Connecting => CaptureStatus::Connecting,
-            DepthStatus::Buffering { .. } => CaptureStatus::Buffering,
-            DepthStatus::SnapshotFetching { .. } => CaptureStatus::SnapshotFetching,
-            DepthStatus::Synchronized { last_update_id, .. } => CaptureStatus::Live {
-                generation,
-                last_update_id,
-            },
-            DepthStatus::Resyncing { reason } => {
-                let reason = resync_reason_code(&reason);
-                self.mark_gap_at_latest(reason);
-                CaptureStatus::Resyncing { reason }
-            }
-            DepthStatus::Disconnected { error_class } => {
-                self.mark_gap_at_latest(error_class);
-                CaptureStatus::Disconnected { error_class }
-            }
-            DepthStatus::Stopped => CaptureStatus::Disabled,
-        };
-    }
-
-    fn mark_gap_at_latest(&mut self, reason: &'static str) {
-        let Some(timestamp_ms) = self.history.latest_book_ms() else {
-            return;
-        };
-        if matches!(self.history.status(), HistoryStatus::Gap { .. }) {
-            return;
-        }
-        if let Err(error) = self.history.mark_gap(timestamp_ms, reason) {
-            self.log_history_error("gap", self.latest_generation.unwrap_or(0), &error);
-        } else {
-            self.invalidate_projection();
-        }
-    }
-
-    fn log_history_error(
-        &self,
-        operation: &'static str,
-        generation: u64,
-        error: &dyn std::fmt::Display,
-    ) {
-        tracing::warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "HEATMAP_HISTORY_REJECTED",
-            symbol = self.symbol.as_str(),
-            generation,
-            operation,
-            error = %error,
-            action = "wait_for_fresh_snapshot",
-            "order-flow history rejected an event"
-        );
-    }
-
-    /// Build renderer-independent primitives for the visible bar slice.
+    /// Request projection of the visible bar slice and return the newest
+    /// already-built frame. Never blocks: a heavy projection only delays the
+    /// next frame swap, not the UI.
     pub fn project_visible(
         &mut self,
         first_bar_index: usize,
@@ -448,64 +250,29 @@ impl OrderflowView {
         if !self.config.enabled {
             return None;
         }
-        let layout = ProjectionLayout {
+        self.sync_published();
+        let request = ProjectionRequest {
             first_bar_index,
-            slot_count: closed.len() + usize::from(partial.is_some()),
+            closed: closed.to_vec(),
+            partial: partial.cloned(),
             extend_live_end,
-            price_low_bits: price_range.0.to_bits(),
-            price_high_bits: price_range.1.to_bits(),
+            price_range,
         };
-        let now = Instant::now();
-        if let Some(cache) = &self.projection_cache
-            && cache.layout == layout
-            && now.saturating_duration_since(cache.built_at) < PROJECTION_INTERVAL
-        {
-            self.projection_cache_hits = self.projection_cache_hits.saturating_add(1);
-            return Some(Arc::clone(&cache.frame));
+        let layout = request.layout();
+        let due = self
+            .last_request_at
+            .is_none_or(|at| at.elapsed() >= PROJECTION_INTERVAL);
+        if self.last_requested_layout != Some(layout) || due {
+            self.worker.send(BookCommand::Project(request));
+            self.last_requested_layout = Some(layout);
+            self.last_request_at = Some(Instant::now());
         }
-
-        let low = Decimal::from_f64(price_range.0)?;
-        let high = Decimal::from_f64(price_range.1)?;
-        let prices = PriceWindow::new(low, high)?;
-        let timeline = BarTimeline::from_bars(
-            first_bar_index,
-            closed,
-            partial,
-            if extend_live_end {
-                self.history.latest_book_ms()
-            } else {
-                None
-            },
-        );
-        if timeline.is_empty() {
-            return None;
-        }
-        let started = now;
-        let projection = project(&self.history, &timeline, prices);
-        self.last_projection_ms = started.elapsed().as_secs_f32() * 1000.0;
-        self.last_projection_cells = projection.cells.len();
-        self.last_projection_aggressions = projection.aggressions.len();
-        self.last_dropped_cells = projection.dropped_cells;
-        self.last_dropped_aggressions = projection.dropped_aggressions;
-        self.projection_builds = self.projection_builds.saturating_add(1);
-        let frame = Arc::new(VisibleOrderflow {
-            projection: Arc::new(projection),
-            first_bar_index,
-            slot_count: timeline.len(),
-        });
-        self.projection_cache = Some(ProjectionCache {
-            built_at: now,
-            layout,
-            frame: Arc::clone(&frame),
-        });
-        Some(frame)
+        self.published.frame.clone()
     }
 
-    fn invalidate_projection(&mut self) {
-        self.projection_cache = None;
-    }
-
-    /// Draw resting liquidity and explicit coverage gaps behind candles.
+    /// Draw resting liquidity, coverage gaps and factual liquidity changes
+    /// behind the candle layer.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_background(
         &self,
         painter: &egui::Painter,
@@ -513,76 +280,25 @@ impl OrderflowView {
         viewport: &Viewport,
         total_bars: usize,
         frame: &VisibleOrderflow,
+        canvas_background: egui::Color32,
+        live_span: f32,
     ) {
-        let clip = painter.with_clip_rect(chart_rect);
-        let mut mesh = egui::Mesh::default();
-        mesh.vertices
-            .reserve(frame.projection.cells.len().saturating_mul(4));
-        mesh.indices
-            .reserve(frame.projection.cells.len().saturating_mul(6));
-
-        for cell in &frame.projection.cells {
-            let rect = projected_rect(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                cell.x0,
-                cell.x1,
-                cell.y0,
-                cell.y1,
-            );
-            let color = heat_color(cell.side, cell.intensity, cell.alpha);
-            if rect.is_positive() {
-                mesh.add_colored_rect(rect, color);
-            }
-        }
-        if !mesh.is_empty() {
-            clip.add(egui::Shape::mesh(mesh));
-        }
-
-        for gap in &frame.projection.gaps {
-            let x0 = projected_x(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                gap.x0,
-            );
-            let x1 = projected_x(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                gap.x1,
-            );
-            let rect = egui::Rect::from_min_max(
-                egui::pos2(x0.min(x1), chart_rect.top()),
-                egui::pos2(x0.max(x1), chart_rect.bottom()),
-            )
-            .intersect(chart_rect);
-            if !rect.is_positive() {
-                continue;
-            }
-            clip.rect_filled(rect, egui::Rounding::ZERO, GAP_FILL);
-            draw_dashed_vertical(&clip, rect.left(), rect);
-            draw_dashed_vertical(&clip, rect.right(), rect);
-            if rect.width() >= 100.0 {
-                clip.text(
-                    rect.center_top() + egui::vec2(0.0, 18.0),
-                    egui::Align2::CENTER_TOP,
-                    gap_label(&gap.reason),
-                    egui::FontId::proportional(10.0),
-                    egui::Color32::from_gray(175),
-                );
-            }
-        }
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            live_span,
+        );
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let context = RenderContext::new(&frame.projection, layout, &style);
+        draw_heatmap_background(painter, &context);
+        draw_liquidity_events(painter, &context);
     }
 
-    /// Draw factual aggressive prints over candles.
+    /// Draw factual aggressive prints and the compact visual key over candles.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
         painter: &egui::Painter,
@@ -590,37 +306,29 @@ impl OrderflowView {
         viewport: &Viewport,
         total_bars: usize,
         frame: &VisibleOrderflow,
+        canvas_background: egui::Color32,
+        live_span: f32,
     ) {
-        let clip = painter.with_clip_rect(chart_rect);
-        for trade in &frame.projection.aggressions {
-            let x = projected_x(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                trade.x,
-            );
-            let y = chart_rect.top() + trade.y as f32 * chart_rect.height();
-            if !chart_rect.contains(egui::pos2(x, y)) {
-                continue;
-            }
-            let radius = 2.5 + trade.size * 8.0;
-            let color = match trade.side {
-                Side::Buy => BUY_PRINT,
-                Side::Sell => SELL_PRINT,
-            };
-            clip.circle_filled(egui::pos2(x, y), radius, color.gamma_multiply(0.72));
-            clip.circle_stroke(egui::pos2(x, y), radius, egui::Stroke::new(1.0_f32, color));
-        }
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            live_span,
+        );
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let context = RenderContext::new(&frame.projection, layout, &style);
+        draw_aggression_bubbles(painter, &context);
+        draw_compact_legend(painter, &context);
     }
 
     pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
         if !self.config.enabled {
             return;
         }
-        let text = self.status.label();
-        let color = self.status.color();
+        let text = self.published.status.label();
+        let color = status_color(&self.published.status);
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), color);
         let pos = egui::pos2(
             chart_rect.right() - galley.size().x - 10.0,
@@ -638,34 +346,205 @@ impl OrderflowView {
         painter.galley(pos, galley, color);
     }
 
+    pub fn health(&mut self) -> OrderflowHealth {
+        self.sync_published();
+        self.published.health.clone()
+    }
+
+    pub fn reset_summary_counters(&mut self) {
+        self.worker.send(BookCommand::ResetSummaryCounters);
+    }
+
     /// Draw the floating settings window and return whether capture must
-    /// restart because the exact price grouping changed.
+    /// restart because the base capture resolution changed.
     pub fn draw_settings(&mut self, ctx: &egui::Context) -> bool {
         if !self.show_settings {
             return false;
         }
+        self.sync_published();
         let before = self.config.clone();
         let mut open = self.show_settings;
-        egui::Window::new("order flow layers")
+        egui::Window::new("order flow · liquidity map")
             .open(&mut open)
-            .resizable(false)
+            .default_width(420.0)
+            .resizable(true)
             .show(ctx, |ui| {
-                ui.label("History begins at the first live depth sync.");
-                ui.small("Binance does not provide historical L2 backfill.");
-                ui.separator();
-
-                let mut grouping = self.config.price_grouping.to_f64().unwrap_or(0.01);
+                egui::ScrollArea::vertical()
+                    .id_salt("orderflow_settings_scroll")
+                    .max_height(560.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("price bucket");
-                    ui.add(
-                        egui::DragValue::new(&mut grouping)
-                            .range(0.000_000_01..=1_000_000.0)
-                            .speed(0.01),
+                    ui.label(
+                        egui::RichText::new("BOOKMAP VIEW")
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 222, 92)),
+                    );
+                    ui.label(
+                        egui::RichText::new(self.published.status.label())
+                            .small()
+                            .color(status_color(&self.published.status)),
                     );
                 });
-                self.config.price_grouping =
-                    Decimal::from_f64(grouping.max(0.000_000_01)).unwrap_or(Decimal::new(1, 2));
+                ui.small(
+                    "Brightness is resting liquidity. Green/red bubbles are confirmed trades.",
+                );
+                ui.small(
+                    "A bite means a compatible L2 reduction; a violet tail is an unattributed withdrawal.",
+                );
+                draw_preview(ui, &self.config).on_hover_text(
+                    "Deterministic preview: persistent wall, aligned depletion, full withdrawal and clustered trades.",
+                );
+                ui.separator();
 
+                ui.horizontal(|ui| {
+                    ui.strong("liquidity ranges");
+                    ui.add_space(8.0);
+                    egui::ComboBox::from_id_salt("heatmap_theme")
+                        .selected_text(theme_label(self.config.theme))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.config.theme,
+                                HeatmapTheme::Bookmap,
+                                "Bookmap",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.theme,
+                                HeatmapTheme::HighContrast,
+                                "High contrast",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.theme,
+                                HeatmapTheme::ColorBlind,
+                                "Color blind",
+                            );
+                        });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("display range");
+                    egui::ComboBox::from_id_salt("heatmap_display_grouping")
+                        .selected_text(display_grouping_label(self.config.display_grouping))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.config.display_grouping,
+                                DisplayGrouping::Adaptive { target_rows: 160 },
+                                "Auto · follows zoom",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.display_grouping,
+                                DisplayGrouping::Native,
+                                "Native · 1×",
+                            );
+                            for multiple in [2, 5, 10, 25, 50] {
+                                ui.selectable_value(
+                                    &mut self.config.display_grouping,
+                                    DisplayGrouping::Multiple(multiple),
+                                    format!("Range · {multiple}×"),
+                                );
+                            }
+                            ui.selectable_value(
+                                &mut self.config.display_grouping,
+                                DisplayGrouping::Multiple(3),
+                                "Custom…",
+                            );
+                        });
+                });
+                match &mut self.config.display_grouping {
+                    DisplayGrouping::Adaptive { target_rows } => {
+                        ui.add(
+                            egui::Slider::new(target_rows, 40..=400)
+                                .text("target screen rows")
+                                .logarithmic(true),
+                        )
+                        .on_hover_text(
+                            "automatically widens price ranges as you zoom out; history stays intact",
+                        );
+                    }
+                    DisplayGrouping::Multiple(multiple)
+                        if ![2_u32, 5, 10, 25, 50].contains(multiple) =>
+                    {
+                        ui.add(
+                            egui::DragValue::new(multiple)
+                                .range(1..=1_000_000)
+                                .prefix("custom multiple "),
+                        );
+                    }
+                    DisplayGrouping::Native | DisplayGrouping::Multiple(_) => {}
+                }
+                ui.small(
+                    "Display grouping is instant and non-destructive; it never restarts L2 capture.",
+                );
+                ui.add(egui::Slider::new(&mut self.config.opacity, 0.05..=1.0).text("brightness"));
+                ui.add(
+                    egui::Slider::new(&mut self.config.gamma, 0.25..=2.0)
+                        .text("quiet liquidity"),
+                );
+
+                ui.separator();
+                ui.strong("aggression bubbles");
+                ui.checkbox(&mut self.config.show_aggressions, "show confirmed executions")
+                    .on_hover_text("confirmed Binance aggTrades; color is the aggressor side");
+                ui.add_enabled_ui(self.config.show_aggressions, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("cluster");
+                        egui::ComboBox::from_id_salt("heatmap_bubble_cluster")
+                            .selected_text(cluster_label(self.config.bubble_cluster_ms))
+                            .show_ui(ui, |ui| {
+                                for (milliseconds, label) in [
+                                    (0, "Raw"),
+                                    (50, "50 ms"),
+                                    (100, "100 ms"),
+                                    (200, "200 ms"),
+                                    (500, "500 ms"),
+                                ] {
+                                    ui.selectable_value(
+                                        &mut self.config.bubble_cluster_ms,
+                                        milliseconds,
+                                        label,
+                                    );
+                                }
+                            });
+                    });
+                });
+
+                ui.separator();
+                ui.strong("liquidity response");
+                ui.checkbox(
+                    &mut self.config.show_liquidity_events,
+                    "show bites and withdrawal tails",
+                );
+                ui.add_enabled(
+                    self.config.show_liquidity_events,
+                    egui::Slider::new(&mut self.config.liquidity_correlation_ms, 25..=1_000)
+                        .text("matching window ms")
+                        .logarithmic(true),
+                )
+                .on_hover_text(
+                    "time/price window used to associate a factual trade with a factual L2 reduction",
+                );
+                ui.add_enabled(
+                    self.config.show_liquidity_events,
+                    egui::Slider::new(&mut self.config.min_unattributed_reduction, 0.0..=1.0)
+                        .text("min unattributed pull"),
+                )
+                .on_hover_text(
+                    "hide unattributed (depth-only) reductions smaller than this fraction of the level; aggression-aligned bites always show",
+                );
+                ui.add_enabled(
+                    self.config.show_liquidity_events,
+                    egui::Slider::new(&mut self.config.min_unattributed_pull_share, 0.0..=1.0)
+                        .text("min pull vs walls"),
+                )
+                .on_hover_text(
+                    "hide unattributed pulls smaller than this share of the visible full-intensity liquidity (P99); a deep pull of a tiny level is noise, of a wall it is the story",
+                );
+                ui.small(
+                    "Association is evidence, not causality: depth updates can also contain pulls or replacements.",
+                );
+
+                ui.separator();
+                ui.strong("scale & history");
                 let mut retention_minutes = self.config.retention_ms as f64 / 60_000.0;
                 ui.add(
                     egui::Slider::new(&mut retention_minutes, 1.0..=1_440.0)
@@ -673,13 +552,6 @@ impl OrderflowView {
                         .text("retention min"),
                 );
                 self.config.retention_ms = (retention_minutes * 60_000.0) as i64;
-                ui.add(egui::Slider::new(&mut self.config.opacity, 0.0..=1.0).text("opacity"));
-                ui.add(egui::Slider::new(&mut self.config.gamma, 0.1..=3.0).text("gamma"));
-                ui.checkbox(&mut self.config.show_aggressions, "aggression bubbles")
-                    .on_hover_text(
-                        "confirmed aggTrades; bubbles never mutate resting book quantities",
-                    );
-
                 let mut automatic = matches!(self.config.intensity_mode, IntensityMode::VisibleP99);
                 ui.checkbox(&mut automatic, "auto intensity (visible P99)");
                 if automatic {
@@ -699,252 +571,124 @@ impl OrderflowView {
                         Decimal::from_f64(maximum.max(0.000_000_01)).unwrap_or(Decimal::ONE),
                     );
                 }
+                ui.checkbox(&mut self.config.show_legend, "show chart legend");
+
+                ui.collapsing("advanced · capture resolution", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("base price bucket");
+                        ui.add(
+                            egui::DragValue::new(&mut self.capture_grouping_draft)
+                                .range(0.000_000_01..=1_000_000.0)
+                                .speed(0.01),
+                        );
+                    });
+                    let candidate =
+                        Decimal::from_f64(self.capture_grouping_draft.max(0.000_000_01))
+                            .unwrap_or(Decimal::new(1, 2));
+                    if ui
+                        .add_enabled(
+                            candidate != self.config.price_grouping,
+                            egui::Button::new("apply base resolution & resync"),
+                        )
+                        .clicked()
+                    {
+                        self.config.price_grouping = candidate;
+                    }
+                    ui.small(
+                        "Changing the capture bucket requires a fresh snapshot and clears retained L2 history.",
+                    );
+                });
 
                 ui.separator();
+                let health = &self.published.health;
                 ui.label(format!(
                     "{} · {} bid / {} ask levels",
-                    self.status.label(),
-                    self.history.book().bid_count(),
-                    self.history.book().ask_count()
+                    self.published.status.label(),
+                    health.bid_levels,
+                    health.ask_levels
                 ));
                 ui.label(format!(
-                    "{} runs · {:.1} MiB retained",
-                    self.history.archived_run_count() + self.history.active_level_count(),
-                    self.history.approximate_history_bytes() as f64 / (1024.0 * 1024.0)
+                    "{} runs · {:.1} MiB retained · projection {:.1} ms",
+                    health.archived_runs + health.active_levels,
+                    health.history_bytes as f64 / (1024.0 * 1024.0),
+                    health.projection_ms
                 ));
-                if ui.button("reset visual defaults").clicked() {
+                ui.label(format!(
+                    "effective range {} · {}× base",
+                    health.effective_grouping, health.effective_grouping_multiple
+                ));
+                if ui.button("reset Bookmap visuals").clicked() {
                     let enabled = self.config.enabled;
+                    let price_grouping = self.config.price_grouping;
+                    self.capture_grouping_draft =
+                        price_grouping.to_f64().unwrap_or(self.capture_grouping_draft);
                     self.config = HeatmapConfig {
                         enabled,
+                        price_grouping,
                         ..HeatmapConfig::default()
                     };
                 }
+                    });
             });
         self.show_settings = open;
 
+        self.commit_config_changes(before)
+    }
+
+    fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
         self.config.sanitize();
         if self.config == before {
             return false;
         }
-        self.invalidate_projection();
-
-        let grouping_changed = self.config.price_grouping != before.price_grouping;
-        if grouping_changed {
-            match self
-                .history
-                .reset_price_grouping(self.config.price_grouping)
-            {
-                Ok(reset) => tracing::info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "HEATMAP_GROUPING_RESET",
-                    symbol = self.symbol.as_str(),
-                    previous_grouping = %reset.previous,
-                    current_grouping = %reset.current,
-                    dropped_runs = reset.dropped_runs,
-                    dropped_aggressions = reset.dropped_aggressions,
-                    action = "restart_capture",
-                    "price grouping changed; historical runs were reset honestly"
-                ),
-                Err(error) => self.log_history_error(
-                    "grouping_reset",
-                    self.latest_generation.unwrap_or(0),
-                    &error,
-                ),
-            }
+        let capture_grouping_changed = self.config.price_grouping != before.price_grouping;
+        let restart_required = capture_grouping_changed && self.config.enabled;
+        if restart_required {
+            // Stage the bucket: visual changes apply now, the destructive
+            // grouping reset only after the feed accepts the restart command.
+            self.pending_capture_grouping_previous = Some(before.price_grouping);
+            self.worker
+                .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+        } else if capture_grouping_changed {
+            self.last_seen_base = self.config.price_grouping;
+            self.worker
+                .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+            self.worker
+                .send(BookCommand::ApplyGroupingNow(self.config.price_grouping));
+        } else {
+            self.worker
+                .send(BookCommand::ApplyVisualConfig(self.config.clone()));
         }
-        self.apply_non_grouping_config();
-        self.config_revision = self.config_revision.saturating_add(1);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "HEATMAP_CONFIG_CHANGED",
-            symbol = self.symbol.as_str(),
-            config_revision = self.config_revision,
-            enabled = self.config.enabled,
-            retention_ms = self.config.retention_ms,
-            price_grouping = %self.config.price_grouping,
-            opacity = self.config.opacity,
-            gamma = self.config.gamma,
-            show_aggressions = self.config.show_aggressions,
-            grouping_changed,
-            action = if grouping_changed { "restart_capture" } else { "reproject" },
-            "heatmap configuration changed"
-        );
-        grouping_changed && self.config.enabled
-    }
-
-    fn apply_non_grouping_config(&mut self) {
-        if let Err(error) = self.history.update_config(self.config.clone()) {
-            self.log_history_error("config_update", self.latest_generation.unwrap_or(0), &error);
-        }
-    }
-
-    pub fn health(&self) -> OrderflowHealth {
-        let (generation, last_update_id, last_event_ms) = match self.history.status() {
-            HistoryStatus::Synced {
-                generation,
-                last_update_id,
-                last_event_ms,
-            } => (Some(generation), last_update_id, Some(last_event_ms)),
-            HistoryStatus::Gap {
-                from_generation, ..
-            } => (
-                from_generation,
-                self.history.book().last_update_id(),
-                self.history.latest_book_ms(),
-            ),
-            HistoryStatus::Empty => (None, None, None),
-        };
-        let counters = self.history.counters();
-        OrderflowHealth {
-            enabled: self.config.enabled,
-            status: self.status.code(),
-            generation,
-            last_update_id,
-            last_event_ms,
-            bid_levels: self.history.book().bid_count(),
-            ask_levels: self.history.book().ask_count(),
-            active_levels: self.history.active_level_count(),
-            archived_runs: self.history.archived_run_count(),
-            aggression_count: self.history.aggressions().count(),
-            history_bytes: self.history.approximate_history_bytes(),
-            projection_cells: self.last_projection_cells,
-            projection_aggressions: self.last_projection_aggressions,
-            dropped_cells: self.last_dropped_cells,
-            dropped_aggressions: self.last_dropped_aggressions,
-            projection_ms: self.last_projection_ms,
-            projection_builds: self.projection_builds,
-            projection_cache_hits: self.projection_cache_hits,
-            config_revision: self.config_revision,
-            last_snapshot_observed_ms: self.last_snapshot_observed_ms,
-            depth_updates: self.depth_updates,
-            depth_updates_since_summary: self.depth_updates_since_summary,
-            snapshots: counters.snapshots,
-            gaps: counters.gaps,
-        }
-    }
-
-    pub fn reset_summary_counters(&mut self) {
-        self.depth_updates_since_summary = 0;
+        restart_required
     }
 }
 
-fn draw_dashed_vertical(painter: &egui::Painter, x: f32, rect: egui::Rect) {
-    let mut y = rect.top();
-    while y < rect.bottom() {
-        painter.line_segment(
-            [
-                egui::pos2(x, y),
-                egui::pos2(x, (y + 4.0).min(rect.bottom())),
-            ],
-            egui::Stroke::new(1.0_f32, GAP_BOUNDARY),
-        );
-        y += 9.0;
+fn theme_label(theme: HeatmapTheme) -> &'static str {
+    match theme {
+        HeatmapTheme::Bookmap => "Bookmap",
+        HeatmapTheme::HighContrast => "High contrast",
+        HeatmapTheme::ColorBlind => "Color blind",
     }
 }
 
-fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
-    match reason {
-        DepthResyncReason::SnapshotTooOld { .. } => "snapshot_too_old",
-        DepthResyncReason::SequenceGap { .. } => "sequence_gap",
-        DepthResyncReason::SnapshotAttemptsExhausted { .. } => "snapshot_attempts_exhausted",
+fn display_grouping_label(grouping: DisplayGrouping) -> String {
+    match grouping {
+        DisplayGrouping::Native => "Native · 1×".to_owned(),
+        DisplayGrouping::Multiple(multiple) => format!("Range · {multiple}×"),
+        DisplayGrouping::Adaptive { target_rows } => format!("Auto · {target_rows} rows"),
     }
 }
 
-fn gap_label(reason: &str) -> &'static str {
-    match reason {
-        "book_unavailable_before_capture" => "book unavailable before capture",
-        "capture_disabled" => "book capture disabled",
-        "sequence_gap" => "book gap · resynchronizing",
-        _ => "book continuity unavailable",
-    }
-}
-
-fn projected_x(
-    chart_rect: egui::Rect,
-    viewport: &Viewport,
-    total_bars: usize,
-    first_bar_index: usize,
-    slot_count: usize,
-    normalized: f64,
-) -> f32 {
-    let position = first_bar_index as f32 - 0.5 + normalized as f32 * slot_count as f32;
-    viewport.x_at_bar_position(position, chart_rect.right(), total_bars)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn projected_rect(
-    chart_rect: egui::Rect,
-    viewport: &Viewport,
-    total_bars: usize,
-    first_bar_index: usize,
-    slot_count: usize,
-    x0: f64,
-    x1: f64,
-    y0: f64,
-    y1: f64,
-) -> egui::Rect {
-    let left = projected_x(
-        chart_rect,
-        viewport,
-        total_bars,
-        first_bar_index,
-        slot_count,
-        x0,
-    );
-    let right = projected_x(
-        chart_rect,
-        viewport,
-        total_bars,
-        first_bar_index,
-        slot_count,
-        x1,
-    );
-    let top = chart_rect.top() + y0 as f32 * chart_rect.height();
-    let bottom = chart_rect.top() + y1 as f32 * chart_rect.height();
-    let mut rect = egui::Rect::from_min_max(
-        egui::pos2(left.min(right), top.min(bottom)),
-        egui::pos2(left.max(right), top.max(bottom)),
-    );
-    if rect.height() < 1.0 {
-        rect = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width().max(0.5), 1.0));
-    }
-    rect.intersect(chart_rect)
-}
-
-fn heat_color(side: BookSide, intensity: f32, alpha: f32) -> egui::Color32 {
-    let t = intensity.clamp(0.0, 1.0);
-    let (low, mid) = match side {
-        BookSide::Bid => (BID_LOW, BID_MID),
-        BookSide::Ask => (ASK_LOW, ASK_MID),
-    };
-    let rgb = if t < 0.7 {
-        lerp_rgb(low, mid, t / 0.7)
+fn cluster_label(milliseconds: i64) -> String {
+    if milliseconds == 0 {
+        "Raw".to_owned()
     } else {
-        lerp_rgb(mid, HEAT_HIGH, (t - 0.7) / 0.3)
-    };
-    egui::Color32::from_rgba_unmultiplied(
-        rgb[0],
-        rgb[1],
-        rgb[2],
-        (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
-    )
-}
-
-fn lerp_rgb(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [
-        (f32::from(a[0]) + (f32::from(b[0]) - f32::from(a[0])) * t).round() as u8,
-        (f32::from(a[1]) + (f32::from(b[1]) - f32::from(a[1])) * t).round() as u8,
-        (f32::from(a[2]) + (f32::from(b[2]) - f32::from(a[2])) * t).round() as u8,
-    ]
+        format!("{milliseconds} ms")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_feed_binance::depth::DepthStatus;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
     fn snapshot_event(generation: u64) -> DepthEvent {
@@ -979,146 +723,106 @@ mod tests {
     }
 
     #[test]
-    fn disabled_view_ignores_book_and_trade_events() {
+    fn worker_round_trip_publishes_book_state_and_frame() {
         let mut view = OrderflowView::new("BTCUSDT");
-        view.handle_depth_event(snapshot_event(1));
-        view.record_trade(&Trade {
-            agg_id: 1,
-            timestamp_ms: 1000,
-            price: Decimal::from(100),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
+        view.set_enabled(true, 10);
+        view.handle_depth_event(snapshot_event(10));
+        // Advance book time so the open runs have visible width.
+        view.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_050,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
         });
-        assert!(!view.history.book().is_initialized());
-        assert_eq!(view.history.aggressions().count(), 0);
+        view.flush_for_test();
+        assert_eq!(view.health().status, "connecting");
+        assert_eq!(view.health().active_levels, 2);
+
+        let bars = [bar(900, 1_100)];
+        // First call queues the projection; the frame appears after a flush.
+        let first = view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        assert!(first.is_none());
+        view.flush_for_test();
+        let frame = view
+            .project_visible(0, &bars, None, true, (98.0, 102.0))
+            .expect("published frame");
+        assert!(frame.projection.enabled);
+        assert!(!frame.projection.cells.is_empty());
     }
 
     #[test]
-    fn effective_snapshot_time_allows_earlier_buffered_observation() {
-        let mut view = OrderflowView::new("BTCUSDT");
-        view.set_enabled(true, 100);
-        view.handle_depth_event(snapshot_event(100));
-        assert_eq!(view.history.latest_book_ms(), Some(999));
-        assert_eq!(view.last_snapshot_observed_ms, Some(1_100));
-    }
-
-    #[test]
-    fn projection_is_cached_at_depth_cadence_and_gap_invalidates_it() {
+    fn disabling_capture_drops_the_published_frame() {
         let mut view = OrderflowView::new("BTCUSDT");
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
+        view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        view.flush_for_test();
+        assert!(
+            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+                .is_some()
+        );
 
-        let first = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
-            .unwrap();
-        let second = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
-            .unwrap();
-        assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(view.projection_builds, 1);
-        assert_eq!(view.projection_cache_hits, 1);
+        view.set_enabled(false, 11);
+        assert!(
+            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+                .is_none()
+        );
+        view.flush_for_test();
+        assert!(view.published.frame.is_none());
+    }
 
-        // A price-window change (pan/zoom, auto-fit shift) must rebuild:
-        // cached cell positions are normalized against the old window.
-        let panned = view
-            .project_visible(0, &bars, None, true, (97.0, 103.0))
-            .unwrap();
-        assert!(!Arc::ptr_eq(&first, &panned));
-        assert_eq!(view.projection_builds, 2);
-
-        view.handle_depth_event(DepthEvent::Status {
+    #[test]
+    fn auto_base_from_live_data_is_adopted_by_the_ui_mirror() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 1);
+        view.handle_depth_event(DepthEvent::Snapshot {
             symbol: "BTCUSDT".to_owned(),
-            generation: 10,
-            status: DepthStatus::Resyncing {
-                reason: DepthResyncReason::SequenceGap {
-                    expected_update_id: 11,
-                    first_update_id: 12,
-                    final_update_id: 13,
+            generation: 1,
+            observed_at_ms: 1_100,
+            effective_at_ms: 1_000,
+            snapshot: BookSnapshot::new(
+                10,
+                vec![BookLevel::new(Decimal::from(64_999), Decimal::from(2)).unwrap()],
+                vec![BookLevel::new(Decimal::from(65_001), Decimal::from(3)).unwrap()],
+                BookCoverage::Limited {
+                    levels_per_side: 1_000,
                 },
-            },
+            ),
         });
-        let after_gap = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
-            .unwrap();
-        assert!(!Arc::ptr_eq(&first, &after_gap));
-        assert_eq!(view.projection_builds, 3);
+        view.flush_for_test();
+        assert_eq!(view.config.price_grouping, Decimal::from(1));
+        assert_eq!(view.capture_grouping_draft, 1.0);
     }
 
     #[test]
-    fn events_below_capture_generation_are_ignored() {
-        let mut view = OrderflowView::new("BTCUSDT");
-        view.set_enabled(true, 500);
-        view.handle_depth_event(snapshot_event(499));
-        assert!(!view.history.book().is_initialized());
-    }
-
-    #[test]
-    fn delayed_event_from_an_older_reconnect_generation_is_ignored() {
-        let mut view = OrderflowView::new("BTCUSDT");
-        view.set_enabled(true, 10);
-        view.handle_depth_event(DepthEvent::Status {
-            symbol: "BTCUSDT".to_owned(),
-            generation: 12,
-            status: DepthStatus::Connecting,
-        });
-        view.handle_depth_event(snapshot_event(11));
-        assert!(!view.history.book().is_initialized());
-        assert_eq!(view.latest_generation, Some(12));
-    }
-
-    #[test]
-    fn rejected_delta_closes_coverage_immediately() {
+    fn staged_grouping_change_survives_until_accept_and_rolls_back_on_reject() {
         let mut view = OrderflowView::new("BTCUSDT");
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
-        view.handle_depth_event(DepthEvent::Update {
-            symbol: "BTCUSDT".to_owned(),
-            generation: 10,
-            event_time_ms: 998,
-            delta: BookDelta::new(11, 11, Vec::new(), Vec::new()),
-        });
+        view.flush_for_test();
+        let original = view.published.base_price_grouping;
 
-        assert!(matches!(view.history.status(), HistoryStatus::Gap { .. }));
-        assert!(!view.history.book().is_initialized());
-        assert_eq!(view.history.coverage_gaps().count(), 1);
-    }
+        let staged = Decimal::new(5, 1);
+        assert!(view.stage_capture_grouping_for_test(staged));
+        // Engine untouched while staged.
+        assert_eq!(view.base_capture_grouping_for_test(), original);
+        assert_eq!(view.health().active_levels, 2);
 
-    #[test]
-    fn resync_status_opens_an_explicit_gap() {
-        let mut view = OrderflowView::new("BTCUSDT");
-        view.set_enabled(true, 10);
-        view.handle_depth_event(snapshot_event(10));
-        view.handle_depth_event(DepthEvent::Status {
-            symbol: "BTCUSDT".to_owned(),
-            generation: 10,
-            status: DepthStatus::Resyncing {
-                reason: DepthResyncReason::SequenceGap {
-                    expected_update_id: 11,
-                    first_update_id: 12,
-                    final_update_id: 13,
-                },
-            },
-        });
-        assert!(matches!(view.history.status(), HistoryStatus::Gap { .. }));
-        assert_eq!(view.history.coverage_gaps().count(), 1);
-    }
+        view.reject_capture_grouping_restart("command_channel_full");
+        assert_eq!(view.config.price_grouping, original);
+        assert_eq!(view.base_capture_grouping_for_test(), original);
 
-    #[test]
-    fn fractional_projection_uses_bar_slot_edges() {
-        let viewport = Viewport::new();
-        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
-        let x0 = projected_x(rect, &viewport, 10, 8, 2, 0.0);
-        let x1 = projected_x(rect, &viewport, 10, 8, 2, 1.0);
-        assert!((x1 - x0 - 16.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn heat_palette_is_side_specific_and_bounded() {
-        let bid = heat_color(BookSide::Bid, 0.5, 0.7);
-        let ask = heat_color(BookSide::Ask, 0.5, 0.7);
-        assert_ne!(bid, ask);
-        assert_eq!(bid.a(), 179);
-        assert_eq!(ask.a(), 179);
+        // Stage again, accept: the engine resets to the new bucket.
+        assert!(view.stage_capture_grouping_for_test(staged));
+        view.accept_capture_grouping_restart(20);
+        assert_eq!(view.base_capture_grouping_for_test(), staged);
+        assert_eq!(view.health().active_levels, 0);
+        assert_eq!(view.health().status, "connecting");
     }
 }

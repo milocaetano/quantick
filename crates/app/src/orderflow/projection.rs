@@ -1,10 +1,15 @@
 //! Renderer-independent projection of RLE history into normalized primitives.
 
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive as _;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use super::config::IntensityMode;
+use super::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, LiquidityHistory, RestingSide};
+pub use super::interaction::LiquidityEvidence;
+use super::interaction::{
+    AggressionCluster, cluster_aggressions, correlate_liquidity, liquidity_events,
+};
 use super::timeline::BarTimeline;
 
 /// Exact visible price interval. `high` maps to y=0 and `low` to y=1.
@@ -61,9 +66,11 @@ pub struct HeatmapCell {
 /// One aggressive execution ready for circles, footprint cells or tooltips.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AggressionPrimitive {
-    /// Aggregate-trade id.
+    /// Representative aggregate-trade id.
     pub agg_id: u64,
-    /// Book generation current at observation time.
+    /// Every aggregate-trade id represented by this bubble.
+    pub agg_ids: Vec<u64>,
+    /// Coverage generation derived from exchange timestamp.
     pub generation: Option<u64>,
     /// Taker side.
     pub side: AggressorSide,
@@ -71,12 +78,63 @@ pub struct AggressionPrimitive {
     pub consumed_side: RestingSide,
     /// Exact execution quantity.
     pub quantity: Decimal,
+    /// Inclusive lower edge of the visual price range.
+    pub price_bucket: Decimal,
+    /// Number of aggregate trades represented by this bubble.
+    pub trade_count: usize,
+    /// Earliest exchange timestamp represented by this bubble.
+    pub first_timestamp_ms: i64,
+    /// Latest exchange timestamp represented by this bubble.
+    pub last_timestamp_ms: i64,
+    /// Exact bubble quantity aligned with compatible liquidity reductions.
+    pub matched_quantity: Decimal,
+    /// `[0,1]` fraction of bubble quantity aligned with reductions.
+    pub matched_fraction: f32,
+    /// Factual liquidity-event ids receiving matched bubble quantity.
+    pub liquidity_event_ids: Vec<u64>,
     /// Normalized chart coordinates.
     pub x: f64,
     /// Normalized y coordinate.
     pub y: f64,
     /// `[0,1]` size factor whose square is proportional to quantity.
     pub size: f32,
+}
+
+/// One factual displayed-liquidity reduction ready for an overlay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiquidityEventPrimitive {
+    /// Deterministic frame-local id.
+    pub event_id: u64,
+    /// Synchronization generation.
+    pub generation: u64,
+    /// Resting side.
+    pub side: RestingSide,
+    /// Inclusive lower edge of the visual price range.
+    pub price_bucket: Decimal,
+    /// Exchange timestamp of the before/after observation.
+    pub timestamp_ms: i64,
+    /// Displayed quantity immediately before the reduction.
+    pub before: Decimal,
+    /// Displayed quantity immediately after the reduction.
+    pub after: Decimal,
+    /// Exact factual reduction.
+    pub removed: Decimal,
+    /// `[0,1]` reduction fraction relative to `before`.
+    pub fraction: f32,
+    /// Whether the displayed visual range became empty.
+    pub full_removal: bool,
+    /// Exact compatible aggression quantity allocated to this event.
+    pub matched_quantity: Decimal,
+    /// `[0,1]` matched fraction relative to `removed`.
+    pub matched_fraction: f32,
+    /// Available factual evidence without a causal label.
+    pub evidence: LiquidityEvidence,
+    /// Normalized horizontal observation coordinate.
+    pub x: f64,
+    /// Normalized top of the affected visual price range.
+    pub y0: f64,
+    /// Normalized bottom of the affected visual price range.
+    pub y1: f64,
 }
 
 /// A visible interval that must not be filled or connected.
@@ -103,8 +161,12 @@ pub struct HeatmapProjection {
     pub cells: Vec<HeatmapCell>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
+    /// Visible factual displayed-liquidity reductions.
+    pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps.
     pub gaps: Vec<GapPrimitive>,
+    /// Exact visual grouping resolved for this frame.
+    pub effective_grouping: EffectiveGrouping,
     /// Quantity that maps to full cell intensity.
     pub liquidity_reference: Decimal,
     /// Quantity that maps to full aggression size.
@@ -113,19 +175,24 @@ pub struct HeatmapProjection {
     pub dropped_cells: usize,
     /// Aggressions omitted by the configured primitive cap.
     pub dropped_aggressions: usize,
+    /// Liquidity events omitted by the visible-cell safety cap.
+    pub dropped_liquidity_events: usize,
 }
 
 impl HeatmapProjection {
-    fn empty(enabled: bool) -> Self {
+    fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
             cells: Vec::new(),
             aggressions: Vec::new(),
+            liquidity_events: Vec::new(),
             gaps: Vec::new(),
+            effective_grouping,
             liquidity_reference: Decimal::ZERO,
             aggression_reference: Decimal::ZERO,
             dropped_cells: 0,
             dropped_aggressions: 0,
+            dropped_liquidity_events: 0,
         }
     }
 }
@@ -142,21 +209,10 @@ struct DraftCell {
     y1: f64,
 }
 
-#[derive(Debug)]
-struct DraftAggression {
-    agg_id: u64,
-    generation: Option<u64>,
-    side: AggressorSide,
-    consumed_side: RestingSide,
-    quantity: Decimal,
-    x: f64,
-    y: f64,
-}
-
 /// Project retained order flow into `[0,1] × [0,1]` chart primitives.
 ///
-/// The function performs no allocation proportional to the full book: only
-/// runs intersecting both the timeline and price window become drafts.
+/// Capture buckets are swept into visual ranges only for this frame. Retained
+/// base history remains untouched when grouping or zoom changes.
 #[must_use]
 pub fn project(
     history: &LiquidityHistory,
@@ -164,35 +220,48 @@ pub fn project(
     prices: PriceWindow,
 ) -> HeatmapProjection {
     let config = history.config();
+    let effective_grouping = EffectiveGrouping::resolve(
+        config.display_grouping,
+        config.price_grouping,
+        prices.high - prices.low,
+    );
     if !config.enabled {
-        return HeatmapProjection::empty(false);
+        return HeatmapProjection::empty(false, effective_grouping);
     }
     let Some((time_start, time_end)) = timeline.timestamp_range() else {
-        return HeatmapProjection::empty(true);
+        return HeatmapProjection::empty(true, effective_grouping);
     };
 
-    let mut drafts = Vec::new();
-    for run in history.runs_intersecting(time_start, time_end) {
-        let run_end = run.end_ms.or(history.latest_book_ms()).unwrap_or(time_end);
-        let bucket_low = run.price_bucket;
-        let bucket_high = bucket_low + config.price_grouping;
-        if bucket_high <= prices.low || bucket_low >= prices.high {
-            continue;
-        }
+    let retained_start = history
+        .retention_start_ms()
+        .map_or(time_start, |start| start.max(time_start));
+    let open_run_end_ms = history.latest_book_ms().unwrap_or(time_end);
+    let coverage: Vec<_> = history.coverage_segments().cloned().collect();
+    let grouped = sweep_grouped_runs(
+        history.runs_intersecting(retained_start, time_end),
+        coverage.iter(),
+        effective_grouping,
+        GroupingWindow {
+            start_ms: retained_start,
+            end_ms: time_end,
+            open_run_end_ms,
+            price_low: prices.low,
+            price_high: prices.high,
+        },
+    );
 
-        let clipped_start = run
-            .start_ms
-            .max(time_start)
-            .max(history.retention_start_ms().unwrap_or(time_start));
-        let clipped_end = run_end.min(time_end);
+    let mut drafts = Vec::new();
+    for run in &grouped.runs {
+        let bucket_low = run.price_bucket;
+        let bucket_high = bucket_low + effective_grouping.bucket_width;
         let Some(x0) = timeline
-            .locate_clamped(clipped_start)
+            .locate_clamped(run.start_ms)
             .map(|position| position.normalized)
         else {
             continue;
         };
         let Some(x1) = timeline
-            .locate_clamped(clipped_end)
+            .locate_clamped(run.end_ms)
             .map(|position| position.normalized)
         else {
             continue;
@@ -263,52 +332,121 @@ pub fn project(
         })
         .collect();
 
-    let mut aggression_drafts = Vec::new();
-    if config.show_aggressions {
-        for trade in history.aggressions() {
-            let Some(x) = timeline
-                .locate(trade.timestamp_ms)
-                .map(|position| position.normalized)
-            else {
-                continue;
-            };
-            let Some(y) = prices.y(trade.price) else {
-                continue;
-            };
-            aggression_drafts.push(DraftAggression {
-                agg_id: trade.agg_id,
-                generation: trade.generation,
-                side: trade.side,
-                consumed_side: trade.consumed_side(),
-                quantity: trade.quantity,
-                x,
-                y,
-            });
+    let visible_aggressions: Vec<_> = history
+        .aggressions()
+        .filter(|trade| {
+            timeline.locate(trade.timestamp_ms).is_some() && prices.y(trade.price).is_some()
+        })
+        .collect();
+    let mut aggression_clusters = cluster_aggressions(
+        visible_aggressions,
+        &coverage,
+        effective_grouping,
+        config.bubble_cluster_ms,
+    );
+    let aggression_reference =
+        percentile_99(aggression_clusters.iter().map(|cluster| cluster.quantity));
+
+    let mut events = if config.show_liquidity_events {
+        liquidity_events(&grouped.transitions)
+    } else {
+        Vec::new()
+    };
+    correlate_liquidity(
+        &mut events,
+        &mut aggression_clusters,
+        config.liquidity_correlation_ms,
+    );
+
+    // Display floors: a busy book shrinks buckets constantly, and a marker per
+    // wiggle is violet drizzle. An unattributed pull must be deep (fraction of
+    // its level, or a full pull) AND big (share of the visible full-intensity
+    // reference) to draw. Aggression-aligned reductions are exempt from the
+    // floors, and the safety cap below keeps them ahead of unattributed ones,
+    // so a bubble can only point at a hidden event in the extreme case where
+    // aligned events alone exceed the cap (reported via dropped counters).
+    let pull_floor = Decimal::from_f32(config.min_unattributed_pull_share)
+        .map(|share| liquidity_reference * share)
+        .unwrap_or(Decimal::ZERO);
+    events.retain(|event| {
+        if matches!(event.evidence, LiquidityEvidence::AggressionAligned) {
+            return true;
         }
+        (event.full_removal || event.fraction >= config.min_unattributed_reduction)
+            && event.removed >= pull_floor
+    });
+
+    let dropped_liquidity_events = events.len().saturating_sub(config.max_visible_cells);
+    if dropped_liquidity_events > 0 {
+        events.sort_by(|a, b| {
+            // Aligned events first: they are the evidence bubbles point at.
+            let a_aligned = matches!(a.evidence, LiquidityEvidence::AggressionAligned);
+            let b_aligned = matches!(b.evidence, LiquidityEvidence::AggressionAligned);
+            b_aligned
+                .cmp(&a_aligned)
+                .then_with(|| b.removed.cmp(&a.removed))
+                .then_with(|| a.timestamp_ms.cmp(&b.timestamp_ms))
+                .then_with(|| a.event_id.cmp(&b.event_id))
+        });
+        events.truncate(config.max_visible_cells);
     }
-    let aggression_reference = percentile_99(aggression_drafts.iter().map(|trade| trade.quantity));
-    let dropped_aggressions = aggression_drafts
-        .len()
-        .saturating_sub(config.max_aggression_primitives);
-    if dropped_aggressions > 0 {
-        aggression_drafts.sort_by(|a, b| {
+
+    let dropped_aggressions = if config.show_aggressions {
+        aggression_clusters
+            .len()
+            .saturating_sub(config.max_aggression_primitives)
+    } else {
+        0
+    };
+    if !config.show_aggressions {
+        aggression_clusters.clear();
+    } else if dropped_aggressions > 0 {
+        aggression_clusters.sort_by(|a, b| {
             b.quantity
                 .cmp(&a.quantity)
+                .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
                 .then_with(|| a.agg_id.cmp(&b.agg_id))
         });
-        aggression_drafts.truncate(config.max_aggression_primitives);
+        aggression_clusters.truncate(config.max_aggression_primitives);
     }
-    let aggressions = aggression_drafts
+
+    let liquidity_events = events
         .into_iter()
-        .map(|draft| AggressionPrimitive {
-            agg_id: draft.agg_id,
-            generation: draft.generation,
-            side: draft.side,
-            consumed_side: draft.consumed_side,
-            quantity: draft.quantity,
-            x: draft.x,
-            y: draft.y,
-            size: normalized_area_size(draft.quantity, aggression_reference),
+        .filter_map(|event| {
+            let x = timeline.locate(event.timestamp_ms)?.normalized;
+            let clipped_low = event.price_bucket.max(prices.low);
+            let clipped_high =
+                (event.price_bucket + effective_grouping.bucket_width).min(prices.high);
+            let y0 = prices.y(clipped_high)?;
+            let y1 = prices.y(clipped_low)?;
+            (y1 > y0).then_some(LiquidityEventPrimitive {
+                event_id: event.event_id,
+                generation: event.generation,
+                side: event.side,
+                price_bucket: event.price_bucket,
+                timestamp_ms: event.timestamp_ms,
+                before: event.before,
+                after: event.after,
+                removed: event.removed,
+                fraction: event.fraction,
+                full_removal: event.full_removal,
+                matched_quantity: event.matched_quantity,
+                matched_fraction: event.matched_fraction,
+                evidence: event.evidence,
+                x,
+                y0,
+                y1,
+            })
+        })
+        .collect();
+
+    let aggressions = aggression_clusters
+        .into_iter()
+        .filter_map(|cluster| {
+            let x = timeline.locate(cluster.timestamp_ms)?.normalized;
+            let y = prices.y(cluster.price)?;
+            let size = normalized_area_size(cluster.quantity, aggression_reference);
+            Some(aggression_primitive(cluster, x, y, size))
         })
         .collect();
 
@@ -366,11 +504,41 @@ pub fn project(
         enabled: true,
         cells,
         aggressions,
+        liquidity_events,
         gaps,
+        effective_grouping,
         liquidity_reference,
         aggression_reference,
         dropped_cells,
         dropped_aggressions,
+        dropped_liquidity_events,
+    }
+}
+
+fn aggression_primitive(
+    cluster: AggressionCluster,
+    x: f64,
+    y: f64,
+    size: f32,
+) -> AggressionPrimitive {
+    let matched_fraction = cluster.matched_fraction();
+    AggressionPrimitive {
+        agg_id: cluster.agg_id,
+        agg_ids: cluster.agg_ids,
+        generation: cluster.generation,
+        side: cluster.side,
+        consumed_side: cluster.consumed_side,
+        quantity: cluster.quantity,
+        price_bucket: cluster.price_bucket,
+        trade_count: cluster.trade_count,
+        first_timestamp_ms: cluster.first_timestamp_ms,
+        last_timestamp_ms: cluster.last_timestamp_ms,
+        matched_quantity: cluster.matched_quantity,
+        matched_fraction,
+        liquidity_event_ids: cluster.liquidity_event_ids,
+        x,
+        y,
+        size,
     }
 }
 
@@ -409,7 +577,7 @@ fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::config::HeatmapConfig;
+    use crate::orderflow::config::{DisplayGrouping, HeatmapConfig};
     use crate::orderflow::history::LiquidityHistory;
     use quantick_engine::{Bar, Side, Trade};
     use quantick_orderbook::BookSide;
@@ -501,6 +669,160 @@ mod tests {
         let full = normalized_area_size(Decimal::from(100), Decimal::from(100));
         assert!((quarter - 0.5).abs() < f32::EPSILON);
         assert_eq!(full, 1.0);
+    }
+
+    #[test]
+    fn unattributed_reduction_floor_hides_small_pulls_only() {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        // Bid 100: 3 -> 2 (33% pull, unattributed): under the 50% floor.
+        history
+            .apply_delta(
+                300,
+                &BookDelta::new(11, 11, vec![level("100", "2")], vec![]),
+            )
+            .unwrap();
+        // Ask 101: 4 -> 1 (75% pull, unattributed): over the floor.
+        history
+            .apply_delta(
+                500,
+                &BookDelta::new(12, 12, vec![], vec![level("101", "1")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(13, 13, vec![], vec![]))
+            .unwrap();
+
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let projection = project(&history, &timeline, prices);
+        let buckets: Vec<_> = projection
+            .liquidity_events
+            .iter()
+            .map(|event| event.price_bucket)
+            .collect();
+        assert!(buckets.contains(&dec("101")), "large pull must display");
+        assert!(!buckets.contains(&dec("100")), "small pull must be hidden");
+
+        // The fraction floor alone is not enough: with it at zero the small
+        // pull is still gated by its size against the visible reference.
+        let mut fraction_only = history.config().clone();
+        fraction_only.min_unattributed_reduction = 0.0;
+        history.update_config(fraction_only).unwrap();
+        let projection = project(&history, &timeline, prices);
+        assert!(
+            !projection
+                .liquidity_events
+                .iter()
+                .any(|event| event.price_bucket == dec("100")),
+            "a small pull must stay hidden while the size gate holds"
+        );
+
+        // Lowering both display floors to zero shows the small pull too.
+        let mut permissive_config = history.config().clone();
+        permissive_config.min_unattributed_reduction = 0.0;
+        permissive_config.min_unattributed_pull_share = 0.0;
+        history.update_config(permissive_config).unwrap();
+        let projection = project(&history, &timeline, prices);
+        assert!(
+            projection
+                .liquidity_events
+                .iter()
+                .any(|event| event.price_bucket == dec("100"))
+        );
+    }
+
+    #[test]
+    fn compatible_aggression_rescues_a_small_reduction_from_the_floor() {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 290,
+            price: dec("100"),
+            quantity: dec("1"),
+            side: Side::Sell,
+        });
+        // The same 33% bid pull as above, but now a compatible sell hit it.
+        history
+            .apply_delta(
+                300,
+                &BookDelta::new(11, 11, vec![level("100", "2")], vec![]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(12, 12, vec![], vec![]))
+            .unwrap();
+
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let projection = project(&history, &timeline, prices);
+        assert!(
+            projection.liquidity_events.iter().any(|event| {
+                event.price_bucket == dec("100")
+                    && matches!(event.evidence, LiquidityEvidence::AggressionAligned)
+            }),
+            "aligned bites always display regardless of the floor"
+        );
+    }
+
+    #[test]
+    fn event_cap_keeps_aligned_evidence_ahead_of_unattributed_pulls() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            max_visible_cells: 2,
+            min_unattributed_reduction: 0.0,
+            min_unattributed_pull_share: 0.0,
+            ..HeatmapConfig::default()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        // A small SELL print aligns with a small bid reduction at 100...
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 290,
+            price: dec("100"),
+            quantity: dec("0.5"),
+            side: Side::Sell,
+        });
+        history
+            .apply_delta(
+                300,
+                &BookDelta::new(11, 11, vec![level("100", "2.5")], vec![]),
+            )
+            .unwrap();
+        // ...followed by two much larger unattributed pulls.
+        history
+            .apply_delta(
+                400,
+                &BookDelta::new(12, 12, vec![level("99", "0.1")], vec![]),
+            )
+            .unwrap();
+        history
+            .apply_delta(
+                500,
+                &BookDelta::new(13, 13, vec![], vec![level("102", "0.5")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(14, 14, vec![], vec![]))
+            .unwrap();
+
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let projection = project(&history, &timeline, prices);
+
+        assert_eq!(projection.liquidity_events.len(), 2, "cap of two applies");
+        assert_eq!(projection.dropped_liquidity_events, 1);
+        // The smallest event by removed quantity is the aligned one, yet it
+        // must survive the cap: bubbles point at aligned events.
+        assert!(
+            projection.liquidity_events.iter().any(|event| {
+                event.price_bucket == dec("100")
+                    && matches!(event.evidence, LiquidityEvidence::AggressionAligned)
+            }),
+            "aligned evidence must outrank bigger unattributed pulls in the cap"
+        );
     }
 
     #[test]
@@ -662,10 +984,52 @@ mod tests {
     }
 
     #[test]
+    fn bubbles_track_execution_price_not_a_flat_line() {
+        // Regression guard: aggressions at different prices must land at
+        // different chart heights (higher price -> higher on chart -> smaller
+        // y), so a moving market shows bubbles riding the price, never a flat
+        // horizontal band.
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            ..config()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        for (id, price) in [(1_u64, "99.5"), (2, "100.5"), (3, "101.5")] {
+            history.record_aggression(&Trade {
+                agg_id: id,
+                timestamp_ms: 200 + id as i64,
+                price: dec(price),
+                quantity: Decimal::ONE,
+                side: Side::Buy,
+            });
+        }
+        history
+            .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+            .unwrap();
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("99"), dec("102")).unwrap(),
+        );
+        assert_eq!(projection.aggressions.len(), 3);
+        let y_at = |bucket: &str| {
+            projection
+                .aggressions
+                .iter()
+                .find(|aggression| aggression.price_bucket == dec(bucket))
+                .unwrap_or_else(|| panic!("no bubble at bucket {bucket}"))
+                .y
+        };
+        assert!(y_at("101") < y_at("100"), "higher price must sit higher");
+        assert!(y_at("100") < y_at("99"), "higher price must sit higher");
+    }
+
+    #[test]
     fn primitive_caps_report_dropped_items() {
         let limited = HeatmapConfig {
             max_visible_cells: 1,
             max_aggression_primitives: 1,
+            bubble_cluster_ms: 0,
             ..config()
         };
         let mut history = LiquidityHistory::new(limited);
@@ -716,5 +1080,134 @@ mod tests {
                 .iter()
                 .any(|cell| cell.x1 > 0.9 && cell.x1 < 1.0)
         );
+    }
+
+    #[test]
+    fn display_grouping_changes_without_resetting_capture_history() {
+        let mut history = LiquidityHistory::new(config());
+        history
+            .install_snapshot(
+                100,
+                1,
+                BookSnapshot::new(
+                    10,
+                    vec![level("100", "2"), level("101", "3")],
+                    vec![level("102", "4")],
+                    BookCoverage::Full,
+                ),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+            .unwrap();
+        let runs_before = history.runs().count();
+        let status_before = history.status();
+        let next = HeatmapConfig {
+            display_grouping: DisplayGrouping::Multiple(2),
+            ..history.config().clone()
+        };
+        history.update_config(next).unwrap();
+
+        assert_eq!(history.runs().count(), runs_before);
+        assert_eq!(history.status(), status_before);
+        assert!(history.book().is_initialized());
+
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("99"), dec("104")).unwrap(),
+        );
+        assert_eq!(projection.effective_grouping.multiple, 2);
+        assert_eq!(projection.effective_grouping.bucket_width, dec("2"));
+        assert!(projection.cells.iter().any(|cell| {
+            cell.side == BookSide::Bid
+                && cell.price_bucket == dec("100")
+                && cell.quantity == dec("5")
+        }));
+    }
+
+    #[test]
+    fn projects_partial_and_full_reductions_with_conserved_aggression_evidence() {
+        let event_config = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            display_grouping: DisplayGrouping::Native,
+            bubble_cluster_ms: 100,
+            liquidity_correlation_ms: 250,
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(event_config);
+        history
+            .install_snapshot(
+                100,
+                1,
+                BookSnapshot::new(
+                    10,
+                    vec![level("100", "2")],
+                    vec![level("101", "10")],
+                    BookCoverage::Full,
+                ),
+            )
+            .unwrap();
+        history.record_aggression(&Trade {
+            agg_id: 77,
+            timestamp_ms: 480,
+            price: dec("101"),
+            quantity: dec("3"),
+            side: Side::Buy,
+        });
+        history
+            .apply_delta(
+                500,
+                &BookDelta::new(11, 11, vec![], vec![level("101", "6")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(
+                800,
+                &BookDelta::new(12, 12, vec![], vec![level("101", "0")]),
+            )
+            .unwrap();
+
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("99"), dec("103")).unwrap(),
+        );
+        assert_eq!(projection.liquidity_events.len(), 2);
+        let partial = projection
+            .liquidity_events
+            .iter()
+            .find(|event| event.timestamp_ms == 500)
+            .unwrap();
+        assert_eq!(partial.before, dec("10"));
+        assert_eq!(partial.after, dec("6"));
+        assert_eq!(partial.removed, dec("4"));
+        assert!(!partial.full_removal);
+        assert_eq!(partial.matched_quantity, dec("3"));
+        assert_eq!(partial.matched_fraction, 0.75);
+        assert_eq!(partial.evidence, LiquidityEvidence::AggressionAligned);
+
+        let full = projection
+            .liquidity_events
+            .iter()
+            .find(|event| event.timestamp_ms == 800)
+            .unwrap();
+        assert_eq!(full.removed, dec("6"));
+        assert!(full.full_removal);
+        assert_eq!(full.evidence, LiquidityEvidence::DepthOnly);
+
+        let bubble = projection.aggressions.first().unwrap();
+        assert_eq!(bubble.trade_count, 1);
+        assert_eq!(bubble.agg_ids, [77]);
+        assert_eq!(bubble.matched_quantity, dec("3"));
+        assert_eq!(bubble.matched_fraction, 1.0);
+        assert_eq!(bubble.liquidity_event_ids, [partial.event_id]);
+        let total_event_match: Decimal = projection
+            .liquidity_events
+            .iter()
+            .map(|event| event.matched_quantity)
+            .sum();
+        assert_eq!(total_event_match, bubble.matched_quantity);
     }
 }
