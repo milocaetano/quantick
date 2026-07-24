@@ -70,6 +70,11 @@ pub(crate) struct OrderflowRenderStyle {
     pub(crate) label_min_radius: f32,
     pub(crate) show_gap_labels: bool,
     pub(crate) show_legend: bool,
+    /// Whether the L2 depth layer is active. The legend only advertises keys
+    /// for layers that can actually draw something.
+    pub(crate) depth_layer: bool,
+    /// Whether the aggression layer is active.
+    pub(crate) aggression_layer: bool,
     pub(crate) legend_max_width: f32,
     /// Follows the chart canvas so the deterministic preview sits on the same
     /// ground as the live chart.
@@ -96,6 +101,8 @@ impl Default for OrderflowRenderStyle {
             label_min_radius: 16.0,
             show_gap_labels: true,
             show_legend: true,
+            depth_layer: true,
+            aggression_layer: true,
             legend_max_width: 690.0,
             canvas_background: egui::Color32::from_rgb(19, 23, 34),
         }
@@ -113,6 +120,8 @@ impl OrderflowRenderStyle {
             show_legend: config.show_legend,
             bubble_opacity: config.bubble_opacity,
             bubble_max_radius: config.bubble_max_radius,
+            depth_layer: config.enabled,
+            aggression_layer: config.show_aggressions,
             canvas_background,
             ..Self::default()
         }
@@ -705,20 +714,31 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
     } else {
         "liquidity".to_owned()
     };
-    let entries = [
-        (LegendGlyph::Heat, liquidity_label),
-        (LegendGlyph::Buy, "buy aggression".to_owned()),
-        (LegendGlyph::Sell, "sell aggression".to_owned()),
-        (
+    // Only key the layers that can draw. With L2 capture off the map, its
+    // depletion markers and its gaps are absent, and announcing them would
+    // describe a chart the viewer is not looking at.
+    let mut entries: Vec<(LegendGlyph, String)> = Vec::new();
+    if style.depth_layer {
+        entries.push((LegendGlyph::Heat, liquidity_label));
+    }
+    if style.aggression_layer {
+        entries.push((LegendGlyph::Buy, "buy aggression".to_owned()));
+        entries.push((LegendGlyph::Sell, "sell aggression".to_owned()));
+    }
+    if style.depth_layer {
+        entries.push((
             LegendGlyph::Aligned,
             "aggression-aligned depletion".to_owned(),
-        ),
-        (
+        ));
+        entries.push((
             LegendGlyph::DepthOnly,
             "L2 reduction (unattributed)".to_owned(),
-        ),
-        (LegendGlyph::Gap, "L2 gap".to_owned()),
-    ];
+        ));
+        entries.push((LegendGlyph::Gap, "L2 gap".to_owned()));
+    }
+    if entries.is_empty() {
+        return;
+    }
     let font = egui::FontId::proportional(10.0);
     let galleys: Vec<_> = entries
         .iter()

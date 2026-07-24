@@ -784,8 +784,10 @@ fn panel_header(ui: &mut egui::Ui, title: &str, open: &mut bool) {
                 .color(egui::Color32::from_rgb(255, 222, 92)),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // `×` is Latin-1, so it renders in egui's default proportional
+            // font — the fancier ✕/✖ glyphs fall back to an empty box.
             if ui
-                .small_button("✕")
+                .small_button("×")
                 .on_hover_text("close this panel")
                 .clicked()
             {
