@@ -490,6 +490,28 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         clip.add(egui::Shape::mesh(tail_mesh));
     }
 
+    // Fronts and caps as solid mesh quads: hundreds of stroked segments per
+    // frame would pay stroke tessellation each; one mesh keeps the per-frame
+    // cost flat during storms of reductions.
+    fn add_vline(
+        mesh: &mut egui::Mesh,
+        x: f32,
+        top: f32,
+        bottom: f32,
+        width: f32,
+        color: egui::Color32,
+    ) {
+        add_gradient_rect(
+            mesh,
+            egui::Rect::from_min_max(
+                egui::pos2(x - width * 0.5, top),
+                egui::pos2(x + width * 0.5, bottom),
+            ),
+            color,
+            color,
+        );
+    }
+    let mut front_mesh = egui::Mesh::default();
     for front in fronts {
         match front {
             EventFront::Aligned {
@@ -498,22 +520,25 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 full,
             } => {
                 let strength = matched.max(0.25);
-                clip.line_segment(
-                    [
-                        egui::pos2(band.x, band.top),
-                        egui::pos2(band.x, band.bottom),
-                    ],
-                    egui::Stroke::new(
-                        if full { 2.0_f32 } else { 1.3_f32 },
-                        palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
-                    ),
+                add_vline(
+                    &mut front_mesh,
+                    band.x,
+                    band.top,
+                    band.bottom,
+                    if full { 2.0 } else { 1.3 },
+                    palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
                 );
                 if full {
                     // End caps read as "this band was fully taken here".
                     for y in [band.top, band.bottom] {
-                        clip.line_segment(
-                            [egui::pos2(band.x - 3.5, y), egui::pos2(band.x + 3.5, y)],
-                            egui::Stroke::new(1.5_f32, palette.consumption.gamma_multiply(0.8)),
+                        add_gradient_rect(
+                            &mut front_mesh,
+                            egui::Rect::from_min_max(
+                                egui::pos2(band.x - 3.5, y - 0.75),
+                                egui::pos2(band.x + 3.5, y + 0.75),
+                            ),
+                            palette.consumption.gamma_multiply(0.8),
+                            palette.consumption.gamma_multiply(0.8),
                         );
                     }
                 }
@@ -523,22 +548,23 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 reduction,
                 full,
             } => {
-                clip.line_segment(
-                    [
-                        egui::pos2(band.x, band.top),
-                        egui::pos2(band.x, band.bottom),
-                    ],
-                    egui::Stroke::new(
-                        if full { 1.6_f32 } else { 1.1_f32 },
-                        palette.depth_only.gamma_multiply(if full {
-                            0.9
-                        } else {
-                            0.55 + 0.3 * reduction
-                        }),
-                    ),
+                add_vline(
+                    &mut front_mesh,
+                    band.x,
+                    band.top,
+                    band.bottom,
+                    if full { 1.6 } else { 1.1 },
+                    palette.depth_only.gamma_multiply(if full {
+                        0.9
+                    } else {
+                        0.55 + 0.3 * reduction
+                    }),
                 );
             }
         }
+    }
+    if !front_mesh.is_empty() {
+        clip.add(egui::Shape::mesh(front_mesh));
     }
 }
 
