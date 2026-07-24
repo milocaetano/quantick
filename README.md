@@ -6,7 +6,7 @@
 
 **Real-time alternative bar charts for order flow trading — and one engine to take your research from chart to backtest to bot.**
 
-> ⚠️ Early development. The design is being worked out in the open; nothing here is usable yet. Star/watch the repo if you want to follow along.
+> ⚠️ Early development, but already runnable. The Rust bar engine, the live Binance feed and the native desktop chart work today — you can clone, build and watch bars form in real time in a few minutes (see [Quick start](#quick-start--build-test-run)). APIs will still churn. Star/watch the repo to follow along.
 
 ## Why this exists
 
@@ -23,6 +23,76 @@ quantick exists to change that: **a free, open, programmable implementation of t
 1. **Visualize.** A native desktop app that renders tick, volume, dollar and imbalance bars from a live market feed — with per-bar delta and CVD built in. See the market the way flow traders read it.
 2. **Research.** Study setups directly on the charts: how does absorption look on volume bars? Where does CVD diverge? Chart-driven analysis is where strategy ideas are born.
 3. **Build.** The same engine that draws your chart feeds your backtests and your bots. The bars your strategy trades live are byte-identical to the bars you researched and backtested — parity by construction, not by discipline.
+
+## Quick start — build, test, run
+
+You don't need an exchange account, an API key or any credentials. Out of the box the chart connects to Binance's **public** market data and opens on `BTCUSDT`.
+
+### 1. Install Rust
+
+quantick is pure Rust. Install a recent stable toolchain with [rustup](https://rustup.rs/) — you need **Rust 1.85 or newer** (the workspace is on the 2024 edition):
+
+```sh
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Windows: download and run rustup-init.exe from https://rustup.rs
+
+rustc --version   # expect 1.85.0 or newer
+```
+
+### 2. Clone and build
+
+```sh
+git clone https://github.com/milocaetano/quantick.git
+cd quantick
+cargo build --workspace
+```
+
+The first build compiles every dependency and takes a few minutes; later builds are incremental and fast.
+
+### 3. Run the tests
+
+The engine is developed test-first and guarded by golden/snapshot tests (fixed trades in → known bars out). Run the whole suite with:
+
+```sh
+cargo test --workspace
+```
+
+### 4. Run the chart
+
+```sh
+cargo run -p quantick-app
+```
+
+A native window titled **quantick** opens, backfills recent history over REST and then streams live trades, forming bars as they happen. From the controls bar you can switch the **bar type** live — tick, volume, dollar, time or imbalance — and tune its parameter. For the smoothest rendering on a busy order book, build optimized:
+
+```sh
+cargo run --release -p quantick-app
+```
+
+> The chart is a native desktop app (egui) and needs a graphical display; it won't run on a headless server. It's tested on Windows, Linux and macOS.
+
+### 5. (Optional) Pick a different feed or symbol
+
+Feeds and symbols are configuration, never hardcoded. To change what the chart opens on, drop a `quantick.toml` in the working directory (it's git-ignored, so it stays local) or point `QUANTICK_CONFIG` at any TOML file. For example, to open on Ethereum:
+
+```toml
+# quantick.toml
+default_feed = "binance"
+default_symbol = "ETHUSDT"
+
+[[feeds]]
+id = "binance"
+name = "Binance"
+provider = "binance"
+symbols = ["BTCUSDT", "ETHUSDT"]
+```
+
+The full set of options — available feeds, the optional MetaTrader 5 bridge, the L2 heatmap toggles and logging — is documented in [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml) and in the [L2 liquidity map](#optional-l2-liquidity-map) section below.
+
+### Contributing
+
+Working on the code? Every change must pass the four-check verification loop (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test --workspace`) before commit — the same checks CI enforces. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
 ## Candle appearance
 
@@ -102,12 +172,14 @@ JSON logs include stable fields such as `schema_version`, `event_code`, symbol, 
 - **Bot developers** who need deterministic, programmable bar construction for strategies driven by order flow
 - **Quant researchers** who want reproducible activity-sampled bars for backtesting and ML feature engineering
 
-## Planned architecture
+## Architecture
 
-- **Bar engine (Rust)** — raw trades in → alternative bars out; deterministic and headless, usable with no UI attached
-- **Live feed** — Binance first (public data, works out of the box, no API key needed); MetaTrader 5 planned
-- **Desktop app** — native chart (egui/wgpu) showing bars form in real time
-- **Bindings** — Python bindings planned, so the engine plugs into existing backtest stacks
+The project is a Cargo workspace of small, one-way-dependent crates (`app` / `feed-*` → `engine` / `orderbook`). Status today:
+
+- **Bar engine (Rust)** — ✅ raw trades in → alternative bars out; deterministic and headless, usable with no UI attached (`crates/engine`)
+- **Live feeds** — ✅ Binance aggTrades over public data, works out of the box with no API key (`crates/feed-binance`); ✅ MetaTrader 5 via a local bridge EA (`crates/feed-mt5`)
+- **Desktop app** — ✅ native chart (egui) showing bars form in real time, with a Bookmap-inspired L2 liquidity heatmap (`crates/app`)
+- **Bindings** — ⏳ Python bindings and a C API are planned, so the engine plugs into existing backtest stacks and bots in any language
 
 ## Design principles
 
@@ -118,15 +190,15 @@ JSON logs include stable fields such as `schema_version`, `event_code`, symbol, 
 
 ## Roadmap
 
-- [ ] Core bar engine (tick / volume / dollar bars)
-- [ ] Binance aggTrades feed
-- [ ] Desktop chart
-- [ ] Imbalance bars (López de Prado information-driven sampling)
-- [ ] CVD & delta visuals
+- [x] Core bar engine (tick / volume / dollar / time bars)
+- [x] Binance aggTrades feed
+- [x] Desktop chart
+- [x] Imbalance bars (López de Prado information-driven sampling)
+- [x] MetaTrader 5 feed
+- [x] Bookmap-inspired L2 liquidity heatmap (egui/glow; wgpu migration still open)
+- [ ] CVD & delta visuals (engine already stores per-bar buy/sell volume and delta; charting them is next)
 - [ ] Python bindings
-- [ ] MetaTrader 5 feed
 - [ ] C API, so bots in C++ (or any language) can consume the engine
-- [ ] GPU footprint / heatmap rendering (wgpu)
 
 ## Contributing
 
