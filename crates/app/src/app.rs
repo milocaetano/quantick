@@ -415,8 +415,13 @@ impl QuantickApp {
                 self.request_book_capture(book_enabled);
             }
             if ui
-                .add_enabled(supports_book, egui::Button::new("⚙ book"))
-                .on_hover_text("heatmap retention, price grouping and intensity")
+                .add_enabled(
+                    supports_book,
+                    egui::Button::new(self.orderflow.settings_button_label()),
+                )
+                .on_hover_text(
+                    "Bookmap palette, non-destructive price ranges, bubbles and liquidity response",
+                )
                 .clicked()
             {
                 self.orderflow.toggle_settings();
@@ -509,8 +514,9 @@ impl QuantickApp {
         }
     }
 
-    /// Restart capture after a semantic configuration change such as price
-    /// grouping. The history has already been reset explicitly by the view.
+    /// Restart capture after a semantic configuration change such as base
+    /// price grouping. The view commits its staged reset only after this
+    /// command is accepted, preserving current history on backpressure.
     fn restart_book_capture(&mut self) {
         if !self.orderflow.enabled() {
             return;
@@ -519,27 +525,33 @@ impl QuantickApp {
         match self.commands.try_send(FeedCommand::RestartBookCapture {
             initial_generation: generation,
         }) {
-            Ok(()) => self
-                .orderflow
-                .prepare_restart(generation, "configuration_restart"),
-            Err(mpsc::error::TrySendError::Full(_)) => tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HEATMAP_RESTART_BACKPRESSURE",
-                symbol = self.symbol.as_str(),
-                generation,
-                action = "keep_existing_capture",
-                "book restart command channel is full"
-            ),
-            Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HEATMAP_RESTART_CHANNEL_CLOSED",
-                symbol = self.symbol.as_str(),
-                generation,
-                action = "keep_existing_capture",
-                "book restart command channel is closed"
-            ),
+            Ok(()) => self.orderflow.accept_capture_grouping_restart(generation),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.orderflow
+                    .reject_capture_grouping_restart("command_channel_full");
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HEATMAP_RESTART_BACKPRESSURE",
+                    symbol = self.symbol.as_str(),
+                    generation,
+                    action = "keep_existing_capture",
+                    "book restart command channel is full"
+                );
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.orderflow
+                    .reject_capture_grouping_restart("command_channel_closed");
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HEATMAP_RESTART_CHANNEL_CLOSED",
+                    symbol = self.symbol.as_str(),
+                    generation,
+                    action = "keep_existing_capture",
+                    "book restart command channel is closed"
+                );
+            }
         }
     }
 
@@ -795,8 +807,12 @@ impl QuantickApp {
             heatmap_history_bytes = book.history_bytes,
             heatmap_cells = book.projection_cells,
             heatmap_aggressions = book.projection_aggressions,
+            heatmap_liquidity_events = book.projection_liquidity_events,
+            heatmap_effective_grouping = %book.effective_grouping,
+            heatmap_effective_grouping_multiple = book.effective_grouping_multiple,
             heatmap_dropped_cells = book.dropped_cells,
             heatmap_dropped_aggressions = book.dropped_aggressions,
+            heatmap_dropped_liquidity_events = book.dropped_liquidity_events,
             heatmap_projection_ms = book.projection_ms,
             heatmap_projection_builds = book.projection_builds,
             heatmap_projection_cache_hits = book.projection_cache_hits,
@@ -857,7 +873,10 @@ impl QuantickApp {
                 "order-book events are behind wall clock"
             );
         }
-        if book.dropped_cells > 0 || book.dropped_aggressions > 0 {
+        if book.dropped_cells > 0
+            || book.dropped_aggressions > 0
+            || book.dropped_liquidity_events > 0
+        {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -865,6 +884,7 @@ impl QuantickApp {
                 symbol = self.symbol.as_str(),
                 dropped_cells = book.dropped_cells,
                 dropped_aggressions = book.dropped_aggressions,
+                dropped_liquidity_events = book.dropped_liquidity_events,
                 action = "increase_grouping_or_reduce_retention",
                 "heatmap primitive cap was reached"
             );
@@ -980,6 +1000,32 @@ impl QuantickApp {
             return;
         }
 
+        // Live tail: while following a live book, grow the forming bar to the
+        // right on a real-time scale so its order flow rolls (events stay put)
+        // instead of recompressing every depth update. Collapses to one slot the
+        // moment the bar closes.
+        let live_span = if self.viewport.follows_live()
+            && let Some(bar) = partial
+            && let Some(now) = self.orderflow.live_end_ms()
+        {
+            let elapsed = now - bar.open_time;
+            let ref_dur = closed
+                .last()
+                .map(|b| (b.close_time - b.open_time).max(1))
+                .unwrap_or(1_000);
+            // Use up to ~55% of the chart for the live book, reach that width
+            // over ~60% of the previous bar's lifetime, and floor it generously
+            // so the right side is always well used (not a thin sliver).
+            let max_span =
+                (chart_rect.width() / self.viewport.candle_width() * 0.55).clamp(8.0, 18.0);
+            let grow_over = (ref_dur * 3 / 5).max(1);
+            crate::orderflow_render::live_span_for(elapsed, grow_over, max_span)
+                .clamp(8.0, max_span)
+        } else {
+            1.0
+        };
+        self.viewport.set_live_tail(live_span - 1.0);
+
         let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
 
         // The visible closed bars, plus the partial if it falls in view.
@@ -1015,9 +1061,17 @@ impl QuantickApp {
             end == total,
             scale.range(),
         );
+        let canvas_background = self.bg();
         if let Some(frame) = &orderflow_frame {
-            self.orderflow
-                .draw_background(painter, chart_rect, &self.viewport, total, frame);
+            self.orderflow.draw_background(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                live_span,
+            );
         }
 
         // Grid + price labels first, behind the candles.
@@ -1025,6 +1079,33 @@ impl QuantickApp {
 
         // Candles, clipped to the chart body so they don't spill into the axes.
         let clip = painter.with_clip_rect(chart_rect);
+        // Clear the heat behind each candle's high–low span so a translucent
+        // candle stays a clean divider — no liquidity band shows through it.
+        // Where the price swept, the wall reads as consumed; bands survive only
+        // in the gaps between candles and above/below each bar.
+        if orderflow_frame.is_some() {
+            let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
+                let top = scale.y(bar.high.to_f64().unwrap_or(0.0));
+                let bottom = scale.y(bar.low.to_f64().unwrap_or(0.0));
+                clip.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(xc - half, top),
+                        egui::pos2(xc + half, bottom),
+                    ),
+                    egui::Rounding::ZERO,
+                    canvas_background,
+                );
+            };
+            for (offset, bar) in visible_closed.iter().enumerate() {
+                clear_bar(
+                    self.viewport.x_center(closed_start + offset, right, total),
+                    bar,
+                );
+            }
+            if let Some(partial) = partial_visible {
+                clear_bar(self.viewport.x_center(closed.len(), right, total), partial);
+            }
+        }
         for (offset, bar) in visible_closed.iter().enumerate() {
             let index = closed_start + offset;
             let xc = self.viewport.x_center(index, right, total);
@@ -1035,8 +1116,15 @@ impl QuantickApp {
             draw_candle(&clip, xc, half, &scale, partial, true, &self.style.candles);
         }
         if let Some(frame) = &orderflow_frame {
-            self.orderflow
-                .draw_aggressions(painter, chart_rect, &self.viewport, total, frame);
+            self.orderflow.draw_aggressions(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                live_span,
+            );
         }
 
         self.draw_backfill_divider(painter, chart_rect, total, cw);
@@ -1434,6 +1522,37 @@ mod tests {
         (app, evt_tx, cmd_rx, book_tx)
     }
 
+    fn enable_heatmap_with_snapshot(
+        app: &mut QuantickApp,
+        commands: &mut mpsc::Receiver<FeedCommand>,
+    ) {
+        use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
+
+        app.request_book_capture(true);
+        let generation = match commands.try_recv().expect("capture command") {
+            FeedCommand::SetBookCapture {
+                enabled: true,
+                initial_generation,
+            } => initial_generation,
+            _ => panic!("unexpected command"),
+        };
+        app.orderflow.handle_depth_event(DepthEvent::Snapshot {
+            symbol: "TESTUSDT".to_owned(),
+            generation,
+            observed_at_ms: 1_100,
+            effective_at_ms: 999,
+            snapshot: BookSnapshot::new(
+                10,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],
+                vec![BookLevel::new(Decimal::from(101), Decimal::from(6)).unwrap()],
+                BookCoverage::Limited {
+                    levels_per_side: 1_000,
+                },
+            ),
+        });
+        assert_eq!(app.orderflow.health().active_levels, 2);
+    }
+
     #[test]
     fn loader_survives_until_every_pending_load_is_answered() {
         // Two "load older" clicks land while the initial backfill is still in
@@ -1544,6 +1663,67 @@ mod tests {
             app.orderflow.enabled(),
             "closed command channel must preserve current capture state"
         );
+    }
+
+    #[test]
+    fn grouping_restart_commits_only_after_command_is_queued() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        enable_heatmap_with_snapshot(&mut app, &mut cmd_rx);
+        let grouping = Decimal::new(5, 2);
+
+        assert!(app.orderflow.stage_capture_grouping_for_test(grouping));
+        assert_eq!(app.orderflow.health().active_levels, 2);
+        app.restart_book_capture();
+
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(FeedCommand::RestartBookCapture { .. })
+        ));
+        assert_eq!(app.orderflow.base_capture_grouping_for_test(), grouping);
+        assert_eq!(app.orderflow.health().active_levels, 0);
+        assert_eq!(app.orderflow.health().status, "connecting");
+    }
+
+    #[test]
+    fn closed_restart_channel_rolls_back_grouping_without_losing_history() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        enable_heatmap_with_snapshot(&mut app, &mut cmd_rx);
+        let original = app.orderflow.base_capture_grouping_for_test();
+
+        assert!(
+            app.orderflow
+                .stage_capture_grouping_for_test(Decimal::new(5, 2))
+        );
+        drop(cmd_rx);
+        app.restart_book_capture();
+
+        assert_eq!(app.orderflow.base_capture_grouping_for_test(), original);
+        assert_eq!(app.orderflow.health().active_levels, 2);
+    }
+
+    #[test]
+    fn full_restart_channel_rolls_back_grouping_without_losing_history() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        enable_heatmap_with_snapshot(&mut app, &mut cmd_rx);
+        let original = app.orderflow.base_capture_grouping_for_test();
+        let (full_tx, mut full_rx) = mpsc::channel(1);
+        app.commands = full_tx;
+        app.commands
+            .try_send(FeedCommand::LoadOlder { count: 1 })
+            .unwrap();
+
+        assert!(
+            app.orderflow
+                .stage_capture_grouping_for_test(Decimal::new(5, 2))
+        );
+        app.restart_book_capture();
+
+        assert!(matches!(
+            full_rx.try_recv(),
+            Ok(FeedCommand::LoadOlder { count: 1 })
+        ));
+        assert_eq!(app.orderflow.base_capture_grouping_for_test(), original);
+        assert_eq!(app.orderflow.health().active_levels, 2);
     }
 
     #[test]

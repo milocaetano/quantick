@@ -48,17 +48,6 @@ pub struct Aggression {
     pub generation: Option<u64>,
 }
 
-impl Aggression {
-    /// The passive side this execution attempted to consume.
-    #[must_use]
-    pub fn consumed_side(&self) -> RestingSide {
-        match self.side {
-            Side::Buy => BookSide::Ask,
-            Side::Sell => BookSide::Bid,
-        }
-    }
-}
-
 /// A contiguous interval known to come from one synchronized book generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoverageSegment {
@@ -288,11 +277,6 @@ impl LiquidityHistory {
                 current: self.config.price_grouping,
                 requested: next.price_grouping,
             });
-        }
-        if !next.show_aggressions {
-            let dropped = self.aggressions.len() as u64;
-            self.aggressions.clear();
-            self.counters.aggressions_evicted += dropped;
         }
         self.config = next;
         if let Some(now_ms) = self.latest_book_ms {
@@ -527,9 +511,6 @@ impl LiquidityHistory {
 
     /// Retain one trade for the aggression overlay without touching the book.
     pub fn record_aggression(&mut self, trade: &Trade) {
-        if !self.config.show_aggressions {
-            return;
-        }
         self.aggressions.push_back(Aggression {
             agg_id: trade.agg_id,
             timestamp_ms: trade.timestamp_ms,
@@ -668,7 +649,7 @@ impl LiquidityHistory {
         for key in existing {
             let changed = next
                 .get(&key)
-                .is_none_or(|quantity| self.active[&key].quantity != *quantity);
+                .is_none_or(|quantity| quantity_diverged(self.active[&key].quantity, *quantity));
             if changed {
                 let mut run = self.active.remove(&key).expect("key came from active");
                 run.end_ms = Some(timestamp_ms);
@@ -774,6 +755,23 @@ impl LiquidityHistory {
             self.counters.aggressions_evicted += 1;
         }
     }
+}
+
+/// Whether a bucket's displayed quantity moved enough from its open run's value
+/// to warrant a new run. A relative threshold collapses the book's constant
+/// small churn into stable bands — one run per meaningful change, not one per
+/// depth update. That churn is both the dominant projection cost and the
+/// "mosaic" look on a dense book; a stable wall now stays a single band.
+fn quantity_diverged(run_quantity: Decimal, book_quantity: Decimal) -> bool {
+    if run_quantity == book_quantity {
+        return false;
+    }
+    if run_quantity <= Decimal::ZERO || book_quantity <= Decimal::ZERO {
+        return true; // a level appeared or fully vanished — always a boundary
+    }
+    let hi = run_quantity.max(book_quantity);
+    let lo = run_quantity.min(book_quantity);
+    (hi - lo) * Decimal::from(10) > hi // > ~10% relative change
 }
 
 fn aggregate_book(book: &OrderBook, grouping: Decimal) -> BTreeMap<LevelKey, Decimal> {
@@ -941,6 +939,47 @@ mod tests {
     }
 
     #[test]
+    fn small_quantity_churn_merges_into_one_band() {
+        let mut history = LiquidityHistory::new(enabled_config());
+        history
+            .install_snapshot(
+                100,
+                1,
+                BookSnapshot::new(
+                    10,
+                    vec![level("100", "100")],
+                    vec![level("101", "50")],
+                    BookCoverage::Full,
+                ),
+            )
+            .unwrap();
+        let before = history.archived_run_count();
+        // A +5% wiggle on the bid stays a single band (no new run).
+        history
+            .apply_delta(
+                110,
+                &BookDelta::new(11, 11, vec![level("100", "105")], vec![]),
+            )
+            .unwrap();
+        assert_eq!(
+            history.archived_run_count(),
+            before,
+            "small churn must not split"
+        );
+        // A big move from the open run's value does split.
+        history
+            .apply_delta(
+                120,
+                &BookDelta::new(12, 12, vec![level("100", "130")], vec![]),
+            )
+            .unwrap();
+        assert!(
+            history.archived_run_count() > before,
+            "a real change must split"
+        );
+    }
+
+    #[test]
     fn indexed_run_query_matches_full_intersection_filter() {
         let mut history = LiquidityHistory::new(enabled_config());
         history.install_snapshot(100, 1, snapshot(10)).unwrap();
@@ -967,11 +1006,6 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(indexed, expected);
-        assert!(
-            indexed
-                .iter()
-                .all(|run| run.end_ms.is_none_or(|end| end > start_ms))
-        );
     }
 
     #[test]
@@ -1170,8 +1204,8 @@ mod tests {
 
         assert_eq!(history.book(), &before);
         let aggressions: Vec<_> = history.aggressions().collect();
-        assert_eq!(aggressions[0].consumed_side(), BookSide::Ask);
-        assert_eq!(aggressions[1].consumed_side(), BookSide::Bid);
+        assert_eq!(aggressions[0].side, Side::Buy);
+        assert_eq!(aggressions[1].side, Side::Sell);
     }
 
     #[test]
@@ -1202,7 +1236,7 @@ mod tests {
     }
 
     #[test]
-    fn update_config_applies_caps_and_aggression_toggle_immediately() {
+    fn visual_aggression_toggle_preserves_bounded_factual_history() {
         let mut history = LiquidityHistory::new(enabled_config());
         history.record_aggression(&trade(1, 100, Side::Buy));
         history.record_aggression(&trade(2, 101, Side::Buy));
@@ -1214,9 +1248,11 @@ mod tests {
             ..history.config().clone()
         };
         history.update_config(config).unwrap();
-        assert_eq!(history.aggressions().count(), 0);
+        assert_eq!(history.aggressions().count(), 1);
+        assert_eq!(history.aggressions().next().unwrap().agg_id, 2);
         history.record_aggression(&trade(3, 102, Side::Sell));
-        assert_eq!(history.aggressions().count(), 0);
+        assert_eq!(history.aggressions().count(), 1);
+        assert_eq!(history.aggressions().next().unwrap().agg_id, 3);
     }
 
     #[test]

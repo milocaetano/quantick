@@ -46,16 +46,23 @@ layered after resting liquidity and before aggression bubbles:
 `heatmap → candle → aggression`. Appearance changes only trigger a redraw and
 never restart the market-data pipelines.
 
-## Optional L2 heatmap
+## Optional L2 liquidity map
 
-The chart can capture Binance Spot level-2 order-book depth and render a Bookmap-style liquidity heatmap. It is **disabled by default** and must be enabled from the chart controls.
+The chart can capture Binance Spot level-2 order-book depth and render a
+Bookmap-inspired liquidity map. It is **disabled by default** and must be
+enabled from the chart controls. The **⚙ L2** panel includes a deterministic
+preview of every visual state, so themes and grouping can be tuned without
+waiting for a rare live-book event.
 
 The visualization follows a few data-honesty rules:
 
 - History begins at the first successfully synchronized live snapshot/update sequence. Binance does not provide historical L2 backfill through this feed, so candles before that point are marked as unavailable instead of being reconstructed.
 - Depth update IDs are checked continuously. A disconnect, sequence gap or resynchronization closes the current liquidity runs, marks the affected interval with subtle shading and dashed vertical boundaries, and starts again from a fresh snapshot. Stale book state is never stretched across a gap.
 - Heatmap quantities are resting bid/ask amounts from the snapshot plus absolute depth updates, limited to the configured number of price levels on each side. Liquidity outside that coverage is unknown.
-- Optional `aggTrade` bubbles show confirmed market aggression as a factual overlay. They never subtract quantity from the book: a depth reduction can be an execution, cancellation, replacement or a combination of those events.
+- `aggTrade` bubbles are confirmed market aggression. Their area is quantity-proportional and nearby prints can be clustered without changing total volume.
+- A dark **bite** and impact ring mean an aggression and an L2 reduction were compatible in passive side, displayed price range, synchronized generation and time. This is an association, not a claim that one event caused the other.
+- A violet dashed tail means displayed liquidity decreased without compatible aggression. It is deliberately called an **unattributed L2 reduction**, not a cancellation: a depth reduction can be an execution, cancellation, replacement or a combination of those events.
+- Window clipping, retention boundaries, snapshots and synchronization gaps never create fake reduction markers.
 - Captured history is bounded and kept in memory only. Restarting the application starts a new capture.
 
 The chart exposes these settings:
@@ -64,13 +71,18 @@ The chart exposes these settings:
 | --- | ---: | --- |
 | L2 heatmap | Off | Starts live capture when enabled |
 | Retention | 30 minutes | 1–1,440 minutes |
-| Price bucket | `0.01` | Any positive value; changing it resets heatmap history and restarts capture |
-| Opacity | `0.72` | `0.0`–`1.0` |
-| Gamma | `0.75` | `0.1`–`3.0` |
+| Display range | Auto / 160 rows | Native, `2×`, `5×`, `10×`, `25×`, `50×`, custom multiple or adaptive-to-zoom; changing it reprojects immediately without resetting history |
+| Base capture bucket | `0.01` | Advanced setting; any positive value. Changing this base resolution requires a fresh snapshot and resets retained L2 history |
+| Theme | Bookmap | Bookmap, High contrast or Color blind |
+| Brightness | `0.72` | `0.05`–`1.0` |
+| Quiet liquidity curve | `0.75` | `0.25`–`2.0` |
 | Intensity scale | Visible P99 | Automatic visible-window P99 or a fixed full-intensity quantity |
 | Aggression bubbles | On | Can be hidden independently of the heatmap |
+| Bubble clustering | 100 ms | Raw, 50, 100, 250 or 500 ms |
+| Liquidity response | On / 250 ms | Bite or withdrawal-tail markers with a configurable 25–1,000 ms evidence window |
+| Legend | On | Explains liquidity brightness, buy/sell aggression, aligned depletion, unattributed reduction and L2 gaps |
 
-The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 100,000 aggression records, 50,000 projected visible cells and 2,000 projected bubbles. Old history is pruned and excess render primitives are dropped within those limits; the associated counters are emitted in diagnostic logs. The exact RLE history remains independent from rendering: visible projection is refreshed at the 100 ms depth cadence and its heat cells are submitted as one batched mesh.
+The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 100,000 aggression records, 50,000 projected visible cells/events and 2,000 projected bubbles. Old history is pruned and excess render primitives are dropped within those limits; the associated counters are emitted in diagnostic logs. The exact RLE history remains independent from rendering: visible projection is refreshed at the 100 ms depth cadence, regrouped in a deterministic sweep and submitted in batched meshes. The paint order is `gap → heatmap → liquidity response → candle → aggression → legend`.
 
 ### L2 and logging environment variables
 

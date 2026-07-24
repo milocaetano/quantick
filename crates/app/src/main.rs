@@ -18,6 +18,7 @@ mod config;
 mod feed;
 mod metrics;
 mod orderflow;
+mod orderflow_render;
 mod orderflow_view;
 mod price_view;
 mod state;
@@ -98,10 +99,14 @@ fn main() -> eframe::Result {
 
     let feed = feed::spawn(provider, &symbol, &config);
 
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+        .expect("bundled assets/icon.png is a valid PNG");
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 650.0])
-            .with_title("quantick"),
+            .with_title("quantick")
+            .with_icon(icon),
         ..Default::default()
     };
 

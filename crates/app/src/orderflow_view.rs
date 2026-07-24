@@ -9,28 +9,69 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use quantick_engine::{Bar, Side, Trade};
+use quantick_engine::{Bar, Trade};
 use quantick_feed_binance::depth::{DepthEvent, DepthResyncReason, DepthStatus};
-use quantick_orderbook::BookSide;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::orderflow::{
-    BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, IntensityMode, LiquidityHistory,
-    PriceWindow, project,
+    BarTimeline, DisplayGrouping, HeatmapConfig, HeatmapProjection, HeatmapTheme, HistoryStatus,
+    IntensityMode, LiquidityHistory, PriceWindow, project,
+};
+use crate::orderflow_render::{
+    OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
+    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview,
 };
 use crate::viewport::Viewport;
 
-const BID_LOW: [u8; 3] = [14, 40, 82];
-const BID_MID: [u8; 3] = [0, 184, 224];
-const ASK_LOW: [u8; 3] = [78, 20, 42];
-const ASK_MID: [u8; 3] = [255, 84, 42];
-const HEAT_HIGH: [u8; 3] = [255, 222, 72];
-const BUY_PRINT: egui::Color32 = egui::Color32::from_rgb(55, 226, 176);
-const SELL_PRINT: egui::Color32 = egui::Color32::from_rgb(255, 91, 105);
-const GAP_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(55, 63, 78, 34);
-const GAP_BOUNDARY: egui::Color32 = egui::Color32::from_rgba_premultiplied(135, 145, 160, 90);
-const PROJECTION_INTERVAL: Duration = Duration::from_millis(100);
+const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
+
+/// Quantize the price window before it keys the projection cache, so a
+/// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a
+/// live book) does not force a full re-projection. The window is snapped to
+/// ~1/500 of its own span; a cached frame is at most that far off vertically.
+fn quantize_price(value: f64, span: f64) -> u64 {
+    let step = (span / 500.0).max(f64::MIN_POSITIVE);
+    ((value / step).round() * step).to_bits()
+}
+
+/// Reference price of a snapshot (best bid/ask mid), for sizing the capture
+/// bucket. Any level works — only the magnitude matters.
+fn snapshot_reference_price(snapshot: &quantick_orderbook::BookSnapshot) -> Option<f64> {
+    let best_bid = snapshot.bids().iter().map(|level| level.price()).max();
+    let best_ask = snapshot.asks().iter().map(|level| level.price()).min();
+    let price = match (best_bid, best_ask) {
+        (Some(bid), Some(ask)) => (bid + ask) / Decimal::from(2),
+        (Some(price), None) | (None, Some(price)) => price,
+        (None, None) => return None,
+    };
+    price.to_f64()
+}
+
+/// A capture price bucket proportional to the asset's price, snapped to a
+/// 1 / 2 / 5 · 10^k step near `price / 65_000` — so BTC (~65k) lands near $1, an
+/// index (~130k) near $2, a ~5k contract near $0.1, and FX stays sub-cent. A
+/// dense book at the 0.01 default explodes into tens of thousands of RLE runs;
+/// this keeps the count affordable without per-asset tuning. Falls back to the
+/// fine default when the price is unusable.
+fn adaptive_base(price: f64) -> Decimal {
+    if !price.is_finite() || price <= 0.0 {
+        return Decimal::new(1, 2);
+    }
+    let target = (price / 65_000.0).clamp(1e-9, 1e6);
+    let pow = 10f64.powf(target.log10().floor());
+    let mantissa = target / pow; // in [1, 10)
+    let nice = if mantissa < 1.5 {
+        1.0
+    } else if mantissa < 3.5 {
+        2.0
+    } else if mantissa < 7.5 {
+        5.0
+    } else {
+        10.0
+    };
+    Decimal::from_f64(nice * pow).unwrap_or(Decimal::new(1, 2))
+}
 
 /// One visible, already-projected order-flow frame.
 #[derive(Clone)]
@@ -74,8 +115,12 @@ pub struct OrderflowHealth {
     pub history_bytes: usize,
     pub projection_cells: usize,
     pub projection_aggressions: usize,
+    pub projection_liquidity_events: usize,
     pub dropped_cells: usize,
     pub dropped_aggressions: usize,
+    pub dropped_liquidity_events: usize,
+    pub effective_grouping: Decimal,
+    pub effective_grouping_multiple: u32,
     pub projection_ms: f32,
     pub projection_builds: u64,
     pub projection_cache_hits: u64,
@@ -155,7 +200,12 @@ pub struct OrderflowView {
     symbol: String,
     config: HeatmapConfig,
     history: LiquidityHistory,
+    /// Size the capture bucket from the asset price on the first snapshot.
+    /// Cleared once the user sets the base resolution by hand.
+    auto_base: bool,
     show_settings: bool,
+    capture_grouping_draft: f64,
+    pending_capture_grouping_previous: Option<Decimal>,
     status: CaptureStatus,
     generation_floor: u64,
     latest_generation: Option<u64>,
@@ -165,8 +215,12 @@ pub struct OrderflowView {
     config_revision: u64,
     last_projection_cells: usize,
     last_projection_aggressions: usize,
+    last_projection_liquidity_events: usize,
     last_dropped_cells: usize,
     last_dropped_aggressions: usize,
+    last_dropped_liquidity_events: usize,
+    last_effective_grouping: Decimal,
+    last_effective_grouping_multiple: u32,
     last_projection_ms: f32,
     projection_builds: u64,
     projection_cache_hits: u64,
@@ -177,11 +231,15 @@ impl OrderflowView {
     #[must_use]
     pub fn new(symbol: impl Into<String>) -> Self {
         let config = HeatmapConfig::default();
+        let base_grouping = config.price_grouping;
         Self {
             symbol: symbol.into(),
             history: LiquidityHistory::new(config.clone()),
             config,
+            auto_base: true,
             show_settings: false,
+            capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
+            pending_capture_grouping_previous: None,
             status: CaptureStatus::Disabled,
             generation_floor: 0,
             latest_generation: None,
@@ -191,8 +249,12 @@ impl OrderflowView {
             config_revision: 0,
             last_projection_cells: 0,
             last_projection_aggressions: 0,
+            last_projection_liquidity_events: 0,
             last_dropped_cells: 0,
             last_dropped_aggressions: 0,
+            last_dropped_liquidity_events: 0,
+            last_effective_grouping: base_grouping,
+            last_effective_grouping_multiple: 1,
             last_projection_ms: 0.0,
             projection_builds: 0,
             projection_cache_hits: 0,
@@ -205,8 +267,41 @@ impl OrderflowView {
         self.config.enabled
     }
 
+    /// Latest exchange timestamp for which live book state is known, while
+    /// capture is active. Drives how wide the forming bar's live tail grows.
+    #[must_use]
+    pub fn live_end_ms(&self) -> Option<i64> {
+        if self.config.enabled {
+            self.history.latest_book_ms()
+        } else {
+            None
+        }
+    }
+
     pub fn toggle_settings(&mut self) {
         self.show_settings = !self.show_settings;
+    }
+
+    #[must_use]
+    pub fn settings_button_label(&self) -> String {
+        match self.config.display_grouping {
+            DisplayGrouping::Adaptive { .. } => "⚙ L2 · auto".to_owned(),
+            DisplayGrouping::Native => "⚙ L2 · 1×".to_owned(),
+            DisplayGrouping::Multiple(multiple) => format!("⚙ L2 · {multiple}×"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
+        let before = self.config.clone();
+        self.config.price_grouping = grouping;
+        self.capture_grouping_draft = grouping.to_f64().unwrap_or(self.capture_grouping_draft);
+        self.commit_config_changes(before)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn base_capture_grouping_for_test(&self) -> Decimal {
+        self.config.price_grouping
     }
 
     /// Reset market-specific history while preserving visual/retention
@@ -215,7 +310,11 @@ impl OrderflowView {
     pub fn reset_for_symbol(&mut self, symbol: impl Into<String>) {
         self.symbol = symbol.into();
         self.config.enabled = false;
+        // A new market has a new price scale; re-derive the capture bucket.
+        self.auto_base = true;
         self.history = LiquidityHistory::new(self.config.clone());
+        self.capture_grouping_draft = self.config.price_grouping.to_f64().unwrap_or(0.01);
+        self.pending_capture_grouping_previous = None;
         self.status = CaptureStatus::Disabled;
         self.generation_floor = 0;
         self.latest_generation = None;
@@ -224,8 +323,12 @@ impl OrderflowView {
         self.depth_updates_since_summary = 0;
         self.last_projection_cells = 0;
         self.last_projection_aggressions = 0;
+        self.last_projection_liquidity_events = 0;
         self.last_dropped_cells = 0;
         self.last_dropped_aggressions = 0;
+        self.last_dropped_liquidity_events = 0;
+        self.last_effective_grouping = self.config.price_grouping;
+        self.last_effective_grouping_multiple = 1;
         self.last_projection_ms = 0.0;
         self.projection_builds = 0;
         self.projection_cache_hits = 0;
@@ -269,6 +372,69 @@ impl OrderflowView {
         self.generation_floor = generation_floor;
         self.status = CaptureStatus::Connecting;
         self.invalidate_projection();
+    }
+
+    /// Commit a staged base-grouping change only after the feed accepted its
+    /// restart command. Until this point the old history and capture remain
+    /// fully usable.
+    pub fn accept_capture_grouping_restart(&mut self, generation_floor: u64) {
+        let Some(previous) = self.pending_capture_grouping_previous.take() else {
+            self.prepare_restart(generation_floor, "configuration_restart");
+            return;
+        };
+        match self
+            .history
+            .reset_price_grouping(self.config.price_grouping)
+        {
+            Ok(reset) => tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_GROUPING_RESET",
+                symbol = self.symbol.as_str(),
+                previous_grouping = %reset.previous,
+                current_grouping = %reset.current,
+                dropped_runs = reset.dropped_runs,
+                dropped_aggressions = reset.dropped_aggressions,
+                action = "restart_capture",
+                "accepted capture restart; base grouping and retained L2 history were reset"
+            ),
+            Err(error) => {
+                self.config.price_grouping = previous;
+                self.capture_grouping_draft =
+                    previous.to_f64().unwrap_or(self.capture_grouping_draft);
+                self.log_history_error(
+                    "grouping_reset",
+                    self.latest_generation.unwrap_or(0),
+                    &error,
+                );
+            }
+        }
+        self.apply_non_grouping_config();
+        self.prepare_restart(generation_floor, "configuration_restart");
+    }
+
+    /// Roll back a staged base-grouping change when the feed command could not
+    /// be queued. No retained history has been touched at this point.
+    pub fn reject_capture_grouping_restart(&mut self, reason: &'static str) {
+        let Some(previous) = self.pending_capture_grouping_previous.take() else {
+            return;
+        };
+        let requested = self.config.price_grouping;
+        self.config.price_grouping = previous;
+        self.capture_grouping_draft = previous.to_f64().unwrap_or(self.capture_grouping_draft);
+        self.apply_non_grouping_config();
+        self.invalidate_projection();
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "HEATMAP_GROUPING_ROLLED_BACK",
+            symbol = self.symbol.as_str(),
+            previous_grouping = %previous,
+            requested_grouping = %requested,
+            reason,
+            action = "keep_existing_capture_and_history",
+            "base grouping change was rolled back because capture restart was not queued"
+        );
     }
 
     /// Record a factual aggregate trade for the aggression overlay.
@@ -338,6 +504,15 @@ impl OrderflowView {
             } => {
                 self.invalidate_projection();
                 self.last_snapshot_observed_ms = Some(observed_at_ms);
+                // Size the capture bucket from the asset price before the first
+                // snapshot of a capture, so a dense book (BTC etc.) doesn't
+                // explode into runs. Skipped once the user picks a base by hand.
+                if self.auto_base
+                    && matches!(self.history.status(), HistoryStatus::Empty)
+                    && let Some(price) = snapshot_reference_price(&snapshot)
+                {
+                    self.apply_auto_base(adaptive_base(price));
+                }
                 if let Err(error) =
                     self.history
                         .install_snapshot(effective_at_ms, generation, snapshot)
@@ -448,12 +623,13 @@ impl OrderflowView {
         if !self.config.enabled {
             return None;
         }
+        let price_span = price_range.1 - price_range.0;
         let layout = ProjectionLayout {
             first_bar_index,
             slot_count: closed.len() + usize::from(partial.is_some()),
             extend_live_end,
-            price_low_bits: price_range.0.to_bits(),
-            price_high_bits: price_range.1.to_bits(),
+            price_low_bits: quantize_price(price_range.0, price_span),
+            price_high_bits: quantize_price(price_range.1, price_span),
         };
         let now = Instant::now();
         if let Some(cache) = &self.projection_cache
@@ -485,8 +661,12 @@ impl OrderflowView {
         self.last_projection_ms = started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_cells = projection.cells.len();
         self.last_projection_aggressions = projection.aggressions.len();
+        self.last_projection_liquidity_events = projection.liquidity_events.len();
         self.last_dropped_cells = projection.dropped_cells;
         self.last_dropped_aggressions = projection.dropped_aggressions;
+        self.last_dropped_liquidity_events = projection.dropped_liquidity_events;
+        self.last_effective_grouping = projection.effective_grouping.bucket_width;
+        self.last_effective_grouping_multiple = projection.effective_grouping.multiple;
         self.projection_builds = self.projection_builds.saturating_add(1);
         let frame = Arc::new(VisibleOrderflow {
             projection: Arc::new(projection),
@@ -505,7 +685,9 @@ impl OrderflowView {
         self.projection_cache = None;
     }
 
-    /// Draw resting liquidity and explicit coverage gaps behind candles.
+    /// Draw resting liquidity, coverage gaps and factual liquidity changes
+    /// behind the candle layer.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_background(
         &self,
         painter: &egui::Painter,
@@ -513,76 +695,25 @@ impl OrderflowView {
         viewport: &Viewport,
         total_bars: usize,
         frame: &VisibleOrderflow,
+        canvas_background: egui::Color32,
+        live_span: f32,
     ) {
-        let clip = painter.with_clip_rect(chart_rect);
-        let mut mesh = egui::Mesh::default();
-        mesh.vertices
-            .reserve(frame.projection.cells.len().saturating_mul(4));
-        mesh.indices
-            .reserve(frame.projection.cells.len().saturating_mul(6));
-
-        for cell in &frame.projection.cells {
-            let rect = projected_rect(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                cell.x0,
-                cell.x1,
-                cell.y0,
-                cell.y1,
-            );
-            let color = heat_color(cell.side, cell.intensity, cell.alpha);
-            if rect.is_positive() {
-                mesh.add_colored_rect(rect, color);
-            }
-        }
-        if !mesh.is_empty() {
-            clip.add(egui::Shape::mesh(mesh));
-        }
-
-        for gap in &frame.projection.gaps {
-            let x0 = projected_x(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                gap.x0,
-            );
-            let x1 = projected_x(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                gap.x1,
-            );
-            let rect = egui::Rect::from_min_max(
-                egui::pos2(x0.min(x1), chart_rect.top()),
-                egui::pos2(x0.max(x1), chart_rect.bottom()),
-            )
-            .intersect(chart_rect);
-            if !rect.is_positive() {
-                continue;
-            }
-            clip.rect_filled(rect, egui::Rounding::ZERO, GAP_FILL);
-            draw_dashed_vertical(&clip, rect.left(), rect);
-            draw_dashed_vertical(&clip, rect.right(), rect);
-            if rect.width() >= 100.0 {
-                clip.text(
-                    rect.center_top() + egui::vec2(0.0, 18.0),
-                    egui::Align2::CENTER_TOP,
-                    gap_label(&gap.reason),
-                    egui::FontId::proportional(10.0),
-                    egui::Color32::from_gray(175),
-                );
-            }
-        }
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            live_span,
+        );
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let context = RenderContext::new(&frame.projection, layout, &style);
+        draw_heatmap_background(painter, &context);
+        draw_liquidity_events(painter, &context);
     }
 
-    /// Draw factual aggressive prints over candles.
+    /// Draw factual aggressive prints and the compact visual key over candles.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
         painter: &egui::Painter,
@@ -590,29 +721,21 @@ impl OrderflowView {
         viewport: &Viewport,
         total_bars: usize,
         frame: &VisibleOrderflow,
+        canvas_background: egui::Color32,
+        live_span: f32,
     ) {
-        let clip = painter.with_clip_rect(chart_rect);
-        for trade in &frame.projection.aggressions {
-            let x = projected_x(
-                chart_rect,
-                viewport,
-                total_bars,
-                frame.first_bar_index,
-                frame.slot_count,
-                trade.x,
-            );
-            let y = chart_rect.top() + trade.y as f32 * chart_rect.height();
-            if !chart_rect.contains(egui::pos2(x, y)) {
-                continue;
-            }
-            let radius = 2.5 + trade.size * 8.0;
-            let color = match trade.side {
-                Side::Buy => BUY_PRINT,
-                Side::Sell => SELL_PRINT,
-            };
-            clip.circle_filled(egui::pos2(x, y), radius, color.gamma_multiply(0.72));
-            clip.circle_stroke(egui::pos2(x, y), radius, egui::Stroke::new(1.0_f32, color));
-        }
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            live_span,
+        );
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let context = RenderContext::new(&frame.projection, layout, &style);
+        draw_aggression_bubbles(painter, &context);
+        draw_compact_legend(painter, &context);
     }
 
     pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
@@ -639,33 +762,178 @@ impl OrderflowView {
     }
 
     /// Draw the floating settings window and return whether capture must
-    /// restart because the exact price grouping changed.
+    /// restart because the base capture resolution changed.
     pub fn draw_settings(&mut self, ctx: &egui::Context) -> bool {
         if !self.show_settings {
             return false;
         }
         let before = self.config.clone();
         let mut open = self.show_settings;
-        egui::Window::new("order flow layers")
+        egui::Window::new("order flow · liquidity map")
             .open(&mut open)
-            .resizable(false)
+            .default_width(420.0)
+            .resizable(true)
             .show(ctx, |ui| {
-                ui.label("History begins at the first live depth sync.");
-                ui.small("Binance does not provide historical L2 backfill.");
-                ui.separator();
-
-                let mut grouping = self.config.price_grouping.to_f64().unwrap_or(0.01);
+                egui::ScrollArea::vertical()
+                    .id_salt("orderflow_settings_scroll")
+                    .max_height(560.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("price bucket");
-                    ui.add(
-                        egui::DragValue::new(&mut grouping)
-                            .range(0.000_000_01..=1_000_000.0)
-                            .speed(0.01),
+                    ui.label(
+                        egui::RichText::new("BOOKMAP VIEW")
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 222, 92)),
+                    );
+                    ui.label(
+                        egui::RichText::new(self.status.label())
+                            .small()
+                            .color(self.status.color()),
                     );
                 });
-                self.config.price_grouping =
-                    Decimal::from_f64(grouping.max(0.000_000_01)).unwrap_or(Decimal::new(1, 2));
+                ui.small(
+                    "Brightness is resting liquidity. Green/red bubbles are confirmed trades.",
+                );
+                ui.small(
+                    "A bite means a compatible L2 reduction; a violet tail is an unattributed withdrawal.",
+                );
+                draw_preview(ui, &self.config).on_hover_text(
+                    "Deterministic preview: persistent wall, aligned depletion, full withdrawal and clustered trades.",
+                );
+                ui.separator();
 
+                ui.horizontal(|ui| {
+                    ui.strong("liquidity ranges");
+                    ui.add_space(8.0);
+                    egui::ComboBox::from_id_salt("heatmap_theme")
+                        .selected_text(theme_label(self.config.theme))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.config.theme,
+                                HeatmapTheme::Bookmap,
+                                "Bookmap",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.theme,
+                                HeatmapTheme::HighContrast,
+                                "High contrast",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.theme,
+                                HeatmapTheme::ColorBlind,
+                                "Color blind",
+                            );
+                        });
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("display range");
+                    egui::ComboBox::from_id_salt("heatmap_display_grouping")
+                        .selected_text(display_grouping_label(self.config.display_grouping))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.config.display_grouping,
+                                DisplayGrouping::Adaptive { target_rows: 160 },
+                                "Auto · follows zoom",
+                            );
+                            ui.selectable_value(
+                                &mut self.config.display_grouping,
+                                DisplayGrouping::Native,
+                                "Native · 1×",
+                            );
+                            for multiple in [2, 5, 10, 25, 50] {
+                                ui.selectable_value(
+                                    &mut self.config.display_grouping,
+                                    DisplayGrouping::Multiple(multiple),
+                                    format!("Range · {multiple}×"),
+                                );
+                            }
+                            ui.selectable_value(
+                                &mut self.config.display_grouping,
+                                DisplayGrouping::Multiple(3),
+                                "Custom…",
+                            );
+                        });
+                });
+                match &mut self.config.display_grouping {
+                    DisplayGrouping::Adaptive { target_rows } => {
+                        ui.add(
+                            egui::Slider::new(target_rows, 40..=400)
+                                .text("target screen rows")
+                                .logarithmic(true),
+                        )
+                        .on_hover_text(
+                            "automatically widens price ranges as you zoom out; history stays intact",
+                        );
+                    }
+                    DisplayGrouping::Multiple(multiple)
+                        if ![2_u32, 5, 10, 25, 50].contains(multiple) =>
+                    {
+                        ui.add(
+                            egui::DragValue::new(multiple)
+                                .range(1..=1_000_000)
+                                .prefix("custom multiple "),
+                        );
+                    }
+                    DisplayGrouping::Native | DisplayGrouping::Multiple(_) => {}
+                }
+                ui.small(
+                    "Display grouping is instant and non-destructive; it never restarts L2 capture.",
+                );
+                ui.add(egui::Slider::new(&mut self.config.opacity, 0.05..=1.0).text("brightness"));
+                ui.add(
+                    egui::Slider::new(&mut self.config.gamma, 0.25..=2.0)
+                        .text("quiet liquidity"),
+                );
+
+                ui.separator();
+                ui.strong("aggression bubbles");
+                ui.checkbox(&mut self.config.show_aggressions, "show confirmed executions")
+                    .on_hover_text("confirmed Binance aggTrades; color is the aggressor side");
+                ui.add_enabled_ui(self.config.show_aggressions, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("cluster");
+                        egui::ComboBox::from_id_salt("heatmap_bubble_cluster")
+                            .selected_text(cluster_label(self.config.bubble_cluster_ms))
+                            .show_ui(ui, |ui| {
+                                for (milliseconds, label) in [
+                                    (0, "Raw"),
+                                    (50, "50 ms"),
+                                    (100, "100 ms"),
+                                    (250, "250 ms"),
+                                    (500, "500 ms"),
+                                ] {
+                                    ui.selectable_value(
+                                        &mut self.config.bubble_cluster_ms,
+                                        milliseconds,
+                                        label,
+                                    );
+                                }
+                            });
+                    });
+                });
+
+                ui.separator();
+                ui.strong("liquidity response");
+                ui.checkbox(
+                    &mut self.config.show_liquidity_events,
+                    "show bites and withdrawal tails",
+                );
+                ui.add_enabled(
+                    self.config.show_liquidity_events,
+                    egui::Slider::new(&mut self.config.liquidity_correlation_ms, 25..=1_000)
+                        .text("matching window ms")
+                        .logarithmic(true),
+                )
+                .on_hover_text(
+                    "time/price window used to associate a factual trade with a factual L2 reduction",
+                );
+                ui.small(
+                    "Association is evidence, not causality: depth updates can also contain pulls or replacements.",
+                );
+
+                ui.separator();
+                ui.strong("scale & history");
                 let mut retention_minutes = self.config.retention_ms as f64 / 60_000.0;
                 ui.add(
                     egui::Slider::new(&mut retention_minutes, 1.0..=1_440.0)
@@ -673,13 +941,6 @@ impl OrderflowView {
                         .text("retention min"),
                 );
                 self.config.retention_ms = (retention_minutes * 60_000.0) as i64;
-                ui.add(egui::Slider::new(&mut self.config.opacity, 0.0..=1.0).text("opacity"));
-                ui.add(egui::Slider::new(&mut self.config.gamma, 0.1..=3.0).text("gamma"));
-                ui.checkbox(&mut self.config.show_aggressions, "aggression bubbles")
-                    .on_hover_text(
-                        "confirmed aggTrades; bubbles never mutate resting book quantities",
-                    );
-
                 let mut automatic = matches!(self.config.intensity_mode, IntensityMode::VisibleP99);
                 ui.checkbox(&mut automatic, "auto intensity (visible P99)");
                 if automatic {
@@ -699,6 +960,33 @@ impl OrderflowView {
                         Decimal::from_f64(maximum.max(0.000_000_01)).unwrap_or(Decimal::ONE),
                     );
                 }
+                ui.checkbox(&mut self.config.show_legend, "show chart legend");
+
+                ui.collapsing("advanced · capture resolution", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("base price bucket");
+                        ui.add(
+                            egui::DragValue::new(&mut self.capture_grouping_draft)
+                                .range(0.000_000_01..=1_000_000.0)
+                                .speed(0.01),
+                        );
+                    });
+                    let candidate =
+                        Decimal::from_f64(self.capture_grouping_draft.max(0.000_000_01))
+                            .unwrap_or(Decimal::new(1, 2));
+                    if ui
+                        .add_enabled(
+                            candidate != self.config.price_grouping,
+                            egui::Button::new("apply base resolution & resync"),
+                        )
+                        .clicked()
+                    {
+                        self.config.price_grouping = candidate;
+                    }
+                    ui.small(
+                        "Changing the capture bucket requires a fresh snapshot and clears retained L2 history.",
+                    );
+                });
 
                 ui.separator();
                 ui.label(format!(
@@ -712,24 +1000,47 @@ impl OrderflowView {
                     self.history.archived_run_count() + self.history.active_level_count(),
                     self.history.approximate_history_bytes() as f64 / (1024.0 * 1024.0)
                 ));
-                if ui.button("reset visual defaults").clicked() {
+                ui.label(format!(
+                    "effective range {} · {}× base",
+                    self.last_effective_grouping, self.last_effective_grouping_multiple
+                ));
+                if ui.button("reset Bookmap visuals").clicked() {
                     let enabled = self.config.enabled;
+                    let price_grouping = self.config.price_grouping;
+                    self.capture_grouping_draft =
+                        price_grouping.to_f64().unwrap_or(self.capture_grouping_draft);
                     self.config = HeatmapConfig {
                         enabled,
+                        price_grouping,
                         ..HeatmapConfig::default()
                     };
                 }
+                    });
             });
         self.show_settings = open;
 
+        self.commit_config_changes(before)
+    }
+
+    fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
         self.config.sanitize();
         if self.config == before {
             return false;
         }
         self.invalidate_projection();
 
-        let grouping_changed = self.config.price_grouping != before.price_grouping;
-        if grouping_changed {
+        let capture_grouping_changed = self.config.price_grouping != before.price_grouping;
+        if capture_grouping_changed {
+            // The user picked a base resolution by hand; stop auto-sizing it.
+            self.auto_base = false;
+        }
+        let restart_required = capture_grouping_changed && self.config.enabled;
+        if restart_required {
+            self.pending_capture_grouping_previous = Some(before.price_grouping);
+            let mut compatible = self.config.clone();
+            compatible.price_grouping = before.price_grouping;
+            self.apply_history_config(compatible);
+        } else if capture_grouping_changed {
             match self
                 .history
                 .reset_price_grouping(self.config.price_grouping)
@@ -743,8 +1054,8 @@ impl OrderflowView {
                     current_grouping = %reset.current,
                     dropped_runs = reset.dropped_runs,
                     dropped_aggressions = reset.dropped_aggressions,
-                    action = "restart_capture",
-                    "price grouping changed; historical runs were reset honestly"
+                    action = "apply_while_capture_disabled",
+                    "base price grouping changed; historical runs were reset honestly"
                 ),
                 Err(error) => self.log_history_error(
                     "grouping_reset",
@@ -752,8 +1063,10 @@ impl OrderflowView {
                     &error,
                 ),
             }
+            self.apply_non_grouping_config();
+        } else {
+            self.apply_non_grouping_config();
         }
-        self.apply_non_grouping_config();
         self.config_revision = self.config_revision.saturating_add(1);
         tracing::info!(
             target: "quantick::app",
@@ -764,19 +1077,54 @@ impl OrderflowView {
             enabled = self.config.enabled,
             retention_ms = self.config.retention_ms,
             price_grouping = %self.config.price_grouping,
+            display_grouping = ?self.config.display_grouping,
             opacity = self.config.opacity,
             gamma = self.config.gamma,
             show_aggressions = self.config.show_aggressions,
-            grouping_changed,
-            action = if grouping_changed { "restart_capture" } else { "reproject" },
+            bubble_cluster_ms = self.config.bubble_cluster_ms,
+            show_liquidity_events = self.config.show_liquidity_events,
+            liquidity_correlation_ms = self.config.liquidity_correlation_ms,
+            theme = ?self.config.theme,
+            capture_grouping_changed,
+            action = if restart_required { "request_capture_restart" } else { "reproject" },
             "heatmap configuration changed"
         );
-        grouping_changed && self.config.enabled
+        restart_required
     }
 
     fn apply_non_grouping_config(&mut self) {
-        if let Err(error) = self.history.update_config(self.config.clone()) {
+        self.apply_history_config(self.config.clone());
+    }
+
+    fn apply_history_config(&mut self, config: HeatmapConfig) {
+        if let Err(error) = self.history.update_config(config) {
             self.log_history_error("config_update", self.latest_generation.unwrap_or(0), &error);
+        }
+    }
+
+    /// Adopt a price-derived capture bucket while history is still empty (so no
+    /// data is discarded), keeping config, draft and history in sync.
+    fn apply_auto_base(&mut self, base: Decimal) {
+        if base <= Decimal::ZERO || base == self.config.price_grouping {
+            return;
+        }
+        match self.history.reset_price_grouping(base) {
+            Ok(_) => {
+                self.config.price_grouping = base;
+                self.capture_grouping_draft = base.to_f64().unwrap_or(self.capture_grouping_draft);
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HEATMAP_AUTO_BASE",
+                    symbol = self.symbol.as_str(),
+                    base = %base,
+                    action = "size_capture_bucket_from_price",
+                    "auto-sized L2 capture bucket from asset price"
+                );
+            }
+            Err(error) => {
+                self.log_history_error("auto_base", self.latest_generation.unwrap_or(0), &error);
+            }
         }
     }
 
@@ -811,8 +1159,12 @@ impl OrderflowView {
             history_bytes: self.history.approximate_history_bytes(),
             projection_cells: self.last_projection_cells,
             projection_aggressions: self.last_projection_aggressions,
+            projection_liquidity_events: self.last_projection_liquidity_events,
             dropped_cells: self.last_dropped_cells,
             dropped_aggressions: self.last_dropped_aggressions,
+            dropped_liquidity_events: self.last_dropped_liquidity_events,
+            effective_grouping: self.last_effective_grouping,
+            effective_grouping_multiple: self.last_effective_grouping_multiple,
             projection_ms: self.last_projection_ms,
             projection_builds: self.projection_builds,
             projection_cache_hits: self.projection_cache_hits,
@@ -830,20 +1182,6 @@ impl OrderflowView {
     }
 }
 
-fn draw_dashed_vertical(painter: &egui::Painter, x: f32, rect: egui::Rect) {
-    let mut y = rect.top();
-    while y < rect.bottom() {
-        painter.line_segment(
-            [
-                egui::pos2(x, y),
-                egui::pos2(x, (y + 4.0).min(rect.bottom())),
-            ],
-            egui::Stroke::new(1.0_f32, GAP_BOUNDARY),
-        );
-        y += 9.0;
-    }
-}
-
 fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
     match reason {
         DepthResyncReason::SnapshotTooOld { .. } => "snapshot_too_old",
@@ -852,100 +1190,76 @@ fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
     }
 }
 
-fn gap_label(reason: &str) -> &'static str {
-    match reason {
-        "book_unavailable_before_capture" => "book unavailable before capture",
-        "capture_disabled" => "book capture disabled",
-        "sequence_gap" => "book gap · resynchronizing",
-        _ => "book continuity unavailable",
+fn theme_label(theme: HeatmapTheme) -> &'static str {
+    match theme {
+        HeatmapTheme::Bookmap => "Bookmap",
+        HeatmapTheme::HighContrast => "High contrast",
+        HeatmapTheme::ColorBlind => "Color blind",
     }
 }
 
-fn projected_x(
-    chart_rect: egui::Rect,
-    viewport: &Viewport,
-    total_bars: usize,
-    first_bar_index: usize,
-    slot_count: usize,
-    normalized: f64,
-) -> f32 {
-    let position = first_bar_index as f32 - 0.5 + normalized as f32 * slot_count as f32;
-    viewport.x_at_bar_position(position, chart_rect.right(), total_bars)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn projected_rect(
-    chart_rect: egui::Rect,
-    viewport: &Viewport,
-    total_bars: usize,
-    first_bar_index: usize,
-    slot_count: usize,
-    x0: f64,
-    x1: f64,
-    y0: f64,
-    y1: f64,
-) -> egui::Rect {
-    let left = projected_x(
-        chart_rect,
-        viewport,
-        total_bars,
-        first_bar_index,
-        slot_count,
-        x0,
-    );
-    let right = projected_x(
-        chart_rect,
-        viewport,
-        total_bars,
-        first_bar_index,
-        slot_count,
-        x1,
-    );
-    let top = chart_rect.top() + y0 as f32 * chart_rect.height();
-    let bottom = chart_rect.top() + y1 as f32 * chart_rect.height();
-    let mut rect = egui::Rect::from_min_max(
-        egui::pos2(left.min(right), top.min(bottom)),
-        egui::pos2(left.max(right), top.max(bottom)),
-    );
-    if rect.height() < 1.0 {
-        rect = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width().max(0.5), 1.0));
+fn display_grouping_label(grouping: DisplayGrouping) -> String {
+    match grouping {
+        DisplayGrouping::Native => "Native · 1×".to_owned(),
+        DisplayGrouping::Multiple(multiple) => format!("Range · {multiple}×"),
+        DisplayGrouping::Adaptive { target_rows } => format!("Auto · {target_rows} rows"),
     }
-    rect.intersect(chart_rect)
 }
 
-fn heat_color(side: BookSide, intensity: f32, alpha: f32) -> egui::Color32 {
-    let t = intensity.clamp(0.0, 1.0);
-    let (low, mid) = match side {
-        BookSide::Bid => (BID_LOW, BID_MID),
-        BookSide::Ask => (ASK_LOW, ASK_MID),
-    };
-    let rgb = if t < 0.7 {
-        lerp_rgb(low, mid, t / 0.7)
+fn cluster_label(milliseconds: i64) -> String {
+    if milliseconds == 0 {
+        "Raw".to_owned()
     } else {
-        lerp_rgb(mid, HEAT_HIGH, (t - 0.7) / 0.3)
-    };
-    egui::Color32::from_rgba_unmultiplied(
-        rgb[0],
-        rgb[1],
-        rgb[2],
-        (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
-    )
-}
-
-fn lerp_rgb(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [
-        (f32::from(a[0]) + (f32::from(b[0]) - f32::from(a[0])) * t).round() as u8,
-        (f32::from(a[1]) + (f32::from(b[1]) - f32::from(a[1])) * t).round() as u8,
-        (f32::from(a[2]) + (f32::from(b[2]) - f32::from(a[2])) * t).round() as u8,
-    ]
+        format!("{milliseconds} ms")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_engine::Side;
     use quantick_feed_binance::depth::DepthStatus;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+
+    #[test]
+    fn adaptive_base_scales_with_price_and_stays_round() {
+        // BTC ~ $1, an index ~ $2, a ~5k contract ~ $0.1, FX stays sub-cent.
+        assert_eq!(adaptive_base(65_000.0), Decimal::from(1));
+        assert_eq!(adaptive_base(118_000.0), Decimal::from(2));
+        assert_eq!(adaptive_base(5_000.0), Decimal::new(1, 1)); // 0.1
+        assert!(adaptive_base(1.1) < Decimal::new(1, 2)); // < 0.01
+        // Every result is a positive 1/2/5 * 10^k step.
+        for price in [0.5, 12.0, 300.0, 4_200.0, 65_000.0, 250_000.0] {
+            let base = adaptive_base(price);
+            assert!(base > Decimal::ZERO, "price {price} -> {base}");
+        }
+        // Degenerate prices fall back to the fine default.
+        assert_eq!(adaptive_base(0.0), Decimal::new(1, 2));
+        assert_eq!(adaptive_base(f64::NAN), Decimal::new(1, 2));
+    }
+
+    #[test]
+    fn auto_base_sizes_the_capture_bucket_from_the_first_snapshot() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 1);
+        // A ~65k book: the 0.01 default should auto-size up to ~$1.
+        view.handle_depth_event(DepthEvent::Snapshot {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 1,
+            observed_at_ms: 1_100,
+            effective_at_ms: 1_000,
+            snapshot: BookSnapshot::new(
+                10,
+                vec![BookLevel::new(Decimal::from(64_999), Decimal::from(2)).unwrap()],
+                vec![BookLevel::new(Decimal::from(65_001), Decimal::from(3)).unwrap()],
+                BookCoverage::Limited {
+                    levels_per_side: 1_000,
+                },
+            ),
+        });
+        assert_eq!(view.base_capture_grouping_for_test(), Decimal::from(1));
+        assert!(view.history.book().is_initialized());
+    }
 
     fn snapshot_event(generation: u64) -> DepthEvent {
         DepthEvent::Snapshot {
@@ -1102,23 +1416,5 @@ mod tests {
         });
         assert!(matches!(view.history.status(), HistoryStatus::Gap { .. }));
         assert_eq!(view.history.coverage_gaps().count(), 1);
-    }
-
-    #[test]
-    fn fractional_projection_uses_bar_slot_edges() {
-        let viewport = Viewport::new();
-        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
-        let x0 = projected_x(rect, &viewport, 10, 8, 2, 0.0);
-        let x1 = projected_x(rect, &viewport, 10, 8, 2, 1.0);
-        assert!((x1 - x0 - 16.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn heat_palette_is_side_specific_and_bounded() {
-        let bid = heat_color(BookSide::Bid, 0.5, 0.7);
-        let ask = heat_color(BookSide::Ask, 0.5, 0.7);
-        assert_ne!(bid, ask);
-        assert_eq!(bid.a(), 179);
-        assert_eq!(ask.a(), 179);
     }
 }
