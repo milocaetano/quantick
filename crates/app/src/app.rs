@@ -1550,6 +1550,7 @@ mod tests {
                 },
             ),
         });
+        app.orderflow.flush_for_test();
         assert_eq!(app.orderflow.health().active_levels, 2);
     }
 
@@ -1758,6 +1759,7 @@ mod tests {
             .unwrap();
 
         app.drain_book_feed();
+        app.orderflow.flush_for_test();
         let book = app.orderflow.health();
         assert_eq!(book.bid_levels, 1);
         assert_eq!(book.ask_levels, 1);
