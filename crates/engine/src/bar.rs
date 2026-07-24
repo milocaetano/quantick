@@ -44,17 +44,21 @@ pub struct Bar {
 
 impl Bar {
     /// Total traded quantity: `buy_volume + sell_volume`.
+    ///
+    /// Saturates rather than panicking on the (physically impossible) overflow,
+    /// so a corrupt or adversarial feed can never crash a caller reading a bar.
     #[must_use]
     pub fn volume(&self) -> Decimal {
-        self.buy_volume + self.sell_volume
+        self.buy_volume.saturating_add(self.sell_volume)
     }
 
     /// Order-flow delta: `buy_volume - sell_volume`.
     ///
-    /// Positive when buyers were the net aggressors over the bar.
+    /// Positive when buyers were the net aggressors over the bar. Saturates
+    /// rather than panicking on overflow (see [`volume`](Bar::volume)).
     #[must_use]
     pub fn delta(&self) -> Decimal {
-        self.buy_volume - self.sell_volume
+        self.buy_volume.saturating_sub(self.sell_volume)
     }
 }
 

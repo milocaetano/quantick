@@ -172,7 +172,10 @@ impl TickMapper {
     pub fn new(mode: SideMode, server_utc_offset_s: i64) -> Self {
         Self {
             mode,
-            offset_ms: server_utc_offset_s * 1000,
+            // Saturating: the offset is declared by the bridge (any local
+            // process may connect), so an absurd value must not panic the feed
+            // task via i64 overflow. A realistic offset (±14 h) is unaffected.
+            offset_ms: server_utc_offset_s.saturating_mul(1000),
             prev_price: None,
             prev_side: None,
             stats: MapStats::default(),
@@ -182,7 +185,7 @@ impl TickMapper {
     /// Refresh the server-time offset (heartbeats may recompute it, e.g.
     /// across a DST change on brokers that observe one).
     pub fn set_server_utc_offset_s(&mut self, offset_s: i64) {
-        self.offset_ms = offset_s * 1000;
+        self.offset_ms = offset_s.saturating_mul(1000);
     }
 
     /// Map one tick. Updates the tick-rule state and the stats ledger.
@@ -240,7 +243,9 @@ impl TickMapper {
                 MapOutcome::Trade {
                     trade: Trade {
                         agg_id: tick.seq,
-                        timestamp_ms: tick.time_ms - self.offset_ms,
+                        // Saturating: `time_ms` and `offset_ms` both originate
+                        // from the untrusted bridge; overflow must not panic.
+                        timestamp_ms: tick.time_ms.saturating_sub(self.offset_ms),
                         price,
                         quantity: Decimal::from(tick.volume),
                         side,
@@ -416,6 +421,30 @@ mod tests {
             panic!("expected trade");
         };
         assert_eq!(trade.timestamp_ms, (1_784_824_300_000 + 2) + 3_600_000);
+    }
+
+    #[test]
+    fn extreme_server_offset_does_not_panic() {
+        // The hello's `server_utc_offset_s` comes from the bridge, which any
+        // local process can impersonate. An absurd offset must not overflow the
+        // i64 conversion (`offset_s * 1000`, then `time_ms - offset_ms`) and
+        // panic the feed task — the arithmetic saturates instead.
+        let mut m = TickMapper::new(SideMode::TickRule, i64::MAX);
+        m.map(&tick(1, "100", 1, 0)); // context
+        let MapOutcome::Trade { trade, .. } = m.map(&tick(2, "101", 1, 0)) else {
+            panic!("expected trade");
+        };
+        // offset_ms saturates to i64::MAX; a positive time_ms minus it stays a
+        // (large) negative in range — no panic.
+        assert!(trade.timestamp_ms < 0);
+
+        // A crafted heartbeat offset refresh must be equally safe. offset_ms
+        // saturates to i64::MIN, so `time_ms - i64::MIN` saturates to i64::MAX.
+        m.set_server_utc_offset_s(i64::MIN);
+        let MapOutcome::Trade { trade, .. } = m.map(&tick(3, "102", 1, 0)) else {
+            panic!("expected trade");
+        };
+        assert_eq!(trade.timestamp_ms, i64::MAX);
     }
 
     #[test]

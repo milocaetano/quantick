@@ -115,7 +115,7 @@ impl ImbalanceBarBuilder {
         );
         Self {
             target_trades,
-            alpha_b: Decimal::from(2) / Decimal::from(target_trades + 1),
+            alpha_b: Decimal::from(2) / Decimal::from(target_trades.saturating_add(1)),
             e_t: Decimal::from(target_trades),
             e_b: Decimal::ZERO,
             theta: Decimal::ZERO,
@@ -149,7 +149,9 @@ impl ImbalanceBarBuilder {
         let closed_len = Decimal::from(self.count);
         let updated = ALPHA_T * closed_len + (Decimal::ONE - ALPHA_T) * self.e_t;
         let min = Decimal::from(self.target_trades) / Decimal::from(4);
-        let max = Decimal::from(CAP_MULT * self.target_trades);
+        // Saturating to match `should_close`'s hard cap and stay panic-free for
+        // any configured `target_trades`.
+        let max = Decimal::from(CAP_MULT.saturating_mul(self.target_trades));
         self.e_t = updated.clamp(min, max);
         self.warmed_up = true;
         self.theta = Decimal::ZERO;
@@ -169,7 +171,7 @@ impl BarBuilder for ImbalanceBarBuilder {
             Side::Buy => Decimal::ONE,
             Side::Sell => -Decimal::ONE,
         };
-        self.theta += b;
+        self.theta = self.theta.saturating_add(b);
         self.e_b = self.alpha_b * b + (Decimal::ONE - self.alpha_b) * self.e_b;
 
         if self.should_close() {
