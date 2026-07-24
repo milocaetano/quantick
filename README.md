@@ -6,6 +6,12 @@
 
 **Real-time alternative bar charts for order flow trading — and one engine to take your research from chart to backtest to bot.**
 
+<p align="center">
+  <img src="img/quantick_orderflow.png" alt="quantick desktop chart showing live BTCUSDT tick bars over a Bookmap-style L2 liquidity heatmap with buy/sell aggression bubbles" width="900">
+</p>
+
+<p align="center"><em>Live BTCUSDT tick bars over the Bookmap-inspired L2 liquidity heatmap, with buy/sell aggression bubbles and a real-time performance HUD — this is <code>cargo run -p quantick-app</code> out of the box.</em></p>
+
 > ⚠️ Early development, but already runnable. The Rust bar engine, the live Binance feed and the native desktop chart work today — you can clone, build and watch bars form in real time in a few minutes (see [Quick start](#quick-start--build-test-run)). APIs will still churn. Star/watch the repo to follow along.
 
 ## Why this exists
