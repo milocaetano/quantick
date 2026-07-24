@@ -427,8 +427,9 @@ def render_scene(scene, style, theme_opacity=0.72, gamma=0.75,
                 continue
             bx, by = X(tr["t"]), Y(tr["p"])
             size = tr["size"]
-            r = math.sqrt(2.75 ** 2 + (size ** 2) * (13.0 ** 2 - 2.75 ** 2))
-            cv.blend_rect(bx - r - 1, by - r - 2, bx + r + 4, by + r + 2, bg, 0.97)
+            r = math.sqrt(2.0 ** 2 + (size ** 2) * (15.0 ** 2 - 2.0 ** 2))
+            # Midriff carve: the eaten wall still touches the bubble's left half.
+            cv.blend_rect(bx - r * 0.4, by - r - 2, bx + r + 4, by + r + 2, bg, 0.97)
 
     # --- start gap (book unavailable before capture) ---
     gx0, gx1 = X(0) - col_w * 0.5, X(scene.gap_end_t)
@@ -551,7 +552,7 @@ def render_bite_proposed(cv, x, yc, band_h, frac, full, bg):
     # front sits on the left edge of the hole (the eaten wall's end).
     cons = (255, 246, 205)
     hh = band_h * 0.5                       # hole spans the full consumed band
-    hole_w = 9.0 if full else (5.0 + 6.0 * frac)
+    hole_w = 14.0 if full else (6.0 + 8.0 * frac)
     cv.blend_rect(x + 0.5, yc - hh, x + 0.5 + hole_w, yc + hh, bg, 0.96)
     fh = hh if full else band_h * (0.32 + 0.68 * frac) * 0.5
     cv.line(x + 0.5, yc - fh, x + 0.5, yc + fh, cons, 0.9 if full else 0.55 + 0.35 * frac,
@@ -565,10 +566,10 @@ def render_withdrawal_proposed(cv, x, yc, band_h, frac, full):
     # A calm violet fade to the right = liquidity left without a matching trade.
     # No dashes, no diamond; the fading ghost + a thin cap reads cleanly.
     violet = (176, 130, 240)
-    tail = (band_h * 0.0 + 20.0) if full else (7.0 + 9.0 * frac)
+    tail = 22.0 if full else (10.0 + 10.0 * frac)
     hh = band_h * 0.5 if full else band_h * (0.34 + 0.66 * frac) * 0.5
     cv.blend_rect_hgrad(x, yc - hh, x + tail, yc + hh,
-                        violet, (0.40 if full else 0.16 + 0.16 * frac), violet, 0.0)
+                        violet, (0.38 if full else 0.16 + 0.18 * frac), violet, 0.0)
     cv.line(x, yc - hh, x, yc + hh, violet, 0.85 if full else 0.5 + 0.3 * frac,
             width=1.6 if full else 1.1)
 
