@@ -81,11 +81,17 @@ pub struct Trade {
 impl Trade {
     /// Notional value of the trade: `price * quantity`.
     ///
-    /// Exact, because both operands are [`Decimal`]. This is the measure dollar
-    /// bars accumulate.
+    /// Exact for every realistic print, because both operands are [`Decimal`].
+    /// The multiplication **saturates** at [`Decimal::MAX`] instead of panicking
+    /// on the (physically impossible) overflow: prices and quantities arrive
+    /// from an untrusted feed (a live exchange socket, or the local MT5 bridge
+    /// any process can dial), and a corrupt or adversarial print near
+    /// `Decimal::MAX` must never panic a bar builder, backtest or bot. Saturation
+    /// keeps the engine deterministic — realistic values are unaffected — while
+    /// honouring the "never panic on feed input" rule the feeds already follow.
     #[must_use]
     pub fn notional(&self) -> Decimal {
-        self.price * self.quantity
+        self.price.saturating_mul(self.quantity)
     }
 }
 
@@ -117,5 +123,19 @@ mod tests {
         };
         // 36000.10 * 0.005 = 180.00050 exactly (no float drift).
         assert_eq!(t.notional(), Decimal::from_str("180.00050").unwrap());
+    }
+
+    #[test]
+    fn notional_saturates_instead_of_panicking_on_overflow() {
+        // A corrupt or adversarial feed print near Decimal::MAX must not panic a
+        // dollar-bar builder, backtest or bot: the product saturates.
+        let t = Trade {
+            agg_id: 1,
+            timestamp_ms: 0,
+            price: Decimal::MAX,
+            quantity: Decimal::from(2),
+            side: Side::Buy,
+        };
+        assert_eq!(t.notional(), Decimal::MAX);
     }
 }

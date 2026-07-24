@@ -89,7 +89,11 @@ impl<M: Measure> BarBuilder for ThresholdBarBuilder<M> {
             None => self.current = Some(open_bar(trade)),
             Some(bar) => extend_bar(bar, trade),
         }
-        self.acc += self.measure.of(trade);
+        // Saturating: the measure comes from untrusted feed data and must never
+        // panic the builder on overflow. A saturated accumulator is `>= threshold`
+        // and simply closes the bar — deterministic, and identical to exact
+        // arithmetic for every representable total.
+        self.acc = self.acc.saturating_add(self.measure.of(trade));
         if self.acc >= self.threshold {
             self.acc = Decimal::ZERO;
             self.current.take()
@@ -125,9 +129,11 @@ pub(crate) fn extend_bar(bar: &mut Bar, trade: &Trade) {
     bar.low = bar.low.min(trade.price);
     bar.close = trade.price;
     bar.close_time = trade.timestamp_ms;
+    // Saturating for the same reason as the accumulator: untrusted feed
+    // quantities must not panic the builder if a running side total overflows.
     match trade.side {
-        Side::Buy => bar.buy_volume += trade.quantity,
-        Side::Sell => bar.sell_volume += trade.quantity,
+        Side::Buy => bar.buy_volume = bar.buy_volume.saturating_add(trade.quantity),
+        Side::Sell => bar.sell_volume = bar.sell_volume.saturating_add(trade.quantity),
     }
     bar.trade_count += 1;
 }
@@ -208,5 +214,24 @@ mod tests {
             "next bar started from zero, so 9 < 10 does not close"
         );
         assert_eq!(b.partial().unwrap().volume(), dec("9"));
+    }
+
+    #[test]
+    fn extreme_measure_saturates_and_closes_without_panicking() {
+        // An adversarial/corrupt feed quantity near Decimal::MAX must not panic
+        // the accumulator: it saturates, crosses the threshold, and closes the
+        // bar (which is `>= threshold` by construction).
+        let mut b = ThresholdBarBuilder::new(dec("10"), QtyMeasure);
+        let huge = Trade {
+            agg_id: 0,
+            timestamp_ms: 0,
+            price: Decimal::from_str("1.0").unwrap(),
+            quantity: Decimal::MAX,
+            side: Side::Buy,
+        };
+        let bar = b.push(&huge).expect("the saturated measure closes the bar");
+        assert_eq!(bar.trade_count, 1);
+        // The bar's own volume also saturates rather than panicking.
+        assert_eq!(bar.volume(), Decimal::MAX);
     }
 }
