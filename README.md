@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo/logo.png" alt="quantick logo" width="220">
+  <img src="logo/logo-dark.png" alt="quantick logo" width="480">
 </p>
 
 # quantick
