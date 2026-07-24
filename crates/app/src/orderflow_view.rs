@@ -523,6 +523,14 @@ impl OrderflowView {
                 .on_hover_text(
                     "time/price window used to associate a factual trade with a factual L2 reduction",
                 );
+                ui.add_enabled(
+                    self.config.show_liquidity_events,
+                    egui::Slider::new(&mut self.config.min_unattributed_reduction, 0.0..=1.0)
+                        .text("min unattributed pull"),
+                )
+                .on_hover_text(
+                    "hide unattributed (depth-only) reductions smaller than this fraction of the level; full pulls and aggression-aligned bites always show",
+                );
                 ui.small(
                     "Association is evidence, not causality: depth updates can also contain pulls or replacements.",
                 );

@@ -358,6 +358,16 @@ pub fn project(
         config.liquidity_correlation_ms,
     );
 
+    // Display floor: a busy book shrinks buckets constantly, and a marker per
+    // wiggle is violet drizzle. Aggression-aligned reductions and full pulls
+    // always display; bubbles only ever reference aligned events, so nothing
+    // retained can point at a hidden one.
+    events.retain(|event| {
+        event.full_removal
+            || matches!(event.evidence, LiquidityEvidence::AggressionAligned)
+            || event.fraction >= config.min_unattributed_reduction
+    });
+
     let dropped_liquidity_events = events.len().saturating_sub(config.max_visible_cells);
     if dropped_liquidity_events > 0 {
         events.sort_by(|a, b| {
@@ -647,6 +657,86 @@ mod tests {
         let full = normalized_area_size(Decimal::from(100), Decimal::from(100));
         assert!((quarter - 0.5).abs() < f32::EPSILON);
         assert_eq!(full, 1.0);
+    }
+
+    #[test]
+    fn unattributed_reduction_floor_hides_small_pulls_only() {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        // Bid 100: 3 -> 2 (33% pull, unattributed): under the 50% floor.
+        history
+            .apply_delta(
+                300,
+                &BookDelta::new(11, 11, vec![level("100", "2")], vec![]),
+            )
+            .unwrap();
+        // Ask 101: 4 -> 1 (75% pull, unattributed): over the floor.
+        history
+            .apply_delta(
+                500,
+                &BookDelta::new(12, 12, vec![], vec![level("101", "1")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(13, 13, vec![], vec![]))
+            .unwrap();
+
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let projection = project(&history, &timeline, prices);
+        let buckets: Vec<_> = projection
+            .liquidity_events
+            .iter()
+            .map(|event| event.price_bucket)
+            .collect();
+        assert!(buckets.contains(&dec("101")), "large pull must display");
+        assert!(!buckets.contains(&dec("100")), "small pull must be hidden");
+
+        // Lowering the display floor to zero shows the small pull too.
+        let mut permissive_config = history.config().clone();
+        permissive_config.min_unattributed_reduction = 0.0;
+        history.update_config(permissive_config).unwrap();
+        let projection = project(&history, &timeline, prices);
+        assert!(
+            projection
+                .liquidity_events
+                .iter()
+                .any(|event| event.price_bucket == dec("100"))
+        );
+    }
+
+    #[test]
+    fn compatible_aggression_rescues_a_small_reduction_from_the_floor() {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 290,
+            price: dec("100"),
+            quantity: dec("1"),
+            side: Side::Sell,
+        });
+        // The same 33% bid pull as above, but now a compatible sell hit it.
+        history
+            .apply_delta(
+                300,
+                &BookDelta::new(11, 11, vec![level("100", "2")], vec![]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(12, 12, vec![], vec![]))
+            .unwrap();
+
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let projection = project(&history, &timeline, prices);
+        assert!(
+            projection.liquidity_events.iter().any(|event| {
+                event.price_bucket == dec("100")
+                    && matches!(event.evidence, LiquidityEvidence::AggressionAligned)
+            }),
+            "aligned bites always display regardless of the floor"
+        );
     }
 
     #[test]

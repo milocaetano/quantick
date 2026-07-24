@@ -85,7 +85,9 @@ impl Default for OrderflowRenderStyle {
             // Off by default: the per-cell glow doubles the heatmap's quad count,
             // which is the single biggest render cost on a dense book.
             edge_glow: 0.0,
-            bubble_min_radius: 2.75,
+            // Area stays quantity-proportional: the minimum keeps the smallest
+            // print a subtle dot instead of a chunky circle.
+            bubble_min_radius: 2.0,
             bubble_max_radius: 13.0,
             bubble_opacity: 0.78,
             show_quantity_labels: true,
@@ -558,21 +560,30 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         let linked_reduction =
             trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
 
-        clip.circle_filled(
-            center,
-            radius + 2.5,
-            color.gamma_multiply(0.12 + 0.06 * finite_unit(trade.size)),
-        );
+        // Small prints are the common case on a busy tape: one cheap dot each.
+        // The full dressing (halo, rim, impact ring) is reserved for bubbles
+        // big enough to read it, which also keeps the per-frame tessellation
+        // budget flat no matter how fast the tape runs.
+        let dressed = radius >= 4.0;
+        if dressed {
+            clip.circle_filled(
+                center,
+                radius + 2.5,
+                color.gamma_multiply(0.12 + 0.06 * finite_unit(trade.size)),
+            );
+        }
         clip.circle_filled(center, radius, color.gamma_multiply(style.bubble_opacity));
-        clip.circle_stroke(
-            center,
-            radius,
-            egui::Stroke::new(1.0_f32, color.gamma_multiply(0.96)),
-        );
+        if dressed {
+            clip.circle_stroke(
+                center,
+                radius,
+                egui::Stroke::new(1.0_f32, color.gamma_multiply(0.96)),
+            );
+        }
 
         if linked_reduction {
-            // Vertical consumption front on the bubble + a bright ring: this
-            // print ate resting liquidity at this exact price.
+            // Vertical consumption front on the bubble: this print ate resting
+            // liquidity at this exact price.
             let strength = finite_unit(trade.matched_fraction).max(0.25);
             let hh = radius * 1.7 + 2.0;
             clip.line_segment(
@@ -582,14 +593,16 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 ],
                 egui::Stroke::new(1.8_f32, palette.consumption.gamma_multiply(0.9)),
             );
-            clip.circle_stroke(
-                center,
-                radius + 1.6,
-                egui::Stroke::new(
-                    1.3_f32,
-                    palette.consumption.gamma_multiply(0.6 + strength * 0.35),
-                ),
-            );
+            if dressed {
+                clip.circle_stroke(
+                    center,
+                    radius + 1.6,
+                    egui::Stroke::new(
+                        1.3_f32,
+                        palette.consumption.gamma_multiply(0.6 + strength * 0.35),
+                    ),
+                );
+            }
         }
 
         if radius >= style.label_min_radius
