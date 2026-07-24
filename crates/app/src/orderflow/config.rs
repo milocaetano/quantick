@@ -139,10 +139,15 @@ pub struct HeatmapConfig {
     pub show_liquidity_events: bool,
     /// Smallest reduction fraction whose *unattributed* (depth-only) marker is
     /// displayed. A busy book shrinks buckets by >10% constantly; drawing every
-    /// one is violet drizzle. Full removals and aggression-aligned reductions
-    /// always display — consumption is the feature's heart. Display-only: the
-    /// underlying runs and transitions stay factual and complete.
+    /// one is violet drizzle. Aggression-aligned reductions always display —
+    /// consumption is the feature's heart. Display-only: the underlying runs
+    /// and transitions stay factual and complete.
     pub min_unattributed_reduction: f32,
+    /// Smallest unattributed pull as a share of the visible full-intensity
+    /// liquidity reference (P99). A 50% pull of a tiny level is noise; a 50%
+    /// pull of a wall is the story. In a panic thousands of levels shrink at
+    /// once, and without a size gate the map turns violet. Display-only.
+    pub min_unattributed_pull_share: f32,
     /// Maximum temporal distance for compatible aggression evidence.
     pub liquidity_correlation_ms: i64,
     /// Whether the renderer should show its visual legend.
@@ -179,6 +184,7 @@ impl Default for HeatmapConfig {
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             show_liquidity_events: true,
             min_unattributed_reduction: 0.5,
+            min_unattributed_pull_share: 0.25,
             liquidity_correlation_ms: DEFAULT_LIQUIDITY_CORRELATION_MS,
             show_legend: true,
             theme: HeatmapTheme::Bookmap,
@@ -220,6 +226,10 @@ impl HeatmapConfig {
             self.min_unattributed_reduction = 0.5;
         }
         self.min_unattributed_reduction = self.min_unattributed_reduction.clamp(0.0, 1.0);
+        if !self.min_unattributed_pull_share.is_finite() {
+            self.min_unattributed_pull_share = 0.25;
+        }
+        self.min_unattributed_pull_share = self.min_unattributed_pull_share.clamp(0.0, 1.0);
         self.bubble_cluster_ms = self.bubble_cluster_ms.clamp(0, MAX_BUBBLE_CLUSTER_MS);
         self.liquidity_correlation_ms = self
             .liquidity_correlation_ms

@@ -1,7 +1,7 @@
 //! Renderer-independent projection of RLE history into normalized primitives.
 
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive as _;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use super::config::IntensityMode;
 use super::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
@@ -358,14 +358,21 @@ pub fn project(
         config.liquidity_correlation_ms,
     );
 
-    // Display floor: a busy book shrinks buckets constantly, and a marker per
-    // wiggle is violet drizzle. Aggression-aligned reductions and full pulls
-    // always display; bubbles only ever reference aligned events, so nothing
-    // retained can point at a hidden one.
+    // Display floors: a busy book shrinks buckets constantly, and a marker per
+    // wiggle is violet drizzle. An unattributed pull must be deep (fraction of
+    // its level, or a full pull) AND big (share of the visible full-intensity
+    // reference) to draw. Aggression-aligned reductions always display;
+    // bubbles only ever reference aligned events, so nothing retained can
+    // point at a hidden one.
+    let pull_floor = Decimal::from_f32(config.min_unattributed_pull_share)
+        .map(|share| liquidity_reference * share)
+        .unwrap_or(Decimal::ZERO);
     events.retain(|event| {
-        event.full_removal
-            || matches!(event.evidence, LiquidityEvidence::AggressionAligned)
-            || event.fraction >= config.min_unattributed_reduction
+        if matches!(event.evidence, LiquidityEvidence::AggressionAligned) {
+            return true;
+        }
+        (event.full_removal || event.fraction >= config.min_unattributed_reduction)
+            && event.removed >= pull_floor
     });
 
     let dropped_liquidity_events = events.len().saturating_sub(config.max_visible_cells);
@@ -692,9 +699,24 @@ mod tests {
         assert!(buckets.contains(&dec("101")), "large pull must display");
         assert!(!buckets.contains(&dec("100")), "small pull must be hidden");
 
-        // Lowering the display floor to zero shows the small pull too.
+        // The fraction floor alone is not enough: with it at zero the small
+        // pull is still gated by its size against the visible reference.
+        let mut fraction_only = history.config().clone();
+        fraction_only.min_unattributed_reduction = 0.0;
+        history.update_config(fraction_only).unwrap();
+        let projection = project(&history, &timeline, prices);
+        assert!(
+            !projection
+                .liquidity_events
+                .iter()
+                .any(|event| event.price_bucket == dec("100")),
+            "a small pull must stay hidden while the size gate holds"
+        );
+
+        // Lowering both display floors to zero shows the small pull too.
         let mut permissive_config = history.config().clone();
         permissive_config.min_unattributed_reduction = 0.0;
+        permissive_config.min_unattributed_pull_share = 0.0;
         history.update_config(permissive_config).unwrap();
         let projection = project(&history, &timeline, prices);
         assert!(

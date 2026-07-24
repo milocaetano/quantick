@@ -529,7 +529,15 @@ impl OrderflowView {
                         .text("min unattributed pull"),
                 )
                 .on_hover_text(
-                    "hide unattributed (depth-only) reductions smaller than this fraction of the level; full pulls and aggression-aligned bites always show",
+                    "hide unattributed (depth-only) reductions smaller than this fraction of the level; aggression-aligned bites always show",
+                );
+                ui.add_enabled(
+                    self.config.show_liquidity_events,
+                    egui::Slider::new(&mut self.config.min_unattributed_pull_share, 0.0..=1.0)
+                        .text("min pull vs walls"),
+                )
+                .on_hover_text(
+                    "hide unattributed pulls smaller than this share of the visible full-intensity liquidity (P99); a deep pull of a tiny level is noise, of a wall it is the story",
                 );
                 ui.small(
                     "Association is evidence, not causality: depth updates can also contain pulls or replacements.",
