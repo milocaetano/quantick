@@ -70,7 +70,7 @@ The chart exposes these settings:
 | Setting | Default | Range / behavior |
 | --- | ---: | --- |
 | L2 heatmap | Off | Starts live capture when enabled |
-| Retention | 5 minutes | 1–1,440 minutes |
+| Retention | 30 minutes | 1–1,440 minutes |
 | Display range | Auto / 128 rows | Native, `2×`, `5×`, `10×`, `25×`, `50×`, custom multiple or adaptive-to-zoom; changing it reprojects immediately without resetting history |
 | Base capture bucket | auto from price | Sized to ~`price / 65000` (1/2/5·10^k) on the first snapshot; any positive value can be set by hand. Changing the base resolution requires a fresh snapshot and resets retained L2 history |
 | Theme | Bookmap | Bookmap, High contrast or Color blind |

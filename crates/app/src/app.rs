@@ -137,6 +137,12 @@ pub struct QuantickApp {
 
     // Pan/zoom navigation over the bar series.
     viewport: Viewport,
+    // Bar-slots reserved past the newest bar for the live region. Persisted so
+    // a closing bar frees exactly one slot: the chart never steps right — the
+    // freed space stays an empty gap the next bar's live region refills.
+    live_tail_hold: f32,
+    // Bar count seen last frame, to detect closes for the hold above.
+    last_total_bars: usize,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     price_view: PriceView,
     // Last frame's auto-fit price range and chart height, for pixel↔price maths
@@ -218,6 +224,8 @@ impl QuantickApp {
             imbalance_target,
             viewport: Viewport::new(),
             price_view: PriceView::new(),
+            live_tail_hold: 0.0,
+            last_total_bars: 0,
             last_auto_range: None,
             last_chart_height: 1.0,
             hover_pos: None,
@@ -728,6 +736,8 @@ impl QuantickApp {
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
+                    // Prepended bars are not closes; keep the live-tail hold.
+                    self.last_total_bars = self.last_total_bars.saturating_add(added);
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     self.latest_trade_ms = Some(trade.timestamp_ms);
@@ -1007,10 +1017,11 @@ impl QuantickApp {
             return;
         }
 
-        // Live tail: while following a live book, grow the forming bar to the
-        // right on a real-time scale so its order flow rolls (events stay put)
-        // instead of recompressing every depth update. Collapses to one slot the
-        // moment the bar closes.
+        // Live region: while following a live book, the forming bar grows to
+        // the right on a FIXED time-per-slot scale (the previous bar's
+        // duration spread over the full width). Linear growth means an event
+        // keeps its exact screen position while the region widens — bubbles
+        // appear where they ate the book and stay put, nothing slides.
         let live_span = if self.viewport.follows_live()
             && let Some(bar) = partial
             && let Some(now) = self.orderflow.live_end_ms()
@@ -1020,18 +1031,31 @@ impl QuantickApp {
                 .last()
                 .map(|b| (b.close_time - b.open_time).max(1))
                 .unwrap_or(1_000);
-            // Use up to ~55% of the chart for the live book, reach that width
-            // over ~60% of the previous bar's lifetime, and floor it generously
-            // so the right side is always well used (not a thin sliver).
+            // Up to ~55% of the chart for the live book.
             let max_span =
                 (chart_rect.width() / self.viewport.candle_width() * 0.55).clamp(8.0, 18.0);
-            let grow_over = (ref_dur * 3 / 5).max(1);
-            crate::orderflow_render::live_span_for(elapsed, grow_over, max_span)
-                .clamp(8.0, max_span)
+            crate::orderflow_render::live_span_for(elapsed, ref_dur, max_span)
         } else {
             1.0
         };
-        self.viewport.set_live_tail(live_span - 1.0);
+        // The reserved tail shrinks only by the one slot each closing bar
+        // consumes and grows only with the live region. The chart therefore
+        // never steps right on a bar close: compression leaves an empty gap on
+        // the right that the next bar's live region refills, and the chart
+        // only ever drifts left.
+        if total < self.last_total_bars {
+            self.live_tail_hold = 0.0; // series reset (symbol/feed change)
+        } else if total > self.last_total_bars {
+            let closed_now = (total - self.last_total_bars) as f32;
+            self.live_tail_hold = (self.live_tail_hold - closed_now).max(0.0);
+        }
+        self.last_total_bars = total;
+        if self.viewport.follows_live() {
+            self.live_tail_hold = self.live_tail_hold.max(live_span - 1.0);
+        } else {
+            self.live_tail_hold = 0.0;
+        }
+        self.viewport.set_live_tail(self.live_tail_hold);
 
         let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
 

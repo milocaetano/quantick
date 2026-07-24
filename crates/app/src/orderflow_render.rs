@@ -86,9 +86,9 @@ impl Default for OrderflowRenderStyle {
             // which is the single biggest render cost on a dense book.
             edge_glow: 0.0,
             // Area stays quantity-proportional: the minimum keeps the smallest
-            // print a subtle dot instead of a chunky circle.
+            // print a subtle dot, the maximum lets a real sweep dominate.
             bubble_min_radius: 2.0,
-            bubble_max_radius: 13.0,
+            bubble_max_radius: 15.0,
             bubble_opacity: 0.78,
             show_quantity_labels: true,
             show_trade_count: true,
@@ -404,7 +404,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         // without the hole the fresh wall abuts the old one and looks
         // continuous, hiding that it was consumed. The marker colour drawn on
         // the hole's left edge tells aggression-aligned from unattributed apart.
-        let hole_w = if full { 9.0 } else { 5.0 + 6.0 * reduction };
+        let hole_w = if full { 14.0 } else { 6.0 + 8.0 * reduction };
         add_gradient_rect(
             &mut hole_mesh,
             egui::Rect::from_min_max(
@@ -441,10 +441,13 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             continue;
         }
         let r = bubble_radius(trade.size, style.bubble_min_radius, style.bubble_max_radius);
+        // Carve from the bubble's midriff rightward: the eaten wall still
+        // touches the bubble's left half (the bubble reads as biting into
+        // it), while re-stacked liquidity cannot slide through to the right.
         add_gradient_rect(
             &mut hole_mesh,
             egui::Rect::from_min_max(
-                egui::pos2(center.x - r - 1.0, center.y - r - 2.0),
+                egui::pos2(center.x - r * 0.4, center.y - r - 2.0),
                 egui::pos2((center.x + r + 4.0).min(right_edge), center.y + r + 2.0),
             ),
             style.canvas_background,
@@ -454,6 +457,37 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
 
     if !hole_mesh.is_empty() {
         clip.add(egui::Shape::mesh(hole_mesh));
+    }
+
+    // A calm violet ghost fading rightward = "the offer was pulled here": the
+    // wall's band ends, the fade marks the pull, and the dark canvas after it
+    // shows the level stayed empty. Drawn under the cap lines.
+    let mut tail_mesh = egui::Mesh::default();
+    for front in &fronts {
+        if let EventFront::DepthOnly {
+            band,
+            reduction,
+            full,
+        } = front
+        {
+            let tail = if *full { 22.0 } else { 10.0 + 10.0 * reduction };
+            add_gradient_rect(
+                &mut tail_mesh,
+                egui::Rect::from_min_max(
+                    egui::pos2(band.x, band.top),
+                    egui::pos2((band.x + tail).min(right_edge), band.bottom),
+                ),
+                palette.depth_only.gamma_multiply(if *full {
+                    0.38
+                } else {
+                    0.16 + 0.18 * reduction
+                }),
+                egui::Color32::TRANSPARENT,
+            );
+        }
+    }
+    if !tail_mesh.is_empty() {
+        clip.add(egui::Shape::mesh(tail_mesh));
     }
 
     for front in fronts {

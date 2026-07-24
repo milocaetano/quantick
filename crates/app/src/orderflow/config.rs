@@ -6,10 +6,12 @@ use rust_decimal::Decimal;
 pub const MIN_RETENTION_MS: i64 = 1_000;
 /// Longest in-memory history window accepted by the UI.
 pub const MAX_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
-/// Default history window: ten minutes. Dense books (e.g. BTC) accumulate tens
-/// of thousands of RLE runs, and every visible run is re-swept on projection, so
-/// a long default window makes the heatmap unaffordable. Users can raise it.
-pub const DEFAULT_RETENTION_MS: i64 = 5 * 60 * 1_000;
+/// Default history window: thirty minutes, so the visible past keeps its
+/// story — where a wall lived, when it was eaten and when it was pulled.
+/// Affordable because projection only sweeps runs intersecting the visible
+/// window (on its own thread) and the run/byte caps below still bound memory;
+/// the adaptive capture bucket keeps dense books at ~10^4 runs per hour.
+pub const DEFAULT_RETENTION_MS: i64 = 30 * 60 * 1_000;
 /// Default number of price rows requested by adaptive visual grouping.
 /// Thin rows are the Bookmap look: aggregating too much sums liquidity until
 /// every band saturates into one yellow wall. Legibility comes from the

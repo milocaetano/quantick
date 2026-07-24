@@ -5,7 +5,7 @@
 # Uso:
 #   powershell -File capture_window.ps1 -TitleMatch quantick -OutPath shot.png
 param(
-    [string]$TitleMatch = "quantick",
+    [string]$ProcessName = "quantick-app",
     [string]$OutPath = "shot.png"
 )
 
@@ -25,12 +25,12 @@ public class WinCap {
 '@
 Add-Type -TypeDefinition $sig
 
-$proc = Get-Process |
-    Where-Object { $_.MainWindowTitle -match $TitleMatch -and $_.MainWindowHandle -ne 0 } |
+$proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 } |
     Select-Object -First 1
 
 if (-not $proc) {
-    Write-Output "NOT_FOUND: nenhuma janela com titulo ~ '$TitleMatch' (o app esta rodando?)"
+    Write-Output "NOT_FOUND: processo '$ProcessName' com janela nao encontrado (o app esta rodando?)"
     exit 2
 }
 
