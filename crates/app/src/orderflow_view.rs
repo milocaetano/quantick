@@ -495,7 +495,7 @@ impl OrderflowView {
                                     (0, "Raw"),
                                     (50, "50 ms"),
                                     (100, "100 ms"),
-                                    (250, "250 ms"),
+                                    (200, "200 ms"),
                                     (500, "500 ms"),
                                 ] {
                                     ui.selectable_value(

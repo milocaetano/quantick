@@ -10,11 +10,12 @@ pub const MAX_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 /// of thousands of RLE runs, and every visible run is re-swept on projection, so
 /// a long default window makes the heatmap unaffordable. Users can raise it.
 pub const DEFAULT_RETENTION_MS: i64 = 5 * 60 * 1_000;
-/// Default number of price rows requested by adaptive visual grouping. Kept
-/// modest: finer rows multiply the visible cells (granular bands and a heavy
-/// projection); thicker rows read cleaner and are far cheaper. Users can raise
-/// it for more detail.
-pub const DEFAULT_ADAPTIVE_ROWS: u32 = 64;
+/// Default number of price rows requested by adaptive visual grouping.
+/// Thin rows are the Bookmap look: aggregating too much sums liquidity until
+/// every band saturates into one yellow wall. Legibility comes from the
+/// default gamma contrast (quiet rows sink into the dark canvas), and the
+/// off-thread projection absorbs the extra cell cost.
+pub const DEFAULT_ADAPTIVE_ROWS: u32 = 128;
 /// Smallest useful adaptive row target.
 pub const MIN_ADAPTIVE_ROWS: u32 = 16;
 /// Largest adaptive row target accepted from configuration.
@@ -175,7 +176,7 @@ impl Default for HeatmapConfig {
             max_history_runs: 500_000,
             max_history_bytes: 64 * 1024 * 1024,
             max_aggressions: 100_000,
-            max_visible_cells: 4_000,
+            max_visible_cells: 12_000,
             max_aggression_primitives: 700,
             intensity_mode: IntensityMode::VisibleP99,
         }
@@ -247,7 +248,7 @@ mod tests {
         );
         assert!(config.show_legend);
         assert_eq!(config.theme, HeatmapTheme::Bookmap);
-        assert_eq!(config.max_visible_cells, 4_000);
+        assert_eq!(config.max_visible_cells, 12_000);
         assert_eq!(config.max_aggression_primitives, 700);
     }
 

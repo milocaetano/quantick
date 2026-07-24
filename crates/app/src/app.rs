@@ -193,7 +193,7 @@ impl QuantickApp {
             BarSpec::Imbalance(target) => imbalance_target = *target,
         }
 
-        Self {
+        let mut app = Self {
             kind: spec.kind(),
             state: ChartState::new(spec),
             events: feed.events,
@@ -234,7 +234,14 @@ impl QuantickApp {
             live_trades: 0,
             trades_since_summary: 0,
             last_summary: Instant::now(),
+        };
+        // Dev/ops convenience: start L2 capture without a click. Same code
+        // path as the UI toggle, so provider support and command
+        // acknowledgement rules stay identical.
+        if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.request_book_capture(true);
         }
+        app
     }
 
     /// The bar spec implied by the current selector state.

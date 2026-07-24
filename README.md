@@ -70,25 +70,26 @@ The chart exposes these settings:
 | Setting | Default | Range / behavior |
 | --- | ---: | --- |
 | L2 heatmap | Off | Starts live capture when enabled |
-| Retention | 30 minutes | 1–1,440 minutes |
-| Display range | Auto / 160 rows | Native, `2×`, `5×`, `10×`, `25×`, `50×`, custom multiple or adaptive-to-zoom; changing it reprojects immediately without resetting history |
-| Base capture bucket | `0.01` | Advanced setting; any positive value. Changing this base resolution requires a fresh snapshot and resets retained L2 history |
+| Retention | 5 minutes | 1–1,440 minutes |
+| Display range | Auto / 128 rows | Native, `2×`, `5×`, `10×`, `25×`, `50×`, custom multiple or adaptive-to-zoom; changing it reprojects immediately without resetting history |
+| Base capture bucket | auto from price | Sized to ~`price / 65000` (1/2/5·10^k) on the first snapshot; any positive value can be set by hand. Changing the base resolution requires a fresh snapshot and resets retained L2 history |
 | Theme | Bookmap | Bookmap, High contrast or Color blind |
-| Brightness | `0.72` | `0.05`–`1.0` |
-| Quiet liquidity curve | `0.75` | `0.25`–`2.0` |
+| Brightness | `0.9` | `0.05`–`1.0` |
+| Quiet liquidity curve | `1.8` | `0.25`–`2.0`; above one sinks quiet liquidity into the dark canvas so only real walls glow |
 | Intensity scale | Visible P99 | Automatic visible-window P99 or a fixed full-intensity quantity |
 | Aggression bubbles | On | Can be hidden independently of the heatmap |
-| Bubble clustering | 100 ms | Raw, 50, 100, 250 or 500 ms |
+| Bubble clustering | 200 ms | Raw, 50, 100, 200 or 500 ms |
 | Liquidity response | On / 250 ms | Bite or withdrawal-tail markers with a configurable 25–1,000 ms evidence window |
 | Legend | On | Explains liquidity brightness, buy/sell aggression, aligned depletion, unattributed reduction and L2 gaps |
 
-The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 100,000 aggression records, 50,000 projected visible cells/events and 2,000 projected bubbles. Old history is pruned and excess render primitives are dropped within those limits; the associated counters are emitted in diagnostic logs. The exact RLE history remains independent from rendering: visible projection is refreshed at the 100 ms depth cadence, regrouped in a deterministic sweep and submitted in batched meshes. The paint order is `gap → heatmap → liquidity response → candle → aggression → legend`.
+The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 100,000 aggression records, 12,000 projected visible cells/events and 700 projected bubbles. Old history is pruned and excess render primitives are dropped within those limits; the associated counters are emitted in diagnostic logs. All book state lives on a dedicated thread: the UI forwards depth events and latest-wins projection requests through a channel and only draws the newest published frame, so a dense-book projection can never block a frame. Projections rebuild at the ~220 ms depth cadence, are regrouped in a deterministic sweep and submitted in batched meshes. The paint order is `gap → heatmap → liquidity response → candle → aggression → legend`.
 
 ### L2 and logging environment variables
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
 | `QUANTICK_BOOK_DEPTH` | `1000` | Binance snapshot depth per side. Numeric values are clamped to `1`–`5000`; a missing or invalid value uses the default. Higher values increase initial REST payload, synchronization work and memory use. |
+| `QUANTICK_BOOK_AUTOSTART` | unset | Set to `1` to enable L2 capture on startup without clicking the chart toggle (development/ops convenience; same code path as the toggle). |
 | `QUANTICK_LOG_FORMAT` | `text` | Set to `json` for newline-delimited JSON diagnostic logs on stderr. |
 | `RUST_LOG` | `quantick=info` | Standard tracing filter; for example, use `quantick=debug` for deeper diagnostics. |
 
