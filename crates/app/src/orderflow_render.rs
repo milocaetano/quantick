@@ -592,14 +592,14 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             continue;
         }
         let radius = bubble_radius(trade.size, style.bubble_min_radius, style.bubble_max_radius);
-        let hh = radius * 1.7 + 2.0;
+        let hh = radius * 2.1 + 6.0;
         add_gradient_rect(
             &mut glow_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(center.x, center.y - hh),
-                egui::pos2((center.x + 7.0).min(right_edge), center.y + hh),
+                egui::pos2((center.x + 18.0).min(right_edge), center.y + hh),
             ),
-            palette.consumption.gamma_multiply(0.22),
+            palette.consumption.gamma_multiply(0.62),
             egui::Color32::TRANSPARENT,
         );
     }
@@ -645,21 +645,21 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             // Vertical consumption front on the bubble: this print ate resting
             // liquidity at this exact price.
             let strength = finite_unit(trade.matched_fraction).max(0.25);
-            let hh = radius * 1.7 + 2.0;
+            let hh = radius * 2.1 + 6.0;
             clip.line_segment(
                 [
                     egui::pos2(center.x, center.y - hh),
                     egui::pos2(center.x, center.y + hh),
                 ],
-                egui::Stroke::new(1.8_f32, palette.consumption.gamma_multiply(0.9)),
+                egui::Stroke::new(3.0_f32, palette.consumption.gamma_multiply(1.0)),
             );
             if dressed {
                 clip.circle_stroke(
                     center,
-                    radius + 1.6,
+                    radius + 2.2,
                     egui::Stroke::new(
-                        1.3_f32,
-                        palette.consumption.gamma_multiply(0.6 + strength * 0.35),
+                        2.2_f32,
+                        palette.consumption.gamma_multiply(0.75 + strength * 0.25),
                     ),
                 );
             }

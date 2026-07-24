@@ -165,6 +165,9 @@ pub struct QuantickApp {
     tz: TzOffset,
 
     frames: FrameStats,
+    /// CPU time per frame (update + tessellation + paint, no vsync wait), from
+    /// eframe. Separates "we are slow" from "we are waiting for the display".
+    cpu_frames: FrameStats,
     last_frame: Option<Instant>,
     latest_trade_ms: Option<i64>,
     live_trades: u64,
@@ -237,6 +240,7 @@ impl QuantickApp {
             show_overlay: true,
             tz: TzOffset::default(),
             frames: FrameStats::new(120),
+            cpu_frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_ms: None,
             live_trades: 0,
@@ -785,6 +789,7 @@ impl QuantickApp {
         let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
         let lag = metrics::feed_lag_ms(metrics::wall_clock_ms(), self.latest_trade_ms);
         let avg = self.frames.avg_ms().unwrap_or(0.0);
+        let cpu_avg = self.cpu_frames.avg_ms().unwrap_or(0.0);
         let worst = self.frames.worst_ms().unwrap_or(0.0);
         let fps = self.frames.fps().unwrap_or(0.0);
         let book = self.orderflow.health();
@@ -800,6 +805,7 @@ impl QuantickApp {
             event_code = "APP_HEALTH_SUMMARY",
             fps = fps as i64,
             frame_avg_ms = avg,
+            frame_cpu_ms = cpu_avg,
             frame_worst_ms = worst,
             feed_lag_ms = lag,
             trades_per_s = rate,
@@ -1402,7 +1408,11 @@ impl QuantickApp {
                 fps_color,
             ),
             (
-                format!("worst {:>5.1} ms", self.frames.worst_ms().unwrap_or(0.0)),
+                format!(
+                    "cpu {:>5.1} ms  worst {:>5.1} ms",
+                    self.cpu_frames.avg_ms().unwrap_or(0.0),
+                    self.frames.worst_ms().unwrap_or(0.0)
+                ),
                 OVERLAY,
             ),
             (lag_text, lag_color),
@@ -1465,10 +1475,13 @@ impl QuantickApp {
 }
 
 impl eframe::App for QuantickApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let now = Instant::now();
         if let Some(last) = self.last_frame {
             self.frames.record((now - last).as_secs_f32() * 1000.0);
+        }
+        if let Some(cpu) = frame.info().cpu_usage {
+            self.cpu_frames.record(cpu * 1000.0);
         }
         self.last_frame = Some(now);
 
