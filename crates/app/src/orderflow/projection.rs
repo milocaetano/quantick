@@ -361,9 +361,10 @@ pub fn project(
     // Display floors: a busy book shrinks buckets constantly, and a marker per
     // wiggle is violet drizzle. An unattributed pull must be deep (fraction of
     // its level, or a full pull) AND big (share of the visible full-intensity
-    // reference) to draw. Aggression-aligned reductions always display;
-    // bubbles only ever reference aligned events, so nothing retained can
-    // point at a hidden one.
+    // reference) to draw. Aggression-aligned reductions are exempt from the
+    // floors, and the safety cap below keeps them ahead of unattributed ones,
+    // so a bubble can only point at a hidden event in the extreme case where
+    // aligned events alone exceed the cap (reported via dropped counters).
     let pull_floor = Decimal::from_f32(config.min_unattributed_pull_share)
         .map(|share| liquidity_reference * share)
         .unwrap_or(Decimal::ZERO);
@@ -378,8 +379,12 @@ pub fn project(
     let dropped_liquidity_events = events.len().saturating_sub(config.max_visible_cells);
     if dropped_liquidity_events > 0 {
         events.sort_by(|a, b| {
-            b.removed
-                .cmp(&a.removed)
+            // Aligned events first: they are the evidence bubbles point at.
+            let a_aligned = matches!(a.evidence, LiquidityEvidence::AggressionAligned);
+            let b_aligned = matches!(b.evidence, LiquidityEvidence::AggressionAligned);
+            b_aligned
+                .cmp(&a_aligned)
+                .then_with(|| b.removed.cmp(&a.removed))
                 .then_with(|| a.timestamp_ms.cmp(&b.timestamp_ms))
                 .then_with(|| a.event_id.cmp(&b.event_id))
         });
@@ -758,6 +763,65 @@ mod tests {
                     && matches!(event.evidence, LiquidityEvidence::AggressionAligned)
             }),
             "aligned bites always display regardless of the floor"
+        );
+    }
+
+    #[test]
+    fn event_cap_keeps_aligned_evidence_ahead_of_unattributed_pulls() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            max_visible_cells: 2,
+            min_unattributed_reduction: 0.0,
+            min_unattributed_pull_share: 0.0,
+            ..HeatmapConfig::default()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        // A small SELL print aligns with a small bid reduction at 100...
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 290,
+            price: dec("100"),
+            quantity: dec("0.5"),
+            side: Side::Sell,
+        });
+        history
+            .apply_delta(
+                300,
+                &BookDelta::new(11, 11, vec![level("100", "2.5")], vec![]),
+            )
+            .unwrap();
+        // ...followed by two much larger unattributed pulls.
+        history
+            .apply_delta(
+                400,
+                &BookDelta::new(12, 12, vec![level("99", "0.1")], vec![]),
+            )
+            .unwrap();
+        history
+            .apply_delta(
+                500,
+                &BookDelta::new(13, 13, vec![], vec![level("102", "0.5")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(14, 14, vec![], vec![]))
+            .unwrap();
+
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let projection = project(&history, &timeline, prices);
+
+        assert_eq!(projection.liquidity_events.len(), 2, "cap of two applies");
+        assert_eq!(projection.dropped_liquidity_events, 1);
+        // The smallest event by removed quantity is the aligned one, yet it
+        // must survive the cap: bubbles point at aligned events.
+        assert!(
+            projection.liquidity_events.iter().any(|event| {
+                event.price_bucket == dec("100")
+                    && matches!(event.evidence, LiquidityEvidence::AggressionAligned)
+            }),
+            "aligned evidence must outrank bigger unattributed pulls in the cap"
         );
     }
 

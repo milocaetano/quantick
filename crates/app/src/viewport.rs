@@ -96,7 +96,8 @@ impl Viewport {
 
     /// Pan by `dx` pixels (a drag delta). Positive `dx` (drag right) reveals
     /// older bars — the right edge moves into the past; negative moves toward
-    /// the present. Reaching the newest bar resumes following.
+    /// the present. Reaching the live edge (the newest bar plus any reserved
+    /// live tail) resumes following.
     pub fn pan_pixels(&mut self, dx: f32, total: usize) {
         if total == 0 || self.candle_width <= 0.0 || dx == 0.0 {
             return;

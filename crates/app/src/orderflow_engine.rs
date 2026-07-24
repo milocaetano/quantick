@@ -82,9 +82,12 @@ pub(crate) struct ProjectionLayout {
     first_bar_index: usize,
     slot_count: usize,
     extend_live_end: bool,
-    // Cell y-positions are normalized against the price window at build
-    // time, so a cached frame is only valid for the exact same window
-    // (bit-compared: any pan/zoom or auto-fit shift must rebuild).
+    // Cell y-positions are normalized against the price window at build time.
+    // The window is compared after `quantize_price` (~1/500 of its own span):
+    // real pans/zooms rebuild, while the sub-pixel auto-fit wiggle of a live
+    // book reuses the cached frame, which is then at most ~1/500 of the span
+    // off vertically. A deliberate, bounded relaxation of the exact
+    // bit-compare this key used before the projection went off-thread.
     price_low_bits: u64,
     price_high_bits: u64,
 }
@@ -1034,6 +1037,29 @@ mod tests {
         let after_gap = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
         assert!(!Arc::ptr_eq(&first, &after_gap));
         assert_eq!(engine.projection_builds, 3);
+    }
+
+    #[test]
+    fn sub_quantum_price_wiggle_reuses_the_cached_frame() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let bars = [bar(900, 1_100)];
+
+        let first = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
+        // The auto-fit range wiggles by far less than 1/500 of the span almost
+        // every frame on a live book; the quantized cache key must absorb it
+        // (a cached frame is at most ~1/500 of the span off vertically).
+        let wiggled = engine
+            .project(&request(&bars, (98.000_5, 102.000_5)))
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &wiggled), "sub-quantum shift is a hit");
+        assert_eq!(engine.projection_builds, 1);
+
+        // A shift past the quantum is a real pan and must rebuild.
+        let panned = engine.project(&request(&bars, (98.05, 102.05))).unwrap();
+        assert!(!Arc::ptr_eq(&first, &panned));
+        assert_eq!(engine.projection_builds, 2);
     }
 
     #[test]

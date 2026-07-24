@@ -161,6 +161,7 @@ pub struct HeatmapConfig {
     /// Maximum number of aggressive executions retained.
     pub max_aggressions: usize,
     /// Maximum number of renderable heatmap cells returned by one projection.
+    /// Also caps the liquidity-event primitives (a shared safety budget).
     pub max_visible_cells: usize,
     /// Maximum number of aggression primitives returned by one projection.
     pub max_aggression_primitives: usize,
@@ -215,7 +216,7 @@ impl HeatmapConfig {
         }
         self.display_grouping = self.display_grouping.sanitized();
         if !self.opacity.is_finite() {
-            self.opacity = 0.72;
+            self.opacity = 0.9;
         }
         self.opacity = self.opacity.clamp(0.0, 1.0);
         if !self.gamma.is_finite() || self.gamma <= 0.0 {
@@ -300,7 +301,7 @@ mod tests {
         assert_eq!(config.retention_ms, MAX_RETENTION_MS);
         assert_eq!(config.price_grouping, Decimal::new(1, 2));
         assert_eq!(config.display_grouping, DisplayGrouping::Multiple(1));
-        assert_eq!(config.opacity, 0.72);
+        assert_eq!(config.opacity, 0.9);
         assert_eq!(config.gamma, 1.0);
         assert_eq!(config.bubble_cluster_ms, MAX_BUBBLE_CLUSTER_MS);
         assert_eq!(config.liquidity_correlation_ms, 0);

@@ -23,7 +23,10 @@ pub struct LiquidityRun {
     pub side: RestingSide,
     /// Inclusive lower edge of the exact Decimal price bucket.
     pub price_bucket: Decimal,
-    /// Sum of displayed quantities inside the bucket.
+    /// Sum of displayed quantities inside the bucket when this run opened.
+    /// The live total may drift within the ±10% churn-merge band before a new
+    /// run is cut (see `quantity_diverged`); the tolerance is a deliberate,
+    /// disclosed granularity choice, not a silent patch.
     pub quantity: Decimal,
     /// Exchange timestamp at which this value became observable.
     pub start_ms: i64,
@@ -219,9 +222,12 @@ type LevelKey = (SideKey, Decimal);
 
 /// RLE history plus the authoritative current [`OrderBook`].
 ///
-/// A run changes only when the *aggregated bucket total* changes. Moving
-/// quantity between exchange levels inside one bucket therefore does not create
-/// noise. Closed runs are bounded; active levels are retained separately so a
+/// A run changes only when the *aggregated bucket total* changes meaningfully
+/// (more than ~10% relative, or a level appearing/vanishing — see
+/// [`quantity_diverged`]); smaller churn is absorbed into the open run, whose
+/// recorded quantity stays the value observed when it opened. Moving quantity
+/// between exchange levels inside one bucket therefore does not create noise.
+/// Closed runs are bounded; active levels are retained separately so a
 /// capacity limit can never corrupt the current book view.
 #[derive(Debug, Clone)]
 pub struct LiquidityHistory {
