@@ -436,14 +436,32 @@ impl QuantickApp {
             if ui
                 .add_enabled(
                     supports_book,
-                    egui::Button::new(self.orderflow.settings_button_label()),
+                    egui::Button::new(self.orderflow.l2_button_label()),
                 )
                 .on_hover_text(
-                    "Bookmap palette, non-destructive price ranges, bubbles and liquidity response",
+                    "dock the L2 panel: palette, non-destructive price ranges and liquidity response",
                 )
                 .clicked()
             {
-                self.orderflow.toggle_settings();
+                self.orderflow.toggle_l2_panel();
+            }
+            ui.separator();
+            // The aggression layer reads the trade stream the chart already
+            // consumes, so it needs no depth pipeline and no provider support.
+            let mut bubbles_enabled = self.orderflow.bubbles_enabled();
+            if ui
+                .checkbox(&mut bubbles_enabled, "bubbles")
+                .on_hover_text("confirmed executions as bubbles; independent of the book heatmap")
+                .changed()
+            {
+                self.orderflow.set_bubbles_enabled(bubbles_enabled);
+            }
+            if ui
+                .button(self.orderflow.bubbles_button_label())
+                .on_hover_text("dock the aggression-bubble panel: clustering, opacity and size")
+                .clicked()
+            {
+                self.orderflow.toggle_bubbles_panel();
             }
             ui.separator();
             ui.checkbox(&mut self.show_overlay, "📈 perf")
@@ -1120,7 +1138,7 @@ impl QuantickApp {
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
         // in the gaps between candles and above/below each bar.
-        if orderflow_frame.is_some() {
+        if orderflow_frame.is_some() && self.orderflow.enabled() {
             let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
                 let top = scale.y(bar.high.to_f64().unwrap_or(0.0));
                 let bottom = scale.y(bar.low.to_f64().unwrap_or(0.0));
@@ -1501,7 +1519,9 @@ impl eframe::App for QuantickApp {
         self.maybe_switch_feed();
         self.state.set_spec(self.current_spec());
         self.draw_style_panel(ctx, now);
-        if self.orderflow.draw_settings(ctx) {
+        // Docked before the central panel so the chart keeps the remaining
+        // width instead of being covered by a floating window.
+        if self.orderflow.draw_panels(ctx) {
             self.restart_book_capture();
         }
 
@@ -1707,6 +1727,33 @@ mod tests {
         assert!(
             app.orderflow.enabled(),
             "closed command channel must preserve current capture state"
+        );
+    }
+
+    #[test]
+    fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        assert!(!app.orderflow.enabled());
+        assert!(!app.orderflow.bubbles_enabled());
+
+        app.orderflow.set_bubbles_enabled(true);
+        assert!(app.orderflow.bubbles_enabled());
+        assert!(
+            !app.orderflow.enabled(),
+            "the bubble layer must not start L2 capture"
+        );
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "aggregate trades already flow; no feed command is needed"
+        );
+
+        app.request_book_capture(true);
+        cmd_rx.try_recv().expect("capture command");
+        app.request_book_capture(false);
+        cmd_rx.try_recv().expect("capture command");
+        assert!(
+            app.orderflow.bubbles_enabled(),
+            "stopping the book must not stop the bubbles"
         );
     }
 

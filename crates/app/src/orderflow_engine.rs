@@ -349,9 +349,15 @@ impl BookEngine {
         }
     }
 
-    #[must_use]
-    pub fn enabled(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn enabled(&self) -> bool {
         self.config.enabled
+    }
+
+    /// Whether any layer (depth map or aggression bubbles) still wants frames.
+    #[must_use]
+    pub fn any_layer_enabled(&self) -> bool {
+        self.config.any_layer_enabled()
     }
 
     #[cfg(test)]
@@ -447,6 +453,11 @@ impl BookEngine {
         }
         self.config = config;
         self.invalidate_projection();
+        if !self.config.any_layer_enabled() {
+            // Nothing left to draw: release the frame instead of publishing a
+            // stale one that no layer would render.
+            self.last_frame = None;
+        }
         self.apply_non_grouping_config();
         self.log_config_changed(false, "reproject");
     }
@@ -524,8 +535,11 @@ impl BookEngine {
     }
 
     /// Record a factual aggregate trade for the aggression overlay.
+    ///
+    /// Aggressions come from the trade stream the chart already consumes, so
+    /// the bubble layer records with L2 capture off.
     pub fn record_trade(&mut self, trade: &Trade) {
-        if self.config.enabled {
+        if self.config.any_layer_enabled() {
             self.history.record_aggression(trade);
         }
     }
@@ -724,7 +738,7 @@ impl BookEngine {
 
     /// Build (or reuse) renderer-independent primitives for one request.
     pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
-        if !self.config.enabled {
+        if !self.config.any_layer_enabled() {
             return None;
         }
         let layout = request.layout();
