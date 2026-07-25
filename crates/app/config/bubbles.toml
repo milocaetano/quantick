@@ -1,0 +1,130 @@
+# quantick — built-in aggression bubble presets (FALLBACK ONLY).
+#
+# Compiled into the binary so the app runs with no external file. The file the
+# panel actually reads and writes is `config/bubbles.toml` at the repository
+# root — edit that one. See config/README.md.
+#
+# Quantities are in the symbol's own units: contracts on the mini index, coins
+# on Binance. A `min_quantity` that hides noise on WIN$N hides everything on
+# BTCUSDT, so size-based presets say which market they were built for.
+#
+# Colour overrides are optional `[r, g, b]` triples. Leave a colour out and it
+# follows the chart theme.
+#
+# A preset only describes how bubbles LOOK. Turning the layer on stays a live
+# decision in the panel, so having this file can never start capture by itself.
+
+active = "default"
+
+[[presets]]
+name = "default"
+cluster_ms = 200
+
+[presets.bubbles]
+min_radius = 2.0
+max_radius = 15.0
+opacity = 0.78
+outline_width = 1.0
+halo_strength = 0.12
+detail_min_radius = 4.0
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 3.5
+show_consumption_front = true
+front_width = 3.0
+front_length_scale = 2.1
+show_impact_ring = true
+impact_ring_width = 2.2
+trail_length = 18.0
+trail_opacity = 0.62
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 16.0
+
+# A fast tape with hundreds of prints per minute: smaller dots, harder
+# clustering, no labels. Reading direction and size beats reading numbers.
+[[presets]]
+name = "dense tape"
+cluster_ms = 500
+
+[presets.bubbles]
+min_radius = 1.5
+max_radius = 11.0
+opacity = 0.7
+outline_width = 0.0
+halo_strength = 0.08
+detail_min_radius = 6.0
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 4.5
+show_consumption_front = true
+front_width = 2.0
+front_length_scale = 1.6
+show_impact_ring = false
+impact_ring_width = 2.2
+trail_length = 10.0
+trail_opacity = 0.45
+show_quantity_labels = false
+show_trade_count = false
+label_min_radius = 20.0
+
+# Only what moves the book: everything under 10 contracts is hidden and the
+# scale is pinned, so a bubble means the same size all session. Built for the
+# B3 mini index (WIN$N / WDO$N).
+[[presets]]
+name = "mini index sweeps"
+cluster_ms = 200
+
+[presets.bubbles]
+min_radius = 3.0
+max_radius = 22.0
+opacity = 0.85
+outline_width = 1.2
+halo_strength = 0.16
+detail_min_radius = 4.0
+size_reference = "fixed"
+size_reference_quantity = 200.0
+min_quantity = 10.0
+side_offset = 5.0
+show_consumption_front = true
+front_width = 3.5
+front_length_scale = 2.4
+show_impact_ring = true
+impact_ring_width = 2.6
+trail_length = 22.0
+trail_opacity = 0.7
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 14.0
+
+# For studying who is eating whom: the bubble shrinks and the consumption mark
+# takes over — a wide, bright front and a long trail into the consumed side.
+[[presets]]
+name = "consumption focus"
+cluster_ms = 200
+
+[presets.bubbles]
+min_radius = 2.0
+max_radius = 12.0
+opacity = 0.55
+outline_width = 0.0
+halo_strength = 0.06
+detail_min_radius = 3.0
+size_reference = "visible_max"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 6.0
+show_consumption_front = true
+front_width = 5.0
+front_length_scale = 3.2
+show_impact_ring = true
+impact_ring_width = 3.0
+trail_length = 40.0
+trail_opacity = 0.85
+show_quantity_labels = false
+show_trade_count = false
+label_min_radius = 16.0
+front_color = [255, 246, 205]
+trail_color = [255, 190, 90]

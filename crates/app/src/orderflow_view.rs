@@ -16,9 +16,10 @@ use quantick_orderbook::DepthEvent;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
+use crate::bubble_presets::{self, BubblePreset, BubblePresetFile, PresetSource};
 use crate::orderflow::{
-    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS,
-    MIN_BUBBLE_MAX_RADIUS,
+    BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode,
+    MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
@@ -27,6 +28,7 @@ use crate::orderflow_engine::{
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
     draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview,
+    theme_bubble_rgb,
 };
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
@@ -63,13 +65,49 @@ pub struct OrderflowView {
     pending_capture_grouping_previous: Option<Decimal>,
     last_requested_layout: Option<ProjectionLayout>,
     last_request_at: Option<Instant>,
+    /// Named bubble looks, loaded from the versionable presets file.
+    presets: BubblePresetFile,
+    /// Where those presets came from, shown in the panel.
+    presets_source: PresetSource,
+    /// Name being typed for the next save.
+    preset_name_draft: String,
+    /// Last preset action (or failure), shown verbatim in the panel.
+    preset_status: Option<String>,
 }
 
 impl OrderflowView {
     #[must_use]
     pub fn new(symbol: impl Into<String>) -> Self {
         let symbol = symbol.into();
-        let config = HeatmapConfig::default();
+        let mut config = HeatmapConfig::default();
+        // The presets file is the record of how the tape should look, so the
+        // chart opens on its active preset instead of the compiled defaults.
+        let (presets, presets_source, load_error) = bubble_presets::load();
+        let mut preset_status = None;
+        if let Some(message) = load_error {
+            tracing::error!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "BUBBLE_PRESETS_UNREADABLE",
+                error = message.as_str(),
+                action = "using_built_in_presets",
+                "bubble presets file could not be read; built-in presets are in use"
+            );
+            preset_status = Some(format!("presets not loaded — {message}"));
+        }
+        if let Some(active) = presets.get(&presets.active) {
+            active.apply_to(&mut config);
+        }
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "BUBBLE_PRESETS_LOADED",
+            source = %presets_source,
+            stored = presets.presets.len(),
+            active = presets.active.as_str(),
+            "bubble presets resolved"
+        );
+        let preset_name_draft = presets.active.clone();
         let base_grouping = config.price_grouping;
         Self {
             worker: BookWorker::spawn(&symbol),
@@ -83,6 +121,10 @@ impl OrderflowView {
             pending_capture_grouping_previous: None,
             last_requested_layout: None,
             last_request_at: None,
+            presets,
+            presets_source,
+            preset_name_draft,
+            preset_status,
         }
     }
 
@@ -393,6 +435,336 @@ impl OrderflowView {
         self.worker.send(BookCommand::ResetSummaryCounters);
     }
 
+    /// Picker, save and reload for the named bubble looks.
+    ///
+    /// Saving writes the whole presets file, so what the panel shows and what
+    /// the repository holds never drift apart.
+    fn draw_bubble_presets(&mut self, ui: &mut egui::Ui) {
+        // The picker reads the stored presets while the closure below wants to
+        // mutate them, so it hands back an index and the name is read after.
+        // Cloning every name each frame would be the other way out, and this
+        // runs on the render thread.
+        let mut chosen = None;
+        ui.horizontal(|ui| {
+            ui.label("preset");
+            let selected = if self.presets.active.is_empty() {
+                "— custom —"
+            } else {
+                self.presets.active.as_str()
+            };
+            egui::ComboBox::from_id_salt("bubble_preset")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for (index, preset) in self.presets.presets.iter().enumerate() {
+                        if ui
+                            .selectable_label(self.presets.active == preset.name, &preset.name)
+                            .clicked()
+                        {
+                            chosen = Some(index);
+                        }
+                    }
+                });
+            if ui
+                .small_button("↻")
+                .on_hover_text("reload the presets file from disk, discarding unsaved tweaks")
+                .clicked()
+            {
+                self.reload_presets();
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.preset_name_draft)
+                    .hint_text("preset name")
+                    .desired_width(150.0),
+            );
+            if ui
+                .button("save")
+                .on_hover_text("write the current bubble settings to the presets file")
+                .clicked()
+            {
+                self.save_preset();
+            }
+            let removable = !self.preset_name_draft.trim().is_empty()
+                && self.presets.get(self.preset_name_draft.trim()).is_some();
+            if ui
+                .add_enabled(removable, egui::Button::new("delete"))
+                .on_hover_text("remove this preset from the file")
+                .clicked()
+            {
+                let name = self.preset_name_draft.trim().to_owned();
+                self.presets.remove(&name);
+                self.persist_presets(format!("preset '{name}' removed"));
+            }
+        });
+        if let Some(index) = chosen
+            && let Some(name) = self
+                .presets
+                .presets
+                .get(index)
+                .map(|preset| preset.name.clone())
+        {
+            self.apply_preset(&name);
+        }
+        ui.small(format!("presets · {}", self.presets_source));
+        if let Some(status) = &self.preset_status {
+            ui.small(status.clone());
+        }
+    }
+
+    fn apply_preset(&mut self, name: &str) {
+        let Some(preset) = self.presets.get(name).cloned() else {
+            return;
+        };
+        preset.apply_to(&mut self.config);
+        self.presets.active = preset.name.clone();
+        self.preset_name_draft = preset.name.clone();
+        self.preset_status = Some(format!("'{}' applied", preset.name));
+    }
+
+    fn save_preset(&mut self) {
+        let name = self.preset_name_draft.trim().to_owned();
+        if name.is_empty() {
+            self.preset_status = Some("name the preset before saving".to_owned());
+            return;
+        }
+        self.presets
+            .upsert(BubblePreset::capture(&name, &self.config));
+        self.presets.active = name.clone();
+        self.persist_presets(format!("'{name}' saved"));
+    }
+
+    fn persist_presets(&mut self, success: String) {
+        match bubble_presets::save(&self.presets) {
+            Ok(path) => {
+                self.presets_source = PresetSource::WorkingDir(path.clone());
+                self.preset_status = Some(format!("{success} → {}", path.display()));
+            }
+            Err(message) => {
+                tracing::error!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "BUBBLE_PRESETS_NOT_SAVED",
+                    error = message.as_str(),
+                    action = "keep_settings_in_memory_only",
+                    "bubble presets could not be written; the current look is in memory only"
+                );
+                self.preset_status = Some(format!("not saved — {message}"));
+            }
+        }
+    }
+
+    fn reload_presets(&mut self) {
+        let (presets, source, error) = bubble_presets::load();
+        self.presets = presets;
+        self.presets_source = source;
+        match error {
+            Some(message) => {
+                tracing::error!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "BUBBLE_PRESETS_UNREADABLE",
+                    error = message.as_str(),
+                    action = "using_built_in_presets",
+                    "bubble presets file could not be read; built-in presets are in use"
+                );
+                self.preset_status = Some(format!("presets not loaded — {message}"));
+            }
+            None => {
+                let active = self.presets.active.clone();
+                if active.is_empty() {
+                    self.preset_status = Some("presets reloaded".to_owned());
+                } else {
+                    self.apply_preset(&active);
+                    self.preset_status = Some(format!("reloaded · '{active}' applied"));
+                }
+            }
+        }
+    }
+
+    /// Every visual choice for the bubbles themselves, grouped so the section
+    /// stays readable: size and placement, the marks a consuming print leaves,
+    /// labels, and colour.
+    fn draw_bubble_controls(&mut self, ui: &mut egui::Ui) {
+        let theme_rgb = theme_bubble_rgb(self.config.theme);
+        let bubbles = &mut self.config.bubbles;
+
+        egui::CollapsingHeader::new("size & placement")
+            .id_salt("bubble_size_section")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut bubbles.min_radius, 0.5..=MAX_BUBBLE_MIN_RADIUS)
+                        .text("smallest print px"),
+                )
+                .on_hover_text("floor radius, so the quietest print is still a visible dot");
+                ui.add(
+                    egui::Slider::new(
+                        &mut bubbles.max_radius,
+                        MIN_BUBBLE_MAX_RADIUS..=MAX_BUBBLE_MAX_RADIUS,
+                    )
+                    .text("biggest print px"),
+                )
+                .on_hover_text(
+                    "radius of a full-size print; bubble *area* stays proportional to \
+                         quantity between the two limits",
+                );
+                if bubbles.max_radius < bubbles.min_radius {
+                    bubbles.max_radius = bubbles.min_radius;
+                }
+                ui.horizontal(|ui| {
+                    ui.label("full size at");
+                    egui::ComboBox::from_id_salt("bubble_size_reference")
+                        .selected_text(size_reference_label(bubbles.size_reference))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut bubbles.size_reference,
+                                BubbleSizeReference::VisibleP99,
+                                "Auto · visible P99",
+                            );
+                            ui.selectable_value(
+                                &mut bubbles.size_reference,
+                                BubbleSizeReference::VisibleMax,
+                                "Auto · largest visible",
+                            );
+                            ui.selectable_value(
+                                &mut bubbles.size_reference,
+                                BubbleSizeReference::Fixed,
+                                "Fixed quantity",
+                            );
+                        })
+                        .response
+                        .on_hover_text(
+                            "P99 keeps one outlier sweep from shrinking everything else, but \
+                             the top 1% all render at the maximum radius. 'Largest visible' \
+                             restores a strict order; a fixed quantity makes bubble size mean \
+                             the same thing across sessions.",
+                        );
+                });
+                if bubbles.size_reference == BubbleSizeReference::Fixed {
+                    ui.add(
+                        egui::DragValue::new(&mut bubbles.size_reference_quantity)
+                            .range(0.000_001..=1_000_000_000.0)
+                            .speed(1.0)
+                            .prefix("full size qty "),
+                    )
+                    .on_hover_text("quantity drawn at the maximum radius, in the symbol's units");
+                }
+                ui.add(
+                    egui::DragValue::new(&mut bubbles.min_quantity)
+                        .range(0.0..=1_000_000_000.0)
+                        .speed(0.5)
+                        .prefix("hide below qty "),
+                )
+                .on_hover_text(
+                    "display-only floor: smaller prints are not drawn. Applied after liquidity \
+                     association, so a hidden print still counts as the evidence behind a \
+                     consumption mark. Zero draws everything.",
+                );
+                ui.add(
+                    egui::Slider::new(&mut bubbles.side_offset, 0.0..=20.0)
+                        .text("side separation px"),
+                )
+                .on_hover_text(
+                    "buy bubbles are nudged up, sell bubbles down: a buy lifts the ask, a sell \
+                     hits the bid, so they are not on the same row. With a one-tick spread they \
+                     would otherwise stack into an unreadable line. Zero pins both to the exact \
+                     price.",
+                );
+                ui.add(egui::Slider::new(&mut bubbles.opacity, 0.05..=1.0).text("fill opacity"));
+                ui.add(
+                    egui::Slider::new(&mut bubbles.outline_width, 0.0..=4.0).text("rim width px"),
+                )
+                .on_hover_text("zero draws no rim");
+                ui.add(egui::Slider::new(&mut bubbles.halo_strength, 0.0..=0.6).text("halo"))
+                    .on_hover_text("soft glow behind the fill; opens up a little with size");
+                ui.add(
+                    egui::Slider::new(&mut bubbles.detail_min_radius, 0.0..=20.0)
+                        .text("detail from px"),
+                )
+                .on_hover_text(
+                    "bubbles smaller than this are plain dots (no halo, rim or impact ring). \
+                     Raising it buys frame time on a fast tape.",
+                );
+            });
+
+        egui::CollapsingHeader::new("consumption marks")
+            .id_salt("bubble_consumption_section")
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.small(
+                    "Drawn only when a print aligned with a factual L2 reduction — the bubble \
+                     ate resting liquidity.",
+                );
+                ui.checkbox(
+                    &mut bubbles.show_consumption_front,
+                    "vertical front through the bubble",
+                );
+                ui.add_enabled(
+                    bubbles.show_consumption_front,
+                    egui::Slider::new(&mut bubbles.front_width, 0.5..=10.0).text("front width px"),
+                );
+                ui.add_enabled(
+                    bubbles.show_consumption_front,
+                    egui::Slider::new(&mut bubbles.front_length_scale, 0.5..=6.0)
+                        .text("front length × radius"),
+                );
+                ui.checkbox(&mut bubbles.show_impact_ring, "impact ring on the rim");
+                ui.add_enabled(
+                    bubbles.show_impact_ring,
+                    egui::Slider::new(&mut bubbles.impact_ring_width, 0.5..=6.0)
+                        .text("ring width px"),
+                )
+                .on_hover_text("brightness of the ring also tracks how much of the print matched");
+                ui.add(
+                    egui::Slider::new(&mut bubbles.trail_length, 0.0..=80.0)
+                        .text("trail length px"),
+                )
+                .on_hover_text(
+                    "the glow leaking into the consumed side, marking where the wall ended; \
+                     zero draws no trail",
+                );
+                ui.add_enabled(
+                    bubbles.trail_length > 0.0,
+                    egui::Slider::new(&mut bubbles.trail_opacity, 0.0..=1.0).text("trail opacity"),
+                );
+            });
+
+        egui::CollapsingHeader::new("labels")
+            .id_salt("bubble_label_section")
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut bubbles.show_quantity_labels,
+                    "quantity inside the bubble",
+                );
+                ui.checkbox(&mut bubbles.show_trade_count, "×N clustered prints");
+                ui.add(
+                    egui::Slider::new(&mut bubbles.label_min_radius, 4.0..=48.0)
+                        .text("label from px"),
+                )
+                .on_hover_text(
+                    "only bubbles this big get a label, and only when the text fits inside",
+                );
+            });
+
+        egui::CollapsingHeader::new("colours")
+            .id_salt("bubble_colour_section")
+            .show(ui, |ui| {
+                let front_fallback = bubbles.front_color.unwrap_or(theme_rgb.front);
+                color_override(ui, "buy", &mut bubbles.buy_color, theme_rgb.buy);
+                color_override(ui, "sell", &mut bubbles.sell_color, theme_rgb.sell);
+                color_override(
+                    ui,
+                    "consumption front",
+                    &mut bubbles.front_color,
+                    theme_rgb.front,
+                );
+                color_override(ui, "trail", &mut bubbles.trail_color, front_fallback);
+                color_override(ui, "label", &mut bubbles.label_color, theme_rgb.text);
+                ui.small("Unset colours follow the chart theme.");
+            });
+    }
+
     /// Draw the docked order-flow panels and return whether capture must
     /// restart because the base capture resolution changed.
     ///
@@ -641,11 +1013,11 @@ impl OrderflowView {
                     self.config = HeatmapConfig {
                         enabled: self.config.enabled,
                         price_grouping,
-                        // The bubble layer owns its own panel and its own reset.
+                        // The bubble layer owns its own panel and its own reset,
+                        // so its whole look (and the preset it came from) stays.
                         show_aggressions: self.config.show_aggressions,
                         bubble_cluster_ms: self.config.bubble_cluster_ms,
-                        bubble_opacity: self.config.bubble_opacity,
-                        bubble_max_radius: self.config.bubble_max_radius,
+                        bubbles: self.config.bubbles.clone(),
                         ..HeatmapConfig::default()
                     };
                 }
@@ -677,6 +1049,12 @@ impl OrderflowView {
                         ui.small(
                             "This layer is independent: it keeps drawing with L2 capture off.",
                         );
+                        draw_preview(ui, &self.config).on_hover_text(
+                            "Deterministic preview: every control below shows its effect here, without waiting for a trade.",
+                        );
+                        ui.separator();
+
+                        self.draw_bubble_presets(ui);
                         ui.separator();
 
                         ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
@@ -690,11 +1068,13 @@ impl OrderflowView {
                                     .selected_text(cluster_label(self.config.bubble_cluster_ms))
                                     .show_ui(ui, |ui| {
                                         for (milliseconds, label) in [
-                                            (0, "Raw"),
+                                            (0, "Raw · one bubble per print"),
                                             (50, "50 ms"),
                                             (100, "100 ms"),
                                             (200, "200 ms"),
                                             (500, "500 ms"),
+                                            (1_000, "1 s"),
+                                            (2_000, "2 s"),
                                         ] {
                                             ui.selectable_value(
                                                 &mut self.config.bubble_cluster_ms,
@@ -706,22 +1086,9 @@ impl OrderflowView {
                             })
                             .response
                             .on_hover_text(
-                                "merge compatible prints inside this window into one bubble; Raw keeps one bubble per trade",
+                                "merge compatible prints (same side, same price range) inside this window into one bubble; quantities are summed exactly",
                             );
-                            ui.add(
-                                egui::Slider::new(&mut self.config.bubble_opacity, 0.05..=1.0)
-                                    .text("bubble opacity"),
-                            );
-                            ui.add(
-                                egui::Slider::new(
-                                    &mut self.config.bubble_max_radius,
-                                    MIN_BUBBLE_MAX_RADIUS..=MAX_BUBBLE_MAX_RADIUS,
-                                )
-                                .text("largest bubble px"),
-                            )
-                            .on_hover_text(
-                                "area stays quantity-proportional; this only sets how big the biggest print draws",
-                            );
+                            self.draw_bubble_controls(ui);
                         });
 
                         ui.separator();
@@ -736,11 +1103,19 @@ impl OrderflowView {
                                 health.dropped_aggressions
                             ));
                         }
-                        if ui.button("reset bubble visuals").clicked() {
+                        if ui
+                            .button("reset bubble visuals")
+                            .on_hover_text("only this panel; L2 and history settings stay as they are")
+                            .clicked()
+                        {
                             let defaults = HeatmapConfig::default();
                             self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
-                            self.config.bubble_opacity = defaults.bubble_opacity;
-                            self.config.bubble_max_radius = defaults.bubble_max_radius;
+                            self.config.bubbles = defaults.bubbles;
+                            // No stored preset is on screen any more, so the
+                            // picker must not keep claiming one.
+                            self.presets.active.clear();
+                            self.preset_status =
+                                Some("bubble defaults restored (not saved)".to_owned());
                         }
                     });
             });
@@ -822,10 +1197,113 @@ fn cluster_label(milliseconds: i64) -> String {
     }
 }
 
+const fn size_reference_label(reference: BubbleSizeReference) -> &'static str {
+    match reference {
+        BubbleSizeReference::VisibleP99 => "Auto · visible P99",
+        BubbleSizeReference::VisibleMax => "Auto · largest visible",
+        BubbleSizeReference::Fixed => "Fixed quantity",
+    }
+}
+
+/// One optional colour: a swatch that adopts the override the moment it is
+/// touched, and a way back to the theme.
+fn color_override(ui: &mut egui::Ui, label: &str, value: &mut Option<[u8; 3]>, fallback: [u8; 3]) {
+    ui.horizontal(|ui| {
+        let mut rgb = value.unwrap_or(fallback);
+        if ui.color_edit_button_srgb(&mut rgb).changed() {
+            *value = Some(rgb);
+        }
+        ui.label(label);
+        if value.is_some() {
+            if ui
+                .small_button("theme")
+                .on_hover_text("follow the chart theme again")
+                .clicked()
+            {
+                *value = None;
+            }
+        } else {
+            ui.weak("(theme)");
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orderflow::{BubbleSizeReference, BubbleStyle};
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+
+    /// Lay the docked panels out for real, off-screen, so a broken nested
+    /// layout or a duplicated widget id fails here instead of on the chart.
+    /// Both panels are open at once: they share the left dock and the bubble
+    /// controls must not collide with the L2 ones.
+    #[test]
+    fn the_bubble_panel_lays_out_every_control() {
+        let ctx = egui::Context::default();
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.toggle_bubbles_panel();
+        view.toggle_l2_panel();
+        let frame = |view: &mut OrderflowView| {
+            ctx.run(egui::RawInput::default(), |ctx| {
+                view.draw_panels(ctx);
+            })
+        };
+        // Two frames: the second one re-uses the ids the first allocated.
+        frame(&mut view);
+        frame(&mut view);
+
+        // Now the conditional branches: fixed size reference (extra field),
+        // marks turned off, no trail, and a custom colour instead of the theme.
+        view.config.bubbles.size_reference = BubbleSizeReference::Fixed;
+        view.config.bubbles.show_consumption_front = false;
+        view.config.bubbles.show_impact_ring = false;
+        view.config.bubbles.trail_length = 0.0;
+        view.config.bubbles.buy_color = Some([1, 2, 3]);
+        view.config.bubbles.min_quantity = 5.0;
+        frame(&mut view);
+
+        // And with bubbles switched off the controls are disabled, not gone.
+        view.config.show_aggressions = false;
+        let output = frame(&mut view);
+        assert!(
+            !output.shapes.is_empty(),
+            "the panel must still paint when bubbles are hidden"
+        );
+        assert!(view.show_bubbles_panel);
+    }
+
+    #[test]
+    fn presets_apply_only_the_bubble_section() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        let before = view.config.clone();
+        view.presets.upsert(BubblePreset {
+            name: "wide".to_owned(),
+            cluster_ms: 100,
+            bubbles: BubbleStyle {
+                max_radius: 42.0,
+                side_offset: 8.0,
+                ..BubbleStyle::default()
+            },
+        });
+        view.apply_preset("wide");
+        assert_eq!(view.config.bubbles.max_radius, 42.0);
+        assert_eq!(view.config.bubble_cluster_ms, 100);
+        assert_eq!(view.presets.active, "wide");
+        assert_eq!(view.preset_name_draft, "wide");
+        // Untouched: the layer switch, retention, grouping, gamma, capture bucket.
+        assert_eq!(view.config.show_aggressions, before.show_aggressions);
+        assert_eq!(view.config.retention_ms, before.retention_ms);
+        assert_eq!(view.config.display_grouping, before.display_grouping);
+        assert_eq!(view.config.gamma, before.gamma);
+        assert_eq!(view.config.price_grouping, before.price_grouping);
+
+        // An unknown name changes nothing at all.
+        let after = view.config.clone();
+        view.apply_preset("nope");
+        assert_eq!(view.config, after);
+        assert_eq!(view.presets.active, "wide");
+    }
 
     fn snapshot_event(generation: u64) -> DepthEvent {
         DepthEvent::Snapshot {
