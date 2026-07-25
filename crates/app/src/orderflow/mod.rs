@@ -16,8 +16,8 @@ pub mod timeline;
 // the public DTOs here gives later renderers one stable import surface.
 #[allow(unused_imports)]
 pub use config::{
-    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS,
-    MIN_BUBBLE_MAX_RADIUS,
+    BubbleSizeReference, BubbleStyle, DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode,
+    MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
 #[allow(unused_imports)]
 pub use grouping::{

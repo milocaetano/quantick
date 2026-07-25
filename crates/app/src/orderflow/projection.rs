@@ -3,7 +3,7 @@
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use super::config::IntensityMode;
+use super::config::{BubbleSizeReference, IntensityMode};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
@@ -356,8 +356,19 @@ pub fn project(
         effective_grouping,
         config.bubble_cluster_ms,
     );
-    let aggression_reference =
-        percentile_99(aggression_clusters.iter().map(|cluster| cluster.quantity));
+    // Computed over every visible cluster, before the display filter below:
+    // hiding small prints must not silently rescale the ones left on screen.
+    let aggression_reference = match config.bubbles.size_reference {
+        BubbleSizeReference::VisibleP99 => {
+            percentile_99(aggression_clusters.iter().map(|cluster| cluster.quantity))
+        }
+        BubbleSizeReference::VisibleMax => aggression_clusters
+            .iter()
+            .map(|cluster| cluster.quantity)
+            .max()
+            .unwrap_or(Decimal::ZERO),
+        BubbleSizeReference::Fixed => config.bubbles.fixed_reference_decimal().unwrap_or_default(),
+    };
 
     let mut events = if config.show_liquidity_events {
         liquidity_events(&grouped.transitions)
@@ -401,6 +412,13 @@ pub fn project(
                 .then_with(|| a.event_id.cmp(&b.event_id))
         });
         events.truncate(config.max_visible_cells);
+    }
+
+    // Display floor for bubbles. Applied after association so a hidden small
+    // print still counts as the evidence behind an aligned reduction: the
+    // marker keeps saying "a trade ate this", the tape just stays readable.
+    if let Some(floor) = config.bubbles.min_quantity_decimal() {
+        aggression_clusters.retain(|cluster| cluster.quantity >= floor);
     }
 
     let dropped_aggressions = if config.show_aggressions {
@@ -598,7 +616,7 @@ fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::config::{DisplayGrouping, HeatmapConfig};
+    use crate::orderflow::config::{BubbleStyle, DisplayGrouping, HeatmapConfig};
     use crate::orderflow::history::LiquidityHistory;
     use quantick_engine::{Bar, Side, Trade};
     use quantick_orderbook::BookSide;
@@ -691,6 +709,169 @@ mod tests {
         let full = normalized_area_size(Decimal::from(100), Decimal::from(100));
         assert!((quarter - 0.5).abs() < f32::EPSILON);
         assert_eq!(full, 1.0);
+    }
+
+    /// Four prints an order of magnitude apart, so the size ladder is visible.
+    /// Clustering is off: these must stay four distinct bubbles.
+    fn history_with_a_size_ladder(config: HeatmapConfig) -> LiquidityHistory {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            ..config
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        for (id, quantity) in [(1_u64, "1"), (2, "10"), (3, "50"), (4, "200")] {
+            history.record_aggression(&Trade {
+                agg_id: id,
+                // Spread across time so clustering cannot merge them.
+                timestamp_ms: 200 + (id as i64) * 100,
+                price: dec("101"),
+                quantity: dec(quantity),
+                side: Side::Buy,
+            });
+        }
+        history
+            .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+            .unwrap();
+        history
+    }
+
+    fn ladder_sizes(config: HeatmapConfig) -> Vec<(Decimal, f32)> {
+        let history = history_with_a_size_ladder(config);
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+        let mut sizes: Vec<(Decimal, f32)> = projection
+            .aggressions
+            .iter()
+            .map(|aggression| (aggression.quantity, aggression.size))
+            .collect();
+        sizes.sort_by_key(|pair| pair.0);
+        sizes
+    }
+
+    #[test]
+    fn big_prints_read_as_big_bubbles_under_every_size_reference() {
+        // The size factor drives radius through area, so it must grow strictly
+        // with quantity and reach 1.0 (the maximum radius) for the reference
+        // print. This is the "can I see the large trades?" guarantee.
+        let sizes = ladder_sizes(HeatmapConfig {
+            bubbles: BubbleStyle {
+                size_reference: BubbleSizeReference::VisibleMax,
+                ..BubbleStyle::default()
+            },
+            ..config()
+        });
+        assert_eq!(sizes.len(), 4);
+        for pair in sizes.windows(2) {
+            assert!(
+                pair[1].1 > pair[0].1,
+                "size must grow with quantity: {pair:?}"
+            );
+        }
+        assert_eq!(
+            sizes.last().unwrap().1,
+            1.0,
+            "the biggest print is full size"
+        );
+        // Area proportionality: a quarter of the reference quantity is half the
+        // size factor, i.e. a quarter of the drawn area.
+        let fifty = sizes.iter().find(|(qty, _)| *qty == dec("50")).unwrap().1;
+        assert!(
+            (fifty - 0.5).abs() < 1e-6,
+            "50/200 must map to 0.5, got {fifty}"
+        );
+
+        // A fixed reference pins the scale: the same print keeps the same size
+        // no matter what else is visible, and anything above it saturates.
+        let fixed = ladder_sizes(HeatmapConfig {
+            bubbles: BubbleStyle {
+                size_reference: BubbleSizeReference::Fixed,
+                size_reference_quantity: 50.0,
+                ..BubbleStyle::default()
+            },
+            ..config()
+        });
+        assert_eq!(
+            fixed.iter().find(|(qty, _)| *qty == dec("50")).unwrap().1,
+            1.0
+        );
+        assert_eq!(
+            fixed.last().unwrap().1,
+            1.0,
+            "a print above the fixed reference clamps instead of overflowing"
+        );
+        let small = fixed.first().unwrap().1;
+        assert!(small > 0.0 && small < 0.2, "1/50 stays a dot, got {small}");
+    }
+
+    #[test]
+    fn hiding_small_prints_is_display_only_and_keeps_the_scale() {
+        let bubbles = BubbleStyle {
+            size_reference: BubbleSizeReference::VisibleMax,
+            min_quantity: 20.0,
+            ..BubbleStyle::default()
+        };
+        let sizes = ladder_sizes(HeatmapConfig {
+            bubbles,
+            ..config()
+        });
+        let quantities: Vec<Decimal> = sizes.iter().map(|(qty, _)| *qty).collect();
+        assert_eq!(quantities, vec![dec("50"), dec("200")]);
+        // The reference still comes from every visible print, so the surviving
+        // bubbles keep the size they had before the floor was raised.
+        assert!((sizes[0].1 - 0.5).abs() < 1e-6);
+        assert_eq!(sizes[1].1, 1.0);
+    }
+
+    #[test]
+    fn a_hidden_print_still_explains_the_reduction_it_caused() {
+        // The floor is applied after association, so a small print that ate a
+        // wall keeps the reduction marked as aggression-aligned even though the
+        // bubble itself is not drawn. Hiding noise must never rewrite evidence.
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubbles: BubbleStyle {
+                min_quantity: 100.0,
+                ..BubbleStyle::default()
+            },
+            ..config()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        history.record_aggression(&Trade {
+            agg_id: 7,
+            timestamp_ms: 400,
+            price: dec("101"),
+            quantity: dec("3"),
+            side: Side::Buy,
+        });
+        // Ask 101: 4 -> 1, right after the print.
+        history
+            .apply_delta(
+                450,
+                &BookDelta::new(11, 11, vec![], vec![level("101", "1")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(12, 12, vec![], vec![]))
+            .unwrap();
+
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+        assert!(
+            projection.aggressions.is_empty(),
+            "a 3-lot print is under the 100 floor"
+        );
+        let aligned = projection
+            .liquidity_events
+            .iter()
+            .find(|event| event.price_bucket == dec("101"))
+            .expect("the reduction is still projected");
+        assert_eq!(aligned.evidence, LiquidityEvidence::AggressionAligned);
+        assert!(aligned.matched_quantity > Decimal::ZERO);
     }
 
     #[test]
