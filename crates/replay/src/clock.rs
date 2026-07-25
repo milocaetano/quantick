@@ -126,6 +126,11 @@ impl Playhead {
             playing: false,
             config: PlaybackConfig {
                 speed: config.speed.clamp(MIN_SPEED, MAX_SPEED),
+                // A cap of zero would hand back an empty batch forever, leaving
+                // the cursor where it is: playback would stall in silence, with
+                // nothing to see and nothing to report. One print per advance is
+                // slow, but it always finishes.
+                max_batch: config.max_batch.max(1),
                 ..config
             },
         }
@@ -473,6 +478,26 @@ mod tests {
             emitted += head.advance(&trades, 16.0).len();
         }
         assert_eq!(emitted, 100, "no print is skipped by the cap");
+        assert!(head.is_finished());
+    }
+
+    #[test]
+    fn a_zero_batch_cap_cannot_stall_playback() {
+        let trades = ticks(5);
+        let mut head = Playhead::new(
+            &trades,
+            PlaybackConfig {
+                speed: 1.0,
+                max_batch: 0,
+                ..Default::default()
+            },
+        );
+        head.play();
+        let mut emitted = 0;
+        for _ in 0..trades.len() {
+            emitted += head.advance(&trades, 1_000.0).len();
+        }
+        assert_eq!(emitted, trades.len(), "every print is still delivered");
         assert!(head.is_finished());
     }
 

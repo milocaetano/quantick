@@ -295,17 +295,13 @@ fn play(
     let mut last = Instant::now();
     let mut reported_finished = false;
 
+    let mut drained = Vec::new();
     loop {
         // 1. Controls first, so a click is honoured before the next batch.
+        drained.clear();
         loop {
             match commands.try_recv() {
-                Ok(FeedCommand::Replay(control)) => {
-                    if !apply(control, &mut playhead, trades, &tx, &session) {
-                        return; // UI gone
-                    }
-                    reported_finished = false;
-                    last = Instant::now();
-                }
+                Ok(FeedCommand::Replay(control)) => drained.push(control),
                 // Live-feed commands have no meaning for a recording. Ignored
                 // rather than refused: the UI gates them by capability, and a
                 // stray one must not kill playback.
@@ -313,6 +309,21 @@ fn play(
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => return,
             }
+        }
+        if !drained.is_empty() {
+            let (immediate, position) = coalesce(&drained);
+            for control in immediate {
+                if !apply(control, &mut playhead, trades, &tx, &session) {
+                    return; // UI gone
+                }
+            }
+            if let Some(control) = position
+                && !apply(control, &mut playhead, trades, &tx, &session)
+            {
+                return;
+            }
+            reported_finished = false;
+            last = Instant::now();
         }
 
         // 2. Release whatever the clock says is due.
@@ -349,6 +360,27 @@ fn play(
             TICK_PAUSED
         });
     }
+}
+
+/// Split a drained batch of controls into the ones applied in order and the one
+/// position command that survives.
+///
+/// Moving the playhead rebuilds the chart from the session's history — work
+/// proportional to the whole recording — so applying every queued seek would
+/// throw away all but the last rebuild. Only the newest position command
+/// (`Restart` or `SeekToFraction`) is kept, and it is applied after the others
+/// so the last thing asked for is where playback lands. Play, pause and speed
+/// are cheap and orthogonal, so they keep their order.
+fn coalesce(controls: &[ReplayControl]) -> (Vec<ReplayControl>, Option<ReplayControl>) {
+    let mut immediate = Vec::new();
+    let mut position = None;
+    for control in controls {
+        match control {
+            ReplayControl::Restart | ReplayControl::SeekToFraction(_) => position = Some(*control),
+            other => immediate.push(*other),
+        }
+    }
+    (immediate, position)
 }
 
 /// Apply one transport command. Returns `false` when the UI has gone away.
@@ -557,6 +589,35 @@ mod tests {
         // 60 prints one second apart: half way is 30 of them.
         assert_eq!(history.len(), 30);
         assert_eq!(history[0].side, Side::Buy);
+    }
+
+    #[test]
+    fn a_burst_of_seeks_rebuilds_the_chart_once() {
+        // A dragged seek handle can queue a command per frame; each rebuild
+        // re-sends the session's history, so only the last position may be
+        // applied. Play/pause/speed are orthogonal and keep their order.
+        let controls = [
+            ReplayControl::SeekToFraction(0.1),
+            ReplayControl::SetSpeed(10.0),
+            ReplayControl::SeekToFraction(0.4),
+            ReplayControl::Restart,
+            ReplayControl::Pause,
+            ReplayControl::SeekToFraction(0.9),
+        ];
+        let (immediate, position) = coalesce(&controls);
+        assert_eq!(
+            immediate,
+            vec![ReplayControl::SetSpeed(10.0), ReplayControl::Pause]
+        );
+        assert_eq!(position, Some(ReplayControl::SeekToFraction(0.9)));
+    }
+
+    #[test]
+    fn a_restart_after_a_seek_is_the_position_that_wins() {
+        let (immediate, position) =
+            coalesce(&[ReplayControl::SeekToFraction(0.8), ReplayControl::Restart]);
+        assert!(immediate.is_empty());
+        assert_eq!(position, Some(ReplayControl::Restart));
     }
 
     #[test]

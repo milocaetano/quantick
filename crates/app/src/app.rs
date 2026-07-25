@@ -34,7 +34,9 @@ fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
-const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
+/// The amber that marks "this is not live data": the backfill/live divider on
+/// the chart, and the market-replay transport.
+pub(crate) const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
 /// Secondary text: labels, hints, anything that must not compete with data.
 pub(crate) const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
 /// Primary text over the chart and the chrome.

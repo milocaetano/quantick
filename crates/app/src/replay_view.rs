@@ -21,18 +21,30 @@ use quantick_replay::clock::SPEEDS;
 use quantick_replay::format::{self, UtcOffset};
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
-use crate::app::{MUTED, OVERLAY, WARN};
+use crate::app::{DIVIDER, MUTED, OVERLAY, WARN};
 use crate::feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// The accent this feature owns: the same amber the chart already uses for the
 /// backfill/live divider, so "this is not live data" reads the same way twice.
-const REPLAY_ACCENT: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
+/// Borrowed rather than repeated, so the two can never drift apart.
+const REPLAY_ACCENT: egui::Color32 = DIVIDER;
+
+/// Background of the docked transport bar.
+const TRANSPORT_BG: egui::Color32 = egui::Color32::from_rgb(24, 27, 34);
+
+/// The unplayed part of the seek track.
+const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(45, 50, 60);
 
 /// Environment variable naming the folder the browser opens on.
 pub const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
 
 /// Height of the seek track, in pixels.
 const TRACK_HEIGHT: f32 = 6.0;
+
+/// Radius of the seek handle, resting and hovered.
+const HANDLE_RADIUS: f32 = 4.5;
+/// See [`HANDLE_RADIUS`].
+const HANDLE_RADIUS_HOVERED: f32 = 6.0;
 
 /// What the replay interface asks the app to do.
 pub enum ReplayAction {
@@ -62,6 +74,12 @@ pub struct ReplayView {
     show_format: bool,
     speed: f32,
     autoplay: bool,
+    /// Where the seek handle is being held, while it is being held.
+    ///
+    /// Seeking rebuilds the chart from the session's history, which is work
+    /// proportional to the whole recording — so a drag shows this position and
+    /// only commits it when the handle is let go. See [`seek_track`].
+    scrub: Option<f32>,
 }
 
 impl Default for ReplayView {
@@ -85,6 +103,7 @@ impl ReplayView {
             show_format: false,
             speed: 1.0,
             autoplay: true,
+            scrub: None,
         }
     }
 
@@ -128,9 +147,10 @@ impl ReplayView {
     pub fn draw(&mut self, ctx: &egui::Context, link: Option<&ReplayLink>) -> Option<ReplayAction> {
         self.poll_picker();
         let mut action = self.poll_loading();
-        if let Some(from_browser) = self.draw_browser(ctx) {
-            action = action.or(Some(from_browser));
-        }
+        // The browser starts a load rather than returning an action: the
+        // session is parsed on a worker, and `poll_loading` turns the result
+        // into the `Open` a later frame carries.
+        self.draw_browser(ctx);
         if let Some(link) = link
             && let Some(from_transport) = self.draw_transport(ctx, link)
         {
@@ -250,9 +270,10 @@ impl ReplayView {
         library.sessions.get(self.selected?)
     }
 
-    fn draw_browser(&mut self, ctx: &egui::Context) -> Option<ReplayAction> {
+    /// Draw the session browser, starting a load if one was asked for.
+    fn draw_browser(&mut self, ctx: &egui::Context) {
         if !self.browser_open {
-            return None;
+            return;
         }
         let mut open = true;
         let mut load_clicked = false;
@@ -268,19 +289,18 @@ impl ReplayView {
                 ui.visuals_mut().override_text_color = Some(OVERLAY);
                 self.draw_folder_row(ui);
                 ui.add_space(10.0);
-                self.draw_session_list(ui);
+                load_clicked = self.draw_session_list(ui);
                 ui.add_space(8.0);
                 self.draw_problems(ui);
                 self.draw_format_help(ui);
                 ui.add_space(6.0);
-                load_clicked = self.draw_start_row(ui);
+                load_clicked |= self.draw_start_row(ui);
             });
 
         self.browser_open = open;
         if load_clicked {
             self.load_selected();
         }
-        None
     }
 
     fn draw_folder_row(&mut self, ui: &mut egui::Ui) {
@@ -316,7 +336,10 @@ impl ReplayView {
         }
     }
 
-    fn draw_session_list(&mut self, ui: &mut egui::Ui) {
+    /// Draw the session list. Returns whether one was double-clicked, which is
+    /// the same request as picking it and pressing **Play session**.
+    fn draw_session_list(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut open_requested = false;
         ui.label(egui::RichText::new("Sessions").color(MUTED).small());
         let frame = egui::Frame::none()
             .fill(egui::Color32::from_black_alpha(60))
@@ -370,6 +393,7 @@ impl ReplayView {
                         }
                         if response.double_clicked() {
                             self.selected = Some(index);
+                            open_requested = true;
                         }
                         if !entry.notes.is_empty() {
                             for note in &entry.notes {
@@ -383,6 +407,7 @@ impl ReplayView {
                     }
                 });
         });
+        open_requested
     }
 
     fn draw_problems(&mut self, ui: &mut egui::Ui) {
@@ -520,7 +545,7 @@ impl ReplayView {
         egui::TopBottomPanel::bottom("replay_transport")
             .frame(
                 egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(24, 27, 34))
+                    .fill(TRANSPORT_BG)
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0)),
             )
             .show(ctx, |ui| {
@@ -588,7 +613,7 @@ impl ReplayView {
                 });
 
                 ui.add_space(2.0);
-                if let Some(fraction) = seek_track(ui, status.progress()) {
+                if let Some(fraction) = seek_track(ui, status.progress(), &mut self.scrub) {
                     action = Some(ReplayAction::Control(ReplayControl::SeekToFraction(
                         fraction,
                     )));
@@ -638,8 +663,14 @@ fn badge(ui: &mut egui::Ui, text: &str) {
         });
 }
 
-/// The seek track. Returns the fraction to jump to when dragged or clicked.
-fn seek_track(ui: &mut egui::Ui, progress: f32) -> Option<f32> {
+/// The seek track. Returns the fraction to jump to, once per gesture.
+///
+/// A held handle only moves `scrub`, which is what the track draws; the jump is
+/// emitted when the handle is let go, or immediately on a click. That bound is
+/// not cosmetic: every seek rebuilds the chart from the session's history, so
+/// emitting one per dragged frame would re-ingest the whole recording at frame
+/// rate — hundreds of megabytes a second on a full trading day.
+fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Option<f32> {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, TRACK_HEIGHT + 8.0),
@@ -649,24 +680,40 @@ fn seek_track(ui: &mut egui::Ui, progress: f32) -> Option<f32> {
         egui::pos2(rect.left(), rect.center().y - TRACK_HEIGHT / 2.0),
         egui::vec2(width, TRACK_HEIGHT),
     );
+
+    // Keep the last position the pointer held: on the frame the button is
+    // released egui may already report no interaction position, and that frame
+    // is exactly the one carrying the seek.
+    if let Some(pointer) = response.interact_pointer_pos() {
+        *scrub = Some(((pointer.x - track.left()) / width.max(1.0)).clamp(0.0, 1.0));
+    }
+    let held = response.dragged() || response.is_pointer_button_down_on();
+    let shown = match *scrub {
+        Some(fraction) if held => fraction,
+        _ => progress.clamp(0.0, 1.0),
+    };
+
     let painter = ui.painter();
-    painter.rect_filled(track, 3.0, egui::Color32::from_rgb(45, 50, 60));
-    let filled = egui::Rect::from_min_size(
-        track.min,
-        egui::vec2(width * progress.clamp(0.0, 1.0), TRACK_HEIGHT),
-    );
+    painter.rect_filled(track, 3.0, TRACK_BG);
+    let filled = egui::Rect::from_min_size(track.min, egui::vec2(width * shown, TRACK_HEIGHT));
     painter.rect_filled(filled, 3.0, REPLAY_ACCENT);
     painter.circle_filled(
         egui::pos2(filled.right(), track.center().y),
-        if response.hovered() { 6.0 } else { 4.5 },
+        if response.hovered() || held {
+            HANDLE_RADIUS_HOVERED
+        } else {
+            HANDLE_RADIUS
+        },
         REPLAY_ACCENT,
     );
 
-    if !(response.dragged() || response.clicked()) {
-        return None;
+    if response.drag_stopped() || response.clicked() {
+        return scrub.take();
     }
-    let pointer = response.interact_pointer_pos()?;
-    Some(((pointer.x - track.left()) / width.max(1.0)).clamp(0.0, 1.0))
+    if !held {
+        *scrub = None;
+    }
+    None
 }
 
 /// `HH:MM:SS` of a replay position, read in the session's own timezone — the
