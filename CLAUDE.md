@@ -15,11 +15,14 @@ Cargo workspace, crates under `crates/`:
 
 - `engine` (package `quantick-engine`) — raw trades in, alternative bars out. Headless and deterministic: no UI, no network, no async. Everything else depends on it; it depends on nothing else in the workspace.
 - `orderbook` (package `quantick-orderbook`) — deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. A pure domain crate like `engine` (no network, no async, no clock); depends on nothing else in the workspace.
+- `replay` (package `quantick-replay`) — recorded market-replay sessions: the CSV tick-file format (read, write and explain why a file was rejected), the folder scan behind the session browser, and the deterministic playback clock. A pure domain crate like `engine` — no network, no async, and it is *told* how much time passed rather than reading a clock; it depends only on `engine`.
 - `feed-binance` (package `quantick-feed-binance`) — live aggTrades feed from Binance public endpoints; produces the trade stream the engine consumes. Also captures synchronized L2 depth into `orderbook` state.
 - `feed-mt5` (package `quantick-feed-mt5`) — MetaTrader 5 tick feed. Listens on a local TCP socket for the QuantickBridge EA (`bridge/mt5/`, MQL5) running inside the logged-in terminal; no credentials anywhere. Side inference policy, synthetic ids and server-time conversion are documented in its `lib.rs`.
 - `app` (package `quantick-app`) — desktop chart (egui/wgpu planned). A consumer of the engine, never the other way around. Feeds and symbols come from config (`crates/app/config/feeds.toml`, overridable via `QUANTICK_CONFIG` or `./quantick.toml`), never hardcoded.
 
-Dependency direction is one-way: `app` / `feed-*` → `engine` / `orderbook` (the domain crates). Never add a reverse edge. Feed crates never depend on each other.
+Dependency direction is one-way: `app` / `feed-*` → `engine` / `orderbook` / `replay` (the domain crates). Never add a reverse edge. Feed crates never depend on each other.
+
+Market replay is a *source*, not a chart mode: `app/src/feed/replay.rs` releases a recorded session down the same `FeedEvent` channel a live venue uses, so bars, navigation and metrics run one code path. UI affordances gate on `FeedCapabilities`, never on "is this a replay?" — a recording reports no depth and no history paging, and the heatmap toggle disables itself from that alone.
 
 ## Non-negotiable design rules
 

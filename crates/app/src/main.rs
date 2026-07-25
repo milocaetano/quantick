@@ -24,6 +24,7 @@ mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
 mod price_view;
+mod replay_view;
 mod state;
 mod style;
 mod timezone;
@@ -100,7 +101,7 @@ fn main() -> eframe::Result {
         "starting quantick"
     );
 
-    let feed = feed::spawn(provider, &symbol, &config);
+    let feed = feed::spawn_live(provider, &symbol, &config);
 
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
         .expect("bundled assets/icon.png is a valid PNG");

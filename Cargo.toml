@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/engine",
     "crates/orderbook",
+    "crates/replay",
     "crates/feed-binance",
     "crates/feed-mt5",
     "crates/app",
