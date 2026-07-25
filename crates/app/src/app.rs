@@ -19,10 +19,11 @@ use quantick_feed_binance::depth::DepthEvent;
 use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::PriceScale;
 use crate::config::{AppConfig, FeedCapabilities, ProviderKind};
-use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle};
+use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, ReplayLink};
 use crate::metrics::{self, FrameStats};
 use crate::orderflow_view::OrderflowView;
 use crate::price_view::PriceView;
+use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::{BarKind, BarSpec, ChartState};
 use crate::style::{CandlePreset, ChartStyle};
 use crate::timezone::TzOffset;
@@ -33,10 +34,15 @@ fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
-const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
-const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
-const OVERLAY: egui::Color32 = egui::Color32::from_rgb(210, 218, 226);
-const WARN: egui::Color32 = egui::Color32::from_rgb(255, 99, 71);
+/// The amber that marks "this is not live data": the backfill/live divider on
+/// the chart, and the market-replay transport.
+pub(crate) const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
+/// Secondary text: labels, hints, anything that must not compete with data.
+pub(crate) const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
+/// Primary text over the chart and the chrome.
+pub(crate) const OVERLAY: egui::Color32 = egui::Color32::from_rgb(210, 218, 226);
+/// Something needs attention.
+pub(crate) const WARN: egui::Color32 = egui::Color32::from_rgb(255, 99, 71);
 const CROSSHAIR: egui::Color32 = egui::Color32::from_rgb(110, 120, 135);
 const TAG_BG: egui::Color32 = egui::Color32::from_rgb(55, 63, 80);
 
@@ -114,6 +120,13 @@ pub struct QuantickApp {
     feed_id: String,
     symbol: String,
     active: (String, String),
+
+    // Market Replay. `replay` is `Some` exactly while a recorded session is
+    // the chart's source; it is the one flag the rest of the UI checks, so
+    // replay never grows a second copy of "which mode are we in". The view
+    // owns the browser window and the transport bar.
+    replay: Option<ReplayLink>,
+    replay_view: ReplayView,
 
     // How many older trades to pull per "load older" click, and how many
     // trades have been backfilled in total (for the readout).
@@ -212,6 +225,8 @@ impl QuantickApp {
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
             active: (feed_id.clone(), symbol.clone()),
+            replay: feed.replay,
+            replay_view: ReplayView::new(),
             config,
             feed_id,
             symbol,
@@ -253,6 +268,28 @@ impl QuantickApp {
         if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
             app.request_book_capture(true);
         }
+        // Same convenience for Market Replay: open the folder named by
+        // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
+        // code path a click takes, so a scripted run and a person get the same
+        // behaviour.
+        if std::env::var("QUANTICK_REPLAY_AUTOSTART").is_ok_and(|value| value == "1") {
+            let speed = std::env::var("QUANTICK_REPLAY_SPEED")
+                .ok()
+                .and_then(|value| value.trim().parse::<f32>().ok())
+                .filter(|speed| *speed > 0.0)
+                .unwrap_or(1.0);
+            let started = app.replay_view.autostart(speed);
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_AUTOSTART",
+                folder = std::env::var(crate::replay_view::REPLAY_DIR_ENV).unwrap_or_default(),
+                speed,
+                started,
+                action = if started { "load_first_session" } else { "open_browser" },
+                "market replay autostart"
+            );
+        }
         app
     }
 
@@ -293,7 +330,26 @@ impl QuantickApp {
     }
 
     /// The feed + symbol selectors, both populated from the configuration.
+    ///
+    /// During a replay the selectors give way to what is actually playing: a
+    /// live venue cannot be picked without leaving the recording first, and a
+    /// combo that silently did so would throw away the session mid-run.
     fn draw_feed_selectors(&mut self, ui: &mut egui::Ui) {
+        if let Some(link) = &self.replay {
+            ui.label(egui::RichText::new("source:").color(MUTED));
+            ui.label(egui::RichText::new(link.label()).color(DIVIDER).strong())
+                .on_hover_text(format!(
+                    "Replaying {}\nSide source: {}",
+                    link.session.path.display(),
+                    link.session
+                        .header
+                        .side_source
+                        .as_deref()
+                        .unwrap_or("not recorded"),
+                ));
+            return;
+        }
+
         // Pre-collect owned option lists so the combo closures don't borrow
         // `self.config` while they mutate `self.feed_id` / `self.symbol`.
         // Providers that aren't streaming yet are labelled "(soon)" so the menu
@@ -480,6 +536,14 @@ impl QuantickApp {
     /// back on the next switch, and until then no affordance may promise data
     /// nothing is streaming.
     fn capabilities(&self) -> FeedCapabilities {
+        // A recorded session streams trades and nothing else: there is no depth
+        // in the file and no venue to page older history from. Answering
+        // honestly here is the whole gate — every affordance already asks the
+        // capability rather than the provider name, so the heatmap toggle and
+        // "load older" disable themselves during replay.
+        if self.replay.is_some() {
+            return FeedCapabilities::none();
+        }
         self.config
             .provider_of(&self.feed_id)
             .map_or(FeedCapabilities::none(), ProviderKind::capabilities)
@@ -608,6 +672,12 @@ impl QuantickApp {
     /// Respawn the feed and reset the chart when the selected feed or symbol
     /// differs from what is currently streaming. A no-op otherwise.
     fn maybe_switch_feed(&mut self) {
+        // A replay owns the chart until it is closed. The selectors are not
+        // drawn while it plays, so nothing can diverge here — but a stale
+        // selection must not respawn a live feed underneath the recording.
+        if self.replay.is_some() {
+            return;
+        }
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
             return;
         }
@@ -637,10 +707,11 @@ impl QuantickApp {
 
         // Dropping the old handle stops the old feed thread. The new feed starts
         // with a fresh backfill in flight.
-        let handle = feed::spawn(provider, &self.symbol, &self.config);
+        let handle = feed::spawn_live(provider, &self.symbol, &self.config);
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.commands = handle.commands;
+        self.replay = handle.replay;
         self.book_channel_closed_reported = false;
 
         // Rebuild the chart from scratch for the new stream, keeping the current
@@ -729,8 +800,15 @@ impl QuantickApp {
     /// A floating timezone picker anchored to the bottom-right corner. The time
     /// axis relabels immediately on selection; the engine is untouched.
     fn draw_timezone_selector(&mut self, ctx: &egui::Context) {
+        // Panels shrink the context's available rect, so the picker rides above
+        // whatever claimed the bottom of the window — the replay transport, and
+        // anything docked there later — instead of sitting on top of it.
+        let bottom_inset = (ctx.screen_rect().bottom() - ctx.available_rect().bottom()).max(0.0);
         egui::Area::new(egui::Id::new("tz_selector"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-10.0, -8.0))
+            .anchor(
+                egui::Align2::RIGHT_BOTTOM,
+                egui::vec2(-10.0, -8.0 - bottom_inset),
+            )
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(egui::Color32::from_black_alpha(150))
@@ -774,16 +852,46 @@ impl QuantickApp {
                     // Prepended bars are not closes; keep the live-tail hold.
                     self.last_total_bars = self.last_total_bars.saturating_add(added);
                 }
-                Ok(FeedEvent::Live(trade)) => {
-                    self.latest_trade_ms = Some(trade.timestamp_ms);
-                    self.live_trades += 1;
-                    self.trades_since_summary += 1;
-                    self.orderflow.record_trade(&trade);
-                    self.state.ingest_live(&trade);
+                Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
+                Ok(FeedEvent::LiveBatch(trades)) => {
+                    for trade in &trades {
+                        self.ingest_live_trade(trade);
+                    }
                 }
+                Ok(FeedEvent::Reset) => self.reset_market_state(),
                 Err(_) => break,
             }
         }
+    }
+
+    /// Ingest one live trade: bars, order flow and the metrics that follow it.
+    fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
+        self.latest_trade_ms = Some(trade.timestamp_ms);
+        self.live_trades += 1;
+        self.trades_since_summary += 1;
+        self.orderflow.record_trade(trade);
+        self.state.ingest_live(trade);
+    }
+
+    /// Throw away everything loaded and wait for the source to refill it.
+    ///
+    /// Sent by a source that rewound — seeking a replay, for instance. The
+    /// chart is rebuilt from the history that follows rather than patched,
+    /// because bars that already closed cannot be reopened.
+    fn reset_market_state(&mut self) {
+        self.state = ChartState::new(self.current_spec());
+        self.viewport = Viewport::new();
+        self.price_view = PriceView::new();
+        self.last_auto_range = None;
+        self.hover_pos = None;
+        self.history_trades = 0;
+        self.latest_trade_ms = None;
+        self.live_tail_hold = 0.0;
+        self.last_total_bars = 0;
+        // The refill arrives as one backfill batch; keep the loading indicator
+        // up until it lands.
+        self.pending_history_loads = 1;
+        self.orderflow.reset_for_symbol(self.symbol.clone());
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -811,6 +919,19 @@ impl QuantickApp {
         }
     }
 
+    /// How far behind the wall clock the newest trade is — the health signal
+    /// for a live feed.
+    ///
+    /// `None` while a session is replaying: those prints are as old as the day
+    /// they were recorded, so measuring them against today's clock reports a
+    /// four-month lag and warns about a connection that is working perfectly.
+    fn trade_lag_ms(&self) -> Option<i64> {
+        if self.replay.is_some() {
+            return None;
+        }
+        metrics::feed_lag_ms(metrics::wall_clock_ms(), self.latest_trade_ms)
+    }
+
     /// Periodically log a perf summary and warn on threshold breaches.
     fn maybe_emit_summary(&mut self, now: Instant) {
         let elapsed = now - self.last_summary;
@@ -818,7 +939,7 @@ impl QuantickApp {
             return;
         }
         let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
-        let lag = metrics::feed_lag_ms(metrics::wall_clock_ms(), self.latest_trade_ms);
+        let lag = self.trade_lag_ms();
         let avg = self.frames.avg_ms().unwrap_or(0.0);
         let cpu_avg = self.cpu_frames.avg_ms().unwrap_or(0.0);
         let worst = self.frames.worst_ms().unwrap_or(0.0);
@@ -881,6 +1002,12 @@ impl QuantickApp {
             candle_outline_width_px = self.style.candles.outline_width,
             chart_background_enabled = self.style.canvas.background_enabled,
             chart_grid_enabled = self.style.canvas.grid_enabled,
+            replay_active = self.replay.is_some(),
+            replay_speed = self.replay.as_ref().map(|r| r.status.speed()),
+            replay_playing = self.replay.as_ref().map(|r| r.status.is_playing()),
+            replay_progress = self.replay.as_ref().map(|r| r.status.progress()),
+            replay_played = self.replay.as_ref().map(|r| r.status.played()),
+            replay_total = self.replay.as_ref().map(|r| r.status.total()),
             action = "observe",
             "application health summary"
         );
@@ -1375,10 +1502,12 @@ impl QuantickApp {
             Some(b) => (b, bars.len().saturating_sub(b)),
             None => (0, bars.len()),
         };
-        let mode = if self.viewport.follows_live() {
-            "● live"
-        } else {
-            "history · double-click for live"
+        let mode = match (self.viewport.follows_live(), self.replay.is_some()) {
+            // Never label a recording "live", however current the chart looks.
+            // `▶` rather than `●`: the bundled fonts carry the transport glyph.
+            (true, true) => "▶ replay",
+            (true, false) => "● live",
+            (false, _) => "history · double-click for live",
         };
         let price_mode = if self.price_view.is_auto() {
             ""
@@ -1412,7 +1541,7 @@ impl QuantickApp {
             return;
         }
         let avg = self.frames.avg_ms();
-        let lag = metrics::feed_lag_ms(metrics::wall_clock_ms(), self.latest_trade_ms);
+        let lag = self.trade_lag_ms();
 
         let fps_color = if avg.is_some_and(|a| a > metrics::SLOW_FRAME_MS) {
             WARN
@@ -1424,9 +1553,16 @@ impl QuantickApp {
         } else {
             OVERLAY
         };
-        let lag_text = match lag {
-            Some(l) => format!("feed lag {l} ms"),
-            None => "feed lag —".to_string(),
+        // A recording has no lag to report — its prints are months old by
+        // design. The line says what is actually driving the chart instead.
+        let lag_text = match (&self.replay, lag) {
+            (Some(link), _) => format!(
+                "replay {:.0}×  {:.0}%",
+                link.status.speed(),
+                link.status.progress() * 100.0
+            ),
+            (None, Some(l)) => format!("feed lag {l} ms"),
+            (None, None) => "feed lag —".to_string(),
         };
 
         let lines: [(String, egui::Color32); 4] = [
@@ -1505,6 +1641,145 @@ impl QuantickApp {
     }
 }
 
+/// Opens the Market Replay browser. The one shortcut this feature claims.
+const REPLAY_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
+
+impl QuantickApp {
+    /// The window's menu bar: one line, two menus, nothing that duplicates a
+    /// control already on the toolbar below it.
+    fn draw_menu_bar(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_shortcut(&REPLAY_SHORTCUT)) {
+            self.replay_view.open_browser();
+        }
+
+        egui::TopBottomPanel::top("menu_bar")
+            .frame(
+                egui::Frame::none()
+                    .fill(self.chrome_bg())
+                    .inner_margin(egui::Margin::symmetric(6.0, 2.0)),
+            )
+            .show(ctx, |ui| {
+                ui.visuals_mut().override_text_color = Some(OVERLAY);
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new("Market Replay…")
+                                    .shortcut_text(ui.ctx().format_shortcut(&REPLAY_SHORTCUT)),
+                            )
+                            .clicked()
+                        {
+                            self.replay_view.open_browser();
+                            ui.close_menu();
+                        }
+                        if self.replay.is_some() && ui.button("Close Replay").clicked() {
+                            self.close_replay();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("Exit").clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("Replay file format…").clicked() {
+                            self.replay_view.open_format_help();
+                            ui.close_menu();
+                        }
+                    });
+                });
+            });
+    }
+
+    /// Carry out what the replay interface asked for.
+    fn apply_replay_action(&mut self, action: ReplayAction) {
+        match action {
+            ReplayAction::Open(request) => self.open_replay(*request),
+            ReplayAction::Close => self.close_replay(),
+            ReplayAction::Control(control) => {
+                // A dropped transport click is not worth a retry queue: the
+                // worker drains commands every 8 ms, so a full channel means
+                // the click was already superseded.
+                if let Err(e) = self.commands.try_send(FeedCommand::Replay(control)) {
+                    tracing::debug!(
+                        target: "quantick::app",
+                        event_code = "REPLAY_COMMAND_DROPPED",
+                        reason = %e,
+                        "transport command not queued"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Make a recorded session the chart's source, replacing whatever feed is
+    /// running. The live selection is untouched, so closing the replay comes
+    /// back to exactly the feed and symbol that were streaming before.
+    fn open_replay(&mut self, request: crate::feed::ReplayRequest) {
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "REPLAY_OPENED",
+            session = %request.session.label(),
+            file = %request.session.path.display(),
+            trades = request.session.trades.len(),
+            speed = request.options.speed,
+            action = "replace_feed_source",
+            "opening a recorded session"
+        );
+
+        let handle = feed::spawn(feed::FeedSource::Replay(Box::new(request)), &self.config);
+        self.events = handle.events;
+        self.book_events = handle.book_events;
+        self.commands = handle.commands;
+        self.replay = handle.replay;
+        self.book_channel_closed_reported = false;
+
+        if let Some(link) = &self.replay {
+            self.symbol = link.symbol().to_string();
+        }
+        // Depth is not in a recording; the toggle is disabled by capability,
+        // and the view must not keep drawing a book from the live feed.
+        let generation = self.next_book_generation();
+        self.orderflow.set_enabled(false, generation);
+        self.reset_market_state();
+    }
+
+    /// Leave replay and put the live feed back.
+    fn close_replay(&mut self) {
+        if self.replay.take().is_none() {
+            return;
+        }
+        let (feed_id, symbol) = self.active.clone();
+        self.feed_id = feed_id;
+        self.symbol = symbol;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "REPLAY_CLOSED",
+            feed = %self.feed_id,
+            symbol = %self.symbol,
+            action = "respawn_live_feed",
+            "leaving market replay"
+        );
+
+        let Some(provider) = self.config.provider_of(&self.feed_id) else {
+            // The configuration changed under us; there is nothing to go back
+            // to, so the chart stays as it is rather than dying.
+            self.reset_market_state();
+            return;
+        };
+        let handle = feed::spawn_live(provider, &self.symbol, &self.config);
+        self.events = handle.events;
+        self.book_events = handle.book_events;
+        self.commands = handle.commands;
+        self.replay = handle.replay;
+        self.book_channel_closed_reported = false;
+        self.reset_market_state();
+    }
+}
+
 impl eframe::App for QuantickApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let now = Instant::now();
@@ -1521,12 +1796,18 @@ impl eframe::App for QuantickApp {
         self.maybe_emit_summary(now);
 
         let bg = self.bg();
+        self.draw_menu_bar(ctx);
         egui::TopBottomPanel::top("controls")
             .frame(egui::Frame::none().fill(self.chrome_bg()).inner_margin(8.0))
             .show(ctx, |ui| {
                 ui.visuals_mut().override_text_color = Some(OVERLAY);
                 self.draw_controls(ui);
             });
+        // The browser window and, while a session plays, the transport bar.
+        // Drawn before the chart so the bottom panel claims its strip first.
+        if let Some(action) = self.replay_view.draw(ctx, self.replay.as_ref()) {
+            self.apply_replay_action(action);
+        }
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         self.maybe_switch_feed();
@@ -1594,6 +1875,7 @@ mod tests {
                 events: evt_rx,
                 book_events: book_rx,
                 commands: cmd_tx,
+                replay: None,
             },
         );
         (app, evt_tx, cmd_rx, book_tx)
@@ -1706,6 +1988,7 @@ mod tests {
                 events: evt_rx,
                 book_events: book_rx,
                 commands: cmd_tx,
+                replay: None,
             },
         );
 

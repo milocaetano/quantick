@@ -5,13 +5,16 @@
 //! can send [`FeedCommand`]s back (e.g. "load older history"), serviced between
 //! live trades.
 //!
-//! Which backend runs is chosen at [`spawn`] time from a [`ProviderKind`], so
-//! the UI is provider-agnostic: it drains the same [`FeedHandle`] regardless of
-//! exchange. [`binance`] streams public aggTrades directly; [`metatrader`]
-//! listens for the local QuantickBridge EA (see `bridge/mt5/`).
+//! Which backend runs is chosen at [`spawn`] time from a [`FeedSource`], so the
+//! UI is provider-agnostic: it drains the same [`FeedHandle`] regardless of
+//! where the trades come from. [`binance`] streams public aggTrades directly;
+//! [`metatrader`] listens for the local QuantickBridge EA (see `bridge/mt5/`);
+//! [`replay`] plays a recorded session back through the very same channel, which
+//! is what lets market replay reuse the whole chart untouched.
 
 pub mod binance;
 pub mod metatrader;
+pub mod replay;
 
 use tokio::sync::mpsc;
 
@@ -19,6 +22,8 @@ use quantick_engine::Trade;
 pub use quantick_feed_binance::depth::DepthEvent;
 
 use crate::config::ProviderKind;
+
+pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// Default number of recent trades to backfill so the chart opens populated,
 /// when `QUANTICK_BACKFILL` is unset. One Binance REST page.
@@ -36,6 +41,19 @@ pub enum FeedEvent {
     HistoryPrepended(Vec<Trade>),
     /// One live trade.
     Live(Trade),
+    /// Several live trades that fell due together.
+    ///
+    /// A replay at 50× can release hundreds of prints between two frames, and a
+    /// per-trade channel message for each is pure overhead on both ends. Live
+    /// feeds keep sending [`FeedEvent::Live`]; the UI treats a batch exactly as
+    /// the trades in it, in order.
+    LiveBatch(Vec<Trade>),
+    /// Discard everything loaded and start over from an empty chart.
+    ///
+    /// Sent when a source rewinds — seeking a replay backwards, for instance.
+    /// Bars that were already closed cannot be un-closed, so the honest answer
+    /// is to rebuild from the new position rather than patch the series.
+    Reset,
 }
 
 /// A command from the UI to the feed thread.
@@ -54,6 +72,22 @@ pub enum FeedCommand {
         /// First generation assigned to the replacement capture.
         initial_generation: u64,
     },
+    /// Drive playback of a recorded session. Ignored by live feeds.
+    Replay(ReplayControl),
+}
+
+/// Where a feed's trades come from. One variant per backend, mirroring the
+/// [`spawn`] dispatch.
+pub enum FeedSource {
+    /// A live venue, selected from the configuration.
+    Live {
+        /// Which backend streams it.
+        provider: ProviderKind,
+        /// The instrument to stream.
+        symbol: String,
+    },
+    /// A recorded session, played back from disk.
+    Replay(Box<replay::ReplayRequest>),
 }
 
 /// The UI's handle on a running feed: events to drain, commands to send.
@@ -67,6 +101,10 @@ pub struct FeedHandle {
     pub book_events: mpsc::Receiver<DepthEvent>,
     /// UI → feed: on-demand history loading.
     pub commands: mpsc::Sender<FeedCommand>,
+    /// Present only while a recorded session is playing: what the transport bar
+    /// reads to draw itself. `None` means this is a live feed, which is the one
+    /// check the UI needs to tell the two modes apart.
+    pub replay: Option<ReplayLink>,
 }
 
 /// The initial backfill depth: `QUANTICK_BACKFILL` if it parses to a positive
@@ -80,21 +118,35 @@ pub fn initial_backfill_target() -> usize {
         .unwrap_or(DEFAULT_BACKFILL_TARGET)
 }
 
-/// Start the feed for `provider`/`symbol` on a background thread, returning the
-/// handle the UI drains and sends commands through. Dropping the handle stops
-/// the feed. Provider-specific settings come from `config`.
+/// Start the feed for `source` on a background thread, returning the handle the
+/// UI drains and sends commands through. Dropping the handle stops the feed.
+/// Provider-specific settings come from `config`.
 ///
-/// This is the whole "provider → backend" dispatch: one place, mirroring the
-/// [`ProviderKind`] variants. Adding a provider is a new arm here plus its
-/// module.
+/// This is the whole "source → backend" dispatch: one place, mirroring the
+/// [`FeedSource`] variants. Adding a source is a new arm here plus its module.
 #[must_use]
-pub fn spawn(
+pub fn spawn(source: FeedSource, config: &crate::config::AppConfig) -> FeedHandle {
+    match source {
+        FeedSource::Live { provider, symbol } => match provider {
+            ProviderKind::Binance => binance::spawn(&symbol),
+            ProviderKind::MetaTrader => metatrader::spawn(&symbol, &config.metatrader),
+        },
+        FeedSource::Replay(request) => replay::spawn(*request),
+    }
+}
+
+/// Start a live feed for `provider`/`symbol`. A shorthand for the common case.
+#[must_use]
+pub fn spawn_live(
     provider: ProviderKind,
     symbol: &str,
     config: &crate::config::AppConfig,
 ) -> FeedHandle {
-    match provider {
-        ProviderKind::Binance => binance::spawn(symbol),
-        ProviderKind::MetaTrader => metatrader::spawn(symbol, &config.metatrader),
-    }
+    spawn(
+        FeedSource::Live {
+            provider,
+            symbol: symbol.to_string(),
+        },
+        config,
+    )
 }

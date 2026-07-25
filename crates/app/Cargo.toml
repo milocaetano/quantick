@@ -10,7 +10,11 @@ quantick-engine = { path = "../engine" }
 quantick-feed-binance = { path = "../feed-binance" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
+quantick-replay = { path = "../replay" }
 rust_decimal = "1"
+# Native folder picker for Market Replay. Runs off the UI thread, so the OS
+# dialog never blocks a frame.
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time", "process"] }

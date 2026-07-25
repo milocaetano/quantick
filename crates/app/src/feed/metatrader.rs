@@ -98,6 +98,7 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
         events: rx,
         book_events: book_rx,
         commands: cmd_tx,
+        replay: None,
     }
 }
 
@@ -464,6 +465,10 @@ async fn answer_command(
             );
             true
         }
+        // Transport commands belong to a recorded session; a live bridge has
+        // no playhead to move. Ignored rather than refused — the UI only shows
+        // the transport while a replay is the source.
+        FeedCommand::Replay(_) => true,
     }
 }
 

@@ -47,6 +47,7 @@ pub fn spawn(symbol: &str) -> FeedHandle {
         events: rx,
         book_events: book_rx,
         commands: cmd_tx,
+        replay: None,
     }
 }
 
@@ -160,6 +161,11 @@ async fn feed_task(
                             &book_tx,
                         ));
                     }
+                    // Transport commands belong to a recorded session; a live
+                    // venue has no playhead to move. Ignored rather than
+                    // refused — the UI only shows the transport while a replay
+                    // is the source.
+                    Some(FeedCommand::Replay(_)) => {}
                     None => break, // UI dropped the command sender: it's gone
                 }
             }
