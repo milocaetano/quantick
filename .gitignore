@@ -6,3 +6,6 @@
 /quantick.toml
 # Python bytecode from the design lab
 __pycache__/
+
+# Server-time offset the MT5 bridge measures and remembers (per machine).
+.quantick_bridge_cache.json

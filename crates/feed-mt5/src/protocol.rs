@@ -14,6 +14,12 @@ use serde::Deserialize;
 
 /// The protocol schema version this decoder understands. A bridge announcing a
 /// different `schema` in its hello is refused — never half-parsed.
+///
+/// Depth of Market arrived as *optional* fields inside this same version
+/// rather than as a version bump: a bridge that predates it simply declares no
+/// [`book_levels`](Hello::book_levels), keeps streaming ticks, and the chart
+/// says the book is unavailable. Forcing every existing terminal to recompile
+/// its EA to keep charting trades would be a worse trade than that.
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// MQL5 `MqlTick.flags` bits (shared vocabulary with the bridge). Real feeds
@@ -71,6 +77,8 @@ pub enum BridgeMsg {
     Hello(Hello),
     /// One MT5 tick (quote and/or trade — the flags say which).
     Tick(Tick),
+    /// One complete image of the Depth of Market.
+    Book(Book),
     /// Periodic liveness signal; also refreshes the server-time offset.
     Heartbeat(Heartbeat),
     /// The ticks that follow are history (from `CopyTicks`), not live.
@@ -108,6 +116,22 @@ pub struct Hello {
     pub digits: u32,
     /// `server_time - utc`, in seconds (B3 brokers: −10800).
     pub server_utc_offset_s: i64,
+    /// Smallest price increment the instrument trades in
+    /// (`SYMBOL_TRADE_TICK_SIZE`), as exact decimal digits. B3's mini index
+    /// moves in 5-point steps, so a consumer that renders liquidity on a finer
+    /// grid would leave every other row permanently empty.
+    ///
+    /// Absent from bridges older than the Depth of Market support.
+    #[serde(default)]
+    pub tick_size: Option<String>,
+    /// Maximum number of price levels per side this bridge can publish
+    /// (`SYMBOL_TICKS_BOOKDEPTH`), when it publishes depth at all.
+    ///
+    /// `None` means this bridge streams no book: either it predates the
+    /// feature or the terminal refused the DOM subscription. It is the honest
+    /// signal for "the heatmap has no data here", never an assumed zero.
+    #[serde(default)]
+    pub book_levels: Option<u32>,
 }
 
 /// One tick. `time_ms` is **server-time** epoch milliseconds (see [`Hello`]).
@@ -130,6 +154,42 @@ pub struct Tick {
     pub volume: u64,
     /// Raw `MqlTick.flags` word (see [`flags`]).
     pub flags: u32,
+}
+
+/// One price level on the wire: `["price", "quantity"]`.
+///
+/// A two-element array rather than an object because a book image repeats it
+/// dozens of times per message, many times a second — the field names would be
+/// most of the bytes. Both values are exact decimal strings, like tick prices.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WireLevel(
+    /// Price.
+    pub String,
+    /// Total resting quantity at that price.
+    pub String,
+);
+
+/// One complete image of the Depth of Market.
+///
+/// MT5 has no incremental book protocol: `OnBookEvent` fires and
+/// `MarketBookGet` returns the whole visible DOM, with no update ids of any
+/// kind. The bridge therefore sends images and the feed diffs them (see
+/// [`crate::depth`]); `seq` exists only to detect images lost in transport,
+/// and is numbered per session independently of tick `seq`.
+///
+/// Levels are the *limit* book only. MT5 also reports market-order rows
+/// (`BOOK_TYPE_*_MARKET`), which carry no meaningful price and are excluded by
+/// the bridge — they are not resting liquidity.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Book {
+    /// Bridge-assigned session image number, from 1.
+    pub seq: u64,
+    /// Server-time epoch milliseconds when the image was taken (see [`Hello`]).
+    pub time_ms: i64,
+    /// Resting buy levels, in whatever order the terminal returned them.
+    pub bids: Vec<WireLevel>,
+    /// Resting sell levels, in whatever order the terminal returned them.
+    pub asks: Vec<WireLevel>,
 }
 
 /// Liveness + offset refresh. A silent bridge (no ticks, no heartbeats) is
@@ -204,6 +264,50 @@ mod tests {
         assert_eq!(t.last, "177795");
         assert_eq!(t.volume, 3);
         assert_eq!(t.flags & flags::LAST, flags::LAST);
+    }
+
+    #[test]
+    fn hello_depth_fields_are_optional_so_older_bridges_still_connect() {
+        // A bridge predating Depth of Market: ticks keep flowing, the book is
+        // honestly absent rather than assumed empty.
+        let old = r#"{"type": "hello", "schema": 1, "bridge": "b", "bridge_version": "0",
+            "symbol": "WIN$N", "broker_symbol": "WINQ26", "digits": 0,
+            "server_utc_offset_s": -10800}"#;
+        let BridgeMsg::Hello(h) = parse_line(old).unwrap() else {
+            panic!("expected hello");
+        };
+        assert_eq!(h.tick_size, None);
+        assert_eq!(h.book_levels, None);
+
+        let with_book = r#"{"type": "hello", "schema": 1, "bridge": "b", "bridge_version": "0",
+            "symbol": "WIN$N", "broker_symbol": "WINQ26", "digits": 0,
+            "server_utc_offset_s": -10800, "tick_size": "5", "book_levels": 20}"#;
+        let BridgeMsg::Hello(h) = parse_line(with_book).unwrap() else {
+            panic!("expected hello");
+        };
+        assert_eq!(h.tick_size.as_deref(), Some("5"));
+        assert_eq!(h.book_levels, Some(20));
+    }
+
+    #[test]
+    fn a_book_image_parses_with_paired_level_arrays() {
+        let line = r#"{"type":"book","seq":7,"time_ms":1784824300802,
+            "bids":[["177795","3"],["177790","12"]],"asks":[["177800","5"]]}"#;
+        let BridgeMsg::Book(book) = parse_line(line).unwrap() else {
+            panic!("expected a book image");
+        };
+        assert_eq!(book.seq, 7);
+        assert_eq!(book.time_ms, 1_784_824_300_802);
+        assert_eq!(book.bids.len(), 2);
+        assert_eq!(book.bids[0], WireLevel("177795".into(), "3".into()));
+        assert_eq!(book.asks, vec![WireLevel("177800".into(), "5".into())]);
+
+        // An empty side is legitimate (auction, halted book), not an error.
+        let empty = r#"{"type":"book","seq":1,"time_ms":1,"bids":[],"asks":[]}"#;
+        let BridgeMsg::Book(book) = parse_line(empty).unwrap() else {
+            panic!("expected a book image");
+        };
+        assert!(book.bids.is_empty() && book.asks.is_empty());
     }
 
     #[test]

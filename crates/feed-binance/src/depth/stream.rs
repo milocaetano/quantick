@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use quantick_orderbook::{BookDelta, BookSnapshot};
+use quantick_orderbook::BookSnapshot;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Sender;
 use tokio_tungstenite::{
@@ -71,122 +71,11 @@ impl DepthSessionConfig {
     }
 }
 
-/// Why a synchronized session must be discarded and rebuilt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DepthResyncReason {
-    /// The REST snapshot was older than the earliest eligible buffered update.
-    SnapshotTooOld {
-        /// Snapshot update id.
-        snapshot_update_id: u64,
-        /// First id in the event that could not bridge it.
-        first_update_id: u64,
-        /// Final id in that event.
-        final_update_id: u64,
-    },
-    /// At least one WebSocket update id was missed.
-    SequenceGap {
-        /// Next required update id.
-        expected_update_id: u64,
-        /// First received id.
-        first_update_id: u64,
-        /// Final received id.
-        final_update_id: u64,
-    },
-    /// Snapshot bootstrap retried too many times on one connection.
-    SnapshotAttemptsExhausted {
-        /// Number of attempted snapshots.
-        attempts: u32,
-    },
-}
-
-/// Consumer-visible depth lifecycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DepthStatus {
-    /// WebSocket connection is being established.
-    Connecting,
-    /// WebSocket is open and updates are being buffered.
-    Buffering {
-        /// Configured hard buffer limit.
-        capacity: usize,
-    },
-    /// A REST snapshot is being fetched while the socket remains live.
-    SnapshotFetching {
-        /// Attempt number within this socket generation.
-        attempt: u32,
-        /// Updates already buffered.
-        buffered_updates: usize,
-    },
-    /// Snapshot and stream are continuous and consumer data is authoritative
-    /// within the declared snapshot coverage.
-    Synchronized {
-        /// Current final update id.
-        last_update_id: u64,
-        /// Current stored bid level count.
-        bid_levels: usize,
-        /// Current stored ask level count.
-        ask_levels: usize,
-    },
-    /// Current state is being discarded.
-    Resyncing {
-        /// Typed reason for the resync.
-        reason: DepthResyncReason,
-    },
-    /// A connection generation ended.
-    Disconnected {
-        /// Stable machine-readable error class.
-        error_class: &'static str,
-    },
-    /// Consumer cancellation stopped the reconnect loop.
-    Stopped,
-}
-
-/// Typed output consumed by the chart or another order-book client.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DepthEvent {
-    /// Lifecycle/status transition.
-    Status {
-        /// Upper-case Binance symbol.
-        symbol: String,
-        /// Monotonic capture/session generation.
-        generation: u64,
-        /// New status.
-        status: DepthStatus,
-    },
-    /// Initial exchange-neutral snapshot, emitted exactly once per successful
-    /// generation before its first delta.
-    Snapshot {
-        /// Upper-case Binance symbol.
-        symbol: String,
-        /// Monotonic capture/session generation.
-        generation: u64,
-        /// Local epoch milliseconds when the REST response was observed.
-        ///
-        /// Binance's snapshot response has no exchange timestamp, so this is
-        /// intentionally labelled as local observation time.
-        observed_at_ms: i64,
-        /// Logical start time for the snapshot in the consumer timeline.
-        ///
-        /// A diff can be buffered before the REST response arrives, so its
-        /// exchange event time may precede `observed_at_ms`. This value is at
-        /// most one millisecond before the bridge event and never after the
-        /// local observation, preventing a false backwards-time delta while
-        /// keeping the observation timestamp available for diagnostics.
-        effective_at_ms: i64,
-        /// Validated exchange-neutral snapshot.
-        snapshot: BookSnapshot,
-    },
-    /// One applied absolute update.
-    Update {
-        /// Upper-case Binance symbol.
-        symbol: String,
-        /// Monotonic capture/session generation.
-        generation: u64,
-        /// Binance exchange event time (`E`).
-        event_time_ms: i64,
-        /// Validated exchange-neutral absolute delta.
-        delta: BookDelta,
-    },
-}
+// The depth stream vocabulary is provider-neutral domain code and lives in
+// `quantick-orderbook`, so a second venue (MetaTrader's DOM, via
+// `SnapshotDiffer`) can speak it without depending on this crate. Re-exported
+// here because this module's public surface is where consumers already look.
+pub use quantick_orderbook::stream::{DepthEvent, DepthResyncReason, DepthStatus};
 
 /// Failure ending one WebSocket generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,6 +414,9 @@ async fn bridge_snapshot(
                             observed_at_ms,
                             update.event_time_ms,
                         ),
+                        // Binance's depth stream never states a tick size;
+                        // the consumer sizes its buckets from the price.
+                        price_step: None,
                         snapshot,
                     },
                 )

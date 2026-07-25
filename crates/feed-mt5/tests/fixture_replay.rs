@@ -18,8 +18,8 @@ use tokio::sync::mpsc;
 
 use quantick_engine::{Side, Trade};
 use quantick_feed_mt5::{
-    BridgeMsg, MapOutcome, Mt5Event, Mt5Status, ServerConfig, SideMode, TickMapper, parse_line,
-    run_bridge_server,
+    BookCaptureSwitch, BridgeMsg, MapOutcome, Mt5Event, Mt5Status, ServerConfig, SideMode,
+    TickMapper, parse_line, run_bridge_server,
 };
 
 const FIXTURE: &str = include_str!("fixtures/win_ticks.ndjson");
@@ -102,6 +102,7 @@ async fn tcp_replay_equals_the_pure_mapper() {
         side_mode: SideMode::TickRule,
         hello_timeout: Duration::from_secs(2),
         read_timeout: Duration::from_secs(2),
+        book_capture: BookCaptureSwitch::new(),
     };
     tokio::spawn(async move {
         let _ = run_bridge_server(config, tx).await;
@@ -121,6 +122,9 @@ async fn tcp_replay_equals_the_pure_mapper() {
             Mt5Event::Backfilled(batch) => streamed.extend(batch),
             Mt5Event::Status(Mt5Status::Lost { .. }) => break,
             Mt5Event::Status(_) => {}
+            // The fixture is a tick-only recording and capture is off, so
+            // depth must never appear on this path.
+            Mt5Event::Depth(event) => panic!("unexpected depth event: {event:?}"),
         }
     }
 

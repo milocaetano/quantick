@@ -43,6 +43,51 @@ impl ProviderKind {
     pub fn is_implemented(self) -> bool {
         matches!(self, ProviderKind::Binance | ProviderKind::MetaTrader)
     }
+
+    /// What this provider's backend can do.
+    ///
+    /// The UI asks the capability, never the provider name: a feature gate
+    /// written as "is this Binance?" has to be found and edited every time a
+    /// venue is added, and silently withholds a feature the new venue supports.
+    #[must_use]
+    pub fn capabilities(self) -> FeedCapabilities {
+        match self {
+            ProviderKind::Binance => FeedCapabilities {
+                book_capture: true,
+                history_paging: true,
+            },
+            // The bridge streams the terminal's Depth of Market. Whether a
+            // given session really has one (symbol, account, EA version) is
+            // runtime information the feed reports honestly; it is not
+            // something to assume either way from here.
+            ProviderKind::MetaTrader => FeedCapabilities {
+                book_capture: true,
+                history_paging: false,
+            },
+        }
+    }
+}
+
+/// What a feed's backend can actually do, so UI affordances follow capability
+/// instead of a hard-coded list of providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeedCapabilities {
+    /// Can stream synchronized L2 depth for the order-flow heatmap.
+    pub book_capture: bool,
+    /// Can fetch trades older than what is loaded, on demand.
+    pub history_paging: bool,
+}
+
+impl FeedCapabilities {
+    /// Nothing is available — the honest answer for a feed that does not
+    /// resolve to a provider.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            book_capture: false,
+            history_paging: false,
+        }
+    }
 }
 
 /// Aggressor-side policy for MetaTrader feeds. MT5 tick flags are broker-
@@ -63,10 +108,24 @@ pub enum Mt5SideSource {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct MetaTraderSettings {
-    /// Address the feed listens on; the QuantickBridge EA dials it.
+    /// Address the feed listens on; a bridge dials it.
     pub listen_addr: String,
     /// How the aggressor side of each trade is decided.
     pub side_source: Mt5SideSource,
+    /// Whether quantick starts a bridge itself when none dials in.
+    ///
+    /// Selecting a MetaTrader feed should be one action, not two. With this on,
+    /// the chart waits briefly for a bridge that is already running (a
+    /// hand-started script, or the Expert Advisor sitting on a chart) and only
+    /// then launches its own — so turning it on never fights a setup that
+    /// already works.
+    pub bridge_autostart: bool,
+    /// The bridge to launch, as program plus arguments.
+    ///
+    /// `--symbol`, `--host` and `--port` are appended from the running feed, so
+    /// this never has to repeat what quantick already knows. Resolved against
+    /// quantick's working directory.
+    pub bridge_command: Vec<String>,
 }
 
 impl Default for MetaTraderSettings {
@@ -74,7 +133,34 @@ impl Default for MetaTraderSettings {
         Self {
             listen_addr: "127.0.0.1:9100".to_string(),
             side_source: Mt5SideSource::TickRule,
+            bridge_autostart: true,
+            bridge_command: vec![
+                "python".to_string(),
+                "bridge/mt5/quantick_bridge.py".to_string(),
+            ],
         }
+    }
+}
+
+impl MetaTraderSettings {
+    /// Host and port a bridge should dial, parsed from [`listen_addr`](Self::listen_addr).
+    ///
+    /// Returns `None` when the address has no `host:port` shape — the autostart
+    /// then stays off rather than launching a bridge that cannot reach us.
+    #[must_use]
+    pub fn bridge_endpoint(&self) -> Option<(&str, &str)> {
+        let (host, port) = self.listen_addr.rsplit_once(':')?;
+        if host.is_empty() || port.parse::<u16>().is_err() {
+            return None;
+        }
+        // A wildcard bind is not an address to dial; loopback is what a local
+        // bridge actually reaches.
+        let host = if host == "0.0.0.0" || host == "[::]" {
+            "127.0.0.1"
+        } else {
+            host
+        };
+        Some((host, port))
     }
 }
 
@@ -324,6 +410,57 @@ mod tests {
         let config = parse(text, ConfigSource::Embedded).unwrap();
         assert_eq!(config.metatrader.listen_addr, "127.0.0.1:9200");
         assert_eq!(config.metatrader.side_source, Mt5SideSource::Flags);
+    }
+
+    #[test]
+    fn the_bridge_dial_address_comes_from_the_listen_address() {
+        let at = |addr: &str| MetaTraderSettings {
+            listen_addr: addr.to_string(),
+            ..MetaTraderSettings::default()
+        };
+        assert_eq!(
+            at("127.0.0.1:9100").bridge_endpoint(),
+            Some(("127.0.0.1", "9100"))
+        );
+        // A wildcard bind is not something a bridge can dial.
+        assert_eq!(
+            at("0.0.0.0:9100").bridge_endpoint(),
+            Some(("127.0.0.1", "9100"))
+        );
+        // Nothing dial-able: the caller must not launch a bridge that cannot
+        // reach us, so there is no address to hand it.
+        assert_eq!(at("9100").bridge_endpoint(), None);
+        assert_eq!(at("127.0.0.1:").bridge_endpoint(), None);
+        assert_eq!(at(":9100").bridge_endpoint(), None);
+        assert_eq!(at("127.0.0.1:not-a-port").bridge_endpoint(), None);
+    }
+
+    #[test]
+    fn bridge_autostart_is_on_by_default_and_overridable() {
+        let defaults = MetaTraderSettings::default();
+        assert!(defaults.bridge_autostart);
+        assert_eq!(defaults.bridge_command.first().unwrap(), "python");
+
+        let text = r#"
+            default_feed = "mt"
+            default_symbol = "WINQ26"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["WINQ26"]
+            [metatrader]
+            bridge_autostart = false
+            bridge_command = ["py", "-3", "bridge/mt5/quantick_bridge.py"]
+        "#;
+        let config = parse(text, ConfigSource::Embedded).unwrap();
+        assert!(!config.metatrader.bridge_autostart);
+        assert_eq!(
+            config.metatrader.bridge_command,
+            ["py", "-3", "bridge/mt5/quantick_bridge.py"]
+        );
+        // Untouched keys keep their defaults.
+        assert_eq!(config.metatrader.listen_addr, "127.0.0.1:9100");
     }
 
     #[test]

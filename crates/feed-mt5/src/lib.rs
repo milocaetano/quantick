@@ -2,15 +2,24 @@
 //! socket.
 //!
 //! MT5 offers no public REST/WebSocket API: market data lives inside the
-//! terminal. The bridge (`bridge/mt5/QuantickBridge.mq5`, MQL5 — the
-//! terminal's C++-family language) runs on a chart and dials out to this
-//! crate's TCP listener with newline-delimited JSON; this crate decodes,
-//! validates and maps those ticks into engine [`quantick_engine::Trade`]s.
+//! terminal. A *bridge* dials out to this crate's TCP listener with
+//! newline-delimited JSON; this crate decodes, validates and maps what arrives
+//! into engine [`quantick_engine::Trade`]s and [`quantick_orderbook::DepthEvent`]s.
 //! No credentials exist anywhere in this path — the terminal is already
 //! logged in, and the socket never leaves localhost.
 //!
+//! Two bridges ship, and this crate cannot tell them apart — the protocol is
+//! the contract, not the implementation:
+//!
+//! - `bridge/mt5/quantick_bridge.py` — attaches to the running terminal
+//!   through the official Python package and polls it. One command, no setup.
+//! - `bridge/mt5/QuantickBridge.mq5` — MQL5, runs on a chart inside the
+//!   terminal, so `OnBookEvent` pushes every book change at the instant it
+//!   happens. Costs a compile-and-attach; buys event-accurate depth.
+//!
 //! ```text
-//! MT5 terminal ── QuantickBridge.mq5 ──▶ TCP 127.0.0.1 ──▶ [stream] ──▶ [protocol] ──▶ [map] ──▶ Trade
+//! MT5 terminal ── QuantickBridge.mq5 ──▶ TCP 127.0.0.1 ──▶ [stream] ──▶ [protocol] ─┬─▶ [map]   ──▶ Trade
+//!                                                                                   └─▶ [depth] ──▶ DepthEvent
 //! ```
 //!
 //! # What MT5 does not provide, and what this crate does about it
@@ -20,7 +29,9 @@
 //! | Exchange trade id | synthetic per-session `seq` (gap-detectable) | [`map`], [`session`] |
 //! | UTC timestamps | bridge declares `server_utc_offset_s`; converted + refreshed | [`protocol`], [`map`] |
 //! | Reliable aggressor side | configurable [`map::SideMode`]; tick rule by default; drops counted | [`map`] |
-//! | Order-book depth | not implemented; the app never enables the heatmap for MT5 | app layer |
+//! | Incremental order-book updates | terminal republishes whole DOM images; diffed into snapshot + deltas | [`depth`] |
+//! | Book update ids | synthetic, monotonic, generation-scoped | [`depth`], `quantick_orderbook::SnapshotDiffer` |
+//! | Full book depth | coverage always labelled `Limited`, never `Full` | [`depth`] |
 //! | Older-history paging | unsupported; requests answered empty + logged | app layer |
 //!
 //! # AI-first diagnosis
@@ -53,20 +64,30 @@
 //! | `MT5_UNDECODABLE_LINE` | garbage on the wire (skipped, counted) | bridge/feed version skew |
 //! | `MT5_LINE_TOO_LONG` | line over 64 KiB; session dropped | not the bridge talking to us |
 //! | `MT5_MAP_SUMMARY` | per-session mapping ledger | audit drops & side sources here |
+//! | `MT5_BOOK_AVAILABLE` | bridge declares a DOM | — |
+//! | `MT5_BOOK_UNSUPPORTED_BY_BRIDGE` | no DOM on this session | recompile the EA, or the symbol has no book |
+//! | `MT5_BOOK_SYNCHRONIZED` | first DOM image accepted; heatmap is live | — |
+//! | `MT5_BOOK_CROSSED` | crossed image rejected (first occurrence) | normal during B3's pre-open auction |
+//! | `MT5_BOOK_MALFORMED` | unreadable level; whole image rejected | bridge/feed version skew |
+//! | `MT5_BOOK_TIME_BACKWARDS` | image timestamp went back; held | terminal clock jumped |
+//! | `MT5_BOOK_SUMMARY` | per-session book ledger | audit image/skip counts here |
 //!
 //! A `MT5_MAP_SUMMARY` where `side_from_flag` is ~100% buys would reveal the
 //! broken-flags pathology this crate's tick-rule default exists for (observed
 //! empirically on B3 `WIN$N`, 2026-07-23: every tick flagged BUY, `flags =
 //! 1080`). Re-verify any broker with `tools/mt5/record_ticks.py`.
 
+pub mod depth;
 pub mod map;
 pub mod protocol;
 pub mod session;
 pub mod stream;
 
+pub use depth::{BookMapper, BookStats};
 pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper};
 pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, Tick, parse_line};
 pub use session::{SeqAnomaly, SeqTracker};
 pub use stream::{
-    DEFAULT_LISTEN_ADDR, Mt5Error, Mt5Event, Mt5Status, ServerConfig, run_bridge_server,
+    BookCaptureSwitch, DEFAULT_LISTEN_ADDR, Mt5Error, Mt5Event, Mt5Status, ServerConfig,
+    run_bridge_server,
 };

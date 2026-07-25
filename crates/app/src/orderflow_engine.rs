@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use quantick_engine::{Bar, Trade};
-use quantick_feed_binance::depth::{DepthEvent, DepthResyncReason, DepthStatus};
+use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -41,6 +41,34 @@ fn snapshot_reference_price(snapshot: &quantick_orderbook::BookSnapshot) -> Opti
         (None, None) => return None,
     };
     price.to_f64()
+}
+
+/// Capture bucket for a generation, and how it was decided.
+///
+/// Two facts constrain it. The instrument's own tick size, when the feed states
+/// one, is the finest bucket that can ever hold liquidity — finer rows are
+/// permanently empty and paint the map with stripes (B3's mini index moves in
+/// 5-point steps, so a 2-point bucket wastes over half the rows). The price
+/// scale sets the coarsest useful one, since a dense book at a fine bucket
+/// explodes into RLE runs. The result honours both: at least one tick, always a
+/// whole number of ticks.
+fn capture_base(
+    price_step: Option<Decimal>,
+    reference_price: Option<f64>,
+) -> Option<(Decimal, &'static str)> {
+    let derived = reference_price.map(adaptive_base);
+    let Some(step) = price_step.filter(|step| *step > Decimal::ZERO) else {
+        return derived.map(|base| (base, "derived_from_price"));
+    };
+    match derived.filter(|derived| *derived > step) {
+        // Round up to a whole number of ticks: every bucket edge then falls on
+        // a real price the instrument can trade at.
+        Some(derived) => match (derived / step).ceil().checked_mul(step) {
+            Some(base) => Some((base, "price_step_multiple")),
+            None => Some((step, "instrument_price_step")),
+        },
+        None => Some((step, "instrument_price_step")),
+    }
 }
 
 /// A capture price bucket proportional to the asset's price, snapped to a
@@ -585,19 +613,23 @@ impl BookEngine {
             DepthEvent::Snapshot {
                 observed_at_ms,
                 effective_at_ms,
+                price_step,
                 snapshot,
                 ..
             } => {
                 self.invalidate_projection();
                 self.last_snapshot_observed_ms = Some(observed_at_ms);
-                // Size the capture bucket from the asset price before the first
-                // snapshot of a capture, so a dense book (BTC etc.) doesn't
-                // explode into runs. Skipped once the user picks a base by hand.
+                // Size the capture bucket before the first snapshot of a
+                // capture: from the instrument's tick size when the feed states
+                // one, otherwise from the asset price so a dense book (BTC etc.)
+                // doesn't explode into runs. Skipped once the user picks a base
+                // by hand.
                 if self.auto_base
                     && matches!(self.history.status(), HistoryStatus::Empty)
-                    && let Some(price) = snapshot_reference_price(&snapshot)
+                    && let Some((base, source)) =
+                        capture_base(price_step, snapshot_reference_price(&snapshot))
                 {
-                    self.apply_auto_base(adaptive_base(price));
+                    self.apply_auto_base(base, source);
                 }
                 if let Err(error) =
                     self.history
@@ -791,7 +823,7 @@ impl BookEngine {
 
     /// Adopt a price-derived capture bucket while history is still empty (so no
     /// data is discarded), keeping config and history in sync.
-    fn apply_auto_base(&mut self, base: Decimal) {
+    fn apply_auto_base(&mut self, base: Decimal, source: &'static str) {
         if base <= Decimal::ZERO || base == self.config.price_grouping {
             return;
         }
@@ -804,8 +836,9 @@ impl BookEngine {
                     event_code = "HEATMAP_AUTO_BASE",
                     symbol = self.symbol.as_str(),
                     base = %base,
-                    action = "size_capture_bucket_from_price",
-                    "auto-sized L2 capture bucket from asset price"
+                    source,
+                    action = "size_capture_bucket",
+                    "auto-sized L2 capture bucket"
                 );
             }
             Err(error) => {
@@ -890,6 +923,7 @@ fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
         DepthResyncReason::SnapshotTooOld { .. } => "snapshot_too_old",
         DepthResyncReason::SequenceGap { .. } => "sequence_gap",
         DepthResyncReason::SnapshotAttemptsExhausted { .. } => "snapshot_attempts_exhausted",
+        DepthResyncReason::SourceRestarted { cause } => cause,
     }
 }
 
@@ -917,6 +951,46 @@ mod tests {
     }
 
     #[test]
+    fn a_declared_tick_size_wins_over_the_price_heuristic_when_it_is_coarser() {
+        // B3's mini index: ~177 800 points, 5-point tick. The price heuristic
+        // alone would pick 2 and leave three rows in five permanently empty.
+        assert_eq!(
+            capture_base(Some(Decimal::from(5)), Some(177_800.0)),
+            Some((Decimal::from(5), "instrument_price_step"))
+        );
+        // Mini dollar: ~5 500, half-point tick — same story an order down.
+        assert_eq!(
+            capture_base(Some(Decimal::new(5, 1)), Some(5_500.0)),
+            Some((Decimal::new(5, 1), "instrument_price_step"))
+        );
+    }
+
+    #[test]
+    fn a_fine_tick_size_is_rounded_up_to_a_whole_number_of_ticks() {
+        // A dense book on a fine grid must still be captured at a bucket the
+        // price scale can afford — but on bucket edges that can really trade.
+        let (base, source) = capture_base(Some(Decimal::new(1, 2)), Some(200_000.0)).unwrap();
+        assert_eq!(source, "price_step_multiple");
+        assert!(base >= adaptive_base(200_000.0));
+        assert_eq!(base % Decimal::new(1, 2), Decimal::ZERO);
+    }
+
+    #[test]
+    fn an_undeclared_tick_size_falls_back_to_the_price_heuristic() {
+        assert_eq!(
+            capture_base(None, Some(65_000.0)),
+            Some((Decimal::from(1), "derived_from_price"))
+        );
+        // A non-positive declared step is not a price grid; ignore it.
+        assert_eq!(
+            capture_base(Some(Decimal::ZERO), Some(65_000.0)),
+            Some((Decimal::from(1), "derived_from_price"))
+        );
+        // Nothing known at all: leave the configured bucket alone.
+        assert_eq!(capture_base(None, None), None);
+    }
+
+    #[test]
     fn auto_base_sizes_the_capture_bucket_from_the_first_snapshot() {
         let mut engine = BookEngine::new("BTCUSDT");
         engine.set_enabled(true, 1);
@@ -926,6 +1000,7 @@ mod tests {
             generation: 1,
             observed_at_ms: 1_100,
             effective_at_ms: 1_000,
+            price_step: None,
             snapshot: BookSnapshot::new(
                 10,
                 vec![BookLevel::new(Decimal::from(64_999), Decimal::from(2)).unwrap()],
@@ -945,6 +1020,7 @@ mod tests {
             generation,
             observed_at_ms: 1_100,
             effective_at_ms: 999,
+            price_step: None,
             snapshot: BookSnapshot::new(
                 10,
                 vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],

@@ -18,7 +18,7 @@ use quantick_feed_binance::depth::DepthEvent;
 
 use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::PriceScale;
-use crate::config::{AppConfig, ProviderKind};
+use crate::config::{AppConfig, FeedCapabilities, ProviderKind};
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle};
 use crate::metrics::{self, FrameStats};
 use crate::orderflow_view::OrderflowView;
@@ -397,9 +397,17 @@ impl QuantickApp {
                     .range(500.0..=50_000.0)
                     .speed(100.0),
             );
+            let capabilities = self.capabilities();
             if ui
-                .button("⟲ load older")
-                .on_hover_text("fetch older trades and prepend them")
+                .add_enabled(
+                    capabilities.history_paging,
+                    egui::Button::new("⟲ load older"),
+                )
+                .on_hover_text(if capabilities.history_paging {
+                    "fetch older trades and prepend them"
+                } else {
+                    "this feed only streams forward; it cannot page older trades"
+                })
                 .clicked()
             {
                 self.request_older_history();
@@ -414,10 +422,7 @@ impl QuantickApp {
                 self.show_style = !self.show_style;
             }
             ui.separator();
-            let supports_book = matches!(
-                self.config.provider_of(&self.feed_id),
-                Some(ProviderKind::Binance)
-            );
+            let supports_book = capabilities.book_capture;
             let mut book_enabled = self.orderflow.enabled();
             let toggle = ui.add_enabled(
                 supports_book,
@@ -449,6 +454,17 @@ impl QuantickApp {
             ui.checkbox(&mut self.show_overlay, "📈 perf")
                 .on_hover_text("show fps / frame time / feed lag (bottom-left)");
         });
+    }
+
+    /// What the selected feed's backend can do.
+    ///
+    /// A feed missing from the config can do nothing — the selection is snapped
+    /// back on the next switch, and until then no affordance may promise data
+    /// nothing is streaming.
+    fn capabilities(&self) -> FeedCapabilities {
+        self.config
+            .provider_of(&self.feed_id)
+            .map_or(FeedCapabilities::none(), ProviderKind::capabilities)
     }
 
     /// Ask the feed thread to fetch and prepend `history_step` older trades.
@@ -486,10 +502,7 @@ impl QuantickApp {
     /// Start or stop the independent depth pipeline without touching aggTrades
     /// or candle construction. UI state changes only if the command is queued.
     fn request_book_capture(&mut self, enabled: bool) {
-        if !matches!(
-            self.config.provider_of(&self.feed_id),
-            Some(ProviderKind::Binance)
-        ) {
+        if !self.capabilities().book_capture {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -590,7 +603,7 @@ impl QuantickApp {
             (self.feed_id, self.symbol) = self.active.clone();
             return;
         };
-        let resume_book_capture = self.orderflow.enabled() && provider == ProviderKind::Binance;
+        let resume_book_capture = self.orderflow.enabled() && provider.capabilities().book_capture;
 
         tracing::info!(
             target: "quantick::app",
@@ -1585,6 +1598,7 @@ mod tests {
             generation,
             observed_at_ms: 1_100,
             effective_at_ms: 999,
+            price_step: None,
             snapshot: BookSnapshot::new(
                 10,
                 vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],
@@ -1791,6 +1805,7 @@ mod tests {
                 generation,
                 observed_at_ms: 1_100,
                 effective_at_ms: 999,
+                price_step: None,
                 snapshot: BookSnapshot::new(
                     10,
                     vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],

@@ -4,9 +4,15 @@
 //| Attach this Expert Advisor to a chart of the symbol you want in    |
 //| quantick (e.g. WIN$N). It dials the quantick feed's local TCP      |
 //| listener and streams newline-delimited JSON: a hello, a backfill   |
-//| block from CopyTicks, then live ticks and heartbeats. The protocol |
-//| contract lives in PROTOCOL.md next to this file; the Rust decoder  |
-//| in crates/feed-mt5 is its executable counterpart.                  |
+//| block from CopyTicks, then live ticks, Depth of Market images and  |
+//| heartbeats. The protocol contract lives in PROTOCOL.md next to     |
+//| this file; the Rust decoder in crates/feed-mt5 is its executable   |
+//| counterpart.                                                       |
+//|                                                                    |
+//| The book is sent as a *complete image* every time it changes: MT5  |
+//| has no incremental book protocol, MarketBookGet only ever returns  |
+//| the whole visible DOM. The feed diffs successive images, so only   |
+//| real changes travel further into quantick.                         |
 //|                                                                    |
 //| No credentials are involved anywhere: the terminal is already      |
 //| logged in and the socket never leaves this machine.                |
@@ -24,10 +30,12 @@ input int    InpBackfillMinutes  = 30;          // History to send on connect
 input int    InpHeartbeatSeconds = 5;           // Heartbeat interval
 input int    InpRetrySeconds     = 5;           // Reconnect backoff
 input int    InpSendTimeoutMs    = 5000;        // Max ms one send may block
+input bool   InpStreamBook       = true;        // Stream Depth of Market
+input int    InpBookMinIntervalMs= 20;          // Min ms between book images (0 = every change)
 
 #define SCHEMA_VERSION 1
 #define BRIDGE_NAME    "quantick-mt5-bridge"
-#define BRIDGE_VERSION "0.1.1"
+#define BRIDGE_VERSION "0.2.0"
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -36,6 +44,13 @@ long     g_last_msc         = 0; // cursor: newest tick time already pumped
 int      g_sent_at_last_msc = 0; // ticks already sent sharing g_last_msc
 datetime g_last_heartbeat   = 0;
 datetime g_next_retry       = 0;
+
+bool     g_book_subscribed  = false; // MarketBookAdd succeeded
+ulong    g_book_seq         = 0;     // per-session book image number, from 1
+ulong    g_book_sent        = 0;
+ulong    g_book_skipped     = 0;     // images identical to the previous one
+long     g_book_last_ms     = 0;     // throttle cursor (local ms)
+string   g_book_last_body   = "";    // last image's levels, for change detection
 
 //+------------------------------------------------------------------+
 //| Structured Experts-tab logging (AI-first: parseable, coded).      |
@@ -130,6 +145,97 @@ bool SendTick(const MqlTick &tick)
   }
 
 //+------------------------------------------------------------------+
+//| One book level's quantity. volume_real carries the accurate value |
+//| where a venue has fractional lots; B3 volumes are whole contracts |
+//| and print as integers so images stay small.                       |
+//+------------------------------------------------------------------+
+string BookVolumeText(const MqlBookInfo &item)
+  {
+   double v = (item.volume_real > 0.0) ? item.volume_real : (double)item.volume;
+   if(v <= 0.0)
+      return("0");
+   if(MathAbs(v - MathRound(v)) < 1e-9)
+      return(IntegerToString((long)MathRound(v)));
+   return(DoubleToString(v, 2));
+  }
+
+//+------------------------------------------------------------------+
+//| Send one complete Depth of Market image.                          |
+//|                                                                   |
+//| Two filters keep the terminal's main thread and the socket quiet  |
+//| without losing anything the chart could show: a minimum interval, |
+//| and a comparison against the last image (MT5 fires OnBookEvent    |
+//| for changes that leave the visible limit book untouched).         |
+//| False = the socket is broken.                                     |
+//+------------------------------------------------------------------+
+bool SendBook()
+  {
+   if(g_socket == INVALID_HANDLE || !InpStreamBook || !g_book_subscribed)
+      return(true);
+
+   long now_ms = (long)(GetMicrosecondCount() / 1000);
+   if(InpBookMinIntervalMs > 0 && (now_ms - g_book_last_ms) < InpBookMinIntervalMs)
+      return(true);
+
+   MqlBookInfo book[];
+   if(!MarketBookGet(_Symbol, book))
+      return(true); // transient; the next book event retries
+
+   string bids = "";
+   string asks = "";
+   int    n    = ArraySize(book);
+   for(int i = 0; i < n; i++)
+     {
+      // BOOK_TYPE_*_MARKET rows are orders waiting to cross, not resting
+      // liquidity at a price: they carry no level to draw.
+      if(book[i].type != BOOK_TYPE_BUY && book[i].type != BOOK_TYPE_SELL)
+         continue;
+      if(book[i].price <= 0.0)
+         continue;
+      string level = StringFormat("[\"%s\",\"%s\"]",
+                                  DoubleToString(book[i].price, _Digits),
+                                  BookVolumeText(book[i]));
+      if(book[i].type == BOOK_TYPE_BUY)
+        {
+         if(StringLen(bids) > 0)
+            StringAdd(bids, ",");
+         StringAdd(bids, level);
+        }
+      else
+        {
+         if(StringLen(asks) > 0)
+            StringAdd(asks, ",");
+         StringAdd(asks, level);
+        }
+     }
+
+   string body = StringFormat("\"bids\":[%s],\"asks\":[%s]", bids, asks);
+   if(body == g_book_last_body)
+     {
+      g_book_skipped++;
+      return(true); // identical image: sending it would only cost bandwidth
+     }
+   g_book_last_body = body;
+   g_book_last_ms   = now_ms;
+
+   // SYMBOL_TIME_MSC is the last quote's instant; in a quiet book it stops
+   // moving, so the coarser server clock takes over and the book timeline
+   // never stalls behind the trade timeline.
+   long stamp     = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
+   long server_ms = (long)TimeTradeServer() * 1000;
+   if(server_ms > stamp)
+      stamp = server_ms;
+
+   g_book_seq++;
+   string line = StringFormat("{\"type\":\"book\",\"seq\":%I64u,\"time_ms\":%I64d,%s}",
+                              g_book_seq, stamp, body);
+   if(!SendLine(line))
+      return(false);
+   g_book_sent++;
+   return(true);
+  }
+
+//+------------------------------------------------------------------+
 //| Session preamble + recent history, right after connecting.        |
 //+------------------------------------------------------------------+
 bool StartSession()
@@ -137,16 +243,34 @@ bool StartSession()
    g_seq              = 0;
    g_ticks_sent       = 0;
    g_sent_at_last_msc = 0;
+   g_book_seq         = 0;
+   g_book_sent        = 0;
+   g_book_skipped     = 0;
+   g_book_last_body   = "";
 
    string basis = SymbolInfoString(_Symbol, SYMBOL_BASIS);
    if(basis == "")
       basis = _Symbol;
 
+   // Depth fields are announced only when this session can actually deliver
+   // depth. Omitting them is the honest "no book here" the feed relies on to
+   // tell the chart why the heatmap is empty.
+   string depth = "";
+   if(g_book_subscribed)
+     {
+      long   levels    = SymbolInfoInteger(_Symbol, SYMBOL_TICKS_BOOKDEPTH);
+      double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      depth = StringFormat(",\"book_levels\":%I64d", levels);
+      if(tick_size > 0.0)
+         StringAdd(depth, StringFormat(",\"tick_size\":\"%s\"",
+                                       DoubleToString(tick_size, _Digits)));
+     }
+
    string hello = StringFormat(
       "{\"type\":\"hello\",\"schema\":%d,\"bridge\":\"%s\",\"bridge_version\":\"%s\","
-      "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d}",
+      "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
-      _Symbol, basis, _Digits, ServerUtcOffsetSeconds());
+      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), depth);
    if(!SendLine(hello))
       return(false);
 
@@ -280,16 +404,40 @@ void MaybeHeartbeat()
       "\"ticks_sent\":%I64u,\"server_utc_offset_s\":%I64d}",
       g_seq, (long)TimeTradeServer() * 1000, g_ticks_sent, ServerUtcOffsetSeconds());
    if(!SendLine(line))
+     {
       Disconnect("heartbeat send failed");
+      return;
+     }
+   if(g_book_subscribed)
+      LogEvent("BRIDGE_BOOK_STATS",
+               StringFormat("\"images_sent\":%I64u,\"images_skipped\":%I64u",
+                            g_book_sent, g_book_skipped));
   }
 
 //+------------------------------------------------------------------+
 int OnInit()
   {
    EventSetMillisecondTimer(200);
+   if(InpStreamBook)
+     {
+      // Subscribing before any connection means the terminal is already
+      // maintaining the DOM when the first quantick session starts.
+      g_book_subscribed = MarketBookAdd(_Symbol);
+      if(g_book_subscribed)
+         LogEvent("BRIDGE_BOOK_SUBSCRIBED",
+                  StringFormat("\"book_levels\":%I64d,\"min_interval_ms\":%d",
+                               SymbolInfoInteger(_Symbol, SYMBOL_TICKS_BOOKDEPTH),
+                               InpBookMinIntervalMs));
+      else
+         LogEvent("BRIDGE_BOOK_SUBSCRIBE_FAILED",
+                  StringFormat("\"mql_error\":%d,\"hint\":\"this symbol may have no Depth "
+                               "of Market on this account; ticks still stream\"",
+                               GetLastError()));
+     }
    LogEvent("BRIDGE_STARTING",
-            StringFormat("\"host\":\"%s\",\"port\":%d,\"backfill_minutes\":%d",
-                         InpHost, InpPort, InpBackfillMinutes));
+            StringFormat("\"host\":\"%s\",\"port\":%d,\"backfill_minutes\":%d,\"stream_book\":%s",
+                         InpHost, InpPort, InpBackfillMinutes,
+                         (g_book_subscribed ? "true" : "false")));
    return(INIT_SUCCEEDED);
   }
 
@@ -302,6 +450,11 @@ void OnDeinit(const int reason)
       SocketClose(g_socket);
       g_socket = INVALID_HANDLE;
      }
+   if(g_book_subscribed)
+     {
+      MarketBookRelease(_Symbol);
+      g_book_subscribed = false;
+     }
    EventKillTimer();
    LogEvent("BRIDGE_STOPPED", StringFormat("\"deinit_reason\":%d", reason));
   }
@@ -310,6 +463,17 @@ void OnDeinit(const int reason)
 void OnTick()
   {
    Pump(); // low latency path; OnTimer is the safety net
+  }
+
+//+------------------------------------------------------------------+
+//| The DOM changed: forward the new image.                           |
+//+------------------------------------------------------------------+
+void OnBookEvent(const string &symbol)
+  {
+   if(symbol != _Symbol)
+      return;
+   if(!SendBook())
+      Disconnect("book send failed");
   }
 
 //+------------------------------------------------------------------+
