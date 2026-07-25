@@ -236,10 +236,19 @@ pub fn save(file: &BubblePresetFile) -> Result<PathBuf, String> {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("{}: {error}", parent.display()))?;
     }
-    let body = toml::to_string_pretty(file).map_err(|error| error.to_string())?;
-    let text = format!("{PRESET_FILE_HEADER}{body}");
+    let text = render(file)?;
     std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(path)
+}
+
+/// Render the presets file as the exact text a save writes.
+///
+/// Split out of [`save`] so the bytes that land in a tracked file can be
+/// asserted in a test without touching the filesystem: this file only earns
+/// being in git if a save produces a diff a human can read.
+fn render(file: &BubblePresetFile) -> Result<String, String> {
+    let body = toml::to_string(file).map_err(|error| error.to_string())?;
+    Ok(format!("{PRESET_FILE_HEADER}{body}"))
 }
 
 const PRESET_FILE_HEADER: &str = "\
@@ -299,11 +308,12 @@ mod tests {
         assert_eq!(other.retention_ms, HeatmapConfig::default().retention_ms);
         assert_eq!(other.gamma, HeatmapConfig::default().gamma);
 
-        // And a full file round trip preserves it byte-for-byte in meaning.
+        // And a full round trip through the real write path — the one `save`
+        // uses — preserves it byte-for-byte in meaning.
         let mut file = BubblePresetFile::default();
         file.upsert(preset.clone());
         file.active = "mine".to_owned();
-        let text = toml::to_string_pretty(&file).expect("serialize");
+        let text = render(&file).expect("render");
         assert_eq!(parse(&text).expect("reparse"), file);
 
         config.bubbles.side_offset = 0.0;
@@ -361,6 +371,49 @@ mod tests {
         assert!(
             file.active.is_empty(),
             "an active name that resolves to nothing is cleared"
+        );
+    }
+
+    #[test]
+    fn a_save_writes_a_file_a_human_can_review() {
+        // The file is tracked in git so a look that reads the tape well can be
+        // reviewed and rolled back like code — which only holds if a save
+        // produces a readable diff. TOML floats are f64, so an f32 written
+        // straight through prints its binary expansion (0.78 becomes
+        // 0.7799999713897705) and every save turns into noise.
+        let mut file = BubblePresetFile::default();
+        file.upsert(BubblePreset {
+            name: "default".to_owned(),
+            cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
+            bubbles: BubbleStyle {
+                front_color: Some([255, 246, 205]),
+                ..BubbleStyle::default()
+            },
+        });
+        file.active = "default".to_owned();
+
+        let text = render(&file).expect("render");
+        assert!(
+            text.starts_with(PRESET_FILE_HEADER),
+            "the explanatory header survives a save:\n{text}"
+        );
+        assert!(
+            text.contains("opacity = 0.78"),
+            "floats stay short:\n{text}"
+        );
+        assert!(
+            text.contains("front_length_scale = 2.1"),
+            "floats stay short:\n{text}"
+        );
+        assert!(!text.contains("0.7799"), "no binary expansions:\n{text}");
+        assert!(
+            text.contains("front_color = [255, 246, 205]"),
+            "colour triples stay on one line, as config/README.md documents:\n{text}"
+        );
+        assert_eq!(
+            parse(&text).expect("reparse"),
+            file,
+            "and it still means exactly what it meant"
         );
     }
 

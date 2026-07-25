@@ -440,29 +440,27 @@ impl OrderflowView {
     /// Saving writes the whole presets file, so what the panel shows and what
     /// the repository holds never drift apart.
     fn draw_bubble_presets(&mut self, ui: &mut egui::Ui) {
-        let names: Vec<String> = self
-            .presets
-            .presets
-            .iter()
-            .map(|preset| preset.name.clone())
-            .collect();
+        // The picker reads the stored presets while the closure below wants to
+        // mutate them, so it hands back an index and the name is read after.
+        // Cloning every name each frame would be the other way out, and this
+        // runs on the render thread.
         let mut chosen = None;
         ui.horizontal(|ui| {
             ui.label("preset");
             let selected = if self.presets.active.is_empty() {
-                "— custom —".to_owned()
+                "— custom —"
             } else {
-                self.presets.active.clone()
+                self.presets.active.as_str()
             };
             egui::ComboBox::from_id_salt("bubble_preset")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    for name in &names {
+                    for (index, preset) in self.presets.presets.iter().enumerate() {
                         if ui
-                            .selectable_label(self.presets.active == *name, name)
+                            .selectable_label(self.presets.active == preset.name, &preset.name)
                             .clicked()
                         {
-                            chosen = Some(name.clone());
+                            chosen = Some(index);
                         }
                     }
                 });
@@ -499,7 +497,13 @@ impl OrderflowView {
                 self.persist_presets(format!("preset '{name}' removed"));
             }
         });
-        if let Some(name) = chosen {
+        if let Some(index) = chosen
+            && let Some(name) = self
+                .presets
+                .presets
+                .get(index)
+                .map(|preset| preset.name.clone())
+        {
             self.apply_preset(&name);
         }
         ui.small(format!("presets · {}", self.presets_source));

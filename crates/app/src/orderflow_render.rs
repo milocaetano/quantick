@@ -202,6 +202,176 @@ const fn side_offset_y(side: Side, offset: f32) -> f32 {
     }
 }
 
+/// Gap, in pixels, between a bubble's rim and the halo drawn behind it.
+const HALO_PADDING_PX: f32 = 2.5;
+/// Gap, in pixels, between a bubble's rim and its impact ring.
+const IMPACT_RING_PADDING_PX: f32 = 2.2;
+/// Pixels added beyond `front_length_scale × radius`, so the consumption mark
+/// on even the smallest bubble is long enough to read as a mark.
+const FRONT_END_PADDING_PX: f32 = 6.0;
+/// How far the halo opens up at full print size, as a fraction of
+/// `halo_strength`: a sweep reads heavier than a routine print of the same
+/// colour, without needing a second colour for it.
+const HALO_SIZE_BOOST: f32 = 0.5;
+/// Rim alpha relative to the fill. A hair below opaque keeps the rim reading
+/// as the bubble's edge rather than as a separate ring on a dark canvas.
+const RIM_ALPHA: f32 = 0.96;
+/// Impact-ring alpha every consuming print gets, before the matched share.
+const IMPACT_RING_BASE_ALPHA: f32 = 0.75;
+/// Share of the impact ring's alpha that tracks how much of the print actually
+/// matched resting liquidity, so a full sweep rings brighter than a nibble.
+const IMPACT_RING_MATCH_ALPHA: f32 = 0.25;
+/// Matched-fraction floor for the consumption marks: a barely matched print
+/// still ate something, so it still leaves a visible mark.
+const MIN_MATCH_STRENGTH: f32 = 0.25;
+
+/// Label font size as a fraction of the bubble radius, and the range it is
+/// held to: too small to read is pointless, too large stops fitting inside.
+const LABEL_FONT_SCALE: f32 = 0.68;
+/// See [`LABEL_FONT_SCALE`].
+const LABEL_MIN_FONT_PX: f32 = 8.0;
+/// See [`LABEL_FONT_SCALE`].
+const LABEL_MAX_FONT_PX: f32 = 11.0;
+/// How far a laid-out label may spill past the radius before it is dropped.
+/// Wider than tall: a bubble is a circle, and text is a horizontal band across
+/// its middle, where there is more room.
+const LABEL_MAX_WIDTH_SCALE: f32 = 1.78;
+/// See [`LABEL_MAX_WIDTH_SCALE`].
+const LABEL_MAX_HEIGHT_SCALE: f32 = 1.45;
+/// Drop shadow that keeps a label legible over any fill colour.
+const LABEL_SHADOW_OFFSET_PX: egui::Vec2 = egui::vec2(1.0, 1.0);
+/// See [`LABEL_SHADOW_OFFSET_PX`].
+const LABEL_SHADOW_ALPHA: u8 = 190;
+
+/// Normalized sizes of the two sample prints in the settings preview: one
+/// near full size and one routine print, so the radius range is visible.
+const PREVIEW_LARGE_PRINT_SIZE: f32 = 0.85;
+/// See [`PREVIEW_LARGE_PRINT_SIZE`].
+const PREVIEW_SMALL_PRINT_SIZE: f32 = 0.45;
+/// Matched fraction of the preview's consuming print. Mid-range, so the
+/// impact ring shows neither its floor nor its ceiling.
+const PREVIEW_MATCHED_FRACTION: f32 = 0.6;
+
+/// Half-length, in pixels, of the vertical consumption front on a bubble of
+/// this radius.
+fn front_half_length(radius: f32, bubbles: &BubbleStyle) -> f32 {
+    radius * bubbles.front_length_scale + FRONT_END_PADDING_PX
+}
+
+/// Halo alpha for a print of this normalized size.
+fn halo_alpha(size: f32, bubbles: &BubbleStyle) -> f32 {
+    (bubbles.halo_strength * (1.0 + HALO_SIZE_BOOST * finite_unit(size))).min(1.0)
+}
+
+/// Impact-ring alpha for a print that matched this fraction of resting
+/// liquidity.
+fn impact_ring_alpha(matched_fraction: f32) -> f32 {
+    IMPACT_RING_BASE_ALPHA
+        + finite_unit(matched_fraction).max(MIN_MATCH_STRENGTH) * IMPACT_RING_MATCH_ALPHA
+}
+
+/// The consumption trail leaking to the right of a bubble, stopped at
+/// `right_edge` so it never paints past the chart.
+fn trail_rect(
+    center: egui::Pos2,
+    half_length: f32,
+    trail_length: f32,
+    right_edge: f32,
+) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(center.x, center.y - half_length),
+        egui::pos2(
+            (center.x + trail_length).min(right_edge),
+            center.y + half_length,
+        ),
+    )
+}
+
+/// One aggression bubble, already placed in screen space.
+#[derive(Debug, Clone, Copy)]
+struct BubbleMark {
+    center: egui::Pos2,
+    radius: f32,
+    side: Side,
+    /// Normalized print size, which opens up the halo.
+    size: f32,
+    /// Fraction of the print matched against resting liquidity, when it ate
+    /// any. `None` draws no consumption marks.
+    matched: Option<f32>,
+}
+
+/// Draw one bubble: halo, fill, rim and — when the print ate resting
+/// liquidity — the vertical consumption front and the impact ring.
+///
+/// The live chart and the settings preview both draw through here, so the
+/// preview cannot drift into showing something the chart does not draw. The
+/// trail is the one mark left out: on the chart every trail is batched into a
+/// single mesh behind all the bubbles, which is a draw-order decision rather
+/// than a per-bubble one.
+fn draw_bubble(
+    painter: &egui::Painter,
+    mark: BubbleMark,
+    bubbles: &BubbleStyle,
+    colors: &BubbleColors,
+) {
+    let BubbleMark {
+        center,
+        radius,
+        side,
+        size,
+        matched,
+    } = mark;
+    let color = colors.for_side(side);
+
+    // Small prints are the common case on a busy tape: one cheap dot each.
+    // The full dressing (halo, rim, impact ring) is reserved for bubbles
+    // big enough to read it, which also keeps the per-frame tessellation
+    // budget flat no matter how fast the tape runs.
+    let dressed = radius >= bubbles.detail_min_radius;
+    if dressed && bubbles.halo_strength > 0.0 {
+        painter.circle_filled(
+            center,
+            radius + HALO_PADDING_PX,
+            color.gamma_multiply(halo_alpha(size, bubbles)),
+        );
+    }
+    painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
+    if dressed && bubbles.outline_width > 0.0 {
+        painter.circle_stroke(
+            center,
+            radius,
+            egui::Stroke::new(bubbles.outline_width, color.gamma_multiply(RIM_ALPHA)),
+        );
+    }
+
+    // This print ate resting liquidity at this exact price.
+    let Some(matched_fraction) = matched else {
+        return;
+    };
+    if bubbles.show_consumption_front {
+        let half_length = front_half_length(radius, bubbles);
+        painter.line_segment(
+            [
+                egui::pos2(center.x, center.y - half_length),
+                egui::pos2(center.x, center.y + half_length),
+            ],
+            egui::Stroke::new(bubbles.front_width, colors.front),
+        );
+    }
+    if dressed && bubbles.show_impact_ring {
+        painter.circle_stroke(
+            center,
+            radius + IMPACT_RING_PADDING_PX,
+            egui::Stroke::new(
+                bubbles.impact_ring_width,
+                colors
+                    .front
+                    .gamma_multiply(impact_ring_alpha(matched_fraction)),
+            ),
+        );
+    }
+}
+
 /// Mapping between normalized projection coordinates and the chart viewport.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ProjectedLayout<'a> {
@@ -669,7 +839,6 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             .then(|| center + egui::vec2(0.0, side_offset_y(trade.side, bubbles.side_offset)))
     };
     let radius_of = |size: f32| bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
-    let front_half_length = |radius: f32| radius * bubbles.front_length_scale + 6.0;
 
     // Consumption trail behind the bubbles, so a bubble's own fill never hides it.
     if bubbles.trail_length > 0.0 {
@@ -681,16 +850,10 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             let Some(center) = center_of(trade) else {
                 continue;
             };
-            let hh = front_half_length(radius_of(trade.size));
+            let half_length = front_half_length(radius_of(trade.size), bubbles);
             add_gradient_rect(
                 &mut trail_mesh,
-                egui::Rect::from_min_max(
-                    egui::pos2(center.x, center.y - hh),
-                    egui::pos2(
-                        (center.x + bubbles.trail_length).min(right_edge),
-                        center.y + hh,
-                    ),
-                ),
+                trail_rect(center, half_length, bubbles.trail_length, right_edge),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
@@ -705,55 +868,20 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             continue;
         };
         let radius = radius_of(trade.size);
-        let color = colors.for_side(trade.side);
         let linked_reduction =
             trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
-
-        // Small prints are the common case on a busy tape: one cheap dot each.
-        // The full dressing (halo, rim, impact ring) is reserved for bubbles
-        // big enough to read it, which also keeps the per-frame tessellation
-        // budget flat no matter how fast the tape runs.
-        let dressed = radius >= bubbles.detail_min_radius;
-        if dressed && bubbles.halo_strength > 0.0 {
-            // The halo opens up a little with size, so a sweep reads heavier
-            // than a routine print even at the same rim colour.
-            let halo = (bubbles.halo_strength * (1.0 + 0.5 * finite_unit(trade.size))).min(1.0);
-            clip.circle_filled(center, radius + 2.5, color.gamma_multiply(halo));
-        }
-        clip.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
-        if dressed && bubbles.outline_width > 0.0 {
-            clip.circle_stroke(
+        draw_bubble(
+            &clip,
+            BubbleMark {
                 center,
                 radius,
-                egui::Stroke::new(bubbles.outline_width, color.gamma_multiply(0.96)),
-            );
-        }
-
-        if linked_reduction {
-            // Vertical consumption front on the bubble: this print ate resting
-            // liquidity at this exact price.
-            let strength = finite_unit(trade.matched_fraction).max(0.25);
-            if bubbles.show_consumption_front {
-                let hh = front_half_length(radius);
-                clip.line_segment(
-                    [
-                        egui::pos2(center.x, center.y - hh),
-                        egui::pos2(center.x, center.y + hh),
-                    ],
-                    egui::Stroke::new(bubbles.front_width, colors.front),
-                );
-            }
-            if dressed && bubbles.show_impact_ring {
-                clip.circle_stroke(
-                    center,
-                    radius + 2.2,
-                    egui::Stroke::new(
-                        bubbles.impact_ring_width,
-                        colors.front.gamma_multiply(0.75 + strength * 0.25),
-                    ),
-                );
-            }
-        }
+                side: trade.side,
+                size: trade.size,
+                matched: linked_reduction.then_some(trade.matched_fraction),
+            },
+            bubbles,
+            &colors,
+        );
 
         if radius >= bubbles.label_min_radius
             && let Some(label) = bubble_label(
@@ -763,14 +891,18 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 bubbles.show_trade_count,
             )
         {
-            let font = egui::FontId::proportional((radius * 0.68).clamp(8.0, 11.0));
+            let font = egui::FontId::proportional(
+                (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
+            );
             let galley = clip.layout_no_wrap(label, font, colors.text);
-            if galley.size().x <= radius * 1.78 && galley.size().y <= radius * 1.45 {
+            if galley.size().x <= radius * LABEL_MAX_WIDTH_SCALE
+                && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
+            {
                 let pos = center - galley.size() / 2.0;
                 clip.galley(
-                    pos + egui::vec2(1.0, 1.0),
+                    pos + LABEL_SHADOW_OFFSET_PX,
                     galley.clone(),
-                    egui::Color32::from_black_alpha(190),
+                    egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
                 );
                 clip.galley(pos, galley, colors.text);
             }
@@ -1037,25 +1169,31 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         // opacity, rim, front, trail, side offset) shows its effect here.
         draw_preview_bubble(
             &painter,
-            egui::pos2(
-                egui::lerp(chart.left()..=chart.right(), 0.58),
-                egui::lerp(chart.top()..=chart.bottom(), 0.27),
-            ),
-            bubble_radius(0.85, bubbles.min_radius, bubbles.max_radius),
-            Side::Buy,
-            config.show_liquidity_events,
+            PreviewBubble {
+                center: egui::pos2(
+                    egui::lerp(chart.left()..=chart.right(), 0.58),
+                    egui::lerp(chart.top()..=chart.bottom(), 0.27),
+                ),
+                size: PREVIEW_LARGE_PRINT_SIZE,
+                side: Side::Buy,
+                linked_reduction: config.show_liquidity_events,
+            },
+            chart.right(),
             bubbles,
             &colors,
         );
         draw_preview_bubble(
             &painter,
-            egui::pos2(
-                egui::lerp(chart.left()..=chart.right(), 0.43),
-                egui::lerp(chart.top()..=chart.bottom(), 0.72),
-            ),
-            bubble_radius(0.45, bubbles.min_radius, bubbles.max_radius),
-            Side::Sell,
-            false,
+            PreviewBubble {
+                center: egui::pos2(
+                    egui::lerp(chart.left()..=chart.right(), 0.43),
+                    egui::lerp(chart.top()..=chart.bottom(), 0.72),
+                ),
+                size: PREVIEW_SMALL_PRINT_SIZE,
+                side: Side::Sell,
+                linked_reduction: false,
+            },
+            chart.right(),
             bubbles,
             &colors,
         );
@@ -1249,68 +1387,67 @@ fn normalized_rect(bounds: egui::Rect, x0: f32, x1: f32, y0: f32, y1: f32) -> eg
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+/// One sample print in the settings preview.
+#[derive(Debug, Clone, Copy)]
+struct PreviewBubble {
+    center: egui::Pos2,
+    /// Normalized print size, as the projection would report it.
+    size: f32,
+    side: Side,
+    /// Whether this sample ate resting liquidity, so it shows the marks.
+    linked_reduction: bool,
+}
+
+/// Draw one preview print exactly the way the chart would draw it.
+///
+/// Everything past the trail goes through [`draw_bubble`], the same function
+/// the live chart uses: a preview that renders its own approximation would
+/// send the user tuning sliders against a picture the chart never produces.
 fn draw_preview_bubble(
     painter: &egui::Painter,
-    center: egui::Pos2,
-    radius: f32,
-    side: Side,
-    linked_reduction: bool,
+    preview: PreviewBubble,
+    right_edge: f32,
     bubbles: &BubbleStyle,
     colors: &BubbleColors,
 ) {
+    let PreviewBubble {
+        center,
+        size,
+        side,
+        linked_reduction,
+    } = preview;
     let center = center + egui::vec2(0.0, side_offset_y(side, bubbles.side_offset));
-    let color = colors.for_side(side);
-    let hh = radius * bubbles.front_length_scale + 6.0;
+    let radius = bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
     if linked_reduction && bubbles.trail_length > 0.0 {
         // Consumption trail behind the bubble (drawn first so the fill sits on
-        // top), matching the live "aggression eating a wall" marker.
+        // top). On the chart this is batched across every bubble; here there
+        // are two, so one mesh each costs nothing.
         let mut mesh = egui::Mesh::default();
         add_gradient_rect(
             &mut mesh,
-            egui::Rect::from_min_max(
-                egui::pos2(center.x, center.y - hh),
-                egui::pos2(center.x + bubbles.trail_length, center.y + hh),
+            trail_rect(
+                center,
+                front_half_length(radius, bubbles),
+                bubbles.trail_length,
+                right_edge,
             ),
             colors.trail.gamma_multiply(bubbles.trail_opacity),
             egui::Color32::TRANSPARENT,
         );
         painter.add(egui::Shape::mesh(mesh));
     }
-    let dressed = radius >= bubbles.detail_min_radius;
-    if dressed && bubbles.halo_strength > 0.0 {
-        painter.circle_filled(
-            center,
-            radius + 2.5,
-            color.gamma_multiply(bubbles.halo_strength),
-        );
-    }
-    painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
-    if dressed && bubbles.outline_width > 0.0 {
-        painter.circle_stroke(
+    draw_bubble(
+        painter,
+        BubbleMark {
             center,
             radius,
-            egui::Stroke::new(bubbles.outline_width, color),
-        );
-    }
-    if linked_reduction {
-        if bubbles.show_consumption_front {
-            painter.line_segment(
-                [
-                    egui::pos2(center.x, center.y - hh),
-                    egui::pos2(center.x, center.y + hh),
-                ],
-                egui::Stroke::new(bubbles.front_width, colors.front),
-            );
-        }
-        if dressed && bubbles.show_impact_ring {
-            painter.circle_stroke(
-                center,
-                radius + 2.2,
-                egui::Stroke::new(bubbles.impact_ring_width, colors.front.gamma_multiply(0.9)),
-            );
-        }
-    }
+            side,
+            size,
+            matched: linked_reduction.then_some(PREVIEW_MATCHED_FRACTION),
+        },
+        bubbles,
+        colors,
+    );
 }
 
 fn draw_preview_legend(
@@ -1970,6 +2107,94 @@ mod tests {
             side_offset_y(Side::Buy, 4.0).abs(),
             side_offset_y(Side::Sell, 4.0).abs()
         );
+    }
+
+    /// Paint through `draw` off-screen and return the shapes it emitted.
+    fn painted(draw: impl Fn(&egui::Painter)) -> String {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            draw(&ctx.layer_painter(egui::LayerId::background()));
+        });
+        format!("{:?}", output.shapes)
+    }
+
+    #[test]
+    fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
+        // The preview is the instrument the user tunes the sliders against, so
+        // it must not render its own approximation. Both paths go through
+        // draw_bubble; with the trail off (the one mark the chart batches
+        // separately) they must emit identical shapes.
+        let bubbles = BubbleStyle {
+            trail_length: 0.0,
+            ..BubbleStyle::default()
+        };
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let at = egui::pos2(120.0, 80.0);
+        let radius = bubble_radius(
+            PREVIEW_LARGE_PRINT_SIZE,
+            bubbles.min_radius,
+            bubbles.max_radius,
+        );
+
+        let live = painted(|painter| {
+            draw_bubble(
+                painter,
+                BubbleMark {
+                    center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset)),
+                    radius,
+                    side: Side::Buy,
+                    size: PREVIEW_LARGE_PRINT_SIZE,
+                    matched: Some(PREVIEW_MATCHED_FRACTION),
+                },
+                &bubbles,
+                &colors,
+            );
+        });
+        let preview = painted(|painter| {
+            draw_preview_bubble(
+                painter,
+                PreviewBubble {
+                    center: at,
+                    size: PREVIEW_LARGE_PRINT_SIZE,
+                    side: Side::Buy,
+                    linked_reduction: true,
+                },
+                f32::INFINITY,
+                &bubbles,
+                &colors,
+            );
+        });
+        assert!(
+            live.contains("Circle"),
+            "the sample must actually draw a bubble: {live}"
+        );
+        assert_eq!(live, preview);
+    }
+
+    #[test]
+    fn bubble_marks_scale_with_size_and_matched_share() {
+        let bubbles = BubbleStyle::default();
+        // The front grows with the radius, and never collapses to nothing on
+        // the smallest bubble.
+        assert!(front_half_length(10.0, &bubbles) > front_half_length(2.0, &bubbles));
+        assert!(front_half_length(0.0, &bubbles) >= FRONT_END_PADDING_PX);
+        // A sweep haloes brighter than a routine print, and alpha stays legal.
+        assert!(halo_alpha(1.0, &bubbles) > halo_alpha(0.0, &bubbles));
+        assert!(halo_alpha(1.0, &bubbles) <= 1.0);
+        assert_eq!(
+            halo_alpha(0.0, &bubbles),
+            bubbles.halo_strength,
+            "an unsized print gets the plain halo"
+        );
+        assert!(
+            halo_alpha(f32::NAN, &bubbles).is_finite(),
+            "a non-finite size must not poison the alpha"
+        );
+        // The ring brightens with the share of the print that matched, from a
+        // floor that keeps a nibble visible.
+        assert!(impact_ring_alpha(1.0) > impact_ring_alpha(0.0));
+        assert!(impact_ring_alpha(0.0) >= IMPACT_RING_BASE_ALPHA);
+        assert!(impact_ring_alpha(1.0) <= 1.0);
     }
 
     #[test]

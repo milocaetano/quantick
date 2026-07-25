@@ -136,6 +136,28 @@ pub enum BubbleSizeReference {
     Fixed,
 }
 
+/// Decimal places kept when a bubble float is written to the presets file.
+///
+/// Four is past the precision any pixel radius or alpha carries, and well
+/// inside what `f32` represents exactly enough to survive a round trip.
+const SERIALIZED_FLOAT_PLACES: i32 = 4;
+
+/// Serialize an `f32` as a short decimal.
+///
+/// TOML floats are `f64`, so an `f32` promoted straight through prints its
+/// exact binary expansion: `0.78` is written back as `0.7799999713897705`.
+/// Presets are tracked in git precisely so a look can be reviewed and rolled
+/// back like code, and a diff of noise defeats that — this is the write path
+/// for every visual float, so rounding here fixes the file for all of them.
+fn serialize_short_f32<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let scale = 10_f64.powi(SERIALIZED_FLOAT_PLACES);
+    let rounded = (f64::from(*value) * scale).round() / scale;
+    serializer.serialize_f64(rounded)
+}
+
 /// Everything the "aggression bubbles" panel owns: bubble geometry, colour,
 /// labels and the two marks a bubble draws when it ate resting liquidity — the
 /// vertical consumption front (the "risco") and the trail that leaks into the
@@ -149,18 +171,24 @@ pub enum BubbleSizeReference {
 #[serde(default)]
 pub struct BubbleStyle {
     /// Radius of the smallest drawn print, in pixels.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub min_radius: f32,
     /// Radius of a full-size print, in pixels. Area stays proportional to
     /// quantity between the two.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub max_radius: f32,
     /// Alpha of the bubble fill.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub opacity: f32,
     /// Rim stroke width; zero draws no rim.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub outline_width: f32,
     /// Soft halo drawn behind the fill, as a fraction of full alpha.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub halo_strength: f32,
     /// Bubbles below this radius are drawn as a plain dot (no halo, rim or
     /// impact ring). Raising it trades detail for frame time on a fast tape.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub detail_min_radius: f32,
     /// How the full-size reference quantity is chosen.
     pub size_reference: BubbleSizeReference,
@@ -179,28 +207,35 @@ pub struct BubbleStyle {
     /// Deliberately unfaithful to the exact price — with a one-tick spread both
     /// sides land on the same row and stack into an unreadable line. Zero
     /// restores exact price placement.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub side_offset: f32,
     /// Whether a bubble that ate resting liquidity draws its vertical
     /// consumption front.
     pub show_consumption_front: bool,
     /// Width of that front, in pixels.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub front_width: f32,
     /// Half-length of the front as a multiple of the bubble radius.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub front_length_scale: f32,
     /// Whether a consuming bubble draws a ring around its rim.
     pub show_impact_ring: bool,
     /// Width of that ring, in pixels.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub impact_ring_width: f32,
     /// Length of the consumption trail leaking to the right, in pixels. Zero
     /// draws no trail.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub trail_length: f32,
     /// Alpha of the trail at the bubble's edge; it fades to nothing.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub trail_opacity: f32,
     /// Whether large bubbles print their quantity.
     pub show_quantity_labels: bool,
     /// Whether large bubbles print how many trades they cluster.
     pub show_trade_count: bool,
     /// Smallest radius that gets a label at all.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub label_min_radius: f32,
     /// Buy-side colour override; absent follows the theme.
     #[serde(skip_serializing_if = "Option::is_none")]
