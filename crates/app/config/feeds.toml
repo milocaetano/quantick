@@ -17,7 +17,7 @@ default_symbol = "BTCUSDT"
 #   id       — stable identifier, referenced by `default_feed` (unique).
 #   name     — label shown in the feed selector.
 #   provider — which backend streams it; maps to a code path.
-#              Supported today: "binance". Planned: "metatrader".
+#              Supported today: "binance", "metatrader".
 #   symbols  — the assets offered for this feed (first is its fallback).
 [[feeds]]
 id = "binance"
@@ -28,7 +28,9 @@ symbols = ["BTCUSDT", "ETHUSDT"]
 # MetaTrader 5, via the QuantickBridge EA (see bridge/mt5/README.md for the
 # one-time setup). The EA streams the chart it is attached to; the symbol
 # selected here must match that chart. B3 continuous contracts: WIN$N (mini
-# índice), WDO$N (mini dólar).
+# índice), WDO$N (mini dólar). The EA also streams Depth of Market, so the
+# book heatmap works here; note MT5 exposes only the top levels, and the chart
+# labels that coverage rather than implying a full book.
 [[feeds]]
 id = "metatrader"
 name = "MetaTrader 5"
@@ -45,3 +47,13 @@ symbols = ["WIN$N", "WDO$N"]
 [metatrader]
 listen_addr = "127.0.0.1:9100"
 side_source = "tick_rule"
+
+# quantick starts the bridge for you: selecting this feed is one action, not
+# two. It waits a few seconds first, so a bridge you already started by hand —
+# or the Expert Advisor sitting on a chart — is left alone and used instead.
+#   bridge_autostart — set false to always start the bridge yourself.
+#   bridge_command   — program plus arguments; --symbol/--host/--port are
+#                      appended from the running feed. Resolved against
+#                      quantick's working directory.
+bridge_autostart = true
+bridge_command = ["python", "bridge/mt5/quantick_bridge.py"]

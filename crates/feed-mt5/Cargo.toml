@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
+quantick-orderbook = { path = "../orderbook" }
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

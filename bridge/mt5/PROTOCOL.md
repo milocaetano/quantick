@@ -5,19 +5,24 @@ dials out** (MQL5 sockets are client-only); the quantick feed listens
 (default `127.0.0.1:9100`). One connection = one session. The stream is
 one-way: bridge → feed.
 
+Two bridges implement it — `quantick_bridge.py` (outside the terminal, via the
+official Python package) and `QuantickBridge.mq5` (inside it) — and the feed
+accepts either without knowing the difference. The protocol is the contract;
+the bridges are interchangeable.
+
 The executable counterpart of this document is
 `crates/feed-mt5/src/protocol.rs` — its tests parse the verbatim lines shown
-here. If you change one, change both.
+here. If you change one, change all three.
 
 ## Session shape
 
 ```
-hello                    exactly once, first line
-backfill_start           optional block, at most once, right after hello
-  tick × N               historical ticks (CopyTicks)
+hello                        exactly once, first line
+backfill_start               optional block, at most once, right after hello
+  tick × N                   historical ticks (CopyTicks)
 backfill_end
-tick | heartbeat × …     live, until the session ends
-bye                      optional clean goodbye
+tick | book | heartbeat × …  live, until the session ends
+bye                          optional clean goodbye
 ```
 
 ## Messages
@@ -25,7 +30,7 @@ bye                      optional clean goodbye
 ### hello
 
 ```json
-{"type":"hello","schema":1,"bridge":"quantick-mt5-bridge","bridge_version":"0.1.0","symbol":"WIN$N","broker_symbol":"WINQ26","digits":0,"server_utc_offset_s":-10800}
+{"type":"hello","schema":1,"bridge":"quantick-mt5-bridge","bridge_version":"0.2.0","symbol":"WIN$N","broker_symbol":"WINQ26","digits":0,"server_utc_offset_s":-10800,"book_levels":20,"tick_size":"5"}
 ```
 
 - `schema` — protocol version; the feed refuses a mismatch.
@@ -34,6 +39,17 @@ bye                      optional clean goodbye
 - `server_utc_offset_s` — **the honesty field**: MT5 stamps ticks in *server
   wall time encoded as epoch*. True UTC = `time_ms − server_utc_offset_s×1000`.
   Computed live as `TimeTradeServer() − TimeGMT()` (B3: −10800).
+- `book_levels` — *optional*. Present only when this session can actually send
+  depth (`MarketBookAdd` succeeded): `SYMBOL_TICKS_BOOKDEPTH`, i.e. the most
+  levels per side the terminal exposes. **Absent means no book** — either a
+  bridge older than schema 1's depth support, or a symbol/account without a
+  DOM. The feed reports that instead of drawing an empty heatmap.
+- `tick_size` — *optional*, `SYMBOL_TRADE_TICK_SIZE` as an exact decimal
+  string. The instrument's real price grid (WIN: `"5"`), so the consumer does
+  not render liquidity on rows that can never hold any.
+
+Both depth fields are additive within schema 1: a bridge that predates them
+still connects and still streams ticks.
 
 ### tick
 
@@ -53,6 +69,36 @@ bye                      optional clean goodbye
   not reject. **Known pathology**: some B3 brokers set BUY on every tick —
   the feed's tick-rule side policy exists because of this (verified
   2026-07-23 on WIN$N: 100% of live and history ticks carried `flags=1080`).
+
+### book
+
+```json
+{"type":"book","seq":7,"time_ms":1784824300802,"bids":[["177795","3"],["177790","12"]],"asks":[["177800","5"]]}
+```
+
+One **complete image** of the Depth of Market. MT5 has no incremental book
+protocol: `OnBookEvent` fires and `MarketBookGet` returns the whole visible
+DOM, with no update ids of any kind. The feed diffs successive images into the
+snapshot-plus-delta form the rest of quantick speaks
+(`quantick_orderbook::SnapshotDiffer`).
+
+- `seq` — bridge-assigned, monotonic from 1 per session, **independent of tick
+  `seq`**. Only for detecting images lost in transport; a gap makes the feed
+  open a new capture generation rather than diff across an unobserved moment.
+- `time_ms` — server time (see hello), taken as
+  `max(SYMBOL_TIME_MSC, TimeTradeServer()×1000)` so the book timeline keeps
+  moving when quotes go quiet.
+- `bids`/`asks` — `["price","quantity"]` pairs, exact decimal strings, in
+  whatever order the terminal returned them (the feed sorts and sums
+  duplicates). Prices carry `digits` decimals.
+- Limit levels only. `BOOK_TYPE_*_MARKET` rows are orders waiting to cross,
+  not resting liquidity, and the bridge excludes them.
+- The bridge sends an image only when it differs from the previous one, and at
+  most every `InpBookMinIntervalMs` (default 20 ms).
+
+Empty sides are legitimate (auction, halted book), not an error. A **crossed**
+image (best bid ≥ best ask) is real during B3's pre-open auction; the feed
+rejects and counts it, keeping the last uncrossed image.
 
 ### heartbeat
 

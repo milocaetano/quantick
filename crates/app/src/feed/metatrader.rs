@@ -24,29 +24,62 @@
 //!   honest; silently inflating bars is not.)
 //! - **"Load older" is unsupported**: every request is answered with an empty
 //!   reply plus a structured warning, so the UI's loader always resolves.
-//! - Order-book capture is unsupported (the UI already disables the heatmap
-//!   for this provider); the depth channel stays open but forever empty.
+//! - **Order-book capture is supported** when the bridge declares a Depth of
+//!   Market. The terminal republishes a complete DOM image on every change and
+//!   `quantick-feed-mt5` diffs those into the same snapshot-plus-delta stream
+//!   Binance produces, so the heatmap runs on one shared pipeline. Capture is
+//!   a switch on the running session rather than a task to start and stop: the
+//!   book shares one socket with ticks, and MQL5 offers no back-channel to ask
+//!   the terminal to stop sending it.
 //!
 //! Synthetic ids caveat: `agg_id` restarts at 1 on every bridge session, so
 //! ids may repeat across reconnects within one chart lifetime. Bars are built
 //! from trade order, not ids, so the chart is unaffected; anything keying on
 //! `agg_id` across sessions must not, and this is the place that documents it.
 
+use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use quantick_feed_mt5::{Mt5Event, Mt5Status, ServerConfig, SideMode, run_bridge_server};
+use quantick_feed_mt5::{
+    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, run_bridge_server,
+};
 
 use crate::config::{MetaTraderSettings, Mt5SideSource};
 
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle};
+
+/// Depth events are independent from the established trade channel. Sized like
+/// the Binance backend's: a B3 book republishes far faster than the UI drains,
+/// and this absorbs bursts without either dropping deltas or stalling trades.
+const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
+
+/// How long the autostart waits for a bridge that is already running before
+/// launching its own. Long enough for an attached Expert Advisor's reconnect
+/// cycle to notice the port, short enough that a cold start feels immediate.
+const BRIDGE_AUTOSTART_GRACE: Duration = Duration::from_secs(3);
+
+/// Gap between autostart attempts. The common failure is a terminal still
+/// starting up, which resolves in seconds.
+const BRIDGE_AUTOSTART_RETRY: Duration = Duration::from_secs(5);
+
+/// How many times the autostart relaunches an exiting bridge before leaving it
+/// alone. Every remaining failure (terminal closed, unknown symbol, unknown
+/// server offset) needs a human, and retrying it forever only buries the log
+/// line that says so.
+const BRIDGE_AUTOSTART_ATTEMPTS: u32 = 5;
 
 /// Start the MetaTrader feed for `symbol`: listen for the bridge on the
 /// configured address and translate its stream into [`FeedEvent`]s.
 #[must_use]
 pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
-    let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(1);
+    let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let symbol = symbol.to_string();
     let settings = settings.clone();
@@ -72,7 +105,7 @@ async fn feed_task(
     symbol: String,
     settings: MetaTraderSettings,
     tx: mpsc::Sender<FeedEvent>,
-    _book_tx: mpsc::Sender<DepthEvent>, // held open, forever empty: no depth from MT5
+    book_tx: mpsc::Sender<DepthEvent>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     // Resolve the UI's initial history load immediately: there is no
@@ -88,6 +121,23 @@ async fn feed_task(
         Mt5SideSource::Flags => SideMode::Flags,
     };
 
+    // Selecting a MetaTrader feed is one action; starting a bridge by hand
+    // afterwards was the second one this removes. The supervisor holds off
+    // until it is sure nobody else is already feeding us.
+    let bridge_connected = Arc::new(AtomicBool::new(false));
+    let autostart = settings.bridge_autostart.then(|| {
+        tokio::spawn(supervise_bridge(
+            symbol.clone(),
+            settings.clone(),
+            Arc::clone(&bridge_connected),
+        ))
+    });
+
+    // The switch lives on this side of the server task so UI commands can flip
+    // depth capture without disturbing the bridge session or the trade stream.
+    let book_capture = BookCaptureSwitch::new();
+    server_cfg.book_capture = book_capture.clone();
+
     let (mt5_tx, mut mt5_rx) = mpsc::channel::<Mt5Event>(4096);
     let server = tokio::spawn(run_bridge_server(server_cfg, mt5_tx));
 
@@ -102,7 +152,12 @@ async fn feed_task(
         tokio::select! {
             maybe_event = mt5_rx.recv() => {
                 match maybe_event {
-                    Some(Mt5Event::Status(status)) => log_status(&symbol, &status),
+                    Some(Mt5Event::Status(status)) => {
+                        if matches!(status, Mt5Status::Connected { .. }) {
+                            bridge_connected.store(true, Ordering::Relaxed);
+                        }
+                        log_status(&symbol, &status);
+                    }
                     Some(Mt5Event::Backfilled(batch)) => {
                         if batch.is_empty() {
                             continue;
@@ -150,6 +205,16 @@ async fn feed_task(
                             }
                         }
                     }
+                    Some(Mt5Event::Depth(event)) => {
+                        // Backpressure rather than dropping: after the opening
+                        // snapshot every event is an absolute delta, and a
+                        // dropped one desynchronizes the book until the next
+                        // generation. A full buffer means the UI is stalled,
+                        // and the trade stream is buffered too.
+                        if book_tx.send(event).await.is_err() {
+                            break; // UI gone
+                        }
+                    }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;
                         last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
@@ -180,7 +245,7 @@ async fn feed_task(
                                 "MT5 bridge listener crashed"
                             ),
                         }
-                        idle_serve_commands(&symbol, &tx, &mut cmd_rx).await;
+                        idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture).await;
                         return;
                     }
                 }
@@ -191,7 +256,7 @@ async fn feed_task(
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
                     Some(cmd) => {
-                        if !answer_command(&symbol, cmd, &tx).await {
+                        if !answer_command(&symbol, cmd, &tx, &book_capture).await {
                             break; // UI gone
                         }
                     }
@@ -201,6 +266,129 @@ async fn feed_task(
         }
     }
     server.abort();
+    // Dropping the supervisor's task drops the child handle, and the child was
+    // spawned with kill-on-drop: a bridge quantick started never outlives the
+    // feed that wanted it.
+    if let Some(autostart) = autostart {
+        autostart.abort();
+    }
+}
+
+/// Launch a bridge when nothing else is feeding us, and keep it alive.
+///
+/// Deliberately passive at the start: a bridge that is already running, or an
+/// Expert Advisor attached to a chart, gets the grace period to dial in. Only
+/// silence triggers a launch.
+async fn supervise_bridge(
+    symbol: String,
+    settings: MetaTraderSettings,
+    connected: Arc<AtomicBool>,
+) {
+    let Some((host, port)) = settings.bridge_endpoint() else {
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
+            symbol = %symbol,
+            listen_addr = %settings.listen_addr,
+            action = "wait_for_manual_bridge",
+            "cannot derive a dial address from listen_addr; not starting a bridge"
+        );
+        return;
+    };
+    let Some((program, extra)) = settings.bridge_command.split_first() else {
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
+            symbol = %symbol,
+            action = "wait_for_manual_bridge",
+            "bridge_command is empty; not starting a bridge"
+        );
+        return;
+    };
+
+    tokio::time::sleep(BRIDGE_AUTOSTART_GRACE).await;
+    for attempt in 1..=BRIDGE_AUTOSTART_ATTEMPTS {
+        if connected.load(Ordering::Relaxed) {
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_BRIDGE_AUTOSTART_NOT_NEEDED",
+                symbol = %symbol,
+                action = "leave_running_bridge_alone",
+                "a bridge is already connected; quantick started none of its own"
+            );
+            return;
+        }
+
+        let mut command = Command::new(program);
+        command
+            .args(extra)
+            .arg("--symbol")
+            .arg(&symbol)
+            .arg("--host")
+            .arg(host)
+            .arg("--port")
+            .arg(port)
+            // The bridge speaks the same structured-log vocabulary, so letting
+            // it write to our streams keeps one story in one place.
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+
+        match command.spawn() {
+            Ok(mut child) => {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BRIDGE_SPAWNED",
+                    symbol = %symbol,
+                    program = %program,
+                    pid = child.id(),
+                    attempt,
+                    host,
+                    port,
+                    "started a bridge for this feed"
+                );
+                let status = child.wait().await;
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BRIDGE_EXITED",
+                    symbol = %symbol,
+                    attempt,
+                    max_attempts = BRIDGE_AUTOSTART_ATTEMPTS,
+                    status = ?status.map(|s| s.code()),
+                    action = "retry_after_backoff",
+                    "the bridge quantick started has exited"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BRIDGE_SPAWN_FAILED",
+                    symbol = %symbol,
+                    program = %program,
+                    attempt,
+                    %error,
+                    action = "retry_after_backoff",
+                    "could not start the bridge (is it on PATH? is the working directory the repo?)"
+                );
+            }
+        }
+        tokio::time::sleep(BRIDGE_AUTOSTART_RETRY).await;
+    }
+
+    warn!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "MT5_BRIDGE_AUTOSTART_GAVE_UP",
+        symbol = %symbol,
+        attempts = BRIDGE_AUTOSTART_ATTEMPTS,
+        action = "wait_for_manual_bridge",
+        "the bridge would not stay up; read its own log lines above for the reason"
+    );
 }
 
 /// After a fatal listener error, keep answering UI commands honestly (empty
@@ -209,16 +397,22 @@ async fn idle_serve_commands(
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
     cmd_rx: &mut mpsc::Receiver<FeedCommand>,
+    book_capture: &BookCaptureSwitch,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
-        if !answer_command(symbol, cmd, tx).await {
+        if !answer_command(symbol, cmd, tx, book_capture).await {
             return;
         }
     }
 }
 
 /// Answer one UI command. Returns false when the UI is gone.
-async fn answer_command(symbol: &str, cmd: FeedCommand, tx: &mpsc::Sender<FeedEvent>) -> bool {
+async fn answer_command(
+    symbol: &str,
+    cmd: FeedCommand,
+    tx: &mpsc::Sender<FeedEvent>,
+    book_capture: &BookCaptureSwitch,
+) -> bool {
     match cmd {
         FeedCommand::LoadOlder { count } => {
             warn!(
@@ -238,27 +432,35 @@ async fn answer_command(symbol: &str, cmd: FeedCommand, tx: &mpsc::Sender<FeedEv
             enabled,
             initial_generation,
         } => {
-            warn!(
+            if enabled {
+                book_capture.enable(initial_generation);
+            } else {
+                book_capture.disable();
+            }
+            info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
-                event_code = "MT5_BOOK_CAPTURE_UNSUPPORTED",
+                event_code = "MT5_BOOK_CAPTURE_SET",
                 symbol,
                 enabled,
                 initial_generation,
-                action = "ignore",
-                "MT5 order-book capture is not implemented"
+                action = if enabled { "publish_depth" } else { "stop_publishing_depth" },
+                "book capture switched on the running bridge session"
             );
             true
         }
         FeedCommand::RestartBookCapture { initial_generation } => {
-            warn!(
+            // A fresh base generation retires whatever the previous one
+            // published; the next image opens a new snapshot.
+            book_capture.enable(initial_generation);
+            info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
-                event_code = "MT5_BOOK_CAPTURE_UNSUPPORTED",
+                event_code = "MT5_BOOK_CAPTURE_RESTARTED",
                 symbol,
                 initial_generation,
-                action = "ignore",
-                "MT5 order-book capture is not implemented"
+                action = "resnapshot_on_next_image",
+                "book capture restarted at a fresh generation"
             );
             true
         }
@@ -310,6 +512,10 @@ mod tests {
         let settings = MetaTraderSettings {
             listen_addr: "127.0.0.1:0".to_string(),
             side_source: Mt5SideSource::TickRule,
+            // These tests are the bridge; a second one racing them would make
+            // the assertions depend on whether python happens to be installed.
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
         };
         spawn(symbol, &settings)
     }
@@ -358,6 +564,10 @@ mod tests {
         let settings = MetaTraderSettings {
             listen_addr: "127.0.0.1:19171".to_string(),
             side_source: Mt5SideSource::TickRule,
+            // These tests are the bridge; a second one racing them would make
+            // the assertions depend on whether python happens to be installed.
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings);
         let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
@@ -421,6 +631,10 @@ mod tests {
         let settings = MetaTraderSettings {
             listen_addr: "127.0.0.1:19172".to_string(),
             side_source: Mt5SideSource::TickRule,
+            // These tests are the bridge; a second one racing them would make
+            // the assertions depend on whether python happens to be installed.
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
         };
         let mut feed = spawn("WIN$N", &settings);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {

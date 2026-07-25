@@ -16,7 +16,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use quantick_engine::Trade;
-use quantick_feed_binance::depth::DepthEvent;
+use quantick_orderbook::DepthEvent;
 use rust_decimal::Decimal;
 
 use crate::orderflow::HeatmapConfig;

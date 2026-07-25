@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use quantick_engine::{Bar, Trade};
-use quantick_feed_binance::depth::DepthEvent;
+use quantick_orderbook::DepthEvent;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -833,6 +833,7 @@ mod tests {
             generation,
             observed_at_ms: 1_100,
             effective_at_ms: 999,
+            price_step: None,
             snapshot: BookSnapshot::new(
                 10,
                 vec![BookLevel::new(Decimal::from(99), Decimal::from(5)).unwrap()],
@@ -955,6 +956,7 @@ mod tests {
             generation: 1,
             observed_at_ms: 1_100,
             effective_at_ms: 1_000,
+            price_step: None,
             snapshot: BookSnapshot::new(
                 10,
                 vec![BookLevel::new(Decimal::from(64_999), Decimal::from(2)).unwrap()],

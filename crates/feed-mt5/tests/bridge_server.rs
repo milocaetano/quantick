@@ -10,7 +10,10 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use quantick_engine::Side;
-use quantick_feed_mt5::{Mt5Event, Mt5Status, ServerConfig, SideMode, run_bridge_server};
+use quantick_feed_mt5::{
+    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, run_bridge_server,
+};
+use quantick_orderbook::{DepthEvent, DepthStatus};
 
 /// A config bound to an ephemeral port with tight test timeouts.
 fn test_config(symbol: &str) -> ServerConfig {
@@ -20,6 +23,7 @@ fn test_config(symbol: &str) -> ServerConfig {
         side_mode: SideMode::TickRule,
         hello_timeout: Duration::from_millis(500),
         read_timeout: Duration::from_millis(1000),
+        book_capture: BookCaptureSwitch::new(),
     }
 }
 
@@ -33,15 +37,24 @@ async fn next_event(rx: &mut mpsc::Receiver<Mt5Event>) -> Mt5Event {
 
 /// Start a server and return (its bound addr, the event receiver).
 async fn start_server(symbol: &str) -> (String, mpsc::Receiver<Mt5Event>) {
+    let (addr, rx, _) = start_server_with_capture(symbol).await;
+    (addr, rx)
+}
+
+/// Same, keeping the depth switch so a test can turn capture on and off.
+async fn start_server_with_capture(
+    symbol: &str,
+) -> (String, mpsc::Receiver<Mt5Event>, BookCaptureSwitch) {
     let (tx, mut rx) = mpsc::channel(1024);
     let config = test_config(symbol);
+    let capture = config.book_capture.clone();
     tokio::spawn(async move {
         let _ = run_bridge_server(config, tx).await;
     });
     let Mt5Event::Status(Mt5Status::Waiting { addr }) = next_event(&mut rx).await else {
         panic!("expected the initial waiting status");
     };
-    (addr, rx)
+    (addr, rx, capture)
 }
 
 fn hello(symbol: &str) -> String {
@@ -49,6 +62,31 @@ fn hello(symbol: &str) -> String {
         "{{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",\
          \"symbol\":\"{symbol}\",\"broker_symbol\":\"WINQ26\",\"digits\":0,\
          \"server_utc_offset_s\":-10800}}\n"
+    )
+}
+
+/// A hello from a bridge that streams Depth of Market.
+fn hello_with_book(symbol: &str) -> String {
+    format!(
+        "{{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",         \"symbol\":\"{symbol}\",\"broker_symbol\":\"WINQ26\",\"digits\":0,         \"server_utc_offset_s\":-10800,\"book_levels\":5,\"tick_size\":\"5\"}}
+"
+    )
+}
+
+fn book(seq: u64, bids: &[(&str, &str)], asks: &[(&str, &str)]) -> String {
+    fn side(levels: &[(&str, &str)]) -> String {
+        levels
+            .iter()
+            .map(|(price, quantity)| format!("[\"{price}\",\"{quantity}\"]"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+    format!(
+        "{{\"type\":\"book\",\"seq\":{seq},\"time_ms\":{},\"bids\":[{}],\"asks\":[{}]}}
+",
+        1_784_824_300_000_i64 + seq as i64,
+        side(bids),
+        side(asks)
     )
 }
 
@@ -234,4 +272,148 @@ async fn a_silent_bridge_is_dropped_and_the_server_waits_again() {
     let Mt5Event::Status(Mt5Status::Waiting { .. }) = next_event(&mut rx).await else {
         panic!("expected the server back in waiting");
     };
+}
+
+/// Drain events until the first depth one, ignoring trades and statuses.
+async fn next_depth(rx: &mut mpsc::Receiver<Mt5Event>) -> DepthEvent {
+    loop {
+        match next_event(rx).await {
+            Mt5Event::Depth(event) => return event,
+            other => {
+                if let Mt5Event::Status(Mt5Status::Lost { reason }) = other {
+                    panic!("session ended before any depth event: {reason}");
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn depth_images_become_a_snapshot_then_deltas_when_capture_is_on() {
+    let (addr, mut rx, capture) = start_server_with_capture("WIN$N").await;
+    capture.enable(1_000_000);
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut script = String::new();
+    script.push_str(&hello_with_book("WIN$N"));
+    script.push_str(&book(
+        1,
+        &[("177790", "12"), ("177795", "3")],
+        &[("177800", "5")],
+    ));
+    // One bid shrank; nothing else moved.
+    script.push_str(&book(
+        2,
+        &[("177790", "12"), ("177795", "1")],
+        &[("177800", "5")],
+    ));
+    sock.write_all(script.as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    // "Connecting" precedes the first image so a chart can say what it waits for.
+    let DepthEvent::Status {
+        generation,
+        status: DepthStatus::Connecting,
+        ..
+    } = next_depth(&mut rx).await
+    else {
+        panic!("expected the connecting status first");
+    };
+    // Above the consumer's base: a reconnect can never reuse a generation.
+    assert!(generation > 1_000_000, "generation was {generation}");
+
+    let DepthEvent::Snapshot {
+        symbol,
+        observed_at_ms,
+        price_step,
+        snapshot,
+        generation: snapshot_generation,
+        ..
+    } = next_depth(&mut rx).await
+    else {
+        panic!("expected the opening snapshot");
+    };
+    assert_eq!(symbol, "WIN$N");
+    assert_eq!(snapshot_generation, generation);
+    // Server time converted to UTC with the hello's −3 h offset.
+    assert_eq!(observed_at_ms, 1_784_824_300_001 + 10_800_000);
+    assert_eq!(price_step, Some(rust_decimal::Decimal::from(5)));
+    assert_eq!(snapshot.bids().len(), 2);
+    assert_eq!(snapshot.asks().len(), 1);
+    // The terminal's DOM is truncated by definition, and the hello said how far
+    // it goes — the chart must never present it as the whole exchange book.
+    assert_eq!(
+        snapshot.coverage(),
+        quantick_orderbook::BookCoverage::Limited { levels_per_side: 5 }
+    );
+
+    assert!(matches!(
+        next_depth(&mut rx).await,
+        DepthEvent::Status {
+            status: DepthStatus::Synchronized { .. },
+            ..
+        }
+    ));
+
+    let DepthEvent::Update { delta, .. } = next_depth(&mut rx).await else {
+        panic!("expected a delta for the changed level");
+    };
+    assert_eq!(delta.bids().len(), 1, "only the level that moved travels");
+    assert!(delta.asks().is_empty());
+}
+
+#[tokio::test]
+async fn depth_stays_silent_while_capture_is_off() {
+    let (addr, mut rx, _capture) = start_server_with_capture("WIN$N").await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut script = String::new();
+    script.push_str(&hello_with_book("WIN$N"));
+    script.push_str(&book(1, &[("177795", "3")], &[("177800", "5")]));
+    script.push_str(&tick(1, "177795", 3));
+    script.push_str(&tick(2, "177800", 1)); // uptick → a buy reaches the UI
+    script.push_str("{\"type\":\"bye\",\"reason\":\"test_done\"}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    // Trades still flow; not one depth event is published.
+    let mut trades = 0;
+    loop {
+        match next_event(&mut rx).await {
+            Mt5Event::Live(_) => trades += 1,
+            Mt5Event::Depth(event) => panic!("capture is off but got {event:?}"),
+            Mt5Event::Status(Mt5Status::Lost { .. }) => break,
+            _ => {}
+        }
+    }
+    assert_eq!(trades, 1);
+}
+
+#[tokio::test]
+async fn a_bridge_without_depth_says_so_instead_of_staying_silent() {
+    let (addr, mut rx, capture) = start_server_with_capture("WIN$N").await;
+    capture.enable(2_000_000);
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut script = String::new();
+    // The plain hello declares no book_levels: an older bridge, or a symbol
+    // with no DOM on this account.
+    script.push_str(&hello("WIN$N"));
+    script.push_str("{\"type\":\"heartbeat\",\"seq_last\":0,\"time_ms\":1,\"ticks_sent\":0}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    let DepthEvent::Status {
+        generation,
+        status:
+            DepthStatus::Disconnected {
+                error_class: "bridge_without_depth",
+            },
+        ..
+    } = next_depth(&mut rx).await
+    else {
+        panic!("expected an honest 'this bridge has no depth' status");
+    };
+    // At the consumer's own generation floor, so it is not discarded as stale.
+    assert_eq!(generation, 2_000_000);
 }
