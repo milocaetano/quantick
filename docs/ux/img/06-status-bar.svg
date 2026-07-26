@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 640" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <style>
+      .t  { fill: #D2DAE2; }
+      .m  { fill: #96A0AF; }
+      .f  { fill: #6E7887; }
+      .amb{ fill: #F0B90B; }
+      .mono { font-family: Consolas, monospace; }
+      .cap { font-size: 11px; fill: #6E7887; letter-spacing: 1px; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="640" fill="#0B0D12"/>
+  <text x="40" y="38" font-size="20" font-weight="600" class="t">Status bar — one glance line, three states</text>
+  <text x="40" y="58" font-size="12" class="m">replaces the perf overlay, the floating timezone pill and the mode text painted over candles · readings live here, controls stay above</text>
+
+  <!-- ======== LIVE ======== -->
+  <text x="40" y="110" class="cap">LIVE — green dot, quiet chrome</text>
+  <rect x="40" y="120" width="1360" height="30" rx="4" fill="#171B26" stroke="#2E3648"/>
+  <circle cx="62" cy="135" r="4" fill="#26A69A"/>
+  <text x="76" y="140" font-size="12" class="t">live · Binance · BTCUSDT</text>
+  <line x1="248" y1="126" x2="248" y2="144" stroke="#2E3648"/>
+  <text x="260" y="140" font-size="12" class="m mono">lag 42 ms</text>
+  <line x1="348" y1="126" x2="348" y2="144" stroke="#2E3648"/>
+  <text x="360" y="140" font-size="12" class="m mono">tick 50 · 240+61 bars</text>
+  <text x="1010" y="140" font-size="12" class="m mono">24,183 trades</text>
+  <line x1="1128" y1="126" x2="1128" y2="144" stroke="#2E3648"/>
+  <text x="1140" y="140" font-size="12" class="m mono">60 fps · 6.1 ms</text>
+  <line x1="1268" y1="126" x2="1268" y2="144" stroke="#2E3648"/>
+  <text x="1280" y="140" font-size="12" class="m">UTC−03:00 ▾</text>
+
+  <!-- ======== WARNING ======== -->
+  <text x="40" y="200" class="cap">DEGRADED — the reading that breached its threshold turns warn-red; nothing else changes</text>
+  <rect x="40" y="210" width="1360" height="30" rx="4" fill="#171B26" stroke="#2E3648"/>
+  <circle cx="62" cy="225" r="4" fill="#26A69A"/>
+  <text x="76" y="230" font-size="12" class="t">live · MetaTrader 5 · WINQ26</text>
+  <line x1="270" y1="216" x2="270" y2="234" stroke="#2E3648"/>
+  <text x="282" y="230" font-size="12" font-weight="600" class="mono" fill="#FF6347">lag 3,208 ms</text>
+  <line x1="400" y1="216" x2="400" y2="234" stroke="#2E3648"/>
+  <text x="412" y="230" font-size="12" class="m mono">tick 50 · 240+61 bars</text>
+  <text x="1010" y="230" font-size="12" class="m mono">24,183 trades</text>
+  <line x1="1128" y1="216" x2="1128" y2="234" stroke="#2E3648"/>
+  <text x="1140" y="230" font-size="12" font-weight="600" class="mono" fill="#FF6347">31 fps · 21.4 ms</text>
+  <line x1="1268" y1="216" x2="1268" y2="234" stroke="#2E3648"/>
+  <text x="1280" y="230" font-size="12" class="m">UTC−03:00 ▾</text>
+
+  <!-- ======== REPLAY ======== -->
+  <text x="40" y="290" class="cap">REPLAY — amber thread: the transport strip appears above the status line, both marked not-live</text>
+  <!-- transport strip -->
+  <rect x="40" y="300" width="1360" height="32" rx="4" fill="#171B26" stroke="#F0B90B" stroke-opacity="0.45"/>
+  <g fill="#F0B90B">
+    <path d="M 60 309 L 60 323 L 66 316 Z"/>
+    <rect x="72" y="309" width="4" height="14"/>
+    <rect x="79" y="309" width="4" height="14"/>
+  </g>
+  <text x="98" y="321" font-size="12" class="amb" font-weight="600">WINJ26 · 2026-03-10</text>
+  <rect x="270" y="311" width="56" height="18" rx="3" fill="#232936"/>
+  <text x="280" y="324" font-size="11" class="t mono">2× ▾</text>
+  <rect x="344" y="313" width="880" height="8" rx="4" fill="#232936"/>
+  <rect x="344" y="313" width="378" height="8" rx="4" fill="#F0B90B" opacity="0.9"/>
+  <circle cx="722" cy="317" r="6" fill="#D2DAE2"/>
+  <text x="1240" y="322" font-size="11" class="mono amb">43% · 10:41:58</text>
+  <text x="1352" y="322" font-size="11" class="m">close ✕</text>
+  <!-- status line under it -->
+  <rect x="40" y="332" width="1360" height="30" rx="4" fill="#171B26" stroke="#2E3648"/>
+  <text x="56" y="352" font-size="12" class="amb">▶ replay · WINJ26</text>
+  <line x1="196" y1="338" x2="196" y2="356" stroke="#2E3648"/>
+  <text x="208" y="352" font-size="12" class="m mono">side: inferred (tick rule)</text>
+  <line x1="404" y1="338" x2="404" y2="356" stroke="#2E3648"/>
+  <text x="416" y="352" font-size="12" class="m mono">tick 50 · 512 bars</text>
+  <text x="1010" y="352" font-size="12" class="m mono">88,412 trades</text>
+  <line x1="1128" y1="338" x2="1128" y2="356" stroke="#2E3648"/>
+  <text x="1140" y="352" font-size="12" class="m mono">60 fps · 5.8 ms</text>
+  <line x1="1268" y1="338" x2="1268" y2="356" stroke="#2E3648"/>
+  <text x="1280" y="352" font-size="12" class="m">UTC−03:00 ▾</text>
+
+  <!-- ======== anatomy ======== -->
+  <g font-size="12">
+    <text x="40" y="430" font-size="16" font-weight="600" class="t">Anatomy</text>
+    <text x="40" y="458" class="t" font-weight="600">left — provenance:</text>
+    <text x="196" y="458" class="m">where the data comes from and how healthy the pipe is: state dot (green live · amber replay · red stalled), venue, symbol, lag.</text>
+    <text x="40" y="482" class="t" font-weight="600">middle — content:</text>
+    <text x="196" y="482" class="m">what the chart is made of: bar spec, bar counts, and honesty labels such as “side: inferred (tick rule)” for feeds without true aggressor sides.</text>
+    <text x="40" y="506" class="t" font-weight="600">right — machinery:</text>
+    <text x="196" y="506" class="m">trades ingested, fps and frame time (the old perf overlay), timezone picker — the bar's only control, kept at the far edge.</text>
+    <text x="40" y="540" class="t">Recompute progress (indicators) borrows the middle section: “computing zigzag.pine · 62%” with a thin progress underline, then yields it back.</text>
+    <text x="40" y="568" class="amb">Amber is reserved: it may only mark data that is not live ground truth — replay, backfill boundary, inferred sides, stale scripts. Never decoration.</text>
+  </g>
+</svg>

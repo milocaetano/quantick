@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <style>
+      .t  { fill: #D2DAE2; }
+      .m  { fill: #96A0AF; }
+      .f  { fill: #6E7887; }
+      .mono { font-family: Consolas, monospace; }
+      .cap { font-size: 11px; fill: #6E7887; letter-spacing: 1px; }
+      .key { font-family: Consolas, monospace; font-size: 10px; fill: #6E7887; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" fill="#0B0D12"/>
+  <text x="40" y="38" font-size="20" font-weight="600" class="t">Tool rail (left) and dock (right)</text>
+  <text x="40" y="58" font-size="12" class="m">the rail holds tools that act on the chart · the dock holds settings that describe layers · one is 44 px forever, the other is one panel at a time</text>
+
+  <!-- ================= LEFT: tool rail ================= -->
+  <text x="40" y="100" font-size="16" font-weight="600" class="t">Tool rail — 44 px, drawing tools land here</text>
+  <text x="40" y="120" font-size="12" class="m">exclusive selection: exactly one tool armed; Esc always returns to Pointer</text>
+
+  <rect x="40" y="140" width="44" height="600" fill="#171B26" stroke="#2E3648"/>
+
+  <!-- pointer (active) -->
+  <rect x="47" y="152" width="30" height="30" rx="4" fill="#4A90D9" opacity="0.25"/>
+  <rect x="47" y="152" width="30" height="30" rx="4" fill="none" stroke="#4A90D9"/>
+  <path d="M 57 159 L 57 175 L 61 171 L 64 177 L 66 176 L 63 170 L 68 170 Z" fill="#D2DAE2"/>
+  <text x="96" y="171" font-size="12" class="t">Pointer — pan, zoom, select</text>
+  <text x="330" y="171" class="key">Esc / 1</text>
+
+  <!-- crosshair -->
+  <rect x="47" y="190" width="30" height="30" rx="4" fill="#232936"/>
+  <g stroke="#96A0AF" stroke-width="1.4"><line x1="62" y1="196" x2="62" y2="214"/><line x1="53" y1="205" x2="71" y2="205"/></g>
+  <text x="96" y="209" font-size="12" class="t">Crosshair — precise read, price tag on axis</text>
+  <text x="330" y="209" class="key">2</text>
+
+  <!-- separator -->
+  <line x1="48" y1="232" x2="76" y2="232" stroke="#2E3648"/>
+
+  <!-- trend line -->
+  <rect x="47" y="242" width="30" height="30" rx="4" fill="#232936"/>
+  <g stroke="#96A0AF" stroke-width="1.4"><line x1="53" y1="266" x2="71" y2="248"/><circle cx="53" cy="266" r="2" fill="#96A0AF"/><circle cx="71" cy="248" r="2" fill="#96A0AF"/></g>
+  <text x="96" y="261" font-size="12" class="t">Trend line — two anchors, bar-index coordinates</text>
+  <text x="330" y="261" class="key">T</text>
+
+  <!-- horizontal line -->
+  <rect x="47" y="280" width="30" height="30" rx="4" fill="#232936"/>
+  <g stroke="#96A0AF" stroke-width="1.4"><line x1="52" y1="295" x2="72" y2="295"/><circle cx="62" cy="295" r="2" fill="#96A0AF"/></g>
+  <text x="96" y="299" font-size="12" class="t">Horizontal level — one price, extends both ways</text>
+  <text x="330" y="299" class="key">H</text>
+
+  <!-- rectangle zone -->
+  <rect x="47" y="318" width="30" height="30" rx="4" fill="#232936"/>
+  <rect x="53" y="325" width="18" height="14" fill="none" stroke="#96A0AF" stroke-width="1.4"/>
+  <text x="96" y="337" font-size="12" class="t">Zone — price-time rectangle (supply/demand)</text>
+  <text x="330" y="337" class="key">R</text>
+
+  <!-- measure -->
+  <rect x="47" y="356" width="30" height="30" rx="4" fill="#232936"/>
+  <g stroke="#96A0AF" stroke-width="1.4"><line x1="53" y1="378" x2="71" y2="362"/><line x1="53" y1="374" x2="53" y2="382"/><line x1="67" y1="360" x2="75" y2="366"/></g>
+  <text x="96" y="375" font-size="12" class="t">Measure — Δprice, Δbars, Δdelta between two points</text>
+  <text x="330" y="375" class="key">M</text>
+
+  <!-- text note -->
+  <rect x="47" y="394" width="30" height="30" rx="4" fill="#232936"/>
+  <text x="56" y="415" font-size="14" class="m" font-weight="600">A</text>
+  <text x="96" y="413" font-size="12" class="t">Note — text label pinned to a bar and price</text>
+  <text x="330" y="413" class="key">N</text>
+
+  <!-- future slot -->
+  <rect x="47" y="432" width="30" height="30" rx="4" fill="none" stroke="#2E3648" stroke-dasharray="3 3"/>
+  <text x="96" y="451" font-size="12" class="f" font-style="italic">reserved — fib, ray, path… one slot per tool, same grammar</text>
+
+  <!-- footer group -->
+  <line x1="48" y1="642" x2="76" y2="642" stroke="#2E3648"/>
+  <rect x="47" y="652" width="30" height="30" rx="4" fill="#232936"/>
+  <g stroke="#96A0AF" stroke-width="1.4" fill="none"><path d="M 55 674 C 55 664, 69 664, 69 674"/><circle cx="62" cy="662" r="3"/></g>
+  <text x="96" y="671" font-size="12" class="t">Magnet — snap anchors to OHLC of the nearest bar</text>
+
+  <rect x="47" y="690" width="30" height="30" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.4"><rect x="55" y="703" width="14" height="10" rx="2"/><path d="M 58 703 v-3 a4 4 0 0 1 8 0 v3"/></g>
+  <text x="96" y="709" font-size="12" class="t">Lock drawings — objects stay, edits refuse politely</text>
+
+  <text x="40" y="778" font-size="12" class="m">Footer = modifiers (toggle state), body = tools (exclusive). Object delete lives on the object:</text>
+  <text x="40" y="796" font-size="12" class="m">select → Del, or the object's own context row — never a global “clear all” icon within reach of a fat finger.</text>
+
+  <!-- ================= RIGHT: dock ================= -->
+  <text x="560" y="100" font-size="16" font-weight="600" class="t">Dock — one home for every settings panel</text>
+  <text x="560" y="120" font-size="12" class="m">tab strip 36 px, always visible when the dock is open · exactly one panel expanded · collapses to the strip</text>
+
+  <!-- dock frame -->
+  <rect x="560" y="140" width="340" height="600" fill="#161A24" stroke="#2E3648"/>
+  <!-- tab strip -->
+  <rect x="560" y="140" width="36" height="600" fill="#171B26"/>
+  <!-- tabs -->
+  <rect x="565" y="152" width="26" height="26" rx="4" fill="#E8845A" opacity="0.30"/>
+  <rect x="565" y="152" width="26" height="26" rx="4" fill="none" stroke="#E8845A"/>
+  <g stroke="#E8845A" stroke-width="1.5"><line x1="571" y1="172" x2="571" y2="164"/><line x1="577" y1="172" x2="577" y2="158"/><line x1="583" y1="172" x2="583" y2="167"/></g>
+  <rect x="565" y="186" width="26" height="26" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.3"><circle cx="574" cy="200" r="3.5"/><circle cx="583" cy="194" r="2.5"/></g>
+  <rect x="565" y="220" width="26" height="26" rx="4" fill="#232936"/>
+  <path d="M 570 240 L 576 230 L 581 235 L 587 226" fill="none" stroke="#96A0AF" stroke-width="1.5"/>
+  <rect x="565" y="254" width="26" height="26" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.3"><circle cx="578" cy="267" r="7"/><path d="M 578 262 v5 l4 2"/></g>
+
+  <g font-size="10" class="f">
+    <text x="604" y="169">L2</text>
+    <text x="604" y="203">Bubbles</text>
+    <text x="604" y="237">Indicators</text>
+    <text x="604" y="271">Session</text>
+  </g>
+
+  <!-- open panel: L2 -->
+  <text x="620" y="170" font-size="13" font-weight="600" class="t">L2 heatmap</text>
+  <text x="878" y="170" font-size="12" text-anchor="end" class="m">⟨⟨</text>
+
+  <text x="620" y="200" font-size="11" class="cap">PALETTE</text>
+  <rect x="620" y="210" width="258" height="26" rx="4" fill="#232936"/>
+  <text x="632" y="227" font-size="12" class="t">thermal ▾</text>
+
+  <text x="620" y="262" font-size="11" class="cap">PRICE GROUPING</text>
+  <rect x="620" y="272" width="120" height="26" rx="4" fill="#232936"/>
+  <text x="632" y="289" font-size="12" class="t mono">0.05 ▾</text>
+  <text x="750" y="289" font-size="11" class="f">non-destructive</text>
+
+  <text x="620" y="324" font-size="11" class="cap">INTENSITY</text>
+  <rect x="620" y="336" width="258" height="6" rx="3" fill="#232936"/>
+  <rect x="620" y="336" width="170" height="6" rx="3" fill="#E8845A" opacity="0.8"/>
+  <circle cx="790" cy="339" r="7" fill="#D2DAE2"/>
+  <rect x="620" y="354" width="16" height="16" rx="3" fill="#26A69A"/>
+  <text x="644" y="366" font-size="12" class="t">auto intensity (visible P99)</text>
+
+  <text x="620" y="404" font-size="11" class="cap">LEGEND</text>
+  <rect x="620" y="414" width="16" height="16" rx="3" fill="#26A69A"/>
+  <text x="644" y="426" font-size="12" class="t">show chart legend</text>
+
+  <line x1="620" y1="452" x2="878" y2="452" stroke="#232936"/>
+  <rect x="620" y="466" width="130" height="26" rx="4" fill="#232936"/>
+  <text x="632" y="483" font-size="12" class="t">reset L2 visuals</text>
+
+  <text x="620" y="530" font-size="11" class="f" font-style="italic">same content as today's left panel —</text>
+  <text x="620" y="546" font-size="11" class="f" font-style="italic">only its home changes</text>
+
+  <!-- collapsed variant -->
+  <text x="960" y="100" font-size="16" font-weight="600" class="t">Collapsed</text>
+  <text x="960" y="120" font-size="12" class="m">36 px — layers stay one click away</text>
+  <rect x="960" y="140" width="36" height="380" fill="#171B26" stroke="#2E3648"/>
+  <rect x="965" y="152" width="26" height="26" rx="4" fill="#232936"/>
+  <g stroke="#96A0AF" stroke-width="1.5"><line x1="971" y1="172" x2="971" y2="164"/><line x1="977" y1="172" x2="977" y2="158"/><line x1="983" y1="172" x2="983" y2="167"/></g>
+  <rect x="965" y="186" width="26" height="26" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.3"><circle cx="974" cy="200" r="3.5"/><circle cx="983" cy="194" r="2.5"/></g>
+  <rect x="965" y="220" width="26" height="26" rx="4" fill="#232936"/>
+  <path d="M 970 240 L 976 230 L 981 235 L 987 226" fill="none" stroke="#96A0AF" stroke-width="1.5"/>
+  <rect x="965" y="254" width="26" height="26" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.3"><circle cx="978" cy="267" r="7"/><path d="M 978 262 v5 l4 2"/></g>
+
+  <!-- rules column -->
+  <g font-size="12">
+    <text x="1060" y="170" font-size="14" font-weight="600" class="t">Dock rules</text>
+    <text x="1060" y="196" class="m">· A layer toggle lives in the toolbar;</text>
+    <text x="1072" y="212" class="m">its settings live in its dock tab.</text>
+    <text x="1060" y="238" class="m">· Opening a tab never toggles the layer —</text>
+    <text x="1072" y="254" class="m">looking is not enabling.</text>
+    <text x="1060" y="280" class="m">· New feature = new tab. The chart pays</text>
+    <text x="1072" y="296" class="m">280 px once, not per panel.</text>
+    <text x="1060" y="322" class="m">· Dock width is user-draggable</text>
+    <text x="1072" y="338" class="m">280–360 px, remembered per tab.</text>
+    <text x="1060" y="364" class="m">· Floating windows remain only for</text>
+    <text x="1072" y="380" class="m">transient tasks: session browser,</text>
+    <text x="1072" y="396" class="m">appearance dialog, script errors.</text>
+  </g>
+
+  <!-- migration note -->
+  <g font-size="12">
+    <text x="560" y="790" font-size="14" font-weight="600" class="t">What moves where</text>
+    <text x="560" y="814" class="m">L2 panel (left SidePanel) → dock tab “L2” · bubbles panel (left SidePanel) → dock tab “Bubbles” · replay browser window → tab “Session”</text>
+    <text x="560" y="834" class="m">indicator manager (planned) → tab “Indicators” · candle style window → stays floating (LOOK), it is a pick-and-close task</text>
+  </g>
+</svg>

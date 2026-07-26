@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <style>
+      .t  { fill: #D2DAE2; }
+      .m  { fill: #96A0AF; }
+      .f  { fill: #6E7887; }
+      .amb{ fill: #F0B90B; }
+      .mono { font-family: Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" fill="#0B0D12"/>
+  <text x="40" y="38" font-size="20" font-weight="600" class="t">Indicators — legend, sub-panes and honest gaps</text>
+  <text x="40" y="58" font-size="12" class="m">overlay scripts join the price chart and its legend · pane scripts stack below, sharing the x-axis · every surface tells the truth about its data</text>
+
+  <!-- ======== chart mock ======== -->
+  <rect x="40" y="80" width="1180" height="700" fill="#131722" stroke="#2E3648"/>
+
+  <!-- price chart region -->
+  <g stroke="#232936"><line x1="40" y1="180" x2="1140" y2="180"/><line x1="40" y1="280" x2="1140" y2="280"/><line x1="40" y1="380" x2="1140" y2="380"/></g>
+
+  <!-- legend block -->
+  <text x="56" y="106" font-size="12" class="t mono">WINQ26 · tick 50 · ● live</text>
+  <!-- indicator legend row: normal -->
+  <circle cx="62" cy="126" r="4" fill="#8AB4F8"/>
+  <text x="74" y="130" font-size="11" class="t mono">EMA 21 close</text>
+  <text x="172" y="130" font-size="11" class="mono" fill="#8AB4F8">64,318.4</text>
+  <!-- indicator legend row: hovered, controls visible -->
+  <rect x="52" y="138" width="330" height="20" rx="3" fill="#1B2030"/>
+  <circle cx="62" cy="148" r="4" fill="#26A69A"/>
+  <text x="74" y="152" font-size="11" class="t mono">CVD (pane)</text>
+  <text x="168" y="152" font-size="11" class="mono" fill="#26A69A">+12,408</text>
+  <g font-size="11" class="m">
+    <text x="296" y="152">👁</text>
+    <text x="318" y="152">⚙</text>
+    <text x="340" y="152">✕</text>
+  </g>
+  <text x="368" y="152" font-size="10" class="f">← on hover</text>
+  <!-- indicator legend row: error state -->
+  <circle cx="62" cy="170" r="4" fill="#FF6347"/>
+  <text x="74" y="174" font-size="11" class="mono" fill="#FF6347">zigzag.pine — error at 12:8 (PINE_STATEFUL_IN_LOOP)</text>
+  <!-- stale row -->
+  <circle cx="62" cy="192" r="4" fill="#F0B90B"/>
+  <text x="74" y="196" font-size="11" class="t mono">range_box.pine</text>
+  <rect x="196" y="184" width="150" height="16" rx="8" fill="#F0B90B" opacity="0.18"/>
+  <text x="204" y="196" font-size="10" class="amb">stale — edit has errors</text>
+
+  <!-- candles -->
+  <g>
+    <line x1="240" y1="230" x2="240" y2="350" stroke="#A0A9B8"/><rect x="228" y="250" width="24" height="70" fill="#26A69A"/>
+    <line x1="320" y1="210" x2="320" y2="340" stroke="#A0A9B8"/><rect x="308" y="240" width="24" height="70" fill="#EF5350"/>
+    <line x1="400" y1="190" x2="400" y2="310" stroke="#A0A9B8"/><rect x="388" y="210" width="24" height="70" fill="#26A69A"/>
+    <line x1="480" y1="170" x2="480" y2="290" stroke="#A0A9B8"/><rect x="468" y="190" width="24" height="70" fill="#26A69A"/>
+    <line x1="560" y1="190" x2="560" y2="320" stroke="#A0A9B8"/><rect x="548" y="220" width="24" height="70" fill="#EF5350"/>
+    <line x1="640" y1="210" x2="640" y2="330" stroke="#A0A9B8"/><rect x="628" y="230" width="24" height="70" fill="#26A69A"/>
+    <line x1="720" y1="180" x2="720" y2="300" stroke="#A0A9B8"/><rect x="708" y="200" width="24" height="70" fill="#26A69A"/>
+    <line x1="800" y1="160" x2="800" y2="280" stroke="#A0A9B8"/><rect x="788" y="180" width="24" height="70" fill="#EF5350"/>
+    <line x1="880" y1="180" x2="880" y2="300" stroke="#A0A9B8"/><rect x="868" y="200" width="24" height="70" fill="#26A69A"/>
+    <line x1="960" y1="160" x2="960" y2="270" stroke="#A0A9B8"/><rect x="948" y="180" width="24" height="60" fill="#26A69A"/>
+    <line x1="1040" y1="150" x2="1040" y2="260" stroke="#A0A9B8"/><rect x="1028" y="170" width="24" height="60" fill="#EF5350"/>
+  </g>
+
+  <!-- EMA with warmup gap -->
+  <path d="M 400 300 C 480 270, 560 280, 640 272 S 800 240, 880 244 S 1000 218, 1080 210" fill="none" stroke="#8AB4F8" stroke-width="1.8"/>
+  <g stroke="#6E7887" stroke-dasharray="3 3" fill="none"><path d="M 240 320 C 290 312, 340 308, 396 301"/></g>
+  <rect x="196" y="330" width="188" height="20" rx="4" fill="#171B26" stroke="#2E3648"/>
+  <text x="206" y="344" font-size="10" class="m">warmup: NaN plots as a gap, never a fake value</text>
+
+  <!-- zone object from a script -->
+  <rect x="620" y="150" width="260" height="46" fill="#F0B90B" opacity="0.10"/>
+  <rect x="620" y="150" width="260" height="46" fill="none" stroke="#F0B90B" stroke-dasharray="4 3" opacity="0.7"/>
+  <text x="628" y="166" font-size="10" class="amb">box.new — range_box.pine</text>
+
+  <!-- pane divider + grip -->
+  <line x1="40" y1="420" x2="1220" y2="420" stroke="#2E3648" stroke-width="2"/>
+  <g fill="#6E7887"><circle cx="620" cy="420" r="1.8"/><circle cx="630" cy="420" r="1.8"/><circle cx="640" cy="420" r="1.8"/></g>
+  <text x="1120" y="414" font-size="10" class="f">drag to resize</text>
+
+  <!-- ======== pane 1: CVD ======== -->
+  <rect x="40" y="420" width="1180" height="140" fill="#10141D"/>
+  <text x="56" y="440" font-size="11" font-weight="600" class="t mono">CVD</text>
+  <text x="96" y="440" font-size="11" class="mono" fill="#26A69A">+12,408</text>
+  <text x="170" y="440" font-size="10" class="f">▾ collapse</text>
+  <g stroke="#232936"><line x1="40" y1="490" x2="1140" y2="490"/></g>
+  <path d="M 60 530 C 200 500, 340 520, 480 496 S 760 462, 900 470 S 1060 448, 1140 452" fill="none" stroke="#26A69A" stroke-width="1.6"/>
+  <g font-size="10" class="m mono"><text x="1148" y="472">12.4k</text><text x="1148" y="530">11.9k</text></g>
+
+  <!-- pane divider -->
+  <line x1="40" y1="560" x2="1220" y2="560" stroke="#2E3648" stroke-width="2"/>
+  <g fill="#6E7887"><circle cx="620" cy="560" r="1.8"/><circle cx="630" cy="560" r="1.8"/><circle cx="640" cy="560" r="1.8"/></g>
+
+  <!-- ======== pane 2: Delta histogram ======== -->
+  <rect x="40" y="560" width="1180" height="130" fill="#10141D"/>
+  <text x="56" y="580" font-size="11" font-weight="600" class="t mono">Delta</text>
+  <text x="106" y="580" font-size="11" class="mono" fill="#EF5350">−184</text>
+  <line x1="40" y1="630" x2="1140" y2="630" stroke="#232936"/>
+  <g>
+    <rect x="234" y="602" width="12" height="28" fill="#26A69A"/>
+    <rect x="314" y="630" width="12" height="20" fill="#EF5350"/>
+    <rect x="394" y="596" width="12" height="34" fill="#26A69A"/>
+    <rect x="474" y="606" width="12" height="24" fill="#26A69A"/>
+    <rect x="554" y="630" width="12" height="30" fill="#EF5350"/>
+    <rect x="634" y="616" width="12" height="14" fill="#26A69A"/>
+    <rect x="714" y="608" width="12" height="22" fill="#26A69A"/>
+    <rect x="794" y="630" width="12" height="26" fill="#EF5350"/>
+    <rect x="874" y="612" width="12" height="18" fill="#26A69A"/>
+    <rect x="954" y="600" width="12" height="30" fill="#26A69A"/>
+    <rect x="1034" y="630" width="12" height="16" fill="#EF5350"/>
+  </g>
+  <g font-size="10" class="m mono"><text x="1148" y="606">+400</text><text x="1148" y="634">0</text><text x="1148" y="662">−400</text></g>
+
+  <!-- shared crosshair across panes -->
+  <line x1="800" y1="80" x2="800" y2="690" stroke="#6E7887" stroke-dasharray="4 3" opacity="0.8"/>
+  <text x="808" y="700" font-size="10" class="f">one crosshair, every pane</text>
+
+  <!-- time axis -->
+  <line x1="40" y1="690" x2="1220" y2="690" stroke="#232936"/>
+  <g font-size="10" class="m mono">
+    <text x="240" y="708" text-anchor="middle">10:41:02</text>
+    <text x="480" y="708" text-anchor="middle">10:41:35</text>
+    <text x="720" y="708" text-anchor="middle">10:41:58</text>
+    <text x="960" y="708" text-anchor="middle">10:42:20</text>
+  </g>
+  <text x="56" y="750" font-size="11" class="f">price axis omitted for clarity — panes keep their own auto-fit scale, x-axis is shared</text>
+
+  <!-- ======== side rules ======== -->
+  <g font-size="12">
+    <text x="1250" y="106" font-size="14" font-weight="600" class="t">Rules</text>
+    <text x="1250" y="132" class="m">· Legend is the manager's</text>
+    <text x="1262" y="148" class="m">fast path: eye, gear, remove</text>
+    <text x="1262" y="164" class="m">on hover. The full manager</text>
+    <text x="1262" y="180" class="m">is the Indicators dock tab.</text>
+    <text x="1250" y="210" class="m">· Overlay scripts share the</text>
+    <text x="1262" y="226" class="m">price scale and auto-fit.</text>
+    <text x="1250" y="256" class="m">· Pane scripts stack below,</text>
+    <text x="1262" y="272" class="m">max 3 panes, resizable,</text>
+    <text x="1262" y="288" class="m">collapsible to their header.</text>
+    <text x="1250" y="318" class="m">· Errors name file, line and</text>
+    <text x="1262" y="334" class="m">code in the legend row —</text>
+    <text x="1262" y="350" class="m">red is broken, amber is</text>
+    <text x="1262" y="366" class="m">stale-but-running.</text>
+    <text x="1250" y="396" class="m">· A recompute shows progress</text>
+    <text x="1262" y="412" class="m">in the status bar; the chart</text>
+    <text x="1262" y="428" class="m">never freezes.</text>
+    <text x="1250" y="458" class="m">· Script drawings (line, box,</text>
+    <text x="1262" y="474" class="m">label) render under user</text>
+    <text x="1262" y="490" class="m">drawings; both under bubbles.</text>
+  </g>
+</svg>
