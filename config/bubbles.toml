@@ -1,20 +1,12 @@
-# quantick — named looks for the AGGRESSION BUBBLES panel.
+# quantick — aggression bubble presets.
 #
-# This is the file the panel reads and writes (override with QUANTICK_BUBBLES).
-# It is tracked in git on purpose: a bubble setup that reads the tape well is
-# worth reviewing and rolling back like code. See README.md in this folder.
-#
-# Quantities are in the symbol's own units: contracts on the mini index, coins
-# on Binance. A `min_quantity` that hides noise on WIN$N hides everything on
-# BTCUSDT, so size-based presets say which market they were built for.
-#
-# Colour overrides are optional `[r, g, b]` triples. Leave a colour out and it
-# follows the chart theme.
-#
-# A preset only describes how bubbles LOOK. Turning the layer on stays a live
-# decision in the panel, so having this file can never start capture by itself.
+# Written by the "aggression bubbles" panel (save), and safe to edit by hand:
+# this file is the versioned record of how the tape is read. See README.md in
+# this folder.
+# `active` names the preset the panel opens on. Colour overrides are optional
+# `[r, g, b]` triples; leave them out to follow the chart theme.
 
-active = "default"
+active = "dense tape btc"
 
 [[presets]]
 name = "default"
@@ -42,8 +34,6 @@ show_quantity_labels = true
 show_trade_count = true
 label_min_radius = 16.0
 
-# A fast tape with hundreds of prints per minute: smaller dots, harder
-# clustering, no labels. Reading direction and size beats reading numbers.
 [[presets]]
 name = "dense tape"
 cluster_ms = 500
@@ -70,9 +60,6 @@ show_quantity_labels = false
 show_trade_count = false
 label_min_radius = 20.0
 
-# Only what moves the book: everything under 10 contracts is hidden and the
-# scale is pinned, so a bubble means the same size all session. Built for the
-# B3 mini index (WIN$N / WDO$N).
 [[presets]]
 name = "mini index sweeps"
 cluster_ms = 200
@@ -99,8 +86,6 @@ show_quantity_labels = true
 show_trade_count = true
 label_min_radius = 14.0
 
-# For studying who is eating whom: the bubble shrinks and the consumption mark
-# takes over — a wide, bright front and a long trail into the consumed side.
 [[presets]]
 name = "consumption focus"
 cluster_ms = 200
@@ -128,3 +113,31 @@ show_trade_count = false
 label_min_radius = 16.0
 front_color = [255, 246, 205]
 trail_color = [255, 190, 90]
+
+[[presets]]
+name = "dense tape btc"
+cluster_ms = 500
+
+[presets.bubbles]
+min_radius = 2.2
+max_radius = 14.0
+opacity = 0.75
+outline_width = 0.2
+halo_strength = 0.25
+detail_min_radius = 2.0
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 1.0
+show_consumption_front = true
+front_width = 0.5
+front_length_scale = 1.1
+show_impact_ring = true
+impact_ring_width = 0.5
+trail_length = 7.0
+trail_opacity = 0.77
+show_quantity_labels = false
+show_trade_count = true
+label_min_radius = 20.0
+front_color = [2, 2, 0]
+trail_color = [0, 0, 0]
