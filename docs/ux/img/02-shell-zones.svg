@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 960" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <style>
+      .t  { fill: #D2DAE2; }
+      .m  { fill: #96A0AF; }
+      .f  { fill: #6E7887; }
+      .mono { font-family: Consolas, monospace; }
+      .zone { font-size: 12px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="960" fill="#0B0D12"/>
+  <text x="40" y="38" font-size="20" font-weight="600" class="t">quantick — proposed shell (zone model)</text>
+  <text x="40" y="58" font-size="12" class="m">nine fixed zones · the chart is the only elastic one · everything future docks into an existing zone, never into a new one</text>
+
+  <!-- ======== window ======== -->
+  <rect x="40" y="80" width="1360" height="744" rx="6" fill="#131722" stroke="#2E3648"/>
+
+  <!-- Z1 menu bar -->
+  <rect x="40" y="80" width="1360" height="28" fill="#8AB4F8" opacity="0.14"/>
+  <rect x="40" y="80" width="1360" height="28" fill="none" stroke="#8AB4F8" stroke-dasharray="4 3"/>
+  <g font-size="12" class="t">
+    <text x="58" y="99">File</text>
+    <text x="94" y="99">View</text>
+    <text x="138" y="99">Insert</text>
+    <text x="188" y="99">Tools</text>
+    <text x="234" y="99">Help</text>
+  </g>
+  <text x="1310" y="99" class="zone" fill="#8AB4F8">1 · menu bar</text>
+
+  <!-- Z2 context toolbar -->
+  <rect x="40" y="108" width="1360" height="44" fill="#4A90D9" opacity="0.12"/>
+  <rect x="40" y="108" width="1360" height="44" fill="none" stroke="#4A90D9" stroke-dasharray="4 3"/>
+  <rect x="56" y="118" width="96" height="24" rx="4" fill="#232936"/>
+  <text x="66" y="134" font-size="11" class="t">Binance ▾</text>
+  <rect x="158" y="118" width="104" height="24" rx="4" fill="#232936"/>
+  <text x="168" y="134" font-size="11" font-weight="600" class="t">BTCUSDT ▾</text>
+  <line x1="276" y1="114" x2="276" y2="146" stroke="#2E3648"/>
+  <rect x="290" y="118" width="76" height="24" rx="4" fill="#232936"/>
+  <text x="300" y="134" font-size="11" class="t">Tick ▾</text>
+  <rect x="372" y="118" width="52" height="24" rx="4" fill="#232936"/>
+  <text x="382" y="134" font-size="11" class="t mono">50</text>
+  <g>
+    <rect x="1076" y="118" width="28" height="24" rx="4" fill="#26A69A" opacity="0.25"/>
+    <rect x="1076" y="118" width="28" height="24" rx="4" fill="none" stroke="#26A69A"/>
+    <rect x="1110" y="118" width="28" height="24" rx="4" fill="#232936"/>
+    <rect x="1144" y="118" width="28" height="24" rx="4" fill="#232936"/>
+    <line x1="1184" y1="114" x2="1184" y2="146" stroke="#2E3648"/>
+    <rect x="1194" y="118" width="28" height="24" rx="4" fill="#232936"/>
+    <rect x="1228" y="118" width="28" height="24" rx="4" fill="#232936"/>
+    <text x="1272" y="134" font-size="14" class="m">⋯</text>
+  </g>
+  <text x="1300" y="136" class="zone" fill="#4A90D9">2 · toolbar</text>
+
+  <!-- Z3 tool rail -->
+  <rect x="40" y="152" width="44" height="560" fill="#B07CF0" opacity="0.12"/>
+  <rect x="40" y="152" width="44" height="560" fill="none" stroke="#B07CF0" stroke-dasharray="4 3"/>
+  <g fill="#96A0AF">
+    <rect x="52" y="168" width="20" height="20" rx="4" fill="#B07CF0" opacity="0.35"/>
+    <rect x="52" y="196" width="20" height="20" rx="4" fill="#232936"/>
+    <rect x="52" y="224" width="20" height="20" rx="4" fill="#232936"/>
+    <rect x="52" y="252" width="20" height="20" rx="4" fill="#232936"/>
+    <rect x="52" y="280" width="20" height="20" rx="4" fill="#232936"/>
+    <rect x="52" y="308" width="20" height="20" rx="4" fill="#232936"/>
+    <rect x="52" y="648" width="20" height="20" rx="4" fill="#232936"/>
+    <rect x="52" y="676" width="20" height="20" rx="4" fill="#232936"/>
+  </g>
+  <text x="62" y="740" class="zone" fill="#B07CF0" transform="rotate(-90 62 740)">3 · tool rail</text>
+
+  <!-- Z4 chart canvas -->
+  <rect x="84" y="152" width="988" height="380" fill="none" stroke="#D2DAE2" stroke-dasharray="5 4" opacity="0.6"/>
+  <text x="100" y="176" font-size="11" class="m mono">BTCUSDT · tick 50 · ● live</text>
+  <text x="100" y="194" font-size="11" class="m mono">EMA 21 · VWAP</text>
+  <g stroke="#232936"><line x1="84" y1="250" x2="1072" y2="250"/><line x1="84" y1="340" x2="1072" y2="340"/><line x1="84" y1="430" x2="1072" y2="430"/></g>
+  <g>
+    <line x1="300" y1="280" x2="300" y2="400" stroke="#A0A9B8"/><rect x="288" y="300" width="24" height="70" fill="#26A69A"/>
+    <line x1="380" y1="260" x2="380" y2="390" stroke="#A0A9B8"/><rect x="368" y="290" width="24" height="70" fill="#EF5350"/>
+    <line x1="460" y1="240" x2="460" y2="360" stroke="#A0A9B8"/><rect x="448" y="260" width="24" height="70" fill="#26A69A"/>
+    <line x1="540" y1="220" x2="540" y2="340" stroke="#A0A9B8"/><rect x="528" y="240" width="24" height="70" fill="#26A69A"/>
+    <line x1="620" y1="240" x2="620" y2="370" stroke="#A0A9B8"/><rect x="608" y="270" width="24" height="70" fill="#EF5350"/>
+    <line x1="700" y1="260" x2="700" y2="380" stroke="#A0A9B8"/><rect x="688" y="280" width="24" height="70" fill="#26A69A"/>
+    <line x1="780" y1="230" x2="780" y2="350" stroke="#A0A9B8"/><rect x="768" y="250" width="24" height="70" fill="#26A69A"/>
+  </g>
+  <path d="M 250 360 C 400 330, 520 290, 660 300 S 900 280, 1040 260" fill="none" stroke="#8AB4F8" stroke-width="1.6" opacity="0.9"/>
+  <text x="560" y="520" class="zone" fill="#D2DAE2">4 · chart canvas (elastic — the only zone that grows)</text>
+
+  <!-- Z5 sub-panes -->
+  <rect x="84" y="532" width="988" height="150" fill="#26A69A" opacity="0.10"/>
+  <rect x="84" y="532" width="988" height="150" fill="none" stroke="#26A69A" stroke-dasharray="4 3"/>
+  <line x1="84" y1="612" x2="1072" y2="612" stroke="#2E3648"/>
+  <text x="100" y="552" font-size="11" class="m mono">CVD</text>
+  <path d="M 100 596 C 260 560, 420 588, 580 566 S 900 540, 1040 556" fill="none" stroke="#26A69A" stroke-width="1.5"/>
+  <text x="100" y="632" font-size="11" class="m mono">Delta</text>
+  <g>
+    <rect x="240" y="640" width="10" height="28" fill="#26A69A"/>
+    <rect x="270" y="654" width="10" height="14" fill="#EF5350"/>
+    <rect x="300" y="636" width="10" height="32" fill="#26A69A"/>
+    <rect x="330" y="650" width="10" height="18" fill="#EF5350"/>
+    <rect x="360" y="644" width="10" height="24" fill="#26A69A"/>
+    <rect x="390" y="658" width="10" height="10" fill="#EF5350"/>
+    <rect x="420" y="640" width="10" height="28" fill="#26A69A"/>
+  </g>
+  <text x="880" y="552" class="zone" fill="#26A69A">5 · indicator sub-panes</text>
+
+  <!-- Z6 time axis -->
+  <rect x="84" y="682" width="988" height="24" fill="#96A0AF" opacity="0.10"/>
+  <rect x="84" y="682" width="988" height="24" fill="none" stroke="#96A0AF" stroke-dasharray="4 3"/>
+  <g font-size="10" class="m mono">
+    <text x="240" y="698" text-anchor="middle">10:41:02</text>
+    <text x="480" y="698" text-anchor="middle">10:41:35</text>
+    <text x="720" y="698" text-anchor="middle">10:42:20</text>
+  </g>
+  <text x="960" y="699" class="zone" fill="#96A0AF">6 · time axis</text>
+
+  <!-- Z9 price axis -->
+  <rect x="1072" y="152" width="64" height="554" fill="#96A0AF" opacity="0.10"/>
+  <rect x="1072" y="152" width="64" height="554" fill="none" stroke="#96A0AF" stroke-dasharray="4 3"/>
+  <g font-size="10" class="m mono">
+    <text x="1080" y="254">64,420</text>
+    <text x="1080" y="344">64,340</text>
+    <text x="1080" y="434">64,260</text>
+  </g>
+  <text x="1092" y="600" class="zone" fill="#96A0AF" transform="rotate(-90 1092 600)">9 · price axis</text>
+
+  <!-- Z8 right dock -->
+  <rect x="1136" y="152" width="264" height="554" fill="#E8845A" opacity="0.10"/>
+  <rect x="1136" y="152" width="264" height="554" fill="none" stroke="#E8845A" stroke-dasharray="4 3"/>
+  <g>
+    <rect x="1136" y="152" width="36" height="554" fill="#171B26"/>
+    <rect x="1142" y="164" width="24" height="24" rx="4" fill="#E8845A" opacity="0.35"/>
+    <rect x="1142" y="196" width="24" height="24" rx="4" fill="#232936"/>
+    <rect x="1142" y="228" width="24" height="24" rx="4" fill="#232936"/>
+    <rect x="1142" y="260" width="24" height="24" rx="4" fill="#232936"/>
+  </g>
+  <text x="1184" y="180" font-size="12" font-weight="600" class="t">L2 heatmap</text>
+  <rect x="1184" y="194" width="196" height="14" rx="3" fill="#232936"/>
+  <rect x="1184" y="216" width="196" height="14" rx="3" fill="#232936"/>
+  <rect x="1184" y="238" width="150" height="14" rx="3" fill="#232936"/>
+  <rect x="1184" y="268" width="196" height="10" rx="3" fill="#232936"/>
+  <text x="1210" y="690" class="zone" fill="#E8845A">8 · dock (tabbed)</text>
+
+  <!-- Z7 status bar with transport slot -->
+  <rect x="40" y="762" width="1360" height="28" fill="#F0B90B" opacity="0.10"/>
+  <rect x="40" y="762" width="1360" height="28" fill="none" stroke="#F0B90B" stroke-dasharray="4 3"/>
+  <circle cx="62" cy="776" r="4" fill="#26A69A"/>
+  <text x="74" y="781" font-size="11" class="t">live · Binance · BTCUSDT</text>
+  <text x="240" y="781" font-size="11" class="m mono">lag 42 ms</text>
+  <text x="1080" y="781" font-size="11" class="m mono">24,183 trades · 60 fps</text>
+  <text x="1270" y="781" font-size="11" class="m">UTC−03:00 ▾</text>
+  <text x="640" y="781" class="zone" fill="#F0B90B">7 · status bar (owns the replay transport)</text>
+
+  <!-- transport slot, dashed, above status bar -->
+  <rect x="40" y="712" width="1360" height="30" fill="none" stroke="#F0B90B" stroke-dasharray="2 3" opacity="0.6"/>
+  <text x="56" y="731" font-size="10" fill="#F0B90B" opacity="0.9">7b · transport strip — appears only while a recording plays, amber like every not-live surface</text>
+
+  <!-- ======== budgets footer ======== -->
+  <g font-size="12">
+    <text x="40" y="856" font-size="14" font-weight="600" class="t">Fixed chrome budget</text>
+    <text x="40" y="880" class="m">menu 28 px · toolbar 44 px · tool rail 44 px · price axis 64 px · time axis 24 px · status bar 28 px · transport 30 px (replay only)</text>
+    <text x="40" y="900" class="m">dock 280–360 px, collapsible to its 36 px tab strip · sub-panes ≤ 40% of chart height, max 3 · vertical chrome while live: 124 px — 4 px more than today</text>
+    <text x="40" y="930" class="t">Rule: a new feature must claim a slot inside zones 1–9. If it cannot, the shell — not the feature — is what gets redesigned.</text>
+  </g>
+</svg>

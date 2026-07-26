@@ -1,0 +1,164 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 860" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <style>
+      .t  { fill: #D2DAE2; }
+      .m  { fill: #96A0AF; }
+      .f  { fill: #6E7887; }
+      .mono { font-family: Consolas, monospace; }
+      .cap { font-size: 11px; fill: #6E7887; letter-spacing: 1px; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="860" fill="#0B0D12"/>
+  <text x="40" y="38" font-size="20" font-weight="600" class="t">Toolbar — grouped by question, not by feature</text>
+  <text x="40" y="58" font-size="12" class="m">left answers “what am I looking at?” · right answers “how is it drawn?” · diagnostics leave the toolbar for the status bar</text>
+
+  <!-- ======== full toolbar ======== -->
+  <rect x="40" y="90" width="1360" height="48" rx="6" fill="#171B26" stroke="#2E3648"/>
+
+  <!-- SOURCE group -->
+  <text x="56" y="82" class="cap">SOURCE</text>
+  <rect x="56" y="100" width="100" height="28" rx="4" fill="#232936"/>
+  <text x="68" y="118" font-size="12" class="t">Binance ▾</text>
+  <rect x="162" y="100" width="112" height="28" rx="4" fill="#232936"/>
+  <text x="174" y="118" font-size="12" font-weight="600" class="t">BTCUSDT ▾</text>
+  <line x1="288" y1="96" x2="288" y2="132" stroke="#2E3648"/>
+
+  <!-- BARS group -->
+  <text x="302" y="82" class="cap">BARS</text>
+  <rect x="302" y="100" width="80" height="28" rx="4" fill="#232936"/>
+  <text x="314" y="118" font-size="12" class="t">Tick ▾</text>
+  <rect x="388" y="100" width="56" height="28" rx="4" fill="#232936"/>
+  <text x="400" y="118" font-size="12" class="t mono">50</text>
+  <line x1="458" y1="96" x2="458" y2="132" stroke="#2E3648"/>
+
+  <!-- HISTORY group -->
+  <text x="472" y="82" class="cap">HISTORY</text>
+  <rect x="472" y="100" width="90" height="28" rx="4" fill="#232936"/>
+  <text x="484" y="118" font-size="12" class="t">+ older ▾</text>
+
+  <!-- spacer note -->
+  <text x="640" y="118" font-size="11" class="f" font-style="italic">← flexible space — groups never wrap, they collapse into ⋯ →</text>
+
+  <!-- LAYERS group -->
+  <text x="1024" y="82" class="cap">LAYERS</text>
+  <g>
+    <rect x="1024" y="100" width="30" height="28" rx="4" fill="#26A69A" opacity="0.22"/>
+    <rect x="1024" y="100" width="30" height="28" rx="4" fill="none" stroke="#26A69A"/>
+    <g stroke="#26A69A" stroke-width="1.6"><line x1="1031" y1="122" x2="1031" y2="112"/><line x1="1037" y1="122" x2="1037" y2="107"/><line x1="1043" y1="122" x2="1043" y2="116"/><line x1="1049" y1="122" x2="1049" y2="110"/></g>
+    <rect x="1060" y="100" width="30" height="28" rx="4" fill="#232936"/>
+    <g fill="none" stroke="#96A0AF" stroke-width="1.4"><circle cx="1070" cy="118" r="4"/><circle cx="1080" cy="110" r="3"/><circle cx="1079" cy="121" r="2.2"/></g>
+    <rect x="1096" y="100" width="30" height="28" rx="4" fill="#232936"/>
+    <path d="M 1102 122 L 1108 112 L 1114 117 L 1121 106" fill="none" stroke="#96A0AF" stroke-width="1.6"/>
+  </g>
+  <line x1="1140" y1="96" x2="1140" y2="132" stroke="#2E3648"/>
+
+  <!-- LOOK group -->
+  <text x="1154" y="82" class="cap">LOOK</text>
+  <rect x="1154" y="100" width="30" height="28" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.4">
+    <rect x="1162" y="106" width="6" height="10"/><line x1="1165" y1="103" x2="1165" y2="119"/>
+    <rect x="1172" y="110" width="6" height="8"/><line x1="1175" y1="107" x2="1175" y2="121"/>
+  </g>
+  <line x1="1198" y1="96" x2="1198" y2="132" stroke="#2E3648"/>
+
+  <!-- PANELS group -->
+  <text x="1212" y="82" class="cap">PANELS</text>
+  <rect x="1212" y="100" width="30" height="28" rx="4" fill="#232936"/>
+  <g fill="none" stroke="#96A0AF" stroke-width="1.4"><rect x="1219" y="107" width="16" height="14" rx="2"/><line x1="1229" y1="107" x2="1229" y2="121"/></g>
+
+  <!-- overflow -->
+  <text x="1262" y="121" font-size="16" class="m">⋯</text>
+  <text x="1300" y="118" font-size="11" class="f">overflow</text>
+
+  <!-- group annotations -->
+  <g font-size="12" class="m">
+    <text x="56" y="168">SOURCE — feed and symbol, from config. During replay the two combos are replaced by the amber session label: the source is the recording.</text>
+    <text x="56" y="188">BARS — bar kind + its one parameter. HISTORY — “+ older ▾” button with the page size inside its menu, gated by the paging capability.</text>
+    <text x="56" y="208">LAYERS — one icon toggle per visual layer: heatmap, bubbles, indicators. Right-click (or caret) opens that layer's dock tab. Adding a layer adds one icon, not one checkbox row.</text>
+    <text x="56" y="228">LOOK — appearance dialog (candles, canvas, grid). PANELS — show/hide the dock. Perf display moves to the status bar; it is a reading, not a control.</text>
+  </g>
+
+  <!-- ======== states strip ======== -->
+  <text x="40" y="292" font-size="16" font-weight="600" class="t">One icon button, five states</text>
+  <g>
+    <rect x="40" y="310" width="34" height="30" rx="4" fill="#232936"/>
+    <g stroke="#96A0AF" stroke-width="1.6"><line x1="49" y1="333" x2="49" y2="323"/><line x1="55" y1="333" x2="55" y2="318"/><line x1="61" y1="333" x2="61" y2="327"/><line x1="67" y1="333" x2="67" y2="321"/></g>
+    <text x="57" y="360" font-size="11" text-anchor="middle" class="m">idle</text>
+
+    <rect x="140" y="310" width="34" height="30" rx="4" fill="#2E3648"/>
+    <g stroke="#D2DAE2" stroke-width="1.6"><line x1="149" y1="333" x2="149" y2="323"/><line x1="155" y1="333" x2="155" y2="318"/><line x1="161" y1="333" x2="161" y2="327"/><line x1="167" y1="333" x2="167" y2="321"/></g>
+    <text x="157" y="360" font-size="11" text-anchor="middle" class="m">hover + tooltip</text>
+
+    <rect x="240" y="310" width="34" height="30" rx="4" fill="#26A69A" opacity="0.22"/>
+    <rect x="240" y="310" width="34" height="30" rx="4" fill="none" stroke="#26A69A"/>
+    <g stroke="#26A69A" stroke-width="1.6"><line x1="249" y1="333" x2="249" y2="323"/><line x1="255" y1="333" x2="255" y2="318"/><line x1="261" y1="333" x2="261" y2="327"/><line x1="267" y1="333" x2="267" y2="321"/></g>
+    <text x="257" y="360" font-size="11" text-anchor="middle" class="m">active</text>
+
+    <rect x="340" y="310" width="34" height="30" rx="4" fill="#232936" opacity="0.45"/>
+    <g stroke="#96A0AF" stroke-width="1.6" opacity="0.4"><line x1="349" y1="333" x2="349" y2="323"/><line x1="355" y1="333" x2="355" y2="318"/><line x1="361" y1="333" x2="361" y2="327"/><line x1="367" y1="333" x2="367" y2="321"/></g>
+    <text x="357" y="360" font-size="11" text-anchor="middle" class="m">disabled</text>
+
+    <rect x="440" y="310" width="34" height="30" rx="4" fill="#232936" opacity="0.45"/>
+    <g stroke="#96A0AF" stroke-width="1.6" opacity="0.4"><line x1="449" y1="333" x2="449" y2="323"/><line x1="455" y1="333" x2="455" y2="318"/><line x1="461" y1="333" x2="461" y2="327"/><line x1="467" y1="333" x2="467" y2="321"/></g>
+    <rect x="484" y="300" width="330" height="26" rx="4" fill="#373F50"/>
+    <path d="M 484 316 L 476 322 L 484 328 Z" fill="#373F50"/>
+    <text x="496" y="317" font-size="11" class="t">this feed has no order-book depth — capability, not error</text>
+    <text x="500" y="360" font-size="11" class="m">disabled explains itself on hover</text>
+  </g>
+  <text x="40" y="396" font-size="12" class="m">Disabled ≠ hidden: an affordance the venue cannot serve stays visible at 40% and says why. Only a mode change (replay) may swap chrome.</text>
+
+  <!-- ======== responsive collapse ======== -->
+  <text x="40" y="452" font-size="16" font-weight="600" class="t">Width discipline — the row never wraps</text>
+
+  <text x="40" y="480" font-size="11" class="cap">WIDE ≥ 1280 px</text>
+  <rect x="40" y="490" width="1360" height="40" rx="6" fill="#171B26" stroke="#2E3648"/>
+  <g font-size="11" class="t">
+    <rect x="52" y="498" width="88" height="24" rx="4" fill="#232936"/><text x="62" y="514">Binance ▾</text>
+    <rect x="146" y="498" width="96" height="24" rx="4" fill="#232936"/><text x="156" y="514" font-weight="600">BTCUSDT ▾</text>
+    <line x1="252" y1="494" x2="252" y2="526" stroke="#2E3648"/>
+    <rect x="262" y="498" width="70" height="24" rx="4" fill="#232936"/><text x="272" y="514">Tick ▾</text>
+    <rect x="338" y="498" width="48" height="24" rx="4" fill="#232936"/><text x="348" y="514" class="mono">50</text>
+    <line x1="396" y1="494" x2="396" y2="526" stroke="#2E3648"/>
+    <rect x="406" y="498" width="82" height="24" rx="4" fill="#232936"/><text x="416" y="514">+ older ▾</text>
+    <rect x="1112" y="498" width="26" height="24" rx="4" fill="#26A69A" opacity="0.25"/>
+    <rect x="1142" y="498" width="26" height="24" rx="4" fill="#232936"/>
+    <rect x="1172" y="498" width="26" height="24" rx="4" fill="#232936"/>
+    <line x1="1208" y1="494" x2="1208" y2="526" stroke="#2E3648"/>
+    <rect x="1218" y="498" width="26" height="24" rx="4" fill="#232936"/>
+    <rect x="1248" y="498" width="26" height="24" rx="4" fill="#232936"/>
+    <text x="1288" y="516" font-size="14" class="m">⋯</text>
+  </g>
+
+  <text x="40" y="566" font-size="11" class="cap">NARROW &lt; 1280 px — LOOK and PANELS fold into ⋯, symbol keeps its name</text>
+  <rect x="40" y="576" width="880" height="40" rx="6" fill="#171B26" stroke="#2E3648"/>
+  <g font-size="11" class="t">
+    <rect x="52" y="584" width="30" height="24" rx="4" fill="#232936"/><text x="60" y="600" class="m">B</text>
+    <rect x="88" y="584" width="96" height="24" rx="4" fill="#232936"/><text x="98" y="600" font-weight="600">BTCUSDT ▾</text>
+    <line x1="194" y1="580" x2="194" y2="612" stroke="#2E3648"/>
+    <rect x="204" y="584" width="96" height="24" rx="4" fill="#232936"/><text x="214" y="600" class="mono">Tick · 50 ▾</text>
+    <line x1="310" y1="580" x2="310" y2="612" stroke="#2E3648"/>
+    <rect x="662" y="584" width="26" height="24" rx="4" fill="#26A69A" opacity="0.25"/>
+    <rect x="692" y="584" width="26" height="24" rx="4" fill="#232936"/>
+    <rect x="722" y="584" width="26" height="24" rx="4" fill="#232936"/>
+    <text x="762" y="602" font-size="14" class="m">⋯</text>
+  </g>
+
+  <text x="40" y="652" font-size="11" class="cap">REPLAY MODE — the source group becomes the honest amber label; capabilities disable the rest</text>
+  <rect x="40" y="662" width="1360" height="40" rx="6" fill="#171B26" stroke="#2E3648"/>
+  <g font-size="11">
+    <text x="52" y="686" fill="#F0B90B" font-weight="600">▶ WINJ26 · 2026-03-10 session</text>
+    <line x1="262" y1="666" x2="262" y2="698" stroke="#2E3648"/>
+    <rect x="272" y="670" width="70" height="24" rx="4" fill="#232936"/><text x="282" y="686" class="t">Tick ▾</text>
+    <rect x="348" y="670" width="48" height="24" rx="4" fill="#232936"/><text x="358" y="686" class="t mono">50</text>
+    <rect x="416" y="670" width="82" height="24" rx="4" fill="#232936" opacity="0.45"/><text x="426" y="686" class="m" opacity="0.5">+ older ▾</text>
+    <rect x="1112" y="670" width="26" height="24" rx="4" fill="#232936" opacity="0.45"/>
+    <rect x="1142" y="670" width="26" height="24" rx="4" fill="#232936"/>
+    <rect x="1172" y="670" width="26" height="24" rx="4" fill="#232936"/>
+  </g>
+
+  <g font-size="12" class="m">
+    <text x="40" y="746">Collapse order (first to fold): LOOK → PANELS → HISTORY → bar parameter merges into the kind combo → feed name shrinks to its initial.</text>
+    <text x="40" y="766">Never folded: the symbol and the LAYERS toggles — they are the two things a trader glances at mid-session.</text>
+  </g>
+</svg>

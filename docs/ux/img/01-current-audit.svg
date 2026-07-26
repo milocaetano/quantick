@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1000" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <style>
+      .t  { fill: #D2DAE2; }
+      .m  { fill: #96A0AF; }
+      .f  { fill: #6E7887; }
+      .amb{ fill: #F0B90B; }
+      .mono { font-family: Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="1000" fill="#0B0D12"/>
+  <text x="40" y="38" font-size="20" font-weight="600" class="t">quantick — today's UI (audit)</text>
+  <text x="40" y="58" font-size="12" class="m">every control the app has in 2026-07, drawn where it lives today · numbered chips mark the findings listed below</text>
+
+  <!-- ======== window frame ======== -->
+  <rect x="40" y="80" width="1360" height="640" rx="6" fill="#131722" stroke="#2E3648"/>
+
+  <!-- menu bar -->
+  <rect x="40" y="80" width="1360" height="26" fill="#171B26"/>
+  <text x="56" y="97" font-size="12" class="t">File</text>
+  <text x="92" y="97" font-size="12" class="t">Help</text>
+  <line x1="40" y1="106" x2="1400" y2="106" stroke="#232936"/>
+
+  <!-- controls row (single wrapped row) -->
+  <rect x="40" y="106" width="1360" height="36" fill="#171B26"/>
+  <text x="56" y="128" font-size="11" class="m">feed:</text>
+  <rect x="86" y="113" width="86" height="20" rx="3" fill="#232936"/>
+  <text x="94" y="127" font-size="11" class="t">Binance ▾</text>
+  <text x="184" y="128" font-size="11" class="m">symbol:</text>
+  <rect x="228" y="113" width="86" height="20" rx="3" fill="#232936"/>
+  <text x="236" y="127" font-size="11" class="t">BTCUSDT ▾</text>
+  <line x1="326" y1="112" x2="326" y2="136" stroke="#232936"/>
+  <text x="336" y="128" font-size="11" class="m">bar type:</text>
+  <rect x="388" y="113" width="56" height="20" rx="3" fill="#232936"/>
+  <text x="396" y="127" font-size="11" class="t">tick ▾</text>
+  <text x="452" y="128" font-size="11" class="m">N trades</text>
+  <rect x="502" y="113" width="40" height="20" rx="3" fill="#232936"/>
+  <text x="510" y="127" font-size="11" class="t mono">50</text>
+  <line x1="552" y1="112" x2="552" y2="136" stroke="#232936"/>
+  <text x="562" y="128" font-size="11" class="m">history +</text>
+  <rect x="614" y="113" width="46" height="20" rx="3" fill="#232936"/>
+  <text x="620" y="127" font-size="11" class="t mono">2000</text>
+  <rect x="666" y="113" width="72" height="20" rx="3" fill="#232936"/>
+  <text x="673" y="127" font-size="11" class="t">load older</text>
+  <text x="744" y="128" font-size="11" class="f mono">(12,483 trades)</text>
+  <line x1="838" y1="112" x2="838" y2="136" stroke="#232936"/>
+  <rect x="848" y="113" width="58" height="20" rx="3" fill="#232936"/>
+  <text x="855" y="127" font-size="11" class="t">candle</text>
+  <line x1="914" y1="112" x2="914" y2="136" stroke="#232936"/>
+  <rect x="924" y="115" width="12" height="12" rx="2" fill="#26A69A"/>
+  <text x="942" y="127" font-size="11" class="t">book heatmap</text>
+  <rect x="1020" y="113" width="66" height="20" rx="3" fill="#232936"/>
+  <text x="1027" y="127" font-size="11" class="t">L2 panel</text>
+  <line x1="1094" y1="112" x2="1094" y2="136" stroke="#232936"/>
+  <rect x="1104" y="115" width="12" height="12" rx="2" fill="none" stroke="#96A0AF"/>
+  <text x="1122" y="127" font-size="11" class="t">bubbles</text>
+  <rect x="1174" y="113" width="86" height="20" rx="3" fill="#232936"/>
+  <text x="1181" y="127" font-size="11" class="t">bubbles panel</text>
+  <line x1="1268" y1="112" x2="1268" y2="136" stroke="#232936"/>
+  <rect x="1278" y="115" width="12" height="12" rx="2" fill="#26A69A"/>
+  <text x="1296" y="127" font-size="11" class="t">perf</text>
+  <line x1="40" y1="142" x2="1400" y2="142" stroke="#232936"/>
+
+  <!-- left side panels, stacked side by side -->
+  <rect x="40" y="142" width="180" height="546" fill="#161A24" stroke="#232936"/>
+  <text x="54" y="164" font-size="12" font-weight="600" class="t">L2 heatmap</text>
+  <rect x="54" y="176" width="152" height="16" rx="3" fill="#232936"/>
+  <rect x="54" y="200" width="152" height="16" rx="3" fill="#232936"/>
+  <rect x="54" y="224" width="110" height="16" rx="3" fill="#232936"/>
+  <rect x="54" y="256" width="152" height="10" rx="3" fill="#232936"/>
+  <rect x="54" y="274" width="152" height="10" rx="3" fill="#232936"/>
+  <text x="54" y="310" font-size="10" class="f">palette · ranges · liquidity</text>
+  <rect x="220" y="142" width="180" height="546" fill="#161A24" stroke="#232936"/>
+  <text x="234" y="164" font-size="12" font-weight="600" class="t">aggression bubbles</text>
+  <rect x="234" y="176" width="152" height="16" rx="3" fill="#232936"/>
+  <rect x="234" y="200" width="152" height="16" rx="3" fill="#232936"/>
+  <rect x="234" y="224" width="110" height="16" rx="3" fill="#232936"/>
+  <rect x="234" y="256" width="152" height="10" rx="3" fill="#232936"/>
+  <text x="234" y="292" font-size="10" class="f">presets · size · colours</text>
+
+  <!-- chart area -->
+  <rect x="400" y="142" width="936" height="546" fill="#131722"/>
+  <!-- header text painted over chart -->
+  <text x="416" y="162" font-size="11" class="m mono">BTCUSDT · tick(50) · 240 backfilled + 61 live bars · ● live</text>
+  <!-- loading indicator top-center -->
+  <text x="850" y="162" font-size="10" class="f">◌ loading history…</text>
+
+  <!-- grid -->
+  <g stroke="#232936" stroke-width="1">
+    <line x1="400" y1="240" x2="1336" y2="240"/>
+    <line x1="400" y1="330" x2="1336" y2="330"/>
+    <line x1="400" y1="420" x2="1336" y2="420"/>
+    <line x1="400" y1="510" x2="1336" y2="510"/>
+    <line x1="400" y1="600" x2="1336" y2="600"/>
+  </g>
+
+  <!-- amber backfill divider -->
+  <line x1="880" y1="142" x2="880" y2="666" stroke="#F0B90B" stroke-width="1.5"/>
+  <text x="874" y="660" font-size="10" text-anchor="end" class="m">backfill</text>
+  <text x="886" y="660" font-size="10" class="amb">live</text>
+
+  <!-- candles -->
+  <g>
+    <line x1="470" y1="300" x2="470" y2="420" stroke="#A0A9B8"/>
+    <rect x="458" y="330" width="24" height="60" fill="#26A69A"/>
+    <line x1="530" y1="320" x2="530" y2="440" stroke="#A0A9B8"/>
+    <rect x="518" y="350" width="24" height="70" fill="#EF5350"/>
+    <line x1="590" y1="280" x2="590" y2="400" stroke="#A0A9B8"/>
+    <rect x="578" y="300" width="24" height="80" fill="#26A69A"/>
+    <line x1="650" y1="250" x2="650" y2="360" stroke="#A0A9B8"/>
+    <rect x="638" y="270" width="24" height="60" fill="#26A69A"/>
+    <line x1="710" y1="260" x2="710" y2="380" stroke="#A0A9B8"/>
+    <rect x="698" y="290" width="24" height="70" fill="#EF5350"/>
+    <line x1="770" y1="290" x2="770" y2="410" stroke="#A0A9B8"/>
+    <rect x="758" y="310" width="24" height="70" fill="#EF5350"/>
+    <line x1="830" y1="270" x2="830" y2="390" stroke="#A0A9B8"/>
+    <rect x="818" y="290" width="24" height="70" fill="#26A69A"/>
+    <line x1="910" y1="240" x2="910" y2="350" stroke="#A0A9B8"/>
+    <rect x="898" y="260" width="24" height="60" fill="#26A69A"/>
+    <line x1="970" y1="220" x2="970" y2="330" stroke="#A0A9B8"/>
+    <rect x="958" y="240" width="24" height="60" fill="#26A69A"/>
+    <line x1="1030" y1="240" x2="1030" y2="360" stroke="#A0A9B8"/>
+    <rect x="1018" y="270" width="24" height="60" fill="#EF5350"/>
+    <line x1="1090" y1="230" x2="1090" y2="340" stroke="#A0A9B8"/>
+    <rect x="1078" y="250" width="24" height="60" fill="#26A69A"/>
+  </g>
+
+  <!-- perf overlay bottom-left of chart -->
+  <rect x="416" y="580" width="170" height="76" rx="4" fill="#000000" opacity="0.6"/>
+  <text x="428" y="600" font-size="11" class="t mono">  60 fps    6.2 ms</text>
+  <text x="428" y="618" font-size="11" class="t mono">cpu 3.1 ms worst 9.8</text>
+  <text x="428" y="636" font-size="11" class="t mono">feed lag 42 ms</text>
+  <text x="428" y="652" font-size="11" class="t mono">24,183 live trades</text>
+
+  <!-- price axis gutter -->
+  <line x1="1336" y1="142" x2="1336" y2="666" stroke="#232936"/>
+  <g font-size="11" class="m mono">
+    <text x="1344" y="244">64,420</text>
+    <text x="1344" y="334">64,380</text>
+    <text x="1344" y="424">64,340</text>
+    <text x="1344" y="514">64,300</text>
+    <text x="1344" y="604">64,260</text>
+  </g>
+
+  <!-- time strip -->
+  <line x1="400" y1="666" x2="1336" y2="666" stroke="#232936"/>
+  <g font-size="10" class="m mono">
+    <text x="470" y="682" text-anchor="middle">10:41:02</text>
+    <text x="650" y="682" text-anchor="middle">10:41:17</text>
+    <text x="830" y="682" text-anchor="middle">10:41:35</text>
+    <text x="1010" y="682" text-anchor="middle">10:41:58</text>
+    <text x="1190" y="682" text-anchor="middle">10:42:20</text>
+  </g>
+
+  <!-- tz selector floating bottom-right -->
+  <rect x="1250" y="640" width="120" height="24" rx="4" fill="#000000" opacity="0.6"/>
+  <text x="1262" y="656" font-size="11" class="t">UTC−03:00 ▾</text>
+
+  <!-- replay transport bottom panel -->
+  <rect x="40" y="688" width="1360" height="32" fill="#171B26"/>
+  <line x1="40" y1="688" x2="1400" y2="688" stroke="#232936"/>
+  <text x="56" y="708" font-size="12" class="amb">▶</text>
+  <text x="76" y="708" font-size="11" class="t">WINJ26 2026-03-10</text>
+  <rect x="220" y="698" width="900" height="10" rx="5" fill="#232936"/>
+  <rect x="220" y="698" width="390" height="10" rx="5" fill="#F0B90B" opacity="0.85"/>
+  <text x="1136" y="708" font-size="11" class="m mono">1× · 43%</text>
+
+  <!-- floating windows, drawn beside the frame -->
+  <rect x="612" y="380" width="240" height="160" rx="6" fill="#171B26" stroke="#2E3648"/>
+  <text x="628" y="402" font-size="12" font-weight="600" class="t">candle style</text>
+  <rect x="628" y="416" width="208" height="12" rx="3" fill="#232936"/>
+  <rect x="628" y="436" width="208" height="12" rx="3" fill="#232936"/>
+  <rect x="628" y="456" width="160" height="12" rx="3" fill="#232936"/>
+  <text x="628" y="490" font-size="10" class="f">floating egui window</text>
+  <rect x="900" y="420" width="260" height="150" rx="6" fill="#171B26" stroke="#2E3648"/>
+  <text x="916" y="442" font-size="12" font-weight="600" class="t">Market Replay</text>
+  <rect x="916" y="456" width="228" height="12" rx="3" fill="#232936"/>
+  <rect x="916" y="476" width="228" height="12" rx="3" fill="#232936"/>
+  <rect x="916" y="496" width="170" height="12" rx="3" fill="#232936"/>
+  <text x="916" y="530" font-size="10" class="f">floating egui window (Ctrl+R)</text>
+
+  <!-- ======== finding chips ======== -->
+  <g font-size="13" font-weight="700">
+    <circle cx="700" cy="124" r="12" fill="#F0B90B"/><text x="700" y="129" text-anchor="middle" fill="#131722">1</text>
+    <circle cx="230" cy="470" r="12" fill="#F0B90B"/><text x="230" y="475" text-anchor="middle" fill="#131722">2</text>
+    <circle cx="855" cy="392" r="12" fill="#F0B90B"/><text x="855" y="397" text-anchor="middle" fill="#131722">3</text>
+    <circle cx="870" cy="124" r="12" fill="#F0B90B"/><text x="870" y="129" text-anchor="middle" fill="#131722">4</text>
+    <circle cx="600" cy="592" r="12" fill="#F0B90B"/><text x="600" y="597" text-anchor="middle" fill="#131722">5</text>
+    <circle cx="1320" cy="124" r="12" fill="#F0B90B"/><text x="1320" y="129" text-anchor="middle" fill="#131722">6</text>
+    <circle cx="180" cy="704" r="12" fill="#F0B90B"/><text x="180" y="709" text-anchor="middle" fill="#131722">7</text>
+  </g>
+
+  <!-- ======== findings legend ======== -->
+  <g font-size="12">
+    <text x="40" y="760" font-size="14" font-weight="600" class="t">Findings</text>
+    <circle cx="52" cy="782" r="10" fill="#F0B90B"/><text x="52" y="786" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">1</text>
+    <text x="72" y="786" class="t">One row mixes six concerns — source, bar spec, history, appearance, layers, diagnostics. It wraps on narrow windows and grows by one control per feature.</text>
+    <circle cx="52" cy="812" r="10" fill="#F0B90B"/><text x="52" y="816" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">2</text>
+    <text x="72" y="816" class="t">Each settings panel is its own left SidePanel. Two open at once cost the chart ~400 px; there are no tabs and no collapse.</text>
+    <circle cx="52" cy="842" r="10" fill="#F0B90B"/><text x="52" y="846" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">3</text>
+    <text x="72" y="846" class="t">Inconsistent surfaces: candle style and the replay browser float, L2/bubbles dock left, the timezone picker pins bottom-right.</text>
+    <circle cx="52" cy="872" r="10" fill="#F0B90B"/><text x="52" y="876" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">4</text>
+    <text x="72" y="876" class="t">Three ad-hoc emoji glyphs stand in for an icon system; no shared sizes, strokes or interaction states.</text>
+    <circle cx="52" cy="902" r="10" fill="#F0B90B"/><text x="52" y="906" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">5</text>
+    <text x="72" y="906" class="t">Status is painted over the candles in four corners: header line, perf box, history loader, timezone pill. There is no single glance line.</text>
+    <circle cx="52" cy="932" r="10" fill="#F0B90B"/><text x="52" y="936" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">6</text>
+    <text x="72" y="936" class="t">No reserved zone for what is coming — indicators, drawing tools, alerts would each add yet another checkbox to the row.</text>
+    <circle cx="52" cy="962" r="10" fill="#F0B90B"/><text x="52" y="966" text-anchor="middle" font-weight="700" font-size="11" fill="#131722">7</text>
+    <text x="72" y="966" class="t">The replay transport is a style island: its own bottom panel with its own conventions, unrelated to any status line.</text>
+  </g>
+</svg>
