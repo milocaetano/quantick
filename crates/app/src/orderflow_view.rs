@@ -431,6 +431,15 @@ impl OrderflowView {
         self.published.health.clone()
     }
 
+    /// Whether capture is turned on but not yet (or no longer) delivering a
+    /// live book. What the app's loading overlay mirrors. Reads the frame's
+    /// mirror, refreshed by the panel/projection calls the frame already made;
+    /// which statuses count as a wait is [`CaptureStatus::is_syncing`]'s call.
+    #[must_use]
+    pub fn is_syncing(&self) -> bool {
+        self.config.enabled && self.published.status.is_syncing()
+    }
+
     pub fn reset_summary_counters(&mut self) {
         self.worker.send(BookCommand::ResetSummaryCounters);
     }
@@ -1386,6 +1395,20 @@ mod tests {
             sell_volume: Decimal::ONE,
             trade_count: 2,
         }
+    }
+
+    #[test]
+    fn capture_reads_as_syncing_only_while_enabled_and_settling() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        assert!(!view.is_syncing(), "disabled capture is not a wait");
+
+        view.set_enabled(true, 10);
+        view.flush_for_test();
+        assert!(view.is_syncing(), "connecting reads as a wait");
+
+        view.set_enabled(false, 20);
+        view.flush_for_test();
+        assert!(!view.is_syncing(), "turning capture off ends the wait");
     }
 
     #[test]
