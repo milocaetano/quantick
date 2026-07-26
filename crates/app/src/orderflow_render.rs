@@ -234,11 +234,20 @@ const SPHERE_LIGHT_OFFSET: f32 = 0.35;
 /// it and side colour → darkened rim outside it; that gradient is the whole
 /// shading model.
 const SPHERE_CORE_RADIUS: f32 = 0.62;
-/// Tessellation bounds for a sphere-shaded bubble, scaled with the radius so
-/// a small dressed bubble stays cheap and a full-size sweep stays round.
+/// Ring segments per pixel of radius on a sphere-shaded bubble, bounded by
+/// [`SPHERE_MIN_SEGMENTS`] and [`SPHERE_MAX_SEGMENTS`]: a small dressed
+/// bubble stays cheap, a full-size sweep stays round.
+const SPHERE_SEGMENTS_PER_RADIUS_PX: f32 = 2.0;
+/// See [`SPHERE_SEGMENTS_PER_RADIUS_PX`].
 const SPHERE_MIN_SEGMENTS: usize = 12;
-/// See [`SPHERE_MIN_SEGMENTS`].
+/// See [`SPHERE_SEGMENTS_PER_RADIUS_PX`].
 const SPHERE_MAX_SEGMENTS: usize = 32;
+
+/// Tessellation of a sphere-shaded bubble of this radius.
+fn sphere_segments(radius: f32) -> usize {
+    ((radius * SPHERE_SEGMENTS_PER_RADIUS_PX) as usize)
+        .clamp(SPHERE_MIN_SEGMENTS, SPHERE_MAX_SEGMENTS)
+}
 
 /// Label font size as a fraction of the bubble radius, and the range it is
 /// held to: too small to read is pointless, too large stops fitting inside.
@@ -336,18 +345,17 @@ fn add_sphere_disc(
     if !radius.is_finite() || radius <= 0.0 || !center.is_finite() {
         return;
     }
-    let segments = ((radius * 2.0) as usize).clamp(SPHERE_MIN_SEGMENTS, SPHERE_MAX_SEGMENTS);
+    let segments = sphere_segments(radius);
     let offset = egui::vec2(-radius, -radius) * SPHERE_LIGHT_OFFSET;
     // The core ring keeps a scaled-down share of the highlight offset, which
     // holds the whole lit zone inside the rim at any radius.
     let core_center = center + offset * (1.0 - SPHERE_CORE_RADIUS);
     let base = mesh.vertices.len() as u32;
     mesh.colored_vertex(center + offset, core);
-    for ring in [
+    for (ring_center, ring_radius, color) in [
         (core_center, radius * SPHERE_CORE_RADIUS, body),
         (center, radius, edge),
     ] {
-        let (ring_center, ring_radius, color) = ring;
         for index in 0..segments {
             let angle = index as f32 / segments as f32 * std::f32::consts::TAU;
             let direction = egui::vec2(angle.cos(), angle.sin());
@@ -2354,7 +2362,7 @@ mod tests {
             egui::Color32::GRAY,
             egui::Color32::BLACK,
         );
-        let segments = ((radius * 2.0) as usize).clamp(SPHERE_MIN_SEGMENTS, SPHERE_MAX_SEGMENTS);
+        let segments = sphere_segments(radius);
         assert_eq!(mesh.vertices.len(), 1 + 2 * segments);
         assert_eq!(mesh.indices.len(), segments * 9);
         for vertex in &mesh.vertices {
