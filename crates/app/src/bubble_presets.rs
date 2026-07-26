@@ -282,6 +282,20 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_fallback_matches_the_tracked_presets_file() {
+        // The panel reads and writes `config/bubbles.toml` at the repository
+        // root; the embedded copy is what a user gets running from anywhere
+        // else. They drifted apart once — the tracked file gained a preset the
+        // binary never saw — so the sync is asserted, not assumed. Comments
+        // may differ between the two files; meaning may not.
+        let tracked = include_str!("../../../config/bubbles.toml");
+        assert_eq!(
+            parse(tracked).expect("tracked presets file"),
+            parse(EMBEDDED_DEFAULT).expect("embedded presets"),
+        );
+    }
+
+    #[test]
     fn a_preset_round_trips_through_the_panel_state() {
         let mut config = HeatmapConfig {
             bubble_cluster_ms: 50,

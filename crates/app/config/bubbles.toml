@@ -14,7 +14,7 @@
 # A preset only describes how bubbles LOOK. Turning the layer on stays a live
 # decision in the panel, so having this file can never start capture by itself.
 
-active = "default"
+active = "dense tape btc"
 
 [[presets]]
 name = "default"
@@ -128,3 +128,34 @@ show_trade_count = false
 label_min_radius = 16.0
 front_color = [255, 246, 205]
 trail_color = [255, 190, 90]
+
+# The project's default open: a BTC-tuned dense tape saved from the panel.
+# Small quiet dots hugging the tape, thin fronts, near-black consumption marks.
+# Built for Binance BTCUSDT. Kept in sync with `config/bubbles.toml`.
+[[presets]]
+name = "dense tape btc"
+cluster_ms = 500
+
+[presets.bubbles]
+min_radius = 2.2
+max_radius = 14.0
+opacity = 0.75
+outline_width = 0.2
+halo_strength = 0.25
+detail_min_radius = 2.0
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 1.0
+show_consumption_front = true
+front_width = 0.5
+front_length_scale = 1.1
+show_impact_ring = true
+impact_ring_width = 0.5
+trail_length = 7.0
+trail_opacity = 0.77
+show_quantity_labels = false
+show_trade_count = true
+label_min_radius = 20.0
+front_color = [2, 2, 0]
+trail_color = [0, 0, 0]
