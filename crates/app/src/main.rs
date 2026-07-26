@@ -17,6 +17,7 @@ mod candle_view;
 mod chart;
 mod config;
 mod feed;
+mod loading;
 mod metrics;
 mod orderflow;
 mod orderflow_engine;

@@ -431,6 +431,22 @@ impl OrderflowView {
         self.published.health.clone()
     }
 
+    /// Whether capture is turned on but not yet (or no longer) delivering a
+    /// live book — connecting, buffering, fetching its snapshot or resyncing
+    /// after a gap. What the app's loading overlay mirrors. Reads the frame's
+    /// mirror, refreshed by the panel/projection calls the frame already made.
+    #[must_use]
+    pub fn is_syncing(&self) -> bool {
+        self.config.enabled
+            && matches!(
+                self.published.status,
+                CaptureStatus::Connecting
+                    | CaptureStatus::Buffering
+                    | CaptureStatus::SnapshotFetching
+                    | CaptureStatus::Resyncing { .. }
+            )
+    }
+
     pub fn reset_summary_counters(&mut self) {
         self.worker.send(BookCommand::ResetSummaryCounters);
     }

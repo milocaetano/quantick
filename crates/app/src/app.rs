@@ -20,6 +20,7 @@ use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::PriceScale;
 use crate::config::{AppConfig, FeedCapabilities, ProviderKind};
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, ReplayLink};
+use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::orderflow_view::OrderflowView;
 use crate::price_view::PriceView;
@@ -132,16 +133,20 @@ pub struct QuantickApp {
     // trades have been backfilled in total (for the readout).
     history_step: usize,
     history_trades: usize,
-    // How many history loads (initial backfill + queued "load older"
-    // requests) are still unanswered; the loading indicator shows while > 0.
-    // A count, not a flag: several requests can be queued (the command
-    // channel holds 16), and the first reply must not hide the indicator
-    // while others are still in flight. The feed answers every request with
-    // exactly one event, so the count always drains back to zero.
-    pending_history_loads: usize,
+    // Every wait currently in flight, drawn by one overlay (see
+    // crate::loading). History loads are counted — several can be queued and
+    // the first reply must not hide the indicator while others are still out;
+    // the feed answers every request with exactly one event, so the count
+    // always drains back to zero. Replay parsing and book synchronization are
+    // level-triggered mirrors of their owners' state.
+    loading: LoadingTracker,
 
     // Bar-type selector state (one parameter retained per kind).
     kind: BarKind,
+    // The spec the selectors ask for, applied one frame after they settle so
+    // the frame carrying the change paints the loading overlay before the
+    // synchronous rebuild holds this thread. See apply_spec_change.
+    pending_spec: Option<BarSpec>,
     tick_n: u64,
     volume_units: f64,
     dollar_notional: f64,
@@ -215,6 +220,11 @@ impl QuantickApp {
             BarSpec::Imbalance(target) => imbalance_target = *target,
         }
 
+        let mut loading = LoadingTracker::new();
+        // The feed starts backfilling the moment it is spawned, so the chart
+        // opens with that one load already in flight.
+        loading.begin(LoadingTask::History);
+
         let mut app = Self {
             kind: spec.kind(),
             state: ChartState::new(spec),
@@ -232,9 +242,8 @@ impl QuantickApp {
             symbol,
             history_step: 2000,
             history_trades: 0,
-            // The feed starts backfilling the moment it is spawned, so the
-            // chart opens with that one load already in flight.
-            pending_history_loads: 1,
+            loading,
+            pending_spec: None,
             tick_n,
             volume_units,
             dollar_notional,
@@ -557,7 +566,7 @@ impl QuantickApp {
             count: self.history_step.max(1),
         }) {
             Ok(()) => {
-                self.pending_history_loads += 1;
+                self.loading.begin(LoadingTask::History);
                 tracing::info!(
                     target: "quantick::app",
                     count = self.history_step,
@@ -722,13 +731,50 @@ impl QuantickApp {
         self.last_auto_range = None;
         self.hover_pos = None;
         self.history_trades = 0;
-        self.pending_history_loads = 1;
+        // The old feed's unanswered loads died with its channel; the new feed
+        // opens with exactly one backfill in flight.
+        self.loading.restart(LoadingTask::History);
         self.latest_trade_ms = None;
         self.orderflow.reset_for_symbol(self.symbol.clone());
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
         if resume_book_capture {
             self.request_book_capture(true);
+        }
+    }
+
+    /// Apply a bar-type/parameter change one frame after the selectors settle.
+    ///
+    /// Switching the spec replays every retained trade synchronously, which
+    /// can hold this thread long enough to notice on a deep history. Deferring
+    /// the rebuild by one frame lets the frame that carries the change paint
+    /// the loading overlay first, so the wait reads as the chart working
+    /// rather than the app hanging. A selector still moving (a dragged
+    /// parameter) keeps pushing the pending spec forward, which also debounces
+    /// the rebuild to one per gesture.
+    fn apply_spec_change(&mut self) {
+        let desired = self.current_spec();
+        if desired == *self.state.spec() {
+            // Selection and chart agree — nothing is pending any more (a feed
+            // switch or reset may have rebuilt the state under a pending spec).
+            if self.pending_spec.take().is_some() {
+                self.loading.set_active(LoadingTask::BarRebuild, false);
+            }
+            return;
+        }
+        match self.pending_spec.take() {
+            // The frame that changed the selector: arm the indicator, paint.
+            None => {
+                self.pending_spec = Some(desired);
+                self.loading.set_active(LoadingTask::BarRebuild, true);
+            }
+            // Still moving: wait for the selector to settle for a frame.
+            Some(pending) if pending != desired => self.pending_spec = Some(desired),
+            // Settled since last frame: do the rebuild.
+            Some(_) => {
+                self.state.set_spec(desired);
+                self.loading.set_active(LoadingTask::BarRebuild, false);
+            }
         }
     }
 
@@ -834,7 +880,7 @@ impl QuantickApp {
         loop {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
-                    self.pending_history_loads = self.pending_history_loads.saturating_sub(1);
+                    self.loading.end(LoadingTask::History);
                     if let Some(last) = trades.last() {
                         self.latest_trade_ms = Some(last.timestamp_ms);
                     }
@@ -844,7 +890,7 @@ impl QuantickApp {
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
                     // pending load; the indicator survives until the last one.
-                    self.pending_history_loads = self.pending_history_loads.saturating_sub(1);
+                    self.loading.end(LoadingTask::History);
                     // Older bars shift every index up; keep the view steady.
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
@@ -889,8 +935,9 @@ impl QuantickApp {
         self.live_tail_hold = 0.0;
         self.last_total_bars = 0;
         // The refill arrives as one backfill batch; keep the loading indicator
-        // up until it lands.
-        self.pending_history_loads = 1;
+        // up until it lands. Requests sent to the source before the reset will
+        // never be answered, so the count restarts rather than accumulates.
+        self.loading.restart(LoadingTask::History);
         self.orderflow.reset_for_symbol(self.symbol.clone());
     }
 
@@ -1614,31 +1661,6 @@ impl QuantickApp {
             y += line_h;
         }
     }
-
-    /// A discreet "history is loading" indicator centred at the chart's top: a
-    /// small spinner plus a tiny label, shown while the initial backfill or an
-    /// on-demand "load older" request is in flight. Centred so it never covers
-    /// the symbol tag at the top-left or the perf overlay at the top-right.
-    fn draw_history_loader(&self, ui: &mut egui::Ui, area: egui::Rect) {
-        if self.pending_history_loads == 0 {
-            return;
-        }
-        let size = 12.0;
-        let gap = 6.0;
-        let galley = ui.painter().layout_no_wrap(
-            "loading history…".to_owned(),
-            egui::FontId::proportional(10.0),
-            MUTED,
-        );
-        // Centre spinner + gap + label as one group on the chart's mid-line.
-        let total_w = size + gap + galley.size().x;
-        let left = area.center().x - total_w / 2.0;
-        let top = area.top() + 8.0;
-        let spinner_rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(size, size));
-        ui.put(spinner_rect, egui::Spinner::new().size(size).color(MUTED));
-        let text_pos = egui::pos2(left + size + gap, top + (size - galley.size().y) / 2.0);
-        ui.painter().galley(text_pos, galley, MUTED);
-    }
 }
 
 /// Opens the Market Replay browser. The one shortcut this feature claims.
@@ -1811,13 +1833,19 @@ impl eframe::App for QuantickApp {
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         self.maybe_switch_feed();
-        self.state.set_spec(self.current_spec());
+        self.apply_spec_change();
         self.draw_style_panel(ctx, now);
         // Docked before the central panel so the chart keeps the remaining
         // width instead of being covered by a floating window.
         if self.orderflow.draw_panels(ctx) {
             self.restart_book_capture();
         }
+        // Waits owned by other components, mirrored level-style each frame so
+        // the overlay needs no push notifications from either.
+        self.loading
+            .set_active(LoadingTask::ReplaySession, self.replay_view.is_loading());
+        self.loading
+            .set_active(LoadingTask::BookSync, self.orderflow.is_syncing());
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
@@ -1826,7 +1854,7 @@ impl eframe::App for QuantickApp {
                 self.handle_navigation(ui, area);
                 self.draw_chart(ui.painter(), area);
                 self.draw_overlay(ui.painter(), area);
-                self.draw_history_loader(ui, area);
+                loading::overlay(ui, area, &self.loading);
             });
         self.draw_timezone_selector(ctx);
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
@@ -1920,27 +1948,43 @@ mod tests {
         // flight: three loads pending. The first reply must NOT hide the
         // indicator - only the last one may.
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-        assert_eq!(app.pending_history_loads, 1, "backfill in flight at start");
+        assert_eq!(
+            app.loading.count(LoadingTask::History),
+            1,
+            "backfill in flight at start"
+        );
 
         app.request_older_history();
         app.request_older_history();
-        assert_eq!(app.pending_history_loads, 3);
+        assert_eq!(app.loading.count(LoadingTask::History), 3);
 
         evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
         app.drain_feed();
-        assert_eq!(app.pending_history_loads, 2, "older loads still pending");
+        assert_eq!(
+            app.loading.count(LoadingTask::History),
+            2,
+            "older loads still pending"
+        );
 
         evt_tx
             .try_send(FeedEvent::HistoryPrepended(Vec::new()))
             .unwrap();
         app.drain_feed();
-        assert_eq!(app.pending_history_loads, 1, "one reply answers one load");
+        assert_eq!(
+            app.loading.count(LoadingTask::History),
+            1,
+            "one reply answers one load"
+        );
 
         evt_tx
             .try_send(FeedEvent::HistoryPrepended(Vec::new()))
             .unwrap();
         app.drain_feed();
-        assert_eq!(app.pending_history_loads, 0, "last reply hides the loader");
+        assert_eq!(
+            app.loading.count(LoadingTask::History),
+            0,
+            "last reply hides the loader"
+        );
     }
 
     #[test]
@@ -1950,7 +1994,70 @@ mod tests {
         let (mut app, _evt_tx, cmd_rx, _book_tx) = test_app();
         drop(cmd_rx);
         app.request_older_history();
-        assert_eq!(app.pending_history_loads, 1, "only the initial backfill");
+        assert_eq!(
+            app.loading.count(LoadingTask::History),
+            1,
+            "only the initial backfill"
+        );
+    }
+
+    #[test]
+    fn a_source_reset_restarts_the_history_wait() {
+        // Loads queued before a reset will never be answered; the refill after
+        // the reset is the one load left in flight.
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.request_older_history();
+        app.request_older_history();
+        assert_eq!(app.loading.count(LoadingTask::History), 3);
+
+        evt_tx.try_send(FeedEvent::Reset).unwrap();
+        app.drain_feed();
+        assert_eq!(app.loading.count(LoadingTask::History), 1);
+    }
+
+    #[test]
+    fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.tick_n = 100;
+
+        app.apply_spec_change();
+        assert!(app.loading.is_active(LoadingTask::BarRebuild));
+        assert_eq!(
+            app.state.spec(),
+            &BarSpec::Tick(50),
+            "the arming frame must paint the overlay before the rebuild runs"
+        );
+
+        app.apply_spec_change();
+        assert_eq!(app.state.spec(), &BarSpec::Tick(100));
+        assert!(!app.loading.is_active(LoadingTask::BarRebuild));
+    }
+
+    #[test]
+    fn a_still_moving_selector_keeps_deferring_the_rebuild() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.tick_n = 100;
+        app.apply_spec_change();
+        app.tick_n = 200; // the drag continues
+        app.apply_spec_change();
+        assert_eq!(
+            app.state.spec(),
+            &BarSpec::Tick(50),
+            "no rebuild mid-gesture"
+        );
+        assert!(app.loading.is_active(LoadingTask::BarRebuild));
+
+        app.apply_spec_change();
+        assert_eq!(app.state.spec(), &BarSpec::Tick(200));
+        assert!(!app.loading.is_active(LoadingTask::BarRebuild));
+    }
+
+    #[test]
+    fn an_unchanged_spec_never_arms_the_rebuild_indicator() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.apply_spec_change();
+        assert!(!app.loading.is_active(LoadingTask::BarRebuild));
+        assert!(app.pending_spec.is_none());
     }
 
     #[test]

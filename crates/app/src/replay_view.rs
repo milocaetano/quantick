@@ -121,6 +121,13 @@ impl ReplayView {
         self.show_format = true;
     }
 
+    /// Whether a session is being parsed on a worker right now — what the
+    /// app's loading overlay mirrors.
+    #[must_use]
+    pub fn is_loading(&self) -> bool {
+        self.loading.is_some()
+    }
+
     /// Scan the configured folder and start its first session, without opening
     /// the browser.
     ///
@@ -328,11 +335,9 @@ impl ReplayView {
             }
         });
         if self.picker.is_some() {
-            ui.label(
-                egui::RichText::new("Waiting for the folder dialog…")
-                    .color(MUTED)
-                    .small(),
-            );
+            ui.horizontal(|ui| {
+                crate::loading::inline(ui, "waiting for the folder dialog");
+            });
         }
     }
 
@@ -511,12 +516,7 @@ impl ReplayView {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(loading) = &self.loading {
-                    ui.add(egui::Spinner::new().size(14.0).color(MUTED));
-                    ui.label(
-                        egui::RichText::new(format!("Loading {}…", loading.label))
-                            .color(MUTED)
-                            .small(),
-                    );
+                    crate::loading::inline(ui, &format!("loading {}", loading.label));
                     return;
                 }
                 let ready = self.selected_entry().is_some();
