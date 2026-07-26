@@ -406,8 +406,13 @@ impl QuantickApp {
             appearance_open: self.show_style,
         };
         let actions = toolbar::draw(ctx, &mut model);
-        // A newly picked feed may not offer the current symbol.
-        self.ensure_symbol_valid();
+        // A newly picked feed may not offer the current symbol. Never during
+        // a replay: the recorded instrument belongs to no live feed's menu,
+        // and snapping it away would relabel the whole session — the status
+        // bar and the logs must keep naming what is actually playing.
+        if self.replay.is_none() {
+            self.ensure_symbol_valid();
+        }
         for action in actions {
             self.apply_toolbar_action(action);
         }
@@ -1440,6 +1445,7 @@ impl QuantickApp {
             live_trades: self.live_trades,
             fps: self.frames.fps(),
             frame_avg_ms: self.frames.avg_ms(),
+            frame_cpu_ms: self.cpu_frames.avg_ms(),
             show_perf: self.show_perf,
         }
     }
@@ -2162,6 +2168,49 @@ mod tests {
         assert!(
             app.book_channel_closed_reported,
             "subsequent frames keep the one-shot diagnostic latched"
+        );
+    }
+
+    #[test]
+    fn replay_keeps_the_recorded_symbol_out_of_the_live_feed_snap() {
+        // A recorded instrument no configured live feed offers must survive
+        // the toolbar frame untouched — snapping it away would relabel the
+        // whole session on the status bar and in the logs. The live path,
+        // drawn through the very same frame, must keep snapping an invalid
+        // selection back to the feed's list.
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        app.open_replay(crate::feed::ReplayRequest {
+            session: std::sync::Arc::new(session),
+            options: crate::feed::ReplayOptions {
+                autoplay: false,
+                ..Default::default()
+            },
+        });
+        assert_eq!(app.symbol, "WINJ26");
+
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw_toolbar(ctx));
+        assert_eq!(
+            app.symbol, "WINJ26",
+            "a toolbar frame during replay must not relabel the session"
+        );
+
+        // The same frame path with the replay closed: validation still works.
+        app.replay = None;
+        app.symbol = "NOT-A-SYMBOL".to_owned();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw_toolbar(ctx));
+        assert_eq!(
+            app.symbol, "TESTUSDT",
+            "live selections keep snapping to the feed's symbol list"
         );
     }
 

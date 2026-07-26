@@ -115,6 +115,9 @@ pub struct StatusModel {
     pub fps: Option<f32>,
     /// Rolling mean frame time, in milliseconds.
     pub frame_avg_ms: Option<f32>,
+    /// Rolling mean CPU cost per frame (update + tessellation + paint, no
+    /// vsync wait), in milliseconds.
+    pub frame_cpu_ms: Option<f32>,
     /// Whether the perf readings (fps, frame time, trades) are shown
     /// (View → perf readings).
     pub show_perf: bool,
@@ -248,11 +251,15 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
         .frame_avg_ms
         .is_some_and(|avg| avg > metrics::SLOW_FRAME_MS);
     let fps_color = if slow { theme::WARN } else { theme::TEXT_MUTED };
+    // The cpu cost rides along because frame time alone hides behind vsync:
+    // a real incident needed exactly this split to tell "we are slow" from
+    // "we are waiting for the display".
     ui.label(
         egui::RichText::new(format!(
-            "{:>4.0} fps · {:>5.1} ms",
+            "{:>4.0} fps · {:>5.1} ms · cpu {:>4.1} ms",
             model.fps.unwrap_or(0.0),
-            model.frame_avg_ms.unwrap_or(0.0)
+            model.frame_avg_ms.unwrap_or(0.0),
+            model.frame_cpu_ms.unwrap_or(0.0)
         ))
         .monospace()
         .color(fps_color),
@@ -339,7 +346,8 @@ mod tests {
                 price_auto: false,
                 live_trades: 12_345,
                 fps: Some(60.0),
-                frame_avg_ms: Some(4.2),
+                frame_avg_ms: Some(16.7),
+                frame_cpu_ms: Some(4.2),
                 show_perf: true,
             };
             for _ in 0..2 {
