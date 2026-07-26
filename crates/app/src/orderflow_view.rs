@@ -18,8 +18,8 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::bubble_presets::{self, BubblePreset, BubblePresetFile, PresetSource};
 use crate::orderflow::{
-    BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode,
-    MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
+    BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
+    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
@@ -593,6 +593,50 @@ impl OrderflowView {
             .id_salt("bubble_size_section")
             .default_open(true)
             .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("render style");
+                    egui::ComboBox::from_id_salt("bubble_render_mode")
+                        .selected_text(render_mode_label(bubbles.render_mode))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut bubbles.render_mode,
+                                BubbleRenderMode::Flat,
+                                "Flat · 2D disc",
+                            );
+                            ui.selectable_value(
+                                &mut bubbles.render_mode,
+                                BubbleRenderMode::Sphere,
+                                "Sphere · 3D shaded",
+                            );
+                        })
+                        .response
+                        .on_hover_text(
+                            "flat is the classic solid disc. Sphere shades every bubble like a \
+                             ball lit from the upper left (the Bookmap look): on a dense tape \
+                             each darkened rim keeps overlapping prints readable as separate \
+                             bubbles instead of one merged blob. Purely visual — clustering and \
+                             liquidity association do not change.",
+                        );
+                });
+                if bubbles.render_mode == BubbleRenderMode::Sphere {
+                    ui.add(
+                        egui::Slider::new(&mut bubbles.sphere_shading, 0.0..=1.0)
+                            .text("depth shading"),
+                    )
+                    .on_hover_text(
+                        "how much the rim darkens toward the edge; higher separates \
+                         overlapping bubbles harder, zero reads flat again",
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut bubbles.sphere_highlight, 0.0..=1.0)
+                            .text("highlight"),
+                    )
+                    .on_hover_text("strength of the light spot that gives the ball its volume");
+                    ui.small(
+                        "Sphere shading applies from the 'detail from px' radius up; smaller \
+                         prints stay cheap dots.",
+                    );
+                }
                 ui.add(
                     egui::Slider::new(&mut bubbles.min_radius, 0.5..=MAX_BUBBLE_MIN_RADIUS)
                         .text("smallest print px"),
@@ -1202,6 +1246,13 @@ const fn size_reference_label(reference: BubbleSizeReference) -> &'static str {
         BubbleSizeReference::VisibleP99 => "Auto · visible P99",
         BubbleSizeReference::VisibleMax => "Auto · largest visible",
         BubbleSizeReference::Fixed => "Fixed quantity",
+    }
+}
+
+const fn render_mode_label(mode: BubbleRenderMode) -> &'static str {
+    match mode {
+        BubbleRenderMode::Flat => "Flat · 2D disc",
+        BubbleRenderMode::Sphere => "Sphere · 3D shaded",
     }
 }
 

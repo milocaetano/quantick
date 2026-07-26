@@ -43,6 +43,10 @@ pub const MIN_BUBBLE_MAX_RADIUS: f32 = 4.0;
 pub const MAX_BUBBLE_MAX_RADIUS: f32 = 48.0;
 /// Largest accepted radius for the smallest drawn bubble.
 pub const MAX_BUBBLE_MIN_RADIUS: f32 = 12.0;
+/// Default edge darkening of a sphere-rendered bubble.
+pub const DEFAULT_SPHERE_SHADING: f32 = 0.55;
+/// Default highlight strength of a sphere-rendered bubble.
+pub const DEFAULT_SPHERE_HIGHLIGHT: f32 = 0.35;
 
 /// Renderer-only price grouping layered over the exact capture buckets.
 ///
@@ -136,6 +140,23 @@ pub enum BubbleSizeReference {
     Fixed,
 }
 
+/// How a bubble's fill is painted.
+///
+/// `Flat` is the classic solid disc. `Sphere` shades each bubble like a ball
+/// lit from the upper left — an offset highlight over a darkened rim — so
+/// overlapping prints on a dense tape keep a visible boundary instead of
+/// merging into one solid blob. Purely visual: geometry, clustering and
+/// liquidity association are identical in both modes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BubbleRenderMode {
+    /// Solid 2D disc.
+    #[default]
+    Flat,
+    /// Shaded 3D-looking sphere.
+    Sphere,
+}
+
 /// Decimal places kept when a bubble float is written to the presets file.
 ///
 /// Four is past the precision any pixel radius or alpha carries, and well
@@ -190,6 +211,15 @@ pub struct BubbleStyle {
     /// impact ring). Raising it trades detail for frame time on a fast tape.
     #[serde(serialize_with = "serialize_short_f32")]
     pub detail_min_radius: f32,
+    /// Whether the fill is a flat disc or a shaded sphere.
+    pub render_mode: BubbleRenderMode,
+    /// How much a sphere-rendered bubble darkens toward its rim. Zero shades
+    /// nothing (the fill reads flat again); one pushes the rim to black.
+    #[serde(serialize_with = "serialize_short_f32")]
+    pub sphere_shading: f32,
+    /// Strength of the off-center light spot on a sphere-rendered bubble.
+    #[serde(serialize_with = "serialize_short_f32")]
+    pub sphere_highlight: f32,
     /// How the full-size reference quantity is chosen.
     pub size_reference: BubbleSizeReference,
     /// Quantity mapped to [`max_radius`](Self::max_radius) when the reference
@@ -265,6 +295,10 @@ impl Default for BubbleStyle {
             outline_width: 1.0,
             halo_strength: 0.12,
             detail_min_radius: 4.0,
+            // Flat, so merely gaining the sphere option changes no pixels.
+            render_mode: BubbleRenderMode::Flat,
+            sphere_shading: DEFAULT_SPHERE_SHADING,
+            sphere_highlight: DEFAULT_SPHERE_HIGHLIGHT,
             size_reference: BubbleSizeReference::VisibleP99,
             size_reference_quantity: 100.0,
             min_quantity: 0.0,
@@ -303,6 +337,9 @@ impl BubbleStyle {
         self.outline_width = finite_clamp(self.outline_width, 0.0, 6.0, 1.0);
         self.halo_strength = finite_clamp(self.halo_strength, 0.0, 1.0, 0.12);
         self.detail_min_radius = finite_clamp(self.detail_min_radius, 0.0, 32.0, 4.0);
+        self.sphere_shading = finite_clamp(self.sphere_shading, 0.0, 1.0, DEFAULT_SPHERE_SHADING);
+        self.sphere_highlight =
+            finite_clamp(self.sphere_highlight, 0.0, 1.0, DEFAULT_SPHERE_HIGHLIGHT);
         if !self.size_reference_quantity.is_finite() || self.size_reference_quantity <= 0.0 {
             self.size_reference_quantity = 100.0;
         }
@@ -647,6 +684,36 @@ mod tests {
         assert_eq!(bubbles.size_reference, BubbleSizeReference::VisibleP99);
         assert_eq!(bubbles.min_quantity, 0.0, "nothing is hidden by default");
         assert_eq!(bubbles.min_quantity_decimal(), None);
+        assert_eq!(
+            bubbles.render_mode,
+            BubbleRenderMode::Flat,
+            "gaining the sphere option must not change existing charts"
+        );
+        assert!((0.0..=1.0).contains(&bubbles.sphere_shading));
+        assert!((0.0..=1.0).contains(&bubbles.sphere_highlight));
+    }
+
+    #[test]
+    fn sphere_fields_sanitize_and_round_trip_through_toml() {
+        let mut style = BubbleStyle {
+            render_mode: BubbleRenderMode::Sphere,
+            sphere_shading: f32::NAN,
+            sphere_highlight: 7.0,
+            ..BubbleStyle::default()
+        };
+        style.sanitize();
+        assert_eq!(style.render_mode, BubbleRenderMode::Sphere);
+        assert_eq!(style.sphere_shading, DEFAULT_SPHERE_SHADING);
+        assert_eq!(style.sphere_highlight, 1.0);
+
+        let text = toml::to_string(&style).expect("serialize");
+        assert!(text.contains("render_mode = \"sphere\""));
+        let parsed: BubbleStyle = toml::from_str(&text).expect("parse");
+        assert_eq!(parsed, style);
+
+        // A presets file written before the mode existed keeps rendering flat.
+        let old: BubbleStyle = toml::from_str("max_radius = 30.0").expect("parse old file");
+        assert_eq!(old.render_mode, BubbleRenderMode::Flat);
     }
 
     #[test]

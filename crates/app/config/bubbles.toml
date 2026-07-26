@@ -99,6 +99,38 @@ show_quantity_labels = true
 show_trade_count = true
 label_min_radius = 14.0
 
+# Bookmap-style shaded spheres. The darkened rim on every bubble keeps
+# overlapping prints readable as separate bubbles on a dense tape, so the
+# detail floor is low: even small prints get the shading.
+[[presets]]
+name = "3d spheres"
+cluster_ms = 200
+
+[presets.bubbles]
+min_radius = 2.0
+max_radius = 16.0
+opacity = 0.85
+outline_width = 1.0
+halo_strength = 0.05
+detail_min_radius = 2.0
+render_mode = "sphere"
+sphere_shading = 0.6
+sphere_highlight = 0.4
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 3.5
+show_consumption_front = true
+front_width = 3.0
+front_length_scale = 2.1
+show_impact_ring = true
+impact_ring_width = 2.2
+trail_length = 18.0
+trail_opacity = 0.62
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 16.0
+
 # For studying who is eating whom: the bubble shrinks and the consumption mark
 # takes over — a wide, bright front and a long trail into the consumed side.
 [[presets]]
