@@ -36,6 +36,9 @@ cluster_ms = 200          # merge compatible prints inside this window
 
 [presets.bubbles]         # everything visual; every key is optional
 max_radius = 15.0
+render_mode = "sphere"    # "flat" (classic disc) or "sphere" (shaded 3D ball);
+sphere_shading = 0.6      # spheres keep overlapping prints readable as separate
+sphere_highlight = 0.4    # bubbles on a dense tape
 side_offset = 3.5         # buys nudged up, sells down, so both sides are readable
 front_width = 3.0         # the vertical consumption mark ("risco")
 trail_length = 18.0       # the glow into the consumed side ("rastro")

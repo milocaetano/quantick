@@ -13,8 +13,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::orderflow::{
-    AggressionPrimitive, BubbleStyle, HeatmapConfig, HeatmapProjection, HeatmapTheme,
-    LiquidityEvidence,
+    AggressionPrimitive, BubbleRenderMode, BubbleStyle, HeatmapConfig, HeatmapProjection,
+    HeatmapTheme, LiquidityEvidence,
 };
 use crate::viewport::Viewport;
 
@@ -225,6 +225,30 @@ const IMPACT_RING_MATCH_ALPHA: f32 = 0.25;
 /// still ate something, so it still leaves a visible mark.
 const MIN_MATCH_STRENGTH: f32 = 0.25;
 
+/// Fraction of the radius the sphere's lit core is offset toward the upper
+/// left. One fixed light direction keeps every bubble shaded identically, so
+/// the eye reads the gradient as volume instead of as data.
+const SPHERE_LIGHT_OFFSET: f32 = 0.35;
+/// Radius of the sphere's full-brightness core ring, as a fraction of the
+/// bubble radius. Vertex colours interpolate highlight → side colour inside
+/// it and side colour → darkened rim outside it; that gradient is the whole
+/// shading model.
+const SPHERE_CORE_RADIUS: f32 = 0.62;
+/// Ring segments per pixel of radius on a sphere-shaded bubble, bounded by
+/// [`SPHERE_MIN_SEGMENTS`] and [`SPHERE_MAX_SEGMENTS`]: a small dressed
+/// bubble stays cheap, a full-size sweep stays round.
+const SPHERE_SEGMENTS_PER_RADIUS_PX: f32 = 2.0;
+/// See [`SPHERE_SEGMENTS_PER_RADIUS_PX`].
+const SPHERE_MIN_SEGMENTS: usize = 12;
+/// See [`SPHERE_SEGMENTS_PER_RADIUS_PX`].
+const SPHERE_MAX_SEGMENTS: usize = 32;
+
+/// Tessellation of a sphere-shaded bubble of this radius.
+fn sphere_segments(radius: f32) -> usize {
+    ((radius * SPHERE_SEGMENTS_PER_RADIUS_PX) as usize)
+        .clamp(SPHERE_MIN_SEGMENTS, SPHERE_MAX_SEGMENTS)
+}
+
 /// Label font size as a fraction of the bubble radius, and the range it is
 /// held to: too small to read is pointless, too large stops fitting inside.
 const LABEL_FONT_SCALE: f32 = 0.68;
@@ -287,6 +311,71 @@ fn trail_rect(
     )
 }
 
+/// The side colour pushed toward white for a sphere's lit core.
+fn sphere_core_color(color: egui::Color32, highlight: f32) -> egui::Color32 {
+    opaque_rgb(mix_rgb(
+        [color.r(), color.g(), color.b()],
+        [255, 255, 255],
+        highlight,
+    ))
+}
+
+/// The side colour pushed toward black for a sphere's rim.
+fn sphere_edge_color(color: egui::Color32, shading: f32) -> egui::Color32 {
+    opaque_rgb(mix_rgb(
+        [color.r(), color.g(), color.b()],
+        [0, 0, 0],
+        shading,
+    ))
+}
+
+/// Append one sphere-shaded disc to `mesh`: a triangle fan from the offset lit
+/// core through a full-brightness ring to the darkened rim. Vertex colours do
+/// all the shading, so the 3D look costs one small mesh — no texture, no
+/// per-pixel work — and overlapping bubbles keep a visible boundary because
+/// each rim is darker than its neighbour's body.
+fn add_sphere_disc(
+    mesh: &mut egui::Mesh,
+    center: egui::Pos2,
+    radius: f32,
+    core: egui::Color32,
+    body: egui::Color32,
+    edge: egui::Color32,
+) {
+    if !radius.is_finite() || radius <= 0.0 || !center.is_finite() {
+        return;
+    }
+    let segments = sphere_segments(radius);
+    let offset = egui::vec2(-radius, -radius) * SPHERE_LIGHT_OFFSET;
+    // The core ring keeps a scaled-down share of the highlight offset, which
+    // holds the whole lit zone inside the rim at any radius.
+    let core_center = center + offset * (1.0 - SPHERE_CORE_RADIUS);
+    let base = mesh.vertices.len() as u32;
+    mesh.colored_vertex(center + offset, core);
+    for (ring_center, ring_radius, color) in [
+        (core_center, radius * SPHERE_CORE_RADIUS, body),
+        (center, radius, edge),
+    ] {
+        for index in 0..segments {
+            let angle = index as f32 / segments as f32 * std::f32::consts::TAU;
+            let direction = egui::vec2(angle.cos(), angle.sin());
+            mesh.colored_vertex(ring_center + direction * ring_radius, color);
+        }
+    }
+    let count = segments as u32;
+    let core_ring = base + 1;
+    let rim_ring = core_ring + count;
+    for index in 0..count {
+        let next = (index + 1) % count;
+        mesh.indices
+            .extend_from_slice(&[base, core_ring + index, core_ring + next]);
+        mesh.indices
+            .extend_from_slice(&[core_ring + index, rim_ring + index, rim_ring + next]);
+        mesh.indices
+            .extend_from_slice(&[core_ring + index, rim_ring + next, core_ring + next]);
+    }
+}
+
 /// One aggression bubble, already placed in screen space.
 #[derive(Debug, Clone, Copy)]
 struct BubbleMark {
@@ -324,10 +413,12 @@ fn draw_bubble(
     let color = colors.for_side(side);
 
     // Small prints are the common case on a busy tape: one cheap dot each.
-    // The full dressing (halo, rim, impact ring) is reserved for bubbles
-    // big enough to read it, which also keeps the per-frame tessellation
-    // budget flat no matter how fast the tape runs.
+    // The full dressing (halo, rim, impact ring — and sphere shading, which
+    // is unreadable at dot size anyway) is reserved for bubbles big enough to
+    // read it, which also keeps the per-frame tessellation budget flat no
+    // matter how fast the tape runs.
     let dressed = radius >= bubbles.detail_min_radius;
+    let sphere = dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
     if dressed && bubbles.halo_strength > 0.0 {
         painter.circle_filled(
             center,
@@ -335,12 +426,32 @@ fn draw_bubble(
             color.gamma_multiply(halo_alpha(size, bubbles)),
         );
     }
-    painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
+    if sphere {
+        let mut mesh = egui::Mesh::default();
+        add_sphere_disc(
+            &mut mesh,
+            center,
+            radius,
+            sphere_core_color(color, bubbles.sphere_highlight).gamma_multiply(bubbles.opacity),
+            color.gamma_multiply(bubbles.opacity),
+            sphere_edge_color(color, bubbles.sphere_shading).gamma_multiply(bubbles.opacity),
+        );
+        painter.add(egui::Shape::mesh(mesh));
+    } else {
+        painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
+    }
     if dressed && bubbles.outline_width > 0.0 {
+        // A sphere's rim adopts the darkened edge colour: the dark separator
+        // is what keeps two overlapping same-side bubbles readable as two.
+        let rim = if sphere {
+            sphere_edge_color(color, bubbles.sphere_shading)
+        } else {
+            color
+        };
         painter.circle_stroke(
             center,
             radius,
-            egui::Stroke::new(bubbles.outline_width, color.gamma_multiply(RIM_ALPHA)),
+            egui::Stroke::new(bubbles.outline_width, rim.gamma_multiply(RIM_ALPHA)),
         );
     }
 
@@ -2223,6 +2334,152 @@ mod tests {
             egui::Color32::from_rgb(9, 9, 9),
             "the trail follows the front colour unless overridden itself"
         );
+    }
+
+    #[test]
+    fn sphere_colours_brighten_the_core_and_darken_the_rim() {
+        let color = egui::Color32::from_rgb(40, 200, 120);
+        let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
+        assert!(luminance(rgb(sphere_core_color(color, 0.35))) > luminance(rgb(color)));
+        assert!(luminance(rgb(sphere_edge_color(color, 0.55))) < luminance(rgb(color)));
+        // Zero strength is the identity, so "sphere with no shading" degrades
+        // honestly into the flat colour instead of some third look.
+        assert_eq!(sphere_core_color(color, 0.0), color);
+        assert_eq!(sphere_edge_color(color, 0.0), color);
+        assert_eq!(sphere_edge_color(color, 1.0), egui::Color32::BLACK);
+    }
+
+    #[test]
+    fn a_sphere_disc_is_a_bounded_two_ring_fan() {
+        let mut mesh = egui::Mesh::default();
+        let center = egui::pos2(50.0, 50.0);
+        let radius = 10.0;
+        add_sphere_disc(
+            &mut mesh,
+            center,
+            radius,
+            egui::Color32::WHITE,
+            egui::Color32::GRAY,
+            egui::Color32::BLACK,
+        );
+        let segments = sphere_segments(radius);
+        assert_eq!(mesh.vertices.len(), 1 + 2 * segments);
+        assert_eq!(mesh.indices.len(), segments * 9);
+        for vertex in &mesh.vertices {
+            assert!(
+                (vertex.pos - center).length() <= radius + 0.001,
+                "shading must stay inside the bubble: {:?}",
+                vertex.pos
+            );
+        }
+
+        // Degenerate geometry appends nothing rather than poisoning the mesh.
+        let before = mesh.vertices.len();
+        add_sphere_disc(
+            &mut mesh,
+            egui::pos2(f32::NAN, 0.0),
+            radius,
+            egui::Color32::WHITE,
+            egui::Color32::GRAY,
+            egui::Color32::BLACK,
+        );
+        add_sphere_disc(
+            &mut mesh,
+            center,
+            0.0,
+            egui::Color32::WHITE,
+            egui::Color32::GRAY,
+            egui::Color32::BLACK,
+        );
+        assert_eq!(mesh.vertices.len(), before);
+    }
+
+    #[test]
+    fn sphere_mode_swaps_the_flat_fill_for_a_shaded_mesh() {
+        let mark = BubbleMark {
+            center: egui::pos2(120.0, 80.0),
+            radius: 12.0,
+            side: Side::Buy,
+            size: 0.8,
+            matched: None,
+        };
+        let palette = Palette::for_theme(HeatmapTheme::Bookmap);
+        let flat_style = BubbleStyle::default();
+        let sphere_style = BubbleStyle {
+            render_mode: BubbleRenderMode::Sphere,
+            ..BubbleStyle::default()
+        };
+        let colors = BubbleColors::resolve(&palette, &flat_style);
+
+        let flat = painted(|painter| draw_bubble(painter, mark, &flat_style, &colors));
+        let sphere = painted(|painter| draw_bubble(painter, mark, &sphere_style, &colors));
+        assert_ne!(flat, sphere, "the mode must change what is painted");
+        assert!(
+            sphere.contains("Mesh"),
+            "sphere mode paints a vertex-shaded mesh: {sphere}"
+        );
+
+        // Below the detail floor both modes paint the same cheap dot, keeping
+        // the tessellation budget flat on a fast tape.
+        let dot = BubbleMark {
+            radius: flat_style.detail_min_radius - 1.0,
+            ..mark
+        };
+        let flat_dot = painted(|painter| draw_bubble(painter, dot, &flat_style, &colors));
+        let sphere_dot = painted(|painter| draw_bubble(painter, dot, &sphere_style, &colors));
+        assert_eq!(flat_dot, sphere_dot);
+    }
+
+    #[test]
+    fn the_preview_draws_a_sphere_bubble_exactly_the_way_the_chart_does() {
+        // Same contract as the flat parity test: the preview must not render
+        // its own approximation of the sphere look.
+        let bubbles = BubbleStyle {
+            render_mode: BubbleRenderMode::Sphere,
+            trail_length: 0.0,
+            ..BubbleStyle::default()
+        };
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let at = egui::pos2(120.0, 80.0);
+        let radius = bubble_radius(
+            PREVIEW_LARGE_PRINT_SIZE,
+            bubbles.min_radius,
+            bubbles.max_radius,
+        );
+
+        let live = painted(|painter| {
+            draw_bubble(
+                painter,
+                BubbleMark {
+                    center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset)),
+                    radius,
+                    side: Side::Buy,
+                    size: PREVIEW_LARGE_PRINT_SIZE,
+                    matched: Some(PREVIEW_MATCHED_FRACTION),
+                },
+                &bubbles,
+                &colors,
+            );
+        });
+        let preview = painted(|painter| {
+            draw_preview_bubble(
+                painter,
+                PreviewBubble {
+                    center: at,
+                    size: PREVIEW_LARGE_PRINT_SIZE,
+                    side: Side::Buy,
+                    linked_reduction: true,
+                },
+                f32::INFINITY,
+                &bubbles,
+                &colors,
+            );
+        });
+        assert!(
+            live.contains("Mesh"),
+            "the sample must shade a sphere: {live}"
+        );
+        assert_eq!(live, preview);
     }
 
     #[test]
