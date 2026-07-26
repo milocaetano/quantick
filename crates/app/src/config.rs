@@ -205,6 +205,21 @@ impl AppConfig {
         self.feed(id).map(|f| f.provider)
     }
 
+    /// Data-honesty label for how feed `id` decides the aggressor side of a
+    /// trade, or `None` when the venue reports true sides. Shown verbatim on
+    /// the status bar; this sits next to the provider → code-path map because
+    /// it is provider knowledge, not a UI affordance gate.
+    #[must_use]
+    pub fn side_note(&self, id: &str) -> Option<&'static str> {
+        match self.provider_of(id)? {
+            ProviderKind::Binance => None,
+            ProviderKind::MetaTrader => Some(match self.metatrader.side_source {
+                Mt5SideSource::TickRule => "side: inferred (tick rule)",
+                Mt5SideSource::Flags => "side: broker flags",
+            }),
+        }
+    }
+
     /// Validate internal consistency: at least one feed, unique ids, non-empty
     /// symbol lists, and a default selection that actually resolves.
     ///
@@ -372,6 +387,32 @@ mod tests {
         let (config, _) = sample();
         assert_eq!(config.provider_of("binance"), Some(ProviderKind::Binance));
         assert_eq!(config.provider_of("nope"), None);
+    }
+
+    #[test]
+    fn side_note_labels_inferred_sides_and_stays_silent_on_venue_truth() {
+        let (config, _) = sample();
+        // Binance reports true aggressor sides — nothing to disclaim.
+        assert_eq!(config.side_note("binance"), None);
+        assert_eq!(config.side_note("nope"), None);
+
+        let text = r#"
+            default_feed = "mt"
+            default_symbol = "WINQ26"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["WINQ26"]
+        "#;
+        let mut config = parse(text, ConfigSource::Embedded).unwrap();
+        assert_eq!(
+            config.side_note("mt"),
+            Some("side: inferred (tick rule)"),
+            "the tick-rule default must be disclosed"
+        );
+        config.metatrader.side_source = Mt5SideSource::Flags;
+        assert_eq!(config.side_note("mt"), Some("side: broker flags"));
     }
 
     #[test]
