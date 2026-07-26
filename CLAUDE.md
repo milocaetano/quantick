@@ -46,3 +46,12 @@ CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on
 
 - Engine code is developed test-first: write fixture trades + expected bars, then implement until green.
 - Branches: `feat/<desc>`, `fix/<desc>`, `docs/<desc>`. Commit messages: conventional style (`feat: ...`, `fix: ...`), imperative mood, English.
+- **One goal, one worktree**: every new goal/task starts on its own branch cut from updated `main`, checked out in a dedicated git worktree under `../quantick-worktrees/` — never worked on in the main checkout. Parallel agents must never share a working tree. Create it with:
+
+  ```sh
+  git fetch origin
+  git worktree add -b <prefix>/<slug> ../quantick-worktrees/<prefix>-<slug> origin/main
+  ```
+
+  Work happens inside that directory. After the branch is merged, clean up from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
+- **Arch-review before PR**: before opening a PR (and before any merge), run the `arch-review` skill over `git diff main...HEAD` and resolve every Blocker and Should-fix finding. A finding deliberately deferred is noted in the PR body. No branch ships un-reviewed.

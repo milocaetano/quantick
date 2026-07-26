@@ -24,10 +24,12 @@ description: Deliver the current branch - run the full verification loop, commit
 
 2. **Commit** anything pending: conventional style (`feat: ...`, `fix: ...`), imperative mood, English.
 
-3. **Push**: `git push -u origin <branch>`.
+3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff main...HEAD`. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never open a PR that has not been arch-reviewed.
 
-4. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer. Use `gh pr create --body-file -` with a heredoc.
+4. **Push**: `git push -u origin <branch>`.
 
-5. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
+5. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer. Use `gh pr create --body-file -` with a heredoc.
 
-6. **Report** the PR URL and CI status. Do **not** merge unless the user asks. When they do: `gh pr merge <pr> --merge --delete-branch` — the `Closes #N` closes the issue and the board card moves to Done automatically.
+6. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
+
+7. **Report** the PR URL and CI status. Do **not** merge unless the user asks. When they do: `gh pr merge <pr> --merge --delete-branch` — the `Closes #N` closes the issue and the board card moves to Done automatically. If the branch lives in a worktree, `--delete-branch` cannot delete a checked-out branch: from the main checkout run `git worktree remove ../quantick-worktrees/<dir>` first, then `git branch -d <branch>`.

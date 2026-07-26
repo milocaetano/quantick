@@ -11,15 +11,16 @@ Argument: the issue number (e.g. `/new-task 3`). If missing, list open issues in
 
 1. **Read the issue**: `gh issue view <N>`. If it does not exist or is already closed, stop and report. Summarize scope and acceptance criteria back to the user — they become the work checklist.
 
-2. **Guard the working tree**: `git status --short` must be clean. If not, stop and ask what to do with the pending changes — never carry unrelated work into a new branch.
+2. **Guard against duplicates**: check `git worktree list` and `git branch --list '<prefix>/<slug>'`. If a worktree or branch for this issue already exists, switch into it and report — never create a second one for the same issue.
 
-3. **Branch from updated main**:
+3. **Create a worktree from updated main** — one goal, one worktree (see `CLAUDE.md`). Never check the branch out in the main clone; parallel agents must never share a working tree:
 
    ```sh
-   git checkout main
-   git pull origin main
-   git checkout -b <prefix>/<short-kebab-slug>
+   git fetch origin
+   git worktree add -b <prefix>/<short-kebab-slug> ../quantick-worktrees/<prefix>-<short-kebab-slug> origin/main
    ```
+
+   Then work from inside `../quantick-worktrees/<prefix>-<short-kebab-slug>`.
 
    Prefix from the issue's labels: `bug` or `type:fix` → `fix/`, `type:docs` → `docs/`, everything else → `feat/`. Slug: short kebab-case from the issue title.
 
@@ -34,7 +35,7 @@ Argument: the issue number (e.g. `/new-task 3`). If missing, list open issues in
      --field-id PVTSSF_lAHOA0fkv84BeK9czhYnKUg --single-select-option-id 47fc9ee4
    ```
 
-5. **Report**: branch name, card moved, and the acceptance criteria as a checklist. For `area:engine` issues, remind: test-first — fixture trades and expected bars are written before the implementation.
+5. **Report**: branch name, worktree path, card moved, and the acceptance criteria as a checklist. For `area:engine` issues, remind: test-first — fixture trades and expected bars are written before the implementation.
 
 ## Board reference (project 1)
 
