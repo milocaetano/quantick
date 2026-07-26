@@ -19,6 +19,7 @@ use quantick_feed_binance::depth::DepthEvent;
 use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::PriceScale;
 use crate::config::{AppConfig, FeedCapabilities, ProviderKind};
+use crate::dock::{Dock, DockEnv, DockTab};
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, ReplayLink};
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
@@ -26,8 +27,12 @@ use crate::orderflow_view::OrderflowView;
 use crate::price_view::PriceView;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::{BarKind, BarSpec, ChartState};
+use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
+use crate::theme;
 use crate::timezone::TzOffset;
+use crate::toolbar::{self, ToolbarAction};
+use crate::toolrail::{Tool, ToolRail};
 use crate::viewport::Viewport;
 
 /// Convert an explicit unmultiplied RGBA style colour to egui.
@@ -35,22 +40,10 @@ fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
-/// The amber that marks "this is not live data": the backfill/live divider on
-/// the chart, and the market-replay transport.
-pub(crate) const DIVIDER: egui::Color32 = egui::Color32::from_rgb(240, 185, 11);
-/// Secondary text: labels, hints, anything that must not compete with data.
-pub(crate) const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 160, 175);
-/// Primary text over the chart and the chrome.
-pub(crate) const OVERLAY: egui::Color32 = egui::Color32::from_rgb(210, 218, 226);
-/// Something needs attention.
-pub(crate) const WARN: egui::Color32 = egui::Color32::from_rgb(255, 99, 71);
-const CROSSHAIR: egui::Color32 = egui::Color32::from_rgb(110, 120, 135);
-const TAG_BG: egui::Color32 = egui::Color32::from_rgb(55, 63, 80);
-
-/// Width of the right-hand price-axis gutter, in pixels.
-const AXIS_GUTTER: f32 = 60.0;
-/// Height of the bottom time-axis strip, in pixels.
-const TIME_STRIP: f32 = 22.0;
+/// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
+const AXIS_GUTTER: f32 = 64.0;
+/// Height of the bottom time-axis strip, in pixels (§5 zone 6).
+const TIME_STRIP: f32 = 24.0;
 
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
@@ -129,6 +122,11 @@ pub struct QuantickApp {
     replay: Option<ReplayLink>,
     replay_view: ReplayView,
 
+    // The two chrome zones the design model reserves beside the chart: the
+    // tabbed right dock (settings) and the left tool rail (chart tools).
+    dock: Dock,
+    toolrail: ToolRail,
+
     // How many older trades to pull per "load older" click, and how many
     // trades have been backfilled in total (for the readout).
     history_step: usize,
@@ -176,8 +174,8 @@ pub struct QuantickApp {
     style_revision: u64,
     style_log_pending: bool,
     last_style_change: Option<Instant>,
-    // Whether the perf overlay (fps / frame time / feed lag) is drawn.
-    show_overlay: bool,
+    // Whether the status bar shows the perf readings (View → perf readings).
+    show_perf: bool,
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
@@ -237,6 +235,8 @@ impl QuantickApp {
             active: (feed_id.clone(), symbol.clone()),
             replay: feed.replay,
             replay_view: ReplayView::new(),
+            dock: Dock::new(),
+            toolrail: ToolRail::new(),
             config,
             feed_id,
             symbol,
@@ -261,7 +261,7 @@ impl QuantickApp {
             style_revision: 0,
             style_log_pending: false,
             last_style_change: None,
-            show_overlay: true,
+            show_perf: true,
             tz: TzOffset::default(),
             frames: FrameStats::new(120),
             cpu_frames: FrameStats::new(120),
@@ -338,31 +338,14 @@ impl QuantickApp {
         }
     }
 
-    /// The feed + symbol selectors, both populated from the configuration.
-    ///
-    /// During a replay the selectors give way to what is actually playing: a
-    /// live venue cannot be picked without leaving the recording first, and a
-    /// combo that silently did so would throw away the session mid-run.
-    fn draw_feed_selectors(&mut self, ui: &mut egui::Ui) {
-        if let Some(link) = &self.replay {
-            ui.label(egui::RichText::new("source:").color(MUTED));
-            ui.label(egui::RichText::new(link.label()).color(DIVIDER).strong())
-                .on_hover_text(format!(
-                    "Replaying {}\nSide source: {}",
-                    link.session.path.display(),
-                    link.session
-                        .header
-                        .side_source
-                        .as_deref()
-                        .unwrap_or("not recorded"),
-                ));
-            return;
-        }
-
-        // Pre-collect owned option lists so the combo closures don't borrow
+    /// Build the toolbar's model from the app's state, draw it, and carry
+    /// out whatever it asked (§6 — the toolbar module owns grouping and the
+    /// overflow rule; this method owns the side effects).
+    fn draw_toolbar(&mut self, ctx: &egui::Context) {
+        // Pre-collect owned option lists so the toolbar's combos don't borrow
         // `self.config` while they mutate `self.feed_id` / `self.symbol`.
-        // Providers that aren't streaming yet are labelled "(soon)" so the menu
-        // is honest about what actually connects.
+        // Providers that aren't streaming yet are labelled "(soon)" so the
+        // menu is honest about what actually connects.
         let feeds: Vec<(String, String)> = self
             .config
             .feeds
@@ -376,167 +359,77 @@ impl QuantickApp {
                 (f.id.clone(), label)
             })
             .collect();
-        ui.label("feed:");
-        egui::ComboBox::from_id_salt("feed_sel")
-            .selected_text(self.feed_display_name())
-            .show_ui(ui, |ui| {
-                for (id, name) in &feeds {
-                    ui.selectable_value(&mut self.feed_id, id.clone(), name);
-                }
-            });
-        // A newly picked feed may not offer the current symbol.
-        self.ensure_symbol_valid();
-
         let symbols: Vec<String> = self
             .config
             .feed(&self.feed_id)
             .map(|f| f.symbols.clone())
             .unwrap_or_default();
-        ui.label("symbol:");
-        egui::ComboBox::from_id_salt("symbol_sel")
-            .selected_text(&self.symbol)
-            .show_ui(ui, |ui| {
-                for s in &symbols {
-                    ui.selectable_value(&mut self.symbol, s.clone(), s);
-                }
-            });
+        // During a replay the SOURCE group gives way to what is actually
+        // playing: a live venue cannot be picked without leaving the
+        // recording first, and a combo that silently did so would throw away
+        // the session mid-run.
+        let replay = self.replay.as_ref().map(|link| toolbar::ReplaySource {
+            label: link.label(),
+            hover: format!(
+                "Replaying {}\nSide source: {}",
+                link.session.path.display(),
+                link.session
+                    .header
+                    .side_source
+                    .as_deref()
+                    .unwrap_or("not recorded"),
+            ),
+        });
+        let capabilities = self.capabilities();
+        let feed_display_name = self.feed_display_name();
+        let heatmap_on = self.orderflow.enabled();
+        let bubbles_on = self.orderflow.bubbles_enabled();
+        let mut model = toolbar::ToolbarModel {
+            feeds,
+            feed_id: &mut self.feed_id,
+            feed_display_name,
+            symbols,
+            symbol: &mut self.symbol,
+            replay,
+            kind: &mut self.kind,
+            tick_n: &mut self.tick_n,
+            volume_units: &mut self.volume_units,
+            dollar_notional: &mut self.dollar_notional,
+            time_interval_ms: &mut self.time_interval_ms,
+            imbalance_target: &mut self.imbalance_target,
+            history_step: &mut self.history_step,
+            history_trades: self.history_trades,
+            capabilities,
+            heatmap_on,
+            bubbles_on,
+            dock_visible: self.dock.visible(),
+            appearance_open: self.show_style,
+        };
+        let actions = toolbar::draw(ctx, &mut model);
+        // A newly picked feed may not offer the current symbol. Never during
+        // a replay: the recorded instrument belongs to no live feed's menu,
+        // and snapping it away would relabel the whole session — the status
+        // bar and the logs must keep naming what is actually playing.
+        if self.replay.is_none() {
+            self.ensure_symbol_valid();
+        }
+        for action in actions {
+            self.apply_toolbar_action(action);
+        }
     }
 
-    /// The bar-type selector: a combo for the kind and a drag for its parameter.
-    fn draw_controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            self.draw_feed_selectors(ui);
-            ui.separator();
-            ui.label("bar type:");
-            egui::ComboBox::from_id_salt("bar_kind")
-                .selected_text(self.kind.label())
-                .show_ui(ui, |ui| {
-                    for kind in BarKind::ALL {
-                        ui.selectable_value(&mut self.kind, kind, kind.label());
-                    }
-                });
-            ui.separator();
-            match self.kind {
-                BarKind::Tick => {
-                    ui.label("N trades");
-                    ui.add(egui::DragValue::new(&mut self.tick_n).range(1.0..=5000.0));
-                }
-                BarKind::Volume => {
-                    ui.label("units");
-                    ui.add(
-                        egui::DragValue::new(&mut self.volume_units)
-                            .range(0.1..=1000.0)
-                            .speed(0.1),
-                    );
-                }
-                BarKind::Dollar => {
-                    ui.label("notional");
-                    ui.add(
-                        egui::DragValue::new(&mut self.dollar_notional)
-                            .range(1000.0..=1_000_000_000.0)
-                            .speed(1000.0),
-                    );
-                }
-                BarKind::Time => {
-                    ui.label("interval ms");
-                    ui.add(
-                        egui::DragValue::new(&mut self.time_interval_ms)
-                            .range(100.0..=600_000.0)
-                            .speed(100.0),
-                    );
-                }
-                BarKind::Imbalance => {
-                    ui.label("target trades");
-                    ui.add(egui::DragValue::new(&mut self.imbalance_target).range(2.0..=5000.0))
-                        .on_hover_text(
-                            "expected trades per bar in balanced flow; \
-                             one-sided aggression closes bars sooner",
-                        );
-                }
-            }
-            ui.separator();
-            // History: pull older trades on demand, N per click.
-            ui.label("history +");
-            ui.add(
-                egui::DragValue::new(&mut self.history_step)
-                    .range(500.0..=50_000.0)
-                    .speed(100.0),
-            );
-            let capabilities = self.capabilities();
-            if ui
-                .add_enabled(
-                    capabilities.history_paging,
-                    egui::Button::new("⟲ load older"),
-                )
-                .on_hover_text(if capabilities.history_paging {
-                    "fetch older trades and prepend them"
-                } else {
-                    "this feed only streams forward; it cannot page older trades"
-                })
-                .clicked()
-            {
-                self.request_older_history();
-            }
-            ui.label(format!("({} trades)", self.history_trades));
-            ui.separator();
-            if ui
-                .button("🎨 candle")
-                .on_hover_text("candle transparency, outlines, colours and presets")
-                .clicked()
-            {
-                self.show_style = !self.show_style;
-            }
-            ui.separator();
-            let supports_book = capabilities.book_capture;
-            let mut book_enabled = self.orderflow.enabled();
-            let toggle = ui.add_enabled(
-                supports_book,
-                egui::Checkbox::new(&mut book_enabled, "book heatmap"),
-            );
-            if toggle
-                .on_hover_text(if supports_book {
-                    "capture synchronized live L2 depth; history starts when enabled"
-                } else {
-                    "order-book capture is not available for this provider"
-                })
-                .changed()
-            {
-                self.request_book_capture(book_enabled);
-            }
-            if ui
-                .add_enabled(
-                    supports_book,
-                    egui::Button::new(self.orderflow.l2_button_label()),
-                )
-                .on_hover_text(
-                    "dock the L2 panel: palette, non-destructive price ranges and liquidity response",
-                )
-                .clicked()
-            {
-                self.orderflow.toggle_l2_panel();
-            }
-            ui.separator();
-            // The aggression layer reads the trade stream the chart already
-            // consumes, so it needs no depth pipeline and no provider support.
-            let mut bubbles_enabled = self.orderflow.bubbles_enabled();
-            if ui
-                .checkbox(&mut bubbles_enabled, "bubbles")
-                .on_hover_text("confirmed executions as bubbles; independent of the book heatmap")
-                .changed()
-            {
-                self.orderflow.set_bubbles_enabled(bubbles_enabled);
-            }
-            if ui
-                .button(self.orderflow.bubbles_button_label())
-                .on_hover_text("dock the aggression-bubble panel: clustering, opacity and size")
-                .clicked()
-            {
-                self.orderflow.toggle_bubbles_panel();
-            }
-            ui.separator();
-            ui.checkbox(&mut self.show_overlay, "📈 perf")
-                .on_hover_text("show fps / frame time / feed lag (bottom-left)");
-        });
+    /// One toolbar side effect. Layer toggles reuse the same code paths the
+    /// old checkboxes took, so provider gating and command acknowledgement
+    /// rules are unchanged.
+    fn apply_toolbar_action(&mut self, action: ToolbarAction) {
+        match action {
+            ToolbarAction::LoadOlder => self.request_older_history(),
+            ToolbarAction::SetHeatmap(enabled) => self.request_book_capture(enabled),
+            ToolbarAction::SetBubbles(enabled) => self.orderflow.set_bubbles_enabled(enabled),
+            ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
+            ToolbarAction::ToggleDock => self.dock.toggle_visible(),
+            ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+        }
     }
 
     /// What the selected feed's backend can do.
@@ -783,13 +676,6 @@ impl QuantickApp {
         color32(self.style.canvas.background_rgba())
     }
 
-    /// Window chrome stays opaque even when the plot canvas is transparent;
-    /// otherwise toolbar labels would depend on the platform clear colour.
-    fn chrome_bg(&self) -> egui::Color32 {
-        let [r, g, b] = self.style.canvas.background;
-        egui::Color32::from_rgb(r, g, b)
-    }
-
     /// The current chart-grid colour. `TRANSPARENT` disables grid painting
     /// without branching throughout the axis code.
     fn grid(&self) -> egui::Color32 {
@@ -841,37 +727,6 @@ impl QuantickApp {
             "candle appearance changed"
         );
         self.style_log_pending = false;
-    }
-
-    /// A floating timezone picker anchored to the bottom-right corner. The time
-    /// axis relabels immediately on selection; the engine is untouched.
-    fn draw_timezone_selector(&mut self, ctx: &egui::Context) {
-        // Panels shrink the context's available rect, so the picker rides above
-        // whatever claimed the bottom of the window — the replay transport, and
-        // anything docked there later — instead of sitting on top of it.
-        let bottom_inset = (ctx.screen_rect().bottom() - ctx.available_rect().bottom()).max(0.0);
-        egui::Area::new(egui::Id::new("tz_selector"))
-            .anchor(
-                egui::Align2::RIGHT_BOTTOM,
-                egui::vec2(-10.0, -8.0 - bottom_inset),
-            )
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style())
-                    .fill(egui::Color32::from_black_alpha(150))
-                    .show(ui, |ui| {
-                        ui.visuals_mut().override_text_color = Some(OVERLAY);
-                        ui.horizontal(|ui| {
-                            ui.label("🕑");
-                            egui::ComboBox::from_id_salt("tz_combo")
-                                .selected_text(self.tz.label())
-                                .show_ui(ui, |ui| {
-                                    for tz in TzOffset::ALL {
-                                        ui.selectable_value(&mut self.tz, tz, tz.label());
-                                    }
-                                });
-                        });
-                    });
-            });
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
@@ -1222,7 +1077,7 @@ impl QuantickApp {
                 egui::Align2::CENTER_CENTER,
                 format!("connecting to {} …", self.symbol),
                 egui::FontId::proportional(16.0),
-                MUTED,
+                theme::TEXT_MUTED,
             );
             self.orderflow.draw_status_badge(painter, chart_rect);
             return;
@@ -1372,7 +1227,6 @@ impl QuantickApp {
         self.draw_backfill_divider(painter, chart_rect, total, cw);
         self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
         self.draw_crosshair(painter, chart_rect, &scale);
-        self.draw_header(painter, chart_rect);
         self.orderflow.draw_status_badge(painter, chart_rect);
 
         // Cache the auto range + height for next frame's input handler, which
@@ -1417,7 +1271,7 @@ impl QuantickApp {
                         egui::Align2::CENTER_CENTER,
                         fmt_time(bar.open_time, self.tz),
                         font.clone(),
-                        MUTED,
+                        theme::TEXT_MUTED,
                     );
                 }
             }
@@ -1446,7 +1300,7 @@ impl QuantickApp {
                 egui::Align2::LEFT_CENTER,
                 format!("{tick:.2}"),
                 font.clone(),
-                MUTED,
+                theme::TEXT_MUTED,
             );
         }
         // The axis dividing line.
@@ -1460,14 +1314,19 @@ impl QuantickApp {
     }
 
     /// Crosshair following the pointer, with the price shown on the axis.
+    /// Drawn only while the Crosshair tool is armed on the rail (§7 — the
+    /// hover crosshair is a mode, not an always-on layer).
     fn draw_crosshair(&self, painter: &egui::Painter, chart_rect: egui::Rect, scale: &PriceScale) {
+        if self.toolrail.tool() != Tool::Crosshair {
+            return;
+        }
         let Some(pos) = self.hover_pos else {
             return;
         };
         if !chart_rect.contains(pos) {
             return;
         }
-        let stroke = egui::Stroke::new(1.0_f32, CROSSHAIR);
+        let stroke = egui::Stroke::new(1.0_f32, theme::TEXT_FAINT);
         painter.line_segment(
             [
                 egui::pos2(pos.x, chart_rect.top()),
@@ -1495,7 +1354,7 @@ impl QuantickApp {
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
         );
-        painter.rect_filled(bg, egui::Rounding::same(2.0), TAG_BG);
+        painter.rect_filled(bg, egui::Rounding::same(2.0), theme::TAG_BG);
         painter.galley(text_pos, galley, egui::Color32::WHITE);
     }
 
@@ -1524,7 +1383,7 @@ impl QuantickApp {
                 egui::pos2(x, chart_rect.top()),
                 egui::pos2(x, chart_rect.bottom()),
             ],
-            egui::Stroke::new(1.0_f32, DIVIDER),
+            egui::Stroke::new(1.0_f32, theme::AMBER),
         );
         let font = egui::FontId::proportional(11.0);
         painter.text(
@@ -1532,157 +1391,94 @@ impl QuantickApp {
             egui::Align2::RIGHT_BOTTOM,
             "backfill",
             font.clone(),
-            MUTED,
+            theme::TEXT_MUTED,
         );
         painter.text(
             egui::pos2(x + 4.0, chart_rect.bottom() - 4.0),
             egui::Align2::LEFT_BOTTOM,
             "live",
             font,
-            DIVIDER,
+            theme::AMBER,
         );
     }
 
-    fn draw_header(&self, painter: &egui::Painter, plot: egui::Rect) {
+    /// Data-honesty label for how the aggressor side of each trade is known,
+    /// or `None` when the venue reports true sides (§8 — the status bar's
+    /// middle section).
+    fn side_note(&self) -> Option<String> {
+        if let Some(link) = &self.replay {
+            Some(match link.session.header.side_source.as_deref() {
+                Some(source) => format!("side: {source}"),
+                None => "side: not recorded".to_owned(),
+            })
+        } else {
+            // The running feed, not the still-uncommitted selection.
+            self.config.side_note(&self.active.0).map(str::to_owned)
+        }
+    }
+
+    /// Everything the status bar reports this frame.
+    fn status_model(&self) -> statusbar::StatusModel {
         let bars = self.state.bars();
         let (backfilled, live) = match self.state.backfill_boundary() {
-            Some(b) => (b, bars.len().saturating_sub(b)),
+            Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
             None => (0, bars.len()),
         };
-        let mode = match (self.viewport.follows_live(), self.replay.is_some()) {
-            // Never label a recording "live", however current the chart looks.
-            // `▶` rather than `●`: the bundled fonts carry the transport glyph.
-            (true, true) => "▶ replay",
-            (true, false) => "● live",
-            (false, _) => "history · double-click for live",
-        };
-        let price_mode = if self.price_view.is_auto() {
-            ""
-        } else {
-            " · price: manual (double-click to auto-fit)"
-        };
-        let header = format!(
-            "{} · {} · {} backfilled + {} live bars · {}{}",
-            self.symbol,
-            self.state.spec().summary(),
-            backfilled,
-            live,
-            mode,
-            price_mode
-        );
-        painter.text(
-            egui::pos2(plot.left(), plot.top()),
-            egui::Align2::LEFT_TOP,
-            header,
-            egui::FontId::proportional(13.0),
-            MUTED,
-        );
-    }
-
-    /// A bottom-left overlay with FPS, frame time and feed lag; values that
-    /// breach a threshold are drawn in the warning colour. Sits in the empty
-    /// lower-left of the chart so it doesn't cover the candles, and is toggled by
-    /// the "perf" checkbox in the controls bar.
-    fn draw_overlay(&self, painter: &egui::Painter, area: egui::Rect) {
-        if !self.show_overlay {
-            return;
-        }
-        let avg = self.frames.avg_ms();
-        let lag = self.trade_lag_ms();
-
-        let fps_color = if avg.is_some_and(|a| a > metrics::SLOW_FRAME_MS) {
-            WARN
-        } else {
-            OVERLAY
-        };
-        let lag_color = if lag.is_some_and(|l| l > metrics::HIGH_LAG_MS) {
-            WARN
-        } else {
-            OVERLAY
-        };
-        // A recording has no lag to report — its prints are months old by
-        // design. The line says what is actually driving the chart instead.
-        let lag_text = match (&self.replay, lag) {
-            (Some(link), _) => format!(
-                "replay {:.0}×  {:.0}%",
-                link.status.speed(),
-                link.status.progress() * 100.0
-            ),
-            (None, Some(l)) => format!("feed lag {l} ms"),
-            (None, None) => "feed lag —".to_string(),
-        };
-
-        let lines: [(String, egui::Color32); 4] = [
-            (
-                format!(
-                    "{:>4.0} fps  {:>5.1} ms",
-                    self.frames.fps().unwrap_or(0.0),
-                    avg.unwrap_or(0.0)
-                ),
-                fps_color,
-            ),
-            (
-                format!(
-                    "cpu {:>5.1} ms  worst {:>5.1} ms",
-                    self.cpu_frames.avg_ms().unwrap_or(0.0),
-                    self.frames.worst_ms().unwrap_or(0.0)
-                ),
-                OVERLAY,
-            ),
-            (lag_text, lag_color),
-            (format!("{} live trades", self.live_trades), OVERLAY),
-        ];
-
-        let font = egui::FontId::monospace(12.0);
-        let pad = 8.0;
-        let line_h = 16.0;
-        let box_w = 180.0;
-        let box_h = lines.len() as f32 * line_h + pad;
-        // Anchor to the empty lower-left of the chart body, above the time strip.
-        let chart = plot_split(area).chart;
-        let bottom_left = egui::pos2(chart.left() + 8.0, chart.bottom() - 8.0 - box_h);
-        let backdrop = egui::Rect::from_min_size(bottom_left, egui::vec2(box_w, box_h));
-        painter.rect_filled(
-            backdrop,
-            egui::Rounding::same(4.0),
-            egui::Color32::from_black_alpha(150),
-        );
-
-        let mut y = backdrop.top() + pad / 2.0;
-        let left = backdrop.left() + pad;
-        for (text, color) in &lines {
-            painter.text(
-                egui::pos2(left, y),
-                egui::Align2::LEFT_TOP,
-                text,
-                font.clone(),
-                *color,
-            );
-            y += line_h;
+        statusbar::StatusModel {
+            venue: if self.replay.is_some() {
+                "recording".to_owned()
+            } else {
+                self.feed_display_name()
+            },
+            symbol: self.symbol.clone(),
+            replay: self.replay.as_ref().map(|link| statusbar::ReplayFigures {
+                speed: link.status.speed(),
+                progress: link.status.progress(),
+            }),
+            feed_lag_ms: self.trade_lag_ms(),
+            spec_summary: self.state.spec().summary(),
+            backfilled_bars: backfilled,
+            live_bars: live,
+            side_note: self.side_note(),
+            follows_live: self.viewport.follows_live(),
+            price_auto: self.price_view.is_auto(),
+            live_trades: self.live_trades,
+            fps: self.frames.fps(),
+            frame_avg_ms: self.frames.avg_ms(),
+            frame_cpu_ms: self.cpu_frames.avg_ms(),
+            show_perf: self.show_perf,
         }
     }
 }
 
-/// Opens the Market Replay browser. The one shortcut this feature claims.
+/// Opens the Market Replay browser (§10).
 const REPLAY_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
+/// Shows/hides the panels dock (§10).
+const DOCK_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
+/// Height of the menu bar, in pixels (§5 zone 1).
+const MENU_BAR_HEIGHT: f32 = 28.0;
 
 impl QuantickApp {
-    /// The window's menu bar: one line, two menus, nothing that duplicates a
-    /// control already on the toolbar below it.
+    /// The window's menu bar (§10): shallow menus for discoverability and
+    /// shortcuts, never the only path to anything.
     fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         if ctx.input_mut(|i| i.consume_shortcut(&REPLAY_SHORTCUT)) {
             self.replay_view.open_browser();
         }
+        if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
+            self.dock.toggle_visible();
+        }
 
         egui::TopBottomPanel::top("menu_bar")
+            .exact_height(MENU_BAR_HEIGHT)
             .frame(
                 egui::Frame::none()
-                    .fill(self.chrome_bg())
-                    .inner_margin(egui::Margin::symmetric(6.0, 2.0)),
+                    .fill(theme::CHROME)
+                    .inner_margin(egui::Margin::symmetric(6.0, 4.0)),
             )
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(OVERLAY);
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui
@@ -1702,6 +1498,56 @@ impl QuantickApp {
                         ui.separator();
                         if ui.button("Exit").clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                    ui.menu_button("View", |ui| {
+                        let panels_label = if self.dock.visible() {
+                            "Hide panels"
+                        } else {
+                            "Show panels"
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(panels_label)
+                                    .shortcut_text(ui.ctx().format_shortcut(&DOCK_SHORTCUT)),
+                            )
+                            .clicked()
+                        {
+                            self.dock.toggle_visible();
+                            ui.close_menu();
+                        }
+                        for (tab, label) in [
+                            (DockTab::L2, "L2 settings"),
+                            (DockTab::Bubbles, "Bubble settings"),
+                            (DockTab::Session, "Session"),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.dock.open_tab(tab);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        ui.checkbox(&mut self.show_perf, "Perf readings")
+                            .on_hover_text("fps, frame time and trade count on the status bar");
+                        ui.separator();
+                        ui.menu_button("Timezone", |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(280.0)
+                                .show(ui, |ui| {
+                                    for tz in TzOffset::ALL {
+                                        if ui.selectable_label(self.tz == tz, tz.label()).clicked()
+                                        {
+                                            self.tz = tz;
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                        });
+                    });
+                    ui.menu_button("Tools", |ui| {
+                        if ui.button("Appearance…").clicked() {
+                            self.show_style = true;
+                            ui.close_menu();
                         }
                     });
                     ui.menu_button("Help", |ui| {
@@ -1818,16 +1664,43 @@ impl eframe::App for QuantickApp {
         self.maybe_emit_summary(now);
 
         let bg = self.bg();
+        // Rail shortcuts first: Esc/1/2 must be read before any widget can
+        // claim the keyboard this frame.
+        self.toolrail.handle_keys(ctx);
+        // Chrome panels claim their zones outside-in (§5): menu and toolbar
+        // on top, the status line at the very bottom with the replay
+        // transport directly above it, then the tool rail and the dock on the
+        // sides. The chart keeps whatever remains.
         self.draw_menu_bar(ctx);
-        egui::TopBottomPanel::top("controls")
-            .frame(egui::Frame::none().fill(self.chrome_bg()).inner_margin(8.0))
-            .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(OVERLAY);
-                self.draw_controls(ui);
-            });
+        self.draw_toolbar(ctx);
+        let status = self.status_model();
+        statusbar::draw(ctx, &status, &mut self.tz);
         // The browser window and, while a session plays, the transport bar.
-        // Drawn before the chart so the bottom panel claims its strip first.
         if let Some(action) = self.replay_view.draw(ctx, self.replay.as_ref()) {
+            self.apply_replay_action(action);
+        }
+        self.toolrail.draw(ctx);
+        let dock_response = {
+            let Self {
+                dock,
+                orderflow,
+                replay_view,
+                replay,
+                ..
+            } = self;
+            dock.draw(
+                ctx,
+                &mut DockEnv {
+                    orderflow,
+                    replay_view,
+                    replay: replay.as_ref(),
+                },
+            )
+        };
+        if dock_response.restart_book_capture {
+            self.restart_book_capture();
+        }
+        if let Some(action) = dock_response.replay_action {
             self.apply_replay_action(action);
         }
         // Respawn the feed if the feed/symbol selection changed (resets the
@@ -1835,11 +1708,6 @@ impl eframe::App for QuantickApp {
         self.maybe_switch_feed();
         self.apply_spec_change();
         self.draw_style_panel(ctx, now);
-        // Docked before the central panel so the chart keeps the remaining
-        // width instead of being covered by a floating window.
-        if self.orderflow.draw_panels(ctx) {
-            self.restart_book_capture();
-        }
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         self.loading
@@ -1853,10 +1721,8 @@ impl eframe::App for QuantickApp {
                 let area = ui.available_rect_before_wrap();
                 self.handle_navigation(ui, area);
                 self.draw_chart(ui.painter(), area);
-                self.draw_overlay(ui.painter(), area);
                 loading::overlay(ui, area, &self.loading);
             });
-        self.draw_timezone_selector(ctx);
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
     }
@@ -2302,6 +2168,49 @@ mod tests {
         assert!(
             app.book_channel_closed_reported,
             "subsequent frames keep the one-shot diagnostic latched"
+        );
+    }
+
+    #[test]
+    fn replay_keeps_the_recorded_symbol_out_of_the_live_feed_snap() {
+        // A recorded instrument no configured live feed offers must survive
+        // the toolbar frame untouched — snapping it away would relabel the
+        // whole session on the status bar and in the logs. The live path,
+        // drawn through the very same frame, must keep snapping an invalid
+        // selection back to the feed's list.
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        app.open_replay(crate::feed::ReplayRequest {
+            session: std::sync::Arc::new(session),
+            options: crate::feed::ReplayOptions {
+                autoplay: false,
+                ..Default::default()
+            },
+        });
+        assert_eq!(app.symbol, "WINJ26");
+
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw_toolbar(ctx));
+        assert_eq!(
+            app.symbol, "WINJ26",
+            "a toolbar frame during replay must not relabel the session"
+        );
+
+        // The same frame path with the replay closed: validation still works.
+        app.replay = None;
+        app.symbol = "NOT-A-SYMBOL".to_owned();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.draw_toolbar(ctx));
+        assert_eq!(
+            app.symbol, "TESTUSDT",
+            "live selections keep snapping to the feed's symbol list"
         );
     }
 

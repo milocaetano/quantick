@@ -11,7 +11,7 @@
 
 use eframe::egui;
 
-use crate::app::{DIVIDER, OVERLAY};
+use crate::theme::{AMBER, TEXT_PRIMARY};
 
 /// Spinner diameter, in pixels — shared by the overlay and the inline row so
 /// loading looks the same everywhere it appears.
@@ -27,7 +27,7 @@ const LABEL_FONT_SIZE: f32 = 12.0;
 /// Distance from the top of the chart area to the backdrop, in pixels.
 const TOP_OFFSET_PX: f32 = 8.0;
 /// Backdrop opacity (0–255): dark enough to read over candles, light enough
-/// to keep the chart visible behind it. Matches the perf overlay's backdrop.
+/// to keep the chart visible behind it.
 const BACKDROP_ALPHA: u8 = 150;
 /// Backdrop corner radius, in pixels.
 const CORNER_RADIUS_PX: f32 = 4.0;
@@ -152,8 +152,8 @@ impl LoadingTracker {
 /// the caller's layout (including right-to-left rows) keeps deciding where
 /// they land.
 pub fn inline(ui: &mut egui::Ui, label: &str) {
-    ui.add(egui::Spinner::new().size(SPINNER_SIZE).color(DIVIDER));
-    ui.label(egui::RichText::new(format!("{label}…")).color(OVERLAY));
+    ui.add(egui::Spinner::new().size(SPINNER_SIZE).color(AMBER));
+    ui.label(egui::RichText::new(format!("{label}…")).color(TEXT_PRIMARY));
 }
 
 /// The one loading overlay: every active task as a spinner + label row on a
@@ -167,7 +167,9 @@ pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
     let painter = ui.painter().clone();
     let galleys: Vec<_> = tracker
         .active()
-        .map(|task| painter.layout_no_wrap(format!("{}…", task.label()), font.clone(), OVERLAY))
+        .map(|task| {
+            painter.layout_no_wrap(format!("{}…", task.label()), font.clone(), TEXT_PRIMARY)
+        })
         .collect();
 
     let widest = galleys
@@ -194,13 +196,13 @@ pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
         );
         ui.put(
             spinner,
-            egui::Spinner::new().size(SPINNER_SIZE).color(DIVIDER),
+            egui::Spinner::new().size(SPINNER_SIZE).color(AMBER),
         );
         let text_pos = egui::pos2(
             spinner.right() + GAP,
             y + (ROW_HEIGHT - galley.size().y) / 2.0,
         );
-        painter.galley(text_pos, galley, OVERLAY);
+        painter.galley(text_pos, galley, TEXT_PRIMARY);
         y += ROW_HEIGHT;
     }
 }

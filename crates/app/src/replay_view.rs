@@ -16,24 +16,23 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
 
 use quantick_replay::clock::SPEEDS;
 use quantick_replay::format::{self, UtcOffset};
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
-use crate::app::{DIVIDER, MUTED, OVERLAY, WARN};
 use crate::feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
+use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
 
 /// The accent this feature owns: the same amber the chart already uses for the
 /// backfill/live divider, so "this is not live data" reads the same way twice.
 /// Borrowed rather than repeated, so the two can never drift apart.
-const REPLAY_ACCENT: egui::Color32 = DIVIDER;
+const REPLAY_ACCENT: egui::Color32 = AMBER;
 
-/// Background of the docked transport bar.
-const TRANSPORT_BG: egui::Color32 = egui::Color32::from_rgb(24, 27, 34);
-
-/// The unplayed part of the seek track.
-const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(45, 50, 60);
+/// Height of the transport strip, in pixels — part of the status system, one
+/// line directly above the status bar (`docs/ux/ui-design-model.md` §8).
+pub const TRANSPORT_HEIGHT: f32 = 30.0;
 
 /// Environment variable naming the folder the browser opens on.
 pub const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
@@ -293,7 +292,7 @@ impl ReplayView {
             .default_height(460.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(OVERLAY);
+                ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
                 self.draw_folder_row(ui);
                 ui.add_space(10.0);
                 load_clicked = self.draw_session_list(ui);
@@ -311,7 +310,11 @@ impl ReplayView {
     }
 
     fn draw_folder_row(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("Replay folder").color(MUTED).small());
+        ui.label(
+            egui::RichText::new("Replay folder")
+                .color(TEXT_MUTED)
+                .small(),
+        );
         ui.horizontal(|ui| {
             let width = (ui.available_width() - 110.0).max(120.0);
             let response = ui.add_sized(
@@ -327,7 +330,7 @@ impl ReplayView {
                 self.browse();
             }
             if ui
-                .button("↻")
+                .button(icons::ARROW_CLOCKWISE)
                 .on_hover_text("Scan this folder again")
                 .clicked()
             {
@@ -345,7 +348,7 @@ impl ReplayView {
     /// the same request as picking it and pressing **Play session**.
     fn draw_session_list(&mut self, ui: &mut egui::Ui) -> bool {
         let mut open_requested = false;
-        ui.label(egui::RichText::new("Sessions").color(MUTED).small());
+        ui.label(egui::RichText::new("Sessions").color(TEXT_MUTED).small());
         let frame = egui::Frame::none()
             .fill(egui::Color32::from_black_alpha(60))
             .inner_margin(8.0)
@@ -358,7 +361,7 @@ impl ReplayView {
                 ui.vertical_centered(|ui| {
                     ui.label(
                         egui::RichText::new("Choose the folder holding your recorded sessions.")
-                            .color(MUTED),
+                            .color(TEXT_MUTED),
                     );
                 });
                 return;
@@ -372,7 +375,7 @@ impl ReplayView {
                         egui::RichText::new(
                             "quantick reads one CSV per session day, in a folder per instrument.",
                         )
-                        .color(MUTED)
+                        .color(TEXT_MUTED)
                         .small(),
                     );
                 });
@@ -404,7 +407,7 @@ impl ReplayView {
                             for note in &entry.notes {
                                 ui.label(
                                     egui::RichText::new(format!("    {note}"))
-                                        .color(MUTED)
+                                        .color(TEXT_MUTED)
                                         .small(),
                                 );
                             }
@@ -438,14 +441,14 @@ impl ReplayView {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(
                             egui::RichText::new(problem.subject())
-                                .color(OVERLAY)
+                                .color(TEXT_PRIMARY)
                                 .monospace(),
                         );
-                        ui.label(egui::RichText::new(&problem.detail).color(MUTED));
+                        ui.label(egui::RichText::new(&problem.detail).color(TEXT_MUTED));
                     });
                     ui.label(
                         egui::RichText::new(format!("    {}", problem.advice()))
-                            .color(MUTED)
+                            .color(TEXT_MUTED)
                             .small(),
                     );
                     ui.add_space(4.0);
@@ -460,7 +463,7 @@ impl ReplayView {
             "Show the file format"
         };
         if ui
-            .link(egui::RichText::new(label).color(MUTED).small())
+            .link(egui::RichText::new(label).color(TEXT_MUTED).small())
             .clicked()
         {
             self.show_format = !self.show_format;
@@ -481,7 +484,7 @@ impl ReplayView {
                             egui::RichText::new(format::FORMAT_HELP)
                                 .monospace()
                                 .small()
-                                .color(MUTED),
+                                .color(TEXT_MUTED),
                         );
                     });
             });
@@ -503,7 +506,7 @@ impl ReplayView {
 
         let mut clicked = false;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Start at").color(MUTED).small());
+            ui.label(egui::RichText::new("Start at").color(TEXT_MUTED).small());
             for speed in SPEEDS {
                 let selected = (self.speed - speed).abs() < f32::EPSILON;
                 if speed_chip(ui, speed, selected).clicked() {
@@ -536,23 +539,26 @@ impl ReplayView {
         clicked
     }
 
-    /// The transport bar, docked at the bottom while a session is playing.
+    /// The transport strip: one 30 px row directly above the status bar while
+    /// a session is playing — part of the status system, not an island (§8).
     fn draw_transport(&mut self, ctx: &egui::Context, link: &ReplayLink) -> Option<ReplayAction> {
         let mut action = None;
         let status = &link.status;
         let timezone = link.session.timezone();
 
         egui::TopBottomPanel::bottom("replay_transport")
+            .exact_height(TRANSPORT_HEIGHT)
             .frame(
                 egui::Frame::none()
-                    .fill(TRANSPORT_BG)
-                    .inner_margin(egui::Margin::symmetric(10.0, 6.0)),
+                    .fill(CHROME)
+                    .inner_margin(egui::Margin::symmetric(10.0, 3.0)),
             )
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(OVERLAY);
-                ui.horizontal(|ui| {
+                ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     if ui
-                        .button("⏮")
+                        .button(icons::SKIP_BACK)
                         .on_hover_text("Back to the first print")
                         .clicked()
                     {
@@ -563,9 +569,9 @@ impl ReplayView {
                     // cannot invert a state that changed between frames.
                     let playing = status.is_playing() && !status.is_finished();
                     let (label, hint, control) = if playing {
-                        ("⏸", "Pause (Space)", ReplayControl::Pause)
+                        (icons::PAUSE, "Pause (Space)", ReplayControl::Pause)
                     } else {
-                        ("▶", "Play (Space)", ReplayControl::Play)
+                        (icons::PLAY, "Play (Space)", ReplayControl::Play)
                     };
                     if ui
                         .button(egui::RichText::new(label).color(REPLAY_ACCENT))
@@ -575,16 +581,14 @@ impl ReplayView {
                         action = Some(ReplayAction::Control(control));
                     }
 
-                    ui.add_space(6.0);
                     badge(ui, "REPLAY");
-                    ui.label(egui::RichText::new(link.label()).color(OVERLAY));
+                    ui.label(egui::RichText::new(link.label()).color(TEXT_PRIMARY));
                     ui.label(
                         egui::RichText::new(clock_text(status.position_ms(), timezone))
                             .monospace()
                             .color(REPLAY_ACCENT),
                     );
 
-                    ui.add_space(6.0);
                     for speed in SPEEDS {
                         let selected = (status.speed() - speed).abs() < f32::EPSILON;
                         if speed_chip(ui, speed, selected).clicked() {
@@ -594,7 +598,7 @@ impl ReplayView {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .button("✖")
+                            .button(icons::X)
                             .on_hover_text("Close the replay and go back to the live feed")
                             .clicked()
                         {
@@ -606,18 +610,18 @@ impl ReplayView {
                                 thousands(status.played()),
                                 thousands(status.total())
                             ))
-                            .color(MUTED)
+                            .color(TEXT_MUTED)
                             .small(),
                         );
+                        // The seek track takes every pixel left between the
+                        // speed chips and the counts.
+                        if let Some(fraction) = seek_track(ui, status.progress(), &mut self.scrub) {
+                            action = Some(ReplayAction::Control(ReplayControl::SeekToFraction(
+                                fraction,
+                            )));
+                        }
                     });
                 });
-
-                ui.add_space(2.0);
-                if let Some(fraction) = seek_track(ui, status.progress(), &mut self.scrub) {
-                    action = Some(ReplayAction::Control(ReplayControl::SeekToFraction(
-                        fraction,
-                    )));
-                }
             });
 
         // Space toggles playback, the way every media transport behaves. Only
@@ -694,7 +698,7 @@ fn seek_track(ui: &mut egui::Ui, progress: f32, scrub: &mut Option<f32>) -> Opti
     };
 
     let painter = ui.painter();
-    painter.rect_filled(track, 3.0, TRACK_BG);
+    painter.rect_filled(track, 3.0, CONTROL);
     let filled = egui::Rect::from_min_size(track.min, egui::vec2(width * shown, TRACK_HEIGHT));
     painter.rect_filled(filled, 3.0, REPLAY_ACCENT);
     painter.circle_filled(

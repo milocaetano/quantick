@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::DepthEvent;
 use rust_decimal::Decimal;
@@ -35,14 +36,14 @@ use crate::viewport::Viewport;
 
 fn status_color(status: &CaptureStatus) -> egui::Color32 {
     match status {
-        CaptureStatus::Live { .. } => egui::Color32::from_rgb(45, 205, 145),
+        CaptureStatus::Live { .. } => crate::theme::BUY,
         CaptureStatus::Connecting | CaptureStatus::Buffering | CaptureStatus::SnapshotFetching => {
-            egui::Color32::from_rgb(240, 185, 11)
+            crate::theme::AMBER
         }
-        CaptureStatus::Disabled => egui::Color32::from_rgb(145, 155, 170),
+        CaptureStatus::Disabled => crate::theme::TEXT_MUTED,
         CaptureStatus::Resyncing { .. }
         | CaptureStatus::Disconnected { .. }
-        | CaptureStatus::Error => egui::Color32::from_rgb(255, 99, 71),
+        | CaptureStatus::Error => crate::theme::WARN,
     }
 }
 
@@ -57,10 +58,6 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
-    /// Whether the docked L2 (liquidity map) settings panel is open.
-    show_l2_panel: bool,
-    /// Whether the docked aggression-bubble settings panel is open.
-    show_bubbles_panel: bool,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
     last_requested_layout: Option<ProjectionLayout>,
@@ -115,8 +112,6 @@ impl OrderflowView {
             config,
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
-            show_l2_panel: false,
-            show_bubbles_panel: false,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
             last_requested_layout: None,
@@ -177,31 +172,6 @@ impl OrderflowView {
         }
         self.sync_published();
         self.published.live_end_ms
-    }
-
-    pub fn toggle_l2_panel(&mut self) {
-        self.show_l2_panel = !self.show_l2_panel;
-    }
-
-    pub fn toggle_bubbles_panel(&mut self) {
-        self.show_bubbles_panel = !self.show_bubbles_panel;
-    }
-
-    #[must_use]
-    pub fn l2_button_label(&self) -> String {
-        match self.config.display_grouping {
-            DisplayGrouping::Adaptive { .. } => "⚙ L2 · auto".to_owned(),
-            DisplayGrouping::Native => "⚙ L2 · 1×".to_owned(),
-            DisplayGrouping::Multiple(multiple) => format!("⚙ L2 · {multiple}×"),
-        }
-    }
-
-    #[must_use]
-    pub fn bubbles_button_label(&self) -> String {
-        format!(
-            "⚙ bubbles · {}",
-            cluster_label(self.config.bubble_cluster_ms)
-        )
     }
 
     #[cfg(test)]
@@ -474,7 +444,7 @@ impl OrderflowView {
                     }
                 });
             if ui
-                .small_button("↻")
+                .small_button(icons::ARROW_CLOCKWISE)
                 .on_hover_text("reload the presets file from disk, discarding unsaved tweaks")
                 .clicked()
             {
@@ -818,38 +788,19 @@ impl OrderflowView {
             });
     }
 
-    /// Draw the docked order-flow panels and return whether capture must
-    /// restart because the base capture resolution changed.
+    /// The L2 dock tab's body: everything the depth map owns. Returns
+    /// whether capture must restart because the base capture resolution
+    /// changed.
     ///
-    /// The L2 map and the aggression bubbles get one panel each, so neither
-    /// configuration hides behind the other's switch.
-    pub fn draw_panels(&mut self, ctx: &egui::Context) -> bool {
-        if !self.show_l2_panel && !self.show_bubbles_panel {
-            return false;
-        }
+    /// The layer's *toggle* lives in the toolbar; this tab is settings only —
+    /// opening it never starts capture (looking is not enabling).
+    pub fn draw_l2_tab(&mut self, ui: &mut egui::Ui) -> bool {
         self.sync_published();
         let before = self.config.clone();
-        self.draw_l2_panel(ctx);
-        self.draw_bubbles_panel(ctx);
-        self.commit_config_changes(before)
-    }
-
-    /// Left dock for everything the depth map owns.
-    fn draw_l2_panel(&mut self, ctx: &egui::Context) {
-        if !self.show_l2_panel {
-            return;
-        }
-        let mut open = true;
-        egui::SidePanel::left("orderflow_l2_panel")
-            .resizable(true)
-            .default_width(340.0)
-            .width_range(300.0..=620.0)
-            .show(ctx, |ui| {
-                panel_header(ui, "L2 · LIQUIDITY MAP", &mut open);
-                egui::ScrollArea::vertical()
-                    .id_salt("orderflow_l2_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("orderflow_l2_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
                 ui.label(
                     egui::RichText::new(self.published.status.label())
                         .small()
@@ -1074,28 +1025,21 @@ impl OrderflowView {
                         ..HeatmapConfig::default()
                     };
                 }
-                    });
             });
-        self.show_l2_panel = open;
+        self.commit_config_changes(before)
     }
 
-    /// Left dock for the aggression layer. Everything here is independent of
-    /// L2 capture: bubbles are built from the aggregate-trade stream.
-    fn draw_bubbles_panel(&mut self, ctx: &egui::Context) {
-        if !self.show_bubbles_panel {
-            return;
-        }
-        let mut open = true;
-        egui::SidePanel::left("orderflow_bubbles_panel")
-            .resizable(true)
-            .default_width(300.0)
-            .width_range(260.0..=520.0)
-            .show(ctx, |ui| {
-                panel_header(ui, "AGGRESSION BUBBLES", &mut open);
-                egui::ScrollArea::vertical()
-                    .id_salt("orderflow_bubbles_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+    /// The Bubbles dock tab's body: the aggression layer's settings.
+    /// Everything here is independent of L2 capture — bubbles are built from
+    /// the aggregate-trade stream. Same return contract as
+    /// [`Self::draw_l2_tab`].
+    pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui) -> bool {
+        self.sync_published();
+        let before = self.config.clone();
+        egui::ScrollArea::vertical()
+            .id_salt("orderflow_bubbles_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
                         ui.small(
                             "Confirmed executions from the trade stream. Colour is the aggressor side; area is quantity.",
                         );
@@ -1158,7 +1102,7 @@ impl OrderflowView {
                         }
                         if ui
                             .button("reset bubble visuals")
-                            .on_hover_text("only this panel; L2 and history settings stay as they are")
+                            .on_hover_text("only this tab; L2 and history settings stay as they are")
                             .clicked()
                         {
                             let defaults = HeatmapConfig::default();
@@ -1171,8 +1115,7 @@ impl OrderflowView {
                                 Some("bubble defaults restored (not saved)".to_owned());
                         }
                     });
-            });
-        self.show_bubbles_panel = open;
+        self.commit_config_changes(before)
     }
 
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
@@ -1200,30 +1143,6 @@ impl OrderflowView {
         }
         restart_required
     }
-}
-
-/// Title row shared by the docked panels, with the close affordance a floating
-/// window used to provide.
-fn panel_header(ui: &mut egui::Ui, title: &str, open: &mut bool) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(title)
-                .strong()
-                .color(egui::Color32::from_rgb(255, 222, 92)),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // `×` is Latin-1, so it renders in egui's default proportional
-            // font — the fancier ✕/✖ glyphs fall back to an empty box.
-            if ui
-                .small_button("×")
-                .on_hover_text("close this panel")
-                .clicked()
-            {
-                *open = false;
-            }
-        });
-    });
-    ui.separator();
 }
 
 fn theme_label(theme: HeatmapTheme) -> &'static str {
@@ -1294,19 +1213,19 @@ mod tests {
     use crate::orderflow::{BubbleSizeReference, BubbleStyle};
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
-    /// Lay the docked panels out for real, off-screen, so a broken nested
-    /// layout or a duplicated widget id fails here instead of on the chart.
-    /// Both panels are open at once: they share the left dock and the bubble
-    /// controls must not collide with the L2 ones.
+    /// Lay the dock tabs out for real, off-screen, so a broken nested layout
+    /// or a duplicated widget id fails here instead of on the chart. Both tabs
+    /// are drawn in the same frame: their widget ids must not collide.
     #[test]
-    fn the_bubble_panel_lays_out_every_control() {
+    fn the_bubble_tab_lays_out_every_control() {
         let ctx = egui::Context::default();
         let mut view = OrderflowView::new("BTCUSDT");
-        view.toggle_bubbles_panel();
-        view.toggle_l2_panel();
         let frame = |view: &mut OrderflowView| {
             ctx.run(egui::RawInput::default(), |ctx| {
-                view.draw_panels(ctx);
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    view.draw_bubbles_tab(ui);
+                    view.draw_l2_tab(ui);
+                });
             })
         };
         // Two frames: the second one re-uses the ids the first allocated.
@@ -1328,9 +1247,8 @@ mod tests {
         let output = frame(&mut view);
         assert!(
             !output.shapes.is_empty(),
-            "the panel must still paint when bubbles are hidden"
+            "the tab must still paint when bubbles are hidden"
         );
-        assert!(view.show_bubbles_panel);
     }
 
     #[test]

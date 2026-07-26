@@ -16,6 +16,7 @@ mod bubble_presets;
 mod candle_view;
 mod chart;
 mod config;
+mod dock;
 mod feed;
 mod loading;
 mod metrics;
@@ -27,9 +28,14 @@ mod orderflow_worker;
 mod price_view;
 mod replay_view;
 mod state;
+mod statusbar;
 mod style;
+mod theme;
 mod timezone;
+mod toolbar;
+mod toolrail;
 mod viewport;
+mod widgets;
 
 /// The bar type the chart opens on. The type and its parameter are tunable live
 /// from the controls bar; the feed and symbol come from the configuration.
@@ -118,7 +124,14 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "quantick",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            // Chrome glyphs come from the bundled Phosphor icon font; the
+            // design tokens point egui's own widgets at the chrome palette.
+            // Both are installed once, before the first frame.
+            let mut fonts = egui::FontDefinitions::default();
+            egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            cc.egui_ctx.set_fonts(fonts);
+            theme::apply(&cc.egui_ctx);
             Ok(Box::new(app::QuantickApp::new(
                 config,
                 feed_id,

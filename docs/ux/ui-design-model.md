@@ -1,6 +1,8 @@
 # quantick UI Design Model
 
-Status: **proposed model, not yet implemented**
+Status: **implemented — migration phases 1–5** (status bar, toolbar regroup,
+icon set, right dock, tool rail); phase 6 lands with the indicator milestones.
+§2 documents the UI as it was *before* this model, kept as the audit record.
 Scope: the desktop app's chrome — where buttons, menus, icons, panels and tools
 live today, and where they will live as the app grows into indicators, drawing
 tools and beyond. This document is the reference for every future UI change:
