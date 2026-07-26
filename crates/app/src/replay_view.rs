@@ -769,6 +769,7 @@ mod tests {
         assert_eq!(view.speed, 1.0);
         assert!(view.autoplay);
         assert!(view.library.is_none());
+        assert!(!view.is_loading(), "nothing is being parsed yet");
     }
 
     #[test]

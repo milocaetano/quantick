@@ -22,6 +22,15 @@ const GAP: f32 = 6.0;
 const PAD: f32 = 8.0;
 /// Height of one overlay row, in pixels.
 const ROW_HEIGHT: f32 = 20.0;
+/// Font size of an overlay row label, in points.
+const LABEL_FONT_SIZE: f32 = 12.0;
+/// Distance from the top of the chart area to the backdrop, in pixels.
+const TOP_OFFSET_PX: f32 = 8.0;
+/// Backdrop opacity (0–255): dark enough to read over candles, light enough
+/// to keep the chart visible behind it. Matches the perf overlay's backdrop.
+const BACKDROP_ALPHA: u8 = 150;
+/// Backdrop corner radius, in pixels.
+const CORNER_RADIUS_PX: f32 = 4.0;
 
 /// Something slow the interface may be waiting on. One variant per kind of
 /// wait; the label is what the user reads next to the spinner.
@@ -61,13 +70,9 @@ impl LoadingTask {
     }
 
     /// This task's position in [`Self::ALL`] — the tracker's array index.
+    /// Declaration order *is* the index, so adding a variant cannot drift.
     fn index(self) -> usize {
-        match self {
-            Self::History => 0,
-            Self::BarRebuild => 1,
-            Self::BookSync => 2,
-            Self::ReplaySession => 3,
-        }
+        self as usize
     }
 }
 
@@ -158,7 +163,7 @@ pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
     if !tracker.any_active() {
         return;
     }
-    let font = egui::FontId::proportional(12.0);
+    let font = egui::FontId::proportional(LABEL_FONT_SIZE);
     let painter = ui.painter().clone();
     let galleys: Vec<_> = tracker
         .active()
@@ -172,13 +177,13 @@ pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
     let box_w = PAD + SPINNER_SIZE + GAP + widest + PAD;
     let box_h = galleys.len() as f32 * ROW_HEIGHT + PAD;
     let backdrop = egui::Rect::from_min_size(
-        egui::pos2(area.center().x - box_w / 2.0, area.top() + 8.0),
+        egui::pos2(area.center().x - box_w / 2.0, area.top() + TOP_OFFSET_PX),
         egui::vec2(box_w, box_h),
     );
     painter.rect_filled(
         backdrop,
-        egui::Rounding::same(4.0),
-        egui::Color32::from_black_alpha(150),
+        egui::Rounding::same(CORNER_RADIUS_PX),
+        egui::Color32::from_black_alpha(BACKDROP_ALPHA),
     );
 
     let mut y = backdrop.top() + PAD / 2.0;

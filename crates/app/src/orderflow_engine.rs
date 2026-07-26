@@ -285,6 +285,19 @@ impl CaptureStatus {
             Self::Error => "error",
         }
     }
+
+    /// Whether capture is working towards a live book — the states the app's
+    /// loading overlay shows as a wait. Exhaustive so a new status must decide
+    /// whether it reads as "loading" instead of silently defaulting to "no".
+    pub fn is_syncing(&self) -> bool {
+        match self {
+            Self::Connecting
+            | Self::Buffering
+            | Self::SnapshotFetching
+            | Self::Resyncing { .. } => true,
+            Self::Disabled | Self::Live { .. } | Self::Disconnected { .. } | Self::Error => false,
+        }
+    }
 }
 
 /// One immutable snapshot of everything the UI reads between frames.
@@ -946,6 +959,31 @@ mod tests {
     use super::*;
     use quantick_engine::Side;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+
+    #[test]
+    fn only_states_working_towards_a_live_book_read_as_syncing() {
+        assert!(CaptureStatus::Connecting.is_syncing());
+        assert!(CaptureStatus::Buffering.is_syncing());
+        assert!(CaptureStatus::SnapshotFetching.is_syncing());
+        assert!(CaptureStatus::Resyncing { reason: "gap" }.is_syncing());
+
+        assert!(!CaptureStatus::Disabled.is_syncing());
+        assert!(
+            !CaptureStatus::Live {
+                generation: 1,
+                last_update_id: 1,
+            }
+            .is_syncing()
+        );
+        assert!(
+            !CaptureStatus::Disconnected {
+                error_class: "read",
+            }
+            .is_syncing(),
+            "a dead connection is a warning, not a wait"
+        );
+        assert!(!CaptureStatus::Error.is_syncing());
+    }
 
     #[test]
     fn adaptive_base_scales_with_price_and_stays_round() {
