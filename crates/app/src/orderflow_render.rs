@@ -1277,6 +1277,8 @@ pub(crate) fn draw_live_footprint(
                 bubbles,
                 &colors,
             );
+            // A rail mark aggregates a whole bucket, so a per-print trade
+            // count would lie: label quantity only, on the usual radius gate.
             if radius >= bubbles.label_min_radius
                 && let Some(label) = bubble_label(quantity, 1, bubbles.show_quantity_labels, false)
             {
@@ -3011,5 +3013,57 @@ mod tests {
             "rails not symmetric"
         );
         assert!((buy - sell - 2.0 * LIVE_COLUMN_RAIL_OFFSET * 8.0).abs() < 1e-4);
+    }
+
+    /// The footprint is an aggression-layer citizen: the family switch and
+    /// the per-side display toggles must gate it exactly like the history
+    /// bubbles, and an empty aggregation must draw nothing.
+    #[test]
+    fn the_footprint_honors_the_aggression_layer_and_side_toggles() {
+        use rust_decimal::Decimal;
+
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 100.0));
+        let scale = PriceScale::from_range(90.0, 110.0, chart.top(), chart.bottom());
+        let rows = vec![HistogramRow {
+            price_bucket: Decimal::from(100),
+            buy: Decimal::from(4),
+            sell: Decimal::from(9),
+        }];
+        let style = OrderflowRenderStyle::default();
+        let draw = |style: &OrderflowRenderStyle, rows: &[HistogramRow]| {
+            let style = style.clone();
+            let rows = rows.to_vec();
+            painted(move |painter| {
+                draw_live_footprint(
+                    painter,
+                    chart,
+                    200.0,
+                    16.0,
+                    &scale,
+                    &style,
+                    &rows,
+                    Decimal::from(9),
+                    Decimal::ONE,
+                )
+            })
+        };
+
+        let both = draw(&style, &rows);
+        let mut no_sells = style.clone();
+        no_sells.show_sell = false;
+        let mut no_buys = style.clone();
+        no_buys.show_buy = false;
+        let mut layer_off = style.clone();
+        layer_off.aggression_layer = false;
+
+        let empty = draw(&style, &[]);
+        assert_eq!(draw(&layer_off, &rows), empty, "family switch must gate");
+        let buys_only = draw(&no_sells, &rows);
+        let sells_only = draw(&no_buys, &rows);
+        assert_ne!(both, buys_only, "hiding sells must remove their mark");
+        assert_ne!(both, sells_only, "hiding buys must remove their mark");
+        assert_ne!(buys_only, sells_only, "the two rails draw distinct marks");
+        assert_ne!(buys_only, empty);
+        assert_ne!(sells_only, empty);
     }
 }
