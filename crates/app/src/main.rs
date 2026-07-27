@@ -18,6 +18,7 @@ mod chart;
 mod config;
 mod dock;
 mod feed;
+mod live_strip;
 mod loading;
 mod metrics;
 mod orderflow;
