@@ -312,6 +312,13 @@ pub fn project(
         IntensityMode::Fixed(maximum) => maximum,
     };
 
+    // Hidden heat is gated after the reference: the drafts fed the P99 above,
+    // and the depletion floors keyed to it must not move just because the map
+    // behind them is switched off. Before the drop accounting, so the health
+    // counters never blame the cap for cells the user chose to hide.
+    if !config.show_liquidity {
+        drafts.clear();
+    }
     let dropped_cells = drafts.len().saturating_sub(config.max_visible_cells);
     if dropped_cells > 0 {
         // Retain the strongest walls deterministically and surface the loss.
@@ -325,12 +332,6 @@ pub fn project(
         drafts.truncate(config.max_visible_cells);
     }
 
-    // Hidden heat is gated here rather than at the sweep: the drafts still
-    // feed the liquidity reference above, and the depletion floors keyed to it
-    // must not move just because the map behind them is switched off.
-    if !config.show_liquidity {
-        drafts.clear();
-    }
     let cells = drafts
         .into_iter()
         .map(|draft| {
@@ -1631,6 +1632,10 @@ mod tests {
             ..event_config()
         });
         assert!(projection.cells.is_empty());
+        assert_eq!(
+            projection.dropped_cells, 0,
+            "hidden cells are a choice, not a cap drop"
+        );
         assert_eq!(
             projection.liquidity_events.len(),
             2,
