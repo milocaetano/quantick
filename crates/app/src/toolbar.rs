@@ -169,7 +169,7 @@ pub struct ToolbarModel<'a> {
     pub history_trades: usize,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
-    /// Whether L2 capture is running.
+    /// Whether the L2 depth map is shown. Capture runs regardless.
     pub heatmap_on: bool,
     /// Whether the aggression layer is on.
     pub bubbles_on: bool,
@@ -186,7 +186,8 @@ pub struct ToolbarModel<'a> {
 pub enum ToolbarAction {
     /// Fetch and prepend one page of older trades.
     LoadOlder,
-    /// Start or stop L2 depth capture.
+    /// Show or hide the L2 depth map. Display-only: the recorder keeps
+    /// running, so reopening the map brings its history back whole.
     SetHeatmap(bool),
     /// Turn the aggression layer on or off.
     SetBubbles(bool),
@@ -423,7 +424,10 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
         .active(model.heatmap_on)
         .accent(theme::ACCENT)
         .enabled(model.capabilities.book_capture)
-        .hover_text("L2 heatmap: capture synchronized live depth — right-click for settings")
+        .hover_text(
+            "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
+             loses nothing. Right-click for settings",
+        )
         .disabled_explanation("order-book capture is not available for this source")
         .show(ui);
     if heatmap.clicked() {

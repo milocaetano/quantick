@@ -300,12 +300,14 @@ impl QuantickApp {
             trades_since_summary: 0,
             last_summary: Instant::now(),
         };
-        // Dev/ops convenience: start L2 capture without a click. Same code
-        // path as the UI toggle, so provider support and command
-        // acknowledgement rules stay identical.
-        if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
-            app.request_book_capture(true);
-        }
+        // Recording is not a display choice: it starts with the feed, so
+        // hiding the map later never leaves a hole in what was captured.
+        app.ensure_book_capture();
+        // The map itself stays hidden until asked for — a layer nobody
+        // requested must cost no projection. Dev/ops can open it without a
+        // click; capture is already running either way.
+        app.orderflow
+            .set_depth_visible(std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|v| v == "1"));
         // Same convenience for the live strip; its pixels stay
         // capability-gated either way (see live_strip_width).
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
@@ -421,7 +423,7 @@ impl QuantickApp {
         });
         let capabilities = self.capabilities();
         let feed_display_name = self.feed_display_name();
-        let heatmap_on = self.orderflow.enabled();
+        let heatmap_on = self.orderflow.depth_visible();
         let bubbles_on = self.orderflow.bubbles_enabled();
         let mut model = toolbar::ToolbarModel {
             feeds,
@@ -464,7 +466,7 @@ impl QuantickApp {
     fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => self.request_older_history(),
-            ToolbarAction::SetHeatmap(enabled) => self.request_book_capture(enabled),
+            ToolbarAction::SetHeatmap(shown) => self.orderflow.set_depth_visible(shown),
             ToolbarAction::SetBubbles(enabled) => self.orderflow.set_bubbles_enabled(enabled),
             ToolbarAction::SetLiveStrip(shown) => self.live_strip_visible = shown,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
@@ -536,6 +538,28 @@ impl QuantickApp {
             .saturating_mul(BOOK_GENERATION_STRIDE)
     }
 
+    /// Keep the recorder running for any feed that can stream depth.
+    ///
+    /// Capture is a data concern: it starts with the feed and stops only when
+    /// the market itself changes (feed/symbol switch, or a replay taking the
+    /// chart over). Showing and hiding the map never reaches this far, which is
+    /// what lets a hidden heatmap come back with its history intact.
+    ///
+    /// Recording with nobody watching stays inside the retention budget the
+    /// heatmap already had — `retention_ms` (30 min by default) bounded by
+    /// `max_history_runs` / `max_history_bytes` — so the ceiling is the same
+    /// one an open map pays for, not a new one.
+    ///
+    /// Idempotent and cheap, so the frame loop can call it as a heartbeat on
+    /// top of the lifecycle calls: already recording costs one bool read, and
+    /// a replay costs one more `Option` check.
+    fn ensure_book_capture(&mut self) {
+        if self.orderflow.enabled() || !self.capabilities().book_capture {
+            return;
+        }
+        self.request_book_capture(true);
+    }
+
     /// Start or stop the independent depth pipeline without touching aggTrades
     /// or candle construction. UI state changes only if the command is queued.
     fn request_book_capture(&mut self, enabled: bool) {
@@ -567,7 +591,7 @@ impl QuantickApp {
                 symbol = self.symbol.as_str(),
                 enabled,
                 generation,
-                action = "retry_on_next_user_action",
+                action = "retry_on_next_frame",
                 "book capture command channel is full"
             ),
             Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
@@ -646,7 +670,11 @@ impl QuantickApp {
             (self.feed_id, self.symbol) = self.active.clone();
             return;
         };
-        let resume_book_capture = self.orderflow.enabled() && provider.capabilities().book_capture;
+        // The recorder follows the feed, not the toggle: a market that can
+        // stream depth is recorded from the moment it starts streaming. Kept
+        // for the log line below; the start itself goes through
+        // [`Self::ensure_book_capture`], the one place that decides it.
+        let resume_book_capture = provider.capabilities().book_capture;
 
         tracing::info!(
             target: "quantick::app",
@@ -684,9 +712,7 @@ impl QuantickApp {
         self.orderflow.reset_for_symbol(self.symbol.clone());
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
-        if resume_book_capture {
-            self.request_book_capture(true);
-        }
+        self.ensure_book_capture();
     }
 
     /// Apply a bar-type/parameter change one frame after the selectors settle.
@@ -1235,7 +1261,7 @@ impl QuantickApp {
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
         // in the gaps between candles and above/below each bar.
-        if orderflow_frame.is_some() && self.orderflow.enabled() {
+        if orderflow_frame.is_some() && self.orderflow.depth_visible() {
             let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
                 let top = scale.y(bar.high.to_f64().unwrap_or(0.0));
                 let bottom = scale.y(bar.low.to_f64().unwrap_or(0.0));
@@ -1791,6 +1817,9 @@ impl QuantickApp {
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
         self.reset_market_state();
+        // The live market is back and it can stream depth again; start
+        // recording immediately rather than waiting for the map to be opened.
+        self.ensure_book_capture();
     }
 }
 
@@ -1807,6 +1836,13 @@ impl eframe::App for QuantickApp {
 
         self.drain_feed();
         self.drain_book_feed();
+        // Heartbeat for the recorder. The lifecycle calls below already start
+        // it at every point that knows the market changed; this one makes
+        // "always recording" true by construction, so a start command lost to
+        // a momentarily full channel heals on the next frame instead of
+        // leaving the session silently unrecorded. Free while it is running:
+        // one bool read and an early return.
+        self.ensure_book_capture();
         self.maybe_emit_summary(now);
 
         let bg = self.bg();
@@ -1944,20 +1980,30 @@ mod tests {
         (app, evt_tx, cmd_rx, book_tx)
     }
 
+    /// Take the `SetBookCapture` command every test app queues at
+    /// construction and return its generation. Capture follows the feed, so
+    /// there is exactly one of these in flight before any test acts.
+    fn take_capture_start(commands: &mut mpsc::Receiver<FeedCommand>) -> u64 {
+        match commands
+            .try_recv()
+            .expect("capture starts with the feed, not with the toggle")
+        {
+            FeedCommand::SetBookCapture {
+                enabled: true,
+                initial_generation,
+            } => initial_generation,
+            _ => panic!("unexpected command"),
+        }
+    }
+
     fn enable_heatmap_with_snapshot(
         app: &mut QuantickApp,
         commands: &mut mpsc::Receiver<FeedCommand>,
     ) {
         use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
 
-        app.request_book_capture(true);
-        let generation = match commands.try_recv().expect("capture command") {
-            FeedCommand::SetBookCapture {
-                enabled: true,
-                initial_generation,
-            } => initial_generation,
-            _ => panic!("unexpected command"),
-        };
+        let generation = take_capture_start(commands);
+        app.orderflow.set_depth_visible(true);
         app.orderflow.handle_depth_event(DepthEvent::Snapshot {
             symbol: "TESTUSDT".to_owned(),
             generation,
@@ -2145,21 +2191,18 @@ mod tests {
     }
 
     #[test]
-    fn capture_toggle_commits_only_after_command_is_queued() {
+    fn capture_starts_with_the_feed_and_commits_only_after_the_command_is_queued() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
-        assert!(!app.orderflow.enabled());
 
-        app.request_book_capture(true);
-        let command = cmd_rx.try_recv().expect("capture command");
-        let generation = match command {
-            FeedCommand::SetBookCapture {
-                enabled: true,
-                initial_generation,
-            } => initial_generation,
-            _ => panic!("unexpected command"),
-        };
-        assert_eq!(generation, BOOK_GENERATION_STRIDE);
+        // Construction already asked the feed to record: capture follows the
+        // market, not the toolbar.
+        assert_eq!(take_capture_start(&mut cmd_rx), BOOK_GENERATION_STRIDE);
         assert!(app.orderflow.enabled());
+        app.ensure_book_capture();
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "a recorder already running needs no second command"
+        );
 
         drop(cmd_rx);
         app.request_book_capture(false);
@@ -2169,30 +2212,74 @@ mod tests {
         );
     }
 
+    /// The user's complaint made executable: hiding the map is pixels only.
+    /// The recorder keeps running, so reopening it finds the history whole
+    /// instead of a hole where the map was closed.
+    #[test]
+    fn hiding_the_heatmap_never_stops_the_recorder() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        take_capture_start(&mut cmd_rx);
+        let gaps_before = app.orderflow.health().gaps;
+
+        app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+        assert!(app.orderflow.depth_visible());
+
+        app.apply_toolbar_action(ToolbarAction::SetHeatmap(false));
+        assert!(!app.orderflow.depth_visible(), "the map is hidden");
+        assert!(app.orderflow.enabled(), "the recorder is untouched");
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "showing or hiding the map sends no feed command"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+        app.orderflow.flush_for_test();
+        assert!(app.orderflow.depth_visible());
+        assert_eq!(
+            app.orderflow.health().gaps,
+            gaps_before,
+            "the toggle must not punch a coverage gap into the recording"
+        );
+    }
+
+    /// The guard that keeps an always-on recorder honest: a source with no
+    /// depth pipeline — a replay, or a feed missing from the config — gets no
+    /// recorder and no command, however often the app asks.
+    #[test]
+    fn a_source_without_depth_starts_no_recorder() {
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        take_capture_start(&mut cmd_rx);
+
+        let generation = app.next_book_generation();
+        app.orderflow.set_enabled(false, generation);
+        app.feed_id = "not-in-the-config".to_owned();
+        assert!(!app.capabilities().book_capture);
+
+        app.ensure_book_capture();
+        assert!(!app.orderflow.enabled());
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "a source with no book is never asked to record"
+        );
+    }
+
     #[test]
     fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
-        assert!(!app.orderflow.enabled());
+        take_capture_start(&mut cmd_rx);
         assert!(!app.orderflow.bubbles_enabled());
 
         app.orderflow.set_bubbles_enabled(true);
         assert!(app.orderflow.bubbles_enabled());
         assert!(
-            !app.orderflow.enabled(),
-            "the bubble layer must not start L2 capture"
-        );
-        assert!(
             cmd_rx.try_recv().is_err(),
             "aggregate trades already flow; no feed command is needed"
         );
 
-        app.request_book_capture(true);
-        cmd_rx.try_recv().expect("capture command");
-        app.request_book_capture(false);
-        cmd_rx.try_recv().expect("capture command");
+        app.apply_toolbar_action(ToolbarAction::SetHeatmap(false));
         assert!(
             app.orderflow.bubbles_enabled(),
-            "stopping the book must not stop the bubbles"
+            "hiding the book must not stop the bubbles"
         );
     }
 
@@ -2262,14 +2349,7 @@ mod tests {
         use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
 
         let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
-        app.request_book_capture(true);
-        let generation = match cmd_rx.try_recv().unwrap() {
-            FeedCommand::SetBookCapture {
-                enabled: true,
-                initial_generation,
-            } => initial_generation,
-            _ => panic!("unexpected command"),
-        };
+        let generation = take_capture_start(&mut cmd_rx);
         let bars_before = app.state.bars().len();
         book_tx
             .try_send(DepthEvent::Snapshot {
@@ -2300,11 +2380,7 @@ mod tests {
     #[test]
     fn candle_appearance_change_is_render_only() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
-        app.request_book_capture(true);
-        assert!(matches!(
-            cmd_rx.try_recv(),
-            Ok(FeedCommand::SetBookCapture { enabled: true, .. })
-        ));
+        take_capture_start(&mut cmd_rx);
         let capture_epoch = app.book_capture_epoch;
         let bar_spec = app.state.spec().clone();
 
@@ -2324,11 +2400,7 @@ mod tests {
     #[test]
     fn closed_depth_channel_is_reported_once_per_feed_handle() {
         let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
-        app.request_book_capture(true);
-        assert!(matches!(
-            cmd_rx.try_recv(),
-            Ok(FeedCommand::SetBookCapture { enabled: true, .. })
-        ));
+        take_capture_start(&mut cmd_rx);
         drop(book_tx);
 
         app.drain_book_feed();

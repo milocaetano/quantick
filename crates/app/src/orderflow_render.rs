@@ -13,8 +13,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::orderflow::{
-    AggressionPrimitive, BubbleRenderMode, BubbleStyle, HeatmapConfig, HeatmapProjection,
-    HeatmapTheme, LiquidityEvidence,
+    AggressionPrimitive, BEFORE_CAPTURE, BubbleRenderMode, BubbleStyle, HeatmapConfig,
+    HeatmapProjection, HeatmapTheme, LiquidityEvidence,
 };
 use crate::viewport::Viewport;
 
@@ -131,7 +131,7 @@ impl OrderflowRenderStyle {
             theme: config.theme,
             bubbles: config.bubbles.clone(),
             show_legend: config.show_legend,
-            depth_layer: config.enabled,
+            depth_layer: config.depth_visible(),
             aggression_layer: config.show_aggressions,
             show_liquidity: config.show_liquidity,
             show_buy: config.show_buy_aggressions,
@@ -754,33 +754,39 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         if !rect.is_positive() {
             continue;
         }
-        clip.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
-        draw_gap_hatch(&clip, rect, palette.gap_hatch);
-        draw_dashed_vertical(
-            &clip,
-            rect.left(),
-            rect,
-            4.0,
-            5.0,
-            palette.gap_boundary,
-            1.0,
-        );
-        draw_dashed_vertical(
-            &clip,
-            rect.right(),
-            rect,
-            4.0,
-            5.0,
-            palette.gap_boundary,
-            1.0,
-        );
+        let leading = gap.precedes_capture();
+        let marks = gap_marks(rect, context.layout.chart_rect, leading);
+        if marks.fill {
+            clip.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
+        }
+        for (draw, x) in [
+            (marks.left_boundary, rect.left()),
+            (marks.right_boundary, rect.right()),
+        ] {
+            if draw {
+                draw_dashed_vertical(&clip, x, rect, 4.0, 5.0, palette.gap_boundary, 1.0);
+            }
+        }
 
         if style.show_gap_labels && rect.width() >= 112.0 {
             let label = gap_label(&gap.reason);
+            // Centering the leading label would park text in the middle of an
+            // otherwise clean chart; it belongs to the divider, so it hugs it.
+            let (anchor, align) = if leading {
+                (
+                    rect.right_top() + egui::vec2(-GAP_LABEL_INSET_PX, 17.0),
+                    egui::Align2::RIGHT_TOP,
+                )
+            } else {
+                (
+                    rect.center_top() + egui::vec2(0.0, 17.0),
+                    egui::Align2::CENTER_TOP,
+                )
+            };
             draw_text_with_shadow(
                 &clip,
-                rect.center_top() + egui::vec2(0.0, 17.0),
-                egui::Align2::CENTER_TOP,
+                anchor,
+                align,
                 label,
                 egui::FontId::proportional(10.0),
                 palette.muted_text,
@@ -1432,7 +1438,6 @@ struct Palette {
     depth_only: egui::Color32,
     bubble_text: egui::Color32,
     gap_fill: egui::Color32,
-    gap_hatch: egui::Color32,
     gap_boundary: egui::Color32,
     muted_text: egui::Color32,
     legend_text: egui::Color32,
@@ -1449,8 +1454,7 @@ impl Palette {
                 consumption: egui::Color32::from_rgb(255, 246, 205),
                 depth_only: egui::Color32::from_rgb(184, 130, 240),
                 bubble_text: egui::Color32::WHITE,
-                gap_fill: egui::Color32::from_rgba_premultiplied(50, 58, 76, 48),
-                gap_hatch: egui::Color32::from_rgba_premultiplied(142, 151, 171, 30),
+                gap_fill: egui::Color32::from_rgba_premultiplied(21, 24, 32, 20),
                 gap_boundary: egui::Color32::from_rgba_premultiplied(157, 167, 188, 115),
                 muted_text: egui::Color32::from_rgb(186, 194, 209),
                 legend_text: egui::Color32::from_rgb(225, 230, 239),
@@ -1463,8 +1467,7 @@ impl Palette {
                 consumption: egui::Color32::WHITE,
                 depth_only: egui::Color32::from_rgb(225, 105, 255),
                 bubble_text: egui::Color32::WHITE,
-                gap_fill: egui::Color32::from_rgba_premultiplied(80, 80, 92, 64),
-                gap_hatch: egui::Color32::from_rgba_premultiplied(235, 235, 245, 42),
+                gap_fill: egui::Color32::from_rgba_premultiplied(35, 35, 40, 28),
                 gap_boundary: egui::Color32::from_rgb(218, 222, 235),
                 muted_text: egui::Color32::WHITE,
                 legend_text: egui::Color32::WHITE,
@@ -1477,8 +1480,7 @@ impl Palette {
                 consumption: egui::Color32::from_rgb(255, 238, 170),
                 depth_only: egui::Color32::from_rgb(220, 95, 205),
                 bubble_text: egui::Color32::WHITE,
-                gap_fill: egui::Color32::from_rgba_premultiplied(58, 60, 72, 52),
-                gap_hatch: egui::Color32::from_rgba_premultiplied(205, 205, 190, 34),
+                gap_fill: egui::Color32::from_rgba_premultiplied(25, 25, 30, 22),
                 gap_boundary: egui::Color32::from_rgb(176, 180, 190),
                 muted_text: egui::Color32::from_rgb(214, 215, 210),
                 legend_text: egui::Color32::from_rgb(232, 232, 226),
@@ -2000,6 +2002,49 @@ fn add_gradient_rect(
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
+/// Pixel slack for deciding that a gap boundary coincides with the chart edge.
+/// Gap bounds arrive as normalized floats scaled into screen space, so an
+/// exact comparison would miss by a rounding bit and draw a stray frame line.
+const GAP_EDGE_EPSILON: f32 = 0.5;
+
+/// Gap between the leading span's label and the divider it annotates. Small
+/// enough that the text reads as belonging to the line rather than floating.
+const GAP_LABEL_INSET_PX: f32 = 6.0;
+
+/// Which marks one coverage gap gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GapMarks {
+    fill: bool,
+    left_boundary: bool,
+    right_boundary: bool,
+}
+
+/// Decide how to mark a coverage gap.
+///
+/// The leading span — everything older than the first snapshot this session
+/// captured — routinely covers a third of the chart. Tinting it would bury the
+/// candles, bubbles and strip that are perfectly real there, so one boundary
+/// carries the whole message: where the book begins. Its left side is not a
+/// boundary at all, whether it lands on the viewport edge or on the oldest bar
+/// the chart holds — there is nothing on the far side of it to separate from.
+///
+/// An interior gap is different on both counts. It is narrow, so it keeps a
+/// faint fill (an untinted sliver reads as "no resting liquidity" rather than
+/// "no data"), and both its ends are real transitions. A boundary landing on
+/// the chart edge is still dropped: that marks the viewport, not a change in
+/// coverage, and drawing it would just frame the chart.
+fn gap_marks(rect: egui::Rect, chart_rect: egui::Rect, leading: bool) -> GapMarks {
+    let on_chart_edge = |x: f32| {
+        (x - chart_rect.left()).abs() < GAP_EDGE_EPSILON
+            || (x - chart_rect.right()).abs() < GAP_EDGE_EPSILON
+    };
+    GapMarks {
+        fill: !leading,
+        left_boundary: !leading && !on_chart_edge(rect.left()),
+        right_boundary: !on_chart_edge(rect.right()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_dashed_vertical(
     painter: &egui::Painter,
@@ -2025,24 +2070,6 @@ fn draw_dashed_vertical(
     }
 }
 
-fn draw_gap_hatch(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    let mut x = rect.left() - rect.height();
-    while x < rect.right() {
-        let start_x = x.max(rect.left());
-        let start_y = rect.bottom() - (start_x - x);
-        let raw_end_x = x + rect.height();
-        let end_x = raw_end_x.min(rect.right());
-        let end_y = rect.top() + (raw_end_x - end_x);
-        if start_y >= rect.top() && end_y <= rect.bottom() {
-            painter.line_segment(
-                [egui::pos2(start_x, start_y), egui::pos2(end_x, end_y)],
-                egui::Stroke::new(0.55_f32, color),
-            );
-        }
-        x += 18.0;
-    }
-}
-
 fn draw_text_with_shadow(
     painter: &egui::Painter,
     anchor: egui::Pos2,
@@ -2063,7 +2090,7 @@ fn draw_text_with_shadow(
 
 fn gap_label(reason: &str) -> &'static str {
     match reason {
-        "book_unavailable_before_capture" => "L2 unavailable before capture",
+        BEFORE_CAPTURE => "L2 unavailable before capture",
         "capture_disabled" => "L2 capture disabled",
         "sequence_gap" => "L2 sequence gap · resynchronizing",
         _ => "L2 continuity unavailable",
@@ -2384,6 +2411,67 @@ mod tests {
             bubble_label(Decimal::ONE, 1, false, true),
             None,
             "one trade does not need a redundant count"
+        );
+    }
+
+    /// The stretch older than this session's capture used to be a hatched,
+    /// tinted block covering a third of the chart. It is now its boundary and
+    /// nothing else, so the candles and bubbles recorded there stay readable.
+    #[test]
+    fn the_pre_capture_span_is_marked_by_its_boundary_alone() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 200.0));
+        let leading = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(120.0, 200.0));
+        assert_eq!(
+            gap_marks(leading, chart, true),
+            GapMarks {
+                fill: false,
+                left_boundary: false,
+                right_boundary: true,
+            }
+        );
+
+        // A chart the bars do not fill starts the span at the oldest bar
+        // instead of at the viewport edge. Still one line: there is nothing to
+        // the left of it to separate the span from.
+        let inset = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(120.0, 200.0));
+        assert_eq!(
+            gap_marks(inset, chart, true),
+            GapMarks {
+                fill: false,
+                left_boundary: false,
+                right_boundary: true,
+            }
+        );
+    }
+
+    /// An interior gap is a handful of pixels wide. Without a fill it would
+    /// read as an empty book rather than as missing data.
+    #[test]
+    fn an_interior_gap_keeps_its_fill_and_both_boundaries() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 200.0));
+        let interior = egui::Rect::from_min_max(egui::pos2(180.0, 0.0), egui::pos2(186.0, 200.0));
+        assert_eq!(
+            gap_marks(interior, chart, false),
+            GapMarks {
+                fill: true,
+                left_boundary: true,
+                right_boundary: true,
+            }
+        );
+    }
+
+    /// Nothing captured at all: both bounds are the viewport, so no line is
+    /// drawn — framing the whole chart would say nothing the label does not.
+    #[test]
+    fn a_gap_spanning_the_whole_chart_draws_no_boundary() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 200.0));
+        assert_eq!(
+            gap_marks(chart, chart, true),
+            GapMarks {
+                fill: false,
+                left_boundary: false,
+                right_boundary: false,
+            }
         );
     }
 
