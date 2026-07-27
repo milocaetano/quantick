@@ -21,6 +21,22 @@ chart, is used instead of being fought. All it needs is the official package
 `bridge_autostart = false`, or point `bridge_command` somewhere else, under
 `[metatrader]` in your config.
 
+Two things make that work outside a developer's checkout:
+
+- **The script is found, not assumed.** A relative `bridge_command` path is
+  resolved against the working directory *and* against the folder holding the
+  quantick executable and its ancestors, so a build launched from a shortcut
+  still finds the `bridge/` folder shipped beside it.
+- **`python` is a first guess, not a requirement.** With no `python` on PATH,
+  the Windows `py` launcher is tried next. A `bridge_command` you configured
+  yourself is never second-guessed — it is an instruction, not a hint.
+
+**You should not have to read this file to fix a broken setup.** Whatever stops
+the bridge is reported on the chart, with the one next step: terminal closed,
+package missing, contract not in Market Watch, server clock unmeasurable, no
+Depth of Market for that symbol. The log keeps the full detail; the chart
+carries the part you have to act on.
+
 To run it by hand anyway — to see its log lines up close, or to feed a quantick
 that is not yours:
 

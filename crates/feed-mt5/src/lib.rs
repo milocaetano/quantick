@@ -77,12 +77,14 @@
 //! empirically on B3 `WIN$N`, 2026-07-23: every tick flagged BUY, `flags =
 //! 1080`). Re-verify any broker with `tools/mt5/record_ticks.py`.
 
+pub mod bridge_log;
 pub mod depth;
 pub mod map;
 pub mod protocol;
 pub mod session;
 pub mod stream;
 
+pub use bridge_log::{BridgeReport, BridgeSeverity, report_for_line};
 pub use depth::{BookMapper, BookStats};
 pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper};
 pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, Tick, parse_line};

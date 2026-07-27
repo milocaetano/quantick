@@ -14,6 +14,7 @@
 
 pub mod binance;
 pub mod metatrader;
+pub mod mt5_bridge;
 pub mod replay;
 
 use tokio::sync::mpsc;
@@ -90,6 +91,64 @@ pub enum FeedSource {
     Replay(Box<replay::ReplayRequest>),
 }
 
+/// What a feed wants the person watching the chart to know.
+///
+/// A feed that cannot deliver trades knows *why* — the terminal is closed, a
+/// package is missing, the contract does not exist. Before this channel that
+/// reason only ever reached a log file, and the chart stayed blank with a
+/// faint "connecting" dot: honest, but useless to anyone not reading stderr.
+///
+/// The distinction the UI acts on is **who has to do something next**.
+/// [`Working`](Self::Working) is the feed's own business, still in progress;
+/// [`Attention`](Self::Attention) needs a human, and always carries the one
+/// next step in plain words. Feeds that never get stuck simply never send
+/// anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FeedNotice {
+    /// Whatever was being reported is over; the chart speaks for itself now.
+    Clear,
+    /// A step is under way and needs nobody: connecting, waiting, retrying.
+    Working {
+        /// One line, e.g. `starting the MetaTrader bridge`.
+        headline: String,
+    },
+    /// Something needs the person watching — a closed terminal, a missing
+    /// package, a contract this account cannot see.
+    Attention {
+        /// What went wrong, in the user's terms.
+        headline: String,
+        /// The single next step to fix it.
+        next_step: String,
+    },
+}
+
+/// The notice channel of a feed that has nothing to say: closed at birth, so
+/// the UI reads it exactly like a feed that simply never reported trouble.
+#[must_use]
+pub fn silent_notices() -> mpsc::Receiver<FeedNotice> {
+    let (_tx, rx) = mpsc::channel(1);
+    rx
+}
+
+impl FeedNotice {
+    /// Shorthand for a step in progress.
+    #[must_use]
+    pub fn working(headline: impl Into<String>) -> Self {
+        Self::Working {
+            headline: headline.into(),
+        }
+    }
+
+    /// Shorthand for something that needs a human.
+    #[must_use]
+    pub fn attention(headline: impl Into<String>, next_step: impl Into<String>) -> Self {
+        Self::Attention {
+            headline: headline.into(),
+            next_step: next_step.into(),
+        }
+    }
+}
+
 /// The UI's handle on a running feed: events to drain, commands to send.
 pub struct FeedHandle {
     /// Feed → UI: backfill, prepended history and live trades.
@@ -99,6 +158,12 @@ pub struct FeedHandle {
     /// Depth is isolated from the established trade/bar channel so it can be
     /// stopped, restarted or backpressured independently.
     pub book_events: mpsc::Receiver<DepthEvent>,
+    /// Feed → UI: what the person watching should know about the connection.
+    ///
+    /// Its own channel rather than a [`FeedEvent`] variant: connection trouble
+    /// is not market data, and a blocked feed must be able to say so while the
+    /// trade channel sits silent — which is exactly when it matters.
+    pub notices: mpsc::Receiver<FeedNotice>,
     /// UI → feed: on-demand history loading.
     pub commands: mpsc::Sender<FeedCommand>,
     /// Present only while a recorded session is playing: what the transport bar

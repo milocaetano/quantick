@@ -258,6 +258,9 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
     FeedHandle {
         events: rx,
         book_events: book_rx,
+        // A file on disk needs nothing started, and a session that failed to
+        // parse never reaches this point: the browser that opened it reports.
+        notices: super::silent_notices(),
         commands: cmd_tx,
         replay: Some(link),
     }

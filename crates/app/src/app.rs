@@ -20,9 +20,10 @@ use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::PriceScale;
 use crate::config::{AppConfig, FeedCapabilities, ProviderKind};
 use crate::dock::{Dock, DockEnv, DockTab};
-use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, ReplayLink};
+use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
+use crate::notice_card;
 use crate::orderflow_view::OrderflowView;
 use crate::price_view::PriceView;
 use crate::replay_view::{ReplayAction, ReplayView};
@@ -126,6 +127,12 @@ pub struct QuantickApp {
     state: ChartState,
     events: mpsc::Receiver<FeedEvent>,
     book_events: mpsc::Receiver<DepthEvent>,
+    /// Connection trouble the feed wants the user to know about.
+    notices: mpsc::Receiver<FeedNotice>,
+    /// The newest notice, held until the feed says it is over. A feed that
+    /// blocks once and then goes quiet has to keep saying so — the chart it
+    /// left empty will not.
+    notice: FeedNotice,
     commands: mpsc::Sender<FeedCommand>,
     orderflow: OrderflowView,
     book_capture_epoch: u64,
@@ -256,6 +263,8 @@ impl QuantickApp {
             state: ChartState::new(spec),
             events: feed.events,
             book_events: feed.book_events,
+            notices: feed.notices,
+            notice: FeedNotice::Clear,
             commands: feed.commands,
             orderflow: OrderflowView::new(symbol.clone()),
             book_capture_epoch: 0,
@@ -665,6 +674,10 @@ impl QuantickApp {
         let handle = feed::spawn_live(provider, &self.symbol, &self.config);
         self.events = handle.events;
         self.book_events = handle.book_events;
+        self.notices = handle.notices;
+        // The old feed's trouble is not the new feed's: switching away from a
+        // blocked source must not leave its instruction on screen.
+        self.notice = FeedNotice::Clear;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -815,6 +828,17 @@ impl QuantickApp {
                 Ok(FeedEvent::Reset) => self.reset_market_state(),
                 Err(_) => break,
             }
+        }
+    }
+
+    /// Take the newest feed notice, if the feed sent any this frame.
+    ///
+    /// Level-triggered rather than queued: only the latest state matters, and
+    /// a burst of bridge output must not queue up cards to show one by one.
+    /// A closed channel (a feed with nothing to report) simply yields nothing.
+    fn drain_notices(&mut self) {
+        while let Ok(notice) = self.notices.try_recv() {
+            self.notice = notice;
         }
     }
 
@@ -1746,6 +1770,10 @@ impl QuantickApp {
         let handle = feed::spawn(feed::FeedSource::Replay(Box::new(request)), &self.config);
         self.events = handle.events;
         self.book_events = handle.book_events;
+        self.notices = handle.notices;
+        // The old feed's trouble is not the new feed's: switching away from a
+        // blocked source must not leave its instruction on screen.
+        self.notice = FeedNotice::Clear;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -1787,6 +1815,44 @@ impl QuantickApp {
         let handle = feed::spawn_live(provider, &self.symbol, &self.config);
         self.events = handle.events;
         self.book_events = handle.book_events;
+        self.notices = handle.notices;
+        // The old feed's trouble is not the new feed's: switching away from a
+        // blocked source must not leave its instruction on screen.
+        self.notice = FeedNotice::Clear;
+        self.commands = handle.commands;
+        self.replay = handle.replay;
+        self.book_channel_closed_reported = false;
+        self.reset_market_state();
+    }
+
+    /// Start the current feed over, from the card that asked the user to fix
+    /// something.
+    ///
+    /// The same respawn a feed switch performs, minus the switch: after the
+    /// terminal is opened or the package installed, the way back has to be one
+    /// click, not a restart of quantick. A replay owns the chart while it
+    /// plays and has nothing to retry.
+    fn restart_feed(&mut self) {
+        if self.replay.is_some() {
+            return;
+        }
+        let Some(provider) = self.config.provider_of(&self.feed_id) else {
+            return;
+        };
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_RESTARTED_BY_USER",
+            feed = %self.feed_id,
+            symbol = %self.symbol,
+            action = "respawn_feed",
+            "restarting the feed from the notice card"
+        );
+        let handle = feed::spawn_live(provider, &self.symbol, &self.config);
+        self.events = handle.events;
+        self.book_events = handle.book_events;
+        self.notices = handle.notices;
+        self.notice = FeedNotice::Clear;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -1807,6 +1873,7 @@ impl eframe::App for QuantickApp {
 
         self.drain_feed();
         self.drain_book_feed();
+        self.drain_notices();
         self.maybe_emit_summary(now);
 
         let bg = self.bg();
@@ -1861,6 +1928,7 @@ impl eframe::App for QuantickApp {
         self.loading
             .set_active(LoadingTask::BookSync, self.orderflow.is_syncing());
 
+        let mut notice_action = notice_card::NoticeAction::None;
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -1868,7 +1936,13 @@ impl eframe::App for QuantickApp {
                 self.handle_navigation(ui, area);
                 self.draw_chart(ui.painter(), area);
                 loading::overlay(ui, area, &self.loading);
+                if notice_card::should_draw(&self.notice, self.state.bars().len()) {
+                    notice_action = notice_card::draw(ui, area, &self.notice);
+                }
             });
+        if notice_action == notice_card::NoticeAction::Retry {
+            self.restart_feed();
+        }
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
     }
@@ -1937,6 +2011,7 @@ mod tests {
             FeedHandle {
                 events: evt_rx,
                 book_events: book_rx,
+                notices: feed::silent_notices(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -2129,6 +2204,7 @@ mod tests {
             FeedHandle {
                 events: evt_rx,
                 book_events: book_rx,
+                notices: feed::silent_notices(),
                 commands: cmd_tx,
                 replay: None,
             },
