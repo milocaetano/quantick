@@ -12,6 +12,9 @@ use quantick_orderbook::BookSide;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
+use crate::chart::PriceScale;
+use crate::live_strip::{DepthRow, HistogramRow};
+use crate::orderflow::projection::{normalized_area_size, normalized_log_intensity};
 use crate::orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, HeatmapConfig, HeatmapProjection,
     HeatmapTheme, LiquidityEvidence,
@@ -557,11 +560,12 @@ pub(crate) struct ProjectedLayout<'a> {
     pub(crate) total_bars: usize,
     pub(crate) first_bar_index: usize,
     pub(crate) slot_count: usize,
-    /// Visual width, in candle-widths, of the last slot (the forming bar). `1.0`
-    /// keeps equal-width slots; `> 1.0` expands the forming bar's live tail to
-    /// the right so its order flow rolls on a real-time scale instead of
-    /// recompressing every depth update.
-    pub(crate) live_span: f32,
+    /// Slot-units position, in this frame's slot space, where the forming
+    /// bar's region begins — the "now" divider. History never crosses it: a
+    /// run still open when the bar opened pins at the boundary instead of
+    /// re-compressing as live time passes, so drawn marks keep their exact
+    /// position. `None` (no forming bar on screen) renders every slot in full.
+    pub(crate) live_boundary: Option<f32>,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -572,7 +576,7 @@ impl<'a> ProjectedLayout<'a> {
         total_bars: usize,
         first_bar_index: usize,
         slot_count: usize,
-        live_span: f32,
+        live_boundary: Option<f32>,
     ) -> Self {
         Self {
             chart_rect,
@@ -580,34 +584,23 @@ impl<'a> ProjectedLayout<'a> {
             total_bars,
             first_bar_index,
             slot_count,
-            live_span: if live_span.is_finite() {
-                live_span.max(1.0)
-            } else {
-                1.0
-            },
+            live_boundary: live_boundary
+                .filter(|boundary| boundary.is_finite() && *boundary >= 0.0),
         }
     }
 
     #[must_use]
     fn x(self, normalized: f64) -> f32 {
         let normalized = finite_unit_f64(normalized) as f32;
-        let slot_count = self.slot_count as f32;
-        // Widen only the last slot (the forming bar) by `live_span`; earlier
-        // closed slots keep unit width. `slot_pos` is the position in slot units
-        // over `[0, slot_count]`; `ext_pos` re-expresses it in bar-width units.
-        let slot_pos = normalized * slot_count;
-        let ext_pos = if self.live_span <= 1.0 || slot_count < 1.0 {
-            slot_pos
-        } else {
-            let boundary = slot_count - 1.0; // start of the forming slot
-            if slot_pos <= boundary {
-                slot_pos
-            } else {
-                // The forming bar's candle owns a clean 1-wide slot as a divider
-                // (no heat behind it); the live order flow occupies the
-                // `live_span - 1` candle-widths to its right.
-                boundary + 1.0 + (slot_pos - boundary) * (self.live_span - 1.0)
-            }
+        // `slot_pos` is the position in slot units over `[0, slot_count]`.
+        // History is clamped at the live boundary: everything the projection
+        // places inside the forming bar's slot collapses onto the divider,
+        // because the forming bar is drawn as the fixed-width live column,
+        // not on a time axis.
+        let slot_pos = normalized * self.slot_count as f32;
+        let ext_pos = match self.live_boundary {
+            Some(boundary) => slot_pos.min(boundary),
+            None => slot_pos,
         };
         let position = self.first_bar_index as f32 - 0.5 + ext_pos;
         self.viewport
@@ -661,6 +654,12 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) projection: &'a HeatmapProjection,
     pub(crate) layout: ProjectedLayout<'a>,
     pub(crate) style: &'a OrderflowRenderStyle,
+    /// The forming bar's open time while it is on screen. Marks stamped at or
+    /// after it belong to the live column (the footprint draws them) and are
+    /// skipped by the history layers — the same cut
+    /// [`crate::live_strip::aggression_rows`] applies, so no mark is drawn
+    /// twice and none is dropped.
+    pub(crate) live_open_ms: Option<i64>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -669,12 +668,21 @@ impl<'a> RenderContext<'a> {
         projection: &'a HeatmapProjection,
         layout: ProjectedLayout<'a>,
         style: &'a OrderflowRenderStyle,
+        live_open_ms: Option<i64>,
     ) -> Self {
         Self {
             projection,
             layout,
             style,
+            live_open_ms,
         }
+    }
+
+    /// Whether a mark stamped at `timestamp_ms` belongs to the live column
+    /// rather than to drawn history.
+    #[must_use]
+    fn is_live(&self, timestamp_ms: i64) -> bool {
+        self.live_open_ms.is_some_and(|open| timestamp_ms >= open)
     }
 }
 
@@ -791,6 +799,11 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
     let right_edge = context.layout.chart_rect.right();
 
     for event in &context.projection.liquidity_events {
+        // Forming-bar events have no time axis to sit on; they appear with
+        // the rest of the bar's history once it closes.
+        if context.is_live(event.timestamp_ms) {
+            continue;
+        }
         let band = context
             .layout
             .event_band(event.x, event.y0, event.y1, style.min_cell_height);
@@ -836,6 +849,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
     // slide through it: the eaten wall ends, the bubble marks the bite, and the
     // fresh wall only resumes to the bubble's right.
     for trade in &context.projection.aggressions {
+        if context.is_live(trade.last_timestamp_ms) {
+            continue;
+        }
         if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
             continue;
         }
@@ -1007,6 +1023,9 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
         for trade in &context.projection.aggressions {
+            if context.is_live(trade.last_timestamp_ms) {
+                continue;
+            }
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
@@ -1027,6 +1046,10 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
 
     for trade in &context.projection.aggressions {
+        // Forming-bar prints live in the footprint column, not on a time axis.
+        if context.is_live(trade.last_timestamp_ms) {
+            continue;
+        }
         let Some(center) = center_of(trade) else {
             continue;
         };
@@ -1054,20 +1077,210 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 bubbles.show_trade_count,
             )
         {
-            let font = egui::FontId::proportional(
-                (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
+            draw_bubble_text(&clip, center, radius, label, colors.text);
+        }
+    }
+}
+
+/// Draw a bubble's quantity/count label, dropped when it would spill past the
+/// bubble it describes.
+fn draw_bubble_text(
+    clip: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    label: String,
+    color: egui::Color32,
+) {
+    let font = egui::FontId::proportional(
+        (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
+    );
+    let galley = clip.layout_no_wrap(label, font, color);
+    if galley.size().x <= radius * LABEL_MAX_WIDTH_SCALE
+        && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
+    {
+        let pos = center - galley.size() / 2.0;
+        clip.galley(
+            pos + LABEL_SHADOW_OFFSET_PX,
+            galley.clone(),
+            egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
+        );
+        clip.galley(pos, galley, color);
+    }
+}
+
+/// Total width of the forming bar's live column, in candle-widths: the bar's
+/// own 1-wide slot plus a half-width overhang to its right. Fixed for the
+/// bar's whole life — the column is a footprint, not a time axis — per the
+/// Live Edge proposal's "~1,5 candle".
+pub(crate) const LIVE_COLUMN_SPAN: f32 = 1.5;
+
+/// Horizontal distance of each footprint rail from the forming candle's
+/// centre, in candle-widths. Sells sit on the left rail, buys on the right,
+/// mirroring the live strip's sell-left / buy-right histogram.
+pub(crate) const LIVE_COLUMN_RAIL_OFFSET: f32 = 0.375;
+
+/// Alpha multiplier for the column's book-now heat relative to a history
+/// cell, so the present reads dimmer than the recorded past behind it.
+pub(crate) const LIVE_COLUMN_HEAT_ALPHA: f32 = 0.4;
+
+/// Bar-slots the viewport reserves past the newest bar while following: the
+/// column's half-width overhang plus breathing room so footprint bubbles are
+/// not glued to the chart edge. Constant, so the right edge advances exactly
+/// one slot per bar close and never steps right.
+pub(crate) const LIVE_TAIL_SLOTS: f32 = 1.0;
+
+// The reservation must cover the column's overhang past its own slot, or the
+// buy rail would render past the chart's right edge.
+const _: () = assert!(LIVE_TAIL_SLOTS >= LIVE_COLUMN_SPAN - 1.0);
+
+/// Where the live column sits: the forming bar's slot and its open time.
+///
+/// Taken from the app's *current* frame state rather than the (possibly
+/// ~220 ms stale) projection, so on a close the column moves to the new slot
+/// immediately and the just-closed bar's history renders in place behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LiveColumnAnchor {
+    /// Global chart index of the forming bar (== the closed-bar count).
+    pub(crate) bar_index: usize,
+    /// The forming bar's open time: the cut between drawn history and the
+    /// column's footprint.
+    pub(crate) open_ms: i64,
+}
+
+/// The live column's on-screen region for a forming candle centred at
+/// `candle_x`: its own slot plus the overhang to the right, full chart height.
+#[must_use]
+pub(crate) fn live_column_rect(
+    candle_x: f32,
+    candle_width: f32,
+    chart_rect: egui::Rect,
+) -> egui::Rect {
+    let left = candle_x - candle_width / 2.0;
+    egui::Rect::from_min_max(
+        egui::pos2(left, chart_rect.top()),
+        egui::pos2(left + LIVE_COLUMN_SPAN * candle_width, chart_rect.bottom()),
+    )
+}
+
+/// The x centre of a footprint rail: sells left of the candle, buys right.
+#[must_use]
+pub(crate) fn live_rail_x(candle_x: f32, candle_width: f32, side: Side) -> f32 {
+    match side {
+        Side::Sell => candle_x - LIVE_COLUMN_RAIL_OFFSET * candle_width,
+        Side::Buy => candle_x + LIVE_COLUMN_RAIL_OFFSET * candle_width,
+    }
+}
+
+/// Draw the live column's background: the book *right now*, one heat cell per
+/// price bucket on the heatmap's own ramp, quantization and reference —
+/// literally the chart's next column, dimmed by [`LIVE_COLUMN_HEAT_ALPHA`].
+/// Current state only: no time lanes, so a book update recolours cells in
+/// place and nothing ever slides or shrinks.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_live_column_heat(
+    painter: &egui::Painter,
+    column: egui::Rect,
+    scale: &PriceScale,
+    style: &OrderflowRenderStyle,
+    rows: &[DepthRow],
+    reference: Decimal,
+    bucket_width: Decimal,
+    gamma: f32,
+    opacity: f32,
+) {
+    let style = style.sanitized();
+    if !(style.depth_layer && style.show_liquidity) {
+        return;
+    }
+    let clip = painter.with_clip_rect(column);
+    for row in rows {
+        let intensity = normalized_log_intensity(row.quantity, reference, gamma);
+        // Same alpha recipe as a projected heat cell (`alpha = intensity *
+        // opacity`, then `heat_fill` layers the style's multiplier), dimmed.
+        let base_alpha = intensity * opacity * LIVE_COLUMN_HEAT_ALPHA;
+        let Some(fill) = heat_fill(&style, row.side, intensity, base_alpha) else {
+            continue;
+        };
+        let top = scale.y((row.price_bucket + bucket_width)
+            .to_f64()
+            .unwrap_or(f64::NAN));
+        let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
+        if !top.is_finite() || !bottom.is_finite() {
+            continue;
+        }
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(column.left(), top.min(bottom)),
+            egui::pos2(column.right(), top.max(bottom)),
+        )
+        .intersect(column);
+        if rect.is_positive() {
+            clip.rect_filled(rect, egui::Rounding::ZERO, fill);
+        }
+    }
+}
+
+/// Draw the forming bar's footprint: per price bucket, one sell bubble on the
+/// left rail and one buy bubble on the right, each sized by the bucket's
+/// accumulated quantity on the same √-area rule and reference as the history
+/// bubbles. Accumulation only ever grows a mark in place — a new trade never
+/// moves or shrinks what is already drawn.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_live_footprint(
+    painter: &egui::Painter,
+    chart_rect: egui::Rect,
+    candle_x: f32,
+    candle_width: f32,
+    scale: &PriceScale,
+    style: &OrderflowRenderStyle,
+    rows: &[HistogramRow],
+    reference: Decimal,
+    bucket_width: Decimal,
+) {
+    let style = style.sanitized();
+    if !style.aggression_layer {
+        return;
+    }
+    let bubbles = &style.bubbles;
+    let palette = Palette::for_theme(style.theme);
+    let colors = BubbleColors::resolve(&palette, bubbles);
+    let clip = painter.with_clip_rect(chart_rect);
+    let half_bucket = bucket_width / Decimal::from(2);
+    for row in rows {
+        let y = scale.y((row.price_bucket + half_bucket)
+            .to_f64()
+            .unwrap_or(f64::NAN));
+        if !y.is_finite() {
+            continue;
+        }
+        for (side, quantity, shown) in [
+            (Side::Sell, row.sell, style.show_sell),
+            (Side::Buy, row.buy, style.show_buy),
+        ] {
+            if !shown || quantity <= Decimal::ZERO {
+                continue;
+            }
+            let size = normalized_area_size(quantity, reference);
+            let radius = bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
+            let center = egui::pos2(live_rail_x(candle_x, candle_width, side), y);
+            draw_bubble(
+                &clip,
+                BubbleMark {
+                    center,
+                    radius,
+                    side,
+                    size,
+                    // The footprint is an aggregate; consumption evidence
+                    // stays a per-print concept and appears with the bar's
+                    // history once it closes.
+                    matched: None,
+                },
+                bubbles,
+                &colors,
             );
-            let galley = clip.layout_no_wrap(label, font, colors.text);
-            if galley.size().x <= radius * LABEL_MAX_WIDTH_SCALE
-                && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
+            if radius >= bubbles.label_min_radius
+                && let Some(label) = bubble_label(quantity, 1, bubbles.show_quantity_labels, false)
             {
-                let pos = center - galley.size() / 2.0;
-                clip.galley(
-                    pos + LABEL_SHADOW_OFFSET_PX,
-                    galley.clone(),
-                    egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),
-                );
-                clip.galley(pos, galley, colors.text);
+                draw_bubble_text(&clip, center, radius, label, colors.text);
             }
         }
     }
@@ -2134,18 +2347,6 @@ fn quantize_heat(intensity: f32) -> f32 {
     ((intensity * HEAT_LEVELS).round() / HEAT_LEVELS).clamp(0.0, 1.0)
 }
 
-/// Visual width (in candle-widths) of the forming bar's live tail. It grows
-/// linearly with elapsed time so a fixed pixels-per-ms scale keeps live events
-/// put (instead of recompressing as the book advances), clamped so the tail
-/// never dominates the chart. `1.0` means "no tail" (the classic single slot).
-pub(crate) fn live_span_for(elapsed_ms: i64, ref_duration_ms: i64, max_span: f32) -> f32 {
-    if elapsed_ms <= 0 || ref_duration_ms <= 0 || !max_span.is_finite() || max_span <= 1.0 {
-        return 1.0;
-    }
-    let span = (elapsed_ms as f32 / ref_duration_ms as f32) * max_span;
-    span.clamp(1.0, max_span)
-}
-
 fn finite_unit(value: f32) -> f32 {
     if value.is_finite() {
         value.clamp(0.0, 1.0)
@@ -2760,28 +2961,55 @@ mod tests {
         assert!(labels(&nothing).is_empty());
     }
 
+    /// History must never cross the "now" divider: everything the projection
+    /// places inside the forming bar's slot pins at the boundary, and the
+    /// closed slots render exactly as they would with no live column at all.
     #[test]
-    fn live_span_grows_with_time_and_clamps() {
-        assert_eq!(live_span_for(0, 1000, 8.0), 1.0);
-        assert_eq!(live_span_for(500, 0, 8.0), 1.0);
-        assert!((live_span_for(1000, 1000, 8.0) - 8.0).abs() < 1e-4);
-        assert_eq!(live_span_for(5000, 1000, 8.0), 8.0);
-        assert!((live_span_for(500, 1000, 8.0) - 4.0).abs() < 1e-4);
-        assert_eq!(live_span_for(1, 1000, 8.0), 1.0);
-    }
-
-    #[test]
-    fn live_span_widens_only_the_forming_slot() {
+    fn history_clamps_at_the_live_boundary() {
         let viewport = Viewport::new(); // candle_width 8, following
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-        // 3 slots: 2 closed + the forming bar, widened 4x.
-        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 4.0);
-        let closed_w = (layout.x(1.0 / 3.0) - layout.x(0.0)).abs();
-        let live_w = (layout.x(1.0) - layout.x(2.0 / 3.0)).abs();
-        assert!(closed_w > 0.0);
+        // 3 slots: 2 closed + the forming bar starting at slot-units 2.
+        let clamped = ProjectedLayout::new(rect, &viewport, 3, 0, 3, Some(2.0));
+        let free = ProjectedLayout::new(rect, &viewport, 3, 0, 3, None);
+        for normalized in [0.0, 0.25, 0.5, 2.0 / 3.0] {
+            assert_eq!(
+                clamped.x(normalized),
+                free.x(normalized),
+                "closed history moved at {normalized}"
+            );
+        }
+        let divider = clamped.x(2.0 / 3.0);
+        for normalized in [0.7, 0.9, 1.0] {
+            assert_eq!(
+                clamped.x(normalized),
+                divider,
+                "forming-slot content crossed the divider at {normalized}"
+            );
+        }
+    }
+
+    /// The live column's geometry: fixed span anchored on the forming slot's
+    /// left edge, sells on the left rail, buys on the right, symmetric.
+    #[test]
+    fn the_live_column_is_fixed_width_with_sells_left_and_buys_right() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        let column = live_column_rect(100.0, 8.0, chart);
+        assert!((column.width() - LIVE_COLUMN_SPAN * 8.0).abs() < 1e-4);
         assert!(
-            (live_w - closed_w * 4.0).abs() < 0.01,
-            "forming slot should be 4x a closed slot: closed={closed_w} live={live_w}"
+            (column.left() - 96.0).abs() < 1e-4,
+            "left = {}",
+            column.left()
         );
+        assert_eq!(column.top(), chart.top());
+        assert_eq!(column.bottom(), chart.bottom());
+
+        let sell = live_rail_x(100.0, 8.0, Side::Sell);
+        let buy = live_rail_x(100.0, 8.0, Side::Buy);
+        assert!(sell < 100.0 && buy > 100.0);
+        assert!(
+            ((100.0 - sell) - (buy - 100.0)).abs() < 1e-4,
+            "rails not symmetric"
+        );
+        assert!((buy - sell - 2.0 * LIVE_COLUMN_RAIL_OFFSET * 8.0).abs() < 1e-4);
     }
 }

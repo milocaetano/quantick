@@ -181,12 +181,6 @@ pub struct QuantickApp {
 
     // Pan/zoom navigation over the bar series.
     viewport: Viewport,
-    // Bar-slots reserved past the newest bar for the live region. Persisted so
-    // a closing bar frees exactly one slot: the chart never steps right — the
-    // freed space stays an empty gap the next bar's live region refills.
-    live_tail_hold: f32,
-    // Bar count seen last frame, to detect closes for the hold above.
-    last_total_bars: usize,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     price_view: PriceView,
     // Last frame's auto-fit price range and chart height, for pixel↔price maths
@@ -280,8 +274,6 @@ impl QuantickApp {
             imbalance_target,
             viewport: Viewport::new(),
             price_view: PriceView::new(),
-            live_tail_hold: 0.0,
-            last_total_bars: 0,
             last_auto_range: None,
             last_chart_height: 1.0,
             hover_pos: None,
@@ -798,8 +790,6 @@ impl QuantickApp {
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
-                    // Prepended bars are not closes; keep the live-tail hold.
-                    self.last_total_bars = self.last_total_bars.saturating_add(added);
                 }
                 Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
                 Ok(FeedEvent::LiveBatch(trades)) => {
@@ -835,8 +825,6 @@ impl QuantickApp {
         self.hover_pos = None;
         self.history_trades = 0;
         self.latest_trade_ms = None;
-        self.live_tail_hold = 0.0;
-        self.last_total_bars = 0;
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
@@ -1131,45 +1119,13 @@ impl QuantickApp {
             return;
         }
 
-        // Live region: while following a live book, the forming bar grows to
-        // the right on a FIXED time-per-slot scale (the previous bar's
-        // duration spread over the full width). Linear growth means an event
-        // keeps its exact screen position while the region widens — bubbles
-        // appear where they ate the book and stay put, nothing slides.
-        let live_span = if self.viewport.follows_live()
-            && let Some(bar) = partial
-            && let Some(now) = self.orderflow.live_end_ms()
-        {
-            let elapsed = now - bar.open_time;
-            let ref_dur = closed
-                .last()
-                .map(|b| (b.close_time - b.open_time).max(1))
-                .unwrap_or(1_000);
-            // Up to ~55% of the chart for the live book.
-            let max_span =
-                (chart_rect.width() / self.viewport.candle_width() * 0.55).clamp(8.0, 18.0);
-            crate::orderflow_render::live_span_for(elapsed, ref_dur, max_span)
-        } else {
-            1.0
-        };
-        // The reserved tail shrinks only by the one slot each closing bar
-        // consumes and grows only with the live region. The chart therefore
-        // never steps right on a bar close: compression leaves an empty gap on
-        // the right that the next bar's live region refills, and the chart
-        // only ever drifts left.
-        if total < self.last_total_bars {
-            self.live_tail_hold = 0.0; // series reset (symbol/feed change)
-        } else if total > self.last_total_bars {
-            let closed_now = (total - self.last_total_bars) as f32;
-            self.live_tail_hold = (self.live_tail_hold - closed_now).max(0.0);
-        }
-        self.last_total_bars = total;
-        if self.viewport.follows_live() {
-            self.live_tail_hold = self.live_tail_hold.max(live_span - 1.0);
-        } else {
-            self.live_tail_hold = 0.0;
-        }
-        self.viewport.set_live_tail(self.live_tail_hold);
+        // The forming bar renders as a fixed-width live column (footprint),
+        // never on a wall-clock axis. The viewport permanently reserves the
+        // column's overhang past the newest bar: a constant reservation means
+        // the right edge advances exactly one slot per close and never steps
+        // right, with no decay bookkeeping.
+        self.viewport
+            .set_live_tail(crate::orderflow_render::LIVE_TAIL_SLOTS);
 
         let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
 
@@ -1207,6 +1163,13 @@ impl QuantickApp {
             scale.range(),
         );
         let canvas_background = self.bg();
+        // The live column's anchor: the forming bar's slot and open time,
+        // taken from this frame's state so the column jumps to the new slot
+        // the instant a bar closes.
+        let live_column = partial_visible.map(|bar| crate::orderflow_render::LiveColumnAnchor {
+            bar_index: closed.len(),
+            open_ms: bar.open_time,
+        });
         if let Some(frame) = &orderflow_frame {
             self.orderflow.draw_background(
                 painter,
@@ -1215,7 +1178,8 @@ impl QuantickApp {
                 total,
                 frame,
                 canvas_background,
-                live_span,
+                &scale,
+                live_column,
             );
         }
 
@@ -1270,7 +1234,8 @@ impl QuantickApp {
                 total,
                 frame,
                 canvas_background,
-                live_span,
+                &scale,
+                live_column,
             );
         }
 

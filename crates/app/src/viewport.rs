@@ -11,8 +11,8 @@
 pub const MIN_CANDLE_WIDTH: f32 = 2.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
 pub const MAX_CANDLE_WIDTH: f32 = 64.0;
-/// How many empty bar-slots past the newest bar you may pan into. Also bounds
-/// the forming bar's live tail, so it is generous enough for a wide live area.
+/// How many empty bar-slots past the newest bar you may pan into. Also the
+/// upper bound on the live-tail reservation (the live column's overhang).
 const FUTURE_MARGIN_BARS: f32 = 40.0;
 
 /// The visible window over a bar series.
@@ -26,7 +26,7 @@ pub struct Viewport {
     /// Whether the right edge is pinned to the newest bar.
     follow: bool,
     /// Extra bar-slots reserved past the newest bar while following, so the
-    /// forming bar can expand its live order-flow tail to the right without the
+    /// forming bar's fixed-width live column fits to the right without the
     /// newest candle sitting on the edge. Zero keeps the classic layout.
     live_tail: f32,
 }

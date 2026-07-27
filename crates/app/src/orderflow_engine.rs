@@ -328,7 +328,6 @@ pub struct BookLadder {
 pub struct BookPublished {
     pub status: CaptureStatus,
     pub health: OrderflowHealth,
-    pub live_end_ms: Option<i64>,
     /// The engine's current capture bucket. The auto-base logic can change it
     /// without a user action, so the UI mirrors it from here.
     pub base_price_grouping: Decimal,
@@ -345,7 +344,6 @@ impl BookPublished {
         Self {
             status: CaptureStatus::Disabled,
             health: OrderflowHealth::empty(),
-            live_end_ms: None,
             base_price_grouping: HeatmapConfig::default().price_grouping,
             frame: None,
             ladder: None,
@@ -990,11 +988,6 @@ impl BookEngine {
         BookPublished {
             status: self.status.clone(),
             health: self.health(),
-            live_end_ms: if self.config.enabled {
-                self.history.latest_book_ms()
-            } else {
-                None
-            },
             base_price_grouping: self.config.price_grouping,
             frame: self.last_frame.clone(),
             ladder: self.ladder(),

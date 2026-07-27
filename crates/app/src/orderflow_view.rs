@@ -30,8 +30,9 @@ use crate::orderflow_engine::{
     ProjectionRequest, VisibleOrderflow,
 };
 use crate::orderflow_render::{
-    OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview, heat_fill,
+    LiveColumnAnchor, OrderflowRenderStyle, ProjectedLayout, RenderContext,
+    draw_aggression_bubbles, draw_compact_legend, draw_heatmap_background, draw_liquidity_events,
+    draw_live_column_heat, draw_live_footprint, draw_preview, heat_fill, live_column_rect,
     theme_bubble_rgb,
 };
 use crate::orderflow_worker::{BookCommand, BookWorker};
@@ -164,17 +165,6 @@ impl OrderflowView {
         let before = self.config.clone();
         self.config.show_aggressions = enabled;
         self.commit_config_changes(before);
-    }
-
-    /// Latest exchange timestamp for which live book state is known, while
-    /// capture is active. Drives how wide the forming bar's live tail grows.
-    #[must_use]
-    pub fn live_end_ms(&mut self) -> Option<i64> {
-        if !self.config.enabled {
-            return None;
-        }
-        self.sync_published();
-        self.published.live_end_ms
     }
 
     #[cfg(test)]
@@ -323,8 +313,19 @@ impl OrderflowView {
         self.published.frame.clone()
     }
 
+    /// The "now" divider in the frame's own slot units: where the current
+    /// forming bar's slot begins. `None` when no forming bar is on screen.
+    /// Right after a close the (possibly ~220 ms stale) frame still ends at
+    /// the just-closed bar; anchoring on the *current* index then places the
+    /// boundary past the frame's slots, which correctly renders the closed
+    /// bar's history in full immediately.
+    fn live_boundary(frame: &VisibleOrderflow, live: Option<LiveColumnAnchor>) -> Option<f32> {
+        live.and_then(|anchor| anchor.bar_index.checked_sub(frame.first_bar_index))
+            .map(|slots| slots as f32)
+    }
+
     /// Draw resting liquidity, coverage gaps and factual liquidity changes
-    /// behind the candle layer.
+    /// behind the candle layer, plus the live column's book-now heat.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_background(
         &self,
@@ -334,7 +335,8 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        live_span: f32,
+        scale: &PriceScale,
+        live: Option<LiveColumnAnchor>,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -342,15 +344,46 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            live_span,
+            Self::live_boundary(frame, live),
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
-        let context = RenderContext::new(&frame.projection, layout, &style);
+        let context = RenderContext::new(
+            &frame.projection,
+            layout,
+            &style,
+            live.map(|anchor| anchor.open_ms),
+        );
         draw_heatmap_background(painter, &context);
         draw_liquidity_events(painter, &context);
+
+        // The live column's background: the book right now, bucketed and
+        // referenced exactly like the strip so one wall wears one colour
+        // across chart, column and strip.
+        if let (Some(anchor), Some(ladder)) = (live, self.published.ladder.as_ref()) {
+            let bucket_width = frame.projection.effective_grouping.bucket_width;
+            let rows = live_strip::depth_rows(ladder, bucket_width);
+            let reference = Some(frame.projection.liquidity_reference)
+                .filter(|reference| *reference > Decimal::ZERO)
+                .unwrap_or_else(|| live_strip::fallback_reference(&rows));
+            let candle_x = viewport.x_center(anchor.bar_index, chart_rect.right(), total_bars);
+            let column = live_column_rect(candle_x, viewport.candle_width(), chart_rect)
+                .intersect(chart_rect);
+            draw_live_column_heat(
+                painter,
+                column,
+                scale,
+                &style,
+                &rows,
+                reference,
+                bucket_width,
+                self.config.gamma,
+                self.config.opacity,
+            );
+        }
     }
 
-    /// Draw factual aggressive prints and the compact visual key over candles.
+    /// Draw factual aggressive prints and the compact visual key over
+    /// candles, plus the forming bar's footprint on the live column's rails.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -360,7 +393,8 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        live_span: f32,
+        scale: &PriceScale,
+        live: Option<LiveColumnAnchor>,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -368,11 +402,37 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            live_span,
+            Self::live_boundary(frame, live),
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
-        let context = RenderContext::new(&frame.projection, layout, &style);
+        let context = RenderContext::new(
+            &frame.projection,
+            layout,
+            &style,
+            live.map(|anchor| anchor.open_ms),
+        );
         draw_aggression_bubbles(painter, &context);
+
+        // The footprint: the same per-bucket aggregation the strip histogram
+        // reads — one engine code path — drawn as sell/buy rails beside the
+        // forming candle.
+        if let Some(anchor) = live {
+            let rows = live_strip::aggression_rows(&frame.projection.aggressions, anchor.open_ms);
+            if !rows.is_empty() {
+                let candle_x = viewport.x_center(anchor.bar_index, chart_rect.right(), total_bars);
+                draw_live_footprint(
+                    painter,
+                    chart_rect,
+                    candle_x,
+                    viewport.candle_width(),
+                    scale,
+                    &style,
+                    &rows,
+                    frame.projection.aggression_reference,
+                    frame.projection.effective_grouping.bucket_width,
+                );
+            }
+        }
         draw_compact_legend(painter, &context);
     }
 
