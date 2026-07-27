@@ -33,7 +33,7 @@ pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:9100";
 /// Longest line the server will buffer. Protocol lines are a few hundred
 /// bytes; anything larger is not the bridge, and an unbounded buffer would let
 /// any local process exhaust memory by streaming bytes without a newline.
-const MAX_LINE_BYTES: usize = 64 * 1024;
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
 
 /// Runtime switch controlling whether DOM images are published.
 ///
@@ -839,8 +839,69 @@ fn snippet(line: &str) -> &str {
     }
 }
 
-/// One read from the bounded line reader.
-enum BoundedLine {
+#[cfg(test)]
+mod bounded_reader_tests {
+    use super::{BoundedLine, BoundedLineReader, MAX_LINE_BYTES};
+
+    /// The reader is generic so the app can point it at a launched bridge's
+    /// stderr, not just a socket. A cursor stands in for both.
+    #[tokio::test]
+    async fn it_reads_lines_from_any_source_not_just_a_socket() {
+        let source = std::io::Cursor::new(b"first\nsecond\r\n".to_vec());
+        let mut reader = BoundedLineReader::new(source);
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::Line("first".to_owned())
+        );
+        // A CRLF terminator loses the carriage return, like the socket path.
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::Line("second".to_owned())
+        );
+        assert_eq!(reader.next_line().await.unwrap(), BoundedLine::Eof);
+    }
+
+    #[tokio::test]
+    async fn an_endless_line_is_capped_and_reading_continues() {
+        // The failure this bound exists for: output with no newline in it.
+        // The oversized line is dropped, and the line after it still arrives.
+        let mut bytes = vec![b'x'; MAX_LINE_BYTES + 10];
+        bytes.push(b'\n');
+        bytes.extend_from_slice(b"survivor\n");
+        let mut reader = BoundedLineReader::new(std::io::Cursor::new(bytes));
+        assert_eq!(reader.next_line().await.unwrap(), BoundedLine::TooLong);
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::Line("survivor".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_is_reported_and_skipped_not_fatal() {
+        // A Windows-encoded path inside a Python traceback is exactly this.
+        let mut bytes = b"before\n".to_vec();
+        bytes.extend_from_slice(&[0xFF, 0xFE, b'\n']);
+        bytes.extend_from_slice(b"after\n");
+        let mut reader = BoundedLineReader::new(std::io::Cursor::new(bytes));
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::Line("before".to_owned())
+        );
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::NotUtf8 { len: 2 }
+        );
+        assert_eq!(
+            reader.next_line().await.unwrap(),
+            BoundedLine::Line("after".to_owned()),
+            "one unreadable line must not end the stream"
+        );
+    }
+}
+
+/// One read from a [`BoundedLineReader`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum BoundedLine {
     /// A complete UTF-8 line (terminator stripped).
     Line(String),
     /// A complete line that was not valid UTF-8; skippable, per PROTOCOL.md.
@@ -865,22 +926,30 @@ enum ReadStep {
 
 /// A newline-delimited reader that never buffers more than
 /// [`MAX_LINE_BYTES`], unlike `AsyncBufReadExt::lines`. Cancel-safe: the only
-/// await is `fill_buf`, and bytes move out of the socket buffer and into the
+/// await is `fill_buf`, and bytes move out of the source buffer and into the
 /// line buffer within a single poll.
-struct BoundedLineReader {
-    reader: BufReader<TcpStream>,
+///
+/// Generic over the source because the bridge speaks the same line-delimited
+/// shape over two transports: a socket, and the stderr of a bridge quantick
+/// launched itself. Both need the same bound — an unterminated line is a
+/// memory leak wherever it comes from — and one implementation is what keeps
+/// the two honest about it.
+pub struct BoundedLineReader<R> {
+    reader: BufReader<R>,
     buf: Vec<u8>,
 }
 
-impl BoundedLineReader {
-    fn new(stream: TcpStream) -> Self {
+impl<R: tokio::io::AsyncRead + Unpin> BoundedLineReader<R> {
+    /// Wrap `source`, reading at most [`MAX_LINE_BYTES`] per line.
+    pub fn new(source: R) -> Self {
         Self {
-            reader: BufReader::new(stream),
+            reader: BufReader::new(source),
             buf: Vec::new(),
         }
     }
 
-    async fn next_line(&mut self) -> std::io::Result<BoundedLine> {
+    /// The next line, or what went wrong with it.
+    pub async fn next_line(&mut self) -> std::io::Result<BoundedLine> {
         loop {
             let step = {
                 let available = self.reader.fill_buf().await?;

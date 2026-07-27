@@ -41,6 +41,14 @@ pub struct BridgeReport {
     /// The single next step. Always present for [`BridgeSeverity::Attention`];
     /// progress reports have nothing to ask for.
     pub next_step: Option<String>,
+    /// Whether the bridge stops after printing this.
+    ///
+    /// Separate from [`severity`](Self::severity) because the two really do
+    /// come apart: a symbol with no Depth of Market needs the user *and* keeps
+    /// streaming trades. A caller watching for "did it explain why it died?"
+    /// must ask this, not whether something needed attention at some point —
+    /// otherwise one survivable warning silences every later crash.
+    pub ends_session: bool,
 }
 
 impl BridgeReport {
@@ -50,15 +58,30 @@ impl BridgeReport {
             severity: BridgeSeverity::Progress,
             headline: headline.into(),
             next_step: None,
+            ends_session: false,
         }
     }
 
-    fn attention(code: &str, headline: impl Into<String>, next_step: impl Into<String>) -> Self {
+    /// Needs the user, and the bridge exits after saying it.
+    fn fatal(code: &str, headline: impl Into<String>, next_step: impl Into<String>) -> Self {
         Self {
             event_code: code.to_owned(),
             severity: BridgeSeverity::Attention,
             headline: headline.into(),
             next_step: Some(next_step.into()),
+            ends_session: true,
+        }
+    }
+
+    /// Needs the user, but the bridge carries on with less than the full
+    /// picture.
+    fn survivable(code: &str, headline: impl Into<String>, next_step: impl Into<String>) -> Self {
+        Self {
+            event_code: code.to_owned(),
+            severity: BridgeSeverity::Attention,
+            headline: headline.into(),
+            next_step: Some(next_step.into()),
+            ends_session: false,
         }
     }
 }
@@ -89,28 +112,28 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
 
     let report = match code {
         // -- fatal, and every one of them has a fix the user can perform ----
-        "BRIDGE_NO_MT5_PACKAGE" => BridgeReport::attention(
+        "BRIDGE_NO_MT5_PACKAGE" => BridgeReport::fatal(
             code,
             "The MetaTrader 5 Python package is missing",
             "Install it once, then reconnect: pip install MetaTrader5",
         ),
-        "BRIDGE_TERMINAL_ATTACH_FAILED" => BridgeReport::attention(
+        "BRIDGE_TERMINAL_ATTACH_FAILED" => BridgeReport::fatal(
             code,
             "MetaTrader 5 is not running, or is not logged in",
             "Open the MetaTrader 5 terminal and log in — quantick keeps retrying.",
         ),
-        "BRIDGE_SYMBOL_NOT_FOUND" => BridgeReport::attention(
+        "BRIDGE_SYMBOL_NOT_FOUND" => BridgeReport::fatal(
             code,
             format!("MetaTrader does not list {symbol}"),
             "Add the contract to Market Watch, or pick the exact name your \
              broker uses (front-month contracts look like WINQ26).",
         ),
-        "BRIDGE_SYMBOL_SELECT_FAILED" => BridgeReport::attention(
+        "BRIDGE_SYMBOL_SELECT_FAILED" => BridgeReport::fatal(
             code,
             format!("MetaTrader would not open {symbol}"),
             "Right-click it in Market Watch and choose Show, then reconnect.",
         ),
-        "BRIDGE_UTC_OFFSET_UNKNOWN" => BridgeReport::attention(
+        "BRIDGE_UTC_OFFSET_UNKNOWN" => BridgeReport::fatal(
             code,
             "The market is quiet, so the server clock could not be measured",
             "Connect once while the market trades — quantick then remembers the \
@@ -133,7 +156,7 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
             BridgeReport::progress(code, "the bridge lost its connection — reconnecting")
         }
         // -- streaming, but with less than the full picture ------------------
-        "BRIDGE_BOOK_SUBSCRIBE_FAILED" => BridgeReport::attention(
+        "BRIDGE_BOOK_SUBSCRIBE_FAILED" => BridgeReport::survivable(
             code,
             format!("{symbol} has no Depth of Market in this terminal"),
             "Trades keep streaming; the book heatmap stays empty. Ask your \
@@ -195,6 +218,42 @@ mod tests {
             let report = report_for_line(line).expect("a user-visible report");
             assert_eq!(report.severity, BridgeSeverity::Progress, "line: {line}");
             assert!(report.next_step.is_none(), "line: {line}");
+        }
+    }
+
+    /// The distinction a caller leans on to decide whether a bridge that died
+    /// already said why. Mirrors `bridge/mt5/quantick_bridge.py`: everything
+    /// that raises `BridgeExit` ends the session; the DOM warning does not.
+    #[test]
+    fn only_the_codes_that_stop_the_bridge_end_the_session() {
+        let ends = |line: &str| {
+            report_for_line(line)
+                .expect("a user-visible report")
+                .ends_session
+        };
+        for line in [
+            r#"{"event_code":"BRIDGE_NO_MT5_PACKAGE"}"#,
+            r#"{"event_code":"BRIDGE_TERMINAL_ATTACH_FAILED"}"#,
+            r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINQ26"}"#,
+            r#"{"event_code":"BRIDGE_SYMBOL_SELECT_FAILED","symbol":"WINQ26"}"#,
+            r#"{"event_code":"BRIDGE_UTC_OFFSET_UNKNOWN"}"#,
+        ] {
+            assert!(ends(line), "this one exits the process: {line}");
+        }
+        // Needs the user *and* keeps streaming: the heatmap stays empty while
+        // trades carry on. Treating it as "explained itself" would silence
+        // every later crash of the same bridge.
+        assert!(!ends(
+            r#"{"event_code":"BRIDGE_BOOK_SUBSCRIBE_FAILED","symbol":"WDO$"}"#
+        ));
+        for line in [
+            r#"{"event_code":"BRIDGE_STARTING"}"#,
+            r#"{"event_code":"BRIDGE_SESSION_STARTED","symbol":"WINQ26"}"#,
+            r#"{"event_code":"BRIDGE_DISCONNECTED"}"#,
+            r#"{"event_code":"BRIDGE_BACKFILL_FAILED"}"#,
+            r#"{"event_code":"BRIDGE_UTC_OFFSET_MARKET_QUIET"}"#,
+        ] {
+            assert!(!ends(line), "progress never ends the session: {line}");
         }
     }
 

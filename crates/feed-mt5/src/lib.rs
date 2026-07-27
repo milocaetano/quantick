@@ -90,6 +90,6 @@ pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper
 pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, Tick, parse_line};
 pub use session::{SeqAnomaly, SeqTracker};
 pub use stream::{
-    BookCaptureSwitch, DEFAULT_LISTEN_ADDR, Mt5Error, Mt5Event, Mt5Status, ServerConfig,
-    run_bridge_server,
+    BookCaptureSwitch, BoundedLine, BoundedLineReader, DEFAULT_LISTEN_ADDR, MAX_LINE_BYTES,
+    Mt5Error, Mt5Event, Mt5Status, ServerConfig, run_bridge_server,
 };

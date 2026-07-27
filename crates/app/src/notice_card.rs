@@ -19,8 +19,13 @@ use crate::feed::FeedNotice;
 use crate::theme;
 
 /// Width of the card, in pixels — wide enough for a sentence of instruction
-/// without spanning a wide monitor.
+/// without spanning a wide monitor. Clamped to the chart when it is narrower.
 const CARD_WIDTH_PX: f32 = 420.0;
+/// Floor for the text column, in pixels. A chart narrow enough to drive this
+/// negative would otherwise wrap every word onto its own line, or panic the
+/// layout; the card is unreadable at that size either way, and this keeps it
+/// merely cramped.
+const MIN_TEXT_WIDTH_PX: f32 = 40.0;
 /// Padding inside the card, in pixels.
 const PAD_PX: f32 = 14.0;
 /// Gap between the headline and the next step, in pixels.
@@ -100,7 +105,11 @@ fn geometry(painter: &egui::Painter, area: egui::Rect, notice: &FeedNotice) -> O
         } => (theme::AMBER, headline.as_str(), Some(next_step.as_str())),
     };
 
-    let text_width = CARD_WIDTH_PX - 2.0 * PAD_PX - DOT_DIAMETER_PX - DOT_GAP_PX;
+    // Wrap against the width the card will actually have, not the width it
+    // would like: on a narrow chart the card is clamped, and text wrapped to
+    // the unclamped width spills past its own border.
+    let width = CARD_WIDTH_PX.min(area.width());
+    let text_width = (width - 2.0 * PAD_PX - DOT_DIAMETER_PX - DOT_GAP_PX).max(MIN_TEXT_WIDTH_PX);
     let headline_galley = painter.layout(
         headline.to_owned(),
         egui::FontId::proportional(HEADLINE_PT),
@@ -129,7 +138,7 @@ fn geometry(painter: &egui::Painter, area: egui::Rect, notice: &FeedNotice) -> O
             area.center().x,
             area.center().y - area.height() * VERTICAL_BIAS,
         ),
-        egui::vec2(CARD_WIDTH_PX.min(area.width()), height),
+        egui::vec2(width, height),
     );
 
     let text_left = card.left() + PAD_PX + DOT_DIAMETER_PX + DOT_GAP_PX;
@@ -344,6 +353,54 @@ mod tests {
                 assert_eq!(retry_button_rect(ui, area, &notice), None);
             });
         });
+    }
+
+    /// Wrapped text must stay inside the card, including when the chart is
+    /// narrower than the card wants to be. The instruction is deliberately
+    /// long: short strings never wrap, so they cannot catch this.
+    #[test]
+    fn a_long_instruction_stays_inside_a_narrow_card() {
+        let ctx = egui::Context::default();
+        let notice = FeedNotice::attention(
+            "MetaTrader does not list WINZ99",
+            "Add the contract to Market Watch, or pick the exact name your broker uses \
+             (front-month contracts look like WINQ26).",
+        );
+        for chart_width in [900.0_f32, 420.0, 300.0, 180.0] {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let area = egui::Rect::from_min_max(
+                        egui::pos2(0.0, 0.0),
+                        egui::pos2(chart_width, 600.0),
+                    );
+                    let geometry = geometry(ui.painter(), area, &notice).expect("a card");
+                    assert!(
+                        geometry.card.width() <= area.width() + f32::EPSILON,
+                        "card {} wider than chart {chart_width}",
+                        geometry.card.width()
+                    );
+                    // The text column plus its padding is what actually has to
+                    // fit — the bug this guards let it wrap to 376 px inside a
+                    // 180 px card.
+                    let text_right_edge =
+                        PAD_PX + DOT_DIAMETER_PX + DOT_GAP_PX + geometry.headline.size().x + PAD_PX;
+                    assert!(
+                        text_right_edge <= geometry.card.width() + 1.0,
+                        "headline needs {text_right_edge} px inside a {} px card (chart {chart_width})",
+                        geometry.card.width()
+                    );
+                    if let Some(step) = &geometry.step {
+                        let step_right_edge =
+                            PAD_PX + DOT_DIAMETER_PX + DOT_GAP_PX + step.size().x + PAD_PX;
+                        assert!(
+                            step_right_edge <= geometry.card.width() + 1.0,
+                            "step needs {step_right_edge} px inside a {} px card (chart {chart_width})",
+                            geometry.card.width()
+                        );
+                    }
+                });
+            });
+        }
     }
 
     /// A chart narrower than the card must still produce a card inside it.

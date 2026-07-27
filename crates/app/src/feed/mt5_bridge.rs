@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use quantick_feed_mt5::bridge_log::{BridgeSeverity, report_for_line};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use quantick_feed_mt5::{BoundedLine, BoundedLineReader, MAX_LINE_BYTES};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -227,7 +227,6 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
         }
     }
 
-    tokio::time::sleep(AUTOSTART_GRACE).await;
     let candidates = interpreter_candidates(program);
     // Which interpreter worked, so a retry does not re-probe the ones that are
     // not installed on this machine.
@@ -238,6 +237,12 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
     // the chart should come back on its own.
     let mut failures = 0_u32;
     let mut watching_logged = false;
+    // The grace period belongs to every *episode* of silence, not just the
+    // first. Someone else's bridge — an Expert Advisor on a chart — reconnects
+    // on its own schedule (five seconds, in the one this repo ships), and
+    // racing it with our own process is what the grace exists to avoid. Losing
+    // a session arms it again.
+    let mut grace_pending = true;
     while failures < AUTOSTART_ATTEMPTS {
         let attempt = failures + 1;
         if sup.connected.load(Ordering::Relaxed) {
@@ -256,10 +261,21 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
                 watching_logged = true;
             }
             failures = 0;
+            grace_pending = true;
             tokio::time::sleep(WATCH_INTERVAL).await;
             continue;
         }
         watching_logged = false;
+
+        if grace_pending {
+            grace_pending = false;
+            tokio::time::sleep(AUTOSTART_GRACE).await;
+            // Whoever we were waiting for may have arrived while we waited —
+            // which is the point of waiting.
+            if sup.connected.load(Ordering::Relaxed) {
+                continue;
+            }
+        }
 
         let _ = sup
             .notices
@@ -362,10 +378,54 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
         // exit needs no second message: the reason is already on screen.
         let mut explained = false;
         if let Some(stderr) = child.stderr.take() {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if forward_bridge_line(&line, symbol, &sup.notices).await {
-                    explained = true;
+            // Bounded rather than `AsyncBufReadExt::lines`, which buffers a
+            // line with no newline in it forever. The same reader guards the
+            // socket path for the same reason (PR #59); a bridge is a local
+            // process, but `bridge_command` is configuration, and a runaway
+            // one must not be able to grow the chart's memory without limit.
+            let mut lines = BoundedLineReader::new(stderr);
+            loop {
+                match lines.next_line().await {
+                    Ok(BoundedLine::Line(line)) => {
+                        if forward_bridge_line(&line, symbol, &sup.notices).await {
+                            explained = true;
+                        }
+                    }
+                    Ok(BoundedLine::Eof) => break,
+                    // Neither of these ends the reading: the bridge is alive
+                    // and its next line may be the one that matters. They are
+                    // logged rather than dropped, because "every line reaches
+                    // the log" is only true if the unreadable ones say so too.
+                    Ok(BoundedLine::TooLong) => warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_BRIDGE_LINE_TOO_LONG",
+                        symbol = %symbol,
+                        max_bytes = MAX_LINE_BYTES as u64,
+                        action = "skip_line_keep_reading",
+                        "a bridge log line exceeded the cap and was skipped"
+                    ),
+                    Ok(BoundedLine::NotUtf8 { len }) => warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_BRIDGE_LINE_NOT_UTF8",
+                        symbol = %symbol,
+                        bytes = len,
+                        action = "skip_line_keep_reading",
+                        "a bridge log line was not valid UTF-8 and was skipped"
+                    ),
+                    Err(error) => {
+                        warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "MT5_BRIDGE_STDERR_READ_FAILED",
+                            symbol = %symbol,
+                            %error,
+                            action = "stop_reading_wait_for_exit",
+                            "could not read the bridge's output"
+                        );
+                        break;
+                    }
                 }
             }
         }
@@ -404,7 +464,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
         .send(FeedNotice::attention(
             "the MetaTrader bridge would not stay running",
             "quantick stopped retrying after several attempts. Fix what the last \
-             message reported, then switch feeds to try again.",
+             message reported, then press Try again.",
         ))
         .await;
 }
@@ -435,7 +495,8 @@ fn exit_notice(explained: bool, code: Option<i32>) -> Option<FeedNotice> {
 }
 
 /// Log one bridge stderr line and, when it means something to a person, send
-/// it on as a notice. Returns whether it produced a user-facing report.
+/// it on as a notice. Returns whether the line is one the bridge stops after —
+/// i.e. whether it explains an exit that follows.
 async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<FeedNotice>) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -454,6 +515,7 @@ async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<Fe
     let Some(report) = report_for_line(trimmed) else {
         return false;
     };
+    let ends_session = report.ends_session;
     let notice = match report.severity {
         BridgeSeverity::Progress => FeedNotice::working(report.headline),
         BridgeSeverity::Attention => FeedNotice::attention(
@@ -463,9 +525,11 @@ async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<Fe
                 .unwrap_or_else(|| "See bridge/mt5/README.md for this bridge's setup.".to_owned()),
         ),
     };
-    let needs_user = matches!(notice, FeedNotice::Attention { .. });
     let _ = notices.send(notice).await;
-    needs_user
+    // Not "did this need the user" — a symbol without a book needs the user
+    // and keeps streaming. Only a line the bridge stops after can explain the
+    // exit that follows it.
+    ends_session
 }
 
 #[cfg(test)]
@@ -602,6 +666,37 @@ mod tests {
         };
         assert!(headline.contains("MetaTrader 5"), "headline: {headline}");
         assert!(!next_step.is_empty(), "an attention always says what to do");
+    }
+
+    #[tokio::test]
+    async fn a_survivable_warning_does_not_excuse_a_later_crash() {
+        // The DOM warning needs the user and the bridge keeps running. If it
+        // counted as "explained", a bridge that later died in silence would
+        // take the chart down without a word — the exact hole this closes.
+        let (tx, mut rx) = mpsc::channel(4);
+        let explains = forward_bridge_line(
+            r#"{"event_code":"BRIDGE_BOOK_SUBSCRIBE_FAILED","symbol":"WDO$"}"#,
+            "WDO$",
+            &tx,
+        )
+        .await;
+        assert!(!explains, "it needs the user, but it explains no exit");
+        // It still reaches the chart: the heatmap will be empty and the user
+        // is told why.
+        assert!(matches!(
+            rx.recv().await,
+            Some(FeedNotice::Attention { .. })
+        ));
+
+        // A fatal one does explain the exit that follows it.
+        assert!(
+            forward_bridge_line(
+                r#"{"event_code":"BRIDGE_SYMBOL_NOT_FOUND","symbol":"WINZ99"}"#,
+                "WINZ99",
+                &tx,
+            )
+            .await
+        );
     }
 
     #[tokio::test]
