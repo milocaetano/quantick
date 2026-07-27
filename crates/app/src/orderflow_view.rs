@@ -707,14 +707,22 @@ impl OrderflowView {
                 )
                 .on_hover_text(
                     "bubbles smaller than this are plain dots (no halo, rim or impact ring). \
-                     Raising it buys frame time on a fast tape, and moves the quantity below \
-                     which prints are folded together.",
+                     Raising it buys frame time on a fast tape.",
+                );
+                ui.add(
+                    egui::Slider::new(&mut bubbles.readable_min_radius, 0.0..=24.0)
+                        .text("readable from px"),
+                )
+                .on_hover_text(
+                    "the size at which a bubble stops being readable on its own. Prints below \
+                     it are what \"fold dust\" merges, and what the ring below marks. Raise it \
+                     for fewer, larger bubbles; zero disables both.",
                 );
                 ui.checkbox(&mut bubbles.hollow_small_buys, "hollow small buys")
                     .on_hover_text(
-                        "draw undressed buy prints as an open ring instead of a solid dot. At \
-                         that size a green speck and a red speck read the same; a ring and a \
-                         disc do not. Dressed bubbles keep their fill.",
+                        "draw buy prints below the readable radius as an open ring instead of \
+                         a solid dot. At that size a green speck and a red speck read the same; \
+                         a ring and a disc do not. Larger bubbles keep their fill.",
                     );
             });
 
@@ -1109,7 +1117,7 @@ impl OrderflowView {
                             })
                             .response
                             .on_hover_text(
-                                "a second pass over the prints too small to draw as anything but a dot: inside this window they fold into one bubble per price range. The threshold follows \"detail from px\" — quantities and trade counts are summed exactly",
+                                "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" — quantities and trade counts are summed exactly",
                             );
                             self.draw_bubble_controls(ui);
                         });

@@ -50,6 +50,12 @@ pub const MIN_BUBBLE_MAX_RADIUS: f32 = 4.0;
 pub const MAX_BUBBLE_MAX_RADIUS: f32 = 48.0;
 /// Largest accepted radius for the smallest drawn bubble.
 pub const MAX_BUBBLE_MIN_RADIUS: f32 = 12.0;
+/// Default radius, in pixels, below which a bubble is treated as unreadable
+/// on its own: small enough to be a routine print, large enough that side
+/// colour and the side nudge actually register at a glance.
+pub const DEFAULT_READABLE_MIN_RADIUS: f32 = 6.0;
+/// Largest accepted readability floor.
+pub const MAX_READABLE_MIN_RADIUS: f32 = 32.0;
 /// Default edge darkening of a sphere-rendered bubble.
 pub const DEFAULT_SPHERE_SHADING: f32 = 0.55;
 /// Default highlight strength of a sphere-rendered bubble.
@@ -218,14 +224,22 @@ pub struct BubbleStyle {
     /// impact ring). Raising it trades detail for frame time on a fast tape.
     #[serde(serialize_with = "serialize_short_f32")]
     pub detail_min_radius: f32,
-    /// Whether buy prints too small to be dressed are drawn as an open ring
-    /// instead of a solid dot.
+    /// Radius, in pixels, below which a bubble cannot be read on its own.
     ///
-    /// Shape survives where colour does not: at the small end of the radius
-    /// range a green speck and a red speck are the same speck, but a ring and
-    /// a disc still read as two different things. Bubbles large enough to
-    /// carry a halo, a rim and their sphere shading already state their side
-    /// clearly, so this leaves them alone.
+    /// The readability floor both the dust merge and
+    /// [`hollow_small_buys`](Self::hollow_small_buys) gate on. Deliberately
+    /// *not* [`detail_min_radius`](Self::detail_min_radius): that one decides
+    /// how much dressing a bubble can afford, and a sphere-heavy look sets it
+    /// low on purpose — the "3d spheres" and "dense tape btc" presets put it
+    /// at or below `min_radius`, which would leave nothing to fold.
+    pub readable_min_radius: f32,
+    /// Whether buy prints below [`readable_min_radius`](Self::readable_min_radius)
+    /// are drawn as an open ring instead of a solid dot.
+    ///
+    /// Shape survives where colour does not: at that size a green speck and a
+    /// red speck are the same speck, but a ring and a disc still read as two
+    /// different things. Bubbles above the floor keep their fill, so a sphere
+    /// look is untouched.
     pub hollow_small_buys: bool,
     /// Whether the fill is a flat disc or a shaded sphere.
     pub render_mode: BubbleRenderMode,
@@ -311,6 +325,7 @@ impl Default for BubbleStyle {
             outline_width: 1.0,
             halo_strength: 0.12,
             detail_min_radius: 4.0,
+            readable_min_radius: DEFAULT_READABLE_MIN_RADIUS,
             hollow_small_buys: true,
             // Flat, so merely gaining the sphere option changes no pixels.
             render_mode: BubbleRenderMode::Flat,
@@ -354,6 +369,12 @@ impl BubbleStyle {
         self.outline_width = finite_clamp(self.outline_width, 0.0, 6.0, 1.0);
         self.halo_strength = finite_clamp(self.halo_strength, 0.0, 1.0, 0.12);
         self.detail_min_radius = finite_clamp(self.detail_min_radius, 0.0, 32.0, 4.0);
+        self.readable_min_radius = finite_clamp(
+            self.readable_min_radius,
+            0.0,
+            MAX_READABLE_MIN_RADIUS,
+            DEFAULT_READABLE_MIN_RADIUS,
+        );
         self.sphere_shading = finite_clamp(self.sphere_shading, 0.0, 1.0, DEFAULT_SPHERE_SHADING);
         self.sphere_highlight =
             finite_clamp(self.sphere_highlight, 0.0, 1.0, DEFAULT_SPHERE_HIGHLIGHT);
@@ -373,25 +394,23 @@ impl BubbleStyle {
     }
 
     /// Quantity at which a print stops being dust: the exact quantity whose
-    /// bubble lands on [`detail_min_radius`](Self::detail_min_radius), the
-    /// radius below which the renderer drops the halo, rim and impact ring and
-    /// leaves a bare dot.
+    /// bubble lands on [`readable_min_radius`](Self::readable_min_radius).
     ///
     /// Inverts the renderer's area mapping — `radius = sqrt(min² + size² ·
     /// (max² − min²))` at `size² = quantity / reference` — so the threshold
     /// follows whatever radius range is configured instead of pinning a second
     /// magic number beside it. `None` means nothing can be dust: no reference
-    /// to size against, or a detail radius already at the minimum.
+    /// to size against, or a floor already at the smallest drawn radius.
     #[must_use]
     pub fn dust_quantity(&self, reference: Decimal) -> Option<Decimal> {
-        if reference <= Decimal::ZERO || self.detail_min_radius <= self.min_radius {
+        if reference <= Decimal::ZERO || self.readable_min_radius <= self.min_radius {
             return None;
         }
         let span = self.max_radius.powi(2) - self.min_radius.powi(2);
         if span <= 0.0 {
             return None;
         }
-        let size_sq = (self.detail_min_radius.powi(2) - self.min_radius.powi(2)) / span;
+        let size_sq = (self.readable_min_radius.powi(2) - self.min_radius.powi(2)) / span;
         Decimal::from_f32(size_sq.clamp(0.0, 1.0)).map(|share| reference * share)
     }
 
