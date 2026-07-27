@@ -20,7 +20,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::orderflow::{BubbleStyle, HeatmapConfig, config::DEFAULT_BUBBLE_CLUSTER_MS};
+use crate::orderflow::{
+    BubbleStyle, HeatmapConfig,
+    config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS},
+};
 
 /// Environment variable naming an explicit presets file.
 pub const PRESETS_ENV: &str = "QUANTICK_BUBBLES";
@@ -38,6 +41,10 @@ const fn default_cluster_ms() -> i64 {
     DEFAULT_BUBBLE_CLUSTER_MS
 }
 
+const fn default_dust_merge_ms() -> i64 {
+    DEFAULT_BUBBLE_DUST_MERGE_MS
+}
+
 /// One named snapshot of the aggression-bubble panel's *appearance*.
 ///
 /// Deliberately not a switch: whether the layer draws at all stays a live
@@ -53,6 +60,10 @@ pub struct BubblePreset {
     /// Temporal window used to cluster compatible prints, in milliseconds.
     #[serde(default = "default_cluster_ms")]
     pub cluster_ms: i64,
+    /// Window over which prints too small to read fold together, in
+    /// milliseconds. Part of the look: how crowded the tape is allowed to get.
+    #[serde(default = "default_dust_merge_ms")]
+    pub dust_merge_ms: i64,
     /// Every visual choice for the bubbles themselves.
     #[serde(default)]
     pub bubbles: BubbleStyle,
@@ -65,6 +76,7 @@ impl BubblePreset {
         Self {
             name: name.into(),
             cluster_ms: config.bubble_cluster_ms,
+            dust_merge_ms: config.bubble_dust_merge_ms,
             bubbles: config.bubbles.clone(),
         }
     }
@@ -73,6 +85,7 @@ impl BubblePreset {
     /// and never the layer's own switch.
     pub fn apply_to(&self, config: &mut HeatmapConfig) {
         config.bubble_cluster_ms = self.cluster_ms;
+        config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubbles = self.bubbles.clone();
     }
 }
@@ -399,6 +412,7 @@ mod tests {
         file.upsert(BubblePreset {
             name: "default".to_owned(),
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
+            dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             bubbles: BubbleStyle {
                 front_color: Some([255, 246, 205]),
                 ..BubbleStyle::default()

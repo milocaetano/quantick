@@ -9,6 +9,7 @@ use super::history::{AggressorSide, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
 use super::interaction::{
     AggressionCluster, cluster_aggressions, correlate_liquidity, liquidity_events,
+    merge_dust_clusters,
 };
 use super::timeline::BarTimeline;
 
@@ -421,6 +422,17 @@ pub fn project(
         aggression_clusters.retain(|cluster| cluster.quantity >= floor);
     }
 
+    // Readability floor. Association already happened, so folding the dust
+    // together moves no evidence: a merged bubble carries the summed quantity
+    // and the union of the event ids its parts pointed at. Sized against the
+    // reference computed above, which is deliberately *not* recomputed —
+    // merging is a drawing decision and must not rescale the bubbles that were
+    // already readable.
+    if let Some(dust) = config.bubbles.dust_quantity(aggression_reference) {
+        aggression_clusters =
+            merge_dust_clusters(aggression_clusters, dust, config.bubble_dust_merge_ms);
+    }
+
     let dropped_aggressions = if config.show_aggressions {
         aggression_clusters
             .len()
@@ -712,10 +724,18 @@ mod tests {
     }
 
     /// Four prints an order of magnitude apart, so the size ladder is visible.
-    /// Clustering is off: these must stay four distinct bubbles.
+    /// Both readability passes are off — temporal clustering and the dust
+    /// merge — so these stay four distinct bubbles and the test measures the
+    /// size mapping alone.
     fn history_with_a_size_ladder(config: HeatmapConfig) -> LiquidityHistory {
+        size_ladder(config, 0)
+    }
+
+    /// The ladder above with the dust merge armed at `dust_merge_ms`.
+    fn size_ladder(config: HeatmapConfig, dust_merge_ms: i64) -> LiquidityHistory {
         let mut history = LiquidityHistory::new(HeatmapConfig {
             bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: dust_merge_ms,
             ..config
         });
         history.install_snapshot(100, 1, snapshot(10)).unwrap();
@@ -749,6 +769,49 @@ mod tests {
             .collect();
         sizes.sort_by_key(|pair| pair.0);
         sizes
+    }
+
+    #[test]
+    fn the_dust_merge_folds_unreadable_prints_without_losing_quantity() {
+        // The same ladder with the dust merge armed. Against a reference of
+        // 200 the two smallest prints (1 and 10) fall below the radius where
+        // the renderer stops dressing a bubble, so they arrive as one mark
+        // carrying both — while the two readable prints are left alone.
+        let history = size_ladder(
+            HeatmapConfig {
+                bubbles: BubbleStyle {
+                    size_reference: BubbleSizeReference::VisibleMax,
+                    ..BubbleStyle::default()
+                },
+                ..config()
+            },
+            5_000,
+        );
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        let mut quantities: Vec<Decimal> = projection
+            .aggressions
+            .iter()
+            .map(|aggression| aggression.quantity)
+            .collect();
+        quantities.sort();
+        assert_eq!(quantities, [dec("11"), dec("50"), dec("200")]);
+        assert_eq!(
+            quantities.iter().sum::<Decimal>(),
+            dec("261"),
+            "merging is a drawing decision and never loses quantity"
+        );
+        let folded = projection
+            .aggressions
+            .iter()
+            .find(|aggression| aggression.quantity == dec("11"))
+            .expect("the two dust prints fold into one bubble");
+        assert_eq!(folded.trade_count, 2);
+        assert_eq!(folded.agg_ids, [1, 2]);
     }
 
     #[test]

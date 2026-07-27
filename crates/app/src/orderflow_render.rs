@@ -202,6 +202,24 @@ const fn side_offset_y(side: Side, offset: f32) -> f32 {
     }
 }
 
+/// Interior alpha of a hollow bubble, as a fraction of the configured fill
+/// alpha: enough tint to keep the disc's area readable, light enough that the
+/// ring is what the eye catches.
+const HOLLOW_FILL_ALPHA: f32 = 0.22;
+/// Ring thickness of a hollow bubble as a fraction of its radius, and the
+/// pixel range it is held to — thin enough to stay a ring on a full-size
+/// sweep, thick enough to survive at dot size.
+const HOLLOW_RING_SCALE: f32 = 0.42;
+/// See [`HOLLOW_RING_SCALE`].
+const HOLLOW_MIN_RING_PX: f32 = 1.2;
+/// See [`HOLLOW_RING_SCALE`].
+const HOLLOW_MAX_RING_PX: f32 = 3.0;
+
+/// Ring thickness of a hollow bubble of this radius.
+fn hollow_ring_width(radius: f32) -> f32 {
+    (radius * HOLLOW_RING_SCALE).clamp(HOLLOW_MIN_RING_PX, HOLLOW_MAX_RING_PX)
+}
+
 /// Gap, in pixels, between a bubble's rim and the halo drawn behind it.
 const HALO_PADDING_PX: f32 = 2.5;
 /// Gap, in pixels, between a bubble's rim and its impact ring.
@@ -418,15 +436,37 @@ fn draw_bubble(
     // read it, which also keeps the per-frame tessellation budget flat no
     // matter how fast the tape runs.
     let dressed = radius >= bubbles.detail_min_radius;
-    let sphere = dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
-    if dressed && bubbles.halo_strength > 0.0 {
+    // Shape carries the side exactly where colour stops doing it: below the
+    // readability floor a green speck and a red speck are the same speck, and
+    // an open ring is not. Gated on that floor rather than on `dressed`,
+    // because a sphere-heavy look sets the dressing radius low on purpose and
+    // would otherwise leave every bubble solid.
+    let hollow = bubbles.hollow_small_buys
+        && matches!(side, Side::Buy)
+        && radius < bubbles.readable_min_radius;
+    let sphere = !hollow && dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
+    if !hollow && dressed && bubbles.halo_strength > 0.0 {
         painter.circle_filled(
             center,
             radius + HALO_PADDING_PX,
             color.gamma_multiply(halo_alpha(size, bubbles)),
         );
     }
-    if sphere {
+    if hollow {
+        let ring = hollow_ring_width(radius);
+        painter.circle_filled(
+            center,
+            radius,
+            color.gamma_multiply(bubbles.opacity * HOLLOW_FILL_ALPHA),
+        );
+        // Stroked on the inside of the radius, so a hollow bubble occupies
+        // exactly the area its quantity earned.
+        painter.circle_stroke(
+            center,
+            (radius - ring / 2.0).max(0.5),
+            egui::Stroke::new(ring, color.gamma_multiply(bubbles.opacity)),
+        );
+    } else if sphere {
         let mut mesh = egui::Mesh::default();
         add_sphere_disc(
             &mut mesh,
@@ -440,7 +480,7 @@ fn draw_bubble(
     } else {
         painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
     }
-    if dressed && bubbles.outline_width > 0.0 {
+    if !hollow && dressed && bubbles.outline_width > 0.0 {
         // A sphere's rim adopts the darkened edge colour: the dark separator
         // is what keeps two overlapping same-side bubbles readable as two.
         let rim = if sphere {
@@ -2062,6 +2102,87 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 mod tests {
     use super::*;
 
+    /// The dust threshold is defined by inverting this module's radius
+    /// mapping, but lives in `config` beside the style it reads. This pins the
+    /// two together: a print at the threshold must land exactly on the
+    /// readability floor.
+    #[test]
+    fn the_dust_threshold_lands_on_the_readability_floor() {
+        use rust_decimal::prelude::ToPrimitive as _;
+
+        let bubbles = BubbleStyle::default();
+        let reference = rust_decimal::Decimal::from(400);
+        let dust = bubbles
+            .dust_quantity(reference)
+            .expect("the default style has a readability floor above its minimum");
+        let size = (dust / reference)
+            .to_f32()
+            .expect("the threshold share converts")
+            .sqrt();
+        let radius = bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
+        assert!(
+            (radius - bubbles.readable_min_radius).abs() < 1e-3,
+            "a dust print rendered at {radius}, not {}",
+            bubbles.readable_min_radius
+        );
+    }
+
+    /// The shipped presets tune `detail_min_radius` down to buy sphere shading
+    /// on small prints — "dense tape btc" (the default open) sets it *below*
+    /// `min_radius`. Anchoring the readability floor there made both the dust
+    /// merge and the hollow ring inert on exactly the look the project opens
+    /// with, which is the regression this guards.
+    #[test]
+    fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
+        let dense_tape_btc = BubbleStyle {
+            min_radius: 2.2,
+            max_radius: 14.0,
+            detail_min_radius: 2.0,
+            ..BubbleStyle::default()
+        };
+        assert!(dense_tape_btc.detail_min_radius < dense_tape_btc.min_radius);
+        assert!(
+            dense_tape_btc
+                .dust_quantity(rust_decimal::Decimal::from(400))
+                .is_some(),
+            "prints must still be foldable when the dressing radius is low"
+        );
+
+        let colors =
+            BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &dense_tape_btc);
+        let mark = BubbleMark {
+            center: egui::pos2(40.0, 40.0),
+            radius: dense_tape_btc.min_radius,
+            side: Side::Buy,
+            size: 0.02,
+            matched: None,
+        };
+        let solid = BubbleStyle {
+            hollow_small_buys: false,
+            ..dense_tape_btc.clone()
+        };
+        assert_ne!(
+            painted(|painter| draw_bubble(painter, mark, &dense_tape_btc, &colors)),
+            painted(|painter| draw_bubble(painter, mark, &solid, &colors)),
+            "the ring must still fire when the dressing radius is below the minimum"
+        );
+    }
+
+    #[test]
+    fn nothing_is_dust_without_a_reference_or_a_readability_floor() {
+        let bubbles = BubbleStyle::default();
+        assert!(bubbles.dust_quantity(rust_decimal::Decimal::ZERO).is_none());
+
+        let flat = BubbleStyle {
+            readable_min_radius: 0.0,
+            ..BubbleStyle::default()
+        };
+        assert!(
+            flat.dust_quantity(rust_decimal::Decimal::from(400))
+                .is_none()
+        );
+    }
+
     fn luminance(rgb: [u8; 3]) -> f32 {
         0.2126 * f32::from(rgb[0]) + 0.7152 * f32::from(rgb[1]) + 0.0722 * f32::from(rgb[2])
     }
@@ -2480,6 +2601,46 @@ mod tests {
             "the sample must shade a sphere: {live}"
         );
         assert_eq!(live, preview);
+    }
+
+    #[test]
+    fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
+        let hollow = BubbleStyle {
+            trail_length: 0.0,
+            ..BubbleStyle::default()
+        };
+        assert!(hollow.hollow_small_buys);
+        let solid = BubbleStyle {
+            hollow_small_buys: false,
+            ..hollow.clone()
+        };
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &hollow);
+        let mark = |radius| BubbleMark {
+            center: egui::pos2(40.0, 40.0),
+            radius,
+            side: Side::Buy,
+            size: 0.05,
+            matched: None,
+        };
+
+        // Below the readability floor — where colour alone stops working —
+        // the setting must change what is painted.
+        let small = hollow.min_radius;
+        assert!(small < hollow.readable_min_radius);
+        assert_ne!(
+            painted(|painter| draw_bubble(painter, mark(small), &hollow, &colors)),
+            painted(|painter| draw_bubble(painter, mark(small), &solid, &colors)),
+            "a buy below the floor must not paint the same with the ring off"
+        );
+
+        // Above it the setting must change nothing: at that size the fill and
+        // its sphere shading already say which side the bubble is.
+        let big = hollow.readable_min_radius + 1.0;
+        assert_eq!(
+            painted(|painter| draw_bubble(painter, mark(big), &hollow, &colors)),
+            painted(|painter| draw_bubble(painter, mark(big), &solid, &colors)),
+            "a buy above the floor must be untouched by the ring setting"
+        );
     }
 
     #[test]

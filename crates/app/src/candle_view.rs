@@ -21,6 +21,21 @@ pub struct StylePanelResponse {
     pub applied_preset: Option<CandlePreset>,
 }
 
+/// Whether a bar reads as bullish, and so which of the two candle colours it
+/// wears.
+///
+/// A bar that closed exactly where it opened counts as bullish, which also
+/// makes a freshly opened forming bar — where close still equals open — start
+/// on the up colour rather than flickering.
+///
+/// Shared so that everything colouring by direction agrees by construction:
+/// the candle and the last-price chip sit on the same canvas at the same
+/// price, and a reader would take any disagreement between them as data.
+#[must_use]
+pub fn is_bullish(bar: &Bar) -> bool {
+    bar.close >= bar.open
+}
+
 /// Draw one candle from pure geometry and a resolved paint description.
 ///
 /// The heatmap is painted before this function and aggression bubbles after it.
@@ -35,7 +50,7 @@ pub fn draw_candle(
     forming: bool,
     style: &CandleStyle,
 ) {
-    let paint = style.resolved(bar.close >= bar.open, forming);
+    let paint = style.resolved(is_bullish(bar), forming);
     let geometry = candle_geometry(scale, bar, xc, half_width, paint.min_body_height);
     let body = egui::Rect::from_min_max(
         egui::pos2(geometry.body.left, geometry.body.top),
@@ -451,5 +466,59 @@ fn draw_preview_candle(
             rounding,
             egui::Stroke::new(paint.outline_width, color32(paint.outline)),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::style::CandleStyle;
+    use rust_decimal::Decimal;
+    use std::str::FromStr as _;
+
+    fn bar(open: &str, close: &str) -> Bar {
+        let open = Decimal::from_str(open).unwrap();
+        let close = Decimal::from_str(close).unwrap();
+        Bar {
+            open_time: 0,
+            close_time: 0,
+            open,
+            high: open.max(close),
+            low: open.min(close),
+            close,
+            buy_volume: Decimal::ZERO,
+            sell_volume: Decimal::ZERO,
+            trade_count: 1,
+        }
+    }
+
+    #[test]
+    fn direction_reads_a_flat_bar_as_bullish() {
+        assert!(is_bullish(&bar("100", "101")));
+        assert!(is_bullish(&bar("100", "100")));
+        assert!(!is_bullish(&bar("100", "99")));
+    }
+
+    /// The last-price chip picks its colour straight from the candle palette
+    /// using this predicate. Both are on the same canvas at the same price, so
+    /// a reader would take any disagreement as information — this pins them
+    /// to one another.
+    #[test]
+    fn the_candle_outline_follows_the_same_direction_the_chip_would_use() {
+        let style = CandleStyle::default();
+        for (open, close) in [("100", "101"), ("100", "100"), ("100", "99")] {
+            let bar = bar(open, close);
+            let chip = if is_bullish(&bar) {
+                style.bull_outline
+            } else {
+                style.bear_outline
+            };
+            let candle = style.resolved(is_bullish(&bar), false);
+            assert_eq!(
+                [candle.outline[0], candle.outline[1], candle.outline[2]],
+                chip,
+                "{open}->{close} painted a candle and a chip of different colours"
+            );
+        }
     }
 }

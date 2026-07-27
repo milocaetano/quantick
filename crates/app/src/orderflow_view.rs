@@ -709,6 +709,21 @@ impl OrderflowView {
                     "bubbles smaller than this are plain dots (no halo, rim or impact ring). \
                      Raising it buys frame time on a fast tape.",
                 );
+                ui.add(
+                    egui::Slider::new(&mut bubbles.readable_min_radius, 0.0..=24.0)
+                        .text("readable from px"),
+                )
+                .on_hover_text(
+                    "the size at which a bubble stops being readable on its own. Prints below \
+                     it are what \"fold dust\" merges, and what the ring below marks. Raise it \
+                     for fewer, larger bubbles; zero disables both.",
+                );
+                ui.checkbox(&mut bubbles.hollow_small_buys, "hollow small buys")
+                    .on_hover_text(
+                        "draw buy prints below the readable radius as an open ring instead of \
+                         a solid dot. At that size a green speck and a red speck read the same; \
+                         a ring and a disc do not. Larger bubbles keep their fill.",
+                    );
             });
 
         egui::CollapsingHeader::new("consumption marks")
@@ -1021,6 +1036,7 @@ impl OrderflowView {
                         // so its whole look (and the preset it came from) stays.
                         show_aggressions: self.config.show_aggressions,
                         bubble_cluster_ms: self.config.bubble_cluster_ms,
+                        bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
                         bubbles: self.config.bubbles.clone(),
                         ..HeatmapConfig::default()
                     };
@@ -1085,6 +1101,24 @@ impl OrderflowView {
                             .on_hover_text(
                                 "merge compatible prints (same side, same price range) inside this window into one bubble; quantities are summed exactly",
                             );
+                            ui.horizontal(|ui| {
+                                ui.label("fold dust");
+                                egui::ComboBox::from_id_salt("heatmap_bubble_dust")
+                                    .selected_text(dust_label(self.config.bubble_dust_merge_ms))
+                                    .show_ui(ui, |ui| {
+                                        for milliseconds in [0, 500, 1_500, 3_000, 10_000] {
+                                            ui.selectable_value(
+                                                &mut self.config.bubble_dust_merge_ms,
+                                                milliseconds,
+                                                dust_label(milliseconds),
+                                            );
+                                        }
+                                    });
+                            })
+                            .response
+                            .on_hover_text(
+                                "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" — quantities and trade counts are summed exactly",
+                            );
                             self.draw_bubble_controls(ui);
                         });
 
@@ -1107,6 +1141,7 @@ impl OrderflowView {
                         {
                             let defaults = HeatmapConfig::default();
                             self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
+                            self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
                             self.config.bubbles = defaults.bubbles;
                             // No stored preset is on screen any more, so the
                             // picker must not keep claiming one.
@@ -1164,6 +1199,16 @@ fn display_grouping_label(grouping: DisplayGrouping) -> String {
 fn cluster_label(milliseconds: i64) -> String {
     if milliseconds == 0 {
         "Raw".to_owned()
+    } else {
+        format!("{milliseconds} ms")
+    }
+}
+
+fn dust_label(milliseconds: i64) -> String {
+    if milliseconds == 0 {
+        "Off · draw every print".to_owned()
+    } else if milliseconds % 1_000 == 0 {
+        format!("{} s", milliseconds / 1_000)
     } else {
         format!("{milliseconds} ms")
     }
@@ -1258,6 +1303,7 @@ mod tests {
         view.presets.upsert(BubblePreset {
             name: "wide".to_owned(),
             cluster_ms: 100,
+            dust_merge_ms: 3_000,
             bubbles: BubbleStyle {
                 max_radius: 42.0,
                 side_offset: 8.0,
@@ -1267,6 +1313,7 @@ mod tests {
         view.apply_preset("wide");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
+        assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.
