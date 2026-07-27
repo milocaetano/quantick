@@ -222,8 +222,9 @@ evenly across each second for smoother playback and marks the session
 ## Optional L2 liquidity map
 
 The chart can capture Binance Spot level-2 order-book depth and render a
-Bookmap-inspired liquidity map. It is **disabled by default** and must be
-enabled from the chart controls. The **⚙ L2** button docks a settings panel to
+Bookmap-inspired liquidity map. Capture starts with any feed that can stream
+depth; the map itself is **hidden by default** and shown from the chart
+controls. The **⚙ L2** button docks a settings panel to
 the left of the chart — the chart keeps the remaining width instead of being
 covered — including a deterministic preview of every visual state, so themes
 and grouping can be tuned without waiting for a rare live-book event.
@@ -236,15 +237,23 @@ switch and its own docked panel:
 - **bubbles** (**⚙ bubbles**) — confirmed aggressive executions, built from the
   aggregate-trade stream the chart already consumes.
 
-Neither switch touches the other. Bubbles render with L2 capture off (and for
-providers without a depth pipeline at all), and stopping the book leaves the
-bubbles running. Turning L2 capture off hides the map without discarding
-retained L2 history.
+Neither switch touches the other. Bubbles render with the map hidden (and for
+providers without a depth pipeline at all), and hiding the book leaves the
+bubbles running.
+
+Both switches are display-only. Recording and drawing are separate concerns:
+the depth recorder runs from the moment a depth-capable feed starts, so hiding
+the map never punches a hole in the recorded book — reopen it and the whole
+retained window is there, without the gap that stopping capture would leave.
+While the map is hidden no projection is built and no depth geometry is drawn,
+so the only cost it carries is the recording itself, bounded by the same
+retention budget documented below. Capture stops only when the market changes:
+a feed or symbol switch, or a replay taking the chart over.
 
 The visualization follows a few data-honesty rules:
 
-- History begins at the first successfully synchronized live snapshot/update sequence. Binance does not provide historical L2 backfill through this feed, so candles before that point are marked as unavailable instead of being reconstructed.
-- Depth update IDs are checked continuously. A disconnect, sequence gap or resynchronization closes the current liquidity runs, marks the affected interval with subtle shading and dashed vertical boundaries, and starts again from a fresh snapshot. Stale book state is never stretched across a gap.
+- History begins at the first successfully synchronized live snapshot/update sequence. Binance does not provide historical L2 backfill through this feed, so candles before that point are marked as unavailable instead of being reconstructed. That stretch is marked by a single dashed line where the book begins, plus a label: it can span most of the chart, and tinting it would bury candles and bubbles that are perfectly real there.
+- Depth update IDs are checked continuously. A disconnect, sequence gap or resynchronization closes the current liquidity runs, marks the affected interval with a faint fill between dashed vertical boundaries, and starts again from a fresh snapshot. Stale book state is never stretched across a gap. Interior gaps keep their fill precisely because they are narrow — an untinted sliver would read as "no resting liquidity" rather than "no data".
 - Heatmap quantities are resting bid/ask amounts from the snapshot plus absolute depth updates, limited to the configured number of price levels on each side. Liquidity outside that coverage is unknown.
 - A displayed band records the bucket total observed when its run opened; changes smaller than ~10% merge into the open run instead of cutting a new one. This churn-merge tolerance is a disclosed granularity choice — larger moves, appearances and full removals always cut a new run at their exact value.
 - `aggTrade` bubbles are confirmed market aggression. Their area is quantity-proportional and nearby prints can be clustered without changing total volume.
@@ -257,7 +266,7 @@ The chart exposes these settings:
 
 | Setting | Default | Range / behavior |
 | --- | ---: | --- |
-| L2 heatmap | Off | Starts live capture when enabled |
+| L2 heatmap | Hidden | Display-only; the recorder runs whenever the feed can stream depth, so reopening the map shows the whole retained window |
 | Retention | 30 minutes | 1–1,440 minutes |
 | Display range | Auto / 128 rows | Native, `2×`, `5×`, `10×`, `25×`, `50×`, custom multiple or adaptive-to-zoom; changing it reprojects immediately without resetting history |
 | Base capture bucket | auto from price | Sized to ~`price / 65000` (1/2/5·10^k) on the first snapshot; any positive value can be set by hand. Changing the base resolution requires a fresh snapshot and resets retained L2 history |
@@ -279,7 +288,7 @@ The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 
 | Variable | Default | Behavior |
 | --- | --- | --- |
 | `QUANTICK_BOOK_DEPTH` | `1000` | Binance snapshot depth per side. Numeric values are clamped to `1`–`5000`; a missing or invalid value uses the default. Higher values increase initial REST payload, synchronization work and memory use. |
-| `QUANTICK_BOOK_AUTOSTART` | unset | Set to `1` to enable L2 capture on startup without clicking the chart toggle (development/ops convenience; same code path as the toggle). |
+| `QUANTICK_BOOK_AUTOSTART` | unset | Set to `1` to show the L2 map on startup without clicking the chart toggle (development/ops convenience; same code path as the toggle). Capture itself needs no flag — it runs for every depth-capable feed. |
 | `QUANTICK_LOG_FORMAT` | `text` | Set to `json` for newline-delimited JSON diagnostic logs on stderr. |
 | `RUST_LOG` | `quantick=info` | Standard tracing filter; for example, use `quantick=debug` for deeper diagnostics. |
 

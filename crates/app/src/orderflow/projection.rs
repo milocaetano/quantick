@@ -138,6 +138,15 @@ pub struct LiquidityEventPrimitive {
     pub y1: f64,
 }
 
+/// Reason recorded for the stretch of chart older than the first snapshot this
+/// session captured. It is the only gap that can span most of the viewport, so
+/// renderers mark it differently from an interior discontinuity.
+///
+/// Exported so the renderer's label table matches on this constant instead of
+/// repeating the literal: a reason renamed here would otherwise fall through
+/// to the generic label without a single test noticing.
+pub const BEFORE_CAPTURE: &str = "book_unavailable_before_capture";
+
 /// A visible interval that must not be filled or connected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapPrimitive {
@@ -151,6 +160,15 @@ pub struct GapPrimitive {
     pub x1: f64,
     /// Diagnostic reason copied from history.
     pub reason: String,
+}
+
+impl GapPrimitive {
+    /// Whether this is the leading stretch that predates local capture, as
+    /// opposed to a discontinuity inside covered time.
+    #[must_use]
+    pub fn precedes_capture(&self) -> bool {
+        self.reason == BEFORE_CAPTURE
+    }
 }
 
 /// Complete pure output for one chart frame.
@@ -233,10 +251,11 @@ pub fn project(
         return HeatmapProjection::empty(true, effective_grouping);
     };
 
-    // The depth layer is projected only while L2 capture is on. Retained runs
-    // survive a capture toggle untouched — they simply stop being drawn, so the
-    // aggression layer can keep rendering without the map behind it.
-    let depth_enabled = config.enabled;
+    // The depth layer is projected only while the map is both recording and on
+    // screen. Retained runs survive hiding it untouched — they simply stop
+    // being drawn and keep accumulating, so the aggression layer can render
+    // without the map behind it and reopening repaints the whole retained past.
+    let depth_enabled = config.depth_visible();
     let retained_start = history
         .retention_start_ms()
         .map_or(time_start, |start| start.max(time_start));
@@ -516,8 +535,8 @@ pub fn project(
         .collect();
 
     // Coverage primitives describe the depth layer. With L2 capture off there
-    // is no map whose absence needs explaining, so a bubbles-only frame stays
-    // free of gap hatching.
+    // is no map whose absence needs explaining, so a bubbles-only frame emits
+    // no gap marks at all.
     let mut gaps: Vec<GapPrimitive> = if depth_enabled && config.show_gaps {
         history
             .coverage_gaps()
@@ -544,8 +563,8 @@ pub fn project(
     // Historical trades can precede the first locally captured L2 snapshot.
     // Make that absence an explicit primitive instead of a transparent region
     // that could be mistaken for zero resting liquidity. The gap switch covers
-    // this hatch too: it is one legend entry, and half-hiding it would leave
-    // the legend describing marks the viewer cannot see.
+    // this leading span too: it is one legend entry, and half-hiding it would
+    // leave the legend describing marks the viewer cannot see.
     if depth_enabled && config.show_gaps {
         match history.coverage_segments().next() {
             Some(first_coverage) if first_coverage.start_ms > time_start => {
@@ -560,7 +579,7 @@ pub fn project(
                         to_generation: Some(first_coverage.generation),
                         x0: x0.normalized,
                         x1: x1.normalized,
-                        reason: "book_unavailable_before_capture".to_owned(),
+                        reason: BEFORE_CAPTURE.to_owned(),
                     });
                 }
             }
@@ -1710,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_gaps_remove_the_hatching() {
+    fn hidden_gaps_emit_no_coverage_primitives() {
         let mut history = LiquidityHistory::new(HeatmapConfig {
             show_gaps: false,
             ..config()
@@ -1725,7 +1744,38 @@ mod tests {
             PriceWindow::new(dec("98"), dec("103")).unwrap(),
         );
         // The same fixture with the flag on yields the
-        // "book_unavailable_before_capture" hatch (see the test above).
+        // "book_unavailable_before_capture" span (see the test above).
         assert!(projection.gaps.is_empty());
+    }
+
+    /// Hiding the map is display-only, so the projection must stop producing
+    /// depth work while the recorded history stays exactly where it was.
+    #[test]
+    fn a_hidden_depth_map_projects_no_depth_primitives() {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(400, 1, snapshot(10)).unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+            .unwrap();
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        let shown = project(&history, &timeline, prices);
+        assert!(!shown.cells.is_empty(), "the visible map has heat cells");
+        assert!(!shown.gaps.is_empty(), "and its pre-capture boundary");
+
+        history
+            .update_config(HeatmapConfig {
+                show_depth: false,
+                ..config()
+            })
+            .unwrap();
+        let hidden = project(&history, &timeline, prices);
+        assert!(hidden.cells.is_empty());
+        assert!(hidden.gaps.is_empty());
+        assert!(
+            hidden.liquidity_events.is_empty(),
+            "no depth primitive survives a hidden map"
+        );
     }
 }

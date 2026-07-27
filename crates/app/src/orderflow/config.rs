@@ -441,19 +441,24 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 
 /// Settings shared by history retention and the pure projection layer.
 ///
-/// The two visual layers are independent switches: [`enabled`](Self::enabled)
-/// owns the L2 depth map, [`show_aggressions`](Self::show_aggressions) owns the
-/// aggression bubbles. Bubbles are built from the aggregate-trade stream the
-/// chart already consumes, so they never need the depth pipeline.
+/// The two visual layers are independent switches:
+/// [`show_depth`](Self::show_depth) owns the L2 depth map,
+/// [`show_aggressions`](Self::show_aggressions) owns the aggression bubbles.
+/// Bubbles are built from the aggregate-trade stream the chart already
+/// consumes, so they never need the depth pipeline.
 ///
-/// Both default to disabled: merely adding the feature cannot change feed load,
-/// memory use or rendering behaviour of the existing chart.
+/// Recording and drawing are separate concerns. [`enabled`](Self::enabled) is
+/// the recorder and defaults to disabled — merely adding the feature cannot
+/// change feed load or memory use. `show_depth` is the display switch, and the
+/// projection only builds depth primitives when both are on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeatmapConfig {
-    /// Whether L2 depth capture/projection is enabled.
+    /// Whether L2 depth capture is running.
     ///
-    /// Only the depth map depends on this: the aggression layer keeps working
-    /// with capture off.
+    /// This is a data concern, not a visual one: the app keeps it on for every
+    /// feed that can stream depth, so hiding the map never punches a hole in
+    /// the recording. Only the depth map depends on it — the aggression layer
+    /// keeps working with capture off.
     pub enabled: bool,
     /// Maximum age retained in memory, measured in exchange milliseconds.
     pub retention_ms: i64,
@@ -490,7 +495,19 @@ pub struct HeatmapConfig {
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
     pub bubbles: BubbleStyle,
-    /// Whether the resting-liquidity heat cells are drawn.
+    /// Whether the depth map is drawn at all — the toolbar's book-heatmap
+    /// switch, and the master of the `show_*` flags under it.
+    ///
+    /// Display-only, like every `show_*` flag in this block: L2 capture keeps
+    /// running and retained history keeps accumulating, so switching the map
+    /// back on repaints the past it kept recording instead of opening a new
+    /// hole. With it off the projection builds no depth primitives at all, so
+    /// a hidden map costs nothing beyond the capture the recorder was doing
+    /// anyway.
+    pub show_depth: bool,
+    /// Whether the resting-liquidity heat cells are drawn. Refines
+    /// [`show_depth`](Self::show_depth), which stays the depth layer's master
+    /// switch.
     ///
     /// Display-only, like every `show_*` flag in this block: L2 capture keeps
     /// running and retained history keeps accumulating, so switching a layer
@@ -510,7 +527,7 @@ pub struct HeatmapConfig {
     /// Whether depth-only (unattributed) reductions draw their markers and
     /// fading withdrawal tails.
     pub show_unattributed_reductions: bool,
-    /// Whether L2 coverage gaps draw their hatching.
+    /// Whether L2 coverage gaps draw their boundary marks.
     pub show_gaps: bool,
     /// Smallest reduction fraction whose *unattributed* (depth-only) marker is
     /// displayed. A busy book shrinks buckets by >10% constantly; drawing every
@@ -560,6 +577,7 @@ impl Default for HeatmapConfig {
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             bubble_dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             bubbles: BubbleStyle::default(),
+            show_depth: true,
             show_liquidity: true,
             show_buy_aggressions: true,
             show_sell_aggressions: true,
@@ -582,13 +600,22 @@ impl Default for HeatmapConfig {
 }
 
 impl HeatmapConfig {
-    /// Whether any order-flow layer asks for capture and projection.
+    /// Whether the depth map has both something recorded and permission to
+    /// draw it. Everything the depth layer projects hangs off this.
+    #[must_use]
+    pub fn depth_visible(&self) -> bool {
+        self.enabled && self.show_depth
+    }
+
+    /// Whether any order-flow layer asks for a projection.
     ///
     /// The depth map and the aggression bubbles are independent: either one
     /// alone keeps the pipeline alive, and neither can switch the other off.
+    /// Capture is not part of this question — the recorder runs on its own, so
+    /// a hidden map stops costing projections without stopping the recording.
     #[must_use]
     pub fn any_layer_enabled(&self) -> bool {
-        self.enabled || self.show_aggressions
+        self.depth_visible() || self.show_aggressions
     }
 
     /// Whether displayed-liquidity reductions need to be computed at all.
@@ -674,7 +701,11 @@ mod tests {
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
         // Every visual layer defaults to on: gaining per-layer switches must
-        // change no pixels until someone actually flips one.
+        // change no pixels until someone actually flips one. The depth map
+        // still draws nothing here, because nothing is being recorded yet —
+        // recording and drawing are separate questions.
+        assert!(config.show_depth);
+        assert!(!config.depth_visible());
         assert!(config.show_liquidity);
         assert!(config.show_buy_aggressions);
         assert!(config.show_sell_aggressions);

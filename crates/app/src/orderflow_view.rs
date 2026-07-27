@@ -142,10 +142,34 @@ impl OrderflowView {
         }
     }
 
-    /// Whether L2 depth capture is on. Says nothing about the bubble layer.
+    /// Whether L2 depth capture is recording. Says nothing about whether the
+    /// map is on screen — see [`depth_visible`](Self::depth_visible).
     #[must_use]
     pub fn enabled(&self) -> bool {
         self.config.enabled
+    }
+
+    /// Whether the depth map is drawn: recording *and* not hidden.
+    #[must_use]
+    pub fn depth_visible(&self) -> bool {
+        self.config.depth_visible()
+    }
+
+    /// Show or hide the depth map without touching L2 capture.
+    ///
+    /// No feed command is involved: the recorder keeps running, so turning the
+    /// map back on repaints the retained past instead of opening a gap in it.
+    pub fn set_depth_visible(&mut self, visible: bool) {
+        if self.config.show_depth == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_depth = visible;
+        if !visible {
+            // Drop the local frame immediately; the worker clears its own.
+            self.published.frame = None;
+        }
+        self.commit_config_changes(before);
     }
 
     /// Whether the aggression layer is on. Independent of the depth map: it
@@ -166,11 +190,11 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// Latest exchange timestamp for which live book state is known, while
-    /// capture is active. Drives how wide the forming bar's live tail grows.
+    /// Latest exchange timestamp for which live book state is known, while the
+    /// map is on screen. Drives how wide the forming bar's live tail grows.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
-        if !self.config.enabled {
+        if !self.config.depth_visible() {
             return None;
         }
         self.sync_published();
@@ -377,7 +401,9 @@ impl OrderflowView {
     }
 
     pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
-        if !self.config.enabled {
+        // Tied to the map, not to the recorder: a badge reporting on a book
+        // nobody asked to see is just chrome.
+        if !self.config.depth_visible() {
             return;
         }
         let text = self.published.status.label();
@@ -527,13 +553,16 @@ impl OrderflowView {
         self.published.health.clone()
     }
 
-    /// Whether capture is turned on but not yet (or no longer) delivering a
-    /// live book. What the app's loading overlay mirrors. Reads the frame's
-    /// mirror, refreshed by the panel/projection calls the frame already made;
-    /// which statuses count as a wait is [`CaptureStatus::is_syncing`]'s call.
+    /// Whether the map is open but not yet (or no longer) backed by a live
+    /// book. What the app's loading overlay mirrors. Reads the frame's mirror,
+    /// refreshed by the panel/projection calls the frame already made; which
+    /// statuses count as a wait is [`CaptureStatus::is_syncing`]'s call.
+    ///
+    /// Visibility-gated: the recorder synchronizing in the background is not
+    /// something to hold a loading overlay up for.
     #[must_use]
     pub fn is_syncing(&self) -> bool {
-        self.config.enabled && self.published.status.is_syncing()
+        self.config.depth_visible() && self.published.status.is_syncing()
     }
 
     pub fn reset_summary_counters(&mut self) {
@@ -1083,7 +1112,10 @@ impl OrderflowView {
                      depletion layers off, bubbles also lose their consumption marks",
                 );
                 ui.checkbox(&mut self.config.show_gaps, "L2 gap")
-                    .on_hover_text("hatching over intervals with no depth coverage");
+                    .on_hover_text(
+                        "dashed boundaries around intervals with no depth coverage; the stretch \
+                         older than this session's capture is marked by its boundary alone",
+                    );
 
                 ui.separator();
                 ui.strong("liquidity response");
