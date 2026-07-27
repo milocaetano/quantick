@@ -917,13 +917,52 @@ impl OrderflowView {
                 );
 
                 ui.separator();
-                ui.strong("liquidity response");
-                ui.checkbox(
-                    &mut self.config.show_liquidity_events,
-                    "show bites and withdrawal tails",
+                ui.strong("visual layers");
+                ui.small(
+                    "One switch per legend entry. Display-only: capture keeps running and \
+                     history keeps accumulating, so a layer switched back on repaints the \
+                     past it kept recording.",
                 );
+                ui.checkbox(&mut self.config.show_liquidity, "liquidity")
+                    .on_hover_text("the resting-liquidity heat cells");
+                ui.checkbox(
+                    &mut self.config.show_buy_aggressions,
+                    "buy aggression",
+                )
+                .on_hover_text(
+                    "buy-side bubbles; needs the aggression layer on (toolbar). Hiding one \
+                     side never rescales the other",
+                );
+                ui.checkbox(
+                    &mut self.config.show_sell_aggressions,
+                    "sell aggression",
+                )
+                .on_hover_text(
+                    "sell-side bubbles; needs the aggression layer on (toolbar). Hiding one \
+                     side never rescales the other",
+                );
+                ui.checkbox(
+                    &mut self.config.show_aligned_depletion,
+                    "aggression-aligned depletion",
+                )
+                .on_hover_text(
+                    "depletion markers where a factual trade matches a factual L2 reduction",
+                );
+                ui.checkbox(
+                    &mut self.config.show_unattributed_reductions,
+                    "L2 reduction (unattributed)",
+                )
+                .on_hover_text(
+                    "depth-only reductions and their fading withdrawal tails; with both \
+                     depletion layers off, bubbles also lose their consumption marks",
+                );
+                ui.checkbox(&mut self.config.show_gaps, "L2 gap")
+                    .on_hover_text("hatching over intervals with no depth coverage");
+
+                ui.separator();
+                ui.strong("liquidity response");
                 ui.add_enabled(
-                    self.config.show_liquidity_events,
+                    self.config.liquidity_events_enabled(),
                     egui::Slider::new(&mut self.config.liquidity_correlation_ms, 25..=1_000)
                         .text("matching window ms")
                         .logarithmic(true),
@@ -932,7 +971,7 @@ impl OrderflowView {
                     "time/price window used to associate a factual trade with a factual L2 reduction",
                 );
                 ui.add_enabled(
-                    self.config.show_liquidity_events,
+                    self.config.show_unattributed_reductions,
                     egui::Slider::new(&mut self.config.min_unattributed_reduction, 0.0..=1.0)
                         .text("min unattributed pull"),
                 )
@@ -940,7 +979,7 @@ impl OrderflowView {
                     "hide unattributed (depth-only) reductions smaller than this fraction of the level; aggression-aligned bites always show",
                 );
                 ui.add_enabled(
-                    self.config.show_liquidity_events,
+                    self.config.show_unattributed_reductions,
                     egui::Slider::new(&mut self.config.min_unattributed_pull_share, 0.0..=1.0)
                         .text("min pull vs walls"),
                 )

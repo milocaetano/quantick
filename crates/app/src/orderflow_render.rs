@@ -74,6 +74,20 @@ pub(crate) struct OrderflowRenderStyle {
     pub(crate) depth_layer: bool,
     /// Whether the aggression layer is active.
     pub(crate) aggression_layer: bool,
+    /// Per-layer display switches, mirroring the config flags: the projection
+    /// already filters the primitives, so the renderer's only job is keeping
+    /// the legend honest about which layers can draw.
+    pub(crate) show_liquidity: bool,
+    /// See [`show_liquidity`](Self::show_liquidity).
+    pub(crate) show_buy: bool,
+    /// See [`show_liquidity`](Self::show_liquidity).
+    pub(crate) show_sell: bool,
+    /// See [`show_liquidity`](Self::show_liquidity).
+    pub(crate) show_aligned: bool,
+    /// See [`show_liquidity`](Self::show_liquidity).
+    pub(crate) show_unattributed: bool,
+    /// See [`show_liquidity`](Self::show_liquidity).
+    pub(crate) show_gaps: bool,
     pub(crate) legend_max_width: f32,
     /// Follows the chart canvas so the deterministic preview sits on the same
     /// ground as the live chart.
@@ -94,6 +108,12 @@ impl Default for OrderflowRenderStyle {
             show_legend: true,
             depth_layer: true,
             aggression_layer: true,
+            show_liquidity: true,
+            show_buy: true,
+            show_sell: true,
+            show_aligned: true,
+            show_unattributed: true,
+            show_gaps: true,
             legend_max_width: 690.0,
             canvas_background: egui::Color32::from_rgb(19, 23, 34),
         }
@@ -113,6 +133,12 @@ impl OrderflowRenderStyle {
             show_legend: config.show_legend,
             depth_layer: config.enabled,
             aggression_layer: config.show_aggressions,
+            show_liquidity: config.show_liquidity,
+            show_buy: config.show_buy_aggressions,
+            show_sell: config.show_sell_aggressions,
+            show_aligned: config.show_aligned_depletion,
+            show_unattributed: config.show_unattributed_reductions,
+            show_gaps: config.show_gaps,
             canvas_background,
             ..Self::default()
         }
@@ -1061,6 +1087,44 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
 }
 
+/// The legend keys for this style, one per layer that can actually draw.
+///
+/// A layer draws when its family is active (L2 capture for the depth family,
+/// the bubbles switch for aggression) *and* its own display switch is on.
+/// Announcing anything else would describe a chart the viewer is not looking
+/// at — the legend is a key for what is on screen, not a feature list.
+fn legend_entries(
+    style: &OrderflowRenderStyle,
+    liquidity_label: String,
+) -> Vec<(LegendGlyph, String)> {
+    let mut entries = Vec::new();
+    if style.depth_layer && style.show_liquidity {
+        entries.push((LegendGlyph::Heat, liquidity_label));
+    }
+    if style.aggression_layer && style.show_buy {
+        entries.push((LegendGlyph::Buy, "buy aggression".to_owned()));
+    }
+    if style.aggression_layer && style.show_sell {
+        entries.push((LegendGlyph::Sell, "sell aggression".to_owned()));
+    }
+    if style.depth_layer && style.show_aligned {
+        entries.push((
+            LegendGlyph::Aligned,
+            "aggression-aligned depletion".to_owned(),
+        ));
+    }
+    if style.depth_layer && style.show_unattributed {
+        entries.push((
+            LegendGlyph::DepthOnly,
+            "L2 reduction (unattributed)".to_owned(),
+        ));
+    }
+    if style.depth_layer && style.show_gaps {
+        entries.push((LegendGlyph::Gap, "L2 gap".to_owned()));
+    }
+    entries
+}
+
 /// Draw a responsive legend inside the chart. Labels deliberately distinguish
 /// confirmed aggression from aligned or unattributed L2 reductions.
 pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderContext<'_>) {
@@ -1081,28 +1145,7 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
     } else {
         "liquidity".to_owned()
     };
-    // Only key the layers that can draw. With L2 capture off the map, its
-    // depletion markers and its gaps are absent, and announcing them would
-    // describe a chart the viewer is not looking at.
-    let mut entries: Vec<(LegendGlyph, String)> = Vec::new();
-    if style.depth_layer {
-        entries.push((LegendGlyph::Heat, liquidity_label));
-    }
-    if style.aggression_layer {
-        entries.push((LegendGlyph::Buy, "buy aggression".to_owned()));
-        entries.push((LegendGlyph::Sell, "sell aggression".to_owned()));
-    }
-    if style.depth_layer {
-        entries.push((
-            LegendGlyph::Aligned,
-            "aggression-aligned depletion".to_owned(),
-        ));
-        entries.push((
-            LegendGlyph::DepthOnly,
-            "L2 reduction (unattributed)".to_owned(),
-        ));
-        entries.push((LegendGlyph::Gap, "L2 gap".to_owned()));
-    }
+    let entries = legend_entries(&style, liquidity_label);
     if entries.is_empty() {
         return;
     }
@@ -1260,7 +1303,7 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         egui::Stroke::new(1.1_f32, egui::Color32::from_white_alpha(145)),
     ));
 
-    if config.show_liquidity_events {
+    if config.show_aligned_depletion {
         // Aggression-aligned consumption front with a glow leaking into the
         // consumed side.
         let aligned = EventBand {
@@ -1286,7 +1329,9 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
             ],
             egui::Stroke::new(1.6_f32, palette.consumption),
         );
+    }
 
+    if config.show_unattributed_reductions {
         // Depth-only withdrawal: a calm violet fade with a thin cap.
         let depth_only = EventBand {
             x: egui::lerp(chart.left()..=chart.right(), 0.76),
@@ -1327,7 +1372,7 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
                 ),
                 size: PREVIEW_LARGE_PRINT_SIZE,
                 side: Side::Buy,
-                linked_reduction: config.show_liquidity_events,
+                linked_reduction: config.show_aligned_depletion,
             },
             chart.right(),
             bubbles,
@@ -2641,6 +2686,51 @@ mod tests {
             painted(|painter| draw_bubble(painter, mark(big), &solid, &colors)),
             "a buy above the floor must be untouched by the ring setting"
         );
+    }
+
+    /// The legend is a key for what is on screen: exactly one entry per layer
+    /// that is both active as a family and switched on individually.
+    #[test]
+    fn the_legend_lists_only_the_layers_that_are_on() {
+        let labels = |style: &OrderflowRenderStyle| -> Vec<String> {
+            legend_entries(style, "liquidity".to_owned())
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect()
+        };
+
+        let all = OrderflowRenderStyle::default();
+        assert_eq!(
+            labels(&all),
+            [
+                "liquidity",
+                "buy aggression",
+                "sell aggression",
+                "aggression-aligned depletion",
+                "L2 reduction (unattributed)",
+                "L2 gap",
+            ]
+        );
+
+        let mut some = all.clone();
+        some.show_liquidity = false;
+        some.show_sell = false;
+        some.show_unattributed = false;
+        assert_eq!(
+            labels(&some),
+            ["buy aggression", "aggression-aligned depletion", "L2 gap"]
+        );
+
+        // Family switches still trump the per-layer ones: without L2 capture
+        // no depth entry may appear, whatever its individual flag says.
+        let mut bubbles_only = all.clone();
+        bubbles_only.depth_layer = false;
+        assert_eq!(labels(&bubbles_only), ["buy aggression", "sell aggression"]);
+
+        let mut nothing = all;
+        nothing.depth_layer = false;
+        nothing.aggression_layer = false;
+        assert!(labels(&nothing).is_empty());
     }
 
     #[test]
