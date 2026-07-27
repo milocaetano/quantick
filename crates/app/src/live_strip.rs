@@ -102,6 +102,15 @@ pub(crate) fn fallback_reference(rows: &[DepthRow]) -> Decimal {
 /// Opacity of the histogram bars over the depth background.
 pub(crate) const HISTOGRAM_ALPHA: f32 = 0.8;
 
+/// Width of the dark outline around each histogram bar, so a green bar never
+/// melts into a green depth cell behind it — same job as the bubbles'
+/// separator ring.
+pub(crate) const HISTOGRAM_OUTLINE_PX: f32 = 1.0;
+
+/// Alpha of that outline: translucent black, darkening whatever depth colour
+/// sits behind the bar's edge.
+pub(crate) const HISTOGRAM_OUTLINE_ALPHA: u8 = 200;
+
 /// Widest histogram bar, as a fraction of the strip's half width, leaving a
 /// sliver of background visible even at full scale.
 pub(crate) const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;

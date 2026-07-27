@@ -249,6 +249,15 @@ fn hollow_ring_width(radius: f32) -> f32 {
     (radius * HOLLOW_RING_SCALE).clamp(HOLLOW_MIN_RING_PX, HOLLOW_MAX_RING_PX)
 }
 
+/// Width of the dark separator ring drawn just outside a bubble's rim. The
+/// heat ramp passes through greens the buy side almost matches, so without a
+/// dark hair between them "aggression" and "liquidity" melt into one layer
+/// wherever a bubble sits on warm heat — the ring is what keeps them two.
+const SEPARATOR_RING_PX: f32 = 1.2;
+/// Alpha of that ring: translucent black, so it darkens whatever heat is
+/// behind it instead of assuming one canvas colour.
+const SEPARATOR_RING_ALPHA: u8 = 200;
+
 /// Gap, in pixels, between a bubble's rim and the halo drawn behind it.
 const HALO_PADDING_PX: f32 = 2.5;
 /// Gap, in pixels, between a bubble's rim and its impact ring.
@@ -479,6 +488,18 @@ fn draw_bubble(
             center,
             radius + HALO_PADDING_PX,
             color.gamma_multiply(halo_alpha(size, bubbles)),
+        );
+    }
+    // The dark hair between the mark and the heat behind it. Skipped on the
+    // cheap-dot path, which stays a single circle per print.
+    if dressed || hollow {
+        painter.circle_stroke(
+            center,
+            radius + SEPARATOR_RING_PX / 2.0,
+            egui::Stroke::new(
+                SEPARATOR_RING_PX,
+                egui::Color32::from_black_alpha(SEPARATOR_RING_ALPHA),
+            ),
         );
     }
     if hollow {

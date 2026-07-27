@@ -579,6 +579,12 @@ impl OrderflowView {
                 .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
             let sell_fill = egui::Color32::from_rgb(colors.sell[0], colors.sell[1], colors.sell[2])
                 .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
+            // A dark hair around each bar keeps a green bar readable over a
+            // green depth cell — the strip's version of the bubbles' ring.
+            let outline = egui::Stroke::new(
+                live_strip::HISTOGRAM_OUTLINE_PX,
+                egui::Color32::from_black_alpha(live_strip::HISTOGRAM_OUTLINE_ALPHA),
+            );
             for row in &histogram {
                 let top = scale.y((row.price_bucket + bucket_width)
                     .to_f64()
@@ -596,6 +602,7 @@ impl OrderflowView {
                     .intersect(strip);
                     if rect.is_positive() {
                         clip.rect_filled(rect, egui::Rounding::ZERO, buy_fill);
+                        clip.rect_stroke(rect, egui::Rounding::ZERO, outline);
                     }
                 }
                 let sell_extent = normalized_area_size(row.sell, reference) * half_width;
@@ -607,6 +614,7 @@ impl OrderflowView {
                     .intersect(strip);
                     if rect.is_positive() {
                         clip.rect_filled(rect, egui::Rounding::ZERO, sell_fill);
+                        clip.rect_stroke(rect, egui::Rounding::ZERO, outline);
                     }
                 }
             }
