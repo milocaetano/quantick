@@ -2019,6 +2019,73 @@ mod tests {
         (app, evt_tx, cmd_rx, book_tx)
     }
 
+    /// The same app, plus the notice sender its feed would hold. The other
+    /// ends come back so the caller keeps the channels open, exactly as a live
+    /// feed thread would.
+    #[allow(clippy::type_complexity)]
+    fn test_app_with_notices() -> (
+        QuantickApp,
+        mpsc::Sender<FeedNotice>,
+        (mpsc::Sender<FeedEvent>, mpsc::Sender<DepthEvent>),
+    ) {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let (notice_tx, notice_rx) = mpsc::channel(8);
+        let app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: notice_rx,
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        (app, notice_tx, (evt_tx, book_tx))
+    }
+
+    #[test]
+    fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
+        let (mut app, notices, _feed_ends) = test_app_with_notices();
+        assert_eq!(app.notice, FeedNotice::Clear, "nothing to report at birth");
+
+        // A burst arriving between two frames must leave the latest state, not
+        // a queue of cards to page through.
+        notices
+            .blocking_send(FeedNotice::working("starting the MetaTrader bridge"))
+            .unwrap();
+        notices
+            .blocking_send(FeedNotice::attention(
+                "MetaTrader 5 is not running",
+                "Open the terminal and log in.",
+            ))
+            .unwrap();
+        app.drain_notices();
+        assert!(
+            matches!(app.notice, FeedNotice::Attention { .. }),
+            "the newest notice is what the user sees, got {:?}",
+            app.notice
+        );
+
+        // And a feed that recovers takes its own instruction back down.
+        notices.blocking_send(FeedNotice::Clear).unwrap();
+        app.drain_notices();
+        assert_eq!(app.notice, FeedNotice::Clear);
+    }
+
+    #[test]
+    fn a_feed_with_nothing_to_report_leaves_the_chart_alone() {
+        // Binance and replay hand over a closed channel; draining it must be a
+        // no-op rather than an error the app has to special-case.
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.drain_notices();
+        assert_eq!(app.notice, FeedNotice::Clear);
+    }
+
     fn enable_heatmap_with_snapshot(
         app: &mut QuantickApp,
         commands: &mut mpsc::Receiver<FeedCommand>,

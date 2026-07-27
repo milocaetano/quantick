@@ -49,11 +49,16 @@ const AUTOSTART_GRACE: Duration = Duration::from_secs(3);
 /// starting up, which resolves in seconds.
 const AUTOSTART_RETRY: Duration = Duration::from_secs(5);
 
-/// How many times the autostart relaunches an exiting bridge before leaving it
-/// alone. Every remaining failure (terminal closed, unknown symbol, unknown
-/// server offset) needs a human, and retrying it forever only buries the log
-/// line that says so.
+/// How many times in a row the autostart may fail to keep a bridge up before
+/// it stops trying. Every remaining failure (terminal closed, unknown symbol,
+/// unknown server offset) needs a human, and retrying forever only buries the
+/// line that says so. A bridge that connects resets the count, so this is a
+/// budget for *consecutive* failures, not for the session.
 const AUTOSTART_ATTEMPTS: u32 = 5;
+
+/// How often the supervisor re-checks a bridge that is connected and healthy.
+/// Only cost is one relaxed atomic load per interval.
+const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The program name that means "the bridge quantick ships with", and so the
 /// only one whose interpreter quantick is allowed to second-guess.
@@ -134,8 +139,12 @@ pub fn default_search_roots() -> Vec<PathBuf> {
 pub struct Supervision {
     /// The instrument the bridge is asked to stream.
     pub symbol: String,
-    /// Flipped by the feed when any bridge says hello, so an already-running
-    /// bridge (or an attached Expert Advisor) is never fought.
+    /// Whether a bridge is feeding us **right now** — set by the feed on
+    /// hello, cleared when the session is lost.
+    ///
+    /// "Right now" rather than "ever": an already-running bridge (or an
+    /// attached Expert Advisor) is never fought, and a terminal that restarts
+    /// mid-session is picked back up instead of leaving the chart frozen.
     pub connected: Arc<AtomicBool>,
     /// Where user-facing reports go.
     pub notices: mpsc::Sender<FeedNotice>,
@@ -146,6 +155,13 @@ pub struct Supervision {
 /// Deliberately passive at the start: a bridge that is already running, or an
 /// Expert Advisor attached to a chart, gets the grace period to dial in. Only
 /// silence triggers a launch.
+///
+/// Then it stays. The supervisor outlives any single bridge, because the
+/// terminal underneath can restart in the middle of a session — watching a
+/// healthy bridge costs one atomic load every [`WATCH_INTERVAL`], and it is
+/// what brings the chart back without the user noticing. It gives up only
+/// after [`AUTOSTART_ATTEMPTS`] *consecutive* failures, which means the setup
+/// is wrong rather than the terminal briefly away, and says so.
 pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
     let symbol = sup.symbol.as_str();
     let Some((host, port)) = settings.bridge_endpoint() else {
@@ -217,18 +233,33 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
     // not installed on this machine.
     let mut chosen: Option<String> = None;
 
-    for attempt in 1..=AUTOSTART_ATTEMPTS {
+    // Consecutive failures, not attempts: the supervisor outlives any single
+    // bridge, because the terminal it depends on can restart at lunchtime and
+    // the chart should come back on its own.
+    let mut failures = 0_u32;
+    let mut watching_logged = false;
+    while failures < AUTOSTART_ATTEMPTS {
+        let attempt = failures + 1;
         if sup.connected.load(Ordering::Relaxed) {
-            info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "MT5_BRIDGE_AUTOSTART_NOT_NEEDED",
-                symbol = %symbol,
-                action = "leave_running_bridge_alone",
-                "a bridge is already connected; quantick started none of its own"
-            );
-            return;
+            // Somebody is feeding us — our own bridge, one started by hand, or
+            // an Expert Advisor. Watch rather than return: when that one goes
+            // away, this is what brings the chart back.
+            if !watching_logged {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BRIDGE_AUTOSTART_NOT_NEEDED",
+                    symbol = %symbol,
+                    action = "watch_running_bridge",
+                    "a bridge is connected; quantick leaves it alone and watches"
+                );
+                watching_logged = true;
+            }
+            failures = 0;
+            tokio::time::sleep(WATCH_INTERVAL).await;
+            continue;
         }
+        watching_logged = false;
 
         let _ = sup
             .notices
@@ -322,6 +353,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
                 action = "retry_after_backoff",
                 "no interpreter could be started"
             );
+            failures += 1;
             tokio::time::sleep(AUTOSTART_RETRY).await;
             continue;
         };
@@ -351,24 +383,10 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
             action = "retry_after_backoff",
             "the bridge quantick started has exited"
         );
-        if !explained && !sup.connected.load(Ordering::Relaxed) {
-            let code = status.ok().and_then(|s| s.code());
-            let _ = sup
-                .notices
-                .send(FeedNotice::attention(
-                    "the MetaTrader bridge stopped",
-                    match code {
-                        Some(code) => format!(
-                            "It exited with code {code} without saying why. Check that \
-                             MetaTrader 5 is running and logged in."
-                        ),
-                        None => "It stopped without saying why. Check that MetaTrader 5 \
-                                 is running and logged in."
-                            .to_owned(),
-                    },
-                ))
-                .await;
+        if let Some(notice) = exit_notice(explained, status.ok().and_then(|s| s.code())) {
+            let _ = sup.notices.send(notice).await;
         }
+        failures += 1;
         tokio::time::sleep(AUTOSTART_RETRY).await;
     }
 
@@ -389,6 +407,31 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
              message reported, then switch feeds to try again.",
         ))
         .await;
+}
+
+/// What to tell the user about a bridge that exited, given whether it already
+/// explained itself and the exit code it left behind.
+///
+/// A bridge that named its own problem needs no second message — the reason is
+/// already on screen, and replacing it with a generic one would *lose*
+/// information. Only silence needs covering.
+#[must_use]
+fn exit_notice(explained: bool, code: Option<i32>) -> Option<FeedNotice> {
+    if explained {
+        return None;
+    }
+    Some(FeedNotice::attention(
+        "the MetaTrader bridge stopped",
+        match code {
+            Some(code) => format!(
+                "It exited with code {code} without saying why. Check that MetaTrader 5 \
+                 is running and logged in."
+            ),
+            None => "It stopped without saying why. Check that MetaTrader 5 is running \
+                     and logged in."
+                .to_owned(),
+        },
+    ))
 }
 
 /// Log one bridge stderr line and, when it means something to a person, send
@@ -568,6 +611,38 @@ mod tests {
             forward_bridge_line(r#"{"event_code":"BRIDGE_STARTING"}"#, "WINQ26", &tx).await;
         assert!(!produced, "progress is not the reason a bridge died");
         assert!(matches!(rx.recv().await, Some(FeedNotice::Working { .. })));
+    }
+
+    #[test]
+    fn a_bridge_that_explained_itself_is_not_talked_over() {
+        // The reason is already on screen; replacing "MetaTrader does not list
+        // WINZ99" with "it stopped without saying why" would lose it.
+        assert_eq!(exit_notice(true, Some(2)), None);
+        assert_eq!(exit_notice(true, None), None);
+    }
+
+    #[test]
+    fn a_silent_exit_still_gets_a_reason_and_a_step() {
+        let Some(FeedNotice::Attention {
+            headline,
+            next_step,
+        }) = exit_notice(false, Some(9))
+        else {
+            panic!("a silent exit must still say something");
+        };
+        assert!(headline.contains("stopped"), "headline: {headline}");
+        assert!(
+            next_step.contains("code 9"),
+            "the code is evidence: {next_step}"
+        );
+        assert!(next_step.contains("MetaTrader 5"), "step: {next_step}");
+
+        // Killed by a signal: no code to quote, same instruction.
+        let Some(FeedNotice::Attention { next_step, .. }) = exit_notice(false, None) else {
+            panic!("a signalled exit must still say something");
+        };
+        assert!(!next_step.contains("code"), "nothing to quote: {next_step}");
+        assert!(next_step.contains("MetaTrader 5"), "step: {next_step}");
     }
 
     #[tokio::test]

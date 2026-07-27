@@ -169,9 +169,18 @@ async fn feed_task(
                             Mt5Status::Waiting { .. } => FeedNotice::working(
                                 "waiting for the MetaTrader bridge to connect",
                             ),
-                            Mt5Status::Lost { .. } => FeedNotice::working(
-                                "the MetaTrader bridge disconnected — reconnecting",
-                            ),
+                            // Losing the bridge clears the flag as well as
+                            // reporting it. The supervisor reads the flag as
+                            // "is one feeding us *now*", so a terminal that
+                            // restarts mid-session gets picked back up —
+                            // without this, "reconnecting" is a promise
+                            // nobody keeps.
+                            Mt5Status::Lost { .. } => {
+                                bridge_connected.store(false, Ordering::Relaxed);
+                                FeedNotice::working(
+                                    "the MetaTrader bridge disconnected — reconnecting",
+                                )
+                            }
                         };
                         let _ = notice_tx.send(notice).await;
                         log_status(&symbol, &status);
