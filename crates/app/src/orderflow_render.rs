@@ -2432,6 +2432,39 @@ mod tests {
         format!("{:?}", output.shapes)
     }
 
+    /// The cheap-dot path is the fps contract on a dense tape: below the
+    /// dressing radius a solid print stays exactly one filled circle — no
+    /// halo, no rim, and no separator ring may sneak onto it.
+    #[test]
+    fn a_cheap_dot_stays_a_single_circle() {
+        let bubbles = BubbleStyle {
+            min_radius: 2.0,
+            detail_min_radius: 6.0,
+            hollow_small_buys: false,
+            ..BubbleStyle::default()
+        };
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let shapes = painted(|painter| {
+            draw_bubble(
+                painter,
+                BubbleMark {
+                    center: egui::pos2(50.0, 50.0),
+                    radius: 3.0,
+                    side: Side::Sell,
+                    size: 0.1,
+                    matched: None,
+                },
+                &bubbles,
+                &colors,
+            )
+        });
+        assert_eq!(
+            shapes.matches("CircleShape").count(),
+            1,
+            "a cheap dot must stay one circle: {shapes}"
+        );
+    }
+
     #[test]
     fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
         // The preview is the instrument the user tunes the sliders against, so
