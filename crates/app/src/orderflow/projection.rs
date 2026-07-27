@@ -630,7 +630,10 @@ fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
     positive[rank.saturating_sub(1)]
 }
 
-fn normalized_log_intensity(quantity: Decimal, reference: Decimal, gamma: f32) -> f32 {
+/// Shared with the live strip (`crate::live_strip`), which normalizes its
+/// depth rows against the same reference the heatmap cells used, so one wall
+/// reads with one colour on both sides of the chart edge.
+pub(crate) fn normalized_log_intensity(quantity: Decimal, reference: Decimal, gamma: f32) -> f32 {
     if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
         return 0.0;
     }

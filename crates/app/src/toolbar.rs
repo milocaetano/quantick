@@ -41,8 +41,8 @@ const W_BARS: f32 = 160.0;
 const W_BAR_PARAM: f32 = 150.0;
 /// The `+ older ▾` split button.
 const W_HISTORY: f32 = 100.0;
-/// The LAYERS icon pair.
-const W_LAYERS: f32 = 64.0;
+/// The LAYERS icon trio (bubbles, heatmap, live strip).
+const W_LAYERS: f32 = 96.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 
@@ -173,6 +173,8 @@ pub struct ToolbarModel<'a> {
     pub heatmap_on: bool,
     /// Whether the aggression layer is on.
     pub bubbles_on: bool,
+    /// Whether the live strip is shown.
+    pub live_strip_on: bool,
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -188,6 +190,9 @@ pub enum ToolbarAction {
     SetHeatmap(bool),
     /// Turn the aggression layer on or off.
     SetBubbles(bool),
+    /// Show or hide the live strip (the book's current depth beside the
+    /// price axis). Display-only: capture is untouched.
+    SetLiveStrip(bool),
     /// Open a dock tab (a layer's settings; never toggles the layer).
     OpenDockTab(DockTab),
     /// Show or hide the dock.
@@ -427,6 +432,23 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     if heatmap.secondary_clicked() {
         actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
     }
+
+    let strip = IconButton::new(icons::WALL, TOOLBAR_ICON)
+        .active(model.live_strip_on)
+        .accent(theme::ACCENT)
+        .enabled(model.capabilities.book_capture)
+        .hover_text(
+            "live strip: the book's resting depth right now, beside the price axis — \
+             right-click for settings",
+        )
+        .disabled_explanation("order-book capture is not available for this source")
+        .show(ui);
+    if strip.clicked() {
+        actions.push(ToolbarAction::SetLiveStrip(!model.live_strip_on));
+    }
+    if strip.secondary_clicked() {
+        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
+    }
 }
 
 /// The `⋯` menu holding every folded group, in a fixed order so muscle
@@ -601,6 +623,7 @@ mod tests {
                         },
                         heatmap_on: false,
                         bubbles_on: true,
+                        live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
                     };

@@ -72,17 +72,27 @@ fn dec_from_f64(x: f64) -> Decimal {
     Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
 }
 
-/// Split the padded plot area into the candle chart, the right price gutter and
-/// the bottom time strip, so the input handler and the renderer agree on the
-/// boundaries.
-fn plot_split(area: egui::Rect) -> PlotAreas {
+/// Split the padded plot area into the candle chart, the optional live strip,
+/// the right price gutter and the bottom time strip, so the input handler and
+/// the renderer agree on the boundaries. `live_strip_width` of zero means the
+/// strip is off and the chart runs straight into the gutter, exactly as it
+/// did before the strip existed.
+fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
     let plot = area.shrink(16.0);
-    let split_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
+    let strip_width = live_strip_width.max(0.0);
+    let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
+    let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
     PlotAreas {
         chart: egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y)),
+        live_strip: (strip_width > 0.0).then(|| {
+            egui::Rect::from_min_max(
+                egui::pos2(split_x, plot.top()),
+                egui::pos2(gutter_x, split_y),
+            )
+        }),
         price_gutter: egui::Rect::from_min_max(
-            egui::pos2(split_x, plot.top()),
+            egui::pos2(gutter_x, plot.top()),
             egui::pos2(plot.right(), split_y),
         ),
         time_strip: egui::Rect::from_min_max(
@@ -92,9 +102,12 @@ fn plot_split(area: egui::Rect) -> PlotAreas {
     }
 }
 
-/// The three interactive regions of the plot.
+/// The interactive regions of the plot, plus the optional live strip.
 struct PlotAreas {
     chart: egui::Rect,
+    /// Present only while the strip is shown; sits between `chart` and
+    /// `price_gutter` and is not an input region.
+    live_strip: Option<egui::Rect>,
     price_gutter: egui::Rect,
     time_strip: egui::Rect,
 }
@@ -117,6 +130,9 @@ pub struct QuantickApp {
     orderflow: OrderflowView,
     book_capture_epoch: u64,
     book_channel_closed_reported: bool,
+    /// Whether the user wants the live strip shown. The pixels it actually
+    /// gets are still capability-gated — see [`Self::live_strip_width`].
+    live_strip_visible: bool,
 
     // Feed & asset selection, driven by the configuration. `feed_id`/`symbol`
     // are what the selectors show (the desired selection); `active` is what the
@@ -244,6 +260,7 @@ impl QuantickApp {
             orderflow: OrderflowView::new(symbol.clone()),
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
+            live_strip_visible: false,
             active: (feed_id.clone(), symbol.clone()),
             replay: feed.replay,
             replay_view: ReplayView::new(),
@@ -288,6 +305,11 @@ impl QuantickApp {
         // acknowledgement rules stay identical.
         if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
             app.request_book_capture(true);
+        }
+        // Same convenience for the live strip; its pixels stay
+        // capability-gated either way (see live_strip_width).
+        if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.live_strip_visible = true;
         }
         // Same convenience for Market Replay: open the folder named by
         // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
@@ -414,6 +436,7 @@ impl QuantickApp {
             capabilities,
             heatmap_on,
             bubbles_on,
+            live_strip_on: self.live_strip_visible,
             dock_visible: self.dock.visible(),
             appearance_open: self.show_style,
         };
@@ -438,9 +461,22 @@ impl QuantickApp {
             ToolbarAction::LoadOlder => self.request_older_history(),
             ToolbarAction::SetHeatmap(enabled) => self.request_book_capture(enabled),
             ToolbarAction::SetBubbles(enabled) => self.orderflow.set_bubbles_enabled(enabled),
+            ToolbarAction::SetLiveStrip(shown) => self.live_strip_visible = shown,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+        }
+    }
+
+    /// Width reserved for the live strip this frame. Capability-driven like
+    /// every affordance: on a source without book capture there is nothing
+    /// the strip could show yet, so it yields its pixels back to the chart
+    /// even while the user's toggle stays on.
+    fn live_strip_width(&self) -> f32 {
+        if self.live_strip_visible && self.capabilities().book_capture {
+            crate::live_strip::LIVE_STRIP_WIDTH_PX
+        } else {
+            0.0
         }
     }
 
@@ -998,7 +1034,7 @@ impl QuantickApp {
     /// - scroll over either axis → zoom that axis;
     /// - double-click → reset to the live edge and auto-fit price.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
-        let areas = plot_split(area);
+        let areas = plot_split(area, self.live_strip_width());
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
         let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
@@ -1081,7 +1117,7 @@ impl QuantickApp {
         let closed = self.state.bars();
         let partial = self.state.partial();
         let total = closed.len() + usize::from(partial.is_some());
-        let areas = plot_split(area);
+        let areas = plot_split(area, self.live_strip_width());
         let chart_rect = areas.chart;
         if total == 0 {
             painter.text(
@@ -1183,8 +1219,10 @@ impl QuantickApp {
             );
         }
 
-        // Grid + price labels first, behind the candles.
-        self.draw_price_axis(painter, chart_rect, &scale);
+        // Grid + price labels first, behind the candles. Labels anchor on the
+        // gutter's edge, past the live strip when one is shown.
+        let axis_x = areas.price_gutter.left();
+        self.draw_price_axis(painter, chart_rect, axis_x, &scale);
 
         // Candles, clipped to the chart body so they don't spill into the axes.
         let clip = painter.with_clip_rect(chart_rect);
@@ -1236,14 +1274,21 @@ impl QuantickApp {
             );
         }
 
+        // The live strip: the book right now, beside the axis the price
+        // labels live on. Its own rect, so chart layers never bleed into it.
+        if let Some(strip) = areas.live_strip {
+            self.orderflow
+                .draw_live_strip(painter, strip, &scale, canvas_background);
+        }
+
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
         if let Some(bar) = partial.or_else(|| closed.last()) {
-            self.draw_last_price(painter, chart_rect, &scale, bar);
+            self.draw_last_price(painter, chart_rect, axis_x, &scale, bar);
         }
         self.draw_backfill_divider(painter, chart_rect, total, cw);
         self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
-        self.draw_crosshair(painter, chart_rect, &scale);
+        self.draw_crosshair(painter, chart_rect, axis_x, &scale);
         self.orderflow.draw_status_badge(painter, chart_rect);
 
         // Cache the auto range + height for next frame's input handler, which
@@ -1296,8 +1341,16 @@ impl QuantickApp {
         }
     }
 
-    /// Right-hand price axis: round-number gridlines and labels.
-    fn draw_price_axis(&self, painter: &egui::Painter, chart_rect: egui::Rect, scale: &PriceScale) {
+    /// Right-hand price axis: round-number gridlines and labels. `axis_x` is
+    /// the gutter's left edge — the chart's right edge normally, the live
+    /// strip's right edge while the strip sits between them.
+    fn draw_price_axis(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        scale: &PriceScale,
+    ) {
         let (lo, hi) = scale.range();
         let font = egui::FontId::monospace(11.0);
         for tick in crate::chart::nice_ticks(lo, hi, 8) {
@@ -1313,7 +1366,7 @@ impl QuantickApp {
                 egui::Stroke::new(1.0_f32, self.grid()),
             );
             painter.text(
-                egui::pos2(chart_rect.right() + 6.0, y),
+                egui::pos2(axis_x + 6.0, y),
                 egui::Align2::LEFT_CENTER,
                 format!("{tick:.2}"),
                 font.clone(),
@@ -1323,8 +1376,8 @@ impl QuantickApp {
         // The axis dividing line.
         painter.line_segment(
             [
-                egui::pos2(chart_rect.right(), chart_rect.top()),
-                egui::pos2(chart_rect.right(), chart_rect.bottom()),
+                egui::pos2(axis_x, chart_rect.top()),
+                egui::pos2(axis_x, chart_rect.bottom()),
             ],
             egui::Stroke::new(1.0_f32, self.grid()),
         );
@@ -1340,6 +1393,7 @@ impl QuantickApp {
         &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
+        axis_x: f32,
         scale: &PriceScale,
         bar: &quantick_engine::Bar,
     ) {
@@ -1359,11 +1413,10 @@ impl QuantickApp {
         };
         let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
 
+        // Runs through the live strip when one is shown (`axis_x` then sits
+        // past it): the depth silhouette is read against this exact line.
         painter.extend(egui::Shape::dashed_line(
-            &[
-                egui::pos2(chart_rect.left(), y),
-                egui::pos2(chart_rect.right(), y),
-            ],
+            &[egui::pos2(chart_rect.left(), y), egui::pos2(axis_x, y)],
             egui::Stroke::new(1.0_f32, color.gamma_multiply(LAST_PRICE_LINE_ALPHA)),
             LAST_PRICE_DASH_PX,
             LAST_PRICE_GAP_PX,
@@ -1376,7 +1429,7 @@ impl QuantickApp {
             egui::FontId::monospace(11.0),
             LAST_PRICE_CHIP_TEXT,
         );
-        let text_pos = egui::pos2(chart_rect.right() + 6.0, y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(axis_x + 6.0, y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
@@ -1388,7 +1441,13 @@ impl QuantickApp {
     /// Crosshair following the pointer, with the price shown on the axis.
     /// Drawn only while the Crosshair tool is armed on the rail (§7 — the
     /// hover crosshair is a mode, not an always-on layer).
-    fn draw_crosshair(&self, painter: &egui::Painter, chart_rect: egui::Rect, scale: &PriceScale) {
+    fn draw_crosshair(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        scale: &PriceScale,
+    ) {
         if self.toolrail.tool() != Tool::Crosshair {
             return;
         }
@@ -1406,10 +1465,12 @@ impl QuantickApp {
             ],
             stroke,
         );
+        // Reaches the axis through the live strip when one is shown, so the
+        // cursor height can be read against the depth silhouette too.
         painter.line_segment(
             [
                 egui::pos2(chart_rect.left(), pos.y),
-                egui::pos2(chart_rect.right(), pos.y),
+                egui::pos2(axis_x, pos.y),
             ],
             stroke,
         );
@@ -1421,7 +1482,7 @@ impl QuantickApp {
             egui::FontId::monospace(11.0),
             egui::Color32::WHITE,
         );
-        let text_pos = egui::pos2(chart_rect.right() + 6.0, pos.y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(axis_x + 6.0, pos.y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
@@ -1805,6 +1866,29 @@ mod tests {
     use super::*;
 
     use crate::config::{FeedConfig, ProviderKind};
+
+    #[test]
+    fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let off = plot_split(area, 0.0);
+        assert!(off.live_strip.is_none());
+        assert_eq!(off.chart.right(), off.price_gutter.left());
+
+        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX);
+        let strip = on.live_strip.expect("strip rect");
+        assert_eq!(on.chart.right(), strip.left());
+        assert_eq!(strip.right(), on.price_gutter.left());
+        assert_eq!(strip.width(), crate::live_strip::LIVE_STRIP_WIDTH_PX);
+        // The strip pays with the chart's pixels: the gutter stays put, and
+        // the time axis keeps spanning exactly the chart body.
+        assert_eq!(on.price_gutter, off.price_gutter);
+        assert_eq!(
+            on.chart.width(),
+            off.chart.width() - crate::live_strip::LIVE_STRIP_WIDTH_PX
+        );
+        assert_eq!(on.time_strip.right(), on.chart.right());
+    }
 
     /// A minimal one-feed, two-symbol config for the app tests.
     fn test_config() -> AppConfig {
