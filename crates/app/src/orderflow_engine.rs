@@ -429,6 +429,12 @@ impl BookEngine {
         self.config.enabled
     }
 
+    /// Whether the depth map is both recording and allowed to draw.
+    #[cfg(test)]
+    pub(crate) fn depth_visible(&self) -> bool {
+        self.config.depth_visible()
+    }
+
     /// Whether any layer (depth map or aggression bubbles) still wants frames.
     #[must_use]
     pub fn any_layer_enabled(&self) -> bool {
@@ -990,7 +996,10 @@ impl BookEngine {
         BookPublished {
             status: self.status.clone(),
             health: self.health(),
-            live_end_ms: if self.config.enabled {
+            // Gated on visibility, not on capture: the live tail and the strip
+            // are pixels, and a recorder nobody is watching must not pay for
+            // them.
+            live_end_ms: if self.config.depth_visible() {
                 self.history.latest_book_ms()
             } else {
                 None
@@ -1007,7 +1016,9 @@ impl BookEngine {
     /// at most [`LADDER_LEVELS_PER_SIDE`] levels per side are visited through
     /// `BTreeMap::range` — never a full book scan.
     fn ladder(&self) -> Option<Arc<BookLadder>> {
-        if !self.config.enabled || !self.history.book().is_initialized() {
+        // Visibility, not capture: with the map hidden nothing consumes the
+        // ladder, so the per-batch copy is pure waste.
+        if !self.config.depth_visible() || !self.history.book().is_initialized() {
             return None;
         }
         let book = self.history.book();
@@ -1453,6 +1464,64 @@ mod tests {
         // Disabling capture is a hard reset: the frame must vanish.
         engine.set_enabled(false, 12);
         assert!(engine.published().frame.is_none());
+    }
+
+    /// The user's complaint made executable: hiding the map is pixels only.
+    /// The recorder keeps filling history, the toggle punches no coverage gap,
+    /// and nothing is projected or published while nobody is watching.
+    #[test]
+    fn a_hidden_map_keeps_recording_and_costs_nothing_to_draw() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let bars = [bar(900, 1_100)];
+        engine.project(&request(&bars, (98.0, 102.0))).unwrap();
+        assert_eq!(engine.projection_builds, 1);
+
+        let hidden = HeatmapConfig {
+            show_depth: false,
+            ..engine.config.clone()
+        };
+        engine.apply_visual_config(hidden);
+        assert!(engine.enabled(), "the recorder keeps running");
+        assert!(!engine.depth_visible());
+        assert!(
+            !engine.any_layer_enabled(),
+            "the worker's projection gate is shut, so no frame is built"
+        );
+        let published = engine.published();
+        assert!(published.frame.is_none(), "nothing is left to draw");
+        assert!(published.ladder.is_none(), "no ladder is copied per batch");
+        assert!(published.live_end_ms.is_none());
+
+        // Depth keeps landing in history while the map is closed.
+        let updates_before = engine.depth_updates;
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_050,
+            delta: BookDelta::new(11, 11, Vec::new(), Vec::new()),
+        });
+        assert_eq!(engine.depth_updates, updates_before + 1);
+        assert_eq!(
+            engine.projection_builds, 1,
+            "recording never triggers a build on its own"
+        );
+        assert_eq!(
+            engine.history.coverage_gaps().count(),
+            0,
+            "hiding the map punches no hole in the recording"
+        );
+
+        // Reopening repaints the past it kept recording.
+        let shown = HeatmapConfig {
+            show_depth: true,
+            ..engine.config.clone()
+        };
+        engine.apply_visual_config(shown);
+        let reopened = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
+        assert!(!reopened.projection.cells.is_empty());
+        assert!(engine.published().ladder.is_some());
     }
 
     #[test]

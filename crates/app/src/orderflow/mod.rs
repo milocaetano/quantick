@@ -37,8 +37,8 @@ pub use interaction::{
 };
 #[allow(unused_imports)]
 pub use projection::{
-    AggressionPrimitive, GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive,
-    LiquidityEvidence, PriceWindow, project,
+    AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
+    LiquidityEventPrimitive, LiquidityEvidence, PriceWindow, project,
 };
 #[allow(unused_imports)]
 pub use timeline::{BarTimeline, TimelinePosition};
