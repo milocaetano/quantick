@@ -232,6 +232,7 @@ pub struct BubbleStyle {
     /// how much dressing a bubble can afford, and a sphere-heavy look sets it
     /// low on purpose — the "3d spheres" and "dense tape btc" presets put it
     /// at or below `min_radius`, which would leave nothing to fold.
+    #[serde(serialize_with = "serialize_short_f32")]
     pub readable_min_radius: f32,
     /// Whether buy prints below [`readable_min_radius`](Self::readable_min_radius)
     /// are drawn as an open ring instead of a solid dot.
