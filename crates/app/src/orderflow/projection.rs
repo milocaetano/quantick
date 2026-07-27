@@ -642,7 +642,10 @@ pub(crate) fn normalized_log_intensity(quantity: Decimal, reference: Decimal, ga
     logarithmic.powf(f64::from(gamma)) as f32
 }
 
-fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
+/// Shared with the live strip's aggression histogram, which sizes its bars by
+/// the same square-root area rule the bubbles use — twice the quantity reads
+/// as twice the ink, on both.
+pub(crate) fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
     if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
         return 0.0;
     }

@@ -468,12 +468,12 @@ impl QuantickApp {
         }
     }
 
-    /// Width reserved for the live strip this frame. Capability-driven like
-    /// every affordance: on a source without book capture there is nothing
-    /// the strip could show yet, so it yields its pixels back to the chart
-    /// even while the user's toggle stays on.
+    /// Width reserved for the live strip this frame. No capability gate any
+    /// more: the aggression histogram runs on the trade stream, which every
+    /// source provides (replay included), and without book data the strip
+    /// honestly degrades to that histogram alone.
     fn live_strip_width(&self) -> f32 {
-        if self.live_strip_visible && self.capabilities().book_capture {
+        if self.live_strip_visible {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
@@ -1274,11 +1274,19 @@ impl QuantickApp {
             );
         }
 
-        // The live strip: the book right now, beside the axis the price
-        // labels live on. Its own rect, so chart layers never bleed into it.
+        // The live strip: the book right now plus the forming bar's
+        // aggression histogram, beside the axis the price labels live on.
+        // Its own rect, so chart layers never bleed into it. The histogram
+        // follows `partial` (not its visible filter): the strip reports the
+        // bar forming now even while the user pans through history.
         if let Some(strip) = areas.live_strip {
-            self.orderflow
-                .draw_live_strip(painter, strip, &scale, canvas_background);
+            self.orderflow.draw_live_strip(
+                painter,
+                strip,
+                &scale,
+                canvas_background,
+                partial.map(|bar| bar.open_time),
+            );
         }
 
         // Above the flow layers: everything else on the canvas is read against
