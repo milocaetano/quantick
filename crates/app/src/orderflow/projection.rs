@@ -325,6 +325,12 @@ pub fn project(
         drafts.truncate(config.max_visible_cells);
     }
 
+    // Hidden heat is gated here rather than at the sweep: the drafts still
+    // feed the liquidity reference above, and the depletion floors keyed to it
+    // must not move just because the map behind them is switched off.
+    if !config.show_liquidity {
+        drafts.clear();
+    }
     let cells = drafts
         .into_iter()
         .map(|draft| {
@@ -371,7 +377,7 @@ pub fn project(
         BubbleSizeReference::Fixed => config.bubbles.fixed_reference_decimal().unwrap_or_default(),
     };
 
-    let mut events = if config.show_liquidity_events {
+    let mut events = if config.liquidity_events_enabled() {
         liquidity_events(&grouped.transitions)
     } else {
         Vec::new()
@@ -398,6 +404,14 @@ pub fn project(
         }
         (event.full_removal || event.fraction >= config.min_unattributed_reduction)
             && event.removed >= pull_floor
+    });
+
+    // Per-layer display switches, applied after correlation so bubbles keep
+    // their matched evidence (and their consumption marks) even when the
+    // depletion markers themselves are hidden.
+    events.retain(|event| match event.evidence {
+        LiquidityEvidence::AggressionAligned => config.show_aligned_depletion,
+        LiquidityEvidence::DepthOnly => config.show_unattributed_reductions,
     });
 
     let dropped_liquidity_events = events.len().saturating_sub(config.max_visible_cells);
@@ -482,6 +496,14 @@ pub fn project(
         })
         .collect();
 
+    // Side switches are display-only and run last: the size reference, the
+    // dust merge and the liquidity association above all saw both sides, so
+    // hiding one side never rescales or re-associates the other.
+    aggression_clusters.retain(|cluster| match cluster.side {
+        AggressorSide::Buy => config.show_buy_aggressions,
+        AggressorSide::Sell => config.show_sell_aggressions,
+    });
+
     let aggressions = aggression_clusters
         .into_iter()
         .filter_map(|cluster| {
@@ -495,7 +517,7 @@ pub fn project(
     // Coverage primitives describe the depth layer. With L2 capture off there
     // is no map whose absence needs explaining, so a bubbles-only frame stays
     // free of gap hatching.
-    let mut gaps: Vec<GapPrimitive> = if depth_enabled {
+    let mut gaps: Vec<GapPrimitive> = if depth_enabled && config.show_gaps {
         history
             .coverage_gaps()
             .filter_map(|gap| {
@@ -520,8 +542,10 @@ pub fn project(
 
     // Historical trades can precede the first locally captured L2 snapshot.
     // Make that absence an explicit primitive instead of a transparent region
-    // that could be mistaken for zero resting liquidity.
-    if depth_enabled {
+    // that could be mistaken for zero resting liquidity. The gap switch covers
+    // this hatch too: it is one legend entry, and half-hiding it would leave
+    // the legend describing marks the viewer cannot see.
+    if depth_enabled && config.show_gaps {
         match history.coverage_segments().next() {
             Some(first_coverage) if first_coverage.start_ms > time_start => {
                 let unavailable_end = first_coverage.start_ms.min(time_end);
@@ -1463,9 +1487,9 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn projects_partial_and_full_reductions_with_conserved_aggression_evidence() {
-        let event_config = HeatmapConfig {
+    /// Baseline for every evidence-related test.
+    fn event_config() -> HeatmapConfig {
+        HeatmapConfig {
             enabled: true,
             show_aggressions: true,
             price_grouping: Decimal::ONE,
@@ -1473,8 +1497,13 @@ mod tests {
             bubble_cluster_ms: 100,
             liquidity_correlation_ms: 250,
             ..HeatmapConfig::default()
-        };
-        let mut history = LiquidityHistory::new(event_config);
+        }
+    }
+
+    /// One buy print plus two ask reductions: the one at t=500 has compatible
+    /// aggression evidence, the full pull at t=800 is depth-only.
+    fn reduction_history(config: HeatmapConfig) -> LiquidityHistory {
+        let mut history = LiquidityHistory::new(config);
         history
             .install_snapshot(
                 100,
@@ -1506,12 +1535,21 @@ mod tests {
                 &BookDelta::new(12, 12, vec![], vec![level("101", "0")]),
             )
             .unwrap();
+        history
+    }
 
-        let projection = project(
+    fn project_reductions(config: HeatmapConfig) -> HeatmapProjection {
+        let history = reduction_history(config);
+        project(
             &history,
             &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
             PriceWindow::new(dec("99"), dec("103")).unwrap(),
-        );
+        )
+    }
+
+    #[test]
+    fn projects_partial_and_full_reductions_with_conserved_aggression_evidence() {
+        let projection = project_reductions(event_config());
         assert_eq!(projection.liquidity_events.len(), 2);
         let partial = projection
             .liquidity_events
@@ -1547,5 +1585,136 @@ mod tests {
             .map(|event| event.matched_quantity)
             .sum();
         assert_eq!(total_event_match, bubble.matched_quantity);
+    }
+
+    #[test]
+    fn evidence_toggles_hide_their_markers_but_keep_bubble_evidence() {
+        let no_aligned = project_reductions(HeatmapConfig {
+            show_aligned_depletion: false,
+            ..event_config()
+        });
+        assert_eq!(no_aligned.liquidity_events.len(), 1);
+        assert_eq!(
+            no_aligned.liquidity_events[0].evidence,
+            LiquidityEvidence::DepthOnly
+        );
+        // The hidden marker's evidence still reaches the bubble: association
+        // ran, only the marker itself is off screen.
+        assert_eq!(no_aligned.aggressions[0].matched_quantity, dec("3"));
+
+        let no_unattributed = project_reductions(HeatmapConfig {
+            show_unattributed_reductions: false,
+            ..event_config()
+        });
+        assert_eq!(no_unattributed.liquidity_events.len(), 1);
+        assert_eq!(
+            no_unattributed.liquidity_events[0].evidence,
+            LiquidityEvidence::AggressionAligned
+        );
+
+        // With both depletion layers off no association runs at all, and the
+        // bubble honestly loses its consumption marks: there is no factual
+        // reduction on screen (or off it) for the mark to point at.
+        let neither = project_reductions(HeatmapConfig {
+            show_aligned_depletion: false,
+            show_unattributed_reductions: false,
+            ..event_config()
+        });
+        assert!(neither.liquidity_events.is_empty());
+        assert_eq!(neither.aggressions[0].matched_quantity, Decimal::ZERO);
+    }
+
+    #[test]
+    fn hidden_liquidity_clears_cells_but_keeps_reference_and_markers() {
+        let projection = project_reductions(HeatmapConfig {
+            show_liquidity: false,
+            ..event_config()
+        });
+        assert!(projection.cells.is_empty());
+        assert_eq!(
+            projection.liquidity_events.len(),
+            2,
+            "markers outlive the heat behind them"
+        );
+        assert!(
+            projection.liquidity_reference > Decimal::ZERO,
+            "the depletion floors must not move when the heat is hidden"
+        );
+    }
+
+    #[test]
+    fn side_toggles_hide_one_side_without_rescaling_the_other() {
+        let projection_with = |show_buy: bool, show_sell: bool| {
+            let mut history = LiquidityHistory::new(HeatmapConfig {
+                bubble_cluster_ms: 0,
+                bubble_dust_merge_ms: 0,
+                show_buy_aggressions: show_buy,
+                show_sell_aggressions: show_sell,
+                bubbles: BubbleStyle {
+                    size_reference: BubbleSizeReference::VisibleMax,
+                    ..BubbleStyle::default()
+                },
+                ..config()
+            });
+            history.install_snapshot(100, 1, snapshot(10)).unwrap();
+            history.record_aggression(&Trade {
+                agg_id: 1,
+                timestamp_ms: 300,
+                price: dec("101"),
+                quantity: dec("4"),
+                side: Side::Buy,
+            });
+            history.record_aggression(&Trade {
+                agg_id: 2,
+                timestamp_ms: 400,
+                price: dec("100"),
+                quantity: dec("1"),
+                side: Side::Sell,
+            });
+            history
+                .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+                .unwrap();
+            project(
+                &history,
+                &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+                PriceWindow::new(dec("98"), dec("103")).unwrap(),
+            )
+        };
+
+        let both = projection_with(true, true);
+        assert_eq!(both.aggressions.len(), 2);
+        let sell_size = both
+            .aggressions
+            .iter()
+            .find(|bubble| bubble.side == Side::Sell)
+            .expect("the sell bubble draws with both sides on")
+            .size;
+
+        let only_sell = projection_with(false, true);
+        assert_eq!(only_sell.aggressions.len(), 1);
+        assert_eq!(only_sell.aggressions[0].side, Side::Sell);
+        // The size reference saw both sides, so hiding the buys must not
+        // inflate the sell that stayed.
+        assert_eq!(only_sell.aggressions[0].size, sell_size);
+    }
+
+    #[test]
+    fn hidden_gaps_remove_the_hatching() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            show_gaps: false,
+            ..config()
+        });
+        history.install_snapshot(400, 1, snapshot(10)).unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(10, 10, vec![], vec![]))
+            .unwrap();
+        let projection = project(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+        // The same fixture with the flag on yields the
+        // "book_unavailable_before_capture" hatch (see the test above).
+        assert!(projection.gaps.is_empty());
     }
 }

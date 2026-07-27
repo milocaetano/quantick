@@ -483,15 +483,35 @@ pub struct HeatmapConfig {
     ///
     /// Zero draws every cluster, however small. The threshold itself is not a
     /// setting: it is whatever quantity lands on
-    /// [`BubbleStyle::detail_min_radius`], so widening the radius range moves
-    /// the floor with it.
+    /// [`BubbleStyle::readable_min_radius`], so widening the radius range
+    /// moves the floor with it.
     pub bubble_dust_merge_ms: i64,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
     pub bubbles: BubbleStyle,
-    /// Whether factual displayed-liquidity reductions are projected.
-    pub show_liquidity_events: bool,
+    /// Whether the resting-liquidity heat cells are drawn.
+    ///
+    /// Display-only, like every `show_*` flag in this block: L2 capture keeps
+    /// running and retained history keeps accumulating, so switching a layer
+    /// back on repaints the past it kept recording. Each flag matches one
+    /// legend entry, and the legend lists only the layers that are on.
+    pub show_liquidity: bool,
+    /// Whether buy-side aggression bubbles are drawn. Refines
+    /// [`show_aggressions`](Self::show_aggressions), which stays the layer's
+    /// master switch (it is what starts trade retention at all).
+    pub show_buy_aggressions: bool,
+    /// Whether sell-side aggression bubbles are drawn. See
+    /// [`show_buy_aggressions`](Self::show_buy_aggressions).
+    pub show_sell_aggressions: bool,
+    /// Whether reductions with compatible aggression evidence draw their
+    /// depletion markers.
+    pub show_aligned_depletion: bool,
+    /// Whether depth-only (unattributed) reductions draw their markers and
+    /// fading withdrawal tails.
+    pub show_unattributed_reductions: bool,
+    /// Whether L2 coverage gaps draw their hatching.
+    pub show_gaps: bool,
     /// Smallest reduction fraction whose *unattributed* (depth-only) marker is
     /// displayed. A busy book shrinks buckets by >10% constantly; drawing every
     /// one is violet drizzle. Aggression-aligned reductions always display —
@@ -540,7 +560,12 @@ impl Default for HeatmapConfig {
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             bubble_dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             bubbles: BubbleStyle::default(),
-            show_liquidity_events: true,
+            show_liquidity: true,
+            show_buy_aggressions: true,
+            show_sell_aggressions: true,
+            show_aligned_depletion: true,
+            show_unattributed_reductions: true,
+            show_gaps: true,
             min_unattributed_reduction: 0.5,
             min_unattributed_pull_share: 0.25,
             liquidity_correlation_ms: DEFAULT_LIQUIDITY_CORRELATION_MS,
@@ -564,6 +589,16 @@ impl HeatmapConfig {
     #[must_use]
     pub fn any_layer_enabled(&self) -> bool {
         self.enabled || self.show_aggressions
+    }
+
+    /// Whether displayed-liquidity reductions need to be computed at all.
+    ///
+    /// The two depletion layers share one computation; either alone keeps it
+    /// on. With both off, aggression bubbles also lose their consumption
+    /// marks — matched evidence comes from that same correlation.
+    #[must_use]
+    pub fn liquidity_events_enabled(&self) -> bool {
+        self.show_aligned_depletion || self.show_unattributed_reductions
     }
 
     /// Return a copy whose numeric values are safe for allocation and math.
@@ -638,7 +673,15 @@ mod tests {
         assert!(config.bubbles.hollow_small_buys);
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
-        assert!(config.show_liquidity_events);
+        // Every visual layer defaults to on: gaining per-layer switches must
+        // change no pixels until someone actually flips one.
+        assert!(config.show_liquidity);
+        assert!(config.show_buy_aggressions);
+        assert!(config.show_sell_aggressions);
+        assert!(config.show_aligned_depletion);
+        assert!(config.show_unattributed_reductions);
+        assert!(config.show_gaps);
+        assert!(config.liquidity_events_enabled());
         assert_eq!(
             config.liquidity_correlation_ms,
             DEFAULT_LIQUIDITY_CORRELATION_MS
