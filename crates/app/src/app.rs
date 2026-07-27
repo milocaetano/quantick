@@ -303,6 +303,11 @@ impl QuantickApp {
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
             app.live_strip_visible = true;
         }
+        // Same convenience for the aggression layer (bubbles + the live
+        // column's footprint). Same code path as the toolbar toggle.
+        if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.orderflow.set_bubbles_enabled(true);
+        }
         // Same convenience for Market Replay: open the folder named by
         // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
         // code path a click takes, so a scripted run and a person get the same
