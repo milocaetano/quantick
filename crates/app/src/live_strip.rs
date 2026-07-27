@@ -5,13 +5,25 @@
 //! up 1:1 with that wall's history to its left; the real spread reads as an
 //! empty gap between the marked best bid and best ask.
 //!
-//! This module owns the pure, testable math (bucketing, the fallback
-//! reference); painting lives in `OrderflowView::draw_live_strip`, which
-//! reads the published [`BookLadder`].
+//! Phase 5 lays the forming bar's aggression histogram over that background:
+//! buys grow rightward from the strip's centre, sells leftward, each bar's
+//! width on the same square-root area rule the bubbles use, normalized by the
+//! forming bar's own biggest bucket. The rows come from the projection's
+//! aggression clusters — the one engine code path — filtered to the forming
+//! bar, so the histogram resets on bar close simply because the new bar has
+//! no clusters yet. Without book data the strip degrades to this histogram
+//! alone, which is why it works on any source that streams trades (replay
+//! included).
+//!
+//! This module owns the pure, testable math (bucketing, references, the
+//! histogram); painting lives in `OrderflowView::draw_live_strip`, which
+//! reads the published [`BookLadder`] and frame.
 
+use quantick_engine::Side;
 use quantick_orderbook::{BookLevel, BookSide};
 use rust_decimal::Decimal;
 
+use crate::orderflow::projection::AggressionPrimitive;
 use crate::orderflow_engine::BookLadder;
 
 /// Width of the strip, in pixels. The proposal band is 72–96 px: wide enough
@@ -83,6 +95,67 @@ fn bucket_side(levels: &[BookLevel], side: BookSide, width: Decimal, rows: &mut 
 pub(crate) fn fallback_reference(rows: &[DepthRow]) -> Decimal {
     rows.iter()
         .map(|row| row.quantity)
+        .max()
+        .unwrap_or(Decimal::ZERO)
+}
+
+/// Opacity of the histogram bars over the depth background.
+pub(crate) const HISTOGRAM_ALPHA: f32 = 0.8;
+
+/// Widest histogram bar, as a fraction of the strip's half width, leaving a
+/// sliver of background visible even at full scale.
+pub(crate) const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;
+
+/// One histogram row: the forming bar's aggression at one price bucket,
+/// both sides together because the drawing mirrors them around one centre.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HistogramRow {
+    /// Inclusive lower price edge, in the projection's own bucket space.
+    pub price_bucket: Decimal,
+    /// Summed buy-aggression quantity in the bucket.
+    pub buy: Decimal,
+    /// Summed sell-aggression quantity in the bucket.
+    pub sell: Decimal,
+}
+
+/// Sum the forming bar's aggression clusters per price bucket. `bar_open_ms`
+/// is the forming bar's open time: clusters that ended before it belong to
+/// closed bars and are dropped, which is the whole "resets on close" rule.
+/// Ascending bucket order, deterministic.
+pub(crate) fn aggression_rows(
+    aggressions: &[AggressionPrimitive],
+    bar_open_ms: i64,
+) -> Vec<HistogramRow> {
+    let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal)> =
+        std::collections::BTreeMap::new();
+    for cluster in aggressions {
+        if cluster.last_timestamp_ms < bar_open_ms {
+            continue;
+        }
+        let entry = buckets
+            .entry(cluster.price_bucket)
+            .or_insert((Decimal::ZERO, Decimal::ZERO));
+        match cluster.side {
+            Side::Buy => entry.0 += cluster.quantity,
+            Side::Sell => entry.1 += cluster.quantity,
+        }
+    }
+    buckets
+        .into_iter()
+        .map(|(price_bucket, (buy, sell))| HistogramRow {
+            price_bucket,
+            buy,
+            sell,
+        })
+        .collect()
+}
+
+/// Full-width reference for the histogram: the forming bar's own biggest
+/// single-side bucket, per the "normalized by the bar" rule — the bar's
+/// heaviest price level always reaches full width, whatever its size.
+pub(crate) fn histogram_reference(rows: &[HistogramRow]) -> Decimal {
+    rows.iter()
+        .map(|row| row.buy.max(row.sell))
         .max()
         .unwrap_or(Decimal::ZERO)
 }
@@ -160,5 +233,61 @@ mod tests {
         let rows = depth_rows(&ladder, Decimal::ONE);
         assert_eq!(fallback_reference(&rows), dec("9"));
         assert_eq!(fallback_reference(&[]), Decimal::ZERO);
+    }
+
+    /// A minimal cluster: only the fields the histogram reads carry data.
+    fn cluster(side: Side, bucket: &str, quantity: &str, last_ms: i64) -> AggressionPrimitive {
+        AggressionPrimitive {
+            agg_id: 1,
+            agg_ids: vec![1],
+            generation: None,
+            side,
+            consumed_side: match side {
+                Side::Buy => quantick_orderbook::BookSide::Ask,
+                Side::Sell => quantick_orderbook::BookSide::Bid,
+            },
+            quantity: dec(quantity),
+            price_bucket: dec(bucket),
+            trade_count: 1,
+            first_timestamp_ms: last_ms,
+            last_timestamp_ms: last_ms,
+            matched_quantity: Decimal::ZERO,
+            matched_fraction: 0.0,
+            liquidity_event_ids: Vec::new(),
+            x: 0.5,
+            y: 0.5,
+            size: 0.5,
+        }
+    }
+
+    #[test]
+    fn the_histogram_keeps_only_the_forming_bar_and_sums_per_bucket() {
+        let clusters = vec![
+            // Closed-bar cluster: ended before the forming bar opened.
+            cluster(Side::Buy, "100", "50", 900),
+            // Forming bar: two buys in one bucket, one sell in another.
+            cluster(Side::Buy, "100", "2", 1_100),
+            cluster(Side::Buy, "100", "3", 1_200),
+            cluster(Side::Sell, "99", "4", 1_150),
+        ];
+        let rows = aggression_rows(&clusters, 1_000);
+        assert_eq!(
+            rows,
+            vec![
+                HistogramRow {
+                    price_bucket: dec("99"),
+                    buy: Decimal::ZERO,
+                    sell: dec("4"),
+                },
+                HistogramRow {
+                    price_bucket: dec("100"),
+                    buy: dec("5"),
+                    sell: Decimal::ZERO,
+                },
+            ]
+        );
+        // The bar's heaviest single-side bucket sets full width.
+        assert_eq!(histogram_reference(&rows), dec("5"));
+        assert_eq!(histogram_reference(&[]), Decimal::ZERO);
     }
 }

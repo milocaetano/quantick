@@ -20,7 +20,7 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use crate::bubble_presets::{self, BubblePreset, BubblePresetFile, PresetSource};
 use crate::chart::PriceScale;
 use crate::live_strip;
-use crate::orderflow::projection::normalized_log_intensity;
+use crate::orderflow::projection::{normalized_area_size, normalized_log_intensity};
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
     IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
@@ -399,17 +399,23 @@ impl OrderflowView {
         painter.galley(pos, galley, color);
     }
 
-    /// Draw the live strip: the current book's depth silhouette, bucketed and
-    /// coloured exactly like the heatmap (same buckets, same ramp, same
-    /// full-intensity reference when a frame exists), with the real spread as
-    /// an empty gap between the marked best bid and best ask. `scale` is the
-    /// chart's own price scale, so rows line up 1:1 with the heatmap rows.
+    /// Draw the live strip. Background: the current book's depth silhouette,
+    /// bucketed and coloured exactly like the heatmap (same buckets, same
+    /// ramp, same full-intensity reference when a frame exists), with the
+    /// real spread as an empty gap between the marked best bid and best ask.
+    /// Foreground: the forming bar's aggression histogram, buys growing
+    /// rightward from the centre and sells leftward, on the bubbles'
+    /// square-root area rule normalized by the bar itself — it resets on bar
+    /// close because the new bar has no clusters yet. `bar_open_ms` is the
+    /// forming bar's open time (`None` hides the histogram); `scale` is the
+    /// chart's own price scale, so everything lines up 1:1 with the chart.
     pub fn draw_live_strip(
         &mut self,
         painter: &egui::Painter,
         strip: egui::Rect,
         scale: &PriceScale,
         canvas_background: egui::Color32,
+        bar_open_ms: Option<i64>,
     ) {
         self.sync_published();
         painter.rect_filled(strip, egui::Rounding::ZERO, canvas_background);
@@ -420,9 +426,157 @@ impl OrderflowView {
                 crate::theme::TEXT_MUTED.gamma_multiply(live_strip::STRIP_BORDER_ALPHA),
             ),
         );
-        let Some(ladder) = self.published.ladder.clone() else {
-            // Honest empty state: the strip is on, the data is not (capture
-            // off, or no snapshot yet).
+
+        let ladder = self.published.ladder.clone();
+        let frame = self.published.frame.clone();
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background).sanitized();
+        let colors = theme_bubble_rgb(self.config.theme);
+        let clip = painter.with_clip_rect(strip);
+        let rows_left = strip.left() + live_strip::STRIP_ROW_INSET_PX;
+
+        // Background: the depth silhouette. Same bucket and same
+        // full-intensity reference as the heatmap frame when one exists, so
+        // one wall wears one colour across the chart edge; without a frame
+        // (heat layer off) the strip normalizes against its own biggest
+        // visible bucket.
+        if let Some(ladder) = &ladder {
+            let (bucket_width, frame_reference) = match frame.as_deref() {
+                Some(frame) => (
+                    frame.projection.effective_grouping.bucket_width,
+                    Some(frame.projection.liquidity_reference),
+                ),
+                None => (self.published.base_price_grouping, None),
+            };
+            let rows = live_strip::depth_rows(ladder, bucket_width);
+            let reference = frame_reference
+                .filter(|reference| *reference > Decimal::ZERO)
+                .unwrap_or_else(|| live_strip::fallback_reference(&rows));
+
+            for row in &rows {
+                let intensity =
+                    normalized_log_intensity(row.quantity, reference, self.config.gamma);
+                // Same alpha recipe as a projected heat cell: the projection
+                // sets `alpha = intensity * opacity`, then `heat_fill` layers
+                // the style's own multiplier on top.
+                let base_alpha = intensity * self.config.opacity;
+                let Some(fill) = heat_fill(&style, row.side, intensity, base_alpha) else {
+                    continue;
+                };
+                let top = scale.y((row.price_bucket + bucket_width)
+                    .to_f64()
+                    .unwrap_or(f64::NAN));
+                let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
+                if !top.is_finite() || !bottom.is_finite() {
+                    continue;
+                }
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(rows_left, top),
+                    egui::pos2(strip.right(), bottom),
+                )
+                .intersect(strip);
+                if rect.is_positive() {
+                    clip.rect_filled(rect, egui::Rounding::ZERO, fill);
+                }
+            }
+
+            // The real spread: cleared back to canvas so it reads as the one
+            // empty band.
+            if let (Some(bid), Some(ask)) = (ladder.best_bid, ladder.best_ask) {
+                let ask_y = scale.y(ask.price().to_f64().unwrap_or(f64::NAN));
+                let bid_y = scale.y(bid.price().to_f64().unwrap_or(f64::NAN));
+                if ask_y.is_finite() && bid_y.is_finite() {
+                    let gap = egui::Rect::from_min_max(
+                        egui::pos2(rows_left, ask_y),
+                        egui::pos2(strip.right(), bid_y),
+                    )
+                    .intersect(strip);
+                    if gap.is_positive() {
+                        clip.rect_filled(gap, egui::Rounding::ZERO, canvas_background);
+                    }
+                }
+            }
+        }
+
+        // Foreground: the forming bar's mirrored aggression histogram, from
+        // the same projection clusters the bubbles draw — one engine, one
+        // aggregation path. Empty whenever those layers publish nothing.
+        let histogram = match (frame.as_deref(), bar_open_ms) {
+            (Some(frame), Some(open_ms)) => {
+                live_strip::aggression_rows(&frame.projection.aggressions, open_ms)
+            }
+            _ => Vec::new(),
+        };
+        if !histogram.is_empty() {
+            let bucket_width = frame
+                .as_deref()
+                .map(|frame| frame.projection.effective_grouping.bucket_width)
+                .unwrap_or(self.published.base_price_grouping);
+            let reference = live_strip::histogram_reference(&histogram);
+            let centre_x = f32::midpoint(rows_left, strip.right());
+            let half_width =
+                (strip.right() - rows_left) / 2.0 * live_strip::HISTOGRAM_MAX_HALF_FRAC;
+            let buy_fill = egui::Color32::from_rgb(colors.buy[0], colors.buy[1], colors.buy[2])
+                .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
+            let sell_fill = egui::Color32::from_rgb(colors.sell[0], colors.sell[1], colors.sell[2])
+                .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
+            for row in &histogram {
+                let top = scale.y((row.price_bucket + bucket_width)
+                    .to_f64()
+                    .unwrap_or(f64::NAN));
+                let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
+                if !top.is_finite() || !bottom.is_finite() {
+                    continue;
+                }
+                let buy_extent = normalized_area_size(row.buy, reference) * half_width;
+                if buy_extent > 0.0 {
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(centre_x, top),
+                        egui::pos2(centre_x + buy_extent, bottom),
+                    )
+                    .intersect(strip);
+                    if rect.is_positive() {
+                        clip.rect_filled(rect, egui::Rounding::ZERO, buy_fill);
+                    }
+                }
+                let sell_extent = normalized_area_size(row.sell, reference) * half_width;
+                if sell_extent > 0.0 {
+                    let rect = egui::Rect::from_min_max(
+                        egui::pos2(centre_x - sell_extent, top),
+                        egui::pos2(centre_x, bottom),
+                    )
+                    .intersect(strip);
+                    if rect.is_positive() {
+                        clip.rect_filled(rect, egui::Rounding::ZERO, sell_fill);
+                    }
+                }
+            }
+        }
+
+        // Touch markers last, readable over both layers.
+        if let Some(ladder) = &ladder {
+            let mark = |price: Option<Decimal>, rgb: [u8; 3]| {
+                let Some(price) = price.and_then(|price| price.to_f64()) else {
+                    return;
+                };
+                let y = scale.y(price);
+                if !y.is_finite() {
+                    return;
+                }
+                clip.line_segment(
+                    [egui::pos2(rows_left, y), egui::pos2(strip.right(), y)],
+                    egui::Stroke::new(
+                        live_strip::TOUCH_MARKER_STROKE_PX,
+                        egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+                    ),
+                );
+            };
+            mark(ladder.best_ask.map(BookLevel::price), colors.sell);
+            mark(ladder.best_bid.map(BookLevel::price), colors.buy);
+        }
+
+        // Honest empty state: the strip is on, no data source has anything —
+        // no book (capture off or no snapshot) and no forming-bar aggression.
+        if ladder.is_none() && histogram.is_empty() {
             painter.text(
                 egui::pos2(strip.center().x, strip.top() + 10.0),
                 egui::Align2::CENTER_CENTER,
@@ -430,81 +584,6 @@ impl OrderflowView {
                 egui::FontId::proportional(10.0),
                 crate::theme::TEXT_MUTED,
             );
-            return;
-        };
-
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background).sanitized();
-        // Same bucket and same full-intensity reference as the heatmap frame
-        // when one exists, so one wall wears one colour across the chart
-        // edge; without a frame (heat layer off) the strip normalizes against
-        // its own biggest visible bucket.
-        let (bucket_width, frame_reference) = match self.published.frame.as_deref() {
-            Some(frame) => (
-                frame.projection.effective_grouping.bucket_width,
-                Some(frame.projection.liquidity_reference),
-            ),
-            None => (self.published.base_price_grouping, None),
-        };
-        let rows = live_strip::depth_rows(&ladder, bucket_width);
-        let reference = frame_reference
-            .filter(|reference| *reference > Decimal::ZERO)
-            .unwrap_or_else(|| live_strip::fallback_reference(&rows));
-
-        let clip = painter.with_clip_rect(strip);
-        let rows_left = strip.left() + live_strip::STRIP_ROW_INSET_PX;
-        for row in &rows {
-            let intensity = normalized_log_intensity(row.quantity, reference, self.config.gamma);
-            // Same alpha recipe as a projected heat cell: the projection sets
-            // `alpha = intensity * opacity`, then `heat_fill` layers the
-            // style's own multiplier on top.
-            let base_alpha = intensity * self.config.opacity;
-            let Some(fill) = heat_fill(&style, row.side, intensity, base_alpha) else {
-                continue;
-            };
-            let top = scale.y((row.price_bucket + bucket_width)
-                .to_f64()
-                .unwrap_or(f64::NAN));
-            let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
-            if !top.is_finite() || !bottom.is_finite() {
-                continue;
-            }
-            let rect = egui::Rect::from_min_max(
-                egui::pos2(rows_left, top),
-                egui::pos2(strip.right(), bottom),
-            )
-            .intersect(strip);
-            if rect.is_positive() {
-                clip.rect_filled(rect, egui::Rounding::ZERO, fill);
-            }
-        }
-
-        // The real spread: cleared back to canvas so it reads as the one empty
-        // band, with the touch marked on both edges.
-        if let (Some(bid), Some(ask)) = (ladder.best_bid, ladder.best_ask) {
-            let ask_y = scale.y(ask.price().to_f64().unwrap_or(f64::NAN));
-            let bid_y = scale.y(bid.price().to_f64().unwrap_or(f64::NAN));
-            if ask_y.is_finite() && bid_y.is_finite() {
-                let gap = egui::Rect::from_min_max(
-                    egui::pos2(rows_left, ask_y),
-                    egui::pos2(strip.right(), bid_y),
-                )
-                .intersect(strip);
-                if gap.is_positive() {
-                    clip.rect_filled(gap, egui::Rounding::ZERO, canvas_background);
-                }
-                let colors = theme_bubble_rgb(self.config.theme);
-                let mark = |y: f32, rgb: [u8; 3]| {
-                    clip.line_segment(
-                        [egui::pos2(rows_left, y), egui::pos2(strip.right(), y)],
-                        egui::Stroke::new(
-                            live_strip::TOUCH_MARKER_STROKE_PX,
-                            egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-                        ),
-                    );
-                };
-                mark(ask_y, colors.sell);
-                mark(bid_y, colors.buy);
-            }
         }
     }
 
@@ -1629,7 +1708,13 @@ mod tests {
         let paint = |view: &mut OrderflowView| {
             ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_live_strip(ui.painter(), strip, &scale, egui::Color32::BLACK);
+                    view.draw_live_strip(
+                        ui.painter(),
+                        strip,
+                        &scale,
+                        egui::Color32::BLACK,
+                        Some(0),
+                    );
                 });
             })
         };

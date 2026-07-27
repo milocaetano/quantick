@@ -433,15 +433,16 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
         actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
     }
 
+    // Never capability-gated: the aggression histogram runs on the trade
+    // stream every source provides (replay included), and without book data
+    // the strip honestly degrades to it.
     let strip = IconButton::new(icons::WALL, TOOLBAR_ICON)
         .active(model.live_strip_on)
         .accent(theme::ACCENT)
-        .enabled(model.capabilities.book_capture)
         .hover_text(
-            "live strip: the book's resting depth right now, beside the price axis — \
-             right-click for settings",
+            "live strip: the book's resting depth and the forming bar's aggression, \
+             beside the price axis — right-click for settings",
         )
-        .disabled_explanation("order-book capture is not available for this source")
         .show(ui);
     if strip.clicked() {
         actions.push(ToolbarAction::SetLiveStrip(!model.live_strip_on));
