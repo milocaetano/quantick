@@ -306,6 +306,11 @@ impl QuantickApp {
         if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
             app.request_book_capture(true);
         }
+        // Same convenience for the live strip; its pixels stay
+        // capability-gated either way (see live_strip_width).
+        if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.live_strip_visible = true;
+        }
         // Same convenience for Market Replay: open the folder named by
         // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
         // code path a click takes, so a scripted run and a person get the same
