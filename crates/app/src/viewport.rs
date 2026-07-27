@@ -283,6 +283,19 @@ mod tests {
         assert!(v.follows_live());
     }
 
+    /// With a constant live-tail reservation, a bar close moves the following
+    /// right edge forward by exactly the one new slot — it can never step
+    /// right (backwards), which is what keeps the close transition jump-free.
+    #[test]
+    fn a_bar_close_advances_the_right_edge_by_exactly_one_slot() {
+        let mut v = Viewport::new();
+        v.set_live_tail(1.0);
+        let before = v.right_edge_bar(26);
+        let after = v.right_edge_bar(27); // one bar closed, a new one forms
+        assert!((after - before - 1.0).abs() < 0.001);
+        assert!(after > before, "the right edge must never step right");
+    }
+
     #[test]
     fn live_tail_reserves_space_to_the_right_while_following() {
         let mut v = Viewport::new(); // following, candle_width 8
