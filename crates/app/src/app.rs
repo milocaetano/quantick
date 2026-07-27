@@ -1350,7 +1350,9 @@ impl QuantickApp {
         if y < chart_rect.top() || y > chart_rect.bottom() {
             return;
         }
-        let rgb = if bar.close >= bar.open {
+        // Same predicate and same two colours the candle wears, so the chip
+        // and the bar it reports can never disagree about direction.
+        let rgb = if crate::candle_view::is_bullish(bar) {
             self.style.candles.bull_outline
         } else {
             self.style.candles.bear_outline
