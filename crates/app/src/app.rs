@@ -549,6 +549,10 @@ impl QuantickApp {
     /// heatmap already had — `retention_ms` (30 min by default) bounded by
     /// `max_history_runs` / `max_history_bytes` — so the ceiling is the same
     /// one an open map pays for, not a new one.
+    ///
+    /// Idempotent and cheap, so the frame loop can call it as a heartbeat on
+    /// top of the lifecycle calls: already recording costs one bool read, and
+    /// a replay costs one more `Option` check.
     fn ensure_book_capture(&mut self) {
         if self.orderflow.enabled() || !self.capabilities().book_capture {
             return;
@@ -587,7 +591,7 @@ impl QuantickApp {
                 symbol = self.symbol.as_str(),
                 enabled,
                 generation,
-                action = "retry_on_next_user_action",
+                action = "retry_on_next_frame",
                 "book capture command channel is full"
             ),
             Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
@@ -1832,6 +1836,13 @@ impl eframe::App for QuantickApp {
 
         self.drain_feed();
         self.drain_book_feed();
+        // Heartbeat for the recorder. The lifecycle calls below already start
+        // it at every point that knows the market changed; this one makes
+        // "always recording" true by construction, so a start command lost to
+        // a momentarily full channel heals on the next frame instead of
+        // leaving the session silently unrecorded. Free while it is running:
+        // one bool read and an early return.
+        self.ensure_book_capture();
         self.maybe_emit_summary(now);
 
         let bg = self.bg();
