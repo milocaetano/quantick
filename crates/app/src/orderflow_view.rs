@@ -20,7 +20,7 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use crate::bubble_presets::{self, BubblePreset, BubblePresetFile, PresetSource};
 use crate::chart::PriceScale;
 use crate::live_strip;
-use crate::orderflow::projection::{normalized_area_size, normalized_log_intensity};
+use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
     IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
@@ -31,7 +31,7 @@ use crate::orderflow_engine::{
 };
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview, heat_fill,
+    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview,
     theme_bubble_rgb,
 };
 use crate::orderflow_worker::{BookCommand, BookWorker};
@@ -399,14 +399,13 @@ impl OrderflowView {
         painter.galley(pos, galley, color);
     }
 
-    /// Draw the live strip. Background: the current book's depth silhouette,
-    /// bucketed and coloured exactly like the heatmap (same buckets, same
-    /// ramp, same full-intensity reference when a frame exists), with the
-    /// real spread as an empty gap between the marked best bid and best ask.
-    /// Foreground: the forming bar's aggression histogram, buys growing
-    /// rightward from the centre and sells leftward, on the bubbles'
+    /// Draw the live strip: the forming bar's aggression histogram, buys
+    /// growing rightward from the centre and sells leftward, on the bubbles'
     /// square-root area rule normalized by the bar itself — it resets on bar
-    /// close because the new bar has no clusters yet. `bar_open_ms` is the
+    /// close because the new bar has no clusters yet. The published ladder
+    /// contributes only the best bid/ask touch lines (the real spread); the
+    /// depth silhouette was retired after live use — it repeated the
+    /// heatmap's right edge and buried the histogram. `bar_open_ms` is the
     /// forming bar's open time (`None` hides the histogram); `scale` is the
     /// chart's own price scale, so everything lines up 1:1 with the chart.
     pub fn draw_live_strip(
@@ -429,77 +428,13 @@ impl OrderflowView {
 
         let ladder = self.published.ladder.clone();
         let frame = self.published.frame.clone();
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background).sanitized();
         let colors = theme_bubble_rgb(self.config.theme);
         let clip = painter.with_clip_rect(strip);
         let rows_left = strip.left() + live_strip::STRIP_ROW_INSET_PX;
 
-        // Background: the depth silhouette. Same bucket and same
-        // full-intensity reference as the heatmap frame when one exists, so
-        // one wall wears one colour across the chart edge; without a frame
-        // (heat layer off) the strip normalizes against its own biggest
-        // visible bucket.
-        if let Some(ladder) = &ladder {
-            let (bucket_width, frame_reference) = match frame.as_deref() {
-                Some(frame) => (
-                    frame.projection.effective_grouping.bucket_width,
-                    Some(frame.projection.liquidity_reference),
-                ),
-                None => (self.published.base_price_grouping, None),
-            };
-            let rows = live_strip::depth_rows(ladder, bucket_width);
-            let reference = frame_reference
-                .filter(|reference| *reference > Decimal::ZERO)
-                .unwrap_or_else(|| live_strip::fallback_reference(&rows));
-
-            for row in &rows {
-                let intensity =
-                    normalized_log_intensity(row.quantity, reference, self.config.gamma);
-                // Same alpha recipe as a projected heat cell: the projection
-                // sets `alpha = intensity * opacity`, then `heat_fill` layers
-                // the style's own multiplier on top.
-                let base_alpha = intensity * self.config.opacity;
-                let Some(fill) = heat_fill(&style, row.side, intensity, base_alpha) else {
-                    continue;
-                };
-                let top = scale.y((row.price_bucket + bucket_width)
-                    .to_f64()
-                    .unwrap_or(f64::NAN));
-                let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
-                if !top.is_finite() || !bottom.is_finite() {
-                    continue;
-                }
-                let rect = egui::Rect::from_min_max(
-                    egui::pos2(rows_left, top),
-                    egui::pos2(strip.right(), bottom),
-                )
-                .intersect(strip);
-                if rect.is_positive() {
-                    clip.rect_filled(rect, egui::Rounding::ZERO, fill);
-                }
-            }
-
-            // The real spread: cleared back to canvas so it reads as the one
-            // empty band.
-            if let (Some(bid), Some(ask)) = (ladder.best_bid, ladder.best_ask) {
-                let ask_y = scale.y(ask.price().to_f64().unwrap_or(f64::NAN));
-                let bid_y = scale.y(bid.price().to_f64().unwrap_or(f64::NAN));
-                if ask_y.is_finite() && bid_y.is_finite() {
-                    let gap = egui::Rect::from_min_max(
-                        egui::pos2(rows_left, ask_y),
-                        egui::pos2(strip.right(), bid_y),
-                    )
-                    .intersect(strip);
-                    if gap.is_positive() {
-                        clip.rect_filled(gap, egui::Rounding::ZERO, canvas_background);
-                    }
-                }
-            }
-        }
-
-        // Foreground: the forming bar's mirrored aggression histogram, from
-        // the same projection clusters the bubbles draw — one engine, one
-        // aggregation path. Empty whenever those layers publish nothing.
+        // The forming bar's mirrored aggression histogram, from the same
+        // projection clusters the bubbles draw — one engine, one aggregation
+        // path. Empty whenever those layers publish nothing.
         let histogram = match (frame.as_deref(), bar_open_ms) {
             (Some(frame), Some(open_ms)) => {
                 live_strip::aggression_rows(&frame.projection.aggressions, open_ms)
@@ -519,12 +454,6 @@ impl OrderflowView {
                 .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
             let sell_fill = egui::Color32::from_rgb(colors.sell[0], colors.sell[1], colors.sell[2])
                 .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
-            // A dark hair around each bar keeps a green bar readable over a
-            // green depth cell — the strip's version of the bubbles' ring.
-            let outline = egui::Stroke::new(
-                live_strip::HISTOGRAM_OUTLINE_PX,
-                egui::Color32::from_black_alpha(live_strip::HISTOGRAM_OUTLINE_ALPHA),
-            );
             for row in &histogram {
                 let top = scale.y((row.price_bucket + bucket_width)
                     .to_f64()
@@ -542,7 +471,6 @@ impl OrderflowView {
                     .intersect(strip);
                     if rect.is_positive() {
                         clip.rect_filled(rect, egui::Rounding::ZERO, buy_fill);
-                        clip.rect_stroke(rect, egui::Rounding::ZERO, outline);
                     }
                 }
                 let sell_extent = normalized_area_size(row.sell, reference) * half_width;
@@ -554,7 +482,6 @@ impl OrderflowView {
                     .intersect(strip);
                     if rect.is_positive() {
                         clip.rect_filled(rect, egui::Rounding::ZERO, sell_fill);
-                        clip.rect_stroke(rect, egui::Rounding::ZERO, outline);
                     }
                 }
             }

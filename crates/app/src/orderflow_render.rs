@@ -2125,17 +2125,6 @@ fn heat_fill_parts(
     Some((resting_rgb(style.theme, side, intensity), alpha))
 }
 
-/// [`heat_fill_parts`] as a ready egui colour, for callers that need no
-/// separate glow pass.
-pub(crate) fn heat_fill(
-    style: &OrderflowRenderStyle,
-    side: BookSide,
-    raw_intensity: f32,
-    base_alpha: f32,
-) -> Option<egui::Color32> {
-    heat_fill_parts(style, side, raw_intensity, base_alpha).map(|(rgb, alpha)| rgba(rgb, alpha))
-}
-
 fn mix_rgb(from: [u8; 3], to: [u8; 3], amount: f32) -> [u8; 3] {
     let amount = finite_unit(amount);
     [
