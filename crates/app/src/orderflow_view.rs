@@ -1295,6 +1295,7 @@ mod tests {
         view.presets.upsert(BubblePreset {
             name: "wide".to_owned(),
             cluster_ms: 100,
+            dust_merge_ms: 3_000,
             bubbles: BubbleStyle {
                 max_radius: 42.0,
                 side_offset: 8.0,
@@ -1304,6 +1305,7 @@ mod tests {
         view.apply_preset("wide");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
+        assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.

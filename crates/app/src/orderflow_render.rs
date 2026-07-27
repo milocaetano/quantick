@@ -2561,6 +2561,46 @@ mod tests {
     }
 
     #[test]
+    fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
+        let hollow = BubbleStyle {
+            trail_length: 0.0,
+            ..BubbleStyle::default()
+        };
+        assert!(hollow.hollow_small_buys);
+        let solid = BubbleStyle {
+            hollow_small_buys: false,
+            ..hollow.clone()
+        };
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &hollow);
+        let mark = |radius| BubbleMark {
+            center: egui::pos2(40.0, 40.0),
+            radius,
+            side: Side::Buy,
+            size: 0.05,
+            matched: None,
+        };
+
+        // Below the detail radius — where colour alone stops working — the
+        // setting must change what is painted.
+        let small = hollow.min_radius;
+        assert!(small < hollow.detail_min_radius);
+        assert_ne!(
+            painted(|painter| draw_bubble(painter, mark(small), &hollow, &colors)),
+            painted(|painter| draw_bubble(painter, mark(small), &solid, &colors)),
+            "an undressed buy must not paint the same with the ring off"
+        );
+
+        // Above it the setting must change nothing: dressing and sphere
+        // shading already say which side the bubble is.
+        let big = hollow.detail_min_radius + 1.0;
+        assert_eq!(
+            painted(|painter| draw_bubble(painter, mark(big), &hollow, &colors)),
+            painted(|painter| draw_bubble(painter, mark(big), &solid, &colors)),
+            "a dressed buy must be untouched by the ring setting"
+        );
+    }
+
+    #[test]
     fn live_span_grows_with_time_and_clamps() {
         assert_eq!(live_span_for(0, 1000, 8.0), 1.0);
         assert_eq!(live_span_for(500, 0, 8.0), 1.0);
