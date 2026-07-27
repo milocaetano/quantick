@@ -13,7 +13,7 @@ use std::time::Instant;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::{Bar, Trade};
-use quantick_orderbook::DepthEvent;
+use quantick_orderbook::{BookLevel, DepthEvent};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -1015,6 +1015,30 @@ impl OrderflowView {
                     health.bid_levels,
                     health.ask_levels
                 ));
+                if let Some(ladder) = &self.published.ladder {
+                    let side = |level: Option<BookLevel>| match level {
+                        Some(level) => format!("{} × {}", level.price(), level.quantity()),
+                        None => "—".to_owned(),
+                    };
+                    let spread = match (ladder.best_bid, ladder.best_ask) {
+                        (Some(bid), Some(ask)) => (ask.price() - bid.price()).to_string(),
+                        _ => "—".to_owned(),
+                    };
+                    ui.label(format!(
+                        "book now: bid {} · ask {} · spread {}",
+                        side(ladder.best_bid),
+                        side(ladder.best_ask),
+                        spread
+                    ))
+                    .on_hover_text(
+                        "Best resting bid and ask of the live book, read from the published ladder.",
+                    );
+                    ui.small(format!(
+                        "ladder holds {} bids / {} asks in view",
+                        ladder.bids.len(),
+                        ladder.asks.len()
+                    ));
+                }
                 ui.label(format!(
                     "{} runs · {:.1} MiB retained · projection {:.1} ms",
                     health.archived_runs + health.active_levels,
@@ -1407,6 +1431,37 @@ mod tests {
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
+    }
+
+    #[test]
+    fn the_projection_request_window_clips_the_published_ladder() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 10);
+        // One 99 bid and one 101 ask (see `snapshot_event`).
+        view.handle_depth_event(snapshot_event(10));
+        let bars = [bar(900, 1_100)];
+        view.project_visible(0, &bars, None, true, (100.0, 102.0));
+        view.flush_for_test();
+
+        let ladder = view.published.ladder.as_ref().expect("published ladder");
+        assert!(
+            ladder.bids.is_empty(),
+            "the 99 bid sits outside the 100-102 window"
+        );
+        assert_eq!(prices_of(&ladder.asks), vec![Decimal::from(101)]);
+        // The raw touch survives the clip on both sides.
+        assert_eq!(
+            ladder.best_bid.expect("best bid").price(),
+            Decimal::from(99)
+        );
+        assert_eq!(
+            ladder.best_ask.expect("best ask").price(),
+            Decimal::from(101)
+        );
+    }
+
+    fn prices_of(levels: &[BookLevel]) -> Vec<Decimal> {
+        levels.iter().map(|level| level.price()).collect()
     }
 
     #[test]
