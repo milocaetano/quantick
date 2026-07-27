@@ -37,12 +37,9 @@
 //! from trade order, not ids, so the chart is unaffected; anything keying on
 //! `agg_id` across sessions must not, and this is the place that documents it.
 
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -52,27 +49,18 @@ use quantick_feed_mt5::{
 
 use crate::config::{MetaTraderSettings, Mt5SideSource};
 
-use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle};
+use super::mt5_bridge::{Supervision, supervise};
+use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
 
 /// Depth events are independent from the established trade channel. Sized like
 /// the Binance backend's: a B3 book republishes far faster than the UI drains,
 /// and this absorbs bursts without either dropping deltas or stalling trades.
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 
-/// How long the autostart waits for a bridge that is already running before
-/// launching its own. Long enough for an attached Expert Advisor's reconnect
-/// cycle to notice the port, short enough that a cold start feels immediate.
-const BRIDGE_AUTOSTART_GRACE: Duration = Duration::from_secs(3);
-
-/// Gap between autostart attempts. The common failure is a terminal still
-/// starting up, which resolves in seconds.
-const BRIDGE_AUTOSTART_RETRY: Duration = Duration::from_secs(5);
-
-/// How many times the autostart relaunches an exiting bridge before leaving it
-/// alone. Every remaining failure (terminal closed, unknown symbol, unknown
-/// server offset) needs a human, and retrying it forever only buries the log
-/// line that says so.
-const BRIDGE_AUTOSTART_ATTEMPTS: u32 = 5;
+/// Capacity of the notice channel. Notices are rare (one per connection
+/// transition) and the UI drains every frame; this only has to outlast a
+/// burst of bridge output arriving while the chart is busy.
+const NOTICE_CHANNEL_CAPACITY: usize = 32;
 
 /// Start the MetaTrader feed for `symbol`: listen for the bridge on the
 /// configured address and translate its stream into [`FeedEvent`]s.
@@ -80,6 +68,7 @@ const BRIDGE_AUTOSTART_ATTEMPTS: u32 = 5;
 pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
+    let (notice_tx, notice_rx) = mpsc::channel::<FeedNotice>(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let symbol = symbol.to_string();
     let settings = settings.clone();
@@ -91,12 +80,13 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build feed runtime");
-            runtime.block_on(feed_task(symbol, settings, tx, book_tx, cmd_rx));
+            runtime.block_on(feed_task(symbol, settings, tx, book_tx, notice_tx, cmd_rx));
         })
         .expect("spawn mt5 feed thread");
     FeedHandle {
         events: rx,
         book_events: book_rx,
+        notices: notice_rx,
         commands: cmd_tx,
         replay: None,
     }
@@ -107,6 +97,7 @@ async fn feed_task(
     settings: MetaTraderSettings,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     // Resolve the UI's initial history load immediately: there is no
@@ -127,12 +118,25 @@ async fn feed_task(
     // until it is sure nobody else is already feeding us.
     let bridge_connected = Arc::new(AtomicBool::new(false));
     let autostart = settings.bridge_autostart.then(|| {
-        tokio::spawn(supervise_bridge(
-            symbol.clone(),
+        tokio::spawn(supervise(
             settings.clone(),
-            Arc::clone(&bridge_connected),
+            Supervision {
+                symbol: symbol.clone(),
+                connected: Arc::clone(&bridge_connected),
+                notices: notice_tx.clone(),
+            },
         ))
     });
+    if !settings.bridge_autostart {
+        // Nothing is coming unless the user brings it: say so rather than
+        // leaving an empty chart to be interpreted.
+        let _ = notice_tx
+            .send(FeedNotice::working(format!(
+                "waiting for a MetaTrader bridge on {}",
+                settings.listen_addr
+            )))
+            .await;
+    }
 
     // The switch lives on this side of the server task so UI commands can flip
     // depth capture without disturbing the bridge session or the trade stream.
@@ -154,9 +158,31 @@ async fn feed_task(
             maybe_event = mt5_rx.recv() => {
                 match maybe_event {
                     Some(Mt5Event::Status(status)) => {
-                        if matches!(status, Mt5Status::Connected { .. }) {
-                            bridge_connected.store(true, Ordering::Relaxed);
-                        }
+                        // The connection's own story, told where the user is
+                        // looking. A connected bridge clears whatever the
+                        // startup reported; a lost one replaces it.
+                        let notice = match &status {
+                            Mt5Status::Connected { .. } => {
+                                bridge_connected.store(true, Ordering::Relaxed);
+                                FeedNotice::Clear
+                            }
+                            Mt5Status::Waiting { .. } => FeedNotice::working(
+                                "waiting for the MetaTrader bridge to connect",
+                            ),
+                            // Losing the bridge clears the flag as well as
+                            // reporting it. The supervisor reads the flag as
+                            // "is one feeding us *now*", so a terminal that
+                            // restarts mid-session gets picked back up —
+                            // without this, "reconnecting" is a promise
+                            // nobody keeps.
+                            Mt5Status::Lost { .. } => {
+                                bridge_connected.store(false, Ordering::Relaxed);
+                                FeedNotice::working(
+                                    "the MetaTrader bridge disconnected — reconnecting",
+                                )
+                            }
+                        };
+                        let _ = notice_tx.send(notice).await;
                         log_status(&symbol, &status);
                     }
                     Some(Mt5Event::Backfilled(batch)) => {
@@ -273,123 +299,6 @@ async fn feed_task(
     if let Some(autostart) = autostart {
         autostart.abort();
     }
-}
-
-/// Launch a bridge when nothing else is feeding us, and keep it alive.
-///
-/// Deliberately passive at the start: a bridge that is already running, or an
-/// Expert Advisor attached to a chart, gets the grace period to dial in. Only
-/// silence triggers a launch.
-async fn supervise_bridge(
-    symbol: String,
-    settings: MetaTraderSettings,
-    connected: Arc<AtomicBool>,
-) {
-    let Some((host, port)) = settings.bridge_endpoint() else {
-        warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
-            symbol = %symbol,
-            listen_addr = %settings.listen_addr,
-            action = "wait_for_manual_bridge",
-            "cannot derive a dial address from listen_addr; not starting a bridge"
-        );
-        return;
-    };
-    let Some((program, extra)) = settings.bridge_command.split_first() else {
-        warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
-            symbol = %symbol,
-            action = "wait_for_manual_bridge",
-            "bridge_command is empty; not starting a bridge"
-        );
-        return;
-    };
-
-    tokio::time::sleep(BRIDGE_AUTOSTART_GRACE).await;
-    for attempt in 1..=BRIDGE_AUTOSTART_ATTEMPTS {
-        if connected.load(Ordering::Relaxed) {
-            info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "MT5_BRIDGE_AUTOSTART_NOT_NEEDED",
-                symbol = %symbol,
-                action = "leave_running_bridge_alone",
-                "a bridge is already connected; quantick started none of its own"
-            );
-            return;
-        }
-
-        let mut command = Command::new(program);
-        command
-            .args(extra)
-            .arg("--symbol")
-            .arg(&symbol)
-            .arg("--host")
-            .arg(host)
-            .arg("--port")
-            .arg(port)
-            // The bridge speaks the same structured-log vocabulary, so letting
-            // it write to our streams keeps one story in one place.
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-
-        match command.spawn() {
-            Ok(mut child) => {
-                info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BRIDGE_SPAWNED",
-                    symbol = %symbol,
-                    program = %program,
-                    pid = child.id(),
-                    attempt,
-                    host,
-                    port,
-                    "started a bridge for this feed"
-                );
-                let status = child.wait().await;
-                warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BRIDGE_EXITED",
-                    symbol = %symbol,
-                    attempt,
-                    max_attempts = BRIDGE_AUTOSTART_ATTEMPTS,
-                    status = ?status.map(|s| s.code()),
-                    action = "retry_after_backoff",
-                    "the bridge quantick started has exited"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BRIDGE_SPAWN_FAILED",
-                    symbol = %symbol,
-                    program = %program,
-                    attempt,
-                    %error,
-                    action = "retry_after_backoff",
-                    "could not start the bridge (is it on PATH? is the working directory the repo?)"
-                );
-            }
-        }
-        tokio::time::sleep(BRIDGE_AUTOSTART_RETRY).await;
-    }
-
-    warn!(
-        target: "quantick::app",
-        schema_version = 1_u8,
-        event_code = "MT5_BRIDGE_AUTOSTART_GAVE_UP",
-        symbol = %symbol,
-        attempts = BRIDGE_AUTOSTART_ATTEMPTS,
-        action = "wait_for_manual_bridge",
-        "the bridge would not stay up; read its own log lines above for the reason"
-    );
 }
 
 /// After a fatal listener error, keep answering UI commands honestly (empty

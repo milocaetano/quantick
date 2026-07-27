@@ -21,6 +21,7 @@ mod feed;
 mod live_strip;
 mod loading;
 mod metrics;
+mod notice_card;
 mod orderflow;
 mod orderflow_engine;
 mod orderflow_render;

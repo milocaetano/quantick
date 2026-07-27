@@ -46,6 +46,10 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     FeedHandle {
         events: rx,
         book_events: book_rx,
+        // A public venue needs no local setup, so it has nothing to walk the
+        // user through: its trouble is network trouble, and that already shows
+        // as a stalled feed on the status bar.
+        notices: super::silent_notices(),
         commands: cmd_tx,
         replay: None,
     }
