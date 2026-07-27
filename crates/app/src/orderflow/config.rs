@@ -1,6 +1,7 @@
 //! Sanitized runtime configuration for the order-book heatmap.
 
 use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive as _;
 use serde::{Deserialize, Serialize};
 
 /// Shortest history window accepted by the UI.
@@ -29,6 +30,12 @@ pub const MAX_DISPLAY_GROUP_MULTIPLE: u32 = 1_000_000;
 pub const DEFAULT_BUBBLE_CLUSTER_MS: i64 = 200;
 /// Largest temporal window used to cluster aggressive prints.
 pub const MAX_BUBBLE_CLUSTER_MS: i64 = 2_000;
+/// Default window over which prints too small to read are folded together.
+/// Long enough to gather the dust of a quiet price range, short enough that
+/// the merged bubble still points at a moment rather than at the whole bar.
+pub const DEFAULT_BUBBLE_DUST_MERGE_MS: i64 = 1_500;
+/// Largest window accepted for folding unreadable prints together.
+pub const MAX_BUBBLE_DUST_MERGE_MS: i64 = 30_000;
 /// Default distance accepted when correlating a depth reduction and aggression.
 pub const DEFAULT_LIQUIDITY_CORRELATION_MS: i64 = 250;
 /// Safe upper bound for depth/aggression correlation.
@@ -211,6 +218,15 @@ pub struct BubbleStyle {
     /// impact ring). Raising it trades detail for frame time on a fast tape.
     #[serde(serialize_with = "serialize_short_f32")]
     pub detail_min_radius: f32,
+    /// Whether buy prints too small to be dressed are drawn as an open ring
+    /// instead of a solid dot.
+    ///
+    /// Shape survives where colour does not: at the small end of the radius
+    /// range a green speck and a red speck are the same speck, but a ring and
+    /// a disc still read as two different things. Bubbles large enough to
+    /// carry a halo, a rim and their sphere shading already state their side
+    /// clearly, so this leaves them alone.
+    pub hollow_small_buys: bool,
     /// Whether the fill is a flat disc or a shaded sphere.
     pub render_mode: BubbleRenderMode,
     /// How much a sphere-rendered bubble darkens toward its rim. Zero shades
@@ -295,6 +311,7 @@ impl Default for BubbleStyle {
             outline_width: 1.0,
             halo_strength: 0.12,
             detail_min_radius: 4.0,
+            hollow_small_buys: true,
             // Flat, so merely gaining the sphere option changes no pixels.
             render_mode: BubbleRenderMode::Flat,
             sphere_shading: DEFAULT_SPHERE_SHADING,
@@ -353,6 +370,29 @@ impl BubbleStyle {
         self.trail_length = finite_clamp(self.trail_length, 0.0, 120.0, 18.0);
         self.trail_opacity = finite_clamp(self.trail_opacity, 0.0, 1.0, 0.62);
         self.label_min_radius = finite_clamp(self.label_min_radius, 4.0, 64.0, 16.0);
+    }
+
+    /// Quantity at which a print stops being dust: the exact quantity whose
+    /// bubble lands on [`detail_min_radius`](Self::detail_min_radius), the
+    /// radius below which the renderer drops the halo, rim and impact ring and
+    /// leaves a bare dot.
+    ///
+    /// Inverts the renderer's area mapping — `radius = sqrt(min² + size² ·
+    /// (max² − min²))` at `size² = quantity / reference` — so the threshold
+    /// follows whatever radius range is configured instead of pinning a second
+    /// magic number beside it. `None` means nothing can be dust: no reference
+    /// to size against, or a detail radius already at the minimum.
+    #[must_use]
+    pub fn dust_quantity(&self, reference: Decimal) -> Option<Decimal> {
+        if reference <= Decimal::ZERO || self.detail_min_radius <= self.min_radius {
+            return None;
+        }
+        let span = self.max_radius.powi(2) - self.min_radius.powi(2);
+        if span <= 0.0 {
+            return None;
+        }
+        let size_sq = (self.detail_min_radius.powi(2) - self.min_radius.powi(2)) / span;
+        Decimal::from_f32(size_sq.clamp(0.0, 1.0)).map(|share| reference * share)
     }
 
     /// Exact quantity below which a print is not drawn, if any.
@@ -418,6 +458,14 @@ pub struct HeatmapConfig {
     ///
     /// Zero keeps raw, one-trade-per-bubble projection.
     pub bubble_cluster_ms: i64,
+    /// Temporal window over which prints too small to read are folded into one
+    /// bubble per visual price range.
+    ///
+    /// Zero draws every cluster, however small. The threshold itself is not a
+    /// setting: it is whatever quantity lands on
+    /// [`BubbleStyle::detail_min_radius`], so widening the radius range moves
+    /// the floor with it.
+    pub bubble_dust_merge_ms: i64,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
@@ -470,6 +518,7 @@ impl Default for HeatmapConfig {
             gamma: 1.8,
             show_aggressions: false,
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
+            bubble_dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             bubbles: BubbleStyle::default(),
             show_liquidity_events: true,
             min_unattributed_reduction: 0.5,
@@ -529,6 +578,7 @@ impl HeatmapConfig {
         }
         self.min_unattributed_pull_share = self.min_unattributed_pull_share.clamp(0.0, 1.0);
         self.bubble_cluster_ms = self.bubble_cluster_ms.clamp(0, MAX_BUBBLE_CLUSTER_MS);
+        self.bubble_dust_merge_ms = self.bubble_dust_merge_ms.clamp(0, MAX_BUBBLE_DUST_MERGE_MS);
         self.bubbles.sanitize();
         self.liquidity_correlation_ms = self
             .liquidity_correlation_ms
@@ -564,6 +614,8 @@ mod tests {
         assert!(!config.show_aggressions);
         assert!(!config.any_layer_enabled());
         assert_eq!(config.bubble_cluster_ms, DEFAULT_BUBBLE_CLUSTER_MS);
+        assert_eq!(config.bubble_dust_merge_ms, DEFAULT_BUBBLE_DUST_MERGE_MS);
+        assert!(config.bubbles.hollow_small_buys);
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
         assert!(config.show_liquidity_events);
@@ -587,6 +639,7 @@ mod tests {
             opacity: f32::NAN,
             gamma: -1.0,
             bubble_cluster_ms: i64::MAX,
+            bubble_dust_merge_ms: i64::MAX,
             bubbles: BubbleStyle {
                 opacity: f32::NAN,
                 max_radius: 900.0,
@@ -610,6 +663,7 @@ mod tests {
         assert_eq!(config.opacity, 0.9);
         assert_eq!(config.gamma, 1.0);
         assert_eq!(config.bubble_cluster_ms, MAX_BUBBLE_CLUSTER_MS);
+        assert_eq!(config.bubble_dust_merge_ms, MAX_BUBBLE_DUST_MERGE_MS);
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, MAX_BUBBLE_MAX_RADIUS);
         assert_eq!(config.liquidity_correlation_ms, 0);
@@ -779,12 +833,14 @@ mod tests {
         let zero_rows = HeatmapConfig {
             display_grouping: DisplayGrouping::Adaptive { target_rows: 0 },
             bubble_cluster_ms: -5,
+            bubble_dust_merge_ms: -1,
             liquidity_correlation_ms: i64::MAX,
             ..HeatmapConfig::default()
         }
         .sanitized();
         assert_eq!(zero_rows.display_grouping, DisplayGrouping::default());
         assert_eq!(zero_rows.bubble_cluster_ms, 0);
+        assert_eq!(zero_rows.bubble_dust_merge_ms, 0);
         assert_eq!(
             zero_rows.liquidity_correlation_ms,
             MAX_LIQUIDITY_CORRELATION_MS

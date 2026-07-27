@@ -45,6 +45,18 @@ const AXIS_GUTTER: f32 = 64.0;
 /// Height of the bottom time-axis strip, in pixels (§5 zone 6).
 const TIME_STRIP: f32 = 24.0;
 
+/// Alpha of the last-price line: legible at a glance without competing with a
+/// candle or a bubble for attention.
+const LAST_PRICE_LINE_ALPHA: f32 = 0.55;
+/// Dash length, in pixels, of the last-price line. Dashed so it never reads as
+/// a level someone drew.
+const LAST_PRICE_DASH_PX: f32 = 4.0;
+/// See [`LAST_PRICE_DASH_PX`].
+const LAST_PRICE_GAP_PX: f32 = 4.0;
+/// Ink on the last-price chip. The chip is filled with a saturated candle
+/// colour, so its text is the one place on the chrome that goes dark.
+const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
+
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
 /// Coalesce slider drags into one diagnostic event after the value settles.
@@ -1224,6 +1236,11 @@ impl QuantickApp {
             );
         }
 
+        // Above the flow layers: everything else on the canvas is read against
+        // it. Drawn on the unclipped painter so the chip reaches the gutter.
+        if let Some(bar) = partial.or_else(|| closed.last()) {
+            self.draw_last_price(painter, chart_rect, &scale, bar);
+        }
         self.draw_backfill_divider(painter, chart_rect, total, cw);
         self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
         self.draw_crosshair(painter, chart_rect, &scale);
@@ -1311,6 +1328,59 @@ impl QuantickApp {
             ],
             egui::Stroke::new(1.0_f32, self.grid()),
         );
+    }
+
+    /// The current price: a dashed line across the chart and a solid chip on
+    /// the price axis, coloured by the direction of the bar carrying it.
+    ///
+    /// This is the always-on answer to "am I above or below?" — the question
+    /// every other mark on the canvas is read against, and the one a wall of
+    /// resting liquidity cannot answer on its own.
+    fn draw_last_price(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        scale: &PriceScale,
+        bar: &quantick_engine::Bar,
+    ) {
+        let Some(price) = bar.close.to_f64() else {
+            return;
+        };
+        let y = scale.y(price);
+        if y < chart_rect.top() || y > chart_rect.bottom() {
+            return;
+        }
+        let rgb = if bar.close >= bar.open {
+            self.style.candles.bull_outline
+        } else {
+            self.style.candles.bear_outline
+        };
+        let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+
+        painter.extend(egui::Shape::dashed_line(
+            &[
+                egui::pos2(chart_rect.left(), y),
+                egui::pos2(chart_rect.right(), y),
+            ],
+            egui::Stroke::new(1.0_f32, color.gamma_multiply(LAST_PRICE_LINE_ALPHA)),
+            LAST_PRICE_DASH_PX,
+            LAST_PRICE_GAP_PX,
+        ));
+
+        // Same geometry as the crosshair tag, so the two never disagree about
+        // where a price sits on the axis.
+        let galley = painter.layout_no_wrap(
+            format!("{price:.2}"),
+            egui::FontId::monospace(11.0),
+            LAST_PRICE_CHIP_TEXT,
+        );
+        let text_pos = egui::pos2(chart_rect.right() + 6.0, y - galley.size().y / 2.0);
+        let bg = egui::Rect::from_min_size(
+            text_pos - egui::vec2(3.0, 1.0),
+            galley.size() + egui::vec2(6.0, 2.0),
+        );
+        painter.rect_filled(bg, egui::Rounding::same(2.0), color);
+        painter.galley(text_pos, galley, LAST_PRICE_CHIP_TEXT);
     }
 
     /// Crosshair following the pointer, with the price shown on the axis.

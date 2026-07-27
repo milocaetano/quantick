@@ -202,6 +202,24 @@ const fn side_offset_y(side: Side, offset: f32) -> f32 {
     }
 }
 
+/// Interior alpha of a hollow bubble, as a fraction of the configured fill
+/// alpha: enough tint to keep the disc's area readable, light enough that the
+/// ring is what the eye catches.
+const HOLLOW_FILL_ALPHA: f32 = 0.22;
+/// Ring thickness of a hollow bubble as a fraction of its radius, and the
+/// pixel range it is held to — thin enough to stay a ring on a full-size
+/// sweep, thick enough to survive at dot size.
+const HOLLOW_RING_SCALE: f32 = 0.42;
+/// See [`HOLLOW_RING_SCALE`].
+const HOLLOW_MIN_RING_PX: f32 = 1.2;
+/// See [`HOLLOW_RING_SCALE`].
+const HOLLOW_MAX_RING_PX: f32 = 3.0;
+
+/// Ring thickness of a hollow bubble of this radius.
+fn hollow_ring_width(radius: f32) -> f32 {
+    (radius * HOLLOW_RING_SCALE).clamp(HOLLOW_MIN_RING_PX, HOLLOW_MAX_RING_PX)
+}
+
 /// Gap, in pixels, between a bubble's rim and the halo drawn behind it.
 const HALO_PADDING_PX: f32 = 2.5;
 /// Gap, in pixels, between a bubble's rim and its impact ring.
@@ -418,6 +436,12 @@ fn draw_bubble(
     // read it, which also keeps the per-frame tessellation budget flat no
     // matter how fast the tape runs.
     let dressed = radius >= bubbles.detail_min_radius;
+    // Shape carries the side exactly where colour stops doing it: an undressed
+    // buy is a green speck and an undressed sell a red one, and at that size
+    // the two are the same speck. An open ring is not. Dressed bubbles keep
+    // their fill — halo, rim and sphere shading already say which side they
+    // are, and punching a hole would only undo the shading.
+    let hollow = !dressed && bubbles.hollow_small_buys && matches!(side, Side::Buy);
     let sphere = dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
     if dressed && bubbles.halo_strength > 0.0 {
         painter.circle_filled(
@@ -426,7 +450,21 @@ fn draw_bubble(
             color.gamma_multiply(halo_alpha(size, bubbles)),
         );
     }
-    if sphere {
+    if hollow {
+        let ring = hollow_ring_width(radius);
+        painter.circle_filled(
+            center,
+            radius,
+            color.gamma_multiply(bubbles.opacity * HOLLOW_FILL_ALPHA),
+        );
+        // Stroked on the inside of the radius, so a hollow bubble occupies
+        // exactly the area its quantity earned.
+        painter.circle_stroke(
+            center,
+            (radius - ring / 2.0).max(0.5),
+            egui::Stroke::new(ring, color.gamma_multiply(bubbles.opacity)),
+        );
+    } else if sphere {
         let mut mesh = egui::Mesh::default();
         add_sphere_disc(
             &mut mesh,
@@ -2061,6 +2099,46 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dust threshold is defined by inverting this module's radius
+    /// mapping, but lives in `config` beside the style it reads. This pins the
+    /// two together: a print at the threshold must land exactly on the radius
+    /// where the renderer stops dressing a bubble.
+    #[test]
+    fn the_dust_threshold_lands_on_the_detail_radius() {
+        use rust_decimal::prelude::ToPrimitive as _;
+
+        let bubbles = BubbleStyle::default();
+        let reference = rust_decimal::Decimal::from(400);
+        let dust = bubbles
+            .dust_quantity(reference)
+            .expect("the default style has a detail radius above its minimum");
+        let size = (dust / reference)
+            .to_f32()
+            .expect("the threshold share converts")
+            .sqrt();
+        let radius = bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
+        assert!(
+            (radius - bubbles.detail_min_radius).abs() < 1e-3,
+            "a dust print rendered at {radius}, not {}",
+            bubbles.detail_min_radius
+        );
+    }
+
+    #[test]
+    fn nothing_is_dust_without_a_reference_or_a_detail_radius() {
+        let bubbles = BubbleStyle::default();
+        assert!(bubbles.dust_quantity(rust_decimal::Decimal::ZERO).is_none());
+
+        let flat = BubbleStyle {
+            detail_min_radius: 0.0,
+            ..BubbleStyle::default()
+        };
+        assert!(
+            flat.dust_quantity(rust_decimal::Decimal::from(400))
+                .is_none()
+        );
+    }
 
     fn luminance(rgb: [u8; 3]) -> f32 {
         0.2126 * f32::from(rgb[0]) + 0.7152 * f32::from(rgb[1]) + 0.0722 * f32::from(rgb[2])

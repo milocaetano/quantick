@@ -707,8 +707,15 @@ impl OrderflowView {
                 )
                 .on_hover_text(
                     "bubbles smaller than this are plain dots (no halo, rim or impact ring). \
-                     Raising it buys frame time on a fast tape.",
+                     Raising it buys frame time on a fast tape, and moves the quantity below \
+                     which prints are folded together.",
                 );
+                ui.checkbox(&mut bubbles.hollow_small_buys, "hollow small buys")
+                    .on_hover_text(
+                        "draw undressed buy prints as an open ring instead of a solid dot. At \
+                         that size a green speck and a red speck read the same; a ring and a \
+                         disc do not. Dressed bubbles keep their fill.",
+                    );
             });
 
         egui::CollapsingHeader::new("consumption marks")
@@ -1021,6 +1028,7 @@ impl OrderflowView {
                         // so its whole look (and the preset it came from) stays.
                         show_aggressions: self.config.show_aggressions,
                         bubble_cluster_ms: self.config.bubble_cluster_ms,
+                        bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
                         bubbles: self.config.bubbles.clone(),
                         ..HeatmapConfig::default()
                     };
@@ -1085,6 +1093,24 @@ impl OrderflowView {
                             .on_hover_text(
                                 "merge compatible prints (same side, same price range) inside this window into one bubble; quantities are summed exactly",
                             );
+                            ui.horizontal(|ui| {
+                                ui.label("fold dust");
+                                egui::ComboBox::from_id_salt("heatmap_bubble_dust")
+                                    .selected_text(dust_label(self.config.bubble_dust_merge_ms))
+                                    .show_ui(ui, |ui| {
+                                        for milliseconds in [0, 500, 1_500, 3_000, 10_000] {
+                                            ui.selectable_value(
+                                                &mut self.config.bubble_dust_merge_ms,
+                                                milliseconds,
+                                                dust_label(milliseconds),
+                                            );
+                                        }
+                                    });
+                            })
+                            .response
+                            .on_hover_text(
+                                "a second pass over the prints too small to draw as anything but a dot: inside this window they fold into one bubble per price range. The threshold follows \"detail from px\" — quantities and trade counts are summed exactly",
+                            );
                             self.draw_bubble_controls(ui);
                         });
 
@@ -1107,6 +1133,7 @@ impl OrderflowView {
                         {
                             let defaults = HeatmapConfig::default();
                             self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
+                            self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
                             self.config.bubbles = defaults.bubbles;
                             // No stored preset is on screen any more, so the
                             // picker must not keep claiming one.
@@ -1164,6 +1191,16 @@ fn display_grouping_label(grouping: DisplayGrouping) -> String {
 fn cluster_label(milliseconds: i64) -> String {
     if milliseconds == 0 {
         "Raw".to_owned()
+    } else {
+        format!("{milliseconds} ms")
+    }
+}
+
+fn dust_label(milliseconds: i64) -> String {
+    if milliseconds == 0 {
+        "Off · draw every print".to_owned()
+    } else if milliseconds % 1_000 == 0 {
+        format!("{} s", milliseconds / 1_000)
     } else {
         format!("{milliseconds} ms")
     }

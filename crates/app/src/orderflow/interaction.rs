@@ -266,6 +266,158 @@ pub fn cluster_aggressions<'a>(
     clusters
 }
 
+/// Accumulator folding consecutive dust clusters into one bubble.
+#[derive(Debug)]
+struct DustMerge {
+    key: ClusterKey,
+    cluster: AggressionCluster,
+    price_quantity: Decimal,
+    count: usize,
+}
+
+impl DustMerge {
+    fn new(key: ClusterKey, cluster: AggressionCluster) -> DustMerge {
+        let price_quantity = cluster.price * cluster.quantity;
+        DustMerge {
+            key,
+            cluster,
+            price_quantity,
+            count: 1,
+        }
+    }
+
+    /// Whether `cluster` extends this merge without spanning more than
+    /// `window_ms` from the anchor's first print.
+    fn accepts(&self, key: ClusterKey, cluster: &AggressionCluster, window_ms: i64) -> bool {
+        self.key == key
+            && cluster
+                .last_timestamp_ms
+                .saturating_sub(self.cluster.first_timestamp_ms)
+                <= window_ms
+    }
+
+    fn push(&mut self, other: AggressionCluster) {
+        self.price_quantity += other.price * other.quantity;
+        self.cluster.quantity += other.quantity;
+        self.cluster.matched_quantity += other.matched_quantity;
+        self.cluster.agg_ids.extend(other.agg_ids);
+        self.cluster
+            .liquidity_event_ids
+            .extend(other.liquidity_event_ids);
+        self.cluster.first_timestamp_ms = self
+            .cluster
+            .first_timestamp_ms
+            .min(other.first_timestamp_ms);
+        self.cluster.last_timestamp_ms =
+            self.cluster.last_timestamp_ms.max(other.last_timestamp_ms);
+        self.count += 1;
+    }
+
+    fn finish(mut self) -> AggressionCluster {
+        // A lone cluster is returned exactly as it arrived: merging must be
+        // invisible where there was nothing to merge.
+        if self.count == 1 {
+            return self.cluster;
+        }
+        if self.cluster.quantity > Decimal::ZERO {
+            self.cluster.price = self.price_quantity / self.cluster.quantity;
+        }
+        self.cluster.timestamp_ms = self.cluster.first_timestamp_ms.saturating_add(
+            self.cluster
+                .last_timestamp_ms
+                .saturating_sub(self.cluster.first_timestamp_ms)
+                / 2,
+        );
+        self.cluster.agg_ids.sort_unstable();
+        self.cluster.agg_ids.dedup();
+        self.cluster.liquidity_event_ids.sort_unstable();
+        self.cluster.liquidity_event_ids.dedup();
+        self.cluster.trade_count = self.cluster.agg_ids.len();
+        if let Some(first) = self.cluster.agg_ids.first() {
+            self.cluster.agg_id = *first;
+        }
+        self.cluster
+    }
+}
+
+/// Fold prints too small to draw as anything but a dot into one bubble per
+/// visual price range.
+///
+/// The bulk of a busy tape is dust: clusters whose quantity puts them at the
+/// minimum radius, where neither the fill colour nor the side nudge survives.
+/// Drawn one by one they are a rash of identical specks that says only "trades
+/// happened here"; folded together they become a single mark carrying the same
+/// exact quantity, which is the part worth reading.
+///
+/// A merge is anchored at its first cluster and never spans more than
+/// `window_ms`, so a quiet price range cannot pull unrelated prints together
+/// across the whole visible history, and a cluster above `dust_quantity` both
+/// passes through untouched and closes any open merge — a merged bubble is
+/// always contiguous in time. Quantities, ids and matched evidence are summed:
+/// nothing is dropped, and `trade_count` still reports every aggregate trade
+/// standing behind the mark.
+#[must_use]
+pub fn merge_dust_clusters(
+    clusters: Vec<AggressionCluster>,
+    dust_quantity: Decimal,
+    window_ms: i64,
+) -> Vec<AggressionCluster> {
+    if dust_quantity <= Decimal::ZERO || window_ms <= 0 {
+        return clusters;
+    }
+
+    let mut keyed: Vec<(ClusterKey, AggressionCluster)> = clusters
+        .into_iter()
+        .map(|cluster| {
+            let key = ClusterKey {
+                generation: cluster.generation,
+                side: aggressor_side_key(cluster.side),
+                price_bucket: cluster.price_bucket,
+            };
+            (key, cluster)
+        })
+        .collect();
+    keyed.sort_by(|(a_key, a), (b_key, b)| {
+        a_key
+            .cmp(b_key)
+            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
+
+    let mut merged: Vec<AggressionCluster> = Vec::with_capacity(keyed.len());
+    let mut open: Option<DustMerge> = None;
+    for (key, cluster) in keyed {
+        if cluster.quantity >= dust_quantity {
+            if let Some(pending) = open.take() {
+                merged.push(pending.finish());
+            }
+            merged.push(cluster);
+            continue;
+        }
+        match open.as_mut() {
+            Some(pending) if pending.accepts(key, &cluster, window_ms) => pending.push(cluster),
+            _ => {
+                if let Some(pending) = open.replace(DustMerge::new(key, cluster)) {
+                    merged.push(pending.finish());
+                }
+            }
+        }
+    }
+    if let Some(pending) = open {
+        merged.push(pending.finish());
+    }
+
+    merged.sort_by(|a, b| {
+        a.first_timestamp_ms
+            .cmp(&b.first_timestamp_ms)
+            .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+            .then_with(|| aggressor_side_key(a.side).cmp(&aggressor_side_key(b.side)))
+            .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
+    merged
+}
+
 /// Convert factual grouped transitions into reduction events.
 #[must_use]
 pub fn liquidity_events(transitions: &[LiquidityTransition]) -> Vec<LiquidityEvent> {
@@ -551,6 +703,101 @@ mod tests {
                 .sum::<Decimal>(),
             dec("5")
         );
+    }
+
+    /// One raw cluster per print, which is what the dust merge is handed once
+    /// the temporal clustering has already run.
+    fn raw_clusters(prints: &[Aggression]) -> Vec<AggressionCluster> {
+        cluster_aggressions(prints.iter(), &[coverage(0, None)], grouping(), 0)
+    }
+
+    #[test]
+    fn dust_folds_into_one_bubble_and_conserves_quantity_ids_and_span() {
+        let prints = [
+            aggression(1, 100, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 300, "101", "2", Side::Buy, Some(3)),
+            aggression(3, 500, "100", "1", Side::Buy, Some(3)),
+        ];
+        let clusters = raw_clusters(&prints);
+        assert_eq!(clusters.len(), 3);
+
+        let merged = merge_dust_clusters(clusters, dec("10"), 1_000);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].quantity, dec("4"));
+        assert_eq!(merged[0].agg_ids, [1, 2, 3]);
+        assert_eq!(merged[0].trade_count, 3);
+        assert_eq!(merged[0].first_timestamp_ms, 100);
+        assert_eq!(merged[0].last_timestamp_ms, 500);
+        assert_eq!(merged[0].timestamp_ms, 300);
+        // Quantity-weighted: (100·1 + 101·2 + 100·1) / 4.
+        assert_eq!(merged[0].price, dec("100.5"));
+    }
+
+    #[test]
+    fn a_dust_merge_never_spans_more_than_its_window() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 200, "100", "1", Side::Buy, Some(3)),
+            aggression(3, 900, "100", "1", Side::Buy, Some(3)),
+        ];
+        let merged = merge_dust_clusters(raw_clusters(&prints), dec("10"), 500);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].agg_ids, [1, 2]);
+        assert_eq!(merged[1].agg_ids, [3]);
+    }
+
+    #[test]
+    fn a_readable_print_passes_through_untouched_and_splits_the_merge() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 100, "100", "50", Side::Buy, Some(3)),
+            aggression(3, 200, "100", "1", Side::Buy, Some(3)),
+        ];
+        let merged = merge_dust_clusters(raw_clusters(&prints), dec("10"), 5_000);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[1].agg_ids, [2]);
+        assert_eq!(merged[1].quantity, dec("50"));
+    }
+
+    #[test]
+    fn dust_never_merges_across_side_or_price_range() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 10, "100", "1", Side::Sell, Some(3)),
+            aggression(3, 20, "110", "1", Side::Buy, Some(3)),
+        ];
+        let merged = merge_dust_clusters(raw_clusters(&prints), dec("10"), 5_000);
+        assert_eq!(merged.len(), 3);
+    }
+
+    #[test]
+    fn a_zero_window_or_threshold_draws_every_print() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 10, "100", "1", Side::Buy, Some(3)),
+        ];
+        let clusters = raw_clusters(&prints);
+        assert_eq!(merge_dust_clusters(clusters.clone(), dec("10"), 0).len(), 2);
+        assert_eq!(merge_dust_clusters(clusters, Decimal::ZERO, 5_000).len(), 2);
+    }
+
+    #[test]
+    fn merging_dust_carries_its_matched_evidence_along() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 100, "100", "1", Side::Buy, Some(3)),
+        ];
+        let mut clusters = raw_clusters(&prints);
+        clusters[0].matched_quantity = dec("0.5");
+        clusters[0].liquidity_event_ids = vec![7];
+        clusters[1].matched_quantity = dec("1");
+        clusters[1].liquidity_event_ids = vec![7, 9];
+
+        let merged = merge_dust_clusters(clusters, dec("10"), 5_000);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].matched_quantity, dec("1.5"));
+        assert_eq!(merged[0].liquidity_event_ids, [7, 9]);
+        assert_eq!(merged[0].matched_fraction(), 0.75);
     }
 
     #[test]
