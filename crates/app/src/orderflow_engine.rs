@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use quantick_engine::{Bar, Trade};
-use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
+use quantick_orderbook::{BookLevel, DepthEvent, DepthResyncReason, DepthStatus};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -20,6 +20,12 @@ use crate::orderflow::{
 };
 
 pub(crate) const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
+
+/// Maximum raw book levels per side copied into a published [`BookLadder`].
+/// Bounds the per-batch copy in [`BookEngine::published`] and the memory the
+/// UI clones per frame; deeper books stay fully captured in history, they are
+/// just not republished level-by-level.
+pub(crate) const LADDER_LEVELS_PER_SIDE: usize = 128;
 
 /// Quantize the price window before it keys the projection cache, so a
 /// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a
@@ -300,6 +306,23 @@ impl CaptureStatus {
     }
 }
 
+/// Bounded copy of the current order book, cut best-first around the spread.
+/// Raw exchange levels, not heatmap buckets: each consumer (price axis, live
+/// strip) aggregates them at whatever grouping its own view uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookLadder {
+    /// Highest bid of the whole book, even when it sits outside the window
+    /// the per-side lists were clipped to.
+    pub best_bid: Option<BookLevel>,
+    /// Lowest ask of the whole book, same contract as `best_bid`.
+    pub best_ask: Option<BookLevel>,
+    /// Bid levels best-first (descending price), at most
+    /// [`LADDER_LEVELS_PER_SIDE`], clipped to the last known view window.
+    pub bids: Vec<BookLevel>,
+    /// Ask levels best-first (ascending price), same bounds as `bids`.
+    pub asks: Vec<BookLevel>,
+}
+
 /// One immutable snapshot of everything the UI reads between frames.
 #[derive(Clone)]
 pub struct BookPublished {
@@ -310,6 +333,10 @@ pub struct BookPublished {
     /// without a user action, so the UI mirrors it from here.
     pub base_price_grouping: Decimal,
     pub frame: Option<Arc<VisibleOrderflow>>,
+    /// Current book around the spread; `None` while capture is off or the
+    /// book has no snapshot yet. Shared through `Arc` so the per-frame clone
+    /// of this snapshot stays cheap.
+    pub ladder: Option<Arc<BookLadder>>,
 }
 
 impl BookPublished {
@@ -321,6 +348,7 @@ impl BookPublished {
             live_end_ms: None,
             base_price_grouping: HeatmapConfig::default().price_grouping,
             frame: None,
+            ladder: None,
         }
     }
 }
@@ -356,6 +384,11 @@ pub struct BookEngine {
     /// UI never flashes to an empty heatmap between rebuilds; cleared by hard
     /// resets (symbol change, grouping reset, capture off).
     last_frame: Option<Arc<VisibleOrderflow>>,
+    /// Price window of the newest projection request, kept so published
+    /// ladders clip to what the user is looking at. `None` until the first
+    /// request (or after a symbol reset): the ladder then falls back to the
+    /// best levels of each side.
+    visible_price_window: Option<(Decimal, Decimal)>,
 }
 
 impl BookEngine {
@@ -387,6 +420,7 @@ impl BookEngine {
             projection_cache_hits: 0,
             projection_cache: None,
             last_frame: None,
+            visible_price_window: None,
         }
     }
 
@@ -434,6 +468,9 @@ impl BookEngine {
         self.projection_cache_hits = 0;
         self.projection_cache = None;
         self.last_frame = None;
+        // A new market has a new price scale; the old view window would clip
+        // the ladder to prices that no longer exist.
+        self.visible_price_window = None;
     }
 
     /// Commit a capture toggle only after its feed command was accepted.
@@ -787,6 +824,20 @@ impl BookEngine {
     }
 
     /// Build (or reuse) renderer-independent primitives for one request.
+    /// Remember the view's price window so published ladders clip to what the
+    /// user is looking at. Separate from [`Self::project`] on purpose: the
+    /// worker notes the window for every request, so the ladder keeps
+    /// following the view even while every heatmap layer is toggled off.
+    pub(crate) fn note_price_window(&mut self, price_range: (f64, f64)) {
+        self.visible_price_window = match (
+            Decimal::from_f64(price_range.0),
+            Decimal::from_f64(price_range.1),
+        ) {
+            (Some(low), Some(high)) if low <= high => Some((low, high)),
+            _ => None,
+        };
+    }
+
     pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
@@ -946,7 +997,59 @@ impl BookEngine {
             },
             base_price_grouping: self.config.price_grouping,
             frame: self.last_frame.clone(),
+            ladder: self.ladder(),
         }
+    }
+
+    /// Cut the bounded ladder for [`Self::published`]: the best-first levels
+    /// of each side clipped to the last known view window, plus the raw best
+    /// bid/ask. Runs per event batch, so the work is bounded by construction:
+    /// at most [`LADDER_LEVELS_PER_SIDE`] levels per side are visited through
+    /// `BTreeMap::range` — never a full book scan.
+    fn ladder(&self) -> Option<Arc<BookLadder>> {
+        if !self.config.enabled || !self.history.book().is_initialized() {
+            return None;
+        }
+        let book = self.history.book();
+        // Book levels were validated on ingestion, so re-validation into
+        // `BookLevel` cannot fail; `filter_map` is just the non-panicking way
+        // to say so.
+        let level =
+            |(&price, &quantity): (&Decimal, &Decimal)| BookLevel::new(price, quantity).ok();
+        let (bids, asks): (Vec<BookLevel>, Vec<BookLevel>) = match self.visible_price_window {
+            Some((low, high)) => (
+                book.bids()
+                    .range(low..=high)
+                    .rev()
+                    .take(LADDER_LEVELS_PER_SIDE)
+                    .filter_map(level)
+                    .collect(),
+                book.asks()
+                    .range(low..=high)
+                    .take(LADDER_LEVELS_PER_SIDE)
+                    .filter_map(level)
+                    .collect(),
+            ),
+            None => (
+                book.bids()
+                    .iter()
+                    .rev()
+                    .take(LADDER_LEVELS_PER_SIDE)
+                    .filter_map(level)
+                    .collect(),
+                book.asks()
+                    .iter()
+                    .take(LADDER_LEVELS_PER_SIDE)
+                    .filter_map(level)
+                    .collect(),
+            ),
+        };
+        Some(Arc::new(BookLadder {
+            best_bid: book.best_bid(),
+            best_ask: book.best_ask(),
+            bids,
+            asks,
+        }))
     }
 }
 
@@ -1111,6 +1214,143 @@ mod tests {
             extend_live_end: true,
             price_range,
         }
+    }
+
+    /// A book with `levels_per_side` one-unit-spaced levels on each side:
+    /// bids ending at 999, asks starting at 1 001.
+    fn dense_snapshot(generation: u64, levels_per_side: usize) -> DepthEvent {
+        let bids = (0..levels_per_side)
+            .map(|i| {
+                BookLevel::new(Decimal::from(999) - Decimal::from(i), Decimal::from(i + 1)).unwrap()
+            })
+            .collect();
+        let asks = (0..levels_per_side)
+            .map(|i| {
+                BookLevel::new(
+                    Decimal::from(1_001) + Decimal::from(i),
+                    Decimal::from(i + 1),
+                )
+                .unwrap()
+            })
+            .collect();
+        DepthEvent::Snapshot {
+            symbol: "BTCUSDT".to_owned(),
+            generation,
+            observed_at_ms: 1_100,
+            effective_at_ms: 999,
+            price_step: None,
+            snapshot: BookSnapshot::new(
+                10,
+                bids,
+                asks,
+                BookCoverage::Limited {
+                    levels_per_side: 1_000,
+                },
+            ),
+        }
+    }
+
+    fn prices(levels: &[BookLevel]) -> Vec<Decimal> {
+        levels.iter().map(|level| level.price()).collect()
+    }
+
+    #[test]
+    fn the_published_ladder_is_bounded_and_best_first() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 1);
+        engine.handle_depth_event(dense_snapshot(1, LADDER_LEVELS_PER_SIDE + 2));
+
+        let ladder = engine.published().ladder.expect("ladder");
+        assert_eq!(ladder.bids.len(), LADDER_LEVELS_PER_SIDE);
+        assert_eq!(ladder.asks.len(), LADDER_LEVELS_PER_SIDE);
+        // Best-first on both sides: index 0 is the touch, and the bound cuts
+        // the far end of the book, never the spread.
+        assert_eq!(ladder.bids[0].price(), Decimal::from(999));
+        assert_eq!(ladder.asks[0].price(), Decimal::from(1_001));
+        assert!(
+            ladder
+                .bids
+                .windows(2)
+                .all(|pair| pair[0].price() > pair[1].price())
+        );
+        assert!(
+            ladder
+                .asks
+                .windows(2)
+                .all(|pair| pair[0].price() < pair[1].price())
+        );
+        assert_eq!(
+            ladder.best_bid.expect("best bid").price(),
+            Decimal::from(999)
+        );
+        assert_eq!(
+            ladder.best_ask.expect("best ask").price(),
+            Decimal::from(1_001)
+        );
+    }
+
+    #[test]
+    fn the_ladder_clips_to_the_view_but_keeps_the_raw_touch() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 1);
+        // Bids 996..=999, asks 1 001..=1 004.
+        engine.handle_depth_event(dense_snapshot(1, 4));
+
+        engine.note_price_window((997.5, 1_002.5));
+        let ladder = engine.published().ladder.expect("ladder");
+        assert_eq!(
+            prices(&ladder.bids),
+            vec![Decimal::from(999), Decimal::from(998)]
+        );
+        assert_eq!(
+            prices(&ladder.asks),
+            vec![Decimal::from(1_001), Decimal::from(1_002)]
+        );
+
+        // A window entirely below the spread shows only bids, yet the touch
+        // is still reported from the whole book — the strip needs it to say
+        // "best ask is above the view".
+        engine.note_price_window((900.0, 997.5));
+        let ladder = engine.published().ladder.expect("ladder");
+        assert_eq!(
+            prices(&ladder.bids),
+            vec![Decimal::from(997), Decimal::from(996)]
+        );
+        assert!(ladder.asks.is_empty());
+        assert_eq!(
+            ladder.best_bid.expect("best bid").price(),
+            Decimal::from(999)
+        );
+        assert_eq!(
+            ladder.best_ask.expect("best ask").price(),
+            Decimal::from(1_001)
+        );
+
+        // A degenerate window (NaN mid-pan) falls back to the spread cut
+        // instead of publishing a half-clipped ladder.
+        engine.note_price_window((f64::NAN, 997.5));
+        let ladder = engine.published().ladder.expect("ladder");
+        assert_eq!(ladder.bids.len(), 4);
+        assert_eq!(ladder.asks.len(), 4);
+    }
+
+    #[test]
+    fn no_capture_or_empty_book_publishes_no_ladder() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 1);
+        assert!(
+            engine.published().ladder.is_none(),
+            "no snapshot yet, nothing honest to publish"
+        );
+
+        engine.handle_depth_event(snapshot_event(1));
+        assert!(engine.published().ladder.is_some());
+
+        engine.set_enabled(false, 2);
+        assert!(
+            engine.published().ladder.is_none(),
+            "capture off publishes no ladder"
+        );
     }
 
     #[test]

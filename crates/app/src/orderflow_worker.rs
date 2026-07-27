@@ -151,6 +151,9 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
         }
 
         if let Some(request) = incoming_request {
+            // Noted outside the layer gate below: the published ladder keeps
+            // following the view even when no heatmap layer wants frames.
+            engine.note_price_window(request.price_range);
             last_request = Some(request);
         }
         // Rebuild against the newest known layout. The engine's own cache
