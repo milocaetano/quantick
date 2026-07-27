@@ -581,7 +581,7 @@ pub(crate) struct ProjectedLayout<'a> {
     /// Visual width, in candle-widths, of the last slot (the forming bar). `1.0`
     /// keeps equal-width slots; `> 1.0` expands the forming bar's live tail to
     /// the right so its order flow rolls on a real-time scale instead of
-    /// recompressing every depth update.
+    /// recompressing every time the live edge advances.
     pub(crate) live_span: f32,
 }
 

@@ -866,7 +866,9 @@ impl BookEngine {
             &request.closed,
             request.partial.as_ref(),
             if request.extend_live_end {
-                self.history.latest_book_ms()
+                // The same live edge the chart widens the forming slot with, so
+                // a bubble lands on the x the tail reserved for it.
+                self.history.latest_flow_ms()
             } else {
                 None
             },
@@ -998,9 +1000,11 @@ impl BookEngine {
             health: self.health(),
             // Gated on visibility, not on capture: the live tail and the strip
             // are pixels, and a recorder nobody is watching must not pay for
-            // them.
-            live_end_ms: if self.config.depth_visible() {
-                self.history.latest_book_ms()
+            // them. Which layer is visible does not narrow the clock, though:
+            // market time comes from every stream being recorded, so a venue
+            // that publishes no Depth of Market still has a present.
+            live_end_ms: if self.config.any_layer_enabled() {
+                self.history.latest_flow_ms()
             } else {
                 None
             },
@@ -1361,6 +1365,72 @@ mod tests {
         assert!(
             engine.published().ladder.is_none(),
             "capture off publishes no ladder"
+        );
+    }
+
+    /// The MetaTrader complaint made executable: a feed streaming trades and
+    /// no Depth of Market must still open the forming bar's live region.
+    ///
+    /// Before this, the live edge was the book's clock alone, so a venue with
+    /// no DOM (and a chart with the map hidden) reported no present at all: the
+    /// tail never grew and every print of the forming bar piled up inside the
+    /// single candle slot, exactly where the tape stopped reading as a tape.
+    #[test]
+    fn trades_alone_advance_the_live_edge_and_spread_the_forming_bar() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        let bubbles_only = HeatmapConfig {
+            show_aggressions: true,
+            bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: 0,
+            ..engine.config.clone()
+        };
+        engine.apply_visual_config(bubbles_only);
+        assert!(!engine.depth_visible(), "no book is streaming here");
+
+        let forming = bar(1_000, 1_000);
+        for (agg_id, timestamp_ms) in [(1_u64, 1_000_i64), (2, 3_000), (3, 5_000)] {
+            engine.record_trade(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: Decimal::from(100),
+                quantity: Decimal::ONE,
+                side: Side::Buy,
+            });
+        }
+        assert_eq!(engine.history.latest_book_ms(), None);
+        assert_eq!(engine.published().live_end_ms, Some(5_000));
+
+        let frame = engine
+            .project(&ProjectionRequest {
+                first_bar_index: 0,
+                closed: Vec::new(),
+                partial: Some(forming),
+                extend_live_end: true,
+                price_range: (98.0, 102.0),
+            })
+            .expect("bubbles project without a book");
+
+        let mut positions: Vec<f64> = frame
+            .projection
+            .aggressions
+            .iter()
+            .map(|bubble| bubble.x)
+            .collect();
+        positions.sort_by(f64::total_cmp);
+        assert_eq!(positions.len(), 3);
+        // The forming slot now spans 1 000 → 5 000 ms, so the three prints land
+        // at the start, the middle and the live edge instead of on one x.
+        assert!(
+            (positions[0] - 0.0).abs() < 1e-9,
+            "first print opens the bar"
+        );
+        assert!(
+            (positions[1] - 0.5).abs() < 1e-9,
+            "the middle print is mid-slot"
+        );
+        assert!(
+            (positions[2] - 1.0).abs() < 1e-9,
+            "the newest print is the live edge"
         );
     }
 

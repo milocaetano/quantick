@@ -190,11 +190,16 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// Latest exchange timestamp for which live book state is known, while the
-    /// map is on screen. Drives how wide the forming bar's live tail grows.
+    /// Latest exchange timestamp any visible layer has data for. Drives how
+    /// wide the forming bar's live tail grows.
+    ///
+    /// Deliberately not the book's clock alone: the bubbles are built from the
+    /// trade stream, so tying the tail to Depth of Market froze the live region
+    /// on every feed that has none — the flow kept arriving and kept being
+    /// drawn inside the forming candle's single slot.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
-        if !self.config.depth_visible() {
+        if !self.config.any_layer_enabled() {
             return None;
         }
         self.sync_published();

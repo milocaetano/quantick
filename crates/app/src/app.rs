@@ -1186,7 +1186,8 @@ impl QuantickApp {
             return;
         }
 
-        // Live region: while following a live book, the forming bar grows to
+        // Live region: while following the live edge — the newest timestamp any
+        // recorded stream has reached, book or trades — the forming bar grows to
         // the right on a FIXED time-per-slot scale (the previous bar's
         // duration spread over the full width). Linear growth means an event
         // keeps its exact screen position while the region widens — bubbles
@@ -1200,7 +1201,7 @@ impl QuantickApp {
                 .last()
                 .map(|b| (b.close_time - b.open_time).max(1))
                 .unwrap_or(1_000);
-            // Up to ~55% of the chart for the live book.
+            // Up to ~55% of the chart for the live region.
             let max_span =
                 (chart_rect.width() / self.viewport.candle_width() * 0.55).clamp(8.0, 18.0);
             crate::orderflow_render::live_span_for(elapsed, ref_dur, max_span)

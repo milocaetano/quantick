@@ -236,6 +236,7 @@ pub struct LiquidityHistory {
     generation: Option<u64>,
     last_generation: Option<u64>,
     latest_book_ms: Option<i64>,
+    latest_aggression_ms: Option<i64>,
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
@@ -255,6 +256,7 @@ impl LiquidityHistory {
             generation: None,
             last_generation: None,
             latest_book_ms: None,
+            latest_aggression_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
@@ -331,6 +333,24 @@ impl LiquidityHistory {
     #[must_use]
     pub fn latest_book_ms(&self) -> Option<i64> {
         self.latest_book_ms
+    }
+
+    /// Latest exchange timestamp observed on *any* retained stream.
+    ///
+    /// The live edge of the chart: how far market time has advanced according
+    /// to the data actually being recorded. Depth and trades are two windows
+    /// onto the same clock, and a venue that streams only one of them still has
+    /// a present — asking the book alone froze the forming bar's tail on every
+    /// feed without a Depth of Market.
+    ///
+    /// The trade side is monotonic on purpose: a late-delivered print must not
+    /// pull the live edge backwards and shrink the tail for a frame.
+    #[must_use]
+    pub fn latest_flow_ms(&self) -> Option<i64> {
+        match (self.latest_book_ms, self.latest_aggression_ms) {
+            (Some(book_ms), Some(trade_ms)) => Some(book_ms.max(trade_ms)),
+            (book_ms, trade_ms) => book_ms.or(trade_ms),
+        }
     }
 
     /// Oldest timestamp still renderable under the configured retention
@@ -526,6 +546,10 @@ impl LiquidityHistory {
             generation: self.generation,
         });
         self.counters.aggressions_recorded += 1;
+        self.latest_aggression_ms = Some(
+            self.latest_aggression_ms
+                .map_or(trade.timestamp_ms, |latest| latest.max(trade.timestamp_ms)),
+        );
         let prune_at = self.latest_book_ms.map_or(trade.timestamp_ms, |book_ms| {
             book_ms.max(trade.timestamp_ms)
         });
@@ -553,6 +577,7 @@ impl LiquidityHistory {
         self.book = OrderBook::new();
         self.generation = None;
         self.latest_book_ms = None;
+        self.latest_aggression_ms = None;
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();
@@ -841,6 +866,36 @@ mod tests {
             quantity: dec("2"),
             side,
         }
+    }
+
+    /// A venue with no Depth of Market still has a present. The live edge is
+    /// whatever the recorded streams have seen, so a trade-only feed advances
+    /// it exactly like a book-only one.
+    #[test]
+    fn the_live_edge_follows_trades_when_no_book_is_streaming() {
+        let mut history = LiquidityHistory::new(enabled_config());
+        assert_eq!(history.latest_flow_ms(), None);
+
+        history.record_aggression(&trade(1, 1_000, Side::Buy));
+        assert_eq!(history.latest_aggression_ms, Some(1_000));
+        assert_eq!(history.latest_book_ms(), None);
+        assert_eq!(history.latest_flow_ms(), Some(1_000));
+
+        history.record_aggression(&trade(2, 1_400, Side::Sell));
+        assert_eq!(history.latest_flow_ms(), Some(1_400));
+
+        // A late delivery must not pull the edge back and shrink the tail.
+        history.record_aggression(&trade(3, 1_200, Side::Buy));
+        assert_eq!(history.latest_flow_ms(), Some(1_400));
+
+        // With both streams the edge is the furthest one, whichever it is.
+        history
+            .install_snapshot(2_000, 9, snapshot(1))
+            .expect("snapshot installs");
+        assert_eq!(history.latest_book_ms(), Some(2_000));
+        assert_eq!(history.latest_flow_ms(), Some(2_000));
+        history.record_aggression(&trade(4, 2_500, Side::Sell));
+        assert_eq!(history.latest_flow_ms(), Some(2_500));
     }
 
     #[test]
