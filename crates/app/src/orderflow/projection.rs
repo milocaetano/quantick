@@ -1604,15 +1604,18 @@ mod tests {
     /// live lane's stay separate, because its bar has not finished happening.
     #[test]
     fn the_summary_folds_closed_bars_and_leaves_the_live_lane_alone() {
+        // Five-second bars, so the rolling window is five seconds wide and the
+        // first bar's prints have long left it.
         let trades = [
-            (1_u64, 10_i64, "100", "3", Side::Buy),
-            (2, 20, "100", "1", Side::Sell),
-            (3, 210, "100", "2", Side::Buy),
-            (4, 220, "100", "2", Side::Sell),
+            (1_u64, 1_000_i64, "100", "3", Side::Buy),
+            (2, 2_000, "100", "1", Side::Sell),
+            (3, 16_000, "100", "2", Side::Buy),
+            (4, 17_000, "100", "2", Side::Sell),
         ];
-        let closed = [bar(0, 200)];
-        let partial = bar(200, 250);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(250));
+        let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
+        let partial = bar(15_000, 20_000);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(20_000));
+        assert_eq!(timeline.lane_start_ms(), Some(15_000));
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
         let off = project(&tape(bubbles_only(), &trades), &timeline, prices);
@@ -1667,7 +1670,7 @@ mod tests {
         for index in 0..20_u64 {
             trades.push((
                 index + 1,
-                10 + index as i64 * 5,
+                1_000 + index as i64 * 500,
                 if index % 2 == 0 { "100" } else { "101" },
                 "1",
                 if index % 2 == 0 {
@@ -1677,11 +1680,11 @@ mod tests {
                 },
             ));
         }
-        trades.push((100, 210, "100", "1", Side::Buy));
-        trades.push((101, 215, "100", "1", Side::Sell));
-        trades.push((200, 410, "100", "1", Side::Buy));
-        let closed = [bar(0, 200), bar(200, 400)];
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(400, 450)), Some(450));
+        trades.push((100, 21_000, "100", "1", Side::Buy));
+        trades.push((101, 21_500, "100", "1", Side::Sell));
+        trades.push((200, 41_000, "100", "1", Side::Buy));
+        let closed = [bar(0, 20_000), bar(20_000, 40_000)];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(40_000, 45_000)), Some(45_000));
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
         let summarized = project(
@@ -1746,14 +1749,14 @@ mod tests {
     #[test]
     fn the_lane_clusters_on_its_own_window() {
         let trades = [
-            (1_u64, 10_i64, "100", "1", Side::Buy),
-            (2, 60, "100", "1", Side::Buy),
-            (3, 210, "100", "1", Side::Buy),
-            (4, 260, "100", "1", Side::Buy),
+            (1_u64, 1_000_i64, "100", "1", Side::Buy),
+            (2, 1_050, "100", "1", Side::Buy),
+            (3, 16_000, "100", "1", Side::Buy),
+            (4, 16_050, "100", "1", Side::Buy),
         ];
-        let closed = [bar(0, 200)];
-        let partial = bar(200, 300);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(300));
+        let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
+        let partial = bar(15_000, 20_000);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(20_000));
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
         // History gathers its pair, the lane keeps its prints apart.
@@ -1802,15 +1805,15 @@ mod tests {
     #[test]
     fn no_cluster_spans_the_lane_boundary() {
         let trades = [
-            (1_u64, 240_i64, "100", "1", Side::Buy),
-            (2, 260, "100", "1", Side::Buy),
+            (1_u64, 14_900_i64, "100", "1", Side::Buy),
+            (2, 15_100, "100", "1", Side::Buy),
         ];
-        // Bars of 50 ms, so the window ending at 300 reaches back to 250 and
-        // cuts between the two prints — both of which are in the same bar.
-        let closed = [bar(0, 50), bar(50, 100), bar(100, 150)];
-        let partial = bar(150, 300);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(300));
-        assert_eq!(timeline.lane_start_ms(), Some(250));
+        // A five-second window ending at 20 s reaches back to 15 s and cuts
+        // between the two prints, a fifth of a second apart.
+        let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
+        let partial = bar(15_000, 20_000);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(20_000));
+        assert_eq!(timeline.lane_start_ms(), Some(15_000));
         let projection = project(
             &tape(
                 HeatmapConfig {
@@ -1831,13 +1834,13 @@ mod tests {
     /// chart — and it is only reported for a frame that follows one.
     #[test]
     fn the_live_edge_is_the_right_edge_of_the_lane() {
-        let closed = [bar(0, 200), bar(200, 400)];
-        let history = tape(bubbles_only(), &[(1, 410, "100", "1", Side::Buy)]);
+        let closed = [bar(0, 20_000), bar(20_000, 40_000)];
+        let history = tape(bubbles_only(), &[(1, 41_000, "100", "1", Side::Buy)]);
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
         let following = project(
             &history,
-            &BarTimeline::from_bars(0, &closed, Some(&bar(400, 500)), Some(500)),
+            &BarTimeline::from_bars(0, &closed, Some(&bar(40_000, 50_000)), Some(50_000)),
             prices,
         );
         assert_eq!(
@@ -1848,7 +1851,7 @@ mod tests {
 
         let settled = project(
             &history,
-            &BarTimeline::from_bars(0, &closed, Some(&bar(400, 500)), None),
+            &BarTimeline::from_bars(0, &closed, Some(&bar(40_000, 50_000)), None),
             prices,
         );
         assert_eq!(settled.live_now_x, None);

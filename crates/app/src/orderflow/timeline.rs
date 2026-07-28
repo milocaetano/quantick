@@ -32,6 +32,15 @@ const RESERVE_SAMPLE_BARS: usize = 8;
 /// milliseconds. Only the very first bars of a fresh series see it.
 const DEFAULT_RESERVE_MS: i64 = 1_000;
 
+/// Shortest window the lane will show, in exchange milliseconds.
+///
+/// Bar durations are wildly uneven on an activity-sampled series: a burst
+/// closes a tick bar in well under a second while a quiet stretch takes a
+/// minute, so the median alone can collapse to almost nothing right after a
+/// busy patch and leave the tape empty. Below a few seconds there is no tape
+/// left to read, whatever the bars did.
+const MIN_LANE_SPAN_MS: i64 = 4_000;
+
 /// How much market time the live lane shows: the typical duration of the recent
 /// closed bars.
 ///
@@ -49,11 +58,13 @@ pub fn reserved_span_ms(closed: &[Bar]) -> i64 {
         .take(RESERVE_SAMPLE_BARS)
         .map(|bar| bar.close_time.saturating_sub(bar.open_time).max(1))
         .collect();
-    if durations.is_empty() {
-        return DEFAULT_RESERVE_MS;
-    }
-    durations.sort_unstable();
-    durations[durations.len() / 2]
+    let typical = if durations.is_empty() {
+        DEFAULT_RESERVE_MS
+    } else {
+        durations.sort_unstable();
+        durations[durations.len() / 2]
+    };
+    typical.max(MIN_LANE_SPAN_MS)
 }
 
 /// The rolling window of market time drawn to the right of every bar slot.
@@ -288,23 +299,28 @@ mod tests {
     /// old it is. That is the whole "sliding tape" contract.
     #[test]
     fn the_lane_is_a_window_ending_at_the_live_edge() {
-        // Four closed bars of 100 ms, then a bar that just opened.
-        let closed = [bar(0, 100), bar(100, 200), bar(200, 300), bar(300, 400)];
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(400, 400)), Some(400));
+        // Four closed bars of ten seconds, then a bar that just opened.
+        let closed = [
+            bar(0, 10_000),
+            bar(10_000, 20_000),
+            bar(20_000, 30_000),
+            bar(30_000, 40_000),
+        ];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(40_000, 40_000)), Some(40_000));
 
         // Five bar slots plus the lane; the window is one typical bar wide.
         assert_eq!(timeline.region_count(), 6);
-        assert_eq!(timeline.lane_start_ms(), Some(300));
-        // 401 rather than 400: an instant-wide forming slot still gets the
-        // one-millisecond floor every degenerate slot gets.
-        assert_eq!(timeline.timestamp_range(), Some((0, 401)));
+        assert_eq!(timeline.lane_start_ms(), Some(30_000));
+        // 40_001 rather than 40_000: an instant-wide forming slot still gets
+        // the one-millisecond floor every degenerate slot gets.
+        assert_eq!(timeline.timestamp_range(), Some((0, 40_001)));
 
-        let now = timeline.locate(400).unwrap();
+        let now = timeline.locate(40_000).unwrap();
         assert_eq!(now.fraction, 1.0, "the live edge is the lane's right edge");
         assert_eq!(now.normalized, 1.0);
         // Half a window old, so half a lane to the left — whichever bar it
         // belongs to.
-        let older = timeline.locate(350).unwrap();
+        let older = timeline.locate(35_000).unwrap();
         assert_eq!(older.fraction, 0.5);
         assert!((older.normalized - 5.5 / 6.0).abs() < 1e-9);
         assert_eq!(older.bar_index, 3, "the bar it happened in is still known");
@@ -314,17 +330,17 @@ mod tests {
     /// same distance from the live edge across a bar close.
     #[test]
     fn a_bar_closing_does_not_move_what_is_already_on_the_tape() {
-        let closed = [bar(0, 100), bar(100, 200)];
+        let closed = [bar(0, 10_000), bar(10_000, 20_000)];
         // Same instant, same live edge, but one more bar has closed.
-        let forming = BarTimeline::from_bars(0, &closed, Some(&bar(200, 250)), Some(250));
+        let forming = BarTimeline::from_bars(0, &closed, Some(&bar(20_000, 25_000)), Some(25_000));
         let after_close = BarTimeline::from_bars(
             0,
-            &[bar(0, 100), bar(100, 200), bar(200, 250)],
-            Some(&bar(250, 250)),
-            Some(250),
+            &[bar(0, 10_000), bar(10_000, 20_000), bar(20_000, 25_000)],
+            Some(&bar(25_000, 25_000)),
+            Some(25_000),
         );
 
-        for timestamp in [180, 200, 220, 250] {
+        for timestamp in [18_000, 20_000, 22_000, 25_000] {
             let before = forming.locate(timestamp).unwrap();
             let after = after_close.locate(timestamp).unwrap();
             assert_eq!(
@@ -341,32 +357,42 @@ mod tests {
     /// bar closing. It lands in the slot of the bar it happened in.
     #[test]
     fn a_print_leaves_the_lane_into_the_slot_of_its_own_bar() {
-        let closed = [bar(0, 100), bar(100, 200)];
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(200, 400)), Some(400));
-        // A 100 ms window ending at 400: everything before 300 has left it.
-        assert_eq!(timeline.lane_start_ms(), Some(300));
+        let closed = [bar(0, 10_000), bar(10_000, 20_000)];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(20_000, 40_000)), Some(40_000));
+        // A ten-second window ending at 40 s: everything before 30 s has left.
+        assert_eq!(timeline.lane_start_ms(), Some(30_000));
 
-        let aged_out = timeline.locate(150).unwrap();
+        let aged_out = timeline.locate(15_000).unwrap();
         assert_eq!(aged_out.bar_index, 1);
         // Region 1 of 4 (three bars plus the lane), halfway across its slot.
         assert!((aged_out.normalized - 1.5 / 4.0).abs() < 1e-9);
 
-        let on_tape = timeline.locate(350).unwrap();
+        let on_tape = timeline.locate(35_000).unwrap();
         assert!(on_tape.normalized > 3.0 / 4.0, "still in the lane");
         assert_eq!(on_tape.bar_index, 2);
     }
 
     #[test]
-    fn one_atypical_bar_does_not_calibrate_the_lane() {
-        // A session break stretches one bar far beyond the instrument's rhythm.
-        let closed = [
-            bar(0, 100),
-            bar(100, 200),
-            bar(200, 60_000),
-            bar(60_000, 60_100),
+    fn neither_an_outlier_nor_a_burst_can_wreck_the_window() {
+        // A session break stretches one bar far beyond the instrument's rhythm:
+        // the median ignores it.
+        let broken = [
+            bar(0, 10_000),
+            bar(10_000, 20_000),
+            bar(20_000, 300_000),
+            bar(300_000, 310_000),
         ];
-        assert_eq!(reserved_span_ms(&closed), 100);
-        assert_eq!(reserved_span_ms(&[]), DEFAULT_RESERVE_MS);
+        assert_eq!(reserved_span_ms(&broken), 10_000);
+
+        // A burst closes tick bars in milliseconds. Following the median down
+        // there would leave the tape holding an instant and reading as empty,
+        // which is what the floor is for.
+        let burst = [bar(0, 5), bar(5, 9), bar(9, 20), bar(20, 26)];
+        assert_eq!(reserved_span_ms(&burst), MIN_LANE_SPAN_MS);
+        assert_eq!(
+            reserved_span_ms(&[]),
+            DEFAULT_RESERVE_MS.max(MIN_LANE_SPAN_MS)
+        );
     }
 
     #[test]

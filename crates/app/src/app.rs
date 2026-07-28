@@ -1274,11 +1274,14 @@ impl QuantickApp {
         // blank half-screen — the reading is lost and nothing says why. Panning
         // far enough into history takes the newest bar off screen, and the
         // lane goes with it; that is the only way it stops being drawn.
-        let lane_span = partial
-            .and_then(|_| {
-                self.orderflow
-                    .live_lane_span(chart_rect.width(), self.viewport.candle_width())
-            })
+        // Not gated on there being a forming bar either. Between the trade
+        // that closes one bar and the trade that opens the next there is no
+        // partial, and hanging the tape off it made the lane blink out —
+        // "ficou sem tape do nada, geralmente após fechar um candle" — with
+        // every print in the window jumping into the closed candle and back.
+        let lane_span = self
+            .orderflow
+            .live_lane_span(chart_rect.width(), self.viewport.candle_width())
             .unwrap_or(0.0);
         // Room the viewport keeps to the right of the last bar, so the lane has
         // somewhere to live. It shrinks by the one slot each closing bar
