@@ -413,6 +413,11 @@ pub fn project(
         effective_grouping,
         config.bubble_cluster_ms,
     );
+    // Two sorted halves concatenated are not sorted, and nothing between here
+    // and the final `sort_clusters` may let that order reach the output: the
+    // size reference is a percentile, the correlation below breaks every tie on
+    // cluster fields rather than on position, and both folds re-sort by their
+    // own key. One pass at the end is the guarantee, and one pass is enough.
     aggression_clusters.extend(cluster_aggressions(
         lane_prints,
         &coverage,
@@ -421,7 +426,6 @@ pub fn project(
             .live_lane
             .effective_cluster_ms(config.bubble_cluster_ms),
     ));
-    sort_clusters(&mut aggression_clusters);
     // Computed over every visible cluster, before the display filter below:
     // hiding small prints must not silently rescale the ones left on screen.
     let aggression_reference = size_reference(&aggression_clusters, config);

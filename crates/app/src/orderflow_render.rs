@@ -3244,6 +3244,77 @@ mod tests {
         assert!(readable.contains(&sell_ink), "a readable pie: {readable}");
     }
 
+    /// The lane's radius multiplier has to survive all the way to the circle
+    /// that gets drawn, and it must touch nothing outside the lane.
+    #[test]
+    fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 6.0);
+        let style = OrderflowRenderStyle {
+            bubbles: BubbleStyle {
+                min_radius: 2.0,
+                max_radius: 10.0,
+                detail_min_radius: 100.0, // cheap dots only: one circle each
+                hollow_small_buys: false,
+                halo_strength: 0.0,
+                trail_length: 0.0,
+                show_quantity_labels: false,
+                show_trade_count: false,
+                ..BubbleStyle::default()
+            },
+            live_lane: LiveLaneStyle {
+                radius_scale: 2.0,
+                ..LiveLaneStyle::default()
+            },
+            ..OrderflowRenderStyle::default()
+        };
+
+        let radii = |live: bool| {
+            let mut projection = HeatmapProjection::empty(
+                true,
+                crate::orderflow::EffectiveGrouping::resolve(
+                    crate::orderflow::DisplayGrouping::Native,
+                    rust_decimal::Decimal::ONE,
+                    rust_decimal::Decimal::from(100),
+                ),
+            );
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id: 1,
+                agg_ids: vec![1],
+                generation: None,
+                side: Side::Buy,
+                consumed_side: BookSide::Ask,
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: 1.0,
+                live,
+                price_bucket: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x: 0.5,
+                y: 0.5,
+                size: 1.0,
+            });
+            painted(|painter| {
+                draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
+            })
+        };
+
+        // At full size the radius is the configured maximum, doubled inside
+        // the lane and untouched outside it.
+        let history = radii(false);
+        let lane = radii(true);
+        assert!(
+            history.contains("radius: 10.0"),
+            "history radius: {history}"
+        );
+        assert!(lane.contains("radius: 20.0"), "lane radius: {lane}");
+    }
+
     /// The two sides never both get the side nudge: an even split sits on the
     /// exact price, and the lean grows continuously from there.
     #[test]

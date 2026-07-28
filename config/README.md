@@ -33,6 +33,7 @@ active = "default"        # the preset the panel opens on ("" = none)
 [[presets]]
 name = "default"
 cluster_ms = 200          # merge compatible prints inside this window
+candle_summary = false    # fold each closed bar into one two-sided pie bubble
 
 [presets.bubbles]         # everything visual; every key is optional
 max_radius = 15.0
@@ -43,7 +44,21 @@ side_offset = 3.5         # buys nudged up, sells down, so both sides are readab
 front_width = 3.0         # the vertical consumption mark ("risco")
 trail_length = 18.0       # the glow into the consumed side ("rastro")
 buy_color = [46, 224, 150]  # omit to follow the chart theme
+
+[presets.live_lane]       # the reserved band right of the forming bar
+width_candles = 17.0      # fixed width; it does not collapse when a bar closes
+cluster_ms = 100          # omit to use the same window history uses
+radius_scale = 1.7        # the lane has room to spare, so it can draw bigger
+show_marks = true         # the lane boundary and the live-time line
 ```
+
+The live lane is where prints arrive in real time. It is reserved when the bar
+opens and fills left to right at a fixed pixels-per-ms scale, so nothing already
+drawn ever moves; a bar that runs longer than the recent bars' typical duration
+compresses inside the lane rather than spilling past it. Because history is
+compressed into one slot per bar and the lane is not, the two regions can be
+tuned apart — and `candle_summary` is the setting that leans into that, trading
+a closed bar's intra-bar detail for one readable mark per price range.
 
 A preset only describes how bubbles **look**. Turning the layer on stays a live
 decision in the panel, so having this file can never start capture by itself.

@@ -1249,11 +1249,16 @@ impl QuantickApp {
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
         // respect to candles and uses the same bar-warped viewport coordinates.
+        // The projection reserves a lane exactly when the layout draws one.
+        // Tied to `live_span` rather than restated, because the two decide the
+        // same thing: with them apart, a panned-away chart would still cluster
+        // and size the forming bar's prints as lane prints and then squeeze
+        // them into a single candle slot.
         let orderflow_frame = self.orderflow.project_visible(
             closed_start,
             visible_closed,
             partial_visible,
-            end == total,
+            end == total && live_span > 1.0,
             scale.range(),
         );
         let canvas_background = self.bg();
