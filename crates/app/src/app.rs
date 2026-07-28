@@ -1186,32 +1186,27 @@ impl QuantickApp {
             return;
         }
 
-        // Live region: while following a live book, the forming bar grows to
-        // the right on a FIXED time-per-slot scale (the previous bar's
-        // duration spread over the full width). Linear growth means an event
-        // keeps its exact screen position while the region widens — bubbles
-        // appear where they ate the book and stay put, nothing slides.
-        let live_span = if self.viewport.follows_live()
-            && let Some(bar) = partial
-            && let Some(now) = self.orderflow.live_end_ms()
-        {
-            let elapsed = now - bar.open_time;
-            let ref_dur = closed
-                .last()
-                .map(|b| (b.close_time - b.open_time).max(1))
-                .unwrap_or(1_000);
-            // Up to ~55% of the chart for the live book.
-            let max_span =
-                (chart_rect.width() / self.viewport.candle_width() * 0.55).clamp(8.0, 18.0);
-            crate::orderflow_render::live_span_for(elapsed, ref_dur, max_span)
-        } else {
-            1.0
-        };
-        // The reserved tail shrinks only by the one slot each closing bar
-        // consumes and grows only with the live region. The chart therefore
-        // never steps right on a bar close: compression leaves an empty gap on
-        // the right that the next bar's live region refills, and the chart
-        // only ever drifts left.
+        // Live region: while following a live book the forming bar owns a
+        // reserved lane to its right, fixed in width and in the exchange time
+        // it represents (the recent bars' typical duration, held by the
+        // timeline). The band is there — wide and empty — before the first
+        // print lands in it, and it fills left to right at a constant
+        // pixels-per-ms scale, so nothing already drawn moves. A bar that
+        // outlives that duration compresses inside the lane instead of
+        // spilling past it.
+        let live_span = partial
+            .filter(|_| self.viewport.follows_live())
+            .and_then(|_| {
+                self.orderflow
+                    .live_lane_span(chart_rect.width(), self.viewport.candle_width())
+            })
+            .unwrap_or(1.0);
+        // Room the viewport keeps to the right of the last bar, so the lane has
+        // somewhere to live. It shrinks by the one slot each closing bar
+        // consumes and is immediately restored to the lane's width, which is
+        // what keeps a bar close from stepping the chart sideways: the closing
+        // bar takes its slot, the lane stays exactly where it was, and the
+        // chart only ever drifts left.
         if total < self.last_total_bars {
             self.live_tail_hold = 0.0; // series reset (symbol/feed change)
         } else if total > self.last_total_bars {

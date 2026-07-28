@@ -60,6 +60,27 @@ pub const MAX_READABLE_MIN_RADIUS: f32 = 32.0;
 pub const DEFAULT_SPHERE_SHADING: f32 = 0.55;
 /// Default highlight strength of a sphere-rendered bubble.
 pub const DEFAULT_SPHERE_HIGHLIGHT: f32 = 0.35;
+/// Default width of the live lane, in candle widths. The chart already capped
+/// the forming bar's tail at eighteen candle widths including the candle's own
+/// slot, so the reserved lane opens exactly as wide as the growing one used to
+/// reach.
+pub const DEFAULT_LIVE_LANE_CANDLES: f32 = 17.0;
+/// Narrowest live lane accepted. Below a few candle widths the band stops
+/// being a lane and becomes a second candle.
+pub const MIN_LIVE_LANE_CANDLES: f32 = 4.0;
+/// Widest live lane accepted. Past this the history it is supposed to be read
+/// against has no room left.
+pub const MAX_LIVE_LANE_CANDLES: f32 = 80.0;
+/// Share of the visible chart the lane may occupy when the window is too
+/// narrow to grant its configured width. Not a setting: it is the guard that
+/// keeps a small window from becoming all lane and no history.
+pub const LIVE_LANE_CHART_SHARE: f32 = 0.55;
+/// Default multiplier applied to the bubble radii inside the live lane.
+pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
+/// Bounds accepted for the live lane's radius multiplier.
+pub const MIN_LIVE_LANE_RADIUS_SCALE: f32 = 0.25;
+/// See [`MIN_LIVE_LANE_RADIUS_SCALE`].
+pub const MAX_LIVE_LANE_RADIUS_SCALE: f32 = 4.0;
 
 /// Renderer-only price grouping layered over the exact capture buckets.
 ///
@@ -151,6 +172,18 @@ pub enum BubbleSizeReference {
     VisibleMax,
     /// An explicit quantity, [`BubbleStyle::size_reference_quantity`].
     Fixed,
+}
+
+impl BubbleSizeReference {
+    /// Whether the reference is derived from what is on screen.
+    ///
+    /// The opposite is [`Fixed`](Self::Fixed), pinned so a bubble means the
+    /// same quantity all session — which is exactly why nothing the renderer
+    /// decides is allowed to rescale it.
+    #[must_use]
+    pub fn is_visible(self) -> bool {
+        !matches!(self, Self::Fixed)
+    }
 }
 
 /// How a bubble's fill is painted.
@@ -439,6 +472,110 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
     }
 }
 
+/// How the reserved band right of the forming bar is drawn.
+///
+/// The live lane is where prints arrive in real time, and it is the one region
+/// of the chart with room to spare: history is compressed into equal-width bar
+/// slots, the lane is a fixed band a single bar fills over its whole life. That
+/// room is what earns it settings of its own — a wider radius range reads as
+/// detail here and as overlap anywhere else.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LiveLaneStyle {
+    /// Width of the lane, in candle widths.
+    ///
+    /// Fixed: it is reserved when the bar opens and does not shrink when the
+    /// bar closes, so the chart never steps sideways and the eye always finds
+    /// the present in the same place.
+    pub width_candles: f32,
+    /// Clustering window applied to prints inside the lane.
+    ///
+    /// `None` inherits [`HeatmapConfig::bubble_cluster_ms`]. A shorter window
+    /// than history's buys detail where there is room for it; a longer one
+    /// gathers a fast tape into readable marks.
+    pub cluster_ms: Option<i64>,
+    /// Multiplier applied to both bubble radii inside the lane.
+    pub radius_scale: f32,
+    /// Whether the lane's boundary and its live-time line are drawn.
+    pub show_marks: bool,
+}
+
+impl Default for LiveLaneStyle {
+    fn default() -> Self {
+        Self {
+            width_candles: DEFAULT_LIVE_LANE_CANDLES,
+            cluster_ms: None,
+            radius_scale: DEFAULT_LIVE_LANE_RADIUS_SCALE,
+            show_marks: true,
+        }
+    }
+}
+
+impl LiveLaneStyle {
+    /// Clamp every value into a range the renderer can use.
+    pub fn sanitize(&mut self) {
+        self.width_candles = finite_clamp(
+            self.width_candles,
+            MIN_LIVE_LANE_CANDLES,
+            MAX_LIVE_LANE_CANDLES,
+            DEFAULT_LIVE_LANE_CANDLES,
+        );
+        self.radius_scale = finite_clamp(
+            self.radius_scale,
+            MIN_LIVE_LANE_RADIUS_SCALE,
+            MAX_LIVE_LANE_RADIUS_SCALE,
+            DEFAULT_LIVE_LANE_RADIUS_SCALE,
+        );
+        self.cluster_ms = self
+            .cluster_ms
+            .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
+    }
+
+    /// Lane width, in candle widths, on a chart this wide.
+    ///
+    /// The configured width is granted whenever the window can spare it. On a
+    /// narrow window the lane gives way instead of swallowing the history it
+    /// exists to be read against. The share is measured over the whole forming
+    /// region, so the candle's own slot comes out of it before the lane does.
+    #[must_use]
+    pub fn resolved_width(&self, chart_width: f32, candle_width: f32) -> f32 {
+        let cap = if self.width_candles.is_finite() {
+            self.width_candles
+                .clamp(MIN_LIVE_LANE_CANDLES, MAX_LIVE_LANE_CANDLES)
+        } else {
+            DEFAULT_LIVE_LANE_CANDLES
+        };
+        if !chart_width.is_finite() || !candle_width.is_finite() || candle_width <= 0.0 {
+            return cap;
+        }
+        let available = (chart_width / candle_width) * LIVE_LANE_CHART_SHARE - 1.0;
+        if !available.is_finite() {
+            return cap;
+        }
+        available.clamp(MIN_LIVE_LANE_CANDLES.min(cap), cap)
+    }
+
+    /// Clustering window for prints inside the lane, given history's own.
+    #[must_use]
+    pub fn effective_cluster_ms(&self, history_cluster_ms: i64) -> i64 {
+        self.cluster_ms.unwrap_or(history_cluster_ms).max(0)
+    }
+
+    /// Bubble radius range inside the lane, given the shared bubble style.
+    #[must_use]
+    pub fn scaled_radii(&self, bubbles: &BubbleStyle) -> (f32, f32) {
+        let scale = if self.radius_scale.is_finite() {
+            self.radius_scale
+                .clamp(MIN_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_RADIUS_SCALE)
+        } else {
+            DEFAULT_LIVE_LANE_RADIUS_SCALE
+        };
+        let min = (bubbles.min_radius * scale).clamp(0.0, MAX_BUBBLE_MIN_RADIUS);
+        let max = (bubbles.max_radius * scale).clamp(MIN_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MAX_RADIUS);
+        (min.min(max), max)
+    }
+}
+
 /// Settings shared by history retention and the pure projection layer.
 ///
 /// The two visual layers are independent switches:
@@ -491,10 +628,23 @@ pub struct HeatmapConfig {
     /// [`BubbleStyle::readable_min_radius`], so widening the radius range
     /// moves the floor with it.
     pub bubble_dust_merge_ms: i64,
+    /// Whether the prints of a closed bar are summarized into one bubble per
+    /// visual price range, with buy and sell shown as sectors of a pie.
+    ///
+    /// Off by default. The live lane draws every print as it lands; once the
+    /// bar closes that detail is compressed into a single slot, where the two
+    /// sides stack on top of each other and read as a smear. The summary is
+    /// the alternative: one mark per price range per bar, carrying the summed
+    /// quantity of both sides and showing their proportion instead of hiding
+    /// one behind the other. Prints in the live lane are never summarized —
+    /// they have not finished happening.
+    pub bubble_candle_summary: bool,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
     pub bubbles: BubbleStyle,
+    /// How the reserved band right of the forming bar is drawn and clustered.
+    pub live_lane: LiveLaneStyle,
     /// Whether the depth map is drawn at all — the toolbar's book-heatmap
     /// switch, and the master of the `show_*` flags under it.
     ///
@@ -576,7 +726,9 @@ impl Default for HeatmapConfig {
             show_aggressions: false,
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             bubble_dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
+            bubble_candle_summary: false,
             bubbles: BubbleStyle::default(),
+            live_lane: LiveLaneStyle::default(),
             show_depth: true,
             show_liquidity: true,
             show_buy_aggressions: true,
@@ -662,6 +814,7 @@ impl HeatmapConfig {
         self.bubble_cluster_ms = self.bubble_cluster_ms.clamp(0, MAX_BUBBLE_CLUSTER_MS);
         self.bubble_dust_merge_ms = self.bubble_dust_merge_ms.clamp(0, MAX_BUBBLE_DUST_MERGE_MS);
         self.bubbles.sanitize();
+        self.live_lane.sanitize();
         self.liquidity_correlation_ms = self
             .liquidity_correlation_ms
             .clamp(0, MAX_LIQUIDITY_CORRELATION_MS);
@@ -697,6 +850,23 @@ mod tests {
         assert!(!config.any_layer_enabled());
         assert_eq!(config.bubble_cluster_ms, DEFAULT_BUBBLE_CLUSTER_MS);
         assert_eq!(config.bubble_dust_merge_ms, DEFAULT_BUBBLE_DUST_MERGE_MS);
+        // Summarizing a closed bar throws away the intra-bar detail on
+        // purpose, so nobody gets it without asking.
+        assert!(!config.bubble_candle_summary);
+        // The lane defaults to inheriting every bubble decision history makes:
+        // gaining a region of its own must change no pixels on its own.
+        assert_eq!(config.live_lane, LiveLaneStyle::default());
+        assert_eq!(config.live_lane.cluster_ms, None);
+        assert_eq!(
+            config
+                .live_lane
+                .effective_cluster_ms(config.bubble_cluster_ms),
+            DEFAULT_BUBBLE_CLUSTER_MS
+        );
+        assert_eq!(
+            config.live_lane.scaled_radii(&config.bubbles),
+            (config.bubbles.min_radius, config.bubbles.max_radius)
+        );
         assert!(config.bubbles.hollow_small_buys);
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
@@ -739,6 +909,12 @@ mod tests {
                 max_radius: 900.0,
                 ..BubbleStyle::default()
             },
+            live_lane: LiveLaneStyle {
+                width_candles: f32::NAN,
+                cluster_ms: Some(i64::MIN),
+                radius_scale: 900.0,
+                show_marks: true,
+            },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,
             max_history_bytes: 0,
@@ -760,6 +936,9 @@ mod tests {
         assert_eq!(config.bubble_dust_merge_ms, MAX_BUBBLE_DUST_MERGE_MS);
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, MAX_BUBBLE_MAX_RADIUS);
+        assert_eq!(config.live_lane.width_candles, DEFAULT_LIVE_LANE_CANDLES);
+        assert_eq!(config.live_lane.cluster_ms, Some(0));
+        assert_eq!(config.live_lane.radius_scale, MAX_LIVE_LANE_RADIUS_SCALE);
         assert_eq!(config.liquidity_correlation_ms, 0);
         assert_eq!(config.max_history_runs, 1);
         assert_eq!(config.max_history_bytes, 1_024);
@@ -767,6 +946,60 @@ mod tests {
         assert_eq!(config.max_visible_cells, 1);
         assert_eq!(config.max_aggression_primitives, 1);
         assert_eq!(config.intensity_mode, IntensityMode::VisibleP99);
+    }
+
+    #[test]
+    fn the_lane_keeps_its_width_until_the_window_cannot_spare_it() {
+        let lane = LiveLaneStyle::default();
+        // A roomy chart grants the configured width exactly — the lane is
+        // fixed, not a fraction that drifts with every zoom step.
+        assert_eq!(
+            lane.resolved_width(1_600.0, 10.0),
+            DEFAULT_LIVE_LANE_CANDLES
+        );
+        assert_eq!(lane.resolved_width(900.0, 5.0), DEFAULT_LIVE_LANE_CANDLES);
+        // A narrow window gives way instead of becoming all lane.
+        assert!((lane.resolved_width(400.0, 20.0) - 10.0).abs() < 1e-4);
+        // Degenerate viewports fall back to the configured width.
+        assert_eq!(
+            lane.resolved_width(f32::NAN, 10.0),
+            DEFAULT_LIVE_LANE_CANDLES
+        );
+        assert_eq!(lane.resolved_width(1_600.0, 0.0), DEFAULT_LIVE_LANE_CANDLES);
+
+        let wide = LiveLaneStyle {
+            width_candles: 40.0,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(wide.resolved_width(1_600.0, 10.0), 40.0);
+    }
+
+    #[test]
+    fn the_lane_overrides_only_what_it_was_given() {
+        let bubbles = BubbleStyle::default();
+        let tuned = LiveLaneStyle {
+            cluster_ms: Some(50),
+            radius_scale: 2.0,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(tuned.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 50);
+        let (min, max) = tuned.scaled_radii(&bubbles);
+        assert!((min - bubbles.min_radius * 2.0).abs() < 1e-4);
+        assert!((max - bubbles.max_radius * 2.0).abs() < 1e-4);
+        // Even an absurd scale stays inside the radius bounds the renderer
+        // was built for, and never inverts the range.
+        let huge = LiveLaneStyle {
+            radius_scale: MAX_LIVE_LANE_RADIUS_SCALE,
+            ..LiveLaneStyle::default()
+        };
+        let (min, max) = huge.scaled_radii(&BubbleStyle {
+            min_radius: MAX_BUBBLE_MIN_RADIUS,
+            max_radius: MAX_BUBBLE_MAX_RADIUS,
+            ..BubbleStyle::default()
+        });
+        assert!(min <= max);
+        assert!(max <= MAX_BUBBLE_MAX_RADIUS);
+        assert!(min <= MAX_BUBBLE_MIN_RADIUS);
     }
 
     #[test]

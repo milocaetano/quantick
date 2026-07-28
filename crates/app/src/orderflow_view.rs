@@ -23,7 +23,9 @@ use crate::live_strip;
 use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
-    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
+    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_CANDLES,
+    MAX_LIVE_LANE_RADIUS_SCALE, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_CANDLES,
+    MIN_LIVE_LANE_RADIUS_SCALE,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
@@ -31,8 +33,8 @@ use crate::orderflow_engine::{
 };
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview,
-    theme_bubble_rgb,
+    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks,
+    draw_preview, theme_bubble_rgb,
 };
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
@@ -191,7 +193,7 @@ impl OrderflowView {
     }
 
     /// Latest exchange timestamp for which live book state is known, while the
-    /// map is on screen. Drives how wide the forming bar's live tail grows.
+    /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
         if !self.config.depth_visible() {
@@ -199,6 +201,25 @@ impl OrderflowView {
         }
         self.sync_published();
         self.published.live_end_ms
+    }
+
+    /// Visual width of the forming bar's slot, in candle widths: its own slot
+    /// plus the live lane reserved to its right.
+    ///
+    /// Fixed, and reserved from the moment the bar opens. The lane does not
+    /// grow out of the candle and does not collapse back into it when the bar
+    /// closes, so the chart never steps sideways and market time always walks
+    /// the same distance per second. `None` when there is no live edge to
+    /// follow, which leaves the forming bar a plain one-wide slot.
+    #[must_use]
+    pub fn live_lane_span(&mut self, chart_width: f32, candle_width: f32) -> Option<f32> {
+        self.live_end_ms()?;
+        Some(
+            1.0 + self
+                .config
+                .live_lane
+                .resolved_width(chart_width, candle_width),
+        )
     }
 
     #[cfg(test)]
@@ -371,6 +392,7 @@ impl OrderflowView {
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(painter, &context);
+        draw_live_lane_marks(painter, &context);
         draw_liquidity_events(painter, &context);
     }
 
@@ -719,6 +741,70 @@ impl OrderflowView {
     /// Every visual choice for the bubbles themselves, grouped so the section
     /// stays readable: size and placement, the marks a consuming print leaves,
     /// labels, and colour.
+    /// The live lane's own settings: the reserved band right of the forming
+    /// bar, which has room the compressed history does not.
+    fn draw_live_lane_controls(&mut self, ui: &mut egui::Ui) {
+        let inherited = self.config.bubble_cluster_ms;
+        let lane = &mut self.config.live_lane;
+
+        egui::CollapsingHeader::new("live lane")
+            .id_salt("bubble_live_lane_section")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("width");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut lane.width_candles,
+                            MIN_LIVE_LANE_CANDLES..=MAX_LIVE_LANE_CANDLES,
+                        )
+                        .suffix(" candles"),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "how much room the forming bar's lane reserves. Fixed: it is there from the moment the bar opens and does not collapse when the bar closes, so the chart never steps sideways. A narrow window still gives history priority",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("cluster");
+                    egui::ComboBox::from_id_salt("bubble_live_lane_cluster")
+                        .selected_text(lane_cluster_label(lane.cluster_ms, inherited))
+                        .show_ui(ui, |ui| {
+                            for window in [None, Some(0), Some(50), Some(100), Some(200), Some(500)]
+                            {
+                                ui.selectable_value(
+                                    &mut lane.cluster_ms,
+                                    window,
+                                    lane_cluster_label(window, inherited),
+                                );
+                            }
+                        });
+                })
+                .response
+                .on_hover_text(
+                    "clustering window for prints inside the lane. A shorter one than history's buys detail where there is room for it; \"same as history\" keeps the two regions identical",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("bubble size");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut lane.radius_scale,
+                            MIN_LIVE_LANE_RADIUS_SCALE..=MAX_LIVE_LANE_RADIUS_SCALE,
+                        )
+                        .suffix("×"),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "multiplies both bubble radii inside the lane only. The lane is the one region with room to spare, so a wider range reads as detail here and as overlap anywhere else",
+                );
+                ui.checkbox(&mut lane.show_marks, "boundary and live-time line")
+                    .on_hover_text(
+                        "the dashed line where the forming candle ends and the lane opens, and the line market time has walked to inside it. Space right of that line is time the lane is holding open, not liquidity that vanished",
+                    );
+            });
+    }
+
     fn draw_bubble_controls(&mut self, ui: &mut egui::Ui) {
         let theme_rgb = theme_bubble_rgb(self.config.theme);
         let bubbles = &mut self.config.bubbles;
@@ -1258,7 +1344,9 @@ impl OrderflowView {
                         show_aggressions: self.config.show_aggressions,
                         bubble_cluster_ms: self.config.bubble_cluster_ms,
                         bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
+                        bubble_candle_summary: self.config.bubble_candle_summary,
                         bubbles: self.config.bubbles.clone(),
+                        live_lane: self.config.live_lane.clone(),
                         ..HeatmapConfig::default()
                     };
                 }
@@ -1340,6 +1428,14 @@ impl OrderflowView {
                             .on_hover_text(
                                 "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" — quantities and trade counts are summed exactly",
                             );
+                            ui.checkbox(
+                                &mut self.config.bubble_candle_summary,
+                                "summarize closed bars",
+                            )
+                            .on_hover_text(
+                                "once a bar closes, fold its prints into one bubble per price range carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. Quantities, ids and matched evidence are summed exactly; the live lane is never summarized",
+                            );
+                            self.draw_live_lane_controls(ui);
                             self.draw_bubble_controls(ui);
                         });
 
@@ -1363,7 +1459,9 @@ impl OrderflowView {
                             let defaults = HeatmapConfig::default();
                             self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
                             self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
+                            self.config.bubble_candle_summary = defaults.bubble_candle_summary;
                             self.config.bubbles = defaults.bubbles;
+                            self.config.live_lane = defaults.live_lane;
                             // No stored preset is on screen any more, so the
                             // picker must not keep claiming one.
                             self.presets.active.clear();
@@ -1422,6 +1520,14 @@ fn cluster_label(milliseconds: i64) -> String {
         "Raw".to_owned()
     } else {
         format!("{milliseconds} ms")
+    }
+}
+
+fn lane_cluster_label(window: Option<i64>, inherited: i64) -> String {
+    match window {
+        None => format!("Same as history · {}", dust_label(inherited)),
+        Some(0) => "Raw · one bubble per print".to_owned(),
+        Some(milliseconds) => dust_label(milliseconds),
     }
 }
 
@@ -1519,22 +1625,33 @@ mod tests {
 
     #[test]
     fn presets_apply_only_the_bubble_section() {
+        use crate::orderflow::LiveLaneStyle;
         let mut view = OrderflowView::new("BTCUSDT");
         let before = view.config.clone();
         view.presets.upsert(BubblePreset {
             name: "wide".to_owned(),
             cluster_ms: 100,
             dust_merge_ms: 3_000,
+            candle_summary: true,
             bubbles: BubbleStyle {
                 max_radius: 42.0,
                 side_offset: 8.0,
                 ..BubbleStyle::default()
+            },
+            live_lane: LiveLaneStyle {
+                width_candles: 30.0,
+                cluster_ms: Some(50),
+                radius_scale: 1.6,
+                show_marks: true,
             },
         });
         view.apply_preset("wide");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
+        assert!(view.config.bubble_candle_summary);
+        assert_eq!(view.config.live_lane.width_candles, 30.0);
+        assert_eq!(view.config.live_lane.cluster_ms, Some(50));
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.

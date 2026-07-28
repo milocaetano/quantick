@@ -3,13 +3,13 @@
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use super::config::{BubbleSizeReference, IntensityMode};
+use super::config::{BubbleSizeReference, HeatmapConfig, IntensityMode};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
 use super::interaction::{
     AggressionCluster, cluster_aggressions, correlate_liquidity, liquidity_events,
-    merge_dust_clusters,
+    merge_dust_clusters, sort_clusters, summarize_clusters,
 };
 use super::timeline::BarTimeline;
 
@@ -79,6 +79,17 @@ pub struct AggressionPrimitive {
     pub consumed_side: RestingSide,
     /// Exact execution quantity.
     pub quantity: Decimal,
+    /// `[0,1]` share of [`quantity`](Self::quantity) taken by buyers.
+    ///
+    /// `1.0` or `0.0` on the single-sided bubbles that make up the tape.
+    /// Anything between is a closed-bar summary carrying both sides, which the
+    /// renderer draws as a pie. Computed here rather than at draw time: the
+    /// projection runs on its own thread every few hundred milliseconds, the
+    /// renderer runs every frame and must not divide `Decimal`s per bubble.
+    pub buy_share: f32,
+    /// Whether this bubble is in the live lane — the reserved band right of
+    /// the forming bar, where the lane's own radius range applies.
+    pub live: bool,
     /// Inclusive lower edge of the visual price range.
     pub price_bucket: Decimal,
     /// Number of aggregate trades represented by this bubble.
@@ -184,12 +195,22 @@ pub struct HeatmapProjection {
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps.
     pub gaps: Vec<GapPrimitive>,
+    /// Normalized x the live edge has reached inside the lane, and the signal
+    /// that this frame has a lane at all. `None` when it follows no live edge.
+    ///
+    /// The lane's left boundary is not carried here: it is the forming slot's
+    /// own edge, which the layout already knows from the slot count.
+    pub live_now_x: Option<f64>,
     /// Exact visual grouping resolved for this frame.
     pub effective_grouping: EffectiveGrouping,
     /// Quantity that maps to full cell intensity.
     pub liquidity_reference: Decimal,
-    /// Quantity that maps to full aggression size.
+    /// Quantity that maps to full aggression size for a single-print bubble.
     pub aggression_reference: Decimal,
+    /// Quantity that maps to full size for a closed-bar summary. Equal to
+    /// [`aggression_reference`](Self::aggression_reference) whenever nothing
+    /// is summarized, which is when both regions share one size scale.
+    pub summary_reference: Decimal,
     /// Cells omitted by the configured primitive cap.
     pub dropped_cells: usize,
     /// Aggressions omitted by the configured primitive cap.
@@ -199,16 +220,20 @@ pub struct HeatmapProjection {
 }
 
 impl HeatmapProjection {
-    fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
+    /// A frame with nothing to draw. Also the seed the render tests build a
+    /// projection from, so they exercise the same struct the pipeline emits.
+    pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
             cells: Vec::new(),
             aggressions: Vec::new(),
             liquidity_events: Vec::new(),
             gaps: Vec::new(),
+            live_now_x: None,
             effective_grouping,
             liquidity_reference: Decimal::ZERO,
             aggression_reference: Decimal::ZERO,
+            summary_reference: Decimal::ZERO,
             dropped_cells: 0,
             dropped_aggressions: 0,
             dropped_liquidity_events: 0,
@@ -371,31 +396,35 @@ pub fn project(
         })
         .collect();
 
-    let visible_aggressions: Vec<_> = history
+    // The live lane is clustered apart from history, with its own window. The
+    // split is also what keeps a cluster from straddling the boundary: half a
+    // bubble cannot be both a print still arriving and a settled summary.
+    let lane_start_ms = timeline.live_start_ms();
+    let in_lane = |timestamp_ms: i64| lane_start_ms.is_some_and(|start| timestamp_ms >= start);
+    let (lane_prints, history_prints): (Vec<_>, Vec<_>) = history
         .aggressions()
         .filter(|trade| {
             timeline.locate(trade.timestamp_ms).is_some() && prices.y(trade.price).is_some()
         })
-        .collect();
+        .partition(|trade| in_lane(trade.timestamp_ms));
     let mut aggression_clusters = cluster_aggressions(
-        visible_aggressions,
+        history_prints,
         &coverage,
         effective_grouping,
         config.bubble_cluster_ms,
     );
+    aggression_clusters.extend(cluster_aggressions(
+        lane_prints,
+        &coverage,
+        effective_grouping,
+        config
+            .live_lane
+            .effective_cluster_ms(config.bubble_cluster_ms),
+    ));
+    sort_clusters(&mut aggression_clusters);
     // Computed over every visible cluster, before the display filter below:
     // hiding small prints must not silently rescale the ones left on screen.
-    let aggression_reference = match config.bubbles.size_reference {
-        BubbleSizeReference::VisibleP99 => {
-            percentile_99(aggression_clusters.iter().map(|cluster| cluster.quantity))
-        }
-        BubbleSizeReference::VisibleMax => aggression_clusters
-            .iter()
-            .map(|cluster| cluster.quantity)
-            .max()
-            .unwrap_or(Decimal::ZERO),
-        BubbleSizeReference::Fixed => config.bubbles.fixed_reference_decimal().unwrap_or_default(),
-    };
+    let aggression_reference = size_reference(&aggression_clusters, config);
 
     let mut events = if config.liquidity_events_enabled() {
         liquidity_events(&grouped.transitions)
@@ -456,16 +485,52 @@ pub fn project(
         aggression_clusters.retain(|cluster| cluster.quantity >= floor);
     }
 
-    // Readability floor. Association already happened, so folding the dust
-    // together moves no evidence: a merged bubble carries the summed quantity
-    // and the union of the event ids its parts pointed at. Sized against the
-    // reference computed above, which is deliberately *not* recomputed —
-    // merging is a drawing decision and must not rescale the bubbles that were
-    // already readable.
+    // Readability floor, then the closed-bar summary. Association already
+    // happened, so folding moves no evidence: a merged bubble carries the
+    // summed quantity and the union of the event ids its parts pointed at.
+    // Sized against the reference computed above, which is deliberately *not*
+    // recomputed — merging is a drawing decision and must not rescale the
+    // bubbles that were already readable.
+    //
+    // Both folds run per region. A cluster never straddles the lane boundary,
+    // so splitting on its first print is exact, and it keeps the lane's live
+    // prints out of a summary that would claim their bar is over.
+    let (mut lane_clusters, mut history_clusters): (Vec<_>, Vec<_>) = aggression_clusters
+        .into_iter()
+        .partition(|cluster| in_lane(cluster.first_timestamp_ms));
     if let Some(dust) = config.bubbles.dust_quantity(aggression_reference) {
-        aggression_clusters =
-            merge_dust_clusters(aggression_clusters, dust, config.bubble_dust_merge_ms);
+        history_clusters = merge_dust_clusters(history_clusters, dust, config.bubble_dust_merge_ms);
+        lane_clusters = merge_dust_clusters(lane_clusters, dust, config.bubble_dust_merge_ms);
     }
+    // Both sides have to be on screen for a two-sided mark to be honest: a
+    // bubble summing buys and sells would lie about its size if one of them
+    // were hidden.
+    let summarizing =
+        config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
+    if summarizing {
+        history_clusters = summarize_clusters(history_clusters, |cluster| {
+            timeline
+                .locate(cluster.timestamp_ms)
+                .map(|position| position.bar_index)
+        });
+    }
+    // While both regions draw the same kind of mark they share one size scale,
+    // so an area means the same thing everywhere. The summary breaks that
+    // premise: history's marks become whole bars and the lane's stay single
+    // prints, quantities an order of magnitude apart, and one shared reference
+    // would peg every summary at the largest radius while flattening the lane
+    // into dots. Each region then gets its own reference — pies stay
+    // comparable with pies, prints with prints — except under a fixed
+    // reference, where the user pinned an absolute quantity precisely so that
+    // nothing on screen may rescale it.
+    let summary_reference = if summarizing && config.bubbles.size_reference.is_visible() {
+        size_reference(&history_clusters, config)
+    } else {
+        aggression_reference
+    };
+    aggression_clusters = history_clusters;
+    aggression_clusters.extend(lane_clusters);
+    sort_clusters(&mut aggression_clusters);
 
     let dropped_aggressions = if config.show_aggressions {
         aggression_clusters
@@ -529,8 +594,14 @@ pub fn project(
         .filter_map(|cluster| {
             let x = timeline.locate(cluster.timestamp_ms)?.normalized;
             let y = prices.y(cluster.price)?;
-            let size = normalized_area_size(cluster.quantity, aggression_reference);
-            Some(aggression_primitive(cluster, x, y, size))
+            let live = in_lane(cluster.first_timestamp_ms);
+            let reference = if live {
+                aggression_reference
+            } else {
+                summary_reference
+            };
+            let size = normalized_area_size(cluster.quantity, reference);
+            Some(aggression_primitive(cluster, x, y, size, live))
         })
         .collect();
 
@@ -601,12 +672,31 @@ pub fn project(
         aggressions,
         liquidity_events,
         gaps,
+        live_now_x: timeline
+            .live_now_position()
+            .map(|position| position.normalized),
         effective_grouping,
         liquidity_reference,
         aggression_reference,
+        summary_reference,
         dropped_cells,
         dropped_aggressions,
         dropped_liquidity_events,
+    }
+}
+
+/// Quantity that maps to a full-size bubble for this set of clusters.
+fn size_reference(clusters: &[AggressionCluster], config: &HeatmapConfig) -> Decimal {
+    match config.bubbles.size_reference {
+        BubbleSizeReference::VisibleP99 => {
+            percentile_99(clusters.iter().map(|cluster| cluster.quantity))
+        }
+        BubbleSizeReference::VisibleMax => clusters
+            .iter()
+            .map(|cluster| cluster.quantity)
+            .max()
+            .unwrap_or(Decimal::ZERO),
+        BubbleSizeReference::Fixed => config.bubbles.fixed_reference_decimal().unwrap_or_default(),
     }
 }
 
@@ -615,8 +705,10 @@ fn aggression_primitive(
     x: f64,
     y: f64,
     size: f32,
+    live: bool,
 ) -> AggressionPrimitive {
     let matched_fraction = cluster.matched_fraction();
+    let buy_share = cluster.buy_share();
     AggressionPrimitive {
         agg_id: cluster.agg_id,
         agg_ids: cluster.agg_ids,
@@ -624,6 +716,8 @@ fn aggression_primitive(
         side: cluster.side,
         consumed_side: cluster.consumed_side,
         quantity: cluster.quantity,
+        buy_share,
+        live,
         price_bucket: cluster.price_bucket,
         trade_count: cluster.trade_count,
         first_timestamp_ms: cluster.first_timestamp_ms,
@@ -678,7 +772,7 @@ pub(crate) fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::config::{BubbleStyle, DisplayGrouping, HeatmapConfig};
+    use crate::orderflow::config::{BubbleStyle, DisplayGrouping, LiveLaneStyle};
     use crate::orderflow::history::LiquidityHistory;
     use quantick_engine::{Bar, Side, Trade};
     use quantick_orderbook::BookSide;
@@ -1467,6 +1561,286 @@ mod tests {
                 .iter()
                 .any(|cell| cell.x1 > 0.9 && cell.x1 < 1.0)
         );
+    }
+
+    /// Bubbles only: no book, so nothing but the tape decides what is drawn.
+    fn tape(config: HeatmapConfig, trades: &[(u64, i64, &str, &str, Side)]) -> LiquidityHistory {
+        let mut history = LiquidityHistory::new(config);
+        for (agg_id, timestamp_ms, price, quantity, side) in trades {
+            history.record_aggression(&Trade {
+                agg_id: *agg_id,
+                timestamp_ms: *timestamp_ms,
+                price: dec(price),
+                quantity: dec(quantity),
+                side: *side,
+            });
+        }
+        history
+    }
+
+    fn bubbles_only() -> HeatmapConfig {
+        HeatmapConfig {
+            enabled: false,
+            show_aggressions: true,
+            price_grouping: Decimal::ONE,
+            display_grouping: DisplayGrouping::Native,
+            bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: 0,
+            bubbles: BubbleStyle {
+                readable_min_radius: 0.0,
+                ..BubbleStyle::default()
+            },
+            ..HeatmapConfig::default()
+        }
+    }
+
+    /// A closed bar's opposing prints collapse into one two-sided mark; the
+    /// live lane's stay separate, because its bar has not finished happening.
+    #[test]
+    fn the_summary_folds_closed_bars_and_leaves_the_live_lane_alone() {
+        let trades = [
+            (1_u64, 10_i64, "100", "3", Side::Buy),
+            (2, 20, "100", "1", Side::Sell),
+            (3, 210, "100", "2", Side::Buy),
+            (4, 220, "100", "2", Side::Sell),
+        ];
+        let closed = [bar(0, 200)];
+        let partial = bar(200, 250);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(250));
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        let off = project(&tape(bubbles_only(), &trades), &timeline, prices);
+        assert_eq!(off.aggressions.len(), 4, "the default draws every print");
+        assert!(
+            off.aggressions
+                .iter()
+                .all(|bubble| bubble.buy_share == 1.0 || bubble.buy_share == 0.0),
+            "no mark carries both sides until the summary is switched on"
+        );
+
+        let summarized = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_candle_summary: true,
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            prices,
+        );
+        // The closed bar became one pie; the lane's two prints are untouched.
+        assert_eq!(summarized.aggressions.len(), 3);
+        let pies: Vec<_> = summarized
+            .aggressions
+            .iter()
+            .filter(|bubble| bubble.buy_share > 0.0 && bubble.buy_share < 1.0)
+            .collect();
+        assert_eq!(pies.len(), 1);
+        assert_eq!(pies[0].quantity, dec("4"));
+        assert!((pies[0].buy_share - 0.75).abs() < 1e-6);
+        assert!(!pies[0].live, "a summary belongs to a bar that is over");
+        assert_eq!(
+            summarized
+                .aggressions
+                .iter()
+                .filter(|bubble| bubble.live)
+                .count(),
+            2,
+            "both live prints keep their own mark"
+        );
+    }
+
+    /// A summary carries a whole bar's quantity. Sized against the reference
+    /// single prints set, every one of them would peg at the largest radius
+    /// and the summaries would stop saying anything about each other.
+    #[test]
+    fn a_summary_is_sized_against_summaries_and_a_pinned_reference_never_moves() {
+        // One busy bar and one quiet one, both closed, plus a live print.
+        let mut trades: Vec<(u64, i64, &str, &str, Side)> = Vec::new();
+        for index in 0..20_u64 {
+            trades.push((
+                index + 1,
+                10 + index as i64 * 5,
+                if index % 2 == 0 { "100" } else { "101" },
+                "1",
+                if index % 2 == 0 {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                },
+            ));
+        }
+        trades.push((100, 210, "100", "1", Side::Buy));
+        trades.push((101, 215, "100", "1", Side::Sell));
+        trades.push((200, 410, "100", "1", Side::Buy));
+        let closed = [bar(0, 200), bar(200, 400)];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(400, 450)), Some(450));
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        let summarized = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_candle_summary: true,
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            prices,
+        );
+        // History is measured against history, the lane against the tape.
+        assert!(summarized.summary_reference > summarized.aggression_reference);
+        let busiest = summarized
+            .aggressions
+            .iter()
+            .filter(|bubble| !bubble.live)
+            .map(|bubble| bubble.size)
+            .fold(0.0_f32, f32::max);
+        let quietest = summarized
+            .aggressions
+            .iter()
+            .filter(|bubble| !bubble.live)
+            .map(|bubble| bubble.size)
+            .fold(1.0_f32, f32::min);
+        assert!(
+            quietest < busiest,
+            "summaries must still differ in size: {quietest} vs {busiest}"
+        );
+
+        // Without a summary the two regions share one scale, exactly as before.
+        let plain = project(&tape(bubbles_only(), &trades), &timeline, prices);
+        assert_eq!(plain.summary_reference, plain.aggression_reference);
+
+        // A pinned reference is pinned: the user chose an absolute quantity so
+        // that nothing on screen may rescale a bubble.
+        let pinned = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_candle_summary: true,
+                    bubbles: BubbleStyle {
+                        size_reference: BubbleSizeReference::Fixed,
+                        size_reference_quantity: 8.0,
+                        readable_min_radius: 0.0,
+                        ..BubbleStyle::default()
+                    },
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            prices,
+        );
+        assert_eq!(pinned.aggression_reference, dec("8"));
+        assert_eq!(pinned.summary_reference, dec("8"));
+    }
+
+    /// The lane clusters on its own window, so the region with room to spare
+    /// can show detail the compressed history cannot.
+    #[test]
+    fn the_lane_clusters_on_its_own_window() {
+        let trades = [
+            (1_u64, 10_i64, "100", "1", Side::Buy),
+            (2, 60, "100", "1", Side::Buy),
+            (3, 210, "100", "1", Side::Buy),
+            (4, 260, "100", "1", Side::Buy),
+        ];
+        let closed = [bar(0, 200)];
+        let partial = bar(200, 300);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(300));
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        // History gathers its pair, the lane keeps its prints apart.
+        let split = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_cluster_ms: 100,
+                    live_lane: LiveLaneStyle {
+                        cluster_ms: Some(0),
+                        ..LiveLaneStyle::default()
+                    },
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            prices,
+        );
+        assert_eq!(split.aggressions.len(), 3);
+        assert_eq!(
+            split.aggressions.iter().filter(|b| b.live).count(),
+            2,
+            "the lane drew both prints"
+        );
+
+        // Inheriting means inheriting: the same window on both sides of the
+        // boundary gathers both pairs.
+        let inherited = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_cluster_ms: 100,
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            prices,
+        );
+        assert_eq!(inherited.aggressions.len(), 2);
+    }
+
+    /// A cluster must never straddle the boundary: half a bubble cannot be
+    /// both a print still arriving and a settled summary.
+    #[test]
+    fn no_cluster_spans_the_lane_boundary() {
+        let trades = [
+            (1_u64, 195_i64, "100", "1", Side::Buy),
+            (2, 205, "100", "1", Side::Buy),
+        ];
+        let closed = [bar(0, 200)];
+        let partial = bar(200, 300);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(300));
+        let projection = project(
+            &tape(
+                HeatmapConfig {
+                    // A window wide enough to swallow both, were it allowed to.
+                    bubble_cluster_ms: 2_000,
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+        assert_eq!(projection.aggressions.len(), 2);
+        assert_eq!(projection.aggressions.iter().filter(|b| b.live).count(), 1);
+    }
+
+    /// The live-time line is where market time has walked to inside the lane,
+    /// and it is only reported for a frame that follows a live edge.
+    #[test]
+    fn the_live_edge_is_reported_inside_the_reserved_lane() {
+        let closed = [bar(0, 200), bar(200, 400)];
+        let history = tape(bubbles_only(), &[(1, 410, "100", "1", Side::Buy)]);
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        // Two closed bars of 200 ms each reserve 200 ms for the third slot; a
+        // live edge 100 ms in sits halfway across the lane, which is halfway
+        // through the last of three slots.
+        let following = project(
+            &history,
+            &BarTimeline::from_bars(0, &closed, Some(&bar(400, 500)), Some(500)),
+            prices,
+        );
+        let now = following.live_now_x.expect("a live frame has a present");
+        assert!((now - (2.0 + 0.5) / 3.0).abs() < 1e-9);
+
+        let settled = project(
+            &history,
+            &BarTimeline::from_bars(0, &closed, Some(&bar(400, 500)), None),
+            prices,
+        );
+        assert_eq!(settled.live_now_x, None);
     }
 
     #[test]
