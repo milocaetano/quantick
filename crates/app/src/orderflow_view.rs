@@ -379,7 +379,7 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        live_span: f32,
+        lane_span: f32,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -387,7 +387,7 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            live_span,
+            lane_span,
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
@@ -406,7 +406,7 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        live_span: f32,
+        lane_span: f32,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -414,7 +414,7 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            live_span,
+            lane_span,
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
@@ -763,7 +763,7 @@ impl OrderflowView {
                 })
                 .response
                 .on_hover_text(
-                    "how much room the forming bar's lane reserves. Fixed: it is there from the moment the bar opens and does not collapse when the bar closes, so the chart never steps sideways. A narrow window still gives history priority",
+                    "how wide the rolling tape past the last bar is. Fixed, like the span of market time it shows: prints enter at the right edge and slide left at a constant rate, and a bar closing empties nothing. A narrow window still gives history priority",
                 );
                 ui.horizontal(|ui| {
                     ui.label("cluster");
@@ -782,7 +782,7 @@ impl OrderflowView {
                 })
                 .response
                 .on_hover_text(
-                    "clustering window for prints inside the lane. A shorter one than history's buys detail where there is room for it; \"same as history\" keeps the two regions identical",
+                    "clustering window for prints on the tape. A shorter one than history's buys detail where there is room for it; \"same as history\" keeps the two regions identical",
                 );
                 ui.horizontal(|ui| {
                     ui.label("bubble size");
@@ -798,9 +798,9 @@ impl OrderflowView {
                 .on_hover_text(
                     "multiplies both bubble radii inside the lane only. The lane is the one region with room to spare, so a wider range reads as detail here and as overlap anywhere else",
                 );
-                ui.checkbox(&mut lane.show_marks, "boundary and live-time line")
+                ui.checkbox(&mut lane.show_marks, "boundary and live-edge line")
                     .on_hover_text(
-                        "the dashed line where the forming candle ends and the lane opens, and the line market time has walked to inside it. Space right of that line is time the lane is holding open, not liquidity that vanished",
+                        "the dashed line where the bar slots end and the tape begins, and the line on the live edge itself at its right end",
                     );
             });
     }
@@ -1433,7 +1433,7 @@ impl OrderflowView {
                                 "summarize closed bars",
                             )
                             .on_hover_text(
-                                "once a bar closes, fold its prints into one bubble per price range carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. Quantities, ids and matched evidence are summed exactly; the live lane is never summarized",
+                                "once a print has rolled off the live lane, fold it together with the rest of its bar and price range into one bubble carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. Quantities, ids and matched evidence are summed exactly; whatever is still on the tape is never summarized",
                             );
                             self.draw_live_lane_controls(ui);
                             self.draw_bubble_controls(ui);

@@ -472,11 +472,11 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
     }
 }
 
-/// How the reserved band right of the forming bar is drawn.
+/// How the rolling tape past the last bar is drawn.
 ///
 /// The live lane is where prints arrive in real time, and it is the one region
 /// of the chart with room to spare: history is compressed into equal-width bar
-/// slots, the lane is a fixed band a single bar fills over its whole life. That
+/// slots, the lane is a fixed band holding one bar's worth of market time. That
 /// room is what earns it settings of its own — a wider radius range reads as
 /// detail here and as overlap anywhere else.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -484,9 +484,11 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 pub struct LiveLaneStyle {
     /// Width of the lane, in candle widths.
     ///
-    /// Fixed: it is reserved when the bar opens and does not shrink when the
-    /// bar closes, so the chart never steps sideways and the eye always finds
-    /// the present in the same place.
+    /// Fixed, and so is the market time it shows, which together give the tape
+    /// a constant pixels-per-ms rate: a print enters at the right edge and
+    /// slides left at the same speed all session. A bar closing changes
+    /// neither, so the chart never steps sideways and nothing on the tape
+    /// jumps.
     pub width_candles: f32,
     /// Clustering window applied to prints inside the lane.
     ///
@@ -496,7 +498,7 @@ pub struct LiveLaneStyle {
     pub cluster_ms: Option<i64>,
     /// Multiplier applied to both bubble radii inside the lane.
     pub radius_scale: f32,
-    /// Whether the lane's boundary and its live-time line are drawn.
+    /// Whether the lane's boundary and the live-edge line are drawn.
     pub show_marks: bool,
 }
 

@@ -675,12 +675,13 @@ pub(crate) struct ProjectedLayout<'a> {
     pub(crate) viewport: &'a Viewport,
     pub(crate) total_bars: usize,
     pub(crate) first_bar_index: usize,
+    /// Regions the normalized x axis is divided into: one per bar, plus the
+    /// live lane when the frame has one.
     pub(crate) slot_count: usize,
-    /// Visual width, in candle-widths, of the last slot (the forming bar). `1.0`
-    /// keeps equal-width slots; `> 1.0` expands the forming bar's live tail to
-    /// the right so its order flow rolls on a real-time scale instead of
-    /// recompressing every depth update.
-    pub(crate) live_span: f32,
+    /// Visual width, in candle-widths, of the live lane — the rolling window of
+    /// market time past the last bar. `0.0` means the frame has no lane and
+    /// every region keeps unit width.
+    pub(crate) lane_span: f32,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -691,7 +692,7 @@ impl<'a> ProjectedLayout<'a> {
         total_bars: usize,
         first_bar_index: usize,
         slot_count: usize,
-        live_span: f32,
+        lane_span: f32,
     ) -> Self {
         Self {
             chart_rect,
@@ -699,10 +700,10 @@ impl<'a> ProjectedLayout<'a> {
             total_bars,
             first_bar_index,
             slot_count,
-            live_span: if live_span.is_finite() {
-                live_span.max(1.0)
+            lane_span: if lane_span.is_finite() {
+                lane_span.max(0.0)
             } else {
-                1.0
+                0.0
             },
         }
     }
@@ -710,22 +711,19 @@ impl<'a> ProjectedLayout<'a> {
     #[must_use]
     fn x(self, normalized: f64) -> f32 {
         let normalized = finite_unit_f64(normalized) as f32;
-        let slot_count = self.slot_count as f32;
-        // Widen only the last slot (the forming bar) by `live_span`; earlier
-        // closed slots keep unit width. `slot_pos` is the position in slot units
-        // over `[0, slot_count]`; `ext_pos` re-expresses it in bar-width units.
-        let slot_pos = normalized * slot_count;
-        let ext_pos = if self.live_span <= 1.0 || slot_count < 1.0 {
-            slot_pos
+        let regions = self.slot_count as f32;
+        // Every bar keeps unit width; only the lane — the last region — is
+        // widened, by `lane_span`. `region_pos` is the position in region units
+        // over `[0, regions]`; `ext_pos` re-expresses it in candle widths.
+        let region_pos = normalized * regions;
+        let ext_pos = if self.lane_span <= 0.0 || regions < 1.0 {
+            region_pos
         } else {
-            let boundary = slot_count - 1.0; // start of the forming slot
-            if slot_pos <= boundary {
-                slot_pos
+            let boundary = regions - 1.0; // where the lane opens
+            if region_pos <= boundary {
+                region_pos
             } else {
-                // The forming bar's candle owns a clean 1-wide slot as a divider
-                // (no heat behind it); the live order flow occupies the
-                // `live_span - 1` candle-widths to its right.
-                boundary + 1.0 + (slot_pos - boundary) * (self.live_span - 1.0)
+                boundary + (region_pos - boundary) * self.lane_span
             }
         };
         self.x_at_ext(ext_pos)
@@ -739,14 +737,12 @@ impl<'a> ProjectedLayout<'a> {
             .x_at_bar_position(position, self.chart_rect.right(), self.total_bars)
     }
 
-    /// Screen x where the live lane opens: the right edge of the forming bar's
-    /// own candle slot, which no timestamp maps into.
-    ///
-    /// `None` when this frame reserves no lane.
+    /// Screen x where the live lane opens: the right edge of the last bar's
+    /// candle slot. `None` when this frame has no lane.
     #[must_use]
     fn lane_left_x(self) -> Option<f32> {
-        (self.live_span > 1.0 && self.slot_count >= 1)
-            .then(|| self.x_at_ext(self.slot_count as f32))
+        (self.lane_span > 0.0 && self.slot_count >= 1)
+            .then(|| self.x_at_ext(self.slot_count as f32 - 1.0))
     }
 
     #[must_use]
@@ -3250,7 +3246,7 @@ mod tests {
     fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
         let viewport = Viewport::new();
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
-        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 6.0);
+        let layout = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
         let style = OrderflowRenderStyle {
             bubbles: BubbleStyle {
                 min_radius: 2.0,
@@ -3327,24 +3323,32 @@ mod tests {
         assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
     }
 
-    /// The divider sits between the forming candle and the lane, on the one
-    /// stretch of chart no timestamp maps into. Without a lane there is
-    /// nothing to divide.
+    /// Bars keep unit slots and only the lane is widened. The divider sits
+    /// exactly where the last bar's slot ends and the lane opens.
     #[test]
-    fn the_lane_boundary_lands_past_the_forming_candle() {
+    fn only_the_lane_is_widened_and_it_opens_where_the_bars_end() {
         let viewport = Viewport::new(); // candle_width 8, following
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 4.0);
-        let boundary = layout.lane_left_x().expect("a widened slot has a lane");
-        // Everything the timeline can address is on one side of it or the
-        // other: the forming candle's own slot ends there, the lane starts.
-        let candle_start = layout.x(2.0 / 3.0);
-        assert!(candle_start < boundary);
-        assert!((boundary - candle_start - viewport.candle_width()).abs() < 0.01);
-        assert!(layout.x(2.0 / 3.0 + 1e-4) >= boundary);
+        // Four regions: three bar slots and the lane, three candle widths wide.
+        let layout = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 3.0);
+        let boundary = layout.lane_left_x().expect("a lane has a boundary");
 
-        let flat = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 1.0);
-        assert_eq!(flat.lane_left_x(), None);
+        let bar_width = (layout.x(1.0 / 4.0) - layout.x(0.0)).abs();
+        assert!((bar_width - viewport.candle_width()).abs() < 0.01);
+        assert!(
+            (layout.x(3.0 / 4.0) - boundary).abs() < 0.01,
+            "the lane opens exactly where the last bar's slot ends"
+        );
+        let lane_width = (layout.x(1.0) - boundary).abs();
+        assert!(
+            (lane_width - 3.0 * viewport.candle_width()).abs() < 0.05,
+            "the lane must be three candle widths: {lane_width}"
+        );
+
+        let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
+        assert_eq!(no_lane.lane_left_x(), None);
+        let flat_width = (no_lane.x(1.0) - no_lane.x(3.0 / 4.0)).abs();
+        assert!((flat_width - viewport.candle_width()).abs() < 0.01);
     }
 
     /// The lane never draws marks it cannot place, and hiding them is exactly
@@ -3364,7 +3368,7 @@ mod tests {
         );
         projection.live_now_x = Some(0.95);
 
-        let with_lane = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 6.0);
+        let with_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
         let drawn = painted(|painter| {
             draw_live_lane_marks(painter, &RenderContext::new(&projection, with_lane, &style));
         });
@@ -3376,8 +3380,8 @@ mod tests {
         // No live edge: the frame is history, and history has no present.
         let mut settled = projection.clone();
         settled.live_now_x = None;
-        // No lane reserved: nothing to divide.
-        let no_lane = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 1.0);
+        // No lane at all: nothing to divide.
+        let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
         // Switched off by the user.
         let hidden = OrderflowRenderStyle {
             live_lane: LiveLaneStyle {
@@ -3403,17 +3407,17 @@ mod tests {
     }
 
     #[test]
-    fn live_span_widens_only_the_forming_slot() {
+    fn the_lane_is_the_only_region_wider_than_a_candle() {
         let viewport = Viewport::new(); // candle_width 8, following
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-        // 3 slots: 2 closed + the forming bar, widened 4x.
+        // 3 regions: 2 bar slots and the lane, four candle widths wide.
         let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 4.0);
         let closed_w = (layout.x(1.0 / 3.0) - layout.x(0.0)).abs();
         let live_w = (layout.x(1.0) - layout.x(2.0 / 3.0)).abs();
         assert!(closed_w > 0.0);
         assert!(
             (live_w - closed_w * 4.0).abs() < 0.01,
-            "forming slot should be 4x a closed slot: closed={closed_w} live={live_w}"
+            "the lane should be 4x a bar slot: bar={closed_w} lane={live_w}"
         );
     }
 }

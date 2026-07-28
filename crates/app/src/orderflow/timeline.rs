@@ -20,27 +20,27 @@ struct Slot {
     end_ms: i64,
 }
 
-/// How many recent closed bars decide the live lane's reserved time span.
+/// How many recent closed bars decide how much market time the lane shows.
 ///
 /// A single bar is too fragile a reference: one session break, one burst bar,
-/// and the lane would be calibrated to a duration that never repeats, crushing
-/// every print of the next bar into its left edge. A median over a short
-/// window follows the instrument's rhythm without letting one outlier set it.
+/// and the lane would be calibrated to a duration that never repeats. A median
+/// over a short window follows the instrument's rhythm without letting one
+/// outlier set it.
 const RESERVE_SAMPLE_BARS: usize = 8;
 
-/// Time the live lane reserves before any bar has closed, in exchange
+/// Market time the lane shows before any bar has closed, in exchange
 /// milliseconds. Only the very first bars of a fresh series see it.
 const DEFAULT_RESERVE_MS: i64 = 1_000;
 
-/// Exchange time the forming bar's slot holds open before the tape has filled
-/// it: the typical duration of the recent closed bars.
+/// How much market time the live lane shows: the typical duration of the recent
+/// closed bars.
 ///
-/// This is what makes the live lane a *reserved* band. The forming slot is
-/// this wide in time from the instant it opens, so the chart shows an empty
-/// band that fills left to right instead of a region that grows out of nothing
-/// on every bar open. Once the bar outlives the reserve the slot keeps growing
-/// with the tape, which compresses what is already drawn rather than pushing
-/// it past the band's right edge.
+/// Constant per frame, which is what makes the lane a tape. The window's right
+/// edge is always the live edge, so a print enters there and slides left at a
+/// fixed pixels-per-ms rate for exactly this long before leaving. Deriving it
+/// from the bars means the lane holds roughly one bar's worth of flow whatever
+/// the instrument or the bar type — without ever being tied to a particular
+/// bar, which is what would make a bar close empty it.
 #[must_use]
 pub fn reserved_span_ms(closed: &[Bar]) -> i64 {
     let mut durations: Vec<i64> = closed
@@ -56,7 +56,22 @@ pub fn reserved_span_ms(closed: &[Bar]) -> i64 {
     durations[durations.len() / 2]
 }
 
-/// Mapping from exchange timestamps to the chart's equal-width bar slots.
+/// The rolling window of market time drawn to the right of every bar slot.
+///
+/// It always ends at the live edge and always covers the same span, so it is a
+/// tape rather than a region that belongs to any one bar: the newest print
+/// enters at its right edge, everything already in it slides left at a fixed
+/// pixels-per-ms rate, and a print leaves through the left edge into the slot
+/// of the bar it happened in. A bar closing is not an event here — nothing
+/// empties, nothing restarts, and the eye never loses the book.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Lane {
+    start_ms: i64,
+    end_ms: i64,
+}
+
+/// Mapping from exchange timestamps to the chart's equal-width bar slots, plus
+/// the live lane past the last of them.
 ///
 /// Internal boundaries are anchored by the next bar's `open_time`. Therefore
 /// book changes between two trades remain visible in the preceding slot
@@ -64,8 +79,7 @@ pub fn reserved_span_ms(closed: &[Bar]) -> i64 {
 #[derive(Debug, Clone, Default)]
 pub struct BarTimeline {
     slots: Vec<Slot>,
-    live_start_ms: Option<i64>,
-    live_now_ms: Option<i64>,
+    lane: Option<Lane>,
 }
 
 impl BarTimeline {
@@ -73,9 +87,8 @@ impl BarTimeline {
     ///
     /// `first_bar_index` lets a visible slice retain global chart indices.
     /// `live_end_ms` is the live edge — the newest timestamp any recorded
-    /// stream has reached. Supplying it turns the forming bar's slot into the
-    /// live lane: it extends to that edge and, before the tape gets there, to
-    /// [`reserved_span_ms`] past the bar's open.
+    /// stream has reached. Supplying it appends the live lane, covering the
+    /// [`reserved_span_ms`] of market time that ends there.
     #[must_use]
     pub fn from_bars(
         first_bar_index: usize,
@@ -85,12 +98,6 @@ impl BarTimeline {
     ) -> Self {
         let bars: Vec<&Bar> = closed.iter().chain(partial).collect();
         let mut slots = Vec::with_capacity(bars.len());
-        // A lane belongs to a bar that is still forming. Without a partial the
-        // last slot is a closed bar, and a closed bar reserves no future.
-        let reserve_ms = match (partial, live_end_ms) {
-            (Some(_), Some(_)) => reserved_span_ms(closed),
-            _ => 0,
-        };
 
         for (offset, bar) in bars.iter().enumerate() {
             let start_ms = bar.open_time;
@@ -98,9 +105,7 @@ impl BarTimeline {
                 .get(offset + 1)
                 .map_or(bar.close_time, |next| next.open_time);
             let live_end = if offset + 1 == bars.len() {
-                live_end_ms.map_or(natural_end, |edge| {
-                    edge.max(start_ms.saturating_add(reserve_ms))
-                })
+                live_end_ms.unwrap_or(natural_end)
             } else {
                 natural_end
             };
@@ -112,36 +117,32 @@ impl BarTimeline {
             });
         }
 
-        let live_start_ms = live_end_ms
-            .and(partial)
-            .and_then(|_| slots.last())
-            .map(|slot| slot.start_ms);
-        Self {
-            slots,
-            live_start_ms,
-            live_now_ms: live_start_ms.and(live_end_ms),
-        }
+        // The lane belongs to the tape, not to a bar: it is the last
+        // `reserved_span_ms` of market time whoever was forming at the time.
+        // That is exactly what keeps a bar close from resetting it.
+        let lane = live_end_ms.map(|end_ms| Lane {
+            start_ms: end_ms.saturating_sub(reserved_span_ms(closed).max(1)),
+            end_ms,
+        });
+        Self { slots, lane }
     }
 
-    /// Exchange timestamp where the live lane begins — the forming bar's open.
+    /// Exchange timestamp where the live lane begins.
     ///
-    /// Prints at or after it are arriving in real time and get the lane's own
-    /// treatment; everything before it is settled history the chart is free to
-    /// summarize. `None` when this timeline follows no live edge, in which
-    /// case every slot is history.
+    /// Prints at or after it are inside the rolling window and get the lane's
+    /// own treatment; everything before it has left the tape and belongs to
+    /// the slot of its bar, where the chart is free to summarize it. `None`
+    /// when this timeline follows no live edge.
     #[must_use]
-    pub fn live_start_ms(&self) -> Option<i64> {
-        self.live_start_ms
+    pub fn lane_start_ms(&self) -> Option<i64> {
+        Some(self.lane?.start_ms)
     }
 
-    /// Position of the live edge inside the lane, in `[0,1]` chart coordinates.
-    ///
-    /// This is how far market time has walked across the reserved band. Marks
-    /// land to its left; the space to its right is time the lane is holding
-    /// open, not liquidity that vanished.
+    /// Position of the live edge, which is the lane's right edge whenever a
+    /// lane exists. Marks never sit to its right.
     #[must_use]
     pub fn live_now_position(&self) -> Option<TimelinePosition> {
-        self.locate_clamped(self.live_now_ms?)
+        self.locate_clamped(self.lane?.end_ms)
     }
 
     /// Number of represented bar slots.
@@ -157,10 +158,19 @@ impl BarTimeline {
         self.slots.is_empty()
     }
 
+    /// Number of equal-width regions the normalized x axis is divided into:
+    /// one per bar, plus the lane when there is one.
+    #[must_use]
+    pub fn region_count(&self) -> usize {
+        self.slots.len() + usize::from(self.lane.is_some())
+    }
+
     /// Inclusive timestamp bounds represented by the timeline.
     #[must_use]
     pub fn timestamp_range(&self) -> Option<(i64, i64)> {
-        Some((self.slots.first()?.start_ms, self.slots.last()?.end_ms))
+        let start = self.slots.first()?.start_ms;
+        let end = self.slots.last()?.end_ms;
+        Some((start, self.lane.map_or(end, |lane| end.max(lane.end_ms))))
     }
 
     /// Locate a timestamp. Values outside coverage return `None`.
@@ -183,19 +193,30 @@ impl BarTimeline {
     fn locate_in_range(&self, timestamp_ms: i64) -> TimelinePosition {
         // Pick the last slot whose start is <= the timestamp. At an exact
         // boundary this selects the new bar; the normalized x is identical to
-        // the prior slot's right edge.
+        // the prior slot's right edge. The slot is resolved even for a print
+        // drawn in the lane: a print is always *from* some bar, which is what
+        // the closed-bar summary groups on, and it is drawn in that bar's slot
+        // the moment it leaves the rolling window.
         let partition = self
             .slots
             .partition_point(|slot| slot.start_ms <= timestamp_ms);
         let slot_index = partition.saturating_sub(1).min(self.slots.len() - 1);
         let slot = self.slots[slot_index];
-        let span = (slot.end_ms - slot.start_ms).max(1) as f64;
-        let fraction = ((timestamp_ms - slot.start_ms) as f64 / span).clamp(0.0, 1.0);
-        let normalized = (slot_index as f64 + fraction) / self.slots.len() as f64;
+        // Inside the rolling window the lane wins over the bar slot, however
+        // many bars the window happens to span. Bars keep their slots; the
+        // tape is simply drawn once, in the newest place it belongs.
+        let (index, start_ms, end_ms) = match self.lane {
+            Some(lane) if timestamp_ms >= lane.start_ms => {
+                (self.slots.len(), lane.start_ms, lane.end_ms)
+            }
+            _ => (slot_index, slot.start_ms, slot.end_ms),
+        };
+        let span = (end_ms - start_ms).max(1) as f64;
+        let fraction = ((timestamp_ms - start_ms) as f64 / span).clamp(0.0, 1.0);
         TimelinePosition {
             bar_index: slot.bar_index,
             fraction,
-            normalized,
+            normalized: (index as f64 + fraction) / self.region_count() as f64,
         }
     }
 }
@@ -262,43 +283,77 @@ mod tests {
         assert_eq!(end.normalized, 1.0);
     }
 
+    /// The lane is a window on market time, so the newest print is always at
+    /// its right edge and an older one is always further left, by exactly how
+    /// old it is. That is the whole "sliding tape" contract.
     #[test]
-    fn the_live_lane_is_reserved_before_the_tape_fills_it() {
+    fn the_lane_is_a_window_ending_at_the_live_edge() {
         // Four closed bars of 100 ms, then a bar that just opened.
         let closed = [bar(0, 100), bar(100, 200), bar(200, 300), bar(300, 400)];
-        let partial = bar(400, 400);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(400));
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(400, 400)), Some(400));
 
-        // The forming slot already spans a typical bar, so the newest print
-        // sits at the lane's left edge instead of at its right one.
-        assert_eq!(timeline.timestamp_range(), Some((0, 500)));
-        assert_eq!(timeline.live_start_ms(), Some(400));
+        // Five bar slots plus the lane; the window is one typical bar wide.
+        assert_eq!(timeline.region_count(), 6);
+        assert_eq!(timeline.lane_start_ms(), Some(300));
+        // 401 rather than 400: an instant-wide forming slot still gets the
+        // one-millisecond floor every degenerate slot gets.
+        assert_eq!(timeline.timestamp_range(), Some((0, 401)));
+
         let now = timeline.locate(400).unwrap();
-        assert_eq!(now.bar_index, 4);
-        assert_eq!(now.fraction, 0.0);
-
-        // Halfway through a typical bar, the live edge is halfway across the
-        // lane: the band fills left to right at a fixed pixels-per-ms scale.
-        let half = BarTimeline::from_bars(0, &closed, Some(&bar(400, 450)), Some(450));
-        assert_eq!(half.timestamp_range(), Some((0, 500)));
-        assert_eq!(half.locate(450).unwrap().fraction, 0.5);
+        assert_eq!(now.fraction, 1.0, "the live edge is the lane's right edge");
+        assert_eq!(now.normalized, 1.0);
+        // Half a window old, so half a lane to the left — whichever bar it
+        // belongs to.
+        let older = timeline.locate(350).unwrap();
+        assert_eq!(older.fraction, 0.5);
+        assert!((older.normalized - 5.5 / 6.0).abs() < 1e-9);
+        assert_eq!(older.bar_index, 3, "the bar it happened in is still known");
     }
 
+    /// The reset the sliding tape exists to remove: the same print keeps the
+    /// same distance from the live edge across a bar close.
     #[test]
-    fn a_bar_outliving_its_reserve_compresses_inside_the_lane() {
+    fn a_bar_closing_does_not_move_what_is_already_on_the_tape() {
         let closed = [bar(0, 100), bar(100, 200)];
-        // The forming bar has already run three reference durations.
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(200, 500)), Some(500));
+        // Same instant, same live edge, but one more bar has closed.
+        let forming = BarTimeline::from_bars(0, &closed, Some(&bar(200, 250)), Some(250));
+        let after_close = BarTimeline::from_bars(
+            0,
+            &[bar(0, 100), bar(100, 200), bar(200, 250)],
+            Some(&bar(250, 250)),
+            Some(250),
+        );
 
-        assert_eq!(timeline.timestamp_range(), Some((0, 500)));
-        // Nothing spills past the lane and the order is preserved: the early
-        // print merely sits closer to its neighbours than it did before.
-        let early = timeline.locate(250).unwrap();
-        let late = timeline.locate(500).unwrap();
-        assert_eq!(early.bar_index, 2);
-        assert!((early.fraction - (50.0 / 300.0)).abs() < 1e-9);
-        assert_eq!(late.fraction, 1.0);
-        assert!(early.normalized < late.normalized);
+        for timestamp in [180, 200, 220, 250] {
+            let before = forming.locate(timestamp).unwrap();
+            let after = after_close.locate(timestamp).unwrap();
+            assert_eq!(
+                before.fraction, after.fraction,
+                "print at {timestamp} jumped inside the lane when the bar closed"
+            );
+        }
+        // The lane itself never empties either: it still ends at the same edge
+        // and still reaches the same way back.
+        assert_eq!(forming.lane_start_ms(), after_close.lane_start_ms());
+    }
+
+    /// Ageing out of the window is what moves a print off the tape — not its
+    /// bar closing. It lands in the slot of the bar it happened in.
+    #[test]
+    fn a_print_leaves_the_lane_into_the_slot_of_its_own_bar() {
+        let closed = [bar(0, 100), bar(100, 200)];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(200, 400)), Some(400));
+        // A 100 ms window ending at 400: everything before 300 has left it.
+        assert_eq!(timeline.lane_start_ms(), Some(300));
+
+        let aged_out = timeline.locate(150).unwrap();
+        assert_eq!(aged_out.bar_index, 1);
+        // Region 1 of 4 (three bars plus the lane), halfway across its slot.
+        assert!((aged_out.normalized - 1.5 / 4.0).abs() < 1e-9);
+
+        let on_tape = timeline.locate(350).unwrap();
+        assert!(on_tape.normalized > 3.0 / 4.0, "still in the lane");
+        assert_eq!(on_tape.bar_index, 2);
     }
 
     #[test]
@@ -315,17 +370,13 @@ mod tests {
     }
 
     #[test]
-    fn a_timeline_without_a_live_edge_reserves_nothing() {
+    fn a_timeline_without_a_live_edge_has_no_lane() {
         let closed = [bar(0, 100), bar(100, 200)];
-        let opening = bar(200, 200);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&opening), None);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(200, 200)), None);
+        assert_eq!(timeline.region_count(), 3, "three bars, no lane");
         assert_eq!(timeline.timestamp_range(), Some((0, 201)));
-        assert_eq!(timeline.live_start_ms(), None);
-
-        // A closed last bar never reserves future time either.
-        let history = BarTimeline::from_bars(0, &closed, None, Some(10_000));
-        assert_eq!(history.timestamp_range(), Some((0, 10_000)));
-        assert_eq!(history.live_start_ms(), None);
+        assert_eq!(timeline.lane_start_ms(), None);
+        assert_eq!(timeline.live_now_position(), None);
     }
 
     #[test]

@@ -398,8 +398,10 @@ pub fn project(
 
     // The live lane is clustered apart from history, with its own window. The
     // split is also what keeps a cluster from straddling the boundary: half a
-    // bubble cannot be both a print still arriving and a settled summary.
-    let lane_start_ms = timeline.live_start_ms();
+    // bubble cannot be both a print still rolling across the tape and a settled
+    // summary. The boundary is a moving timestamp, not a bar edge, so a print
+    // crosses it by ageing out of the window rather than by its bar closing.
+    let lane_start_ms = timeline.lane_start_ms();
     let in_lane = |timestamp_ms: i64| lane_start_ms.is_some_and(|start| timestamp_ms >= start);
     let (lane_prints, history_prints): (Vec<_>, Vec<_>) = history
         .aggressions()
@@ -1794,16 +1796,21 @@ mod tests {
     }
 
     /// A cluster must never straddle the boundary: half a bubble cannot be
-    /// both a print still arriving and a settled summary.
+    /// both a print still rolling across the tape and a settled summary. The
+    /// boundary is the rolling window's left edge, so what decides it is a
+    /// print's age, not which bar it came from.
     #[test]
     fn no_cluster_spans_the_lane_boundary() {
         let trades = [
-            (1_u64, 195_i64, "100", "1", Side::Buy),
-            (2, 205, "100", "1", Side::Buy),
+            (1_u64, 240_i64, "100", "1", Side::Buy),
+            (2, 260, "100", "1", Side::Buy),
         ];
-        let closed = [bar(0, 200)];
-        let partial = bar(200, 300);
+        // Bars of 50 ms, so the window ending at 300 reaches back to 250 and
+        // cuts between the two prints — both of which are in the same bar.
+        let closed = [bar(0, 50), bar(50, 100), bar(100, 150)];
+        let partial = bar(150, 300);
         let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(300));
+        assert_eq!(timeline.lane_start_ms(), Some(250));
         let projection = project(
             &tape(
                 HeatmapConfig {
@@ -1820,24 +1827,24 @@ mod tests {
         assert_eq!(projection.aggressions.iter().filter(|b| b.live).count(), 1);
     }
 
-    /// The live-time line is where market time has walked to inside the lane,
-    /// and it is only reported for a frame that follows a live edge.
+    /// The live edge is the lane's right edge, so it is the right edge of the
+    /// chart — and it is only reported for a frame that follows one.
     #[test]
-    fn the_live_edge_is_reported_inside_the_reserved_lane() {
+    fn the_live_edge_is_the_right_edge_of_the_lane() {
         let closed = [bar(0, 200), bar(200, 400)];
         let history = tape(bubbles_only(), &[(1, 410, "100", "1", Side::Buy)]);
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
-        // Two closed bars of 200 ms each reserve 200 ms for the third slot; a
-        // live edge 100 ms in sits halfway across the lane, which is halfway
-        // through the last of three slots.
         let following = project(
             &history,
             &BarTimeline::from_bars(0, &closed, Some(&bar(400, 500)), Some(500)),
             prices,
         );
-        let now = following.live_now_x.expect("a live frame has a present");
-        assert!((now - (2.0 + 0.5) / 3.0).abs() < 1e-9);
+        assert_eq!(
+            following.live_now_x,
+            Some(1.0),
+            "market time always reaches the lane's right edge"
+        );
 
         let settled = project(
             &history,

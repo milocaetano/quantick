@@ -1186,27 +1186,28 @@ impl QuantickApp {
             return;
         }
 
-        // Live region: while following a live book the forming bar owns a
-        // reserved lane to its right, fixed in width and in the exchange time
-        // it represents (the recent bars' typical duration, held by the
-        // timeline). The band is there — wide and empty — before the first
-        // print lands in it, and it fills left to right at a constant
-        // pixels-per-ms scale, so nothing already drawn moves. A bar that
-        // outlives that duration compresses inside the lane instead of
-        // spilling past it.
-        let live_span = partial
+        // The live lane: while following the live edge, a band past the last
+        // bar showing a fixed span of market time that always ends at now.
+        // Fixed width, fixed pixels-per-ms: a print enters at the right edge
+        // and slides left until it leaves into the slot of its own bar. It
+        // belongs to the tape rather than to the forming bar, which is what
+        // keeps a bar close from emptying it — the reset that made the book
+        // look like it was restarting every few seconds.
+        let lane_span = partial
             .filter(|_| self.viewport.follows_live())
             .and_then(|_| {
                 self.orderflow
                     .live_lane_span(chart_rect.width(), self.viewport.candle_width())
             })
-            .unwrap_or(1.0);
+            .unwrap_or(0.0);
         // Room the viewport keeps to the right of the last bar, so the lane has
         // somewhere to live. It shrinks by the one slot each closing bar
         // consumes and is immediately restored to the lane's width, which is
         // what keeps a bar close from stepping the chart sideways: the closing
         // bar takes its slot, the lane stays exactly where it was, and the
         // chart only ever drifts left.
+        // (`lane_span` is the lane alone; the bars, forming one included, each
+        // own a plain unit slot to its left.)
         if total < self.last_total_bars {
             self.live_tail_hold = 0.0; // series reset (symbol/feed change)
         } else if total > self.last_total_bars {
@@ -1215,7 +1216,7 @@ impl QuantickApp {
         }
         self.last_total_bars = total;
         if self.viewport.follows_live() {
-            self.live_tail_hold = self.live_tail_hold.max(live_span - 1.0);
+            self.live_tail_hold = self.live_tail_hold.max(lane_span);
         } else {
             self.live_tail_hold = 0.0;
         }
@@ -1249,16 +1250,16 @@ impl QuantickApp {
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
         // respect to candles and uses the same bar-warped viewport coordinates.
-        // The projection reserves a lane exactly when the layout draws one.
-        // Tied to `live_span` rather than restated, because the two decide the
-        // same thing: with them apart, a panned-away chart would still cluster
-        // and size the forming bar's prints as lane prints and then squeeze
-        // them into a single candle slot.
+        // The projection builds a lane exactly when the layout draws one. Tied
+        // to `lane_span` rather than restated, because the two decide the same
+        // thing: with them apart, a panned-away chart would still cluster and
+        // size the newest prints as lane prints and then squeeze them into a
+        // single candle slot.
         let orderflow_frame = self.orderflow.project_visible(
             closed_start,
             visible_closed,
             partial_visible,
-            end == total && live_span > 1.0,
+            end == total && lane_span > 0.0,
             scale.range(),
         );
         let canvas_background = self.bg();
@@ -1270,7 +1271,7 @@ impl QuantickApp {
                 total,
                 frame,
                 canvas_background,
-                live_span,
+                lane_span,
             );
         }
 
@@ -1325,7 +1326,7 @@ impl QuantickApp {
                 total,
                 frame,
                 canvas_background,
-                live_span,
+                lane_span,
             );
         }
 

@@ -889,7 +889,7 @@ impl BookEngine {
         let frame = Arc::new(VisibleOrderflow {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
-            slot_count: timeline.len(),
+            slot_count: timeline.region_count(),
         });
         self.projection_cache = Some(ProjectionCache {
             built_at: now,
