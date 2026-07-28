@@ -23,9 +23,8 @@ use crate::live_strip;
 use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
-    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_CANDLES,
-    MAX_LIVE_LANE_RADIUS_SCALE, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_CANDLES,
-    MIN_LIVE_LANE_RADIUS_SCALE,
+    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
+    MAX_LIVE_LANE_SHARE, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
@@ -755,15 +754,15 @@ impl OrderflowView {
                     ui.label("width");
                     ui.add(
                         egui::Slider::new(
-                            &mut lane.width_candles,
-                            MIN_LIVE_LANE_CANDLES..=MAX_LIVE_LANE_CANDLES,
+                            &mut lane.width_share,
+                            MIN_LIVE_LANE_SHARE..=MAX_LIVE_LANE_SHARE,
                         )
-                        .suffix(" candles"),
+                        .custom_formatter(|value, _| format!("{:.0}% of the chart", value * 100.0)),
                     );
                 })
                 .response
                 .on_hover_text(
-                    "how wide the rolling tape past the last bar is. Fixed, like the span of market time it shows: prints enter at the right edge and slide left at a constant rate, and a bar closing empties nothing. A narrow window still gives history priority",
+                    "how much of the chart the rolling tape takes. Measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
                 ui.horizontal(|ui| {
                     ui.label("cluster");
@@ -1639,7 +1638,7 @@ mod tests {
                 ..BubbleStyle::default()
             },
             live_lane: LiveLaneStyle {
-                width_candles: 30.0,
+                width_share: 0.5,
                 cluster_ms: Some(50),
                 radius_scale: 1.6,
                 show_marks: true,
@@ -1650,7 +1649,7 @@ mod tests {
         assert_eq!(view.config.bubble_cluster_ms, 100);
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
         assert!(view.config.bubble_candle_summary);
-        assert_eq!(view.config.live_lane.width_candles, 30.0);
+        assert_eq!(view.config.live_lane.width_share, 0.5);
         assert_eq!(view.config.live_lane.cluster_ms, Some(50));
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");

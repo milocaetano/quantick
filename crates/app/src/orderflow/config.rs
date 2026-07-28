@@ -60,21 +60,18 @@ pub const MAX_READABLE_MIN_RADIUS: f32 = 32.0;
 pub const DEFAULT_SPHERE_SHADING: f32 = 0.55;
 /// Default highlight strength of a sphere-rendered bubble.
 pub const DEFAULT_SPHERE_HIGHLIGHT: f32 = 0.35;
-/// Default width of the live lane, in candle widths. The chart already capped
-/// the forming bar's tail at eighteen candle widths including the candle's own
-/// slot, so the reserved lane opens exactly as wide as the growing one used to
-/// reach.
-pub const DEFAULT_LIVE_LANE_CANDLES: f32 = 17.0;
-/// Narrowest live lane accepted. Below a few candle widths the band stops
-/// being a lane and becomes a second candle.
-pub const MIN_LIVE_LANE_CANDLES: f32 = 4.0;
-/// Widest live lane accepted. Past this the history it is supposed to be read
-/// against has no room left.
-pub const MAX_LIVE_LANE_CANDLES: f32 = 80.0;
-/// Share of the visible chart the lane may occupy when the window is too
-/// narrow to grant its configured width. Not a setting: it is the guard that
-/// keeps a small window from becoming all lane and no history.
-pub const LIVE_LANE_CHART_SHARE: f32 = 0.55;
+/// Default share of the chart width taken by the live lane. Enough room for
+/// the tape to be read as a tape, with two thirds of the chart left for the
+/// history it is read against.
+pub const DEFAULT_LIVE_LANE_SHARE: f32 = 0.35;
+/// Narrowest live lane accepted, as a share of the chart.
+pub const MIN_LIVE_LANE_SHARE: f32 = 0.05;
+/// Widest live lane accepted. Past this the history has no room left.
+pub const MAX_LIVE_LANE_SHARE: f32 = 0.7;
+/// Narrowest lane the layout will draw, in candle widths. A floor rather than
+/// a setting: below a couple of candle widths the band stops being a lane and
+/// becomes a second candle, however small a share was asked for.
+pub const MIN_LIVE_LANE_CANDLES: f32 = 2.0;
 /// Default multiplier applied to the bubble radii inside the live lane.
 pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 /// Bounds accepted for the live lane's radius multiplier.
@@ -482,14 +479,15 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LiveLaneStyle {
-    /// Width of the lane, in candle widths.
+    /// Width of the lane as a share of the chart.
     ///
-    /// Fixed, and so is the market time it shows, which together give the tape
-    /// a constant pixels-per-ms rate: a print enters at the right edge and
-    /// slides left at the same speed all session. A bar closing changes
-    /// neither, so the chart never steps sideways and nothing on the tape
-    /// jumps.
-    pub width_candles: f32,
+    /// Measured against the chart rather than the candle so that the tape is a
+    /// *place* on screen: zooming the time axis changes how many bars fit
+    /// beside it, never how much room it gets. Fixed, and so is the market time
+    /// it shows, which together give the tape a constant pixels-per-ms rate —
+    /// a print enters at the right edge and slides left at the same speed. A
+    /// bar closing changes neither, so nothing on the tape ever jumps.
+    pub width_share: f32,
     /// Clustering window applied to prints inside the lane.
     ///
     /// `None` inherits [`HeatmapConfig::bubble_cluster_ms`]. A shorter window
@@ -505,7 +503,7 @@ pub struct LiveLaneStyle {
 impl Default for LiveLaneStyle {
     fn default() -> Self {
         Self {
-            width_candles: DEFAULT_LIVE_LANE_CANDLES,
+            width_share: DEFAULT_LIVE_LANE_SHARE,
             cluster_ms: None,
             radius_scale: DEFAULT_LIVE_LANE_RADIUS_SCALE,
             show_marks: true,
@@ -516,11 +514,11 @@ impl Default for LiveLaneStyle {
 impl LiveLaneStyle {
     /// Clamp every value into a range the renderer can use.
     pub fn sanitize(&mut self) {
-        self.width_candles = finite_clamp(
-            self.width_candles,
-            MIN_LIVE_LANE_CANDLES,
-            MAX_LIVE_LANE_CANDLES,
-            DEFAULT_LIVE_LANE_CANDLES,
+        self.width_share = finite_clamp(
+            self.width_share,
+            MIN_LIVE_LANE_SHARE,
+            MAX_LIVE_LANE_SHARE,
+            DEFAULT_LIVE_LANE_SHARE,
         );
         self.radius_scale = finite_clamp(
             self.radius_scale,
@@ -533,28 +531,33 @@ impl LiveLaneStyle {
             .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
     }
 
-    /// Lane width, in candle widths, on a chart this wide.
+    /// Lane width in candle widths — the unit the layout works in — for a
+    /// chart this wide at this zoom.
     ///
-    /// The configured width is granted whenever the window can spare it. On a
-    /// narrow window the lane gives way instead of swallowing the history it
-    /// exists to be read against. The share is measured over the whole forming
-    /// region, so the candle's own slot comes out of it before the lane does.
+    /// The pixel width is `chart_width × width_share` at every zoom level:
+    /// widening the candles simply means the lane is worth fewer of them. That
+    /// is the whole point of anchoring the lane to the chart, and it is what
+    /// keeps a zoom step from collapsing the tape to a sliver.
     #[must_use]
     pub fn resolved_width(&self, chart_width: f32, candle_width: f32) -> f32 {
-        let cap = if self.width_candles.is_finite() {
-            self.width_candles
-                .clamp(MIN_LIVE_LANE_CANDLES, MAX_LIVE_LANE_CANDLES)
+        let share = if self.width_share.is_finite() {
+            self.width_share
+                .clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
         } else {
-            DEFAULT_LIVE_LANE_CANDLES
+            DEFAULT_LIVE_LANE_SHARE
         };
-        if !chart_width.is_finite() || !candle_width.is_finite() || candle_width <= 0.0 {
-            return cap;
+        if !chart_width.is_finite()
+            || chart_width <= 0.0
+            || !candle_width.is_finite()
+            || candle_width <= 0.0
+        {
+            return MIN_LIVE_LANE_CANDLES;
         }
-        let available = (chart_width / candle_width) * LIVE_LANE_CHART_SHARE - 1.0;
-        if !available.is_finite() {
-            return cap;
+        let candles = chart_width * share / candle_width;
+        if !candles.is_finite() {
+            return MIN_LIVE_LANE_CANDLES;
         }
-        available.clamp(MIN_LIVE_LANE_CANDLES.min(cap), cap)
+        candles.max(MIN_LIVE_LANE_CANDLES)
     }
 
     /// Clustering window for prints inside the lane, given history's own.
@@ -912,7 +915,7 @@ mod tests {
                 ..BubbleStyle::default()
             },
             live_lane: LiveLaneStyle {
-                width_candles: f32::NAN,
+                width_share: f32::NAN,
                 cluster_ms: Some(i64::MIN),
                 radius_scale: 900.0,
                 show_marks: true,
@@ -938,7 +941,7 @@ mod tests {
         assert_eq!(config.bubble_dust_merge_ms, MAX_BUBBLE_DUST_MERGE_MS);
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, MAX_BUBBLE_MAX_RADIUS);
-        assert_eq!(config.live_lane.width_candles, DEFAULT_LIVE_LANE_CANDLES);
+        assert_eq!(config.live_lane.width_share, DEFAULT_LIVE_LANE_SHARE);
         assert_eq!(config.live_lane.cluster_ms, Some(0));
         assert_eq!(config.live_lane.radius_scale, MAX_LIVE_LANE_RADIUS_SCALE);
         assert_eq!(config.liquidity_correlation_ms, 0);
@@ -950,30 +953,41 @@ mod tests {
         assert_eq!(config.intensity_mode, IntensityMode::VisibleP99);
     }
 
+    /// The lane is a place on the chart, so its pixel width survives every
+    /// zoom step. Measuring it in candle widths is what made a zoom-out
+    /// collapse the tape to a sliver.
     #[test]
-    fn the_lane_keeps_its_width_until_the_window_cannot_spare_it() {
+    fn zooming_changes_how_many_candles_fit_beside_the_lane_never_its_size() {
         let lane = LiveLaneStyle::default();
-        // A roomy chart grants the configured width exactly — the lane is
-        // fixed, not a fraction that drifts with every zoom step.
-        assert_eq!(
-            lane.resolved_width(1_600.0, 10.0),
-            DEFAULT_LIVE_LANE_CANDLES
-        );
-        assert_eq!(lane.resolved_width(900.0, 5.0), DEFAULT_LIVE_LANE_CANDLES);
-        // A narrow window gives way instead of becoming all lane.
-        assert!((lane.resolved_width(400.0, 20.0) - 10.0).abs() < 1e-4);
-        // Degenerate viewports fall back to the configured width.
-        assert_eq!(
-            lane.resolved_width(f32::NAN, 10.0),
-            DEFAULT_LIVE_LANE_CANDLES
-        );
-        assert_eq!(lane.resolved_width(1_600.0, 0.0), DEFAULT_LIVE_LANE_CANDLES);
+        let chart = 1_000.0;
+        let expected_px = chart * DEFAULT_LIVE_LANE_SHARE;
+        for candle_width in [2.0_f32, 4.0, 8.0, 16.0, 32.0, 64.0] {
+            let candles = lane.resolved_width(chart, candle_width);
+            assert!(
+                (candles * candle_width - expected_px).abs() < 0.01,
+                "at {candle_width}px per candle the lane was {}px, not {expected_px}px",
+                candles * candle_width
+            );
+        }
 
+        // A wider share takes more of the same chart, at any zoom.
         let wide = LiveLaneStyle {
-            width_candles: 40.0,
+            width_share: 0.5,
             ..LiveLaneStyle::default()
         };
-        assert_eq!(wide.resolved_width(1_600.0, 10.0), 40.0);
+        assert!((wide.resolved_width(chart, 8.0) * 8.0 - 500.0).abs() < 0.01);
+
+        // Degenerate viewports fall back to the narrowest drawable lane
+        // instead of a width the layout cannot use.
+        assert_eq!(lane.resolved_width(f32::NAN, 10.0), MIN_LIVE_LANE_CANDLES);
+        assert_eq!(lane.resolved_width(1_600.0, 0.0), MIN_LIVE_LANE_CANDLES);
+        assert_eq!(lane.resolved_width(0.0, 10.0), MIN_LIVE_LANE_CANDLES);
+        // Even a tiny share stays a band rather than a hairline.
+        let sliver = LiveLaneStyle {
+            width_share: MIN_LIVE_LANE_SHARE,
+            ..LiveLaneStyle::default()
+        };
+        assert!(sliver.resolved_width(100.0, 64.0) >= MIN_LIVE_LANE_CANDLES);
     }
 
     #[test]

@@ -46,7 +46,7 @@ trail_length = 18.0       # the glow into the consumed side ("rastro")
 buy_color = [46, 224, 150]  # omit to follow the chart theme
 
 [presets.live_lane]       # the rolling tape drawn past the last bar
-width_candles = 17.0      # fixed width; it does not collapse when a bar closes
+width_share = 0.35        # share of the chart; zoom never changes it
 cluster_ms = 100          # omit to use the same window history uses
 radius_scale = 1.7        # the lane has room to spare, so it can draw bigger
 show_marks = true         # the lane boundary and the live-edge line

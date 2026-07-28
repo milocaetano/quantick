@@ -18,8 +18,8 @@ pub mod timeline;
 pub use config::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, DisplayGrouping, HeatmapConfig,
     HeatmapTheme, IntensityMode, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
-    MAX_LIVE_LANE_CANDLES, MAX_LIVE_LANE_RADIUS_SCALE, MIN_BUBBLE_MAX_RADIUS,
-    MIN_LIVE_LANE_CANDLES, MIN_LIVE_LANE_RADIUS_SCALE,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MIN_BUBBLE_MAX_RADIUS,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
 };
 #[allow(unused_imports)]
 pub use grouping::{

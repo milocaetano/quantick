@@ -236,7 +236,7 @@ front_color = [2, 2, 0]
 trail_color = [0, 0, 0]
 
 [presets.live_lane]
-width_candles = 26.0
+width_share = 0.5
 cluster_ms = 100
 radius_scale = 1.7
 show_marks = true

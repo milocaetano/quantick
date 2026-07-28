@@ -78,6 +78,57 @@ fn dec_from_f64(x: f64) -> Decimal {
 /// the renderer agree on the boundaries. `live_strip_width` of zero means the
 /// strip is off and the chart runs straight into the gutter, exactly as it
 /// did before the strip existed.
+/// Size and inset of the "back to live" badge.
+///
+/// Placed on the chart's right edge, over the live lane, because that is where
+/// the eye is while reading the tape — and because the blank a viewer stares at
+/// after losing the live edge is exactly there. The footer says the same thing
+/// in small text at the opposite corner, which is how the state went unnoticed.
+const BACK_TO_LIVE_SIZE: egui::Vec2 = egui::vec2(150.0, 26.0);
+/// See [`BACK_TO_LIVE_SIZE`].
+const BACK_TO_LIVE_INSET_PX: f32 = 12.0;
+
+/// Where the "back to live" badge sits on a chart of this size.
+fn back_to_live_rect(chart: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_size(
+        egui::pos2(
+            chart.right() - BACK_TO_LIVE_SIZE.x - BACK_TO_LIVE_INSET_PX,
+            chart.top() + BACK_TO_LIVE_INSET_PX,
+        ),
+        BACK_TO_LIVE_SIZE,
+    )
+}
+
+/// Draw the badge that says the chart is showing history, and how to leave it.
+fn draw_back_to_live(painter: &egui::Painter, chart: egui::Rect, hovered: bool) {
+    let rect = back_to_live_rect(chart);
+    if !chart.contains_rect(rect) {
+        return;
+    }
+    let rounding = egui::Rounding::same(6.0);
+    painter.rect_filled(
+        rect,
+        rounding,
+        if hovered {
+            theme::CONTROL
+        } else {
+            theme::CHROME
+        },
+    );
+    painter.rect_stroke(rect, rounding, egui::Stroke::new(1.0_f32, theme::AMBER));
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "\u{25c0} back to live",
+        egui::FontId::proportional(12.0),
+        if hovered {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::AMBER
+        },
+    );
+}
+
 fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
     let plot = area.shrink(16.0);
     let strip_width = live_strip_width.max(0.0);
@@ -194,6 +245,9 @@ pub struct QuantickApp {
     live_tail_hold: f32,
     // Bar count seen last frame, to detect closes for the hold above.
     last_total_bars: usize,
+    // Whether the pointer is over the "back to live" badge, which the input
+    // pass knows and the draw pass needs a frame later.
+    back_to_live_hovered: bool,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     price_view: PriceView,
     // Last frame's auto-fit price range and chart height, for pixel↔price maths
@@ -290,6 +344,7 @@ impl QuantickApp {
             viewport: Viewport::new(),
             price_view: PriceView::new(),
             live_tail_hold: 0.0,
+            back_to_live_hovered: false,
             last_total_bars: 0,
             last_auto_range: None,
             last_chart_height: 1.0,
@@ -1117,6 +1172,22 @@ impl QuantickApp {
             self.viewport.snap_to_live();
             self.price_view.reset();
         }
+        // The badge is registered after the chart body, so it takes the click
+        // that would otherwise land on the canvas behind it. Double-clicking
+        // anywhere still works; this only makes the way back visible.
+        self.back_to_live_hovered = false;
+        if total > 0 && !self.viewport.follows_live() {
+            let badge = ui.interact(
+                back_to_live_rect(areas.chart),
+                egui::Id::new("back_to_live"),
+                egui::Sense::click(),
+            );
+            self.back_to_live_hovered = badge.hovered();
+            if badge.clicked() {
+                self.viewport.snap_to_live();
+                self.price_view.reset();
+            }
+        }
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
@@ -1183,18 +1254,27 @@ impl QuantickApp {
                 theme::TEXT_MUTED,
             );
             self.orderflow.draw_status_badge(painter, chart_rect);
+            if !self.viewport.follows_live() {
+                draw_back_to_live(painter, chart_rect, self.back_to_live_hovered);
+            }
             return;
         }
 
-        // The live lane: while following the live edge, a band past the last
-        // bar showing a fixed span of market time that always ends at now.
-        // Fixed width, fixed pixels-per-ms: a print enters at the right edge
-        // and slides left until it leaves into the slot of its own bar. It
-        // belongs to the tape rather than to the forming bar, which is what
-        // keeps a bar close from emptying it — the reset that made the book
-        // look like it was restarting every few seconds.
+        // The live lane: a band past the last bar showing a fixed span of
+        // market time that always ends at now. Fixed width, fixed
+        // pixels-per-ms: a print enters at the right edge and slides left until
+        // it leaves into the slot of its own bar. It belongs to the tape rather
+        // than to the forming bar, which is what keeps a bar close from
+        // emptying it — the reset that made the book look like it was
+        // restarting every few seconds.
+        //
+        // Deliberately *not* gated on following the live edge. The tape keeps
+        // running wherever the viewport is pointed, and a chart that drops it
+        // the moment you pan or zoom leaves the reserved space behind as a
+        // blank half-screen — the reading is lost and nothing says why. Panning
+        // far enough into history takes the newest bar off screen, and the
+        // lane goes with it; that is the only way it stops being drawn.
         let lane_span = partial
-            .filter(|_| self.viewport.follows_live())
             .and_then(|_| {
                 self.orderflow
                     .live_lane_span(chart_rect.width(), self.viewport.candle_width())
@@ -1205,7 +1285,9 @@ impl QuantickApp {
         // consumes and is immediately restored to the lane's width, which is
         // what keeps a bar close from stepping the chart sideways: the closing
         // bar takes its slot, the lane stays exactly where it was, and the
-        // chart only ever drifts left.
+        // chart only ever drifts left. Held whether or not the viewport is
+        // following, so the live edge a pan has to reach to resume following
+        // stays where it was when the pan started.
         // (`lane_span` is the lane alone; the bars, forming one included, each
         // own a plain unit slot to its left.)
         if total < self.last_total_bars {
@@ -1215,11 +1297,7 @@ impl QuantickApp {
             self.live_tail_hold = (self.live_tail_hold - closed_now).max(0.0);
         }
         self.last_total_bars = total;
-        if self.viewport.follows_live() {
-            self.live_tail_hold = self.live_tail_hold.max(lane_span);
-        } else {
-            self.live_tail_hold = 0.0;
-        }
+        self.live_tail_hold = self.live_tail_hold.max(lane_span);
         self.viewport.set_live_tail(self.live_tail_hold);
 
         let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
@@ -1354,6 +1432,9 @@ impl QuantickApp {
         self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
         self.draw_crosshair(painter, chart_rect, axis_x, &scale);
         self.orderflow.draw_status_badge(painter, chart_rect);
+        if !self.viewport.follows_live() {
+            draw_back_to_live(painter, chart_rect, self.back_to_live_hovered);
+        }
 
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
