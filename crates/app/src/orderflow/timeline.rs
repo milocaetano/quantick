@@ -91,6 +91,7 @@ struct Lane {
 pub struct BarTimeline {
     slots: Vec<Slot>,
     lane: Option<Lane>,
+    forming_bar_index: Option<usize>,
 }
 
 impl BarTimeline {
@@ -135,7 +136,24 @@ impl BarTimeline {
             start_ms: end_ms.saturating_sub(reserved_span_ms(closed).max(1)),
             end_ms,
         });
-        Self { slots, lane }
+        let forming_bar_index = partial
+            .and_then(|_| slots.last())
+            .map(|slot| slot.bar_index);
+        Self {
+            slots,
+            lane,
+            forming_bar_index,
+        }
+    }
+
+    /// Index of the bar still forming, if this timeline has one.
+    ///
+    /// The one bar whose story is not over, which is what the closed-bar
+    /// summary has to leave alone: a pie over a bar still taking prints would
+    /// claim a proportion that has not finished happening.
+    #[must_use]
+    pub fn forming_bar_index(&self) -> Option<usize> {
+        self.forming_bar_index
     }
 
     /// Exchange timestamp where the live lane begins.
@@ -192,6 +210,32 @@ impl BarTimeline {
             return None;
         }
         Some(self.locate_in_range(timestamp_ms))
+    }
+
+    /// Locate a timestamp in its bar's slot, ignoring the lane.
+    ///
+    /// The lane is a second place the same instant can be drawn, and it wins in
+    /// [`locate`](Self::locate) because that is where a raw print belongs while
+    /// it is still on the tape. A closed bar's summary is about the bar, so it
+    /// asks for the slot even when the prints behind it are still rolling.
+    #[must_use]
+    pub fn locate_in_slot(&self, timestamp_ms: i64) -> Option<TimelinePosition> {
+        let (first, last) = self.timestamp_range()?;
+        if timestamp_ms < first || timestamp_ms > last {
+            return None;
+        }
+        let partition = self
+            .slots
+            .partition_point(|slot| slot.start_ms <= timestamp_ms);
+        let slot_index = partition.saturating_sub(1).min(self.slots.len() - 1);
+        let slot = self.slots[slot_index];
+        let span = (slot.end_ms - slot.start_ms).max(1) as f64;
+        let fraction = ((timestamp_ms - slot.start_ms) as f64 / span).clamp(0.0, 1.0);
+        Some(TimelinePosition {
+            bar_index: slot.bar_index,
+            fraction,
+            normalized: (slot_index as f64 + fraction) / self.region_count() as f64,
+        })
     }
 
     /// Locate a timestamp after clipping it to the timeline bounds.

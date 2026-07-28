@@ -9,7 +9,7 @@ use super::history::{AggressorSide, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
 use super::interaction::{
     AggressionCluster, cluster_aggressions, correlate_liquidity, liquidity_events,
-    merge_dust_clusters, sort_clusters, summarize_clusters,
+    merge_dust_clusters, summarize_clusters,
 };
 use super::timeline::BarTimeline;
 
@@ -396,52 +396,107 @@ pub fn project(
         })
         .collect();
 
-    // The live lane is clustered apart from history, with its own window. The
-    // split is also what keeps a cluster from straddling the boundary: half a
-    // bubble cannot be both a print still rolling across the tape and a settled
-    // summary. The boundary is a moving timestamp, not a bar edge, so a print
-    // crosses it by ageing out of the window rather than by its bar closing.
+    // The chart draws the same flow in two views. The tape shows the last
+    // stretch of market time print by print; a bar slot shows what its bar came
+    // to. A print is on the tape while it is inside the rolling window, and it
+    // belongs to its bar's slot either once it has aged out of the window or —
+    // when closed bars are summarized — as soon as its bar closes, because a
+    // summary is a statement about a finished bar and has to be complete the
+    // moment the bar is. Raw prints are still drawn exactly once; only the
+    // aggregate is allowed to overlap the tape it was computed from.
     let lane_start_ms = timeline.lane_start_ms();
     let in_lane = |timestamp_ms: i64| lane_start_ms.is_some_and(|start| timestamp_ms >= start);
-    let (lane_prints, history_prints): (Vec<_>, Vec<_>) = history
-        .aggressions()
-        .filter(|trade| {
-            timeline.locate(trade.timestamp_ms).is_some() && prices.y(trade.price).is_some()
-        })
-        .partition(|trade| in_lane(trade.timestamp_ms));
-    let mut aggression_clusters = cluster_aggressions(
-        history_prints,
-        &coverage,
-        effective_grouping,
-        config.bubble_cluster_ms,
-    );
-    // Two sorted halves concatenated are not sorted, and nothing between here
-    // and the final `sort_clusters` may let that order reach the output: the
-    // size reference is a percentile, the correlation below breaks every tie on
-    // cluster fields rather than on position, and both folds re-sort by their
-    // own key. One pass at the end is the guarantee, and one pass is enough.
-    aggression_clusters.extend(cluster_aggressions(
-        lane_prints,
+    let forming_bar = timeline.forming_bar_index();
+    // Both sides have to be on screen for a two-sided mark to be honest: a
+    // bubble summing buys and sells would lie about its size if one of them
+    // were hidden.
+    let summarizing =
+        config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
+
+    let mut tape_prints = Vec::new();
+    let mut slot_prints = Vec::new();
+    for trade in history.aggressions() {
+        let Some(position) = timeline.locate(trade.timestamp_ms) else {
+            continue;
+        };
+        if prices.y(trade.price).is_none() {
+            continue;
+        }
+        let on_tape = in_lane(trade.timestamp_ms);
+        if on_tape {
+            tape_prints.push(trade);
+        }
+        let bar_is_over = Some(position.bar_index) != forming_bar;
+        if if summarizing {
+            bar_is_over || !on_tape
+        } else {
+            !on_tape
+        } {
+            slot_prints.push(trade);
+        }
+    }
+
+    // Each view clusters on its own window: the tape has room the compressed
+    // slots do not, and the split is also what keeps a cluster from straddling
+    // the boundary between them.
+    let mut tape_clusters = cluster_aggressions(
+        tape_prints,
         &coverage,
         effective_grouping,
         config
             .live_lane
             .effective_cluster_ms(config.bubble_cluster_ms),
-    ));
+    );
+    let mut slot_clusters = cluster_aggressions(
+        slot_prints,
+        &coverage,
+        effective_grouping,
+        config.bubble_cluster_ms,
+    );
     // Computed over every visible cluster, before the display filter below:
     // hiding small prints must not silently rescale the ones left on screen.
-    let aggression_reference = size_reference(&aggression_clusters, config);
+    // This is the scale for a *raw* print, which is what the tape draws and
+    // what a slot draws until its bar is summarized.
+    let aggression_reference = size_reference(
+        &tape_clusters
+            .iter()
+            .chain(slot_clusters.iter())
+            .cloned()
+            .collect::<Vec<_>>(),
+        config,
+    );
 
     let mut events = if config.liquidity_events_enabled() {
         liquidity_events(&grouped.transitions)
     } else {
         Vec::new()
     };
-    correlate_liquidity(
-        &mut events,
-        &mut aggression_clusters,
-        config.liquidity_correlation_ms,
-    );
+    if summarizing {
+        // The views overlap, so they are correlated apart: neither may allocate
+        // the same reduction twice within itself, and a print drawn in both
+        // places carries the same fact in both. The markers themselves keep the
+        // settled pass's numbers, which cover every print of every closed bar.
+        correlate_liquidity(
+            &mut events.clone(),
+            &mut tape_clusters,
+            config.liquidity_correlation_ms,
+        );
+        correlate_liquidity(
+            &mut events,
+            &mut slot_clusters,
+            config.liquidity_correlation_ms,
+        );
+    } else {
+        // Disjoint: one pass over both, so a reduction is allocated across the
+        // whole visible tape exactly as it always was. `correlate_liquidity`
+        // mutates in place without reordering, so the halves split back apart.
+        let tape_len = tape_clusters.len();
+        let mut both = std::mem::take(&mut tape_clusters);
+        both.append(&mut slot_clusters);
+        correlate_liquidity(&mut events, &mut both, config.liquidity_correlation_ms);
+        slot_clusters = both.split_off(tape_len);
+        tape_clusters = both;
+    }
 
     // Display floors: a busy book shrinks buckets constantly, and a marker per
     // wiggle is violet drizzle. An unattributed pull must be deep (fraction of
@@ -488,7 +543,8 @@ pub fn project(
     // print still counts as the evidence behind an aligned reduction: the
     // marker keeps saying "a trade ate this", the tape just stays readable.
     if let Some(floor) = config.bubbles.min_quantity_decimal() {
-        aggression_clusters.retain(|cluster| cluster.quantity >= floor);
+        tape_clusters.retain(|cluster| cluster.quantity >= floor);
+        slot_clusters.retain(|cluster| cluster.quantity >= floor);
     }
 
     // Readability floor, then the closed-bar summary. Association already
@@ -497,46 +553,73 @@ pub fn project(
     // Sized against the reference computed above, which is deliberately *not*
     // recomputed — merging is a drawing decision and must not rescale the
     // bubbles that were already readable.
-    //
-    // Both folds run per region. A cluster never straddles the lane boundary,
-    // so splitting on its first print is exact, and it keeps the lane's live
-    // prints out of a summary that would claim their bar is over.
-    let (mut lane_clusters, mut history_clusters): (Vec<_>, Vec<_>) = aggression_clusters
-        .into_iter()
-        .partition(|cluster| in_lane(cluster.first_timestamp_ms));
     if let Some(dust) = config.bubbles.dust_quantity(aggression_reference) {
-        history_clusters = merge_dust_clusters(history_clusters, dust, config.bubble_dust_merge_ms);
-        lane_clusters = merge_dust_clusters(lane_clusters, dust, config.bubble_dust_merge_ms);
+        tape_clusters = merge_dust_clusters(tape_clusters, dust, config.bubble_dust_merge_ms);
+        slot_clusters = merge_dust_clusters(slot_clusters, dust, config.bubble_dust_merge_ms);
     }
-    // Both sides have to be on screen for a two-sided mark to be honest: a
-    // bubble summing buys and sells would lie about its size if one of them
-    // were hidden.
-    let summarizing =
-        config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
-    if summarizing {
-        history_clusters = summarize_clusters(history_clusters, |cluster| {
-            timeline
-                .locate(cluster.timestamp_ms)
-                .map(|position| position.bar_index)
-        });
-    }
-    // While both regions draw the same kind of mark they share one size scale,
-    // so an area means the same thing everywhere. The summary breaks that
-    // premise: history's marks become whole bars and the lane's stay single
-    // prints, quantities an order of magnitude apart, and one shared reference
-    // would peg every summary at the largest radius while flattening the lane
-    // into dots. Each region then gets its own reference — pies stay
-    // comparable with pies, prints with prints — except under a fixed
-    // reference, where the user pinned an absolute quantity precisely so that
-    // nothing on screen may rescale it.
+
+    // The forming bar's own slot never summarizes: its story is not over. Its
+    // prints sit there once they have aged off the tape, drawn one by one, and
+    // they read on the raw-print scale like the tape does.
+    let bar_of = |cluster: &AggressionCluster| {
+        timeline
+            .locate(cluster.timestamp_ms)
+            .map(|position| position.bar_index)
+            .filter(|index| Some(*index) != forming_bar)
+    };
+    let (settled_clusters, forming_clusters): (Vec<_>, Vec<_>) = if summarizing {
+        slot_clusters
+            .into_iter()
+            .partition(|cluster| bar_of(cluster).is_some())
+    } else {
+        (slot_clusters, Vec::new())
+    };
+    let settled_clusters = if summarizing {
+        summarize_clusters(settled_clusters, bar_of)
+    } else {
+        settled_clusters
+    };
+    // While every mark is a raw print they share one size scale, so an area
+    // means the same thing everywhere. The summary breaks that premise: a pie
+    // carries a whole bar and a tape mark carries one print, quantities an
+    // order of magnitude apart, and one shared reference would peg every pie at
+    // the largest radius while flattening the tape into dots. Pies then get
+    // their own reference — pies stay comparable with pies, prints with prints
+    // — except under a fixed reference, where the user pinned an absolute
+    // quantity precisely so that nothing on screen may rescale it.
     let summary_reference = if summarizing && config.bubbles.size_reference.is_visible() {
-        size_reference(&history_clusters, config)
+        size_reference(&settled_clusters, config)
     } else {
         aggression_reference
     };
-    aggression_clusters = history_clusters;
-    aggression_clusters.extend(lane_clusters);
-    sort_clusters(&mut aggression_clusters);
+
+    // One list again, each mark carrying the view it belongs to and the scale
+    // that view reads on.
+    let mut aggression_clusters: Vec<(AggressionCluster, bool, Decimal)> =
+        Vec::with_capacity(tape_clusters.len() + settled_clusters.len() + forming_clusters.len());
+    aggression_clusters.extend(
+        tape_clusters
+            .into_iter()
+            .map(|cluster| (cluster, true, aggression_reference)),
+    );
+    aggression_clusters.extend(
+        settled_clusters
+            .into_iter()
+            .map(|cluster| (cluster, false, summary_reference)),
+    );
+    aggression_clusters.extend(
+        forming_clusters
+            .into_iter()
+            .map(|cluster| (cluster, false, aggression_reference)),
+    );
+    aggression_clusters.sort_by(|(a, a_live, _), (b, b_live, _)| {
+        a.first_timestamp_ms
+            .cmp(&b.first_timestamp_ms)
+            .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+            .then_with(|| a_live.cmp(b_live))
+            .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
 
     let dropped_aggressions = if config.show_aggressions {
         aggression_clusters
@@ -548,7 +631,7 @@ pub fn project(
     if !config.show_aggressions {
         aggression_clusters.clear();
     } else if dropped_aggressions > 0 {
-        aggression_clusters.sort_by(|a, b| {
+        aggression_clusters.sort_by(|(a, _, _), (b, _, _)| {
             b.quantity
                 .cmp(&a.quantity)
                 .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
@@ -590,24 +673,31 @@ pub fn project(
     // Side switches are display-only and run last: the size reference, the
     // dust merge and the liquidity association above all saw both sides, so
     // hiding one side never rescales or re-associates the other.
-    aggression_clusters.retain(|cluster| match cluster.side {
+    aggression_clusters.retain(|(cluster, _, _)| match cluster.side {
         AggressorSide::Buy => config.show_buy_aggressions,
         AggressorSide::Sell => config.show_sell_aggressions,
     });
 
     let aggressions = aggression_clusters
         .into_iter()
-        .filter_map(|cluster| {
-            let x = timeline.locate(cluster.timestamp_ms)?.normalized;
-            let y = prices.y(cluster.price)?;
-            let live = in_lane(cluster.first_timestamp_ms);
-            let reference = if live {
-                aggression_reference
+        .filter_map(|(cluster, live, reference)| {
+            // A tape mark is placed by the live edge it is measured from; a
+            // slot mark by the bar it belongs to. `locate` answers the first,
+            // so a settled mark has to ask for its bar's slot explicitly.
+            let position = if live {
+                timeline.locate(cluster.timestamp_ms)?
             } else {
-                summary_reference
+                timeline.locate_in_slot(cluster.timestamp_ms)?
             };
+            let y = prices.y(cluster.price)?;
             let size = normalized_area_size(cluster.quantity, reference);
-            Some(aggression_primitive(cluster, x, y, size, live))
+            Some(aggression_primitive(
+                cluster,
+                position.normalized,
+                y,
+                size,
+                live,
+            ))
         })
         .collect();
 
@@ -1657,6 +1747,95 @@ mod tests {
                 .count(),
             2,
             "both live prints keep their own mark"
+        );
+    }
+
+    /// A summary is a statement about a finished bar, so it is complete the
+    /// moment the bar is — even while the prints behind it are still rolling
+    /// across the tape. That is the one place the two views overlap: the pie is
+    /// an aggregate of the same flow, not a second copy of a raw print.
+    #[test]
+    fn a_bar_gets_its_pie_at_close_without_taking_its_prints_off_the_tape() {
+        let trades = [
+            (1_u64, 16_000_i64, "100", "3", Side::Buy),
+            (2, 17_000, "100", "1", Side::Sell),
+        ];
+        // The last closed bar runs to 18 s and the window reaches back to 15 s,
+        // so both prints are inside a bar that is over *and* on the tape.
+        let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 18_000)];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(18_000, 20_000)), Some(20_000));
+        assert_eq!(timeline.lane_start_ms(), Some(15_000));
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        let summarized = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_candle_summary: true,
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            prices,
+        );
+        // Two marks still rolling, plus the finished bar's pie.
+        assert_eq!(summarized.aggressions.iter().filter(|b| b.live).count(), 2);
+        let pies: Vec<_> = summarized
+            .aggressions
+            .iter()
+            .filter(|bubble| !bubble.live)
+            .collect();
+        assert_eq!(pies.len(), 1, "the closed bar summarizes immediately");
+        assert_eq!(pies[0].quantity, dec("4"));
+        assert!((pies[0].buy_share - 0.75).abs() < 1e-6);
+        // The pie sits in its bar's slot, left of where the tape begins.
+        let lane_left = 3.0 / 4.0;
+        assert!(pies[0].x < lane_left, "the pie belongs to the bar's slot");
+        assert!(
+            summarized
+                .aggressions
+                .iter()
+                .filter(|b| b.live)
+                .all(|b| b.x >= lane_left)
+        );
+
+        // Without the summary a raw print is drawn exactly once, on the tape.
+        let plain = project(&tape(bubbles_only(), &trades), &timeline, prices);
+        assert_eq!(plain.aggressions.len(), 2);
+        assert!(plain.aggressions.iter().all(|bubble| bubble.live));
+    }
+
+    /// The forming bar is the one bar a pie may not claim: its proportion has
+    /// not finished happening. Its prints sit in its slot one by one once they
+    /// age off the tape.
+    #[test]
+    fn the_forming_bar_is_never_summarized() {
+        let trades = [
+            (1_u64, 16_000_i64, "100", "3", Side::Buy),
+            (2, 17_000, "100", "1", Side::Sell),
+        ];
+        // Both prints are in the forming bar and both have aged off the tape.
+        let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(15_000, 30_000)), Some(30_000));
+        assert_eq!(timeline.lane_start_ms(), Some(25_000));
+        let summarized = project(
+            &tape(
+                HeatmapConfig {
+                    bubble_candle_summary: true,
+                    ..bubbles_only()
+                },
+                &trades,
+            ),
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+        assert_eq!(summarized.aggressions.len(), 2, "two prints, two marks");
+        assert!(
+            summarized
+                .aggressions
+                .iter()
+                .all(|bubble| !bubble.live && (bubble.buy_share == 1.0 || bubble.buy_share == 0.0)),
+            "the forming bar keeps raw prints in its own slot"
         );
     }
 
