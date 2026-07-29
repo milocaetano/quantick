@@ -668,6 +668,19 @@ fn draw_bubble(
     }
 }
 
+/// Screen x where the history pane ends and the live lane begins.
+///
+/// The lane is a pane pinned to the right edge of the chart, so the divider is
+/// a property of the chart rect alone — no viewport, no bars. That is exactly
+/// what makes panning and zooming the candles leave the tape where it is.
+/// `None` when the frame has no lane, or when the lane would take the whole
+/// chart and leave the candles nowhere to go.
+#[must_use]
+pub(crate) fn lane_divider_x(chart_rect: egui::Rect, lane_width_px: f32) -> Option<f32> {
+    (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px < chart_rect.width())
+        .then(|| chart_rect.right() - lane_width_px)
+}
+
 /// Mapping between normalized projection coordinates and the chart viewport.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ProjectedLayout<'a> {
@@ -678,10 +691,10 @@ pub(crate) struct ProjectedLayout<'a> {
     /// Regions the normalized x axis is divided into: one per bar, plus the
     /// live lane when the frame has one.
     pub(crate) slot_count: usize,
-    /// Visual width, in candle-widths, of the live lane — the rolling window of
-    /// market time past the last bar. `0.0` means the frame has no lane and
-    /// every region keeps unit width.
-    pub(crate) lane_span: f32,
+    /// Width in pixels of the live lane's pane, taken off the right edge of
+    /// the chart. `0.0` means the frame has no lane and the candles own the
+    /// whole chart.
+    pub(crate) lane_width_px: f32,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -692,7 +705,7 @@ impl<'a> ProjectedLayout<'a> {
         total_bars: usize,
         first_bar_index: usize,
         slot_count: usize,
-        lane_span: f32,
+        lane_width_px: f32,
     ) -> Self {
         Self {
             chart_rect,
@@ -700,8 +713,8 @@ impl<'a> ProjectedLayout<'a> {
             total_bars,
             first_bar_index,
             slot_count,
-            lane_span: if lane_span.is_finite() {
-                lane_span.max(0.0)
+            lane_width_px: if lane_width_px.is_finite() {
+                lane_width_px.max(0.0)
             } else {
                 0.0
             },
@@ -712,21 +725,18 @@ impl<'a> ProjectedLayout<'a> {
     fn x(self, normalized: f64) -> f32 {
         let normalized = finite_unit_f64(normalized) as f32;
         let regions = self.slot_count as f32;
-        // Every bar keeps unit width; only the lane — the last region — is
-        // widened, by `lane_span`. `region_pos` is the position in region units
-        // over `[0, regions]`; `ext_pos` re-expresses it in candle widths.
+        // `region_pos` is the position in region units over `[0, regions]`.
+        // Bars go through the viewport, which owns everything left of the
+        // divider; the lane — the last region — is a fixed band of screen,
+        // mapped linearly and answering to nothing the candles do.
         let region_pos = normalized * regions;
-        let ext_pos = if self.lane_span <= 0.0 || regions < 1.0 {
-            region_pos
-        } else {
-            let boundary = regions - 1.0; // where the lane opens
-            if region_pos <= boundary {
-                region_pos
-            } else {
-                boundary + (region_pos - boundary) * self.lane_span
+        let boundary = regions - 1.0;
+        match self.lane_left_x() {
+            Some(divider) if regions >= 1.0 && region_pos > boundary => {
+                divider + (region_pos - boundary) * self.lane_width_px
             }
-        };
-        self.x_at_ext(ext_pos)
+            _ => self.x_at_ext(region_pos),
+        }
     }
 
     /// Screen x of a position measured in candle widths from the first slot.
@@ -734,15 +744,70 @@ impl<'a> ProjectedLayout<'a> {
     fn x_at_ext(self, ext_pos: f32) -> f32 {
         let position = self.first_bar_index as f32 - 0.5 + ext_pos;
         self.viewport
-            .x_at_bar_position(position, self.chart_rect.right(), self.total_bars)
+            .x_at_bar_position(position, self.history_right(), self.total_bars)
     }
 
-    /// Screen x where the live lane opens: the right edge of the last bar's
-    /// candle slot. `None` when this frame has no lane.
+    /// Screen x where the live lane opens. `None` when this frame has no lane.
     #[must_use]
-    fn lane_left_x(self) -> Option<f32> {
-        (self.lane_span > 0.0 && self.slot_count >= 1)
-            .then(|| self.x_at_ext(self.slot_count as f32 - 1.0))
+    pub(crate) fn lane_left_x(self) -> Option<f32> {
+        lane_divider_x(self.chart_rect, self.lane_width_px)
+    }
+
+    /// Right edge of the candles' own pane: the divider when a lane is drawn,
+    /// the chart's right edge otherwise.
+    #[must_use]
+    fn history_right(self) -> f32 {
+        self.lane_left_x()
+            .unwrap_or_else(|| self.chart_rect.right())
+    }
+
+    /// The candles' pane — everything left of the divider.
+    #[must_use]
+    fn history_rect(self) -> egui::Rect {
+        egui::Rect::from_min_max(
+            self.chart_rect.min,
+            egui::pos2(self.history_right(), self.chart_rect.bottom()),
+        )
+    }
+
+    /// The tape's pane — everything right of the divider.
+    #[must_use]
+    fn lane_rect(self) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(self.history_right(), self.chart_rect.top()),
+            self.chart_rect.max,
+        )
+    }
+
+    /// The pane a normalized position belongs to.
+    ///
+    /// Panning the candles into history sends the newest bars off the right of
+    /// their own pane, which is now the divider rather than the chart edge.
+    /// Clipping each primitive to its pane is what keeps them from being drawn
+    /// over the tape instead of scrolling out of sight.
+    #[must_use]
+    fn pane(self, normalized: f64) -> egui::Rect {
+        match self.lane_left_x() {
+            Some(_) if self.slot_count >= 1 => {
+                let boundary = (self.slot_count as f64 - 1.0) / self.slot_count as f64;
+                if finite_unit_f64(normalized) > boundary {
+                    self.lane_rect()
+                } else {
+                    self.history_rect()
+                }
+            }
+            _ => self.chart_rect,
+        }
+    }
+
+    /// The pane a band spans. One that crosses the divider — a resting level
+    /// that has been there since before the tape's window opened — belongs to
+    /// both and is clipped by neither.
+    #[must_use]
+    fn span_pane(self, x0: f64, x1: f64) -> egui::Rect {
+        let low = self.pane(x0.min(x1));
+        let high = self.pane(x0.max(x1));
+        if low == high { low } else { self.chart_rect }
     }
 
     #[must_use]
@@ -762,7 +827,7 @@ impl<'a> ProjectedLayout<'a> {
                 egui::pos2(left.max(right), top.max(bottom)),
             ),
             min_height,
-            self.chart_rect,
+            self.span_pane(x0, x1),
         )
     }
 
@@ -776,7 +841,7 @@ impl<'a> ProjectedLayout<'a> {
                 egui::pos2(self.x(x), top.max(bottom)),
             ),
             min_height,
-            self.chart_rect,
+            self.pane(x),
         );
         EventBand {
             x: self.x(x),
@@ -840,7 +905,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),
             )
-            .intersect(context.layout.chart_rect);
+            .intersect(context.layout.span_pane(cell.x0, cell.x1));
             let glow = rgba(rgb, alpha * style.edge_glow);
             add_gradient_rect(&mut mesh, glow_rect, glow, glow);
         }
@@ -860,7 +925,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             egui::pos2(x0.min(x1), context.layout.chart_rect.top()),
             egui::pos2(x0.max(x1), context.layout.chart_rect.bottom()),
         )
-        .intersect(context.layout.chart_rect);
+        .intersect(context.layout.span_pane(gap.x0, gap.x1));
         if !rect.is_positive() {
             continue;
         }
@@ -1185,17 +1250,18 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let palette = Palette::for_theme(style.theme);
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
-    let right_edge = context.layout.chart_rect.right();
 
     // The side nudge generalizes to a bubble carrying both sides: it slides
     // continuously with the buy share, so an even split sits on the exact
     // price and a lopsided one leans the way its dominant side would.
+    // A print is drawn only inside its own pane: one panned off the right of
+    // the candles is out of sight, not on top of the tape.
     let center_of = |trade: &AggressionPrimitive| {
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
         let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
         context
             .layout
-            .chart_rect
+            .pane(trade.x)
             .contains(center)
             .then(|| center + egui::vec2(0.0, -lean * bubbles.side_offset))
     };
@@ -1223,7 +1289,12 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             let half_length = front_half_length(radius_of(trade), bubbles);
             add_gradient_rect(
                 &mut trail_mesh,
-                trail_rect(center, half_length, bubbles.trail_length, right_edge),
+                trail_rect(
+                    center,
+                    half_length,
+                    bubbles.trail_length,
+                    context.layout.pane(trade.x).right(),
+                ),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
@@ -3323,32 +3394,59 @@ mod tests {
         assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
     }
 
-    /// Bars keep unit slots and only the lane is widened. The divider sits
-    /// exactly where the last bar's slot ends and the lane opens.
+    /// The lane is a pane of its own: a fixed band on the right edge of the
+    /// chart, with the candles' pane ending exactly where it opens.
     #[test]
-    fn only_the_lane_is_widened_and_it_opens_where_the_bars_end() {
+    fn the_lane_is_a_fixed_band_on_the_right_edge() {
         let viewport = Viewport::new(); // candle_width 8, following
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-        // Four regions: three bar slots and the lane, three candle widths wide.
-        let layout = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 3.0);
+        // Four regions: three bar slots and the lane, 300 px wide.
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
         let boundary = layout.lane_left_x().expect("a lane has a boundary");
+        assert!(
+            (boundary - 700.0).abs() < 0.01,
+            "the band is the last 300 px"
+        );
 
+        // Bars keep their candle width, and the last one ends at the divider.
         let bar_width = (layout.x(1.0 / 4.0) - layout.x(0.0)).abs();
         assert!((bar_width - viewport.candle_width()).abs() < 0.01);
         assert!(
             (layout.x(3.0 / 4.0) - boundary).abs() < 0.01,
-            "the lane opens exactly where the last bar's slot ends"
+            "the candles' pane ends exactly where the lane opens"
         );
-        let lane_width = (layout.x(1.0) - boundary).abs();
-        assert!(
-            (lane_width - 3.0 * viewport.candle_width()).abs() < 0.05,
-            "the lane must be three candle widths: {lane_width}"
-        );
+        // ...and the lane spans the band, whatever the candles are worth.
+        assert!((layout.x(1.0) - rect.right()).abs() < 0.01);
 
         let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
         assert_eq!(no_lane.lane_left_x(), None);
         let flat_width = (no_lane.x(1.0) - no_lane.x(3.0 / 4.0)).abs();
         assert!((flat_width - viewport.candle_width()).abs() < 0.01);
+        assert!((no_lane.x(1.0) - rect.right()).abs() < 0.01);
+    }
+
+    /// The point of the pane: every chart movement leaves the tape alone.
+    #[test]
+    fn panning_and_zooming_the_candles_never_move_the_lane() {
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        let mut panned = Viewport::new();
+        panned.pan_pixels(240.0, 60); // 30 candles into history
+        let mut zoomed = Viewport::new();
+        zoomed.zoom(4.0);
+
+        let still = Viewport::new();
+        let reference = ProjectedLayout::new(rect, &still, 60, 0, 5, 300.0);
+        for viewport in [&panned, &zoomed] {
+            let moved = ProjectedLayout::new(rect, viewport, 60, 0, 5, 300.0);
+            assert_eq!(moved.lane_left_x(), reference.lane_left_x());
+            // Same instant on the tape, same pixel — however the candles moved.
+            for position in [0.85_f64, 0.9, 1.0] {
+                assert!(
+                    (moved.x(position) - reference.x(position)).abs() < 0.01,
+                    "the tape moved with the candles at {position}"
+                );
+            }
+        }
     }
 
     /// The lane never draws marks it cannot place, and hiding them is exactly
@@ -3410,8 +3508,9 @@ mod tests {
     fn the_lane_is_the_only_region_wider_than_a_candle() {
         let viewport = Viewport::new(); // candle_width 8, following
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-        // 3 regions: 2 bar slots and the lane, four candle widths wide.
-        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 4.0);
+        // 3 regions: 2 bar slots and the lane, 32 px wide — four candles' worth
+        // at this zoom, and still 32 px at any other.
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 3, 32.0);
         let closed_w = (layout.x(1.0 / 3.0) - layout.x(0.0)).abs();
         let live_w = (layout.x(1.0) - layout.x(2.0 / 3.0)).abs();
         assert!(closed_w > 0.0);
@@ -3419,5 +3518,26 @@ mod tests {
             (live_w - closed_w * 4.0).abs() < 0.01,
             "the lane should be 4x a bar slot: bar={closed_w} lane={live_w}"
         );
+    }
+
+    /// A bar panned off the right of its own pane scrolls out of sight instead
+    /// of being drawn over the tape.
+    #[test]
+    fn a_candle_panned_behind_the_tape_is_clipped_to_its_own_pane() {
+        let mut viewport = Viewport::new();
+        viewport.pan_pixels(80.0, 20); // 10 candles into history
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 20, 0, 21, 300.0);
+        let divider = layout.lane_left_x().expect("a lane has a boundary");
+
+        // The newest bar is now right of the divider, and its pane stops there.
+        let newest = 19.5 / 21.0;
+        assert!(layout.x(newest) > divider);
+        assert!(layout.pane(newest).right() <= divider + 0.01);
+        // A band entirely past the divider is clipped away to nothing...
+        assert!(!layout.band(newest, newest, 0.1, 0.2, 1.0).is_positive());
+        // ...while the tape's own pane starts there and reaches the edge.
+        assert!((layout.pane(1.0).left() - divider).abs() < 0.01);
+        assert!((layout.pane(1.0).right() - rect.right()).abs() < 0.01);
     }
 }

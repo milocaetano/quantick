@@ -213,6 +213,7 @@ trail_color = [0, 0, 0]
 
 [presets.live_lane]
 width_share = 0.5
+time_zoom = 1.0
 cluster_ms = 100
 radius_scale = 1.7
 show_marks = true

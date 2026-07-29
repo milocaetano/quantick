@@ -879,6 +879,16 @@ mod tests {
         Decimal::from_str(value).unwrap()
     }
 
+    /// The live edge as the chart supplies it while the newest bar is on
+    /// screen: the lane shows the recent bars' typical duration, unzoomed.
+    fn live(now_ms: i64, closed: &[Bar]) -> Option<crate::orderflow::LiveEdge> {
+        Some(crate::orderflow::LiveEdge {
+            now_ms,
+            window_ms: crate::orderflow::reserved_span_ms(closed),
+            on_newest_bar: true,
+        })
+    }
+
     fn level(price: &str, quantity: &str) -> BookLevel {
         BookLevel::new(dec(price), dec(quantity)).unwrap()
     }
@@ -1645,7 +1655,7 @@ mod tests {
             .unwrap();
         let closed = [bar(0, 200)];
         let partial = bar(300, 350);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(800));
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), live(800, &closed));
         let projection = project(
             &history,
             &timeline,
@@ -1704,7 +1714,7 @@ mod tests {
         ];
         let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
         let partial = bar(15_000, 20_000);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(20_000));
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), live(20_000, &closed));
         assert_eq!(timeline.lane_start_ms(), Some(15_000));
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
@@ -1763,7 +1773,12 @@ mod tests {
         // The last closed bar runs to 18 s and the window reaches back to 15 s,
         // so both prints are inside a bar that is over *and* on the tape.
         let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 18_000)];
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(18_000, 20_000)), Some(20_000));
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            Some(&bar(18_000, 20_000)),
+            live(20_000, &closed),
+        );
         assert_eq!(timeline.lane_start_ms(), Some(15_000));
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
@@ -1816,7 +1831,12 @@ mod tests {
         ];
         // Both prints are in the forming bar and both have aged off the tape.
         let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(15_000, 30_000)), Some(30_000));
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            Some(&bar(15_000, 30_000)),
+            live(30_000, &closed),
+        );
         assert_eq!(timeline.lane_start_ms(), Some(25_000));
         let summarized = project(
             &tape(
@@ -1863,7 +1883,12 @@ mod tests {
         trades.push((101, 21_500, "100", "1", Side::Sell));
         trades.push((200, 41_000, "100", "1", Side::Buy));
         let closed = [bar(0, 20_000), bar(20_000, 40_000)];
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&bar(40_000, 45_000)), Some(45_000));
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            Some(&bar(40_000, 45_000)),
+            live(45_000, &closed),
+        );
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
         let summarized = project(
@@ -1935,7 +1960,7 @@ mod tests {
         ];
         let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
         let partial = bar(15_000, 20_000);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(20_000));
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), live(20_000, &closed));
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
 
         // History gathers its pair, the lane keeps its prints apart.
@@ -1991,7 +2016,7 @@ mod tests {
         // between the two prints, a fifth of a second apart.
         let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
         let partial = bar(15_000, 20_000);
-        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), Some(20_000));
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), live(20_000, &closed));
         assert_eq!(timeline.lane_start_ms(), Some(15_000));
         let projection = project(
             &tape(
@@ -2019,7 +2044,12 @@ mod tests {
 
         let following = project(
             &history,
-            &BarTimeline::from_bars(0, &closed, Some(&bar(40_000, 50_000)), Some(50_000)),
+            &BarTimeline::from_bars(
+                0,
+                &closed,
+                Some(&bar(40_000, 50_000)),
+                live(50_000, &closed),
+            ),
             prices,
         );
         assert_eq!(

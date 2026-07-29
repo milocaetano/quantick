@@ -24,7 +24,8 @@ use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
     IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
-    MAX_LIVE_LANE_SHARE, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
+    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM, reserved_span_ms,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
@@ -202,23 +203,50 @@ impl OrderflowView {
         self.published.live_end_ms
     }
 
-    /// Visual width of the forming bar's slot, in candle widths: its own slot
-    /// plus the live lane reserved to its right.
+    /// Width in pixels of the live lane's pane, taken off the right edge of a
+    /// chart this wide.
     ///
-    /// Fixed, and reserved from the moment the bar opens. The lane does not
-    /// grow out of the candle and does not collapse back into it when the bar
-    /// closes, so the chart never steps sideways and market time always walks
-    /// the same distance per second. `None` when there is no live edge to
-    /// follow, which leaves the forming bar a plain one-wide slot.
+    /// A pane, not a slot: the candles own everything left of it and the lane
+    /// owns this band whatever they do. Panning or zooming them changes how
+    /// many bars fit beside the tape and never the tape itself, which is what
+    /// keeps the most recent prints on screen through every chart movement.
+    /// `None` when there is no live edge to run to.
     #[must_use]
-    pub fn live_lane_span(&mut self, chart_width: f32, candle_width: f32) -> Option<f32> {
+    pub fn live_lane_width_px(&mut self, chart_width: f32) -> Option<f32> {
         self.live_end_ms()?;
-        Some(
-            1.0 + self
-                .config
-                .live_lane
-                .resolved_width(chart_width, candle_width),
-        )
+        Some(self.config.live_lane.resolved_width_px(chart_width))
+    }
+
+    /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
+    /// (negative `delta_px`) gives the tape more room, at the expense of the
+    /// history beside it.
+    pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
+        if !delta_px.is_finite() || !chart_width.is_finite() || chart_width <= 0.0 {
+            return;
+        }
+        let before = self.config.clone();
+        let width = self.config.live_lane.resolved_width_px(chart_width) - delta_px;
+        self.config.live_lane.width_share = width / chart_width;
+        self.commit_config_changes(before);
+    }
+
+    /// Zoom the lane's time window by a multiplicative factor: `> 1` shows
+    /// less market time in the same band (prints run faster and further
+    /// apart), `< 1` shows more (prints crowd together and cluster).
+    pub fn zoom_live_lane(&mut self, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.time_zoom *= factor;
+        self.commit_config_changes(before);
+    }
+
+    /// Market time the lane is showing right now, in milliseconds — the label
+    /// under it, and the only readout of what the zoom is worth.
+    #[must_use]
+    pub fn live_lane_window_ms(&self, closed: &[Bar]) -> i64 {
+        self.config.live_lane.window_ms(reserved_span_ms(closed))
     }
 
     #[cfg(test)]
@@ -341,7 +369,8 @@ impl OrderflowView {
         first_bar_index: usize,
         closed: &[Bar],
         partial: Option<&Bar>,
-        extend_live_end: bool,
+        lane: bool,
+        on_newest_bar: bool,
         price_range: (f64, f64),
     ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
@@ -352,7 +381,8 @@ impl OrderflowView {
             first_bar_index,
             closed: closed.to_vec(),
             partial: partial.cloned(),
-            extend_live_end,
+            lane,
+            on_newest_bar,
             price_range,
         };
         let layout = request.layout();
@@ -378,7 +408,7 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        lane_span: f32,
+        lane_width_px: f32,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -386,7 +416,7 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            lane_span,
+            lane_width_px,
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
@@ -405,7 +435,7 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        lane_span: f32,
+        lane_width_px: f32,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -413,7 +443,7 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            lane_span,
+            lane_width_px,
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
@@ -762,7 +792,22 @@ impl OrderflowView {
                 })
                 .response
                 .on_hover_text(
-                    "how much of the chart the rolling tape takes. Measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
+                    "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("time zoom");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut lane.time_zoom,
+                            MIN_LIVE_LANE_ZOOM..=MAX_LIVE_LANE_ZOOM,
+                        )
+                        .logarithmic(true)
+                        .suffix("×"),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "how much market time fits in the tape, against the recent bars' typical duration. Zoom in and prints run across it faster and further apart; zoom out and more time crowds in — the clustering window follows, so they gather into fewer, bigger bubbles. Also set by dragging the time strip under the tape",
                 );
                 ui.horizontal(|ui| {
                     ui.label("cluster");
@@ -1639,6 +1684,7 @@ mod tests {
             },
             live_lane: LiveLaneStyle {
                 width_share: 0.5,
+                time_zoom: 2.0,
                 cluster_ms: Some(50),
                 radius_scale: 1.6,
                 show_marks: true,
@@ -1650,6 +1696,7 @@ mod tests {
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
         assert!(view.config.bubble_candle_summary);
         assert_eq!(view.config.live_lane.width_share, 0.5);
+        assert_eq!(view.config.live_lane.time_zoom, 2.0);
         assert_eq!(view.config.live_lane.cluster_ms, Some(50));
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");
@@ -1736,14 +1783,67 @@ mod tests {
 
         let bars = [bar(900, 1_100)];
         // First call queues the projection; the frame appears after a flush.
-        let first = view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        let first = view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
         assert!(first.is_none());
         view.flush_for_test();
         let frame = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
+            .project_visible(0, &bars, None, true, true, (98.0, 102.0))
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
+    }
+
+    /// Dragging the divider is the width slider by another route, and it stops
+    /// at half the chart: past that the history has no room to be read in.
+    #[test]
+    fn dragging_the_divider_resizes_the_lane_up_to_half_the_chart() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        let chart = 1_000.0;
+        let before = view.config.live_lane.resolved_width_px(chart);
+
+        // Drag left → a wider tape, pixel for pixel.
+        view.resize_live_lane(-60.0, chart);
+        assert!((view.config.live_lane.resolved_width_px(chart) - (before + 60.0)).abs() < 0.01);
+        // Drag right → a narrower one.
+        view.resize_live_lane(60.0, chart);
+        assert!((view.config.live_lane.resolved_width_px(chart) - before).abs() < 0.01);
+
+        // Half the chart is the ceiling, a twentieth the floor, whatever the
+        // drag asked for.
+        view.resize_live_lane(-10_000.0, chart);
+        assert_eq!(view.config.live_lane.width_share, MAX_LIVE_LANE_SHARE);
+        view.resize_live_lane(10_000.0, chart);
+        assert_eq!(view.config.live_lane.width_share, MIN_LIVE_LANE_SHARE);
+
+        // A degenerate chart or a lost pointer changes nothing at all.
+        let steady = view.config.live_lane.clone();
+        view.resize_live_lane(f32::NAN, chart);
+        view.resize_live_lane(-20.0, 0.0);
+        assert_eq!(view.config.live_lane, steady);
+    }
+
+    /// The tape's own zoom, and the bounds that keep it a tape.
+    #[test]
+    fn zooming_the_lane_scales_its_window_and_stops_at_the_bounds() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        let bars = [bar(0, 8_000), bar(8_000, 16_000)];
+        let unzoomed = view.live_lane_window_ms(&bars);
+        assert_eq!(unzoomed, 8_000, "one typical bar of market time");
+
+        view.zoom_live_lane(2.0);
+        assert_eq!(view.live_lane_window_ms(&bars), 4_000, "half the time");
+        view.zoom_live_lane(0.5);
+        assert_eq!(view.live_lane_window_ms(&bars), unzoomed);
+
+        view.zoom_live_lane(1_000.0);
+        assert_eq!(view.config.live_lane.time_zoom, MAX_LIVE_LANE_ZOOM);
+        view.zoom_live_lane(1e-6);
+        assert_eq!(view.config.live_lane.time_zoom, MIN_LIVE_LANE_ZOOM);
+
+        let steady = view.config.live_lane.clone();
+        view.zoom_live_lane(0.0);
+        view.zoom_live_lane(f32::NAN);
+        assert_eq!(view.config.live_lane, steady);
     }
 
     #[test]
@@ -1753,7 +1853,7 @@ mod tests {
         // One 99 bid and one 101 ask (see `snapshot_event`).
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, (100.0, 102.0));
+        view.project_visible(0, &bars, None, true, true, (100.0, 102.0));
         view.flush_for_test();
 
         let ladder = view.published.ladder.as_ref().expect("published ladder");
@@ -1831,10 +1931,10 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1);
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
+            .project_visible(0, &bars, None, true, true, (98.0, 102.0))
             .expect("published frame");
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
@@ -1842,7 +1942,7 @@ mod tests {
         // Turning the bubbles off closes the pipeline again.
         view.set_bubbles_enabled(false);
         assert!(
-            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
                 .is_none()
         );
     }
@@ -1853,16 +1953,16 @@ mod tests {
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
         view.flush_for_test();
         assert!(
-            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
                 .is_some()
         );
 
         view.set_enabled(false, 11);
         assert!(
-            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
                 .is_none()
         );
         view.flush_for_test();

@@ -6,13 +6,15 @@
 //! even when there are only a handful of bars. This is the pure state behind
 //! that (candle width + the fractional bar index at the right edge + a follow
 //! flag), unit-tested in CI with no egui or input handling.
+//!
+//! It owns the candles' pane only. The live lane is a band of screen beside it
+//! with a clock of its own, so nothing here reaches the tape.
 
 /// Narrowest a candle slot can be, in pixels (max zoom-out).
 pub const MIN_CANDLE_WIDTH: f32 = 2.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
 pub const MAX_CANDLE_WIDTH: f32 = 64.0;
-/// How many empty bar-slots past the newest bar you may pan into. Also bounds
-/// the forming bar's live tail, so it is generous enough for a wide live area.
+/// How many empty bar-slots past the newest bar you may pan into.
 const FUTURE_MARGIN_BARS: f32 = 40.0;
 
 /// The visible window over a bar series.
@@ -25,10 +27,6 @@ pub struct Viewport {
     right_bar: f32,
     /// Whether the right edge is pinned to the newest bar.
     follow: bool,
-    /// Extra bar-slots reserved past the newest bar while following, so the
-    /// forming bar can expand its live order-flow tail to the right without the
-    /// newest candle sitting on the edge. Zero keeps the classic layout.
-    live_tail: f32,
 }
 
 impl Default for Viewport {
@@ -37,7 +35,6 @@ impl Default for Viewport {
             candle_width: 8.0,
             right_bar: 0.0,
             follow: true,
-            live_tail: 0.0,
         }
     }
 }
@@ -71,48 +68,32 @@ impl Viewport {
         }
     }
 
-    /// The bar index at the right edge for a series of `total` bars. While
-    /// following, this includes the live-tail reservation so the newest candle
-    /// sits `live_tail` slots in from the edge.
+    /// The bar index at the right edge for a series of `total` bars.
     #[must_use]
     pub fn right_edge_bar(&self, total: usize) -> f32 {
         if self.follow {
-            total.saturating_sub(1) as f32 + self.live_tail
+            total.saturating_sub(1) as f32
         } else {
             self.right_bar
         }
     }
 
-    /// Reserve `tail` extra bar-slots past the newest bar while following, so the
-    /// forming bar can grow a live order-flow tail to the right. Clamped to the
-    /// pannable future margin; non-finite input resets it.
-    pub fn set_live_tail(&mut self, tail: f32) {
-        self.live_tail = if tail.is_finite() {
-            tail.clamp(0.0, FUTURE_MARGIN_BARS)
-        } else {
-            0.0
-        };
-    }
-
     /// Pan by `dx` pixels (a drag delta). Positive `dx` (drag right) reveals
     /// older bars — the right edge moves into the past; negative moves toward
-    /// the present. Reaching the live edge (the newest bar plus any reserved
-    /// live tail) resumes following.
+    /// the present. Reaching the newest bar resumes following.
     pub fn pan_pixels(&mut self, dx: f32, total: usize) {
         if total == 0 || self.candle_width <= 0.0 || dx == 0.0 {
             return;
         }
         let newest = (total - 1) as f32;
-        // The live edge is the newest bar plus its live-tail reservation.
-        let live_edge = newest + self.live_tail;
         let current = self.right_edge_bar(total);
         let next = current - dx / self.candle_width;
-        let max_right = live_edge + FUTURE_MARGIN_BARS;
+        let max_right = newest + FUTURE_MARGIN_BARS;
         self.right_bar = next.clamp(0.0, max_right);
-        // Follow only when the right edge is essentially *at* the live edge.
+        // Follow only when the right edge is essentially *at* the newest bar.
         // Panning into the empty future keeps that margin instead of snapping
         // back to live.
-        self.follow = (self.right_bar - live_edge).abs() <= 0.5;
+        self.follow = (self.right_bar - newest).abs() <= 0.5;
     }
 
     /// Pin the right edge back to the newest bar.
@@ -283,38 +264,16 @@ mod tests {
         assert!(v.follows_live());
     }
 
+    /// The viewport is the candles' pane and nothing else: the live lane is a
+    /// band beside it, so no pan or zoom here can move, shrink or empty it.
     #[test]
-    fn live_tail_reserves_space_to_the_right_while_following() {
-        let mut v = Viewport::new(); // following, candle_width 8
-        v.set_live_tail(4.0);
-        // Right edge is now 4 slots past the newest bar (9 of 10).
-        assert!((v.right_edge_bar(10) - 13.0).abs() < 0.001);
-        // The newest candle sits 4 slots (+half) in from the right edge.
-        let right = 1000.0;
-        let newest_x = v.x_center(9, right, 10);
-        assert!((newest_x - (right - (4.0 + 0.5) * v.candle_width())).abs() < 0.001);
-    }
-
-    #[test]
-    fn live_tail_is_clamped_and_finite() {
-        // With a single bar, the following right edge is exactly the live tail.
+    fn the_viewport_reserves_nothing_for_the_live_lane() {
         let mut v = Viewport::new();
-        v.set_live_tail(f32::NAN);
-        assert_eq!(v.right_edge_bar(1), 0.0);
-        v.set_live_tail(1e9);
-        assert!((v.right_edge_bar(1) - FUTURE_MARGIN_BARS).abs() < 0.001);
-        v.set_live_tail(-5.0);
-        assert_eq!(v.right_edge_bar(1), 0.0);
-    }
-
-    #[test]
-    fn following_resumes_at_the_live_edge_not_the_bare_newest() {
-        let mut v = Viewport::new();
-        v.set_live_tail(4.0);
-        v.pan_pixels(80.0, 10); // drag 10 candles into the past
+        assert_eq!(v.right_edge_bar(10), 9.0);
+        v.pan_pixels(24.0, 10); // three candles into history
         assert!(!v.follows_live());
-        v.pan_pixels(-80.0, 10); // back toward the present (the live edge)
+        v.pan_pixels(-24.0, 10);
         assert!(v.follows_live());
-        assert!((v.right_edge_bar(10) - 13.0).abs() < 0.001);
+        assert_eq!(v.right_edge_bar(10), 9.0, "the newest bar is the edge");
     }
 }

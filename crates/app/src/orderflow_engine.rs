@@ -15,8 +15,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::orderflow::{
-    BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, PriceWindow,
-    project,
+    BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
+    PriceWindow, project, reserved_span_ms,
 };
 
 pub(crate) const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
@@ -115,7 +115,8 @@ pub struct VisibleOrderflow {
 pub(crate) struct ProjectionLayout {
     first_bar_index: usize,
     slot_count: usize,
-    extend_live_end: bool,
+    lane: bool,
+    on_newest_bar: bool,
     // Cell y-positions are normalized against the price window at build time.
     // The window is compared after `quantize_price` (~1/500 of its own span):
     // real pans/zooms rebuild, while the sub-pixel auto-fit wiggle of a live
@@ -131,14 +132,16 @@ impl ProjectionLayout {
     pub(crate) fn new(
         first_bar_index: usize,
         slot_count: usize,
-        extend_live_end: bool,
+        lane: bool,
+        on_newest_bar: bool,
         price_range: (f64, f64),
     ) -> Self {
         let price_span = price_range.1 - price_range.0;
         Self {
             first_bar_index,
             slot_count,
-            extend_live_end,
+            lane,
+            on_newest_bar,
             price_low_bits: quantize_price(price_range.0, price_span),
             price_high_bits: quantize_price(price_range.1, price_span),
         }
@@ -152,7 +155,12 @@ pub(crate) struct ProjectionRequest {
     pub first_bar_index: usize,
     pub closed: Vec<Bar>,
     pub partial: Option<Bar>,
-    pub extend_live_end: bool,
+    /// Whether the chart is drawing its live lane this frame.
+    pub lane: bool,
+    /// Whether the newest bar of the series is inside this slice. The lane is
+    /// pinned to the chart and runs whether it is or not; the difference is
+    /// that only the newest bar's slot may be stretched to the live edge.
+    pub on_newest_bar: bool,
     pub price_range: (f64, f64),
 }
 
@@ -162,7 +170,8 @@ impl ProjectionRequest {
         ProjectionLayout::new(
             self.first_bar_index,
             self.closed.len() + usize::from(self.partial.is_some()),
-            self.extend_live_end,
+            self.lane,
+            self.on_newest_bar,
             self.price_range,
         )
     }
@@ -844,6 +853,27 @@ impl BookEngine {
         };
     }
 
+    /// The live edge this frame's lane runs to, and how much market time it
+    /// shows: the recent bars' typical duration, scaled by the lane's own zoom.
+    ///
+    /// The zoom is the user's, and it is applied here rather than in the
+    /// timeline because the timeline draws the window it is handed — the
+    /// automatic reference is only the default the knob starts from.
+    #[must_use]
+    fn live_edge(&self, request: &ProjectionRequest) -> Option<LiveEdge> {
+        if !request.lane {
+            return None;
+        }
+        Some(LiveEdge {
+            now_ms: self.history.latest_book_ms()?,
+            window_ms: self
+                .config
+                .live_lane
+                .window_ms(reserved_span_ms(&request.closed)),
+            on_newest_bar: request.on_newest_bar,
+        })
+    }
+
     pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
@@ -865,11 +895,7 @@ impl BookEngine {
             request.first_bar_index,
             &request.closed,
             request.partial.as_ref(),
-            if request.extend_live_end {
-                self.history.latest_book_ms()
-            } else {
-                None
-            },
+            self.live_edge(request),
         );
         if timeline.is_empty() {
             return None;
@@ -1222,7 +1248,8 @@ mod tests {
             first_bar_index: 0,
             closed: bars.to_vec(),
             partial: None,
-            extend_live_end: true,
+            lane: true,
+            on_newest_bar: true,
             price_range,
         }
     }

@@ -66,12 +66,28 @@ pub const DEFAULT_SPHERE_HIGHLIGHT: f32 = 0.35;
 pub const DEFAULT_LIVE_LANE_SHARE: f32 = 0.35;
 /// Narrowest live lane accepted, as a share of the chart.
 pub const MIN_LIVE_LANE_SHARE: f32 = 0.05;
-/// Widest live lane accepted. Past this the history has no room left.
-pub const MAX_LIVE_LANE_SHARE: f32 = 0.7;
-/// Narrowest lane the layout will draw, in candle widths. A floor rather than
-/// a setting: below a couple of candle widths the band stops being a lane and
-/// becomes a second candle, however small a share was asked for.
-pub const MIN_LIVE_LANE_CANDLES: f32 = 2.0;
+/// Widest live lane accepted. The tape may take half the chart and no more:
+/// past that there is no history left to read the tape against.
+pub const MAX_LIVE_LANE_SHARE: f32 = 0.5;
+/// Narrowest lane the layout will draw, in pixels. A floor rather than a
+/// setting: below this the band stops being a tape whatever share was asked
+/// for. Capped by the chart itself, so a tiny window is still split by share.
+pub const MIN_LIVE_LANE_WIDTH_PX: f32 = 24.0;
+/// Default zoom of the lane's time window: one typical bar's worth of market
+/// time, the same window the lane showed before the knob existed.
+pub const DEFAULT_LIVE_LANE_ZOOM: f32 = 1.0;
+/// Most zoomed-out lane accepted — four times the typical bar duration in the
+/// same band, so prints crowd together and cluster into fewer, bigger marks.
+pub const MIN_LIVE_LANE_ZOOM: f32 = 0.25;
+/// Most zoomed-in lane accepted — an eighth of it, so prints run across the
+/// band fast and far apart.
+pub const MAX_LIVE_LANE_ZOOM: f32 = 8.0;
+/// Least market time a zoomed-in lane will show. Below an instant there is no
+/// tape left, whatever the zoom asked for.
+pub const MIN_LIVE_LANE_WINDOW_MS: i64 = 200;
+/// Most market time a zoomed-out lane will show. A tape is the recent past;
+/// past a quarter of an hour the chart's own history says it better.
+pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 900_000;
 /// Default multiplier applied to the bubble radii inside the live lane.
 pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 /// Bounds accepted for the live lane's radius multiplier.
@@ -471,11 +487,12 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 
 /// How the rolling tape past the last bar is drawn.
 ///
-/// The live lane is where prints arrive in real time, and it is the one region
-/// of the chart with room to spare: history is compressed into equal-width bar
-/// slots, the lane is a fixed band holding one bar's worth of market time. That
-/// room is what earns it settings of its own — a wider radius range reads as
-/// detail here and as overlap anywhere else.
+/// The live lane is a pane of its own, pinned to the right edge of the chart:
+/// history is compressed into equal-width bar slots that pan and zoom, the lane
+/// is a fixed band of screen showing a fixed window of market time that always
+/// ends at now. Being its own pane is what earns it settings of its own — how
+/// wide it is, how much time fits in it, and how big its bubbles are, none of
+/// which the candles beside it get a say in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LiveLaneStyle {
@@ -488,7 +505,18 @@ pub struct LiveLaneStyle {
     /// a print enters at the right edge and slides left at the same speed. A
     /// bar closing changes neither, so nothing on the tape ever jumps.
     pub width_share: f32,
-    /// Clustering window applied to prints inside the lane.
+    /// Zoom of the lane's time window, against the recent bars' typical
+    /// duration.
+    ///
+    /// `1.0` fits about one bar's worth of market time in the band. Zooming in
+    /// (`> 1`) shows less time in the same width, so prints run across it
+    /// faster and further apart; zooming out (`< 1`) shows more, so they crowd
+    /// together — and the clustering window follows the span
+    /// ([`effective_cluster_ms`](Self::effective_cluster_ms)), which is what
+    /// turns that crowd into fewer, bigger marks instead of a smear.
+    pub time_zoom: f32,
+    /// Clustering window applied to prints inside the lane, before the zoom
+    /// scales it.
     ///
     /// `None` inherits [`HeatmapConfig::bubble_cluster_ms`]. A shorter window
     /// than history's buys detail where there is room for it; a longer one
@@ -504,6 +532,7 @@ impl Default for LiveLaneStyle {
     fn default() -> Self {
         Self {
             width_share: DEFAULT_LIVE_LANE_SHARE,
+            time_zoom: DEFAULT_LIVE_LANE_ZOOM,
             cluster_ms: None,
             radius_scale: DEFAULT_LIVE_LANE_RADIUS_SCALE,
             show_marks: true,
@@ -520,6 +549,12 @@ impl LiveLaneStyle {
             MAX_LIVE_LANE_SHARE,
             DEFAULT_LIVE_LANE_SHARE,
         );
+        self.time_zoom = finite_clamp(
+            self.time_zoom,
+            MIN_LIVE_LANE_ZOOM,
+            MAX_LIVE_LANE_ZOOM,
+            DEFAULT_LIVE_LANE_ZOOM,
+        );
         self.radius_scale = finite_clamp(
             self.radius_scale,
             MIN_LIVE_LANE_RADIUS_SCALE,
@@ -531,39 +566,62 @@ impl LiveLaneStyle {
             .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
     }
 
-    /// Lane width in candle widths — the unit the layout works in — for a
-    /// chart this wide at this zoom.
+    /// Lane width in pixels for a chart this wide.
     ///
-    /// The pixel width is `chart_width × width_share` at every zoom level:
-    /// widening the candles simply means the lane is worth fewer of them. That
-    /// is the whole point of anchoring the lane to the chart, and it is what
-    /// keeps a zoom step from collapsing the tape to a sliver.
+    /// The lane is a pane, not a number of candle slots: it takes
+    /// `chart_width × width_share` of screen whatever the candles are doing, so
+    /// zooming the time axis changes how many bars fit beside the tape and
+    /// never how much room the tape gets.
     #[must_use]
-    pub fn resolved_width(&self, chart_width: f32, candle_width: f32) -> f32 {
+    pub fn resolved_width_px(&self, chart_width: f32) -> f32 {
+        if !chart_width.is_finite() || chart_width <= 0.0 {
+            return 0.0;
+        }
         let share = if self.width_share.is_finite() {
             self.width_share
                 .clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
         } else {
             DEFAULT_LIVE_LANE_SHARE
         };
-        if !chart_width.is_finite()
-            || chart_width <= 0.0
-            || !candle_width.is_finite()
-            || candle_width <= 0.0
-        {
-            return MIN_LIVE_LANE_CANDLES;
-        }
-        let candles = chart_width * share / candle_width;
-        if !candles.is_finite() {
-            return MIN_LIVE_LANE_CANDLES;
-        }
-        candles.max(MIN_LIVE_LANE_CANDLES)
+        // The floor yields to the cap on a narrow window: half a small chart
+        // beats a fixed band that would eat all of it.
+        let floor = MIN_LIVE_LANE_WIDTH_PX.min(chart_width * MAX_LIVE_LANE_SHARE);
+        (chart_width * share).max(floor)
+    }
+
+    /// Market time the lane shows, given the automatic reference window (the
+    /// recent bars' typical duration).
+    #[must_use]
+    pub fn window_ms(&self, reference_ms: i64) -> i64 {
+        let zoom = if self.time_zoom.is_finite() {
+            self.time_zoom.clamp(MIN_LIVE_LANE_ZOOM, MAX_LIVE_LANE_ZOOM)
+        } else {
+            DEFAULT_LIVE_LANE_ZOOM
+        };
+        let window = reference_ms.max(1) as f64 / f64::from(zoom);
+        (window.round() as i64).clamp(MIN_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_WINDOW_MS)
     }
 
     /// Clustering window for prints inside the lane, given history's own.
+    ///
+    /// Scaled by the same zoom as the window itself, so a cluster covers a
+    /// constant *distance on screen* rather than a constant amount of time:
+    /// zooming out gathers the crowd it creates into fewer, bigger bubbles
+    /// instead of piling prints on top of each other.
     #[must_use]
     pub fn effective_cluster_ms(&self, history_cluster_ms: i64) -> i64 {
-        self.cluster_ms.unwrap_or(history_cluster_ms).max(0)
+        let base = self.cluster_ms.unwrap_or(history_cluster_ms).max(0);
+        if base == 0 {
+            // One bubble per print, at every zoom: raw is a choice, not a size.
+            return 0;
+        }
+        let zoom = if self.time_zoom.is_finite() {
+            self.time_zoom.clamp(MIN_LIVE_LANE_ZOOM, MAX_LIVE_LANE_ZOOM)
+        } else {
+            DEFAULT_LIVE_LANE_ZOOM
+        };
+        let scaled = (base as f64 / f64::from(zoom)).round() as i64;
+        scaled.clamp(1, MAX_BUBBLE_CLUSTER_MS)
     }
 
     /// Bubble radius range inside the lane, given the shared bubble style.
@@ -916,6 +974,7 @@ mod tests {
             },
             live_lane: LiveLaneStyle {
                 width_share: f32::NAN,
+                time_zoom: 900.0,
                 cluster_ms: Some(i64::MIN),
                 radius_scale: 900.0,
                 show_marks: true,
@@ -942,6 +1001,7 @@ mod tests {
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, MAX_BUBBLE_MAX_RADIUS);
         assert_eq!(config.live_lane.width_share, DEFAULT_LIVE_LANE_SHARE);
+        assert_eq!(config.live_lane.time_zoom, MAX_LIVE_LANE_ZOOM);
         assert_eq!(config.live_lane.cluster_ms, Some(0));
         assert_eq!(config.live_lane.radius_scale, MAX_LIVE_LANE_RADIUS_SCALE);
         assert_eq!(config.liquidity_correlation_ms, 0);
@@ -953,41 +1013,93 @@ mod tests {
         assert_eq!(config.intensity_mode, IntensityMode::VisibleP99);
     }
 
-    /// The lane is a place on the chart, so its pixel width survives every
-    /// zoom step. Measuring it in candle widths is what made a zoom-out
-    /// collapse the tape to a sliver.
+    /// The lane is a pane of the chart, so its width is a share of the chart
+    /// and nothing else — the candle zoom has no say in it at all.
     #[test]
-    fn zooming_changes_how_many_candles_fit_beside_the_lane_never_its_size() {
+    fn the_lane_takes_a_share_of_the_chart_and_never_more_than_half() {
         let lane = LiveLaneStyle::default();
-        let chart = 1_000.0;
-        let expected_px = chart * DEFAULT_LIVE_LANE_SHARE;
-        for candle_width in [2.0_f32, 4.0, 8.0, 16.0, 32.0, 64.0] {
-            let candles = lane.resolved_width(chart, candle_width);
-            assert!(
-                (candles * candle_width - expected_px).abs() < 0.01,
-                "at {candle_width}px per candle the lane was {}px, not {expected_px}px",
-                candles * candle_width
-            );
-        }
+        assert!((lane.resolved_width_px(1_000.0) - 350.0).abs() < 0.01);
+        assert!((lane.resolved_width_px(600.0) - 210.0).abs() < 0.01);
 
-        // A wider share takes more of the same chart, at any zoom.
+        // A wider share takes more of the same chart; half is the ceiling.
         let wide = LiveLaneStyle {
-            width_share: 0.5,
+            width_share: 0.9,
             ..LiveLaneStyle::default()
         };
-        assert!((wide.resolved_width(chart, 8.0) * 8.0 - 500.0).abs() < 0.01);
+        let mut capped = wide.clone();
+        capped.sanitize();
+        assert_eq!(capped.width_share, MAX_LIVE_LANE_SHARE);
+        assert!((capped.resolved_width_px(1_000.0) - 500.0).abs() < 0.01);
+        // Even unsanitized input cannot reach past half the chart.
+        assert!(wide.resolved_width_px(1_000.0) <= 500.01);
 
-        // Degenerate viewports fall back to the narrowest drawable lane
-        // instead of a width the layout cannot use.
-        assert_eq!(lane.resolved_width(f32::NAN, 10.0), MIN_LIVE_LANE_CANDLES);
-        assert_eq!(lane.resolved_width(1_600.0, 0.0), MIN_LIVE_LANE_CANDLES);
-        assert_eq!(lane.resolved_width(0.0, 10.0), MIN_LIVE_LANE_CANDLES);
-        // Even a tiny share stays a band rather than a hairline.
+        // Degenerate charts get no lane rather than a width the layout would
+        // have to invent a meaning for.
+        assert_eq!(lane.resolved_width_px(f32::NAN), 0.0);
+        assert_eq!(lane.resolved_width_px(0.0), 0.0);
+        // A tiny share stays a band rather than a hairline...
         let sliver = LiveLaneStyle {
             width_share: MIN_LIVE_LANE_SHARE,
             ..LiveLaneStyle::default()
         };
-        assert!(sliver.resolved_width(100.0, 64.0) >= MIN_LIVE_LANE_CANDLES);
+        assert!(sliver.resolved_width_px(200.0) >= MIN_LIVE_LANE_WIDTH_PX);
+        // ...unless the chart itself is smaller than the floor, where the cap
+        // wins and the tape still leaves history half the window.
+        assert!((sliver.resolved_width_px(20.0) - 10.0).abs() < 0.01);
+    }
+
+    /// The lane's own zoom: same band, a different amount of market time in
+    /// it. Zooming out has to aggregate as well as compress, or the crowd it
+    /// creates is unreadable.
+    #[test]
+    fn the_lane_zoom_scales_the_window_and_the_clustering_with_it() {
+        let reference = 8_000; // a typical bar of eight seconds
+        let default = LiveLaneStyle {
+            cluster_ms: Some(100),
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(default.window_ms(reference), 8_000);
+        assert_eq!(default.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 100);
+
+        // Zoomed out: four times the market time in the same band, and a
+        // cluster four times as long — so a cluster keeps its width on screen.
+        let out = LiveLaneStyle {
+            time_zoom: 0.25,
+            ..default.clone()
+        };
+        assert_eq!(out.window_ms(reference), 32_000);
+        assert_eq!(out.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 400);
+
+        // Zoomed in: a quarter of the time, a quarter of the window.
+        let into = LiveLaneStyle {
+            time_zoom: 4.0,
+            ..default.clone()
+        };
+        assert_eq!(into.window_ms(reference), 2_000);
+        assert_eq!(into.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 25);
+
+        // Raw is a choice, not a size: it survives every zoom.
+        let raw = LiveLaneStyle {
+            cluster_ms: Some(0),
+            time_zoom: MIN_LIVE_LANE_ZOOM,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(raw.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 0);
+
+        // Bounds hold whatever the bars did: a session-long reference cannot
+        // turn the tape into a second chart, and a burst cannot make it an
+        // instant wide.
+        let out = LiveLaneStyle {
+            time_zoom: MIN_LIVE_LANE_ZOOM,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(out.window_ms(i64::MAX), MAX_LIVE_LANE_WINDOW_MS);
+        let into = LiveLaneStyle {
+            time_zoom: MAX_LIVE_LANE_ZOOM,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(into.window_ms(1), MIN_LIVE_LANE_WINDOW_MS);
+        assert_eq!(into.effective_cluster_ms(1), 1);
     }
 
     #[test]
