@@ -118,6 +118,15 @@ fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
     }
 }
 
+/// Whether a pointer at `x` is over the live lane rather than the candles.
+///
+/// The divider itself counts as the lane, so the gesture that resizes it and
+/// the gesture that pans the candles can never both fire on the same pixel.
+/// Without a lane every pixel belongs to the candles, exactly as before.
+fn gesture_hits_lane(divider_x: Option<f32>, x: f32) -> bool {
+    divider_x.is_some_and(|divider| x >= divider)
+}
+
 /// Split the bottom time strip at the lane's divider: the candles' own time
 /// axis on the left, the lane's on the right.
 ///
@@ -1152,7 +1161,7 @@ impl QuantickApp {
         let height = self.last_chart_height;
         let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
         let divider = self.last_lane_divider_x;
-        let in_lane = |position: egui::Pos2| divider.is_some_and(|x| position.x >= x);
+        let in_lane = |position: egui::Pos2| gesture_hits_lane(divider, position.x);
 
         // Chart body: drag pans both axes; scroll zooms time.
         let chart = ui.interact(
@@ -2185,6 +2194,18 @@ mod tests {
         assert_eq!(split_time_strip(strip, None), (strip, None));
         // A divider off the strip is not a split either.
         assert_eq!(split_time_strip(strip, Some(-5.0)), (strip, None));
+    }
+
+    /// The tape is inert: a gesture that lands on it must not reach the
+    /// candles, and the divider belongs to the tape so the resize handle and
+    /// the pan can never both fire on one pixel.
+    #[test]
+    fn a_gesture_on_the_tape_never_belongs_to_the_candles() {
+        assert!(!gesture_hits_lane(Some(700.0), 699.9));
+        assert!(gesture_hits_lane(Some(700.0), 700.0));
+        assert!(gesture_hits_lane(Some(700.0), 1_200.0));
+        // No lane: every pixel is the candles', exactly as before it existed.
+        assert!(!gesture_hits_lane(None, 1_200.0));
     }
 
     #[test]

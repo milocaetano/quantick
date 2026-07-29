@@ -948,7 +948,10 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             continue;
         }
         let leading = gap.precedes_capture();
-        let marks = gap_marks(rect, context.layout.chart_rect, leading);
+        // Against its own pane, not the chart: a gap cut short by the divider
+        // ends there because the pane does, and a boundary mark would claim the
+        // coverage resumed at a moment it did not.
+        let marks = gap_marks(rect, context.layout.span_pane(gap.x0, gap.x1), leading);
         if marks.fill {
             clip.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
         }
@@ -1198,13 +1201,15 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         bottom: f32,
         width: f32,
         color: egui::Color32,
+        pane: egui::Rect,
     ) {
         add_gradient_rect(
             mesh,
             egui::Rect::from_min_max(
                 egui::pos2(x - width * 0.5, top),
                 egui::pos2(x + width * 0.5, bottom),
-            ),
+            )
+            .intersect(pane),
             color,
             color,
         );
@@ -1226,6 +1231,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                     band.bottom,
                     if full { 2.0 } else { 1.3 },
                     palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
+                    pane,
                 );
                 if full {
                     // End caps read as "this band was fully taken here".
@@ -1247,7 +1253,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band,
                 reduction,
                 full,
-                pane: _,
+                pane,
             } => {
                 add_vline(
                     &mut front_mesh,
@@ -1260,6 +1266,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                     } else {
                         0.55 + 0.3 * reduction
                     }),
+                    pane,
                 );
             }
         }
