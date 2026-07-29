@@ -1,5 +1,7 @@
 //! Renderer-independent projection of RLE history into normalized primitives.
 
+use std::collections::BTreeMap;
+
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -253,6 +255,21 @@ struct DraftCell {
     y1: f64,
 }
 
+/// One level's resting liquidity, summed over one bar and weighted by time.
+///
+/// The accumulator behind a bar slot's summary band: `weighted / span_ms` is
+/// the quantity that was typically resting at that price while the bar ran.
+struct SlotHeat {
+    generation: u64,
+    /// Σ quantity × milliseconds it was displayed for, inside this bar.
+    weighted: Decimal,
+    /// The bar's own duration, which the sum is averaged over — so a level
+    /// present for part of the bar reads proportionally fainter.
+    span_ms: i64,
+    y0: f64,
+    y1: f64,
+}
+
 /// Project retained order flow into `[0,1] × [0,1]` chart primitives.
 ///
 /// Capture buckets are swept into visual ranges only for this frame. Retained
@@ -307,26 +324,32 @@ pub fn project(
         GroupedLiquidity::default()
     };
 
+    // Where the book is drawn, and in what form.
+    //
+    // A bar is timeless: its slot is a fixed width whatever market time it took,
+    // so drawing sub-bar runs inside it invents a clock the bar does not have —
+    // and once the tape covers the present, asking only for the newest place a
+    // run belongs leaves the candles' half of the chart frozen a window in the
+    // past. With a tape on screen the two halves split the job the way the
+    // prints already do: the tape keeps the runs themselves, second by second,
+    // and each bar slot carries *one summary band per level* — the quantity
+    // that was typically resting there while the bar ran, each run weighted by
+    // how much of the bar it covered. A wall that stood the whole bar reads at
+    // its own size; one that flickered for a tenth of it reads a tenth as
+    // bright. Both panes read on the same scale, so a stable wall looks the
+    // same on either side of the divider.
+    //
+    // Without a tape there is nothing to carry the detail, so the chart keeps
+    // drawing every run where it happened, exactly as it always has.
     let mut drafts = Vec::new();
+    // One entry per run, so the intensity reference measures the book itself
+    // rather than how many views a level happens to be drawn in.
+    let mut run_quantities = Vec::with_capacity(grouped.runs.len());
+    let mut summary: BTreeMap<(usize, Decimal, RestingSide), SlotHeat> = BTreeMap::new();
+    let lane_view = timeline.lane_start_ms().is_some();
     for run in &grouped.runs {
         let bucket_low = run.price_bucket;
         let bucket_high = bucket_low + effective_grouping.bucket_width;
-        let Some(x0) = timeline
-            .locate_clamped(run.start_ms)
-            .map(|position| position.normalized)
-        else {
-            continue;
-        };
-        let Some(x1) = timeline
-            .locate_clamped(run.end_ms)
-            .map(|position| position.normalized)
-        else {
-            continue;
-        };
-        if x1 <= x0 {
-            continue;
-        }
-
         let clipped_low = bucket_low.max(prices.low);
         let clipped_high = bucket_high.min(prices.high);
         let Some(y0) = prices.y(clipped_high) else {
@@ -338,21 +361,78 @@ pub fn project(
         if y1 <= y0 {
             continue;
         }
-
-        drafts.push(DraftCell {
+        let draft = |x0: f64, x1: f64, quantity: Decimal| DraftCell {
             generation: run.generation,
             side: run.side,
             price_bucket: run.price_bucket,
-            quantity: run.quantity,
+            quantity,
             x0,
             x1,
             y0,
             y1,
+        };
+
+        let mut drawn = false;
+        if lane_view {
+            for span in timeline.slots_between(run.start_ms, run.end_ms) {
+                let overlap = run
+                    .end_ms
+                    .min(span.end_ms)
+                    .saturating_sub(run.start_ms.max(span.start_ms));
+                if overlap <= 0 {
+                    continue;
+                }
+                let entry = summary
+                    .entry((span.index, run.price_bucket, run.side))
+                    .or_insert(SlotHeat {
+                        generation: run.generation,
+                        weighted: Decimal::ZERO,
+                        span_ms: (span.end_ms - span.start_ms).max(1),
+                        y0,
+                        y1,
+                    });
+                entry.weighted = entry
+                    .weighted
+                    .saturating_add(run.quantity.saturating_mul(Decimal::from(overlap)));
+                entry.generation = entry.generation.max(run.generation);
+                drawn = true;
+            }
+            if let (Some(x0), Some(x1)) = (
+                timeline.locate_in_lane_clamped(run.start_ms),
+                timeline.locate_in_lane_clamped(run.end_ms),
+            ) && x1.normalized > x0.normalized
+            {
+                drafts.push(draft(x0.normalized, x1.normalized, run.quantity));
+                drawn = true;
+            }
+        } else if let (Some(x0), Some(x1)) = (
+            timeline.locate_clamped(run.start_ms),
+            timeline.locate_clamped(run.end_ms),
+        ) && x1.normalized > x0.normalized
+        {
+            drafts.push(draft(x0.normalized, x1.normalized, run.quantity));
+            drawn = true;
+        }
+        if drawn {
+            run_quantities.push(run.quantity);
+        }
+    }
+    for ((index, price_bucket, side), heat) in summary {
+        let (x0, x1) = timeline.slot_bounds(index);
+        drafts.push(DraftCell {
+            generation: heat.generation,
+            side,
+            price_bucket,
+            quantity: heat.weighted / Decimal::from(heat.span_ms),
+            x0,
+            x1,
+            y0: heat.y0,
+            y1: heat.y1,
         });
     }
 
     let liquidity_reference = match config.intensity_mode {
-        IntensityMode::VisibleP99 => percentile_99(drafts.iter().map(|cell| cell.quantity)),
+        IntensityMode::VisibleP99 => percentile_99(run_quantities.into_iter()),
         IntensityMode::Fixed(maximum) => maximum,
     };
 
@@ -1376,6 +1456,73 @@ mod tests {
         // Only the lower half of bucket [100,101] is in [99.5,100.5].
         assert!((old.y0 - 0.0).abs() < 1e-9);
         assert!((old.y1 - 0.5).abs() < 1e-9);
+    }
+
+    /// A bar is timeless: its slot cannot say *when* inside the bar a wall was
+    /// resting, only how much of the bar it rested for. So with a tape on
+    /// screen the slots summarize — one band per level, weighted by presence —
+    /// and the tape keeps the runs themselves.
+    #[test]
+    fn a_bar_slot_summarizes_the_book_while_the_tape_keeps_the_runs() {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
+        // The 100 bid (quantity 3) is pulled halfway through the first bar.
+        history
+            .apply_delta(
+                5_000,
+                &BookDelta::new(11, 11, vec![level("100", "0")], vec![]),
+            )
+            .unwrap();
+        history
+            .apply_delta(20_000, &BookDelta::new(12, 12, vec![], vec![]))
+            .unwrap();
+
+        let closed = [bar(0, 10_000), bar(10_000, 20_000)];
+        let prices = PriceWindow::new(dec("99.5"), dec("100.5")).unwrap();
+        let of_bucket = |projection: &HeatmapProjection| {
+            let mut cells: Vec<_> = projection
+                .cells
+                .iter()
+                .filter(|cell| cell.price_bucket == dec("100"))
+                .map(|cell| (cell.x0, cell.x1, cell.quantity))
+                .collect();
+            cells.sort_by(|a, b| a.0.total_cmp(&b.0));
+            cells
+        };
+
+        // Without a tape the chart keeps drawing the run where it happened:
+        // half of the first bar's slot, at its own quantity.
+        let alone = project(
+            &history,
+            &BarTimeline::from_bars(0, &closed, None, None),
+            prices,
+        );
+        assert_eq!(of_bucket(&alone), vec![(0.0, 0.25, dec("3"))]);
+
+        // With a tape, that same run becomes one summary band per bar: the
+        // whole slot wide, carrying what was typically resting there — three
+        // for half the bar reads as one and a half.
+        let summarized = project(
+            &history,
+            &BarTimeline::from_bars(
+                0,
+                &closed,
+                None,
+                Some(crate::orderflow::LiveEdge {
+                    now_ms: 20_000,
+                    window_ms: 5_000,
+                    on_newest_bar: true,
+                }),
+            ),
+            prices,
+        );
+        // Three regions: two bar slots and the tape. The run only touches the
+        // first bar, and it is long gone by the time the tape's window opens.
+        assert_eq!(
+            of_bucket(&summarized),
+            vec![(0.0, 1.0 / 3.0, dec("1.5"))],
+            "one band per bar, weighted by how much of it the wall was there"
+        );
     }
 
     #[test]

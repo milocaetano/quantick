@@ -81,6 +81,19 @@ struct Lane {
     end_ms: i64,
 }
 
+/// One bar slot and the market time it represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotSpan {
+    /// Position among the timeline's regions, for [`BarTimeline::slot_bounds`].
+    pub index: usize,
+    /// Global bar index of the bar this slot draws.
+    pub bar_index: usize,
+    /// Exchange timestamp the slot opens at.
+    pub start_ms: i64,
+    /// Exchange timestamp the slot ends at.
+    pub end_ms: i64,
+}
+
 /// The live edge, as one visible slice of bars sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiveEdge {
@@ -241,9 +254,11 @@ impl BarTimeline {
     /// asks for the slot even when the prints behind it are still rolling.
     #[must_use]
     pub fn locate_in_slot(&self, timestamp_ms: i64) -> Option<TimelinePosition> {
-        if !self.covers(timestamp_ms) {
-            return None;
-        }
+        self.covers(timestamp_ms)
+            .then(|| self.slot_position(timestamp_ms))
+    }
+
+    fn slot_position(&self, timestamp_ms: i64) -> TimelinePosition {
         let partition = self
             .slots
             .partition_point(|slot| slot.start_ms <= timestamp_ms);
@@ -251,11 +266,51 @@ impl BarTimeline {
         let slot = self.slots[slot_index];
         let span = (slot.end_ms - slot.start_ms).max(1) as f64;
         let fraction = ((timestamp_ms - slot.start_ms) as f64 / span).clamp(0.0, 1.0);
-        Some(TimelinePosition {
+        TimelinePosition {
             bar_index: slot.bar_index,
             fraction,
             normalized: (slot_index as f64 + fraction) / self.region_count() as f64,
-        })
+        }
+    }
+
+    /// The bar slots a time range touches, in order.
+    ///
+    /// What the candles' pane needs to summarize a run: which bars it was
+    /// resting through, and for how much of each. Empty when the range falls
+    /// entirely outside the represented bars.
+    pub fn slots_between(&self, start_ms: i64, end_ms: i64) -> impl Iterator<Item = SlotSpan> + '_ {
+        let first = self
+            .slots
+            .partition_point(|slot| slot.end_ms <= start_ms)
+            .min(self.slots.len());
+        let last = self.slots.partition_point(|slot| slot.start_ms < end_ms);
+        self.slots[first..last.max(first)]
+            .iter()
+            .enumerate()
+            .map(move |(offset, slot)| SlotSpan {
+                index: first + offset,
+                bar_index: slot.bar_index,
+                start_ms: slot.start_ms,
+                end_ms: slot.end_ms,
+            })
+    }
+
+    /// Normalized x of a whole slot: `[left, right)` of its region.
+    #[must_use]
+    pub fn slot_bounds(&self, index: usize) -> (f64, f64) {
+        let regions = self.region_count().max(1) as f64;
+        (index as f64 / regions, (index + 1) as f64 / regions)
+    }
+
+    /// Locate a timestamp inside the lane, clipping it to the lane's own
+    /// window. `None` when this timeline has no lane.
+    ///
+    /// The tape's half of the same question: a run that reaches into the
+    /// window is drawn there too, from wherever the window opens.
+    #[must_use]
+    pub fn locate_in_lane_clamped(&self, timestamp_ms: i64) -> Option<TimelinePosition> {
+        let lane = self.lane?;
+        Some(self.locate_in_range(timestamp_ms.clamp(lane.start_ms, lane.end_ms)))
     }
 
     /// Locate a timestamp after clipping it to the timeline bounds.
