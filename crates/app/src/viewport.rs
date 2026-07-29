@@ -111,6 +111,37 @@ impl Viewport {
         }
     }
 
+    /// Put the right edge back on `bar` of a series that was rebuilt under it.
+    ///
+    /// A rebuild (a new bar type or threshold) re-aligns every index: bar 2000
+    /// of a tick series and bar 2000 of a volume series are not the same
+    /// market moment, and the new series may not even be that long — a stale
+    /// index leaves the window past the end of the data, showing nothing. The
+    /// caller re-derives which bar the edge belongs on (by time, the one thing
+    /// a rebuild preserves) and hands it over here; `None` means there is
+    /// nothing left to anchor to, so the view returns to the live edge.
+    ///
+    /// A view already following live is left alone: its right edge is the
+    /// newest bar by definition, whatever the rebuild did.
+    ///
+    /// The sibling of [`Self::shift_right_edge`], for the case that one cannot
+    /// serve: prepending older history moves every index by a known count, so
+    /// that one shifts by it; a re-cut series has no such count, so this one
+    /// takes the destination outright.
+    pub fn reanchor(&mut self, bar: Option<usize>, total: usize) {
+        if self.follow {
+            return;
+        }
+        match bar {
+            Some(index) if total > 0 => {
+                let newest = (total - 1) as f32;
+                self.right_bar = (index as f32).clamp(0.0, newest);
+                self.follow = (self.right_bar - newest).abs() <= 0.5;
+            }
+            _ => self.snap_to_live(),
+        }
+    }
+
     /// The x-pixel centre of bar `index`, given the chart's right edge x and the
     /// series length. The newest bar sits half a candle in from `chart_right`.
     #[must_use]
@@ -253,6 +284,61 @@ mod tests {
         v.shift_right_edge(100);
         assert!(v.follows_live());
         assert_eq!(v.right_edge_bar(110), 109.0);
+    }
+
+    /// The regression: a rebuild that shortens the series must not leave the
+    /// window past the end of the data, where nothing is drawn at all.
+    #[test]
+    fn reanchoring_a_shortened_series_keeps_bars_on_screen() {
+        let mut v = Viewport::new();
+        v.pan_pixels(8_000.0, 3_000); // deep into the history of a long series
+        assert!(!v.follows_live());
+        assert!(v.visible_range(800.0, 40).0 >= v.visible_range(800.0, 40).1);
+
+        // The rebuild left 40 bars, and bar 12 is the same market time.
+        v.reanchor(Some(12), 40);
+        let (start, end) = v.visible_range(800.0, 40);
+        assert!(start < end, "the window must hold bars again");
+        assert!((v.right_edge_bar(40) - 12.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn reanchoring_without_an_anchor_returns_to_the_live_edge() {
+        let mut v = Viewport::new();
+        v.pan_pixels(8_000.0, 3_000);
+        v.reanchor(None, 40);
+        assert!(v.follows_live());
+        assert_eq!(v.right_edge_bar(40), 39.0);
+    }
+
+    #[test]
+    fn reanchoring_onto_the_newest_bar_resumes_following() {
+        let mut v = Viewport::new();
+        v.pan_pixels(80.0, 3_000);
+        v.reanchor(Some(39), 40);
+        assert!(v.follows_live(), "the edge is the live edge again");
+    }
+
+    #[test]
+    fn reanchoring_never_lands_outside_the_new_series() {
+        let mut v = Viewport::new();
+        v.pan_pixels(80.0, 3_000);
+        // An anchor past the end (a rebuild that shrank the series harder than
+        // the caller's index knew) still lands on a bar.
+        v.reanchor(Some(9_999), 40);
+        assert!(v.right_edge_bar(40) <= 39.0);
+        // And an empty series has nothing to anchor to.
+        v.pan_pixels(80.0, 40);
+        v.reanchor(Some(3), 0);
+        assert!(v.follows_live());
+    }
+
+    #[test]
+    fn reanchoring_leaves_a_following_view_alone() {
+        let mut v = Viewport::new();
+        v.reanchor(Some(3), 40);
+        assert!(v.follows_live(), "following already means the newest bar");
+        assert_eq!(v.right_edge_bar(40), 39.0);
     }
 
     #[test]
