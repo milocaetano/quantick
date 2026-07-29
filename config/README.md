@@ -33,7 +33,8 @@ active = "default"        # the preset the panel opens on ("" = none)
 [[presets]]
 name = "default"
 cluster_ms = 200          # merge compatible prints inside this window
-candle_summary = false    # fold each closed bar into one two-sided pie bubble
+candle_summary = false    # fold each bar into one two-sided pie bubble per price
+                          # range — the forming one included, as a running total
 
 [presets.bubbles]         # everything visual; every key is optional
 max_radius = 15.0

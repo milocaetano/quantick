@@ -311,4 +311,14 @@ mod tests {
             );
         }
     }
+
+    /// An adaptive rule has no fixed threshold to count toward, and reporting
+    /// one would tell the reader the bar closes at a moment it will not.
+    #[test]
+    fn an_adaptive_rule_reports_no_countdown() {
+        let mut b = ImbalanceBarBuilder::new(10);
+        assert!(b.progress().is_none());
+        run(&mut b, &[Side::Buy, Side::Buy, Side::Sell]);
+        assert!(b.progress().is_none());
+    }
 }

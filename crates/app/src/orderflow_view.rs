@@ -1477,7 +1477,7 @@ impl OrderflowView {
                                 "summarize closed bars",
                             )
                             .on_hover_text(
-                                "once a print has rolled off the live lane, fold it together with the rest of its bar and price range into one bubble carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. Quantities, ids and matched evidence are summed exactly; whatever is still on the tape is never summarized",
+                                "fold every print of a bar and price range into one bubble carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. The forming bar included: its pie is a running total that grows with each order, so the compressed left side reports what is happening now instead of only what already happened. Quantities, ids and matched evidence are summed exactly, and the tape still shows those same prints one by one",
                             );
                             self.draw_live_lane_controls(ui);
                             self.draw_bubble_controls(ui);

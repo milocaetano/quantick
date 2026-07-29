@@ -147,6 +147,18 @@ struct PlotAreas {
     time_strip: egui::Rect,
 }
 
+/// Format the forming bar's countdown, e.g. `37/50 ticks`.
+///
+/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
+/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
+fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
+    format!(
+        "{}/{} {unit}",
+        progress.done.normalize(),
+        progress.target.normalize()
+    )
+}
+
 /// Format a duration in milliseconds for the lane's time axis, in the unit a
 /// human would read it in.
 fn fmt_window(milliseconds: i64) -> String {
@@ -1124,17 +1136,23 @@ impl QuantickApp {
     }
 
     /// Handle mouse navigation, TradingView-style:
-    /// - drag the chart → pan time (x, moves the whole chart) and price (y);
-    /// - scroll over the chart → zoom time;
+    /// - drag the candles → pan time (x, moves the whole chart) and price (y);
+    /// - scroll over them → zoom time;
     /// - drag the bottom time strip left/right → zoom time (spread candles);
     /// - drag the right price gutter up/down → zoom the price scale;
     /// - scroll over either axis → zoom that axis;
     /// - double-click → reset to the live edge and auto-fit price.
+    ///
+    /// The live lane is a pane of its own and answers to none of it: a gesture
+    /// that starts inside the tape moves nothing, and scrolling there zooms the
+    /// tape's own window instead of the candles.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
         let areas = plot_split(area, self.live_strip_width());
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
         let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
+        let divider = self.last_lane_divider_x;
+        let in_lane = |position: egui::Pos2| divider.is_some_and(|x| position.x >= x);
 
         // Chart body: drag pans both axes; scroll zooms time.
         let chart = ui.interact(
@@ -1143,7 +1161,12 @@ impl QuantickApp {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
-        if total > 0 && chart.dragged() {
+        // Where the press landed, not where the pointer is now: a pan that
+        // started on the candles keeps working when it crosses the divider.
+        let dragging_candles = chart
+            .interact_pointer_pos()
+            .is_some_and(|press| !in_lane(press));
+        if total > 0 && chart.dragged() && dragging_candles {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
@@ -1162,8 +1185,13 @@ impl QuantickApp {
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                // Scroll up (positive) zooms in — wider candles.
-                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                // Scroll up (positive) zooms in. Over the tape that means less
+                // market time in the band; over the candles, wider candles.
+                if chart.hover_pos().is_some_and(in_lane) {
+                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                } else {
+                    self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                }
             }
         }
 
@@ -1756,6 +1784,10 @@ impl QuantickApp {
             }),
             feed_lag_ms: self.trade_lag_ms(),
             spec_summary: self.state.spec().summary(),
+            bar_progress: self
+                .state
+                .progress()
+                .map(|(progress, unit)| fmt_progress(&progress, unit)),
             backfilled_bars: backfilled,
             live_bars: live,
             side_note: self.side_note(),

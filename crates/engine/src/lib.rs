@@ -33,7 +33,7 @@ mod trade;
 mod volume;
 
 pub use bar::Bar;
-pub use builder::BarBuilder;
+pub use builder::{BarBuilder, BarProgress};
 pub use dollar::{DollarBarBuilder, DollarMeasure};
 pub use imbalance::ImbalanceBarBuilder;
 pub use threshold::{Measure, ThresholdBarBuilder};

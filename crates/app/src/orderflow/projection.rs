@@ -397,16 +397,17 @@ pub fn project(
         .collect();
 
     // The chart draws the same flow in two views. The tape shows the last
-    // stretch of market time print by print; a bar slot shows what its bar came
-    // to. A print is on the tape while it is inside the rolling window, and it
-    // belongs to its bar's slot either once it has aged out of the window or —
-    // when closed bars are summarized — as soon as its bar closes, because a
-    // summary is a statement about a finished bar and has to be complete the
-    // moment the bar is. Raw prints are still drawn exactly once; only the
-    // aggregate is allowed to overlap the tape it was computed from.
+    // stretch of market time print by print; a bar slot shows what its bar has
+    // come to. A print is on the tape while it is inside the rolling window,
+    // and it belongs to its bar's slot either once it has aged out of the
+    // window or — while summarizing — immediately, because a summary is a
+    // running statement about its bar and has to be complete at every instant:
+    // the bar that just closed the moment it closes, and the forming bar as its
+    // orders arrive, so the left side reads what is happening now instead of
+    // only what already happened. Raw prints are still drawn exactly once; only
+    // the aggregate is allowed to overlap the tape it was computed from.
     let lane_start_ms = timeline.lane_start_ms();
     let in_lane = |timestamp_ms: i64| lane_start_ms.is_some_and(|start| timestamp_ms >= start);
-    let forming_bar = timeline.forming_bar_index();
     // Both sides have to be on screen for a two-sided mark to be honest: a
     // bubble summing buys and sells would lie about its size if one of them
     // were hidden.
@@ -416,22 +417,14 @@ pub fn project(
     let mut tape_prints = Vec::new();
     let mut slot_prints = Vec::new();
     for trade in history.aggressions() {
-        let Some(position) = timeline.locate(trade.timestamp_ms) else {
-            continue;
-        };
-        if prices.y(trade.price).is_none() {
+        if timeline.locate(trade.timestamp_ms).is_none() || prices.y(trade.price).is_none() {
             continue;
         }
         let on_tape = in_lane(trade.timestamp_ms);
         if on_tape {
             tape_prints.push(trade);
         }
-        let bar_is_over = Some(position.bar_index) != forming_bar;
-        if if summarizing {
-            bar_is_over || !on_tape
-        } else {
-            !on_tape
-        } {
+        if summarizing || !on_tape {
             slot_prints.push(trade);
         }
     }
@@ -558,26 +551,21 @@ pub fn project(
         slot_clusters = merge_dust_clusters(slot_clusters, dust, config.bubble_dust_merge_ms);
     }
 
-    // The forming bar's own slot never summarizes: its story is not over. Its
-    // prints sit there once they have aged off the tape, drawn one by one, and
-    // they read on the raw-print scale like the tape does.
+    // Every bar with prints in its slot gets one mark per price range, the
+    // forming one included: its pie is a running total that grows with each
+    // order, which is how the compressed left side says what is happening now
+    // rather than only what already happened. It is honest because it is
+    // exactly what the bar has taken so far — and the tape beside it still
+    // shows those same prints one by one.
     let bar_of = |cluster: &AggressionCluster| {
         timeline
             .locate(cluster.timestamp_ms)
             .map(|position| position.bar_index)
-            .filter(|index| Some(*index) != forming_bar)
-    };
-    let (settled_clusters, forming_clusters): (Vec<_>, Vec<_>) = if summarizing {
-        slot_clusters
-            .into_iter()
-            .partition(|cluster| bar_of(cluster).is_some())
-    } else {
-        (slot_clusters, Vec::new())
     };
     let settled_clusters = if summarizing {
-        summarize_clusters(settled_clusters, bar_of)
+        summarize_clusters(slot_clusters, bar_of)
     } else {
-        settled_clusters
+        slot_clusters
     };
     // While every mark is a raw print they share one size scale, so an area
     // means the same thing everywhere. The summary breaks that premise: a pie
@@ -596,7 +584,7 @@ pub fn project(
     // One list again, each mark carrying the view it belongs to and the scale
     // that view reads on.
     let mut aggression_clusters: Vec<(AggressionCluster, bool, Decimal)> =
-        Vec::with_capacity(tape_clusters.len() + settled_clusters.len() + forming_clusters.len());
+        Vec::with_capacity(tape_clusters.len() + settled_clusters.len());
     aggression_clusters.extend(
         tape_clusters
             .into_iter()
@@ -606,11 +594,6 @@ pub fn project(
         settled_clusters
             .into_iter()
             .map(|cluster| (cluster, false, summary_reference)),
-    );
-    aggression_clusters.extend(
-        forming_clusters
-            .into_iter()
-            .map(|cluster| (cluster, false, aggression_reference)),
     );
     aggression_clusters.sort_by(|(a, a_live, _), (b, b_live, _)| {
         a.first_timestamp_ms
@@ -1700,10 +1683,11 @@ mod tests {
         }
     }
 
-    /// A closed bar's opposing prints collapse into one two-sided mark; the
-    /// live lane's stay separate, because its bar has not finished happening.
+    /// Opposing prints of the same bar collapse into one two-sided mark in its
+    /// slot; the tape's own prints stay separate, because the tape is where
+    /// flow is read print by print.
     #[test]
-    fn the_summary_folds_closed_bars_and_leaves_the_live_lane_alone() {
+    fn the_summary_folds_a_bar_and_leaves_the_live_lane_alone() {
         // Five-second bars, so the rolling window is five seconds wide and the
         // first bar's prints have long left it.
         let trades = [
@@ -1738,17 +1722,22 @@ mod tests {
             &timeline,
             prices,
         );
-        // The closed bar became one pie; the lane's two prints are untouched.
-        assert_eq!(summarized.aggressions.len(), 3);
+        // Two pies — the closed bar's and the forming bar's running total —
+        // plus the tape's two prints, untouched.
+        assert_eq!(summarized.aggressions.len(), 4);
         let pies: Vec<_> = summarized
             .aggressions
             .iter()
             .filter(|bubble| bubble.buy_share > 0.0 && bubble.buy_share < 1.0)
             .collect();
-        assert_eq!(pies.len(), 1);
+        assert_eq!(pies.len(), 2);
         assert_eq!(pies[0].quantity, dec("4"));
         assert!((pies[0].buy_share - 0.75).abs() < 1e-6);
-        assert!(!pies[0].live, "a summary belongs to a bar that is over");
+        assert!(!pies[0].live, "a summary belongs to a bar, not to the tape");
+        // The forming bar's pie carries what it has taken so far — the very
+        // prints still rolling across the tape.
+        assert_eq!(pies[1].quantity, dec("4"));
+        assert!((pies[1].buy_share - 0.5).abs() < 1e-6);
         assert_eq!(
             summarized
                 .aggressions
@@ -1820,16 +1809,11 @@ mod tests {
         assert!(plain.aggressions.iter().all(|bubble| bubble.live));
     }
 
-    /// The forming bar is the one bar a pie may not claim: its proportion has
-    /// not finished happening. Its prints sit in its slot one by one once they
-    /// age off the tape.
+    /// The forming bar summarizes too, and its pie grows with the flow: that is
+    /// how the compressed left side reports what is happening *now* instead of
+    /// only what already happened once the bar closed.
     #[test]
-    fn the_forming_bar_is_never_summarized() {
-        let trades = [
-            (1_u64, 16_000_i64, "100", "3", Side::Buy),
-            (2, 17_000, "100", "1", Side::Sell),
-        ];
-        // Both prints are in the forming bar and both have aged off the tape.
+    fn the_forming_bars_pie_grows_with_every_order() {
         let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
         let timeline = BarTimeline::from_bars(
             0,
@@ -1838,25 +1822,32 @@ mod tests {
             live(30_000, &closed),
         );
         assert_eq!(timeline.lane_start_ms(), Some(25_000));
-        let summarized = project(
-            &tape(
-                HeatmapConfig {
-                    bubble_candle_summary: true,
-                    ..bubbles_only()
-                },
-                &trades,
-            ),
-            &timeline,
-            PriceWindow::new(dec("98"), dec("103")).unwrap(),
-        );
-        assert_eq!(summarized.aggressions.len(), 2, "two prints, two marks");
-        assert!(
-            summarized
-                .aggressions
-                .iter()
-                .all(|bubble| !bubble.live && (bubble.buy_share == 1.0 || bubble.buy_share == 0.0)),
-            "the forming bar keeps raw prints in its own slot"
-        );
+        let summarize = HeatmapConfig {
+            bubble_candle_summary: true,
+            ..bubbles_only()
+        };
+        let pie_of = |trades: &[(u64, i64, &str, &str, Side)]| {
+            let projected = project(
+                &tape(summarize.clone(), trades),
+                &timeline,
+                PriceWindow::new(dec("98"), dec("103")).unwrap(),
+            );
+            assert_eq!(projected.aggressions.len(), 1, "one bar, one mark");
+            let pie = projected.aggressions[0].clone();
+            assert!(!pie.live, "a summary belongs to a bar, not to the tape");
+            (pie.quantity, pie.buy_share, pie.trade_count)
+        };
+
+        // One buy so far: the mark is all buy and carries exactly that print.
+        let first = [(1_u64, 16_000_i64, "100", "3", Side::Buy)];
+        assert_eq!(pie_of(&first), (dec("3"), 1.0, 1));
+        // A sell arrives: the same mark grows and the proportion moves with it,
+        // without waiting for the bar to close.
+        let second = [
+            (1_u64, 16_000_i64, "100", "3", Side::Buy),
+            (2, 17_000, "100", "1", Side::Sell),
+        ];
+        assert_eq!(pie_of(&second), (dec("4"), 0.75, 2));
     }
 
     /// A summary carries a whole bar's quantity. Sized against the reference

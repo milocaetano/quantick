@@ -98,6 +98,13 @@ pub struct StatusModel {
     pub feed_lag_ms: Option<i64>,
     /// The bar spec, e.g. `tick(50)`.
     pub spec_summary: String,
+    /// How far the forming bar is from closing, e.g. `37/50 ticks`, when its
+    /// rule counts toward a fixed threshold.
+    ///
+    /// Alternative bars close on activity, not on a clock, so without this the
+    /// chart never says whether the next print completes the bar or the
+    /// fiftieth does.
+    pub bar_progress: Option<String>,
     /// Closed bars built from backfilled history.
     pub backfilled_bars: usize,
     /// Closed bars built live.
@@ -206,6 +213,14 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
             .monospace()
             .color(theme::TEXT_PRIMARY),
     );
+    if let Some(progress) = &model.bar_progress {
+        ui.label(
+            egui::RichText::new(progress)
+                .monospace()
+                .color(theme::AMBER),
+        )
+        .on_hover_text("how far the forming bar is from closing");
+    }
     ui.label(
         egui::RichText::new(bars_text(model.backfilled_bars, model.live_bars))
             .monospace()
@@ -339,6 +354,7 @@ mod tests {
                 }),
                 feed_lag_ms: (!replaying).then_some(120),
                 spec_summary: "tick(50)".to_owned(),
+                bar_progress: Some("37/50 ticks".to_owned()),
                 backfilled_bars: 240,
                 live_bars: 61,
                 side_note: replaying.then(|| "side: inferred (tick rule)".to_owned()),

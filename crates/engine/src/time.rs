@@ -24,7 +24,9 @@
 //! bar's), and that gap is the honest record that no trades happened in between.
 
 use crate::threshold::{extend_bar, open_bar};
-use crate::{Bar, BarBuilder, Trade};
+use rust_decimal::Decimal;
+
+use crate::{Bar, BarBuilder, BarProgress, Trade};
 
 /// Builds time bars: one bar per `interval_ms` interval that contains trades.
 ///
@@ -101,6 +103,23 @@ impl BarBuilder for TimeBarBuilder {
     fn partial(&self) -> Option<&Bar> {
         self.current.as_ref()
     }
+
+    /// Elapsed time *of the trades seen*, against the interval — never a wall
+    /// clock, which would make the same fixture report differently on two runs.
+    /// A quiet stretch therefore freezes the readout instead of running it out:
+    /// the bar closes on the first trade of a later interval, so with no trades
+    /// there is nothing yet to close it.
+    fn progress(&self) -> Option<BarProgress> {
+        let bar = self.current.as_ref()?;
+        let elapsed = bar
+            .close_time
+            .saturating_sub(self.bucket_start)
+            .clamp(0, self.interval_ms);
+        Some(BarProgress {
+            done: Decimal::from(elapsed),
+            target: Decimal::from(self.interval_ms),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -157,5 +176,25 @@ mod tests {
         assert_eq!(closed.open_time, 1500, "only the non-empty bucket closed");
         // The forming bar jumps straight to bucket 4000 — no empty bars between.
         assert_eq!(b.partial().unwrap().open_time, 4200);
+    }
+
+    /// The countdown follows the trades, not a wall clock — the same fixture
+    /// must report the same progress on every run.
+    #[test]
+    fn progress_is_elapsed_trade_time_inside_the_interval() {
+        let mut b = TimeBarBuilder::new(1000);
+        assert!(b.progress().is_none(), "no bar, nothing to report");
+        b.push(&trade(1200, "100.0", Side::Buy));
+        let p = b.progress().expect("a time bar runs toward its interval");
+        assert_eq!(
+            (p.done, p.target),
+            (Decimal::from(200), Decimal::from(1000))
+        );
+        // A later trade in the same bucket moves it; a quiet stretch does not.
+        b.push(&trade(1900, "101.0", Side::Buy));
+        assert_eq!(b.progress().unwrap().done, Decimal::from(900));
+        // The next interval opens a fresh bar and a fresh countdown.
+        assert!(b.push(&trade(2100, "101.0", Side::Buy)).is_some());
+        assert_eq!(b.progress().unwrap().done, Decimal::from(100));
     }
 }

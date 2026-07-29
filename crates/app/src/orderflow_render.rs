@@ -779,35 +779,53 @@ impl<'a> ProjectedLayout<'a> {
         )
     }
 
+    /// Whether a normalized position belongs to the tape rather than the
+    /// candles. `false` for every position when the frame has no lane.
+    #[must_use]
+    fn in_lane(self, normalized: f64) -> bool {
+        self.lane_left_x().is_some()
+            && self.slot_count >= 1
+            && finite_unit_f64(normalized) > (self.slot_count as f64 - 1.0) / self.slot_count as f64
+    }
+
     /// The pane a normalized position belongs to.
     ///
     /// Panning the candles into history sends the newest bars off the right of
     /// their own pane, which is now the divider rather than the chart edge.
-    /// Clipping each primitive to its pane is what keeps them from being drawn
-    /// over the tape instead of scrolling out of sight.
+    /// Clipping each primitive to its pane is what keeps the two from drawing
+    /// into each other — a candle scrolls out of sight behind the tape instead
+    /// of over it, and nothing on the tape reaches back across the divider.
     #[must_use]
     fn pane(self, normalized: f64) -> egui::Rect {
-        match self.lane_left_x() {
-            Some(_) if self.slot_count >= 1 => {
-                let boundary = (self.slot_count as f64 - 1.0) / self.slot_count as f64;
-                if finite_unit_f64(normalized) > boundary {
-                    self.lane_rect()
-                } else {
-                    self.history_rect()
-                }
-            }
-            _ => self.chart_rect,
+        if self.lane_left_x().is_none() {
+            return self.chart_rect;
+        }
+        if self.in_lane(normalized) {
+            self.lane_rect()
+        } else {
+            self.history_rect()
         }
     }
 
-    /// The pane a band spans. One that crosses the divider — a resting level
-    /// that has been there since before the tape's window opened — belongs to
-    /// both and is clipped by neither.
+    /// The pane a band spans.
+    ///
+    /// One that crosses the divider — a resting level that has been there since
+    /// before the tape's window opened — belongs to both panes and is clipped
+    /// by neither, so it reads as the single continuous run it is. Unless its
+    /// history end has scrolled off the candles' pane: then only the part
+    /// inside the tape's own window is still on screen, and letting the rest
+    /// through would paint history time across the tape.
     #[must_use]
     fn span_pane(self, x0: f64, x1: f64) -> egui::Rect {
         let low = self.pane(x0.min(x1));
         let high = self.pane(x0.max(x1));
-        if low == high { low } else { self.chart_rect }
+        if low == high {
+            return low;
+        }
+        if self.x(x0.min(x1)) >= self.history_right() {
+            return self.lane_rect();
+        }
+        self.chart_rect
     }
 
     #[must_use]
@@ -1056,6 +1074,10 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         if band.x < context.layout.chart_rect.left() - 1.0 || band.x > right_edge + 1.0 {
             continue;
         }
+        // Every mark below reaches to the *right* of the level it happened at,
+        // so each one stops at the edge of its own pane: a reduction beside the
+        // divider must not bleed its hole and its tail across the tape.
+        let pane = context.layout.pane(event.x);
 
         let reduction = finite_unit(event.fraction);
         let full = event.full_removal;
@@ -1071,8 +1093,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             &mut hole_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(band.x, band.top),
-                egui::pos2((band.x + hole_w).min(right_edge), band.bottom),
-            ),
+                egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
+            )
+            .intersect(pane),
             style.canvas_background,
             style.canvas_background,
         );
@@ -1082,11 +1105,13 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band: front,
                 matched: finite_unit(event.matched_fraction),
                 full,
+                pane,
             }),
             LiquidityEvidence::DepthOnly => fronts.push(EventFront::DepthOnly {
                 band: front,
                 reduction,
                 full,
+                pane,
             }),
         }
     }
@@ -1099,7 +1124,8 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             continue;
         }
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        if !context.layout.chart_rect.contains(center) {
+        let pane = context.layout.pane(trade.x);
+        if !pane.contains(center) {
             continue;
         }
         // Follow the bubble's own vertical nudge, so the carved gap stays
@@ -1117,8 +1143,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             &mut hole_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(center.x - r * 0.4, center.y - r - 2.0),
-                egui::pos2((center.x + r + 4.0).min(right_edge), center.y + r + 2.0),
-            ),
+                egui::pos2((center.x + r + 4.0).min(pane.right()), center.y + r + 2.0),
+            )
+            .intersect(pane),
             style.canvas_background,
             style.canvas_background,
         );
@@ -1137,6 +1164,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             band,
             reduction,
             full,
+            pane,
         } = front
         {
             let tail = if *full { 22.0 } else { 10.0 + 10.0 * reduction };
@@ -1144,8 +1172,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 &mut tail_mesh,
                 egui::Rect::from_min_max(
                     egui::pos2(band.x, band.top),
-                    egui::pos2((band.x + tail).min(right_edge), band.bottom),
-                ),
+                    egui::pos2((band.x + tail).min(pane.right()), band.bottom),
+                )
+                .intersect(*pane),
                 palette.depth_only.gamma_multiply(if *full {
                     0.38
                 } else {
@@ -1187,6 +1216,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band,
                 matched,
                 full,
+                pane,
             } => {
                 let strength = matched.max(0.25);
                 add_vline(
@@ -1205,7 +1235,8 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                             egui::Rect::from_min_max(
                                 egui::pos2(band.x - 3.5, y - 0.75),
                                 egui::pos2(band.x + 3.5, y + 0.75),
-                            ),
+                            )
+                            .intersect(pane),
                             palette.consumption.gamma_multiply(0.8),
                             palette.consumption.gamma_multiply(0.8),
                         );
@@ -1216,6 +1247,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band,
                 reduction,
                 full,
+                pane: _,
             } => {
                 add_vline(
                     &mut front_mesh,
@@ -1276,6 +1308,24 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         }
     };
 
+    // A bubble is a disc, not a rect, so its own pane has to clip it: keeping
+    // the *centre* inside the pane still lets a fat radius (and its label)
+    // spill across the divider, which is exactly the two charts drawing into
+    // each other. One painter per pane, picked per print.
+    let history_clip = painter.with_clip_rect(context.layout.history_rect());
+    let lane_clip = if context.layout.lane_left_x().is_some() {
+        painter.with_clip_rect(context.layout.lane_rect())
+    } else {
+        history_clip.clone()
+    };
+    let clip_for = |trade: &AggressionPrimitive| {
+        if context.layout.in_lane(trade.x) {
+            &lane_clip
+        } else {
+            &history_clip
+        }
+    };
+
     // Consumption trail behind the bubbles, so a bubble's own fill never hides it.
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
@@ -1286,15 +1336,11 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             let Some(center) = center_of(trade) else {
                 continue;
             };
+            let pane = context.layout.pane(trade.x);
             let half_length = front_half_length(radius_of(trade), bubbles);
             add_gradient_rect(
                 &mut trail_mesh,
-                trail_rect(
-                    center,
-                    half_length,
-                    bubbles.trail_length,
-                    context.layout.pane(trade.x).right(),
-                ),
+                trail_rect(center, half_length, bubbles.trail_length, pane.right()).intersect(pane),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
@@ -1308,11 +1354,12 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         let Some(center) = center_of(trade) else {
             continue;
         };
+        let clip = clip_for(trade);
         let radius = radius_of(trade);
         let linked_reduction =
             trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
         draw_bubble(
-            &clip,
+            clip,
             BubbleMark {
                 center,
                 radius,
@@ -1784,11 +1831,16 @@ enum EventFront {
         band: EventBand,
         matched: f32,
         full: bool,
+        /// The pane this reduction happened in — the candles' or the tape's.
+        /// Every mark it draws is clipped to it, caps included.
+        pane: egui::Rect,
     },
     DepthOnly {
         band: EventBand,
         reduction: f32,
         full: bool,
+        /// See [`EventFront::Aligned::pane`].
+        pane: egui::Rect,
     },
 }
 
@@ -3380,6 +3432,87 @@ mod tests {
             "history radius: {history}"
         );
         assert!(lane.contains("radius: 20.0"), "lane radius: {lane}");
+    }
+
+    /// A bubble is a disc: keeping its centre in its pane is not enough, since
+    /// a fat radius beside the divider still spills across it. Each print is
+    /// clipped to the pane it belongs to, so the two charts never draw into
+    /// each other — "os gráficos estão penetrando um no outro".
+    #[test]
+    fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        // Three bar slots plus a 300 px lane: the divider lands on x = 700.
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+        let divider = layout.lane_left_x().expect("a lane has a boundary");
+        let style = OrderflowRenderStyle {
+            bubbles: BubbleStyle {
+                min_radius: 20.0,
+                max_radius: 20.0,
+                detail_min_radius: 100.0, // cheap dots: one circle per print
+                hollow_small_buys: false,
+                halo_strength: 0.0,
+                trail_length: 0.0,
+                show_quantity_labels: false,
+                show_trade_count: false,
+                ..BubbleStyle::default()
+            },
+            ..OrderflowRenderStyle::default()
+        };
+
+        let clipped = |x: f64, live: bool| {
+            let mut projection = HeatmapProjection::empty(
+                true,
+                crate::orderflow::EffectiveGrouping::resolve(
+                    crate::orderflow::DisplayGrouping::Native,
+                    rust_decimal::Decimal::ONE,
+                    rust_decimal::Decimal::from(100),
+                ),
+            );
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id: 1,
+                agg_ids: vec![1],
+                generation: None,
+                side: Side::Buy,
+                consumed_side: BookSide::Ask,
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: 1.0,
+                live,
+                price_bucket: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x,
+                y: 0.5,
+                size: 1.0,
+            });
+            painted(|painter| {
+                draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
+            })
+        };
+
+        // The last instant before the lane opens: a print of the candles, drawn
+        // hard against the divider with a radius that would reach well past it.
+        let history = clipped(0.749, false);
+        assert!(
+            history.contains(&format!("{:?}", layout.history_rect())),
+            "a candle-pane print must carry the candle pane's clip: {history}"
+        );
+        assert!(
+            !history.contains(&format!("{:?}", layout.chart_rect)),
+            "and never the whole chart's: {history}"
+        );
+        // ...and the tape's first print is clipped the other way.
+        let lane = clipped(0.751, true);
+        assert!(
+            lane.contains(&format!("{:?}", layout.lane_rect())),
+            "a tape print must carry the tape's clip: {lane}"
+        );
+        assert!(layout.history_rect().right() <= divider);
+        assert!(layout.lane_rect().left() >= divider);
     }
 
     /// The two sides never both get the side nudge: an even split sits on the

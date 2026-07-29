@@ -108,7 +108,6 @@ pub struct LiveEdge {
 pub struct BarTimeline {
     slots: Vec<Slot>,
     lane: Option<Lane>,
-    forming_bar_index: Option<usize>,
 }
 
 impl BarTimeline {
@@ -151,24 +150,7 @@ impl BarTimeline {
             start_ms: edge.now_ms.saturating_sub(edge.window_ms.max(1)),
             end_ms: edge.now_ms,
         });
-        let forming_bar_index = partial
-            .and_then(|_| slots.last())
-            .map(|slot| slot.bar_index);
-        Self {
-            slots,
-            lane,
-            forming_bar_index,
-        }
-    }
-
-    /// Index of the bar still forming, if this timeline has one.
-    ///
-    /// The one bar whose story is not over, which is what the closed-bar
-    /// summary has to leave alone: a pie over a bar still taking prints would
-    /// claim a proportion that has not finished happening.
-    #[must_use]
-    pub fn forming_bar_index(&self) -> Option<usize> {
-        self.forming_bar_index
+        Self { slots, lane }
     }
 
     /// Exchange timestamp where the live lane begins.
