@@ -12,7 +12,7 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, ThresholdBarBuilder, Trade, threshold::Measure};
+use crate::{Bar, BarBuilder, BarProgress, ThresholdBarBuilder, Trade, threshold::Measure};
 
 /// The volume measure: every trade contributes its traded quantity.
 #[derive(Debug, Clone, Copy, Default)]
@@ -61,6 +61,10 @@ impl BarBuilder for VolumeBarBuilder {
 
     fn partial(&self) -> Option<&Bar> {
         self.inner.partial()
+    }
+
+    fn progress(&self) -> Option<BarProgress> {
+        self.inner.progress()
     }
 }
 

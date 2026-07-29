@@ -23,7 +23,9 @@ use crate::live_strip;
 use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
-    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS,
+    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
+    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM, reserved_span_ms,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
@@ -31,8 +33,8 @@ use crate::orderflow_engine::{
 };
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_preview,
-    theme_bubble_rgb,
+    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks,
+    draw_preview, theme_bubble_rgb,
 };
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
@@ -191,7 +193,7 @@ impl OrderflowView {
     }
 
     /// Latest exchange timestamp for which live book state is known, while the
-    /// map is on screen. Drives how wide the forming bar's live tail grows.
+    /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
         if !self.config.depth_visible() {
@@ -199,6 +201,52 @@ impl OrderflowView {
         }
         self.sync_published();
         self.published.live_end_ms
+    }
+
+    /// Width in pixels of the live lane's pane, taken off the right edge of a
+    /// chart this wide.
+    ///
+    /// A pane, not a slot: the candles own everything left of it and the lane
+    /// owns this band whatever they do. Panning or zooming them changes how
+    /// many bars fit beside the tape and never the tape itself, which is what
+    /// keeps the most recent prints on screen through every chart movement.
+    /// `None` when there is no live edge to run to.
+    #[must_use]
+    pub fn live_lane_width_px(&mut self, chart_width: f32) -> Option<f32> {
+        self.live_end_ms()?;
+        Some(self.config.live_lane.resolved_width_px(chart_width))
+    }
+
+    /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
+    /// (negative `delta_px`) gives the tape more room, at the expense of the
+    /// history beside it.
+    pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
+        if !delta_px.is_finite() || !chart_width.is_finite() || chart_width <= 0.0 {
+            return;
+        }
+        let before = self.config.clone();
+        let width = self.config.live_lane.resolved_width_px(chart_width) - delta_px;
+        self.config.live_lane.width_share = width / chart_width;
+        self.commit_config_changes(before);
+    }
+
+    /// Zoom the lane's time window by a multiplicative factor: `> 1` shows
+    /// less market time in the same band (prints run faster and further
+    /// apart), `< 1` shows more (prints crowd together and cluster).
+    pub fn zoom_live_lane(&mut self, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.time_zoom *= factor;
+        self.commit_config_changes(before);
+    }
+
+    /// Market time the lane is showing right now, in milliseconds — the label
+    /// under it, and the only readout of what the zoom is worth.
+    #[must_use]
+    pub fn live_lane_window_ms(&self, closed: &[Bar]) -> i64 {
+        self.config.live_lane.window_ms(reserved_span_ms(closed))
     }
 
     #[cfg(test)]
@@ -321,7 +369,8 @@ impl OrderflowView {
         first_bar_index: usize,
         closed: &[Bar],
         partial: Option<&Bar>,
-        extend_live_end: bool,
+        lane: bool,
+        on_newest_bar: bool,
         price_range: (f64, f64),
     ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
@@ -332,7 +381,8 @@ impl OrderflowView {
             first_bar_index,
             closed: closed.to_vec(),
             partial: partial.cloned(),
-            extend_live_end,
+            lane,
+            on_newest_bar,
             price_range,
         };
         let layout = request.layout();
@@ -358,7 +408,7 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        live_span: f32,
+        lane_width_px: f32,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -366,11 +416,12 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            live_span,
+            lane_width_px,
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(painter, &context);
+        draw_live_lane_marks(painter, &context);
         draw_liquidity_events(painter, &context);
     }
 
@@ -384,7 +435,7 @@ impl OrderflowView {
         total_bars: usize,
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
-        live_span: f32,
+        lane_width_px: f32,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -392,7 +443,7 @@ impl OrderflowView {
             total_bars,
             frame.first_bar_index,
             frame.slot_count,
-            live_span,
+            lane_width_px,
         );
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
@@ -719,6 +770,85 @@ impl OrderflowView {
     /// Every visual choice for the bubbles themselves, grouped so the section
     /// stays readable: size and placement, the marks a consuming print leaves,
     /// labels, and colour.
+    /// The live lane's own settings: the reserved band right of the forming
+    /// bar, which has room the compressed history does not.
+    fn draw_live_lane_controls(&mut self, ui: &mut egui::Ui) {
+        let inherited = self.config.bubble_cluster_ms;
+        let lane = &mut self.config.live_lane;
+
+        egui::CollapsingHeader::new("live lane")
+            .id_salt("bubble_live_lane_section")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("width");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut lane.width_share,
+                            MIN_LIVE_LANE_SHARE..=MAX_LIVE_LANE_SHARE,
+                        )
+                        .custom_formatter(|value, _| format!("{:.0}% of the chart", value * 100.0)),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("time zoom");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut lane.time_zoom,
+                            MIN_LIVE_LANE_ZOOM..=MAX_LIVE_LANE_ZOOM,
+                        )
+                        .logarithmic(true)
+                        .suffix("×"),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "how much market time fits in the tape, against the recent bars' typical duration. Zoom in and prints run across it faster and further apart; zoom out and more time crowds in — the clustering window follows, so they gather into fewer, bigger bubbles. Also set by dragging the time strip under the tape",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("cluster");
+                    egui::ComboBox::from_id_salt("bubble_live_lane_cluster")
+                        .selected_text(lane_cluster_label(lane.cluster_ms, inherited))
+                        .show_ui(ui, |ui| {
+                            for window in [None, Some(0), Some(50), Some(100), Some(200), Some(500)]
+                            {
+                                ui.selectable_value(
+                                    &mut lane.cluster_ms,
+                                    window,
+                                    lane_cluster_label(window, inherited),
+                                );
+                            }
+                        });
+                })
+                .response
+                .on_hover_text(
+                    "clustering window for prints on the tape. A shorter one than history's buys detail where there is room for it; \"same as history\" keeps the two regions identical",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("bubble size");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut lane.radius_scale,
+                            MIN_LIVE_LANE_RADIUS_SCALE..=MAX_LIVE_LANE_RADIUS_SCALE,
+                        )
+                        .suffix("×"),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "multiplies both bubble radii inside the lane only. The lane is the one region with room to spare, so a wider range reads as detail here and as overlap anywhere else",
+                );
+                ui.checkbox(&mut lane.show_marks, "boundary and live-edge line")
+                    .on_hover_text(
+                        "the dashed line where the bar slots end and the tape begins, and the line on the live edge itself at its right end",
+                    );
+            });
+    }
+
     fn draw_bubble_controls(&mut self, ui: &mut egui::Ui) {
         let theme_rgb = theme_bubble_rgb(self.config.theme);
         let bubbles = &mut self.config.bubbles;
@@ -1258,7 +1388,9 @@ impl OrderflowView {
                         show_aggressions: self.config.show_aggressions,
                         bubble_cluster_ms: self.config.bubble_cluster_ms,
                         bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
+                        bubble_candle_summary: self.config.bubble_candle_summary,
                         bubbles: self.config.bubbles.clone(),
+                        live_lane: self.config.live_lane.clone(),
                         ..HeatmapConfig::default()
                     };
                 }
@@ -1340,6 +1472,14 @@ impl OrderflowView {
                             .on_hover_text(
                                 "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" — quantities and trade counts are summed exactly",
                             );
+                            ui.checkbox(
+                                &mut self.config.bubble_candle_summary,
+                                "summarize closed bars",
+                            )
+                            .on_hover_text(
+                                "fold every print of a bar and price range into one bubble carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. The forming bar included: its pie is a running total that grows with each order, so the compressed left side reports what is happening now instead of only what already happened. Quantities, ids and matched evidence are summed exactly, and the tape still shows those same prints one by one",
+                            );
+                            self.draw_live_lane_controls(ui);
                             self.draw_bubble_controls(ui);
                         });
 
@@ -1363,7 +1503,9 @@ impl OrderflowView {
                             let defaults = HeatmapConfig::default();
                             self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
                             self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
+                            self.config.bubble_candle_summary = defaults.bubble_candle_summary;
                             self.config.bubbles = defaults.bubbles;
+                            self.config.live_lane = defaults.live_lane;
                             // No stored preset is on screen any more, so the
                             // picker must not keep claiming one.
                             self.presets.active.clear();
@@ -1422,6 +1564,14 @@ fn cluster_label(milliseconds: i64) -> String {
         "Raw".to_owned()
     } else {
         format!("{milliseconds} ms")
+    }
+}
+
+fn lane_cluster_label(window: Option<i64>, inherited: i64) -> String {
+    match window {
+        None => format!("Same as history · {}", dust_label(inherited)),
+        Some(0) => "Raw · one bubble per print".to_owned(),
+        Some(milliseconds) => dust_label(milliseconds),
     }
 }
 
@@ -1519,22 +1669,35 @@ mod tests {
 
     #[test]
     fn presets_apply_only_the_bubble_section() {
+        use crate::orderflow::LiveLaneStyle;
         let mut view = OrderflowView::new("BTCUSDT");
         let before = view.config.clone();
         view.presets.upsert(BubblePreset {
             name: "wide".to_owned(),
             cluster_ms: 100,
             dust_merge_ms: 3_000,
+            candle_summary: true,
             bubbles: BubbleStyle {
                 max_radius: 42.0,
                 side_offset: 8.0,
                 ..BubbleStyle::default()
+            },
+            live_lane: LiveLaneStyle {
+                width_share: 0.5,
+                time_zoom: 2.0,
+                cluster_ms: Some(50),
+                radius_scale: 1.6,
+                show_marks: true,
             },
         });
         view.apply_preset("wide");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
+        assert!(view.config.bubble_candle_summary);
+        assert_eq!(view.config.live_lane.width_share, 0.5);
+        assert_eq!(view.config.live_lane.time_zoom, 2.0);
+        assert_eq!(view.config.live_lane.cluster_ms, Some(50));
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.
@@ -1620,14 +1783,67 @@ mod tests {
 
         let bars = [bar(900, 1_100)];
         // First call queues the projection; the frame appears after a flush.
-        let first = view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        let first = view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
         assert!(first.is_none());
         view.flush_for_test();
         let frame = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
+            .project_visible(0, &bars, None, true, true, (98.0, 102.0))
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
+    }
+
+    /// Dragging the divider is the width slider by another route, and it stops
+    /// at half the chart: past that the history has no room to be read in.
+    #[test]
+    fn dragging_the_divider_resizes_the_lane_up_to_half_the_chart() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        let chart = 1_000.0;
+        let before = view.config.live_lane.resolved_width_px(chart);
+
+        // Drag left → a wider tape, pixel for pixel.
+        view.resize_live_lane(-60.0, chart);
+        assert!((view.config.live_lane.resolved_width_px(chart) - (before + 60.0)).abs() < 0.01);
+        // Drag right → a narrower one.
+        view.resize_live_lane(60.0, chart);
+        assert!((view.config.live_lane.resolved_width_px(chart) - before).abs() < 0.01);
+
+        // Half the chart is the ceiling, a twentieth the floor, whatever the
+        // drag asked for.
+        view.resize_live_lane(-10_000.0, chart);
+        assert_eq!(view.config.live_lane.width_share, MAX_LIVE_LANE_SHARE);
+        view.resize_live_lane(10_000.0, chart);
+        assert_eq!(view.config.live_lane.width_share, MIN_LIVE_LANE_SHARE);
+
+        // A degenerate chart or a lost pointer changes nothing at all.
+        let steady = view.config.live_lane.clone();
+        view.resize_live_lane(f32::NAN, chart);
+        view.resize_live_lane(-20.0, 0.0);
+        assert_eq!(view.config.live_lane, steady);
+    }
+
+    /// The tape's own zoom, and the bounds that keep it a tape.
+    #[test]
+    fn zooming_the_lane_scales_its_window_and_stops_at_the_bounds() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        let bars = [bar(0, 8_000), bar(8_000, 16_000)];
+        let unzoomed = view.live_lane_window_ms(&bars);
+        assert_eq!(unzoomed, 8_000, "one typical bar of market time");
+
+        view.zoom_live_lane(2.0);
+        assert_eq!(view.live_lane_window_ms(&bars), 4_000, "half the time");
+        view.zoom_live_lane(0.5);
+        assert_eq!(view.live_lane_window_ms(&bars), unzoomed);
+
+        view.zoom_live_lane(1_000.0);
+        assert_eq!(view.config.live_lane.time_zoom, MAX_LIVE_LANE_ZOOM);
+        view.zoom_live_lane(1e-6);
+        assert_eq!(view.config.live_lane.time_zoom, MIN_LIVE_LANE_ZOOM);
+
+        let steady = view.config.live_lane.clone();
+        view.zoom_live_lane(0.0);
+        view.zoom_live_lane(f32::NAN);
+        assert_eq!(view.config.live_lane, steady);
     }
 
     #[test]
@@ -1637,7 +1853,7 @@ mod tests {
         // One 99 bid and one 101 ask (see `snapshot_event`).
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, (100.0, 102.0));
+        view.project_visible(0, &bars, None, true, true, (100.0, 102.0));
         view.flush_for_test();
 
         let ladder = view.published.ladder.as_ref().expect("published ladder");
@@ -1715,10 +1931,10 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1);
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(0, &bars, None, true, (98.0, 102.0))
+            .project_visible(0, &bars, None, true, true, (98.0, 102.0))
             .expect("published frame");
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
@@ -1726,7 +1942,7 @@ mod tests {
         // Turning the bubbles off closes the pipeline again.
         view.set_bubbles_enabled(false);
         assert!(
-            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
                 .is_none()
         );
     }
@@ -1737,16 +1953,16 @@ mod tests {
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, (98.0, 102.0));
+        view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
         view.flush_for_test();
         assert!(
-            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
                 .is_some()
         );
 
         view.set_enabled(false, 11);
         assert!(
-            view.project_visible(0, &bars, None, true, (98.0, 102.0))
+            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
                 .is_none()
         );
         view.flush_for_test();

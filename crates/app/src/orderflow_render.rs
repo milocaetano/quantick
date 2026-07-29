@@ -14,7 +14,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::orderflow::{
     AggressionPrimitive, BEFORE_CAPTURE, BubbleRenderMode, BubbleStyle, HeatmapConfig,
-    HeatmapProjection, HeatmapTheme, LiquidityEvidence,
+    HeatmapProjection, HeatmapTheme, LiquidityEvidence, LiveLaneStyle,
 };
 use crate::viewport::Viewport;
 
@@ -67,6 +67,9 @@ pub(crate) struct OrderflowRenderStyle {
     pub(crate) edge_glow: f32,
     /// Every user-owned bubble choice, straight from the settings panel.
     pub(crate) bubbles: BubbleStyle,
+    /// The live lane's own choices: how wide the reserved band is, how its
+    /// prints cluster, and how much bigger their bubbles read.
+    pub(crate) live_lane: LiveLaneStyle,
     pub(crate) show_gap_labels: bool,
     pub(crate) show_legend: bool,
     /// Whether the L2 depth layer is active. The legend only advertises keys
@@ -104,6 +107,7 @@ impl Default for OrderflowRenderStyle {
             // which is the single biggest render cost on a dense book.
             edge_glow: 0.0,
             bubbles: BubbleStyle::default(),
+            live_lane: LiveLaneStyle::default(),
             show_gap_labels: true,
             show_legend: true,
             depth_layer: true,
@@ -130,6 +134,7 @@ impl OrderflowRenderStyle {
         Self {
             theme: config.theme,
             bubbles: config.bubbles.clone(),
+            live_lane: config.live_lane.clone(),
             show_legend: config.show_legend,
             depth_layer: config.depth_visible(),
             aggression_layer: config.show_aggressions,
@@ -151,6 +156,7 @@ impl OrderflowRenderStyle {
         style.min_cell_height = finite_clamp(style.min_cell_height, 0.5, 12.0, 1.5);
         style.edge_glow = finite_clamp(style.edge_glow, 0.0, 1.0, 0.18);
         style.bubbles.sanitize();
+        style.live_lane.sanitize();
         style.legend_max_width = finite_clamp(style.legend_max_width, 160.0, 2_000.0, 690.0);
         style
     }
@@ -328,6 +334,9 @@ const PREVIEW_SMALL_PRINT_SIZE: f32 = 0.45;
 /// Matched fraction of the preview's consuming print. Mid-range, so the
 /// impact ring shows neither its floor nor its ceiling.
 const PREVIEW_MATCHED_FRACTION: f32 = 0.6;
+/// Buy share of the preview's summarized print. Lopsided rather than even, so
+/// the two sectors are visibly unequal and the mark reads as a proportion.
+const PREVIEW_SUMMARY_BUY_SHARE: f32 = 0.62;
 
 /// Half-length, in pixels, of the vertical consumption front on a bubble of
 /// this radius.
@@ -382,44 +391,101 @@ fn sphere_edge_color(color: egui::Color32, shading: f32) -> egui::Color32 {
     ))
 }
 
-/// Append one sphere-shaded disc to `mesh`: a triangle fan from the offset lit
-/// core through a full-brightness ring to the darkened rim. Vertex colours do
-/// all the shading, so the 3D look costs one small mesh — no texture, no
-/// per-pixel work — and overlapping bubbles keep a visible boundary because
-/// each rim is darker than its neighbour's body.
-fn add_sphere_disc(
-    mesh: &mut egui::Mesh,
-    center: egui::Pos2,
-    radius: f32,
+/// Angle a pie starts at: straight up. Screen y grows downward, so a positive
+/// sweep from here runs clockwise, the direction a pie chart is read in.
+const PIE_START_ANGLE: f32 = -std::f32::consts::FRAC_PI_2;
+
+/// The three colours a shaded bubble interpolates between: lit core, side
+/// colour, darkened rim.
+#[derive(Debug, Clone, Copy)]
+struct SphereShading {
     core: egui::Color32,
     body: egui::Color32,
     edge: egui::Color32,
+}
+
+impl SphereShading {
+    /// One colour used three times, which flattens the gradient. This is how
+    /// the flat render mode draws its pie without a second tessellator.
+    const fn flat(color: egui::Color32) -> Self {
+        Self {
+            core: color,
+            body: color,
+            edge: color,
+        }
+    }
+
+    /// A side colour lit from the upper left.
+    fn sphere(color: egui::Color32, bubbles: &BubbleStyle) -> Self {
+        Self {
+            core: sphere_core_color(color, bubbles.sphere_highlight),
+            body: color,
+            edge: sphere_edge_color(color, bubbles.sphere_shading),
+        }
+    }
+
+    /// The same shading behind the bubble's configured fill alpha.
+    fn faded(self, opacity: f32) -> Self {
+        Self {
+            core: self.core.gamma_multiply(opacity),
+            body: self.body.gamma_multiply(opacity),
+            edge: self.edge.gamma_multiply(opacity),
+        }
+    }
+}
+
+/// Append one shaded circular sector to `mesh`: a triangle fan from the offset
+/// lit core through a full-brightness ring to the darkened rim, limited to
+/// `sweep` radians from `start_angle`. Vertex colours do all the shading, so
+/// the 3D look costs one small mesh — no texture, no per-pixel work — and
+/// overlapping bubbles keep a visible boundary because each rim is darker than
+/// its neighbour's body.
+///
+/// A whole bubble is one sector sweeping `TAU`; a two-sided bubble is two
+/// sectors sharing a centre, each shaded in its own side's colour.
+fn add_shaded_sector(
+    mesh: &mut egui::Mesh,
+    center: egui::Pos2,
+    radius: f32,
+    start_angle: f32,
+    sweep: f32,
+    shading: SphereShading,
 ) {
-    if !radius.is_finite() || radius <= 0.0 || !center.is_finite() {
+    let SphereShading { core, body, edge } = shading;
+    if !radius.is_finite() || radius <= 0.0 || !center.is_finite() || !sweep.is_finite() {
         return;
     }
-    let segments = sphere_segments(radius);
+    let sweep = sweep.clamp(0.0, std::f32::consts::TAU);
+    if sweep <= 0.0 {
+        return;
+    }
+    // Segments are budgeted for a whole circle, so a narrow sector stays
+    // cheap without ever falling below the two edges that make it a wedge.
+    let full = sphere_segments(radius);
+    let segments = (((full as f32) * (sweep / std::f32::consts::TAU)).ceil() as usize).max(2);
     let offset = egui::vec2(-radius, -radius) * SPHERE_LIGHT_OFFSET;
     // The core ring keeps a scaled-down share of the highlight offset, which
     // holds the whole lit zone inside the rim at any radius.
     let core_center = center + offset * (1.0 - SPHERE_CORE_RADIUS);
     let base = mesh.vertices.len() as u32;
     mesh.colored_vertex(center + offset, core);
+    // One more vertex than segments: the arc has two ends and, unlike a full
+    // circle, must not wrap the last back onto the first.
     for (ring_center, ring_radius, color) in [
         (core_center, radius * SPHERE_CORE_RADIUS, body),
         (center, radius, edge),
     ] {
-        for index in 0..segments {
-            let angle = index as f32 / segments as f32 * std::f32::consts::TAU;
+        for index in 0..=segments {
+            let angle = start_angle + sweep * (index as f32 / segments as f32);
             let direction = egui::vec2(angle.cos(), angle.sin());
             mesh.colored_vertex(ring_center + direction * ring_radius, color);
         }
     }
     let count = segments as u32;
     let core_ring = base + 1;
-    let rim_ring = core_ring + count;
+    let rim_ring = core_ring + count + 1;
     for index in 0..count {
-        let next = (index + 1) % count;
+        let next = index + 1;
         mesh.indices
             .extend_from_slice(&[base, core_ring + index, core_ring + next]);
         mesh.indices
@@ -440,6 +506,9 @@ struct BubbleMark {
     /// Fraction of the print matched against resting liquidity, when it ate
     /// any. `None` draws no consumption marks.
     matched: Option<f32>,
+    /// `[0,1]` share of the quantity buyers took. Anything strictly between
+    /// the ends is a bubble carrying both sides, drawn as a pie.
+    buy_share: f32,
 }
 
 /// Draw one bubble: halo, fill, rim and — when the print ate resting
@@ -462,6 +531,7 @@ fn draw_bubble(
         side,
         size,
         matched,
+        buy_share,
     } = mark;
     let color = colors.for_side(side);
 
@@ -471,11 +541,22 @@ fn draw_bubble(
     // read it, which also keeps the per-frame tessellation budget flat no
     // matter how fast the tape runs.
     let dressed = radius >= bubbles.detail_min_radius;
+    // A bubble carrying both sides shows their proportion as pie sectors, but
+    // only where a proportion can actually be read. Two floors, both needed:
+    // `readable_min_radius` is the dedicated "too small to read" threshold, and
+    // `dressed` keeps the cheap one-circle path intact on a dense tape, which
+    // some presets deliberately extend by setting the dressing radius below the
+    // minimum. Under either floor the mark is the dot it has always been, in
+    // the dominant side's colour.
+    let buy_share = finite_unit(buy_share);
+    let mixed =
+        dressed && radius >= bubbles.readable_min_radius && buy_share > 0.0 && buy_share < 1.0;
     // Shape carries the side exactly where colour stops doing it: below the
     // readability floor a green speck and a red speck are the same speck, and
     // an open ring is not. Gated on that floor rather than on `dressed`,
     // because a sphere-heavy look sets the dressing radius low on purpose and
-    // would otherwise leave every bubble solid.
+    // would otherwise leave every bubble solid. A pie is above that same floor
+    // by construction, so the two never contend for one bubble.
     let hollow = bubbles.hollow_small_buys
         && matches!(side, Side::Buy)
         && radius < bubbles.readable_min_radius;
@@ -513,16 +594,33 @@ fn draw_bubble(
             (radius - ring / 2.0).max(0.5),
             egui::Stroke::new(ring, color.gamma_multiply(bubbles.opacity)),
         );
-    } else if sphere {
+    } else if mixed || sphere {
+        // Shading is what tells the two modes apart: a sphere reads its core,
+        // body and rim colours, a flat bubble uses one colour three times.
+        let shaded = |color: egui::Color32| {
+            if sphere {
+                SphereShading::sphere(color, bubbles)
+            } else {
+                SphereShading::flat(color)
+            }
+            .faded(bubbles.opacity)
+        };
+        // Two sectors for a pie, one whole disc for everything else. A zero
+        // sweep draws nothing, so the second entry costs nothing when unused.
+        let sectors = if mixed {
+            [
+                (buy_share * std::f32::consts::TAU, colors.buy),
+                ((1.0 - buy_share) * std::f32::consts::TAU, colors.sell),
+            ]
+        } else {
+            [(std::f32::consts::TAU, color), (0.0, color)]
+        };
         let mut mesh = egui::Mesh::default();
-        add_sphere_disc(
-            &mut mesh,
-            center,
-            radius,
-            sphere_core_color(color, bubbles.sphere_highlight).gamma_multiply(bubbles.opacity),
-            color.gamma_multiply(bubbles.opacity),
-            sphere_edge_color(color, bubbles.sphere_shading).gamma_multiply(bubbles.opacity),
-        );
+        let mut angle = PIE_START_ANGLE;
+        for (sweep, side_color) in sectors {
+            add_shaded_sector(&mut mesh, center, radius, angle, sweep, shaded(side_color));
+            angle += sweep;
+        }
         painter.add(egui::Shape::mesh(mesh));
     } else {
         painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
@@ -570,6 +668,19 @@ fn draw_bubble(
     }
 }
 
+/// Screen x where the history pane ends and the live lane begins.
+///
+/// The lane is a pane pinned to the right edge of the chart, so the divider is
+/// a property of the chart rect alone — no viewport, no bars. That is exactly
+/// what makes panning and zooming the candles leave the tape where it is.
+/// `None` when the frame has no lane, or when the lane would take the whole
+/// chart and leave the candles nowhere to go.
+#[must_use]
+pub(crate) fn lane_divider_x(chart_rect: egui::Rect, lane_width_px: f32) -> Option<f32> {
+    (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px < chart_rect.width())
+        .then(|| chart_rect.right() - lane_width_px)
+}
+
 /// Mapping between normalized projection coordinates and the chart viewport.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ProjectedLayout<'a> {
@@ -577,12 +688,13 @@ pub(crate) struct ProjectedLayout<'a> {
     pub(crate) viewport: &'a Viewport,
     pub(crate) total_bars: usize,
     pub(crate) first_bar_index: usize,
+    /// Regions the normalized x axis is divided into: one per bar, plus the
+    /// live lane when the frame has one.
     pub(crate) slot_count: usize,
-    /// Visual width, in candle-widths, of the last slot (the forming bar). `1.0`
-    /// keeps equal-width slots; `> 1.0` expands the forming bar's live tail to
-    /// the right so its order flow rolls on a real-time scale instead of
-    /// recompressing every depth update.
-    pub(crate) live_span: f32,
+    /// Width in pixels of the live lane's pane, taken off the right edge of
+    /// the chart. `0.0` means the frame has no lane and the candles own the
+    /// whole chart.
+    pub(crate) lane_width_px: f32,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -593,7 +705,7 @@ impl<'a> ProjectedLayout<'a> {
         total_bars: usize,
         first_bar_index: usize,
         slot_count: usize,
-        live_span: f32,
+        lane_width_px: f32,
     ) -> Self {
         Self {
             chart_rect,
@@ -601,10 +713,10 @@ impl<'a> ProjectedLayout<'a> {
             total_bars,
             first_bar_index,
             slot_count,
-            live_span: if live_span.is_finite() {
-                live_span.max(1.0)
+            lane_width_px: if lane_width_px.is_finite() {
+                lane_width_px.max(0.0)
             } else {
-                1.0
+                0.0
             },
         }
     }
@@ -612,27 +724,108 @@ impl<'a> ProjectedLayout<'a> {
     #[must_use]
     fn x(self, normalized: f64) -> f32 {
         let normalized = finite_unit_f64(normalized) as f32;
-        let slot_count = self.slot_count as f32;
-        // Widen only the last slot (the forming bar) by `live_span`; earlier
-        // closed slots keep unit width. `slot_pos` is the position in slot units
-        // over `[0, slot_count]`; `ext_pos` re-expresses it in bar-width units.
-        let slot_pos = normalized * slot_count;
-        let ext_pos = if self.live_span <= 1.0 || slot_count < 1.0 {
-            slot_pos
-        } else {
-            let boundary = slot_count - 1.0; // start of the forming slot
-            if slot_pos <= boundary {
-                slot_pos
-            } else {
-                // The forming bar's candle owns a clean 1-wide slot as a divider
-                // (no heat behind it); the live order flow occupies the
-                // `live_span - 1` candle-widths to its right.
-                boundary + 1.0 + (slot_pos - boundary) * (self.live_span - 1.0)
+        let regions = self.slot_count as f32;
+        // `region_pos` is the position in region units over `[0, regions]`.
+        // Bars go through the viewport, which owns everything left of the
+        // divider; the lane — the last region — is a fixed band of screen,
+        // mapped linearly and answering to nothing the candles do.
+        let region_pos = normalized * regions;
+        let boundary = regions - 1.0;
+        match self.lane_left_x() {
+            Some(divider) if regions >= 1.0 && region_pos > boundary => {
+                divider + (region_pos - boundary) * self.lane_width_px
             }
-        };
+            _ => self.x_at_ext(region_pos),
+        }
+    }
+
+    /// Screen x of a position measured in candle widths from the first slot.
+    #[must_use]
+    fn x_at_ext(self, ext_pos: f32) -> f32 {
         let position = self.first_bar_index as f32 - 0.5 + ext_pos;
         self.viewport
-            .x_at_bar_position(position, self.chart_rect.right(), self.total_bars)
+            .x_at_bar_position(position, self.history_right(), self.total_bars)
+    }
+
+    /// Screen x where the live lane opens. `None` when this frame has no lane.
+    #[must_use]
+    pub(crate) fn lane_left_x(self) -> Option<f32> {
+        lane_divider_x(self.chart_rect, self.lane_width_px)
+    }
+
+    /// Right edge of the candles' own pane: the divider when a lane is drawn,
+    /// the chart's right edge otherwise.
+    #[must_use]
+    fn history_right(self) -> f32 {
+        self.lane_left_x()
+            .unwrap_or_else(|| self.chart_rect.right())
+    }
+
+    /// The candles' pane — everything left of the divider.
+    #[must_use]
+    fn history_rect(self) -> egui::Rect {
+        egui::Rect::from_min_max(
+            self.chart_rect.min,
+            egui::pos2(self.history_right(), self.chart_rect.bottom()),
+        )
+    }
+
+    /// The tape's pane — everything right of the divider.
+    #[must_use]
+    fn lane_rect(self) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(self.history_right(), self.chart_rect.top()),
+            self.chart_rect.max,
+        )
+    }
+
+    /// Whether a normalized position belongs to the tape rather than the
+    /// candles. `false` for every position when the frame has no lane.
+    #[must_use]
+    fn in_lane(self, normalized: f64) -> bool {
+        self.lane_left_x().is_some()
+            && self.slot_count >= 1
+            && finite_unit_f64(normalized) > (self.slot_count as f64 - 1.0) / self.slot_count as f64
+    }
+
+    /// The pane a normalized position belongs to.
+    ///
+    /// Panning the candles into history sends the newest bars off the right of
+    /// their own pane, which is now the divider rather than the chart edge.
+    /// Clipping each primitive to its pane is what keeps the two from drawing
+    /// into each other — a candle scrolls out of sight behind the tape instead
+    /// of over it, and nothing on the tape reaches back across the divider.
+    #[must_use]
+    fn pane(self, normalized: f64) -> egui::Rect {
+        if self.lane_left_x().is_none() {
+            return self.chart_rect;
+        }
+        if self.in_lane(normalized) {
+            self.lane_rect()
+        } else {
+            self.history_rect()
+        }
+    }
+
+    /// The pane a band spans.
+    ///
+    /// One that crosses the divider — a resting level that has been there since
+    /// before the tape's window opened — belongs to both panes and is clipped
+    /// by neither, so it reads as the single continuous run it is. Unless its
+    /// history end has scrolled off the candles' pane: then only the part
+    /// inside the tape's own window is still on screen, and letting the rest
+    /// through would paint history time across the tape.
+    #[must_use]
+    fn span_pane(self, x0: f64, x1: f64) -> egui::Rect {
+        let low = self.pane(x0.min(x1));
+        let high = self.pane(x0.max(x1));
+        if low == high {
+            return low;
+        }
+        if self.x(x0.min(x1)) >= self.history_right() {
+            return self.lane_rect();
+        }
+        self.chart_rect
     }
 
     #[must_use]
@@ -652,7 +845,7 @@ impl<'a> ProjectedLayout<'a> {
                 egui::pos2(left.max(right), top.max(bottom)),
             ),
             min_height,
-            self.chart_rect,
+            self.span_pane(x0, x1),
         )
     }
 
@@ -666,7 +859,7 @@ impl<'a> ProjectedLayout<'a> {
                 egui::pos2(self.x(x), top.max(bottom)),
             ),
             min_height,
-            self.chart_rect,
+            self.pane(x),
         );
         EventBand {
             x: self.x(x),
@@ -730,7 +923,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),
             )
-            .intersect(context.layout.chart_rect);
+            .intersect(context.layout.span_pane(cell.x0, cell.x1));
             let glow = rgba(rgb, alpha * style.edge_glow);
             add_gradient_rect(&mut mesh, glow_rect, glow, glow);
         }
@@ -750,12 +943,15 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             egui::pos2(x0.min(x1), context.layout.chart_rect.top()),
             egui::pos2(x0.max(x1), context.layout.chart_rect.bottom()),
         )
-        .intersect(context.layout.chart_rect);
+        .intersect(context.layout.span_pane(gap.x0, gap.x1));
         if !rect.is_positive() {
             continue;
         }
         let leading = gap.precedes_capture();
-        let marks = gap_marks(rect, context.layout.chart_rect, leading);
+        // Against its own pane, not the chart: a gap cut short by the divider
+        // ends there because the pane does, and a boundary mark would claim the
+        // coverage resumed at a moment it did not.
+        let marks = gap_marks(rect, context.layout.span_pane(gap.x0, gap.x1), leading);
         if marks.fill {
             clip.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
         }
@@ -795,6 +991,63 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
     }
 }
 
+/// Dash and gap, in pixels, of the line dividing the forming bar's candle from
+/// its live lane. Fine and airy: it marks where the present begins, and a solid
+/// rule there would read as a wall in the data.
+const LANE_DIVIDER_DASH_PX: f32 = 3.0;
+/// See [`LANE_DIVIDER_DASH_PX`].
+const LANE_DIVIDER_GAP_PX: f32 = 5.0;
+/// Dash and gap of the live-time line. Tighter than the divider's, so the two
+/// never read as the same mark even where they nearly touch.
+const LANE_NOW_DASH_PX: f32 = 6.0;
+/// See [`LANE_NOW_DASH_PX`].
+const LANE_NOW_GAP_PX: f32 = 3.0;
+/// Stroke width shared by both lane marks.
+const LANE_MARK_WIDTH_PX: f32 = 1.0;
+
+/// Draw the live lane's two marks: the boundary it opens at, and the line
+/// market time has walked to inside it.
+///
+/// Together they are what makes the reserved band readable. The boundary says
+/// the forming candle ends here and the present begins; the live-time line says
+/// how far into the present the tape has come. Space to the right of that line
+/// is time the lane is holding open — not liquidity that disappeared — and
+/// without the line an empty band would be indistinguishable from a dead feed.
+pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderContext<'_>) {
+    let style = context.style.sanitized();
+    if !style.live_lane.show_marks {
+        return;
+    }
+    // Both marks belong to the lane; without a live edge there is no lane.
+    let Some(now_x) = context.projection.live_now_x else {
+        return;
+    };
+    let Some(divider_x) = context.layout.lane_left_x() else {
+        return;
+    };
+    let rect = context.layout.chart_rect;
+    let palette = Palette::for_theme(style.theme);
+    let clip = painter.with_clip_rect(rect);
+    for (x, dash, gap, color) in [
+        (
+            divider_x,
+            LANE_DIVIDER_DASH_PX,
+            LANE_DIVIDER_GAP_PX,
+            palette.lane_divider,
+        ),
+        (
+            context.layout.x(now_x),
+            LANE_NOW_DASH_PX,
+            LANE_NOW_GAP_PX,
+            palette.lane_now,
+        ),
+    ] {
+        if x.is_finite() && rect.x_range().contains(x) {
+            draw_dashed_vertical(&clip, x, rect, dash, gap, color, LANE_MARK_WIDTH_PX);
+        }
+    }
+}
+
 /// Draw reductions after heat cells and before/around the candle layer.
 ///
 /// `AggressionAligned` draws a bright *consumption front* — the instant an
@@ -824,6 +1077,10 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         if band.x < context.layout.chart_rect.left() - 1.0 || band.x > right_edge + 1.0 {
             continue;
         }
+        // Every mark below reaches to the *right* of the level it happened at,
+        // so each one stops at the edge of its own pane: a reduction beside the
+        // divider must not bleed its hole and its tail across the tape.
+        let pane = context.layout.pane(event.x);
 
         let reduction = finite_unit(event.fraction);
         let full = event.full_removal;
@@ -839,8 +1096,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             &mut hole_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(band.x, band.top),
-                egui::pos2((band.x + hole_w).min(right_edge), band.bottom),
-            ),
+                egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
+            )
+            .intersect(pane),
             style.canvas_background,
             style.canvas_background,
         );
@@ -850,11 +1108,13 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band: front,
                 matched: finite_unit(event.matched_fraction),
                 full,
+                pane,
             }),
             LiquidityEvidence::DepthOnly => fronts.push(EventFront::DepthOnly {
                 band: front,
                 reduction,
                 full,
+                pane,
             }),
         }
     }
@@ -867,7 +1127,8 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             continue;
         }
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        if !context.layout.chart_rect.contains(center) {
+        let pane = context.layout.pane(trade.x);
+        if !pane.contains(center) {
             continue;
         }
         // Follow the bubble's own vertical nudge, so the carved gap stays
@@ -885,8 +1146,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             &mut hole_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(center.x - r * 0.4, center.y - r - 2.0),
-                egui::pos2((center.x + r + 4.0).min(right_edge), center.y + r + 2.0),
-            ),
+                egui::pos2((center.x + r + 4.0).min(pane.right()), center.y + r + 2.0),
+            )
+            .intersect(pane),
             style.canvas_background,
             style.canvas_background,
         );
@@ -905,6 +1167,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
             band,
             reduction,
             full,
+            pane,
         } = front
         {
             let tail = if *full { 22.0 } else { 10.0 + 10.0 * reduction };
@@ -912,8 +1175,9 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 &mut tail_mesh,
                 egui::Rect::from_min_max(
                     egui::pos2(band.x, band.top),
-                    egui::pos2((band.x + tail).min(right_edge), band.bottom),
-                ),
+                    egui::pos2((band.x + tail).min(pane.right()), band.bottom),
+                )
+                .intersect(*pane),
                 palette.depth_only.gamma_multiply(if *full {
                     0.38
                 } else {
@@ -937,13 +1201,15 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         bottom: f32,
         width: f32,
         color: egui::Color32,
+        pane: egui::Rect,
     ) {
         add_gradient_rect(
             mesh,
             egui::Rect::from_min_max(
                 egui::pos2(x - width * 0.5, top),
                 egui::pos2(x + width * 0.5, bottom),
-            ),
+            )
+            .intersect(pane),
             color,
             color,
         );
@@ -955,6 +1221,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band,
                 matched,
                 full,
+                pane,
             } => {
                 let strength = matched.max(0.25);
                 add_vline(
@@ -964,6 +1231,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                     band.bottom,
                     if full { 2.0 } else { 1.3 },
                     palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
+                    pane,
                 );
                 if full {
                     // End caps read as "this band was fully taken here".
@@ -973,7 +1241,8 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                             egui::Rect::from_min_max(
                                 egui::pos2(band.x - 3.5, y - 0.75),
                                 egui::pos2(band.x + 3.5, y + 0.75),
-                            ),
+                            )
+                            .intersect(pane),
                             palette.consumption.gamma_multiply(0.8),
                             palette.consumption.gamma_multiply(0.8),
                         );
@@ -984,6 +1253,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                 band,
                 reduction,
                 full,
+                pane,
             } => {
                 add_vline(
                     &mut front_mesh,
@@ -996,6 +1266,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
                     } else {
                         0.55 + 0.3 * reduction
                     }),
+                    pane,
                 );
             }
         }
@@ -1018,17 +1289,49 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let palette = Palette::for_theme(style.theme);
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
-    let right_edge = context.layout.chart_rect.right();
 
+    // The side nudge generalizes to a bubble carrying both sides: it slides
+    // continuously with the buy share, so an even split sits on the exact
+    // price and a lopsided one leans the way its dominant side would.
+    // A print is drawn only inside its own pane: one panned off the right of
+    // the candles is out of sight, not on top of the tape.
     let center_of = |trade: &AggressionPrimitive| {
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
+        let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
         context
             .layout
-            .chart_rect
+            .pane(trade.x)
             .contains(center)
-            .then(|| center + egui::vec2(0.0, side_offset_y(trade.side, bubbles.side_offset)))
+            .then(|| center + egui::vec2(0.0, -lean * bubbles.side_offset))
     };
-    let radius_of = |size: f32| bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
+    // The live lane has room the compressed history does not, which is the
+    // whole reason it gets a radius range of its own.
+    let (lane_min, lane_max) = style.live_lane.scaled_radii(bubbles);
+    let radius_of = |trade: &AggressionPrimitive| {
+        if trade.live {
+            bubble_radius(trade.size, lane_min, lane_max)
+        } else {
+            bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius)
+        }
+    };
+
+    // A bubble is a disc, not a rect, so its own pane has to clip it: keeping
+    // the *centre* inside the pane still lets a fat radius (and its label)
+    // spill across the divider, which is exactly the two charts drawing into
+    // each other. One painter per pane, picked per print.
+    let history_clip = painter.with_clip_rect(context.layout.history_rect());
+    let lane_clip = if context.layout.lane_left_x().is_some() {
+        painter.with_clip_rect(context.layout.lane_rect())
+    } else {
+        history_clip.clone()
+    };
+    let clip_for = |trade: &AggressionPrimitive| {
+        if context.layout.in_lane(trade.x) {
+            &lane_clip
+        } else {
+            &history_clip
+        }
+    };
 
     // Consumption trail behind the bubbles, so a bubble's own fill never hides it.
     if bubbles.trail_length > 0.0 {
@@ -1040,10 +1343,11 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             let Some(center) = center_of(trade) else {
                 continue;
             };
-            let half_length = front_half_length(radius_of(trade.size), bubbles);
+            let pane = context.layout.pane(trade.x);
+            let half_length = front_half_length(radius_of(trade), bubbles);
             add_gradient_rect(
                 &mut trail_mesh,
-                trail_rect(center, half_length, bubbles.trail_length, right_edge),
+                trail_rect(center, half_length, bubbles.trail_length, pane.right()).intersect(pane),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
@@ -1057,17 +1361,19 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         let Some(center) = center_of(trade) else {
             continue;
         };
-        let radius = radius_of(trade.size);
+        let clip = clip_for(trade);
+        let radius = radius_of(trade);
         let linked_reduction =
             trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
         draw_bubble(
-            &clip,
+            clip,
             BubbleMark {
                 center,
                 radius,
                 side: trade.side,
                 size: trade.size,
                 matched: linked_reduction.then_some(trade.matched_fraction),
+                buy_share: trade.buy_share,
             },
             bubbles,
             &colors,
@@ -1386,6 +1692,13 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
                 size: PREVIEW_LARGE_PRINT_SIZE,
                 side: Side::Buy,
                 linked_reduction: config.show_aligned_depletion,
+                // With the closed-bar summary on, the large sample is what a
+                // summarized bar actually produces: one mark, both sides.
+                buy_share: if config.bubble_candle_summary {
+                    PREVIEW_SUMMARY_BUY_SHARE
+                } else {
+                    1.0
+                },
             },
             chart.right(),
             bubbles,
@@ -1401,6 +1714,7 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
                 size: PREVIEW_SMALL_PRINT_SIZE,
                 side: Side::Sell,
                 linked_reduction: false,
+                buy_share: 0.0,
             },
             chart.right(),
             bubbles,
@@ -1439,6 +1753,10 @@ struct Palette {
     bubble_text: egui::Color32,
     gap_fill: egui::Color32,
     gap_boundary: egui::Color32,
+    /// Boundary between the forming bar's candle and its live lane.
+    lane_divider: egui::Color32,
+    /// The line market time has walked to inside the lane.
+    lane_now: egui::Color32,
     muted_text: egui::Color32,
     legend_text: egui::Color32,
     legend_background: egui::Color32,
@@ -1456,6 +1774,8 @@ impl Palette {
                 bubble_text: egui::Color32::WHITE,
                 gap_fill: egui::Color32::from_rgba_premultiplied(21, 24, 32, 20),
                 gap_boundary: egui::Color32::from_rgba_premultiplied(157, 167, 188, 115),
+                lane_divider: egui::Color32::from_rgba_premultiplied(120, 132, 156, 90),
+                lane_now: egui::Color32::from_rgba_premultiplied(226, 234, 250, 150),
                 muted_text: egui::Color32::from_rgb(186, 194, 209),
                 legend_text: egui::Color32::from_rgb(225, 230, 239),
                 legend_background: egui::Color32::from_rgba_premultiplied(8, 12, 23, 225),
@@ -1469,6 +1789,8 @@ impl Palette {
                 bubble_text: egui::Color32::WHITE,
                 gap_fill: egui::Color32::from_rgba_premultiplied(35, 35, 40, 28),
                 gap_boundary: egui::Color32::from_rgb(218, 222, 235),
+                lane_divider: egui::Color32::from_gray(160),
+                lane_now: egui::Color32::WHITE,
                 muted_text: egui::Color32::WHITE,
                 legend_text: egui::Color32::WHITE,
                 legend_background: egui::Color32::from_rgba_premultiplied(0, 0, 0, 238),
@@ -1482,6 +1804,8 @@ impl Palette {
                 bubble_text: egui::Color32::WHITE,
                 gap_fill: egui::Color32::from_rgba_premultiplied(25, 25, 30, 22),
                 gap_boundary: egui::Color32::from_rgb(176, 180, 190),
+                lane_divider: egui::Color32::from_rgba_premultiplied(140, 143, 152, 95),
+                lane_now: egui::Color32::from_rgba_premultiplied(232, 232, 226, 155),
                 muted_text: egui::Color32::from_rgb(214, 215, 210),
                 legend_text: egui::Color32::from_rgb(232, 232, 226),
                 legend_background: egui::Color32::from_rgba_premultiplied(10, 11, 25, 230),
@@ -1514,11 +1838,16 @@ enum EventFront {
         band: EventBand,
         matched: f32,
         full: bool,
+        /// The pane this reduction happened in — the candles' or the tape's.
+        /// Every mark it draws is clipped to it, caps included.
+        pane: egui::Rect,
     },
     DepthOnly {
         band: EventBand,
         reduction: f32,
         full: bool,
+        /// See [`EventFront::Aligned::pane`].
+        pane: egui::Rect,
     },
 }
 
@@ -1601,6 +1930,9 @@ struct PreviewBubble {
     side: Side,
     /// Whether this sample ate resting liquidity, so it shows the marks.
     linked_reduction: bool,
+    /// Buy share of the sample, so a preview of the closed-bar summary shows
+    /// the pie the chart would actually draw.
+    buy_share: f32,
 }
 
 /// Draw one preview print exactly the way the chart would draw it.
@@ -1620,8 +1952,10 @@ fn draw_preview_bubble(
         size,
         side,
         linked_reduction,
+        buy_share,
     } = preview;
-    let center = center + egui::vec2(0.0, side_offset_y(side, bubbles.side_offset));
+    let lean = (finite_unit(buy_share) - 0.5) * 2.0;
+    let center = center + egui::vec2(0.0, -lean * bubbles.side_offset);
     let radius = bubble_radius(size, bubbles.min_radius, bubbles.max_radius);
     if linked_reduction && bubbles.trail_length > 0.0 {
         // Consumption trail behind the bubble (drawn first so the fill sits on
@@ -1649,6 +1983,7 @@ fn draw_preview_bubble(
             side,
             size,
             matched: linked_reduction.then_some(PREVIEW_MATCHED_FRACTION),
+            buy_share,
         },
         bubbles,
         colors,
@@ -2171,18 +2506,6 @@ fn quantize_heat(intensity: f32) -> f32 {
     ((intensity * HEAT_LEVELS).round() / HEAT_LEVELS).clamp(0.0, 1.0)
 }
 
-/// Visual width (in candle-widths) of the forming bar's live tail. It grows
-/// linearly with elapsed time so a fixed pixels-per-ms scale keeps live events
-/// put (instead of recompressing as the book advances), clamped so the tail
-/// never dominates the chart. `1.0` means "no tail" (the classic single slot).
-pub(crate) fn live_span_for(elapsed_ms: i64, ref_duration_ms: i64, max_span: f32) -> f32 {
-    if elapsed_ms <= 0 || ref_duration_ms <= 0 || !max_span.is_finite() || max_span <= 1.0 {
-        return 1.0;
-    }
-    let span = (elapsed_ms as f32 / ref_duration_ms as f32) * max_span;
-    span.clamp(1.0, max_span)
-}
-
 fn finite_unit(value: f32) -> f32 {
     if value.is_finite() {
         value.clamp(0.0, 1.0)
@@ -2265,6 +2588,7 @@ mod tests {
             side: Side::Buy,
             size: 0.02,
             matched: None,
+            buy_share: 1.0,
         };
         let solid = BubbleStyle {
             hollow_small_buys: false,
@@ -2541,6 +2865,7 @@ mod tests {
                     side: Side::Sell,
                     size: 0.1,
                     matched: None,
+                    buy_share: 0.0,
                 },
                 &bubbles,
                 &colors,
@@ -2580,6 +2905,7 @@ mod tests {
                     side: Side::Buy,
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     matched: Some(PREVIEW_MATCHED_FRACTION),
+                    buy_share: 1.0,
                 },
                 &bubbles,
                 &colors,
@@ -2593,6 +2919,7 @@ mod tests {
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     side: Side::Buy,
                     linked_reduction: true,
+                    buy_share: 1.0,
                 },
                 f32::INFINITY,
                 &bubbles,
@@ -2678,16 +3005,17 @@ mod tests {
         let mut mesh = egui::Mesh::default();
         let center = egui::pos2(50.0, 50.0);
         let radius = 10.0;
-        add_sphere_disc(
-            &mut mesh,
-            center,
-            radius,
-            egui::Color32::WHITE,
-            egui::Color32::GRAY,
-            egui::Color32::BLACK,
-        );
+        let full = std::f32::consts::TAU;
+        let shading = SphereShading {
+            core: egui::Color32::WHITE,
+            body: egui::Color32::GRAY,
+            edge: egui::Color32::BLACK,
+        };
+        add_shaded_sector(&mut mesh, center, radius, 0.0, full, shading);
         let segments = sphere_segments(radius);
-        assert_eq!(mesh.vertices.len(), 1 + 2 * segments);
+        // One vertex more per ring than the wrapping fan needed: an arc has two
+        // ends, and a whole circle is the arc whose ends coincide.
+        assert_eq!(mesh.vertices.len(), 1 + 2 * (segments + 1));
         assert_eq!(mesh.indices.len(), segments * 9);
         for vertex in &mesh.vertices {
             assert!(
@@ -2699,23 +3027,52 @@ mod tests {
 
         // Degenerate geometry appends nothing rather than poisoning the mesh.
         let before = mesh.vertices.len();
-        add_sphere_disc(
-            &mut mesh,
-            egui::pos2(f32::NAN, 0.0),
-            radius,
-            egui::Color32::WHITE,
-            egui::Color32::GRAY,
-            egui::Color32::BLACK,
-        );
-        add_sphere_disc(
-            &mut mesh,
-            center,
-            0.0,
-            egui::Color32::WHITE,
-            egui::Color32::GRAY,
-            egui::Color32::BLACK,
-        );
+        for (center, radius, sweep) in [
+            (egui::pos2(f32::NAN, 0.0), radius, full),
+            (center, 0.0, full),
+            (center, radius, 0.0),
+            (center, radius, f32::NAN),
+        ] {
+            add_shaded_sector(&mut mesh, center, radius, 0.0, sweep, shading);
+        }
         assert_eq!(mesh.vertices.len(), before);
+    }
+
+    /// A pie is two wedges, and each one stays a wedge: bounded by the radius,
+    /// anchored on the shared centre, and cheaper than a whole disc.
+    #[test]
+    fn a_sector_covers_only_its_own_slice() {
+        let center = egui::pos2(50.0, 50.0);
+        let radius = 12.0;
+        let shading = SphereShading::flat(egui::Color32::GRAY);
+        let mut quarter = egui::Mesh::default();
+        add_shaded_sector(
+            &mut quarter,
+            center,
+            radius,
+            PIE_START_ANGLE,
+            std::f32::consts::FRAC_PI_2,
+            shading,
+        );
+        let mut whole = egui::Mesh::default();
+        add_shaded_sector(
+            &mut whole,
+            center,
+            radius,
+            PIE_START_ANGLE,
+            std::f32::consts::TAU,
+            shading,
+        );
+        assert!(quarter.vertices.len() < whole.vertices.len());
+        // Straight up and to the right of centre: the quarter starting at
+        // twelve o'clock sweeps clockwise into exactly that quadrant.
+        assert!(
+            quarter.vertices.iter().all(|vertex| vertex.pos.x
+                >= center.x - radius * SPHERE_LIGHT_OFFSET - 0.001
+                && vertex.pos.y <= center.y + 0.001),
+            "a quarter must not paint the other three: {:?}",
+            quarter.vertices.iter().map(|v| v.pos).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -2726,6 +3083,7 @@ mod tests {
             side: Side::Buy,
             size: 0.8,
             matched: None,
+            buy_share: 1.0,
         };
         let palette = Palette::for_theme(HeatmapTheme::Bookmap);
         let flat_style = BubbleStyle::default();
@@ -2780,6 +3138,7 @@ mod tests {
                     side: Side::Buy,
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     matched: Some(PREVIEW_MATCHED_FRACTION),
+                    buy_share: 1.0,
                 },
                 &bubbles,
                 &colors,
@@ -2793,6 +3152,7 @@ mod tests {
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     side: Side::Buy,
                     linked_reduction: true,
+                    buy_share: 1.0,
                 },
                 f32::INFINITY,
                 &bubbles,
@@ -2824,6 +3184,7 @@ mod tests {
             side: Side::Buy,
             size: 0.05,
             matched: None,
+            buy_share: 1.0,
         };
 
         // Below the readability floor — where colour alone stops working —
@@ -2891,28 +3252,432 @@ mod tests {
         assert!(labels(&nothing).is_empty());
     }
 
+    /// A two-sided bubble is a pie: both side colours on one mark, and the
+    /// proportion is what the sectors carry. Where a pie cannot be read the
+    /// mark falls back to exactly the dot it has always been.
     #[test]
-    fn live_span_grows_with_time_and_clamps() {
-        assert_eq!(live_span_for(0, 1000, 8.0), 1.0);
-        assert_eq!(live_span_for(500, 0, 8.0), 1.0);
-        assert!((live_span_for(1000, 1000, 8.0) - 8.0).abs() < 1e-4);
-        assert_eq!(live_span_for(5000, 1000, 8.0), 8.0);
-        assert!((live_span_for(500, 1000, 8.0) - 4.0).abs() < 1e-4);
-        assert_eq!(live_span_for(1, 1000, 8.0), 1.0);
+    fn a_two_sided_bubble_draws_both_sides_and_a_small_one_falls_back() {
+        let bubbles = BubbleStyle {
+            min_radius: 2.0,
+            max_radius: 20.0,
+            detail_min_radius: 6.0,
+            hollow_small_buys: false,
+            render_mode: BubbleRenderMode::Flat,
+            ..BubbleStyle::default()
+        };
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let mark = |radius: f32, buy_share: f32| BubbleMark {
+            center: egui::pos2(60.0, 60.0),
+            radius,
+            side: Side::Buy,
+            size: 0.6,
+            matched: None,
+            buy_share,
+        };
+        // Compared after the fill alpha, which is what actually lands in the
+        // mesh vertices.
+        let ink = |color: egui::Color32| format!("{:?}", color.gamma_multiply(bubbles.opacity));
+
+        // A dressed pie paints both colours into one mesh.
+        let pie = painted(|painter| draw_bubble(painter, mark(12.0, 0.4), &bubbles, &colors));
+        assert!(pie.contains("Mesh"), "a pie is a mesh: {pie}");
+        assert!(
+            pie.contains(&ink(colors.buy)) && pie.contains(&ink(colors.sell)),
+            "both sides must be inked: {pie}"
+        );
+
+        // A single-sided bubble is untouched by the pie path: it still takes
+        // the cheap flat circle it always did.
+        let solid = painted(|painter| draw_bubble(painter, mark(12.0, 1.0), &bubbles, &colors));
+        assert!(
+            !solid.contains("Mesh"),
+            "a plain bubble stays flat: {solid}"
+        );
+        assert!(!solid.contains(&ink(colors.sell)));
+
+        // Below the dressing radius the pie is unreadable, so the mark returns
+        // to one dot in the dominant side's colour.
+        let dot = painted(|painter| {
+            draw_bubble(
+                painter,
+                mark(bubbles.detail_min_radius - 1.0, 0.4),
+                &bubbles,
+                &colors,
+            )
+        });
+        assert_eq!(
+            dot.matches("CircleShape").count(),
+            1,
+            "a mixed dot must stay one circle: {dot}"
+        );
+        assert!(!dot.contains(&ink(colors.sell)));
+    }
+
+    /// The presets the user actually runs push the dressing radius *below* the
+    /// minimum to buy sphere shading on small bubbles, which makes every mark
+    /// "dressed". The pie must not ride in on that: it needs the dedicated
+    /// readability floor too, or a summarized bar turns into a rash of
+    /// two-tone specks nobody can read a proportion from.
+    #[test]
+    fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
+        // "dense tape btc" — the project's default open — as shipped.
+        let dense_tape_btc = BubbleStyle {
+            min_radius: 2.2,
+            max_radius: 14.0,
+            detail_min_radius: 2.0,
+            readable_min_radius: crate::orderflow::config::DEFAULT_READABLE_MIN_RADIUS,
+            hollow_small_buys: true,
+            render_mode: BubbleRenderMode::Sphere,
+            ..BubbleStyle::default()
+        };
+        assert!(dense_tape_btc.detail_min_radius < dense_tape_btc.min_radius);
+        let colors =
+            BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &dense_tape_btc);
+        let mark = |radius: f32| BubbleMark {
+            center: egui::pos2(60.0, 60.0),
+            radius,
+            side: Side::Buy,
+            size: 0.5,
+            matched: None,
+            buy_share: 0.5,
+        };
+        let sell_ink = format!("{:?}", colors.sell.gamma_multiply(dense_tape_btc.opacity));
+
+        // At the smallest drawn radius every bubble is "dressed" here, and the
+        // mark must still be one speck of one colour.
+        let speck = painted(|painter| {
+            draw_bubble(
+                painter,
+                mark(dense_tape_btc.min_radius),
+                &dense_tape_btc,
+                &colors,
+            )
+        });
+        assert!(
+            !speck.contains(&sell_ink),
+            "a speck must not try to be a pie: {speck}"
+        );
+
+        // Past the readability floor the proportion is worth drawing.
+        let readable = painted(|painter| {
+            draw_bubble(
+                painter,
+                mark(dense_tape_btc.readable_min_radius + 1.0),
+                &dense_tape_btc,
+                &colors,
+            )
+        });
+        assert!(readable.contains(&sell_ink), "a readable pie: {readable}");
+    }
+
+    /// The lane's radius multiplier has to survive all the way to the circle
+    /// that gets drawn, and it must touch nothing outside the lane.
+    #[test]
+    fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
+        let style = OrderflowRenderStyle {
+            bubbles: BubbleStyle {
+                min_radius: 2.0,
+                max_radius: 10.0,
+                detail_min_radius: 100.0, // cheap dots only: one circle each
+                hollow_small_buys: false,
+                halo_strength: 0.0,
+                trail_length: 0.0,
+                show_quantity_labels: false,
+                show_trade_count: false,
+                ..BubbleStyle::default()
+            },
+            live_lane: LiveLaneStyle {
+                radius_scale: 2.0,
+                ..LiveLaneStyle::default()
+            },
+            ..OrderflowRenderStyle::default()
+        };
+
+        let radii = |live: bool| {
+            let mut projection = HeatmapProjection::empty(
+                true,
+                crate::orderflow::EffectiveGrouping::resolve(
+                    crate::orderflow::DisplayGrouping::Native,
+                    rust_decimal::Decimal::ONE,
+                    rust_decimal::Decimal::from(100),
+                ),
+            );
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id: 1,
+                agg_ids: vec![1],
+                generation: None,
+                side: Side::Buy,
+                consumed_side: BookSide::Ask,
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: 1.0,
+                live,
+                price_bucket: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x: 0.5,
+                y: 0.5,
+                size: 1.0,
+            });
+            painted(|painter| {
+                draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
+            })
+        };
+
+        // At full size the radius is the configured maximum, doubled inside
+        // the lane and untouched outside it.
+        let history = radii(false);
+        let lane = radii(true);
+        assert!(
+            history.contains("radius: 10.0"),
+            "history radius: {history}"
+        );
+        assert!(lane.contains("radius: 20.0"), "lane radius: {lane}");
+    }
+
+    /// A bubble is a disc: keeping its centre in its pane is not enough, since
+    /// a fat radius beside the divider still spills across it. Each print is
+    /// clipped to the pane it belongs to, so the two charts never draw into
+    /// each other — "os gráficos estão penetrando um no outro".
+    #[test]
+    fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        // Three bar slots plus a 300 px lane: the divider lands on x = 700.
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+        let divider = layout.lane_left_x().expect("a lane has a boundary");
+        let style = OrderflowRenderStyle {
+            bubbles: BubbleStyle {
+                min_radius: 20.0,
+                max_radius: 20.0,
+                detail_min_radius: 100.0, // cheap dots: one circle per print
+                hollow_small_buys: false,
+                halo_strength: 0.0,
+                trail_length: 0.0,
+                show_quantity_labels: false,
+                show_trade_count: false,
+                ..BubbleStyle::default()
+            },
+            ..OrderflowRenderStyle::default()
+        };
+
+        let clipped = |x: f64, live: bool| {
+            let mut projection = HeatmapProjection::empty(
+                true,
+                crate::orderflow::EffectiveGrouping::resolve(
+                    crate::orderflow::DisplayGrouping::Native,
+                    rust_decimal::Decimal::ONE,
+                    rust_decimal::Decimal::from(100),
+                ),
+            );
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id: 1,
+                agg_ids: vec![1],
+                generation: None,
+                side: Side::Buy,
+                consumed_side: BookSide::Ask,
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: 1.0,
+                live,
+                price_bucket: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x,
+                y: 0.5,
+                size: 1.0,
+            });
+            painted(|painter| {
+                draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
+            })
+        };
+
+        // The last instant before the lane opens: a print of the candles, drawn
+        // hard against the divider with a radius that would reach well past it.
+        let history = clipped(0.749, false);
+        assert!(
+            history.contains(&format!("{:?}", layout.history_rect())),
+            "a candle-pane print must carry the candle pane's clip: {history}"
+        );
+        assert!(
+            !history.contains(&format!("{:?}", layout.chart_rect)),
+            "and never the whole chart's: {history}"
+        );
+        // ...and the tape's first print is clipped the other way.
+        let lane = clipped(0.751, true);
+        assert!(
+            lane.contains(&format!("{:?}", layout.lane_rect())),
+            "a tape print must carry the tape's clip: {lane}"
+        );
+        assert!(layout.history_rect().right() <= divider);
+        assert!(layout.lane_rect().left() >= divider);
+    }
+
+    /// The two sides never both get the side nudge: an even split sits on the
+    /// exact price, and the lean grows continuously from there.
+    #[test]
+    fn a_pie_leans_with_its_buy_share() {
+        let offset = 4.0;
+        let lean = |buy_share: f32| -((finite_unit(buy_share) - 0.5) * 2.0) * offset;
+        assert_eq!(lean(1.0), side_offset_y(Side::Buy, offset));
+        assert_eq!(lean(0.0), side_offset_y(Side::Sell, offset));
+        assert_eq!(lean(0.5), 0.0);
+        assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
+    }
+
+    /// The lane is a pane of its own: a fixed band on the right edge of the
+    /// chart, with the candles' pane ending exactly where it opens.
+    #[test]
+    fn the_lane_is_a_fixed_band_on_the_right_edge() {
+        let viewport = Viewport::new(); // candle_width 8, following
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        // Four regions: three bar slots and the lane, 300 px wide.
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+        let boundary = layout.lane_left_x().expect("a lane has a boundary");
+        assert!(
+            (boundary - 700.0).abs() < 0.01,
+            "the band is the last 300 px"
+        );
+
+        // Bars keep their candle width, and the last one ends at the divider.
+        let bar_width = (layout.x(1.0 / 4.0) - layout.x(0.0)).abs();
+        assert!((bar_width - viewport.candle_width()).abs() < 0.01);
+        assert!(
+            (layout.x(3.0 / 4.0) - boundary).abs() < 0.01,
+            "the candles' pane ends exactly where the lane opens"
+        );
+        // ...and the lane spans the band, whatever the candles are worth.
+        assert!((layout.x(1.0) - rect.right()).abs() < 0.01);
+
+        let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
+        assert_eq!(no_lane.lane_left_x(), None);
+        let flat_width = (no_lane.x(1.0) - no_lane.x(3.0 / 4.0)).abs();
+        assert!((flat_width - viewport.candle_width()).abs() < 0.01);
+        assert!((no_lane.x(1.0) - rect.right()).abs() < 0.01);
+    }
+
+    /// The point of the pane: every chart movement leaves the tape alone.
+    #[test]
+    fn panning_and_zooming_the_candles_never_move_the_lane() {
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        let mut panned = Viewport::new();
+        panned.pan_pixels(240.0, 60); // 30 candles into history
+        let mut zoomed = Viewport::new();
+        zoomed.zoom(4.0);
+
+        let still = Viewport::new();
+        let reference = ProjectedLayout::new(rect, &still, 60, 0, 5, 300.0);
+        for viewport in [&panned, &zoomed] {
+            let moved = ProjectedLayout::new(rect, viewport, 60, 0, 5, 300.0);
+            assert_eq!(moved.lane_left_x(), reference.lane_left_x());
+            // Same instant on the tape, same pixel — however the candles moved.
+            for position in [0.85_f64, 0.9, 1.0] {
+                assert!(
+                    (moved.x(position) - reference.x(position)).abs() < 0.01,
+                    "the tape moved with the candles at {position}"
+                );
+            }
+        }
+    }
+
+    /// The lane never draws marks it cannot place, and hiding them is exactly
+    /// one switch away.
+    #[test]
+    fn the_lane_marks_need_a_lane_a_live_edge_and_permission() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        let style = OrderflowRenderStyle::default();
+        let mut projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+        projection.live_now_x = Some(0.95);
+
+        let with_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
+        let drawn = painted(|painter| {
+            draw_live_lane_marks(painter, &RenderContext::new(&projection, with_lane, &style));
+        });
+        assert!(
+            drawn.matches("LineSegment").count() >= 2,
+            "both the boundary and the live-time line must draw: {drawn}"
+        );
+
+        // No live edge: the frame is history, and history has no present.
+        let mut settled = projection.clone();
+        settled.live_now_x = None;
+        // No lane at all: nothing to divide.
+        let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
+        // Switched off by the user.
+        let hidden = OrderflowRenderStyle {
+            live_lane: LiveLaneStyle {
+                show_marks: false,
+                ..LiveLaneStyle::default()
+            },
+            ..OrderflowRenderStyle::default()
+        };
+        let nothing = painted(|_| {});
+        for (frame, layout, style) in [
+            (&settled, with_lane, &style),
+            (&projection, no_lane, &style),
+            (&projection, with_lane, &hidden),
+        ] {
+            assert_eq!(
+                painted(|painter| draw_live_lane_marks(
+                    painter,
+                    &RenderContext::new(frame, layout, style)
+                )),
+                nothing
+            );
+        }
     }
 
     #[test]
-    fn live_span_widens_only_the_forming_slot() {
+    fn the_lane_is_the_only_region_wider_than_a_candle() {
         let viewport = Viewport::new(); // candle_width 8, following
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-        // 3 slots: 2 closed + the forming bar, widened 4x.
-        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 3, 4.0);
+        // 3 regions: 2 bar slots and the lane, 32 px wide — four candles' worth
+        // at this zoom, and still 32 px at any other.
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 3, 32.0);
         let closed_w = (layout.x(1.0 / 3.0) - layout.x(0.0)).abs();
         let live_w = (layout.x(1.0) - layout.x(2.0 / 3.0)).abs();
         assert!(closed_w > 0.0);
         assert!(
             (live_w - closed_w * 4.0).abs() < 0.01,
-            "forming slot should be 4x a closed slot: closed={closed_w} live={live_w}"
+            "the lane should be 4x a bar slot: bar={closed_w} lane={live_w}"
         );
+    }
+
+    /// A bar panned off the right of its own pane scrolls out of sight instead
+    /// of being drawn over the tape.
+    #[test]
+    fn a_candle_panned_behind_the_tape_is_clipped_to_its_own_pane() {
+        let mut viewport = Viewport::new();
+        viewport.pan_pixels(80.0, 20); // 10 candles into history
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 20, 0, 21, 300.0);
+        let divider = layout.lane_left_x().expect("a lane has a boundary");
+
+        // The newest bar is now right of the divider, and its pane stops there.
+        let newest = 19.5 / 21.0;
+        assert!(layout.x(newest) > divider);
+        assert!(layout.pane(newest).right() <= divider + 0.01);
+        // A band entirely past the divider is clipped away to nothing...
+        assert!(!layout.band(newest, newest, 0.1, 0.2, 1.0).is_positive());
+        // ...while the tape's own pane starts there and reaches the edge.
+        assert!((layout.pane(1.0).left() - divider).abs() < 0.01);
+        assert!((layout.pane(1.0).right() - rect.right()).abs() < 0.01);
     }
 }

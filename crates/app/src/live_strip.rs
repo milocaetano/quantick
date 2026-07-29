@@ -116,6 +116,11 @@ mod tests {
                 Side::Sell => quantick_orderbook::BookSide::Bid,
             },
             quantity: dec(quantity),
+            buy_share: match side {
+                Side::Buy => 1.0,
+                Side::Sell => 0.0,
+            },
+            live: false,
             price_bucket: dec(bucket),
             trade_count: 1,
             first_timestamp_ms: last_ms,

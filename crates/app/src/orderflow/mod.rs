@@ -17,8 +17,9 @@ pub mod timeline;
 #[allow(unused_imports)]
 pub use config::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, DisplayGrouping, HeatmapConfig,
-    HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
-    MIN_BUBBLE_MAX_RADIUS,
+    HeatmapTheme, IntensityMode, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM,
 };
 #[allow(unused_imports)]
 pub use grouping::{
@@ -33,7 +34,7 @@ pub use history::{
 #[allow(unused_imports)]
 pub use interaction::{
     AggressionCluster, LiquidityEvent, cluster_aggressions, correlate_liquidity, generation_at,
-    liquidity_events,
+    liquidity_events, sort_clusters, summarize_clusters,
 };
 #[allow(unused_imports)]
 pub use projection::{
@@ -41,4 +42,4 @@ pub use projection::{
     LiquidityEventPrimitive, LiquidityEvidence, PriceWindow, project,
 };
 #[allow(unused_imports)]
-pub use timeline::{BarTimeline, TimelinePosition};
+pub use timeline::{BarTimeline, LiveEdge, TimelinePosition, reserved_span_ms};

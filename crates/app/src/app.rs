@@ -73,6 +73,21 @@ fn dec_from_f64(x: f64) -> Decimal {
     Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
 }
 
+/// Half-width, in pixels, of the grab area over the live lane's divider.
+///
+/// The line itself stays a hairline — it marks where the present begins and a
+/// thick rule there would read as a wall in the data. The handle around it is
+/// what makes it draggable, and the resize cursor is the only thing that says
+/// so.
+const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
+
+/// Pixels of drag on the lane's own time strip that double or halve its window.
+///
+/// Matches the candles' own feel: dragging the time axis zooms it by
+/// `exp(dx / 120)`, so the two panes answer a drag at the same rate even
+/// though they are zooming different things.
+const LANE_ZOOM_DRAG_PX: f32 = 120.0;
+
 /// Split the padded plot area into the candle chart, the optional live strip,
 /// the right price gutter and the bottom time strip, so the input handler and
 /// the renderer agree on the boundaries. `live_strip_width` of zero means the
@@ -103,6 +118,34 @@ fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
     }
 }
 
+/// Whether a pointer at `x` is over the live lane rather than the candles.
+///
+/// The divider itself counts as the lane, so the gesture that resizes it and
+/// the gesture that pans the candles can never both fire on the same pixel.
+/// Without a lane every pixel belongs to the candles, exactly as before.
+fn gesture_hits_lane(divider_x: Option<f32>, x: f32) -> bool {
+    divider_x.is_some_and(|divider| x >= divider)
+}
+
+/// Split the bottom time strip at the lane's divider: the candles' own time
+/// axis on the left, the lane's on the right.
+///
+/// Each pane zooms from the strip under it, which is the only place a zoom
+/// gesture can say *which* time axis it means. Without a divider the whole
+/// strip belongs to the candles, exactly as it did before the lane had a zoom.
+fn split_time_strip(strip: egui::Rect, divider_x: Option<f32>) -> (egui::Rect, Option<egui::Rect>) {
+    let Some(divider) = divider_x.filter(|x| strip.x_range().contains(*x)) else {
+        return (strip, None);
+    };
+    (
+        egui::Rect::from_min_max(strip.min, egui::pos2(divider, strip.bottom())),
+        Some(egui::Rect::from_min_max(
+            egui::pos2(divider, strip.top()),
+            strip.max,
+        )),
+    )
+}
+
 /// The interactive regions of the plot, plus the optional live strip.
 struct PlotAreas {
     chart: egui::Rect,
@@ -111,6 +154,31 @@ struct PlotAreas {
     live_strip: Option<egui::Rect>,
     price_gutter: egui::Rect,
     time_strip: egui::Rect,
+}
+
+/// Format the forming bar's countdown, e.g. `37/50 ticks`.
+///
+/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
+/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
+fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
+    format!(
+        "{}/{} {unit}",
+        progress.done.normalize(),
+        progress.target.normalize()
+    )
+}
+
+/// Format a duration in milliseconds for the lane's time axis, in the unit a
+/// human would read it in.
+fn fmt_window(milliseconds: i64) -> String {
+    let milliseconds = milliseconds.max(0);
+    if milliseconds < 1_000 {
+        format!("{milliseconds} ms")
+    } else if milliseconds < 60_000 {
+        format!("{:.1} s", milliseconds as f64 / 1_000.0)
+    } else {
+        format!("{:.1} min", milliseconds as f64 / 60_000.0)
+    }
 }
 
 /// Format a UTC epoch-millisecond timestamp as `HH:MM:SS` in the display
@@ -186,14 +254,13 @@ pub struct QuantickApp {
     time_interval_ms: i64,
     imbalance_target: u64,
 
-    // Pan/zoom navigation over the bar series.
+    // Pan/zoom navigation over the bar series. It owns the history pane only:
+    // the live lane is a band of screen to its right that answers to nothing
+    // it does.
     viewport: Viewport,
-    // Bar-slots reserved past the newest bar for the live region. Persisted so
-    // a closing bar frees exactly one slot: the chart never steps right — the
-    // freed space stays an empty gap the next bar's live region refills.
-    live_tail_hold: f32,
-    // Bar count seen last frame, to detect closes for the hold above.
-    last_total_bars: usize,
+    // Where the history pane ended last frame — the lane's divider, and the
+    // handle that resizes it. The input pass runs before the draw computes it.
+    last_lane_divider_x: Option<f32>,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     price_view: PriceView,
     // Last frame's auto-fit price range and chart height, for pixel↔price maths
@@ -289,8 +356,7 @@ impl QuantickApp {
             imbalance_target,
             viewport: Viewport::new(),
             price_view: PriceView::new(),
-            live_tail_hold: 0.0,
-            last_total_bars: 0,
+            last_lane_divider_x: None,
             last_auto_range: None,
             last_chart_height: 1.0,
             hover_pos: None,
@@ -842,8 +908,6 @@ impl QuantickApp {
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
-                    // Prepended bars are not closes; keep the live-tail hold.
-                    self.last_total_bars = self.last_total_bars.saturating_add(added);
                 }
                 Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
                 Ok(FeedEvent::LiveBatch(trades)) => {
@@ -890,8 +954,7 @@ impl QuantickApp {
         self.hover_pos = None;
         self.history_trades = 0;
         self.latest_trade_ms = None;
-        self.live_tail_hold = 0.0;
-        self.last_total_bars = 0;
+        self.last_lane_divider_x = None;
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
@@ -1082,17 +1145,23 @@ impl QuantickApp {
     }
 
     /// Handle mouse navigation, TradingView-style:
-    /// - drag the chart → pan time (x, moves the whole chart) and price (y);
-    /// - scroll over the chart → zoom time;
+    /// - drag the candles → pan time (x, moves the whole chart) and price (y);
+    /// - scroll over them → zoom time;
     /// - drag the bottom time strip left/right → zoom time (spread candles);
     /// - drag the right price gutter up/down → zoom the price scale;
     /// - scroll over either axis → zoom that axis;
     /// - double-click → reset to the live edge and auto-fit price.
+    ///
+    /// The live lane is a pane of its own and answers to none of it: a gesture
+    /// that starts inside the tape moves nothing, and scrolling there zooms the
+    /// tape's own window instead of the candles.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
         let areas = plot_split(area, self.live_strip_width());
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
         let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
+        let divider = self.last_lane_divider_x;
+        let in_lane = |position: egui::Pos2| gesture_hits_lane(divider, position.x);
 
         // Chart body: drag pans both axes; scroll zooms time.
         let chart = ui.interact(
@@ -1101,7 +1170,12 @@ impl QuantickApp {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
-        if total > 0 && chart.dragged() {
+        // Where the press landed, not where the pointer is now: a pan that
+        // started on the candles keeps working when it crosses the divider.
+        let dragging_candles = chart
+            .interact_pointer_pos()
+            .is_some_and(|press| !in_lane(press));
+        if total > 0 && chart.dragged() && dragging_candles {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
@@ -1120,25 +1194,79 @@ impl QuantickApp {
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                // Scroll up (positive) zooms in — wider candles.
-                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                // Scroll up (positive) zooms in. Over the tape that means less
+                // market time in the band; over the candles, wider candles.
+                if chart.hover_pos().is_some_and(in_lane) {
+                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                } else {
+                    self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                }
             }
         }
 
-        // Bottom time strip: drag or scroll to zoom the candle spacing.
+        // The lane's divider, as a resize handle. Registered after the chart
+        // body so it takes the drag that would otherwise pan the candles
+        // behind it, and it is the only place the pointer changes shape: the
+        // line stays a hairline, the cursor is what says it can be moved.
+        let divider = self.last_lane_divider_x.map(|x| {
+            ui.interact(
+                egui::Rect::from_min_max(
+                    egui::pos2(x - LANE_HANDLE_HALF_WIDTH_PX, areas.chart.top()),
+                    egui::pos2(x + LANE_HANDLE_HALF_WIDTH_PX, areas.chart.bottom()),
+                ),
+                egui::Id::new("lane_divider"),
+                egui::Sense::drag(),
+            )
+        });
+        if let Some(divider) = &divider {
+            if divider.hovered() || divider.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if divider.dragged() {
+                // Drag left → a wider tape, at the expense of the candles.
+                self.orderflow
+                    .resize_live_lane(divider.drag_delta().x, areas.chart.width());
+            }
+        }
+
+        // Bottom time strip: drag or scroll to zoom. The segment under the
+        // lane zooms the lane's window, the rest zooms the candle spacing —
+        // each pane's own time axis, under the pane it belongs to.
+        let (history_strip, lane_strip) =
+            split_time_strip(areas.time_strip, self.last_lane_divider_x);
         let time = ui.interact(
-            areas.time_strip,
+            history_strip,
             egui::Id::new("time_nav"),
             egui::Sense::click_and_drag(),
         );
         if time.dragged() {
             // Drag right → wider candles (zoom in); left → narrower (zoom out).
-            self.viewport.zoom((time.drag_delta().x / 120.0).exp());
+            self.viewport
+                .zoom((time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
         }
         if time.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
                 self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+            }
+        }
+        if let Some(lane_strip) = lane_strip {
+            let lane_time = ui.interact(
+                lane_strip,
+                egui::Id::new("lane_time_nav"),
+                egui::Sense::click_and_drag(),
+            );
+            if lane_time.dragged() {
+                // Drag right → less market time in the band (zoom in), so
+                // prints run across it faster and further apart.
+                self.orderflow
+                    .zoom_live_lane((lane_time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
+            }
+            if lane_time.hovered() {
+                let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                if scroll.abs() > 0.0 {
+                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                }
             }
         }
 
@@ -1186,47 +1314,36 @@ impl QuantickApp {
             return;
         }
 
-        // Live region: while following a live book, the forming bar grows to
-        // the right on a FIXED time-per-slot scale (the previous bar's
-        // duration spread over the full width). Linear growth means an event
-        // keeps its exact screen position while the region widens — bubbles
-        // appear where they ate the book and stay put, nothing slides.
-        let live_span = if self.viewport.follows_live()
-            && let Some(bar) = partial
-            && let Some(now) = self.orderflow.live_end_ms()
-        {
-            let elapsed = now - bar.open_time;
-            let ref_dur = closed
-                .last()
-                .map(|b| (b.close_time - b.open_time).max(1))
-                .unwrap_or(1_000);
-            // Up to ~55% of the chart for the live book.
-            let max_span =
-                (chart_rect.width() / self.viewport.candle_width() * 0.55).clamp(8.0, 18.0);
-            crate::orderflow_render::live_span_for(elapsed, ref_dur, max_span)
-        } else {
-            1.0
-        };
-        // The reserved tail shrinks only by the one slot each closing bar
-        // consumes and grows only with the live region. The chart therefore
-        // never steps right on a bar close: compression leaves an empty gap on
-        // the right that the next bar's live region refills, and the chart
-        // only ever drifts left.
-        if total < self.last_total_bars {
-            self.live_tail_hold = 0.0; // series reset (symbol/feed change)
-        } else if total > self.last_total_bars {
-            let closed_now = (total - self.last_total_bars) as f32;
-            self.live_tail_hold = (self.live_tail_hold - closed_now).max(0.0);
-        }
-        self.last_total_bars = total;
-        if self.viewport.follows_live() {
-            self.live_tail_hold = self.live_tail_hold.max(live_span - 1.0);
-        } else {
-            self.live_tail_hold = 0.0;
-        }
-        self.viewport.set_live_tail(self.live_tail_hold);
+        // The live lane: a pane of its own, pinned to the right edge of the
+        // chart, showing a fixed window of market time that always ends at
+        // now. Fixed width, fixed pixels-per-ms: a print enters at the right
+        // edge and slides left until it leaves into the slot of its own bar.
+        //
+        // It belongs to the tape rather than to the forming bar, which is what
+        // keeps a bar close from emptying it — the reset that made the book
+        // look like it was restarting every few seconds. And it is a pane
+        // rather than a reservation inside the viewport, which is what keeps
+        // every chart movement out of it: panning, zooming and dragging move
+        // the candles beside the tape and never the tape itself, so the most
+        // recent prints are on screen whatever the rest of the chart is doing.
+        let lane_width_px = self
+            .orderflow
+            .live_lane_width_px(chart_rect.width())
+            .unwrap_or(0.0);
+        // Everything left of the divider is the candles' pane. They pan and
+        // zoom inside it exactly as they did when it was the whole chart.
+        self.last_lane_divider_x =
+            crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        let history_rect = egui::Rect::from_min_max(
+            chart_rect.min,
+            egui::pos2(
+                self.last_lane_divider_x
+                    .unwrap_or_else(|| chart_rect.right()),
+                chart_rect.bottom(),
+            ),
+        );
 
-        let (start, end) = self.viewport.visible_range(chart_rect.width(), total);
+        let (start, end) = self.viewport.visible_range(history_rect.width(), total);
 
         // The visible closed bars, plus the partial if it falls in view.
         let closed_start = start.min(closed.len());
@@ -1250,14 +1367,19 @@ impl QuantickApp {
 
         let cw = self.viewport.candle_width();
         let half = (cw * self.style.candles.clamped_width_frac() / 2.0).max(0.5);
-        let right = chart_rect.right();
+        let right = history_rect.right();
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
         // respect to candles and uses the same bar-warped viewport coordinates.
+        // The projection builds a lane exactly when the layout draws one. Tied
+        // to `lane_width_px` rather than restated, because the two decide the
+        // same thing: with them apart, the newest prints would be clustered and
+        // sized as lane prints and then squeezed into a single candle slot.
         let orderflow_frame = self.orderflow.project_visible(
             closed_start,
             visible_closed,
             partial_visible,
+            lane_width_px > 0.0,
             end == total,
             scale.range(),
         );
@@ -1270,7 +1392,7 @@ impl QuantickApp {
                 total,
                 frame,
                 canvas_background,
-                live_span,
+                lane_width_px,
             );
         }
 
@@ -1279,8 +1401,10 @@ impl QuantickApp {
         let axis_x = areas.price_gutter.left();
         self.draw_price_axis(painter, chart_rect, axis_x, &scale);
 
-        // Candles, clipped to the chart body so they don't spill into the axes.
-        let clip = painter.with_clip_rect(chart_rect);
+        // Candles, clipped to their own pane: panning far enough into history
+        // sends the newest bars off the right of it, and they scroll out of
+        // sight behind the tape instead of being drawn over it.
+        let clip = painter.with_clip_rect(history_rect);
         // Clear the heat behind each candle's high–low span so a translucent
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
@@ -1325,7 +1449,7 @@ impl QuantickApp {
                 total,
                 frame,
                 canvas_background,
-                live_span,
+                lane_width_px,
             );
         }
 
@@ -1349,8 +1473,14 @@ impl QuantickApp {
         if let Some(bar) = partial.or_else(|| closed.last()) {
             self.draw_last_price(painter, chart_rect, axis_x, &scale, bar);
         }
-        self.draw_backfill_divider(painter, chart_rect, total, cw);
+        // The candles' own mark, so it is placed and clipped in their pane.
+        self.draw_backfill_divider(painter, history_rect, total, cw);
         self.draw_time_strip(painter, areas.time_strip, closed, start, end, total);
+        self.draw_lane_time_axis(
+            painter,
+            split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
+            self.orderflow.live_lane_window_ms(closed),
+        );
         self.draw_crosshair(painter, chart_rect, axis_x, &scale);
         self.orderflow.draw_status_badge(painter, chart_rect);
 
@@ -1362,6 +1492,10 @@ impl QuantickApp {
 
     /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
     /// visible bars. Draggable left/right to zoom the candle spacing.
+    ///
+    /// The labels stay under the candles' own pane; the segment past the lane's
+    /// divider is the tape's time axis and reads its window instead
+    /// ([`Self::draw_lane_time_axis`]).
     fn draw_time_strip(
         &self,
         painter: &egui::Painter,
@@ -1385,12 +1519,13 @@ impl QuantickApp {
         if visible == 0 {
             return;
         }
+        let (history_strip, _) = split_time_strip(strip, self.last_lane_divider_x);
         let step = (visible / 6).max(1);
         let mut index = start;
         while index < end {
             if let Some(bar) = closed.get(index) {
-                let x = self.viewport.x_center(index, strip.right(), total);
-                if strip.x_range().contains(x) {
+                let x = self.viewport.x_center(index, history_strip.right(), total);
+                if history_strip.x_range().contains(x) {
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
@@ -1402,6 +1537,31 @@ impl QuantickApp {
             }
             index += step;
         }
+    }
+
+    /// The live lane's own time axis: how much market time the tape is
+    /// showing, under the tape.
+    ///
+    /// The lane has no bar boundaries to label — it is one continuous window —
+    /// so its axis reads the window itself. It is also the only readout of what
+    /// the lane's zoom is currently worth, which is what makes dragging here
+    /// something other than guesswork.
+    fn draw_lane_time_axis(
+        &self,
+        painter: &egui::Painter,
+        lane_strip: Option<egui::Rect>,
+        window_ms: i64,
+    ) {
+        let Some(strip) = lane_strip else {
+            return;
+        };
+        painter.text(
+            strip.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("tape · {}", fmt_window(window_ms)),
+            egui::FontId::monospace(10.0),
+            theme::TEXT_MUTED,
+        );
     }
 
     /// Right-hand price axis: round-number gridlines and labels. `axis_x` is
@@ -1555,11 +1715,14 @@ impl QuantickApp {
     }
 
     /// A vertical marker separating backfilled history (left) from live (right),
-    /// drawn only when the boundary falls inside the chart body.
+    /// drawn only when the boundary falls inside the candles' pane.
+    ///
+    /// `pane` is the candles' own rect — the chart minus the live lane — since
+    /// that is the space the viewport maps bar indices into.
     fn draw_backfill_divider(
         &self,
         painter: &egui::Painter,
-        chart_rect: egui::Rect,
+        pane: egui::Rect,
         total: usize,
         candle_width: f32,
     ) {
@@ -1570,27 +1733,24 @@ impl QuantickApp {
             return; // nothing backfilled
         }
         // The divider sits at the left edge of the first live bar.
-        let x = self.viewport.x_center(boundary, chart_rect.right(), total) - candle_width / 2.0;
-        if x < chart_rect.left() || x > chart_rect.right() {
+        let x = self.viewport.x_center(boundary, pane.right(), total) - candle_width / 2.0;
+        if x < pane.left() || x > pane.right() {
             return; // off-screen
         }
         painter.line_segment(
-            [
-                egui::pos2(x, chart_rect.top()),
-                egui::pos2(x, chart_rect.bottom()),
-            ],
+            [egui::pos2(x, pane.top()), egui::pos2(x, pane.bottom())],
             egui::Stroke::new(1.0_f32, theme::AMBER),
         );
         let font = egui::FontId::proportional(11.0);
         painter.text(
-            egui::pos2(x - 4.0, chart_rect.bottom() - 4.0),
+            egui::pos2(x - 4.0, pane.bottom() - 4.0),
             egui::Align2::RIGHT_BOTTOM,
             "backfill",
             font.clone(),
             theme::TEXT_MUTED,
         );
         painter.text(
-            egui::pos2(x + 4.0, chart_rect.bottom() - 4.0),
+            egui::pos2(x + 4.0, pane.bottom() - 4.0),
             egui::Align2::LEFT_BOTTOM,
             "live",
             font,
@@ -1633,6 +1793,10 @@ impl QuantickApp {
             }),
             feed_lag_ms: self.trade_lag_ms(),
             spec_summary: self.state.spec().summary(),
+            bar_progress: self
+                .state
+                .progress()
+                .map(|(progress, unit)| fmt_progress(&progress, unit)),
             backfilled_bars: backfilled,
             live_bars: live,
             side_note: self.side_note(),
@@ -2011,6 +2175,45 @@ mod tests {
             off.chart.width() - crate::live_strip::LIVE_STRIP_WIDTH_PX
         );
         assert_eq!(on.time_strip.right(), on.chart.right());
+    }
+
+    /// Each pane zooms from the strip under it, and the split is exactly the
+    /// divider — so a drag can never mean both time axes at once.
+    #[test]
+    fn the_time_strip_splits_at_the_lane_divider() {
+        let strip = egui::Rect::from_min_max(egui::pos2(0.0, 580.0), egui::pos2(1000.0, 600.0));
+
+        let (history, lane) = split_time_strip(strip, Some(700.0));
+        let lane = lane.expect("the lane owns the strip under it");
+        assert_eq!(history.left(), strip.left());
+        assert_eq!(history.right(), 700.0);
+        assert_eq!(lane.left(), 700.0);
+        assert_eq!(lane.right(), strip.right());
+
+        // Without a lane the candles keep the whole strip, exactly as before.
+        assert_eq!(split_time_strip(strip, None), (strip, None));
+        // A divider off the strip is not a split either.
+        assert_eq!(split_time_strip(strip, Some(-5.0)), (strip, None));
+    }
+
+    /// The tape is inert: a gesture that lands on it must not reach the
+    /// candles, and the divider belongs to the tape so the resize handle and
+    /// the pan can never both fire on one pixel.
+    #[test]
+    fn a_gesture_on_the_tape_never_belongs_to_the_candles() {
+        assert!(!gesture_hits_lane(Some(700.0), 699.9));
+        assert!(gesture_hits_lane(Some(700.0), 700.0));
+        assert!(gesture_hits_lane(Some(700.0), 1_200.0));
+        // No lane: every pixel is the candles', exactly as before it existed.
+        assert!(!gesture_hits_lane(None, 1_200.0));
+    }
+
+    #[test]
+    fn the_lane_axis_reads_its_window_in_a_human_unit() {
+        assert_eq!(fmt_window(800), "800 ms");
+        assert_eq!(fmt_window(8_000), "8.0 s");
+        assert_eq!(fmt_window(90_000), "1.5 min");
+        assert_eq!(fmt_window(-1), "0 ms");
     }
 
     /// A minimal one-feed, two-symbol config for the app tests.

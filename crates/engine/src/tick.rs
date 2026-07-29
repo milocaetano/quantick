@@ -11,7 +11,7 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, ThresholdBarBuilder, Trade, threshold::Measure};
+use crate::{Bar, BarBuilder, BarProgress, ThresholdBarBuilder, Trade, threshold::Measure};
 
 /// The tick measure: every trade contributes exactly 1.
 #[derive(Debug, Clone, Copy, Default)]
@@ -68,6 +68,10 @@ impl BarBuilder for TickBarBuilder {
     fn partial(&self) -> Option<&Bar> {
         self.inner.partial()
     }
+
+    fn progress(&self) -> Option<BarProgress> {
+        self.inner.progress()
+    }
 }
 
 #[cfg(test)]
@@ -119,5 +123,24 @@ mod tests {
         assert_eq!(p.sell_volume, Decimal::from_str("2.0").unwrap());
         assert_eq!(p.open_time, 10);
         assert_eq!(p.close_time, 20);
+    }
+
+    /// Alternative bars are not on a clock, so the only way to know whether the
+    /// next print closes the bar is to ask the rule that closes it.
+    #[test]
+    fn progress_counts_toward_the_close_and_starts_over_after_it() {
+        let mut b = TickBarBuilder::new(3);
+        let progress = |b: &TickBarBuilder| {
+            let p = b.progress().expect("a tick bar runs toward a fixed count");
+            (p.done, p.target)
+        };
+        assert_eq!(progress(&b), (Decimal::ZERO, Decimal::from(3)));
+        b.push(&trade(1, 10, "100.0", "1.0", Side::Buy));
+        assert_eq!(progress(&b), (Decimal::ONE, Decimal::from(3)));
+        b.push(&trade(2, 20, "101.0", "2.0", Side::Sell));
+        assert_eq!(progress(&b), (Decimal::from(2), Decimal::from(3)));
+        // The third trade closes the bar, and the count starts over.
+        assert!(b.push(&trade(3, 30, "101.0", "1.0", Side::Buy)).is_some());
+        assert_eq!(progress(&b), (Decimal::ZERO, Decimal::from(3)));
     }
 }

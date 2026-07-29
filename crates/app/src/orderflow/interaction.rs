@@ -41,6 +41,14 @@ pub struct AggressionCluster {
     pub price_bucket: Decimal,
     /// Exact summed execution quantity.
     pub quantity: Decimal,
+    /// The share of [`quantity`](Self::quantity) taken by buyers; the rest was
+    /// taken by sellers.
+    ///
+    /// A cluster built by [`cluster_aggressions`] has one side, so this is
+    /// either all of the quantity or none of it. It becomes interesting after
+    /// [`summarize_clusters`], which is the one place both sides land in the
+    /// same mark.
+    pub buy_quantity: Decimal,
     /// Quantity-weighted execution price.
     pub price: Decimal,
     /// Deterministic visual timestamp centered in the cluster interval.
@@ -62,6 +70,15 @@ impl AggressionCluster {
     #[must_use]
     pub fn matched_fraction(&self) -> f32 {
         decimal_fraction(self.matched_quantity, self.quantity)
+    }
+
+    /// `[0,1]` share of this bubble's quantity that buyers took.
+    ///
+    /// Exactly `1.0` or `0.0` on a single-sided bubble, which is what lets the
+    /// renderer tell a pie from a plain disc without a second flag.
+    #[must_use]
+    pub fn buy_share(&self) -> f32 {
+        decimal_fraction(self.buy_quantity, self.quantity)
     }
 }
 
@@ -151,6 +168,10 @@ impl ClusterBuilder {
                 .saturating_sub(self.first_timestamp_ms)
                 / 2,
         );
+        let buy_quantity = match self.side {
+            AggressorSide::Buy => self.quantity,
+            AggressorSide::Sell => Decimal::ZERO,
+        };
         AggressionCluster {
             agg_id: self.agg_ids[0],
             agg_ids: self.agg_ids,
@@ -159,6 +180,7 @@ impl ClusterBuilder {
             consumed_side: consumed_side(self.side),
             price_bucket: self.key.price_bucket,
             quantity: self.quantity,
+            buy_quantity,
             price,
             timestamp_ms,
             first_timestamp_ms: self.first_timestamp_ms,
@@ -266,39 +288,39 @@ pub fn cluster_aggressions<'a>(
     clusters
 }
 
-/// Accumulator folding consecutive dust clusters into one bubble.
+/// Accumulator folding several clusters into one bubble.
+///
+/// Both folds the projection performs — the dust merge below and the closed-bar
+/// summary — sum the same things in the same way: exact quantity, the buy share
+/// of it, matched evidence, ids and the time span. Only the grouping key and
+/// the admission rule differ, so those stay with the callers and the summing
+/// lives here once.
 #[derive(Debug)]
-struct DustMerge {
-    key: ClusterKey,
+struct ClusterFold {
     cluster: AggressionCluster,
     price_quantity: Decimal,
     count: usize,
 }
 
-impl DustMerge {
-    fn new(key: ClusterKey, cluster: AggressionCluster) -> DustMerge {
+impl ClusterFold {
+    fn new(cluster: AggressionCluster) -> ClusterFold {
         let price_quantity = cluster.price * cluster.quantity;
-        DustMerge {
-            key,
+        ClusterFold {
             cluster,
             price_quantity,
             count: 1,
         }
     }
 
-    /// Whether `cluster` extends this merge without spanning more than
-    /// `window_ms` from the anchor's first print.
-    fn accepts(&self, key: ClusterKey, cluster: &AggressionCluster, window_ms: i64) -> bool {
-        self.key == key
-            && cluster
-                .last_timestamp_ms
-                .saturating_sub(self.cluster.first_timestamp_ms)
-                <= window_ms
+    /// The cluster this fold is anchored at, before anything was folded in.
+    fn anchor(&self) -> &AggressionCluster {
+        &self.cluster
     }
 
     fn push(&mut self, other: AggressionCluster) {
         self.price_quantity += other.price * other.quantity;
         self.cluster.quantity += other.quantity;
+        self.cluster.buy_quantity += other.buy_quantity;
         self.cluster.matched_quantity += other.matched_quantity;
         self.cluster.agg_ids.extend(other.agg_ids);
         self.cluster
@@ -322,6 +344,17 @@ impl DustMerge {
         if self.cluster.quantity > Decimal::ZERO {
             self.cluster.price = self.price_quantity / self.cluster.quantity;
         }
+        // The side a mixed bubble reports is the one that took more. A tie
+        // keeps the anchor's side, which is deterministic because the caller
+        // sorted the input. Single-sided folds are unaffected: every member
+        // contributed to the same total, so the winner is the side they share.
+        let sell_quantity = self.cluster.quantity - self.cluster.buy_quantity;
+        if self.cluster.buy_quantity > sell_quantity {
+            self.cluster.side = AggressorSide::Buy;
+        } else if sell_quantity > self.cluster.buy_quantity {
+            self.cluster.side = AggressorSide::Sell;
+        }
+        self.cluster.consumed_side = consumed_side(self.cluster.side);
         self.cluster.timestamp_ms = self.cluster.first_timestamp_ms.saturating_add(
             self.cluster
                 .last_timestamp_ms
@@ -338,6 +371,22 @@ impl DustMerge {
         }
         self.cluster
     }
+}
+
+/// Deterministic order every clustering and folding step emits its result in.
+///
+/// Also what the projection restores after clustering the live lane and the
+/// history behind it separately: two sorted halves concatenated are not sorted,
+/// and iteration order must never leak into what the chart draws.
+pub fn sort_clusters(clusters: &mut [AggressionCluster]) {
+    clusters.sort_by(|a, b| {
+        a.first_timestamp_ms
+            .cmp(&b.first_timestamp_ms)
+            .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+            .then_with(|| aggressor_side_key(a.side).cmp(&aggressor_side_key(b.side)))
+            .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
 }
 
 /// Fold prints too small to draw as anything but a dot into one bubble per
@@ -385,36 +434,107 @@ pub fn merge_dust_clusters(
     });
 
     let mut merged: Vec<AggressionCluster> = Vec::with_capacity(keyed.len());
-    let mut open: Option<DustMerge> = None;
+    let mut open: Option<(ClusterKey, ClusterFold)> = None;
     for (key, cluster) in keyed {
         if cluster.quantity >= dust_quantity {
-            if let Some(pending) = open.take() {
+            if let Some((_, pending)) = open.take() {
                 merged.push(pending.finish());
             }
             merged.push(cluster);
             continue;
         }
+        let accepts = open.as_ref().is_some_and(|(open_key, pending)| {
+            *open_key == key
+                && cluster
+                    .last_timestamp_ms
+                    .saturating_sub(pending.anchor().first_timestamp_ms)
+                    <= window_ms
+        });
         match open.as_mut() {
-            Some(pending) if pending.accepts(key, &cluster, window_ms) => pending.push(cluster),
+            Some((_, pending)) if accepts => pending.push(cluster),
             _ => {
-                if let Some(pending) = open.replace(DustMerge::new(key, cluster)) {
+                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
                     merged.push(pending.finish());
                 }
             }
         }
     }
-    if let Some(pending) = open {
+    if let Some((_, pending)) = open {
         merged.push(pending.finish());
     }
 
-    merged.sort_by(|a, b| {
-        a.first_timestamp_ms
-            .cmp(&b.first_timestamp_ms)
-            .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+    sort_clusters(&mut merged);
+    merged
+}
+
+/// Fold every print a closed bar left in one visual price range into a single
+/// bubble carrying both sides.
+///
+/// The live lane draws prints one by one because it has the room to; a closed
+/// bar owns one slot, and the same prints compressed into it stack until buy
+/// and sell hide each other. The summary trades that pile for one honest mark
+/// per bar and price range: exact summed quantity, the buy share preserved in
+/// [`AggressionCluster::buy_quantity`] so the renderer can show the proportion,
+/// and every id and matched event still attached. Nothing is dropped and
+/// `trade_count` still reports every aggregate trade behind the mark.
+///
+/// `bar_of` reports which bar slot a cluster falls in; clusters it declines to
+/// place — the live lane's, which have not finished happening — pass through
+/// untouched. Coverage generation stays in the key, so a summary never spans a
+/// break in the recording.
+#[must_use]
+pub fn summarize_clusters(
+    clusters: Vec<AggressionCluster>,
+    bar_of: impl Fn(&AggressionCluster) -> Option<usize>,
+) -> Vec<AggressionCluster> {
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    struct SummaryKey {
+        bar_index: usize,
+        generation: Option<u64>,
+        price_bucket: Decimal,
+    }
+
+    let mut passthrough: Vec<AggressionCluster> = Vec::new();
+    let mut keyed: Vec<(SummaryKey, AggressionCluster)> = Vec::with_capacity(clusters.len());
+    for cluster in clusters {
+        match bar_of(&cluster) {
+            Some(bar_index) => keyed.push((
+                SummaryKey {
+                    bar_index,
+                    generation: cluster.generation,
+                    price_bucket: cluster.price_bucket,
+                },
+                cluster,
+            )),
+            None => passthrough.push(cluster),
+        }
+    }
+    keyed.sort_by(|(a_key, a), (b_key, b)| {
+        a_key
+            .cmp(b_key)
+            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
             .then_with(|| aggressor_side_key(a.side).cmp(&aggressor_side_key(b.side)))
-            .then_with(|| a.price_bucket.cmp(&b.price_bucket))
             .then_with(|| a.agg_id.cmp(&b.agg_id))
     });
+
+    let mut merged = passthrough;
+    merged.reserve(keyed.len());
+    let mut open: Option<(SummaryKey, ClusterFold)> = None;
+    for (key, cluster) in keyed {
+        match open.as_mut() {
+            Some((open_key, pending)) if *open_key == key => pending.push(cluster),
+            _ => {
+                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
+                    merged.push(pending.finish());
+                }
+            }
+        }
+    }
+    if let Some((_, pending)) = open {
+        merged.push(pending.finish());
+    }
+
+    sort_clusters(&mut merged);
     merged
 }
 
@@ -779,6 +899,114 @@ mod tests {
         let clusters = raw_clusters(&prints);
         assert_eq!(merge_dust_clusters(clusters.clone(), dec("10"), 0).len(), 2);
         assert_eq!(merge_dust_clusters(clusters, Decimal::ZERO, 5_000).len(), 2);
+    }
+
+    /// The closed-bar summary is the one fold that mixes the two sides, so it
+    /// is the one that has to keep the arithmetic honest: nothing dropped, the
+    /// proportion preserved, and the reported side the one that took more.
+    #[test]
+    fn a_summary_merges_both_sides_and_keeps_the_proportion() {
+        let prints = [
+            aggression(1, 0, "100", "3", Side::Buy, Some(3)),
+            aggression(2, 40, "100", "1", Side::Sell, Some(3)),
+            aggression(3, 80, "100", "2", Side::Buy, Some(3)),
+        ];
+        let clusters = raw_clusters(&prints);
+        assert_eq!(clusters.len(), 3, "the tape starts as three prints");
+
+        let summarized = summarize_clusters(clusters, |_| Some(7));
+        assert_eq!(summarized.len(), 1);
+        let bubble = &summarized[0];
+        assert_eq!(bubble.quantity, dec("6"));
+        assert_eq!(bubble.buy_quantity, dec("5"));
+        assert!((bubble.buy_share() - 5.0 / 6.0).abs() < 1e-6);
+        // Buyers took more, so the mark reports their side and the passive
+        // side it consumed follows from that.
+        assert_eq!(bubble.side, Side::Buy);
+        assert_eq!(bubble.consumed_side, BookSide::Ask);
+        assert_eq!(bubble.agg_ids, vec![1, 2, 3]);
+        assert_eq!(bubble.trade_count, 3);
+        assert_eq!(bubble.first_timestamp_ms, 0);
+        assert_eq!(bubble.last_timestamp_ms, 80);
+        assert_eq!(bubble.timestamp_ms, 40);
+
+        // Reverse the sides and the reported side reverses with them.
+        let mirrored = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 40, "100", "4", Side::Sell, Some(3)),
+        ];
+        let mirrored = summarize_clusters(raw_clusters(&mirrored), |_| Some(7));
+        assert_eq!(mirrored.len(), 1);
+        assert_eq!(mirrored[0].side, Side::Sell);
+        assert_eq!(mirrored[0].consumed_side, BookSide::Bid);
+        assert!((mirrored[0].buy_share() - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_summary_never_crosses_a_bar_a_price_range_or_a_coverage_break() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            // Same bar and range, other side: this one joins.
+            aggression(2, 10, "100", "1", Side::Sell, Some(3)),
+            // Another visual range.
+            aggression(3, 20, "108", "1", Side::Buy, Some(3)),
+        ];
+        let clusters = raw_clusters(&prints);
+        // Bar index derived from the timestamp: the first two share a bar.
+        let summarized = summarize_clusters(clusters.clone(), |cluster| {
+            Some(usize::from(cluster.first_timestamp_ms >= 15))
+        });
+        assert_eq!(summarized.len(), 3 - 1, "only the shared bar+range merges");
+
+        // Clusters the caller declines to place are the live lane's: they pass
+        // through exactly as they arrived.
+        let untouched = summarize_clusters(clusters.clone(), |_| None);
+        assert_eq!(untouched, clusters);
+
+        // A coverage break splits the summary even inside one bar and range.
+        let across_break = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 10, "100", "1", Side::Sell, Some(3)),
+        ];
+        let split = summarize_clusters(
+            cluster_aggressions(
+                &across_break,
+                &[
+                    coverage(0, Some(5)),
+                    CoverageSegment {
+                        generation: 4,
+                        start_ms: 5,
+                        end_ms: None,
+                    },
+                ],
+                grouping(),
+                0,
+            ),
+            |_| Some(0),
+        );
+        assert_eq!(split.len(), 2, "a summary must not span a recording break");
+    }
+
+    /// Every cluster leaves the builder single-sided, which is what lets the
+    /// renderer read `buy_share` as "pie or plain disc" with no second flag.
+    #[test]
+    fn a_plain_cluster_is_all_of_one_side() {
+        let prints = [
+            aggression(1, 0, "100", "2", Side::Buy, Some(3)),
+            aggression(2, 10, "100", "3", Side::Sell, Some(3)),
+        ];
+        for cluster in raw_clusters(&prints) {
+            match cluster.side {
+                Side::Buy => {
+                    assert_eq!(cluster.buy_quantity, cluster.quantity);
+                    assert_eq!(cluster.buy_share(), 1.0);
+                }
+                Side::Sell => {
+                    assert_eq!(cluster.buy_quantity, Decimal::ZERO);
+                    assert_eq!(cluster.buy_share(), 0.0);
+                }
+            }
+        }
     }
 
     #[test]

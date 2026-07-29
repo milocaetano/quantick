@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::orderflow::{
-    BubbleStyle, HeatmapConfig,
+    BubbleStyle, HeatmapConfig, LiveLaneStyle,
     config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS},
 };
 
@@ -51,8 +51,9 @@ const fn default_dust_merge_ms() -> i64 {
 /// decision in the UI, so opening the chart with a presets file present can
 /// never turn capture on by itself.
 ///
-/// Field order matters: TOML requires plain values before tables, so
-/// [`bubbles`](Self::bubbles) stays last.
+/// Field order matters: TOML requires plain values before tables, so the two
+/// tables — [`bubbles`](Self::bubbles) and [`live_lane`](Self::live_lane) —
+/// stay at the end.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BubblePreset {
     /// Unique, human-chosen name shown in the picker.
@@ -64,9 +65,17 @@ pub struct BubblePreset {
     /// milliseconds. Part of the look: how crowded the tape is allowed to get.
     #[serde(default = "default_dust_merge_ms")]
     pub dust_merge_ms: i64,
+    /// Whether closed bars are folded into one two-sided bubble per price
+    /// range. As much a look as the radius range: it decides whether history
+    /// reads as a tape or as a summary.
+    #[serde(default)]
+    pub candle_summary: bool,
     /// Every visual choice for the bubbles themselves.
     #[serde(default)]
     pub bubbles: BubbleStyle,
+    /// The live lane's own width, clustering and radius scale.
+    #[serde(default)]
+    pub live_lane: LiveLaneStyle,
 }
 
 impl BubblePreset {
@@ -77,7 +86,9 @@ impl BubblePreset {
             name: name.into(),
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
+            candle_summary: config.bubble_candle_summary,
             bubbles: config.bubbles.clone(),
+            live_lane: config.live_lane.clone(),
         }
     }
 
@@ -86,7 +97,9 @@ impl BubblePreset {
     pub fn apply_to(&self, config: &mut HeatmapConfig) {
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
+        config.bubble_candle_summary = self.candle_summary;
         config.bubbles = self.bubbles.clone();
+        config.live_lane = self.live_lane.clone();
     }
 }
 
@@ -147,6 +160,7 @@ impl BubblePresetFile {
                 .cluster_ms
                 .clamp(0, crate::orderflow::config::MAX_BUBBLE_CLUSTER_MS);
             preset.bubbles.sanitize();
+            preset.live_lane.sanitize();
             true
         });
         let active = std::mem::take(&mut self.active).trim().to_owned();
@@ -413,10 +427,12 @@ mod tests {
             name: "default".to_owned(),
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
+            candle_summary: false,
             bubbles: BubbleStyle {
                 front_color: Some([255, 246, 205]),
                 ..BubbleStyle::default()
             },
+            live_lane: LiveLaneStyle::default(),
         });
         file.active = "default".to_owned();
 

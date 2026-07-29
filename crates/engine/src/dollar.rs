@@ -29,7 +29,7 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, ThresholdBarBuilder, Trade, threshold::Measure};
+use crate::{Bar, BarBuilder, BarProgress, ThresholdBarBuilder, Trade, threshold::Measure};
 
 /// The dollar measure: every trade contributes its notional `price * quantity`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -78,6 +78,10 @@ impl BarBuilder for DollarBarBuilder {
 
     fn partial(&self) -> Option<&Bar> {
         self.inner.partial()
+    }
+
+    fn progress(&self) -> Option<BarProgress> {
+        self.inner.progress()
     }
 }
 

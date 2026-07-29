@@ -11,8 +11,8 @@
 //! unit-tested in CI.
 
 use quantick_engine::{
-    Bar, BarBuilder, DollarBarBuilder, ImbalanceBarBuilder, TickBarBuilder, TimeBarBuilder, Trade,
-    VolumeBarBuilder,
+    Bar, BarBuilder, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, TickBarBuilder,
+    TimeBarBuilder, Trade, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
 
@@ -51,6 +51,17 @@ impl BarKind {
             BarKind::Dollar => "dollar",
             BarKind::Time => "time",
             BarKind::Imbalance => "imbalance",
+        }
+    }
+
+    /// The unit the closing rule counts in, for the forming bar's countdown.
+    #[must_use]
+    pub fn progress_unit(self) -> &'static str {
+        match self {
+            BarKind::Tick | BarKind::Imbalance => "ticks",
+            BarKind::Volume => "vol",
+            BarKind::Dollar => "notional",
+            BarKind::Time => "ms",
         }
     }
 }
@@ -248,6 +259,17 @@ impl ChartState {
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
+    }
+
+    /// How far the forming bar is from closing, in the rule's own measure, and
+    /// the unit to print it in.
+    ///
+    /// Straight from the builder that owns the closing rule — the chart never
+    /// re-derives "a tick bar closes at N". `None` for a rule with no fixed
+    /// threshold to count toward.
+    #[must_use]
+    pub fn progress(&self) -> Option<(BarProgress, &'static str)> {
+        Some((self.builder.progress()?, self.spec.kind().progress_unit()))
     }
 }
 

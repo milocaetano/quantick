@@ -1,6 +1,25 @@
 //! The [`BarBuilder`] abstraction shared by every bar type.
 
+use rust_decimal::Decimal;
+
 use crate::{Bar, Trade};
+
+/// How far the in-progress bar is from closing.
+///
+/// Both figures are in the rule's own measure — trades for tick bars, quantity
+/// for volume, notional for dollar, milliseconds for time — so a consumer can
+/// render "37 of 50" without knowing which rule is running. Alternative bars
+/// are not on a clock, so nothing on a chart otherwise says whether the next
+/// print closes the bar or the fiftieth does; this is the only honest answer,
+/// and it comes from the builder that owns the closing rule rather than from a
+/// second copy of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BarProgress {
+    /// Measure accumulated by the trades since the last close.
+    pub done: Decimal,
+    /// Measure at which this bar closes.
+    pub target: Decimal,
+}
 
 /// Turns a stream of [`Trade`]s into a stream of [`Bar`]s.
 ///
@@ -32,4 +51,13 @@ pub trait BarBuilder {
     /// need finalised bars only should use the return value of
     /// [`push`](BarBuilder::push); `partial` is for rendering the forming bar.
     fn partial(&self) -> Option<&Bar>;
+
+    /// How far the in-progress bar is from closing, in this rule's measure.
+    ///
+    /// `None` — the default — when the rule runs toward no fixed threshold, as
+    /// an adaptive rule does. Reporting a countdown that is not the rule would
+    /// tell the reader the bar closes at a moment it will not.
+    fn progress(&self) -> Option<BarProgress> {
+        None
+    }
 }

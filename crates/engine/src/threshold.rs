@@ -27,7 +27,7 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, Side, Trade};
+use crate::{Bar, BarBuilder, BarProgress, Side, Trade};
 
 /// How much one trade contributes toward closing a bar.
 ///
@@ -104,6 +104,17 @@ impl<M: Measure> BarBuilder for ThresholdBarBuilder<M> {
 
     fn partial(&self) -> Option<&Bar> {
         self.current.as_ref()
+    }
+
+    /// The accumulator itself: this rule *is* a running total against a fixed
+    /// threshold, so there is nothing to derive and nothing to approximate.
+    /// Reported between bars too, as a plain zero — the next bar has taken
+    /// nothing yet, which is a fact rather than an absence.
+    fn progress(&self) -> Option<BarProgress> {
+        Some(BarProgress {
+            done: self.acc,
+            target: self.threshold,
+        })
     }
 }
 

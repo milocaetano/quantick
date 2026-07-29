@@ -176,3 +176,44 @@ show_trade_count = true
 label_min_radius = 20.0
 front_color = [2, 2, 0]
 trail_color = [0, 0, 0]
+
+[[presets]]
+name = "live lane pie"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+
+[presets.bubbles]
+min_radius = 2.2
+max_radius = 20.0
+opacity = 0.8
+outline_width = 0.4
+halo_strength = 0.2
+detail_min_radius = 5.0
+readable_min_radius = 8.0
+render_mode = "sphere"
+sphere_shading = 0.55
+sphere_highlight = 0.35
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 1.0
+show_consumption_front = true
+front_width = 0.5
+front_length_scale = 1.1
+show_impact_ring = true
+impact_ring_width = 0.5
+trail_length = 7.0
+trail_opacity = 0.77
+show_quantity_labels = false
+show_trade_count = true
+label_min_radius = 20.0
+front_color = [2, 2, 0]
+trail_color = [0, 0, 0]
+
+[presets.live_lane]
+width_share = 0.5
+time_zoom = 1.0
+cluster_ms = 100
+radius_scale = 1.7
+show_marks = true
