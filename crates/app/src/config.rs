@@ -192,6 +192,16 @@ pub struct FeedConfig {
     /// Assets offered for this feed; the first is used as a fallback when the
     /// current symbol is not valid for a newly selected feed.
     pub symbols: Vec<String>,
+    /// Bubble preset applied when this feed is selected, by name.
+    ///
+    /// A market dictates how its tape reads — the B3 mini index wants the
+    /// candle summary that a dense BTC tape does not — so a feed may declare
+    /// the look it opens with. Absent, nothing changes: the panel keeps
+    /// whatever preset is active, exactly as before the field existed. The
+    /// name must exist in the bubble presets file; an unknown name is reported
+    /// and ignored rather than silently altering the panel.
+    #[serde(default)]
+    pub bubble_preset: Option<String>,
 }
 
 /// The whole feed/asset configuration.
@@ -255,6 +265,15 @@ impl AppConfig {
             }
             if self.feeds.iter().filter(|f| f.id == feed.id).count() > 1 {
                 return Err(format!("duplicate feed id '{}'", feed.id));
+            }
+            // Whether the name resolves is the presets file's business (checked
+            // when the preset is applied); an empty name is a config typo.
+            if feed
+                .bubble_preset
+                .as_ref()
+                .is_some_and(|name| name.trim().is_empty())
+            {
+                return Err(format!("feed '{}' names an empty bubble_preset", feed.id));
             }
         }
         let Some(default) = self.feed(&self.default_feed) else {
@@ -396,6 +415,30 @@ mod tests {
         assert!(mt5.symbols.contains(&"WIN$N".to_string()));
         assert_eq!(config.metatrader.side_source, Mt5SideSource::TickRule);
         assert!(!config.metatrader.listen_addr.is_empty());
+
+        // The mini index opens on the pie summary; Binance declares nothing
+        // and keeps whatever the presets file says.
+        assert_eq!(mt5.bubble_preset.as_deref(), Some("live lane pie"));
+        assert_eq!(binance.bubble_preset, None);
+    }
+
+    #[test]
+    fn an_empty_bubble_preset_is_a_config_error() {
+        let text = r#"
+            default_feed = "b"
+            default_symbol = "AAA"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["AAA"]
+            bubble_preset = "  "
+        "#;
+        let err = parse(text, ConfigSource::Embedded).expect_err("blank name");
+        assert!(
+            err.to_string().contains("bubble_preset"),
+            "the message names the field: {err}"
+        );
     }
 
     #[test]

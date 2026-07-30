@@ -149,6 +149,7 @@ label_min_radius = 16.0
 [[presets]]
 name = "dense tape btc"
 cluster_ms = 500
+candle_summary = true
 
 [presets.bubbles]
 min_radius = 2.2

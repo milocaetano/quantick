@@ -249,6 +249,18 @@ impl OrderflowView {
         self.config.live_lane.window_ms(reserved_span_ms(closed))
     }
 
+    /// Name of the preset the panel currently wears.
+    #[cfg(test)]
+    pub(crate) fn active_preset_for_test(&self) -> &str {
+        &self.presets.active
+    }
+
+    /// Read-only view of the heatmap config, for app-level assertions.
+    #[cfg(test)]
+    pub(crate) fn config_for_test(&self) -> &HeatmapConfig {
+        &self.config
+    }
+
     #[cfg(test)]
     pub(crate) fn stage_capture_grouping_for_test(&mut self, grouping: Decimal) -> bool {
         let before = self.config.clone();
@@ -697,14 +709,20 @@ impl OrderflowView {
         }
     }
 
-    fn apply_preset(&mut self, name: &str) {
+    /// Apply the stored preset called `name`, reporting whether it exists.
+    ///
+    /// The panel's picker and a feed's declared preset both land here, so a
+    /// preset applies identically no matter who asked. An unknown name changes
+    /// nothing and returns `false`; the caller decides how loudly to say so.
+    pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
         let Some(preset) = self.presets.get(name).cloned() else {
-            return;
+            return false;
         };
         preset.apply_to(&mut self.config);
         self.presets.active = preset.name.clone();
         self.preset_name_draft = preset.name.clone();
         self.preset_status = Some(format!("'{}' applied", preset.name));
+        true
     }
 
     fn save_preset(&mut self) {
@@ -1690,7 +1708,7 @@ mod tests {
                 show_marks: true,
             },
         });
-        view.apply_preset("wide");
+        assert!(view.apply_preset("wide"), "a stored name applies");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
@@ -1707,9 +1725,9 @@ mod tests {
         assert_eq!(view.config.gamma, before.gamma);
         assert_eq!(view.config.price_grouping, before.price_grouping);
 
-        // An unknown name changes nothing at all.
+        // An unknown name changes nothing at all, and says so.
         let after = view.config.clone();
-        view.apply_preset("nope");
+        assert!(!view.apply_preset("nope"));
         assert_eq!(view.config, after);
         assert_eq!(view.presets.active, "wide");
     }

@@ -14,11 +14,15 @@ default_feed = "binance"
 default_symbol = "BTCUSDT"
 
 # Each [[feeds]] entry is one selectable feed.
-#   id       — stable identifier, referenced by `default_feed` (unique).
-#   name     — label shown in the feed selector.
-#   provider — which backend streams it; maps to a code path.
-#              Supported today: "binance", "metatrader".
-#   symbols  — the assets offered for this feed (first is its fallback).
+#   id            — stable identifier, referenced by `default_feed` (unique).
+#   name          — label shown in the feed selector.
+#   provider      — which backend streams it; maps to a code path.
+#                   Supported today: "binance", "metatrader".
+#   symbols       — the assets offered for this feed (first is its fallback).
+#   bubble_preset — optional: a bubble preset (by name, from bubbles.toml)
+#                   applied whenever this feed is selected. Leave it out and
+#                   the panel keeps whatever preset is active. An unknown name
+#                   is reported and ignored.
 [[feeds]]
 id = "binance"
 name = "Binance"
@@ -42,6 +46,10 @@ id = "metatrader"
 name = "MetaTrader 5"
 provider = "metatrader"
 symbols = ["WIN$N", "WDO$N", "US500"]
+# The B3 mini index reads best as per-bar pie summaries: bars close in seconds
+# and the candle summary keeps the last bars carrying marks instead of leaving
+# the lane window bare.
+bubble_preset = "live lane pie"
 
 # MetaTrader bridge settings (defaults shown; the section is optional).
 #   listen_addr — where quantick listens; the EA dials this address.
