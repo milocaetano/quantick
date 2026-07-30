@@ -31,11 +31,17 @@ symbols = ["BTCUSDT", "ETHUSDT"]
 # índice), WDO$N (mini dólar). The EA also streams Depth of Market, so the
 # book heatmap works here; note MT5 exposes only the top levels, and the chart
 # labels that coverage rather than implying a full book.
+#
+# One terminal serves one account at a time, so which of these symbols exist
+# depends on who is logged in. US500 is a broker-quoted index CFD (Tickmill):
+# it has no tape and no book — the bridge declares that, quotes chart as one
+# synthetic print per tick, and everything needing a traded size switches
+# itself off. See bridge/mt5/PROTOCOL.md, field `tape`.
 [[feeds]]
 id = "metatrader"
 name = "MetaTrader 5"
 provider = "metatrader"
-symbols = ["WIN$N", "WDO$N"]
+symbols = ["WIN$N", "WDO$N", "US500"]
 
 # MetaTrader bridge settings (defaults shown; the section is optional).
 #   listen_addr — where quantick listens; the EA dials this address.

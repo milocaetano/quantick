@@ -18,6 +18,7 @@ use quantick_feed_binance::{
 };
 
 use super::{FeedCommand, FeedEvent, FeedHandle, initial_backfill_target};
+use crate::config::ProviderKind;
 
 /// Default number of REST depth levels requested per side.
 const DEFAULT_BOOK_DEPTH: u16 = 1_000;
@@ -50,6 +51,9 @@ pub fn spawn(symbol: &str) -> FeedHandle {
         // user through: its trouble is network trouble, and that already shows
         // as a stalled feed on the status bar.
         notices: super::silent_notices(),
+        // Every aggTrade is an execution carrying its real size, and the venue
+        // answers the same for every symbol it lists — nothing to narrow later.
+        capabilities: super::fixed_capabilities(ProviderKind::Binance.capabilities()),
         commands: cmd_tx,
         replay: None,
     }

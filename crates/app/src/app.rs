@@ -12,13 +12,13 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
 use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::PriceScale;
-use crate::config::{AppConfig, FeedCapabilities, ProviderKind};
+use crate::config::{AppConfig, FeedCapabilities};
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::loading::{self, LoadingTask, LoadingTracker};
@@ -201,6 +201,9 @@ pub struct QuantickApp {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     notice: FeedNotice,
+    /// What the running feed can really do, read fresh every frame. The feed
+    /// narrows it once a session tells it what the symbol actually offers.
+    feed_capabilities: watch::Receiver<FeedCapabilities>,
     commands: mpsc::Sender<FeedCommand>,
     orderflow: OrderflowView,
     book_capture_epoch: u64,
@@ -331,6 +334,7 @@ impl QuantickApp {
             events: feed.events,
             book_events: feed.book_events,
             notices: feed.notices,
+            feed_capabilities: feed.capabilities,
             notice: FeedNotice::Clear,
             commands: feed.commands,
             orderflow: OrderflowView::new(symbol.clone()),
@@ -568,17 +572,17 @@ impl QuantickApp {
     /// back on the next switch, and until then no affordance may promise data
     /// nothing is streaming.
     fn capabilities(&self) -> FeedCapabilities {
-        // A recorded session streams trades and nothing else: there is no depth
-        // in the file and no venue to page older history from. Answering
-        // honestly here is the whole gate — every affordance already asks the
-        // capability rather than the provider name, so the heatmap toggle and
-        // "load older" disable themselves during replay.
-        if self.replay.is_some() {
+        // A feed missing from the config resolves to no provider, so nothing is
+        // streaming and nothing may be promised.
+        if self.config.provider_of(&self.feed_id).is_none() && self.replay.is_none() {
             return FeedCapabilities::none();
         }
-        self.config
-            .provider_of(&self.feed_id)
-            .map_or(FeedCapabilities::none(), ProviderKind::capabilities)
+        // Otherwise the running feed answers for itself. Each source declares
+        // what it is — a recording has trades and no depth, a bridge session
+        // knows whether its symbol has a book or a tape — and every affordance
+        // already asks the capability rather than the provider name, so they
+        // enable and disable themselves from this one value.
+        *self.feed_capabilities.borrow()
     }
 
     /// Ask the feed thread to fetch and prepend `history_step` older trades.
@@ -769,6 +773,7 @@ impl QuantickApp {
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
+        self.feed_capabilities = handle.capabilities;
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
@@ -1758,18 +1763,41 @@ impl QuantickApp {
         );
     }
 
-    /// Data-honesty label for how the aggressor side of each trade is known,
-    /// or `None` when the venue reports true sides (§8 — the status bar's
-    /// middle section).
-    fn side_note(&self) -> Option<String> {
+    /// Data-honesty label for how each print is known, or `None` when the venue
+    /// reports true trades and true sides (§8 — the status bar's middle
+    /// section). The label shares its row with the machinery readouts, so it
+    /// stays short and the full story lives in the hover.
+    ///
+    /// A venue that prints nothing at all takes precedence over how sides were
+    /// decided: on a quote-driven feed *every* print is derived, and saying so
+    /// is the more important disclosure. Without it a chart of one-unit prints
+    /// reads as a market where every trade happened to be the same size.
+    fn side_note(&self) -> Option<(String, Option<String>)> {
         if let Some(link) = &self.replay {
-            Some(match link.session.header.side_source.as_deref() {
-                Some(source) => format!("side: {source}"),
-                None => "side: not recorded".to_owned(),
-            })
+            Some((
+                match link.session.header.side_source.as_deref() {
+                    Some(source) => format!("side: {source}"),
+                    None => "side: not recorded".to_owned(),
+                },
+                None,
+            ))
+        } else if self.config.provider_of(&self.active.0).is_some()
+            && !self.capabilities().traded_volume
+        {
+            Some((
+                "prints: quote-derived".to_owned(),
+                Some(
+                    "this venue quotes prices but prints no trades: every candle is built \
+                     from one synthetic print per tick, at the mid of bid and ask, carrying \
+                     one unit — never a traded size"
+                        .to_owned(),
+                ),
+            ))
         } else {
             // The running feed, not the still-uncommitted selection.
-            self.config.side_note(&self.active.0).map(str::to_owned)
+            self.config
+                .side_note(&self.active.0)
+                .map(|note| (note.to_owned(), None))
         }
     }
 
@@ -1780,6 +1808,7 @@ impl QuantickApp {
             Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
             None => (0, bars.len()),
         };
+        let note = self.side_note();
         statusbar::StatusModel {
             venue: if self.replay.is_some() {
                 "recording".to_owned()
@@ -1799,7 +1828,8 @@ impl QuantickApp {
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
             backfilled_bars: backfilled,
             live_bars: live,
-            side_note: self.side_note(),
+            side_note: note.clone().map(|(label, _)| label),
+            side_detail: note.and_then(|(_, detail)| detail),
             follows_live: self.viewport.follows_live(),
             price_auto: self.price_view.is_auto(),
             live_trades: self.live_trades,
@@ -1961,6 +1991,7 @@ impl QuantickApp {
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
+        self.feed_capabilities = handle.capabilities;
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
@@ -2006,6 +2037,7 @@ impl QuantickApp {
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
+        self.feed_capabilities = handle.capabilities;
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
@@ -2042,6 +2074,7 @@ impl QuantickApp {
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
+        self.feed_capabilities = handle.capabilities;
         self.notice = FeedNotice::Clear;
         self.commands = handle.commands;
         self.replay = handle.replay;
@@ -2231,6 +2264,52 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                // What a live Tickmill US500 session publishes once its bridge
+                // says hello.
+                capabilities: feed::fixed_capabilities(FeedCapabilities {
+                    book_capture: false,
+                    history_paging: false,
+                    traded_volume: false,
+                }),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let _ends = (evt_tx, book_tx);
+
+        let (label, detail) = app
+            .side_note()
+            .expect("a quote-driven feed discloses itself");
+        assert_eq!(
+            label, "prints: quote-derived",
+            "a chart of one-unit prints must not read as a real tape"
+        );
+        // Short label, full story on hover: this row shares its space with the
+        // machinery readouts, and a long label paints over them.
+        assert!(label.len() < 25, "the label has to fit beside the readouts");
+        assert!(
+            detail.is_some_and(|text| text.contains("one synthetic print per tick")),
+            "the hover has to explain what a quote-derived print is"
+        );
+        // And the affordances that would need a size are off with it.
+        assert!(!app.capabilities().traded_volume);
+        assert!(!app.capabilities().book_capture);
+    }
+
     /// An app wired to in-memory channels, plus the test's ends of them: send
     /// feed events in, observe feed commands out. No egui, no network.
     fn test_app() -> (
@@ -2251,6 +2330,7 @@ mod tests {
                 events: evt_rx,
                 book_events: book_rx,
                 notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -2280,6 +2360,7 @@ mod tests {
                 events: evt_rx,
                 book_events: book_rx,
                 notices: notice_rx,
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -2521,6 +2602,7 @@ mod tests {
                 events: evt_rx,
                 book_events: book_rx,
                 notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
                 commands: cmd_tx,
                 replay: None,
             },

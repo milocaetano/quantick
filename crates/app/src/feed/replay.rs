@@ -27,6 +27,7 @@ use tokio::sync::mpsc;
 use quantick_replay::{PlaybackConfig, Playhead, Session};
 
 use super::{FeedCommand, FeedEvent, FeedHandle};
+use crate::config::FeedCapabilities;
 
 /// How often the worker wakes while playing. Finer than a 60 fps frame, so the
 /// chart never waits on the clock for a print that is already due.
@@ -261,6 +262,14 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         // A file on disk needs nothing started, and a session that failed to
         // parse never reaches this point: the browser that opened it reports.
         notices: super::silent_notices(),
+        // A recording is trades and nothing else: no depth in the file, no
+        // venue to page older history from. The sizes in it are the sizes that
+        // were captured, so anything measuring volume still works.
+        capabilities: super::fixed_capabilities(FeedCapabilities {
+            book_capture: false,
+            history_paging: false,
+            traded_volume: true,
+        }),
         commands: cmd_tx,
         replay: Some(link),
     }
