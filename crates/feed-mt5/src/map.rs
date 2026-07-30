@@ -16,6 +16,13 @@
 //!   trade records where its side came from ([`SideSource`]), and everything
 //!   undeterminable is dropped and counted ([`MapStats`]), never invented.
 //!
+//! A fourth gap is not MT5's doing but the venue's: some symbols have **no
+//! tape at all**. A broker-quoted CFD moves bid and ask and never prints a
+//! trade, so [`TapeKind::Quotes`] switches the mapper to charting what does
+//! exist — one synthetic print per tick, at the mid, carrying one unit. Those
+//! prints say "a tick happened here, at this price"; they never claim traded
+//! volume, and [`MapStats::trades_from_quotes`] keeps the count separable.
+//!
 //! Pure and synchronous: no I/O, no clocks — same ticks in, same trades out.
 
 use rust_decimal::Decimal;
@@ -23,7 +30,14 @@ use std::str::FromStr as _;
 
 use quantick_engine::{Side, Trade};
 
-use crate::protocol::{AggressorFlag, Tick, aggressor_from_flags, flags};
+use crate::protocol::{AggressorFlag, TapeKind, Tick, aggressor_from_flags, flags};
+
+/// Quantity carried by a print synthesised from a quote: one tick, one unit.
+///
+/// Not a traded size — the venue traded nothing. It exists so tick bars can
+/// count, and it is why a quote-driven feed must keep volume-based bar types
+/// and footprints switched off.
+const SYNTHETIC_QUANTITY: Decimal = Decimal::ONE;
 
 /// How the aggressor side is decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +77,9 @@ pub enum DropReason {
     /// [`SideMode::TickRule`]: no prior price movement yet, so no side can be
     /// inferred (the first trades of a session, until the price first moves).
     NoTickRuleContext,
+    /// [`TapeKind::Quotes`]: bid or ask was missing or non-positive, so there
+    /// is no two-sided quote to take a mid from.
+    MissingQuote,
 }
 
 /// The outcome of mapping one tick.
@@ -76,7 +93,9 @@ pub enum MapOutcome {
         source: SideSource,
     },
     /// A quote-only tick (no LAST flag): honest market data, but not a trade —
-    /// bars are built from trades only.
+    /// bars are built from trades only. Only under [`TapeKind::Trades`]; where
+    /// the venue prints nothing, the quote *is* the data (see
+    /// [`TickMapper::map`]).
     QuoteOnly,
     /// A trade-like tick that could not honestly become a trade.
     Dropped(DropReason),
@@ -93,8 +112,13 @@ pub struct MapStats {
     pub side_from_tick_rule: u64,
     /// Trades emitted with side carried from the previous trade.
     pub side_carried: u64,
-    /// Quote-only ticks seen (not trades; not charted).
+    /// Quote-only ticks seen (not trades; not charted). Always 0 under
+    /// [`TapeKind::Quotes`], where a quote is exactly what gets charted.
     pub quote_only: u64,
+    /// How many of the emitted trades were synthesised from a quote rather
+    /// than printed by the venue — a subset of [`MapStats::trades`], kept
+    /// separate so "this chart is quote-derived" stays a countable fact.
+    pub trades_from_quotes: u64,
     /// Drops: unparseable/non-positive price.
     pub dropped_bad_price: u64,
     /// Drops: trade tick with zero volume.
@@ -105,6 +129,8 @@ pub struct MapStats {
     pub dropped_ambiguous_flags: u64,
     /// Drops: tick-rule mode, before the first price movement.
     pub dropped_no_tick_rule_context: u64,
+    /// Drops: quote mode, tick without a usable two-sided quote.
+    pub dropped_missing_quote: u64,
 }
 
 impl MapStats {
@@ -122,6 +148,7 @@ impl MapStats {
             + self.dropped_no_aggressor_flag
             + self.dropped_ambiguous_flags
             + self.dropped_no_tick_rule_context
+            + self.dropped_missing_quote
     }
 
     /// Emit the whole ledger as one structured log line (AI-first: a log
@@ -137,12 +164,14 @@ impl MapStats {
             side_from_tick_rule = self.side_from_tick_rule,
             side_carried = self.side_carried,
             quote_only = self.quote_only,
+            trades_from_quotes = self.trades_from_quotes,
             dropped = self.dropped(),
             dropped_bad_price = self.dropped_bad_price,
             dropped_zero_volume = self.dropped_zero_volume,
             dropped_no_aggressor_flag = self.dropped_no_aggressor_flag,
             dropped_ambiguous_flags = self.dropped_ambiguous_flags,
             dropped_no_tick_rule_context = self.dropped_no_tick_rule_context,
+            dropped_missing_quote = self.dropped_missing_quote,
             "mt5 tick mapping summary"
         );
     }
@@ -156,6 +185,8 @@ impl MapStats {
 #[derive(Debug)]
 pub struct TickMapper {
     mode: SideMode,
+    /// What the venue prints, as the bridge declared it in its hello.
+    tape: TapeKind,
     /// `server_time - utc`, in milliseconds (from hello, refreshed by
     /// heartbeats).
     offset_ms: i64,
@@ -167,11 +198,12 @@ pub struct TickMapper {
 
 impl TickMapper {
     /// A mapper for one session with the given side policy and the hello's
-    /// `server_utc_offset_s`.
+    /// `server_utc_offset_s`, for a venue that prints trades.
     #[must_use]
     pub fn new(mode: SideMode, server_utc_offset_s: i64) -> Self {
         Self {
             mode,
+            tape: TapeKind::Trades,
             // Saturating: the offset is declared by the bridge (any local
             // process may connect), so an absurd value must not panic the feed
             // task via i64 overflow. A realistic offset (±14 h) is unaffected.
@@ -182,6 +214,20 @@ impl TickMapper {
         }
     }
 
+    /// Map for a venue of the given kind. A session keeps one kind from its
+    /// hello to its last tick, so the same recording always maps the same way.
+    #[must_use]
+    pub fn with_tape(mut self, tape: TapeKind) -> Self {
+        self.tape = tape;
+        self
+    }
+
+    /// What this mapper assumes the venue prints.
+    #[must_use]
+    pub fn tape(&self) -> TapeKind {
+        self.tape
+    }
+
     /// Refresh the server-time offset (heartbeats may recompute it, e.g.
     /// across a DST change on brokers that observe one).
     pub fn set_server_utc_offset_s(&mut self, offset_s: i64) {
@@ -190,6 +236,15 @@ impl TickMapper {
 
     /// Map one tick. Updates the tick-rule state and the stats ledger.
     pub fn map(&mut self, tick: &Tick) -> MapOutcome {
+        match self.tape {
+            TapeKind::Trades => self.map_printed_trade(tick),
+            TapeKind::Quotes => self.map_quote_as_print(tick),
+        }
+    }
+
+    /// The venue prints trades: only a tick carrying LAST and a real volume is
+    /// one, and the quotes around it are market data the bars do not use.
+    fn map_printed_trade(&mut self, tick: &Tick) -> MapOutcome {
         // No LAST bit → the tick is a quote update, not a trade.
         if tick.flags & flags::LAST == 0 {
             self.stats.quote_only += 1;
@@ -217,17 +272,78 @@ impl TickMapper {
                 AggressorFlag::Ambiguous => Err(DropReason::AmbiguousFlags),
                 AggressorFlag::Absent => Err(DropReason::NoAggressorFlag),
             },
-            SideMode::TickRule => match self.prev_price {
-                Some(prev) if price > prev => Ok((Side::Buy, SideSource::TickRule)),
-                Some(prev) if price < prev => Ok((Side::Sell, SideSource::TickRule)),
-                Some(_) => match self.prev_side {
-                    Some(side) => Ok((side, SideSource::Carried)),
-                    None => Err(DropReason::NoTickRuleContext),
-                },
-                None => Err(DropReason::NoTickRuleContext),
-            },
+            SideMode::TickRule => self.tick_rule(price),
         };
 
+        self.finish(tick, price, Decimal::from(tick.volume), decided)
+    }
+
+    /// The venue only quotes: nothing is ever printed, so the honest thing to
+    /// chart is the tick itself. Every two-sided quote becomes one synthetic
+    /// print at the mid, sized [`SYNTHETIC_QUANTITY`].
+    ///
+    /// The mid rather than bid or ask because a fixed spread would otherwise
+    /// print as real movement — the probed US500 quotes a constant 0.30, which
+    /// as bid/ask alternation would chart 30 points of chop that never
+    /// happened. The mid keeps every price move a move in the market.
+    ///
+    /// The aggressor flags and any LAST field are ignored here on purpose: a
+    /// venue that prints nothing has no aggressor to report, and mixing the odd
+    /// printed trade into a synthetic series would put two different meanings
+    /// of "volume" on one chart.
+    fn map_quote_as_print(&mut self, tick: &Tick) -> MapOutcome {
+        let (Ok(bid), Ok(ask)) = (Decimal::from_str(&tick.bid), Decimal::from_str(&tick.ask))
+        else {
+            self.stats.dropped_bad_price += 1;
+            return MapOutcome::Dropped(DropReason::BadPrice);
+        };
+        // A one-sided or empty quote is common in recorded history, where MT5
+        // leaves the side it does not know at "0". There is no mid to take.
+        if bid <= Decimal::ZERO || ask <= Decimal::ZERO {
+            self.stats.dropped_missing_quote += 1;
+            return MapOutcome::Dropped(DropReason::MissingQuote);
+        }
+        // Checked: prices come from an untrusted local bridge, and Decimal
+        // overflow must drop the tick, never panic the feed task.
+        let Some(mid) = bid
+            .checked_add(ask)
+            .and_then(|sum| sum.checked_div(Decimal::TWO))
+        else {
+            self.stats.dropped_bad_price += 1;
+            return MapOutcome::Dropped(DropReason::BadPrice);
+        };
+
+        // The tick rule is the only side policy available: with no print there
+        // is no aggressor flag to trust, whatever `side_source` is configured.
+        let decided = self.tick_rule(mid);
+        self.finish(tick, mid, SYNTHETIC_QUANTITY, decided)
+    }
+
+    /// López de Prado's tick rule: uptick = buy, downtick = sell, unchanged =
+    /// carry the previous side. The one place the rule lives, so both venue
+    /// kinds classify identically.
+    fn tick_rule(&self, price: Decimal) -> Result<(Side, SideSource), DropReason> {
+        match self.prev_price {
+            Some(prev) if price > prev => Ok((Side::Buy, SideSource::TickRule)),
+            Some(prev) if price < prev => Ok((Side::Sell, SideSource::TickRule)),
+            Some(_) => match self.prev_side {
+                Some(side) => Ok((side, SideSource::Carried)),
+                None => Err(DropReason::NoTickRuleContext),
+            },
+            None => Err(DropReason::NoTickRuleContext),
+        }
+    }
+
+    /// Record the decision and turn it into an outcome — the single exit both
+    /// venue kinds take, so the ledger can never disagree with what was
+    /// emitted.
+    fn finish(
+        &mut self,
+        tick: &Tick,
+        price: Decimal,
+        quantity: Decimal,
+        decided: Result<(Side, SideSource), DropReason>,
+    ) -> MapOutcome {
         // The price is real either way: it must feed the next tick-rule
         // comparison even when this tick's own side was undeterminable.
         self.prev_price = Some(price);
@@ -240,6 +356,9 @@ impl TickMapper {
                     SideSource::TickRule => self.stats.side_from_tick_rule += 1,
                     SideSource::Carried => self.stats.side_carried += 1,
                 }
+                if self.tape == TapeKind::Quotes {
+                    self.stats.trades_from_quotes += 1;
+                }
                 MapOutcome::Trade {
                     trade: Trade {
                         agg_id: tick.seq,
@@ -247,7 +366,7 @@ impl TickMapper {
                         // from the untrusted bridge; overflow must not panic.
                         timestamp_ms: tick.time_ms.saturating_sub(self.offset_ms),
                         price,
-                        quantity: Decimal::from(tick.volume),
+                        quantity,
                         side,
                     },
                     source,
@@ -258,8 +377,10 @@ impl TickMapper {
                     DropReason::NoAggressorFlag => self.stats.dropped_no_aggressor_flag += 1,
                     DropReason::AmbiguousFlags => self.stats.dropped_ambiguous_flags += 1,
                     DropReason::NoTickRuleContext => self.stats.dropped_no_tick_rule_context += 1,
-                    // BadPrice / ZeroVolume returned earlier.
-                    DropReason::BadPrice | DropReason::ZeroVolume => unreachable!(),
+                    // BadPrice / ZeroVolume / MissingQuote returned earlier.
+                    DropReason::BadPrice | DropReason::ZeroVolume | DropReason::MissingQuote => {
+                        unreachable!("returned before the side decision")
+                    }
                 }
                 MapOutcome::Dropped(reason)
             }
@@ -397,6 +518,121 @@ mod tests {
         );
         assert_eq!(m.stats.dropped_bad_price, 2);
         assert_eq!(m.stats.dropped_zero_volume, 1);
+    }
+
+    /// A quote tick as the Tickmill US500 recording sends them: both sides
+    /// priced, `last` zero, no volume, only the BID|ASK bits.
+    fn quote(seq: u64, bid: &str, ask: &str) -> Tick {
+        Tick {
+            seq,
+            time_ms: 1_785_327_308_000 + seq as i64,
+            bid: bid.to_string(),
+            ask: ask.to_string(),
+            last: "0.00".to_string(),
+            volume: 0,
+            flags: flags::BID | flags::ASK,
+        }
+    }
+
+    #[test]
+    fn quote_driven_prints_the_mid_at_one_unit() {
+        let mut m = TickMapper::new(SideMode::TickRule, 0).with_tape(TapeKind::Quotes);
+        // First quote: a price, but no movement to classify yet.
+        assert_eq!(
+            m.map(&quote(1, "7447.81", "7448.11")),
+            MapOutcome::Dropped(DropReason::NoTickRuleContext)
+        );
+        // Mid rises 7447.96 → 7447.97: a buy, one unit, at the mid.
+        let MapOutcome::Trade { trade, source } = m.map(&quote(2, "7447.82", "7448.12")) else {
+            panic!("expected a synthetic print");
+        };
+        assert_eq!(trade.price, Decimal::from_str("7447.97").unwrap());
+        assert_eq!(trade.quantity, Decimal::ONE);
+        assert_eq!(trade.side, Side::Buy);
+        assert_eq!(source, SideSource::TickRule);
+        assert_eq!(trade.agg_id, 2);
+
+        // Mid falls: a sell.
+        let MapOutcome::Trade { trade, .. } = m.map(&quote(3, "7447.50", "7447.80")) else {
+            panic!("expected a synthetic print");
+        };
+        assert_eq!(trade.side, Side::Sell);
+
+        assert_eq!(m.stats.trades(), 2);
+        assert_eq!(m.stats.trades_from_quotes, 2, "both came from quotes");
+        assert_eq!(m.stats.quote_only, 0, "quotes are the data here");
+    }
+
+    #[test]
+    fn a_half_tick_mid_keeps_its_exact_decimal() {
+        // An odd cent sum halves to three decimals. Rounding it to the
+        // symbol's two would throw away half the resolution the quote has.
+        let mut m = TickMapper::new(SideMode::TickRule, 0).with_tape(TapeKind::Quotes);
+        m.map(&quote(1, "7447.80", "7448.10")); // context: mid 7447.95
+        let MapOutcome::Trade { trade, .. } = m.map(&quote(2, "7447.81", "7448.10")) else {
+            panic!("expected a synthetic print");
+        };
+        assert_eq!(trade.price, Decimal::from_str("7447.955").unwrap());
+    }
+
+    #[test]
+    fn quote_driven_needs_both_sides_of_the_quote() {
+        let mut m = TickMapper::new(SideMode::TickRule, 0).with_tape(TapeKind::Quotes);
+        assert_eq!(
+            m.map(&quote(1, "0.00", "7448.11")),
+            MapOutcome::Dropped(DropReason::MissingQuote)
+        );
+        assert_eq!(
+            m.map(&quote(2, "7447.81", "0.00")),
+            MapOutcome::Dropped(DropReason::MissingQuote)
+        );
+        assert_eq!(
+            m.map(&quote(3, "nonsense", "7448.11")),
+            MapOutcome::Dropped(DropReason::BadPrice)
+        );
+        assert_eq!(m.stats.dropped_missing_quote, 2);
+        assert_eq!(m.stats.dropped_bad_price, 1);
+        assert_eq!(m.stats.trades(), 0);
+    }
+
+    #[test]
+    fn quote_driven_ignores_flags_and_any_printed_last() {
+        // Even in Flags mode, and even when a tick claims a LAST price with a
+        // BUY aggressor, a quote-driven session charts the mid and infers the
+        // side itself: the venue prints nothing, so there is nothing to trust.
+        let mut m = TickMapper::new(SideMode::Flags, 0).with_tape(TapeKind::Quotes);
+        let mut printed = quote(1, "100.00", "101.00");
+        printed.last = "500.00".to_string();
+        printed.volume = 42;
+        printed.flags = flags::LAST | flags::VOLUME | flags::BUY;
+        assert_eq!(
+            m.map(&printed),
+            MapOutcome::Dropped(DropReason::NoTickRuleContext)
+        );
+
+        let mut printed = quote(2, "99.00", "100.00");
+        printed.last = "500.00".to_string();
+        printed.volume = 42;
+        printed.flags = flags::LAST | flags::VOLUME | flags::BUY;
+        let MapOutcome::Trade { trade, source } = m.map(&printed) else {
+            panic!("expected a synthetic print");
+        };
+        assert_eq!(trade.price, Decimal::from_str("99.5").unwrap());
+        assert_eq!(trade.quantity, Decimal::ONE, "never the claimed volume");
+        assert_eq!(trade.side, Side::Sell, "mid fell 100.5 → 99.5");
+        assert_eq!(source, SideSource::TickRule);
+        assert_eq!(m.stats.side_from_flag, 0);
+    }
+
+    #[test]
+    fn a_tape_venue_is_the_default_and_is_unchanged() {
+        // Nothing about the printed-trade path depends on the new field: the
+        // default mapper still refuses a quote outright.
+        let m = TickMapper::new(SideMode::TickRule, 0);
+        assert_eq!(m.tape(), TapeKind::Trades);
+        let mut m = m;
+        assert_eq!(m.map(&quote(1, "99.00", "101.00")), MapOutcome::QuoteOnly);
+        assert_eq!(m.stats.trades_from_quotes, 0);
     }
 
     #[test]

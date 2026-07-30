@@ -306,11 +306,23 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
     } else {
         format!("{} · {}", model.kind.label(), param_summary(model))
     };
+    let traded_volume = model.capabilities.traded_volume;
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for kind in BarKind::ALL {
-                ui.selectable_value(model.kind, kind, kind.label());
+                // A rule that counts traded size is offered only where size is
+                // real. On a quote-driven feed it would silently become a tick
+                // bar under another name.
+                let usable = traded_volume || !kind.needs_traded_volume();
+                ui.add_enabled_ui(usable, |ui| {
+                    let item = ui.selectable_value(model.kind, kind, kind.label());
+                    if !usable {
+                        item.on_disabled_hover_text(
+                            "this source quotes prices but prints no traded volume",
+                        );
+                    }
+                });
             }
         });
     if plan.param_inline {
@@ -408,10 +420,15 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     let bubbles = IconButton::new(icons::CIRCLES_THREE, TOOLBAR_ICON)
         .active(model.bubbles_on)
         .accent(theme::BUY)
+        // A bubble's whole message is its size. Where every print is one
+        // synthetic unit, the layer draws one identical circle per tick and
+        // says nothing — so it is withheld rather than drawn empty of meaning.
+        .enabled(model.capabilities.traded_volume)
         .hover_text(
             "aggression bubbles: confirmed executions from the trade stream — \
              right-click for settings",
         )
+        .disabled_explanation("this source quotes prices but prints no traded volume")
         .show(ui);
     if bubbles.clicked() {
         actions.push(ToolbarAction::SetBubbles(!model.bubbles_on));
@@ -625,9 +642,63 @@ mod tests {
                         capabilities: FeedCapabilities {
                             book_capture: !replaying,
                             history_paging: !replaying,
+                            traded_volume: true,
                         },
                         heatmap_on: false,
                         bubbles_on: true,
+                        live_strip_on: false,
+                        dock_visible: true,
+                        appearance_open: false,
+                    };
+                    let actions = draw(ctx, &mut model);
+                    assert!(actions.is_empty(), "no clicks, no actions");
+                });
+            }
+        }
+    }
+
+    /// The same layout for a venue that prints no volume — the shape a live
+    /// Tickmill US500 session produces. Every size-measuring affordance is
+    /// disabled rather than absent, so the toolbar must still lay out whole.
+    #[test]
+    fn a_quote_driven_feed_lays_the_toolbar_out_with_its_volume_widgets_disabled() {
+        let ctx = egui::Context::default();
+        let mut feed_id = "metatrader".to_owned();
+        let mut symbol = "US500".to_owned();
+        let mut tick_n = 50_u64;
+        let mut volume_units = 5.0_f64;
+        let mut dollar_notional = 500_000.0_f64;
+        let mut time_interval_ms = 1_000_i64;
+        let mut imbalance_target = 100_u64;
+        let mut history_step = 2_000_usize;
+        // Every kind, including the two the feed cannot back: selecting one is
+        // still possible from config or a previous session, and the toolbar
+        // must draw it rather than panic.
+        for mut kind in BarKind::ALL {
+            for _ in 0..2 {
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    let mut model = ToolbarModel {
+                        feeds: vec![("metatrader".to_owned(), "MetaTrader 5".to_owned())],
+                        feed_id: &mut feed_id,
+                        feed_display_name: "MetaTrader 5".to_owned(),
+                        symbols: vec!["US500".to_owned()],
+                        symbol: &mut symbol,
+                        replay: None,
+                        kind: &mut kind,
+                        tick_n: &mut tick_n,
+                        volume_units: &mut volume_units,
+                        dollar_notional: &mut dollar_notional,
+                        time_interval_ms: &mut time_interval_ms,
+                        imbalance_target: &mut imbalance_target,
+                        history_step: &mut history_step,
+                        history_trades: 200_000,
+                        capabilities: FeedCapabilities {
+                            book_capture: false,
+                            history_paging: false,
+                            traded_volume: false,
+                        },
+                        heatmap_on: false,
+                        bubbles_on: false,
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,

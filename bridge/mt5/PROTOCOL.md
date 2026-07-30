@@ -39,6 +39,16 @@ bye                          optional clean goodbye
 - `server_utc_offset_s` — **the honesty field**: MT5 stamps ticks in *server
   wall time encoded as epoch*. True UTC = `time_ms − server_utc_offset_s×1000`.
   Computed live as `TimeTradeServer() − TimeGMT()` (B3: −10800).
+- `tape` — *optional*, `"trades"` or `"quotes"`. What the venue actually
+  prints. An exchange feed prints executed trades; a broker-quoted CFD prints
+  nothing at all — Tickmill's `US500` sent 100 000 consecutive ticks with no
+  LAST bit and no volume, and `COPY_TICKS_TRADE` over the preceding five days
+  returned nothing. Both bridges decide it by asking the terminal for one trade
+  tick in the last 30 days — the window errs long because mislabelling a real
+  tape as quotes looks like nothing is wrong. On `"quotes"` the feed charts one synthetic print
+  per tick, at the mid, sized 1 (see `crates/feed-mt5/src/map.rs`), and the
+  chart withholds everything that would need a traded volume. **Absent means
+  `"trades"`**, so a bridge written before this field behaves exactly as before.
 - `book_levels` — *optional*. Present only when this session can actually send
   depth (`MarketBookAdd` succeeded): `SYMBOL_TICKS_BOOKDEPTH`, i.e. the most
   levels per side the terminal exposes. **Absent means no book** — either a

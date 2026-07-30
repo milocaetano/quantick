@@ -44,17 +44,22 @@ impl ProviderKind {
         matches!(self, ProviderKind::Binance | ProviderKind::MetaTrader)
     }
 
-    /// What this provider's backend can do.
+    /// What this provider's backend can do before a session says otherwise.
     ///
     /// The UI asks the capability, never the provider name: a feature gate
     /// written as "is this Binance?" has to be found and edited every time a
     /// venue is added, and silently withholds a feature the new venue supports.
+    ///
+    /// This is the answer for the provider as such; a running feed may narrow
+    /// it once it learns what its symbol actually offers (see
+    /// [`crate::feed::FeedHandle::capabilities`]).
     #[must_use]
     pub fn capabilities(self) -> FeedCapabilities {
         match self {
             ProviderKind::Binance => FeedCapabilities {
                 book_capture: true,
                 history_paging: true,
+                traded_volume: true,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -63,6 +68,7 @@ impl ProviderKind {
             ProviderKind::MetaTrader => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
+                traded_volume: true,
             },
         }
     }
@@ -76,6 +82,15 @@ pub struct FeedCapabilities {
     pub book_capture: bool,
     /// Can fetch trades older than what is loaded, on demand.
     pub history_paging: bool,
+    /// Its prints carry a volume the venue really traded.
+    ///
+    /// False on a broker-quoted instrument — an index CFD prints nothing, so
+    /// the feed charts one synthetic unit per tick (see
+    /// `quantick_feed_mt5::TapeKind`). Everything that measures *size* rather
+    /// than *movement* has to withhold itself there: a volume bar would just be
+    /// a tick bar with a misleading name, and a bubble layer would draw one
+    /// identical circle per print.
+    pub traded_volume: bool,
 }
 
 impl FeedCapabilities {
@@ -86,6 +101,7 @@ impl FeedCapabilities {
         Self {
             book_capture: false,
             history_paging: false,
+            traded_volume: false,
         }
     }
 }

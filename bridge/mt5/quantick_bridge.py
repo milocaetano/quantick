@@ -64,6 +64,10 @@ OFFSET_GRID_S = 15 * 60
 #: Where a measured offset is remembered between runs.
 CACHE_PATH = Path(__file__).with_name(".quantick_bridge_cache.json")
 
+#: How far back to look for one executed trade before declaring a symbol
+#: tape-less. See `BridgeSession.detect_tape` for why this errs long.
+TAPE_PROBE_DAYS = 30
+
 
 def log(event_code: str, **fields: object) -> None:
     """Emit one structured line, matching what the EA prints to Experts."""
@@ -225,6 +229,38 @@ class Session:
     def server_now_ms(self) -> int:
         return int((time.time() + self.offset_s) * 1000)
 
+    def detect_tape(self) -> str:
+        """Does this venue print trades for the symbol, or only quote it?
+
+        Asks the terminal for *one* executed trade tick in the recent past:
+        cheap, and decisive. An exchange-fed instrument has printed something;
+        a broker-quoted CFD never prints at all — its ticks carry a bid and an
+        ask and nothing else, so charting it as a tape leaves the chart empty.
+
+        The window is generous on purpose. Getting this wrong in the "quotes"
+        direction is the expensive mistake: a real tape would chart as one-unit
+        synthetic prints with volume bars switched off, and nothing on screen
+        would look broken. A month of lookback costs exactly the same single
+        tick request as a day, and no exchange closes for a month.
+
+        Known limit: a contract listed but never yet traded (a fresh expiry
+        opened outside session hours) is reported as quotes until it prints and
+        the bridge reconnects.
+        """
+        since = int(time.time() + self.offset_s) - TAPE_PROBE_DAYS * 86400
+        trades = mt5.copy_ticks_from(self.symbol, since, 1, mt5.COPY_TICKS_TRADE)
+        found = 0 if trades is None else len(trades)
+        tape = "trades" if found else "quotes"
+        log(
+            "BRIDGE_TAPE_DETECTED",
+            symbol=self.symbol,
+            tape=tape,
+            probe_days=TAPE_PROBE_DAYS,
+            trade_ticks_found=found,
+            note="quotes = the broker prices this symbol but prints no trades",
+        )
+        return tape
+
     # -- session ----------------------------------------------------------
 
     def start(self, offset_s: int) -> None:
@@ -243,6 +279,7 @@ class Session:
             "broker_symbol": info.basis or self.symbol,
             "digits": self.digits,
             "server_utc_offset_s": offset_s,
+            "tape": self.detect_tape(),
         }
         # Depth fields are announced only when this session can really deliver
         # depth. Omitting them is the honest "no book here" quantick relies on

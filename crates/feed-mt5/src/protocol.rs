@@ -96,6 +96,27 @@ pub enum BridgeMsg {
     },
 }
 
+/// What a venue actually prints for a symbol — the honest answer to "is there
+/// a tape here at all?".
+///
+/// Exchange-fed instruments print executed trades; broker-quoted CFDs do not.
+/// The Tickmill index CFD `US500`, probed on 2026-07-29, sent 100 000
+/// consecutive ticks with no LAST bit, no non-zero volume, and
+/// `COPY_TICKS_TRADE` returned nothing at all: the broker quotes a price, it
+/// does not redistribute the exchange's tape. Charting such a symbol as if it
+/// had trades leaves the chart empty; inventing volume for it would be worse.
+/// So the bridge declares which world the symbol lives in, and the mapper
+/// follows ([`crate::map::TickMapper`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TapeKind {
+    /// Executed trades are printed: ticks carry LAST and a real traded volume.
+    #[default]
+    Trades,
+    /// Quotes only: bid and ask move, nothing is ever printed as traded.
+    Quotes,
+}
+
 /// Session preamble. `server_utc_offset_s` is the key honesty field: MT5
 /// stamps ticks in *server wall time encoded as epoch*, so true UTC requires
 /// subtracting this offset. The bridge computes it live from
@@ -132,6 +153,13 @@ pub struct Hello {
     /// signal for "the heatmap has no data here", never an assumed zero.
     #[serde(default)]
     pub book_levels: Option<u32>,
+    /// What the venue prints for this symbol.
+    ///
+    /// Absent — as in every bridge that predates the field, and every fixture
+    /// recorded before it — means [`TapeKind::Trades`]: the behaviour every
+    /// exchange-fed session has always had, unchanged.
+    #[serde(default)]
+    pub tape: TapeKind,
 }
 
 /// One tick. `time_ms` is **server-time** epoch milliseconds (see [`Hello`]).
