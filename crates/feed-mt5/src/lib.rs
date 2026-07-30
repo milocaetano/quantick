@@ -33,6 +33,7 @@
 //! | Book update ids | synthetic, monotonic, generation-scoped | [`depth`], `quantick_orderbook::SnapshotDiffer` |
 //! | Full book depth | coverage always labelled `Limited`, never `Full` | [`depth`] |
 //! | Older-history paging | unsupported; requests answered empty + logged | app layer |
+//! | A tape at all (broker CFDs print none) | bridge declares [`protocol::TapeKind`]; quotes chart as one-unit synthetic prints, counted apart | [`map`] |
 //!
 //! # AI-first diagnosis
 //!
@@ -87,7 +88,7 @@ pub mod stream;
 pub use bridge_log::{BridgeReport, BridgeSeverity, report_for_line};
 pub use depth::{BookMapper, BookStats};
 pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper};
-pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, Tick, parse_line};
+pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, TapeKind, Tick, parse_line};
 pub use session::{SeqAnomaly, SeqTracker};
 pub use stream::{
     BookCaptureSwitch, BoundedLine, BoundedLineReader, DEFAULT_LISTEN_ADDR, MAX_LINE_BYTES,

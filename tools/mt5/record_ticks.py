@@ -28,6 +28,10 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 
+#: How far back to look for one executed trade before declaring a symbol
+#: tape-less. Matches the live bridge's own probe window.
+TAPE_PROBE_DAYS = 30
+
 # MQL5 tick flags (shared vocabulary with the bridge and the Rust decoder).
 TICK_FLAG_BID = 2
 TICK_FLAG_ASK = 4
@@ -49,6 +53,29 @@ def emit(event_code: str, **fields) -> None:
 def fmt_price(value: float, digits: int) -> str:
     """Format a price exactly as the bridge does: fixed `digits` decimals."""
     return f"{value:.{digits}f}"
+
+
+def detect_tape(mt5, symbol: str) -> str:
+    """Does this venue print trades for `symbol`, or only quote it?
+
+    Asks the terminal for *one* executed trade tick in the recent past —
+    cheap, and decisive: an exchange-fed instrument has printed something, a
+    broker-quoted CFD never prints at all. Mirrors the live bridge so a
+    recording carries the same declaration a session would.
+    """
+    from_dt = datetime.now(timezone.utc) - timedelta(days=TAPE_PROBE_DAYS)
+    trades = mt5.copy_ticks_from(symbol, from_dt, 1, mt5.COPY_TICKS_TRADE)
+    found = 0 if trades is None else len(trades)
+    tape = "trades" if found else "quotes"
+    emit(
+        "MT5_TAPE_DETECTED",
+        symbol=symbol,
+        tape=tape,
+        probe_days=TAPE_PROBE_DAYS,
+        trade_ticks_found=found,
+        note="quotes = the broker prices this symbol but prints no trades (index CFDs)",
+    )
+    return tape
 
 
 def main() -> int:
@@ -143,6 +170,7 @@ def main() -> int:
                 "broker_symbol": args.symbol,
                 "digits": digits,
                 "server_utc_offset_s": offset_s,
+                "tape": detect_tape(mt5, args.symbol),
             }
             f.write(json.dumps(hello, ensure_ascii=False) + "\n")
             for seq, t in enumerate(kept, start=1):

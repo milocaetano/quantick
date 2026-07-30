@@ -36,6 +36,9 @@ input int    InpBookMinIntervalMs= 20;          // Min ms between book images (0
 #define SCHEMA_VERSION 1
 #define BRIDGE_NAME    "quantick-mt5-bridge"
 #define BRIDGE_VERSION "0.2.0"
+// How far back to look for one executed trade before declaring a symbol
+// tape-less. See DetectTape() for why this errs long.
+#define TAPE_PROBE_DAYS 30
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -236,6 +239,33 @@ bool SendBook()
   }
 
 //+------------------------------------------------------------------+
+//| Does this venue print trades for the symbol, or only quote it?    |
+//|                                                                   |
+//| Asks the terminal for one executed trade tick in the recent past: |
+//| cheap, and decisive. An exchange-fed instrument has printed       |
+//| something; a broker-quoted CFD never prints at all — its ticks    |
+//| carry a bid and an ask and nothing else.                          |
+//|                                                                   |
+//| The window errs long on purpose: mislabelling a real tape as      |
+//| quotes would chart one-unit synthetic prints with volume bars off |
+//| and nothing would look broken, and a month of lookback costs the  |
+//| same single tick request as a day.                                |
+//+------------------------------------------------------------------+
+string DetectTape()
+  {
+   MqlTick probe[];
+   ulong from_msc = (ulong)(TimeTradeServer() - TAPE_PROBE_DAYS * 24 * 60 * 60) * 1000;
+   int   found    = CopyTicks(_Symbol, probe, COPY_TICKS_TRADE, from_msc, 1);
+   string tape    = (found > 0) ? "trades" : "quotes";
+   LogEvent("BRIDGE_TAPE_DETECTED",
+            StringFormat("\"tape\":\"%s\",\"probe_days\":%d,\"trade_ticks_found\":%d,"
+                         "\"note\":\"quotes = the broker prices this symbol but "
+                         "prints no trades\"",
+                         tape, TAPE_PROBE_DAYS, (found > 0) ? found : 0));
+   return(tape);
+  }
+
+//+------------------------------------------------------------------+
 //| Session preamble + recent history, right after connecting.        |
 //+------------------------------------------------------------------+
 bool StartSession()
@@ -268,9 +298,10 @@ bool StartSession()
 
    string hello = StringFormat(
       "{\"type\":\"hello\",\"schema\":%d,\"bridge\":\"%s\",\"bridge_version\":\"%s\","
-      "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d%s}",
+      "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d,"
+      "\"tape\":\"%s\"%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
-      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), depth);
+      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), DetectTape(), depth);
    if(!SendLine(hello))
       return(false);
 
