@@ -17,12 +17,12 @@ pub mod metatrader;
 pub mod mt5_bridge;
 pub mod replay;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use quantick_engine::Trade;
 pub use quantick_feed_binance::depth::DepthEvent;
 
-use crate::config::ProviderKind;
+use crate::config::{FeedCapabilities, ProviderKind};
 
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
@@ -130,6 +130,14 @@ pub fn silent_notices() -> mpsc::Receiver<FeedNotice> {
     rx
 }
 
+/// The capability channel of a feed whose answer is known at spawn and never
+/// changes. The sender is dropped immediately; a `watch` receiver keeps serving
+/// the value it was born with.
+#[must_use]
+pub fn fixed_capabilities(capabilities: FeedCapabilities) -> watch::Receiver<FeedCapabilities> {
+    watch::channel(capabilities).1
+}
+
 impl FeedNotice {
     /// Shorthand for a step in progress.
     #[must_use]
@@ -164,6 +172,14 @@ pub struct FeedHandle {
     /// is not market data, and a blocked feed must be able to say so while the
     /// trade channel sits silent — which is exactly when it matters.
     pub notices: mpsc::Receiver<FeedNotice>,
+    /// What this running feed can really do, narrowed as it finds out.
+    ///
+    /// A provider answers for itself at spawn time, but some answers only exist
+    /// once a session starts: whether *this* MetaTrader symbol has a book, or a
+    /// tape at all, arrives with the bridge's hello. The UI reads the current
+    /// value every frame — exactly as it read the static provider answer
+    /// before — so an affordance withdraws itself the moment the truth is known.
+    pub capabilities: watch::Receiver<FeedCapabilities>,
     /// UI → feed: on-demand history loading.
     pub commands: mpsc::Sender<FeedCommand>,
     /// Present only while a recorded session is playing: what the transport bar

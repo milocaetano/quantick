@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use quantick_engine::Side;
 use quantick_feed_mt5::{
-    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, run_bridge_server,
+    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind, run_bridge_server,
 };
 use quantick_orderbook::{DepthEvent, DepthStatus};
 
@@ -117,12 +117,19 @@ async fn full_session_backfill_then_live() {
     let Mt5Event::Status(Mt5Status::Connected {
         symbol,
         broker_symbol,
+        tape,
+        ..
     }) = next_event(&mut rx).await
     else {
         panic!("expected connected");
     };
     assert_eq!(symbol, "WIN$N");
     assert_eq!(broker_symbol, "WINQ26");
+    assert_eq!(
+        tape,
+        TapeKind::Trades,
+        "a hello without the field means the venue prints trades"
+    );
 
     let Mt5Event::Backfilled(batch) = next_event(&mut rx).await else {
         panic!("expected the backfill block");

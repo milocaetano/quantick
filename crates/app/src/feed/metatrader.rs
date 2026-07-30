@@ -40,14 +40,14 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
-    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, run_bridge_server,
+    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind, run_bridge_server,
 };
 
-use crate::config::{MetaTraderSettings, Mt5SideSource};
+use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
 
 use super::mt5_bridge::{Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
@@ -70,6 +70,10 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
     let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel::<FeedNotice>(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
+    // Until a bridge says hello, the provider's own answer stands: this
+    // terminal usually streams an exchange contract with a book and a tape,
+    // and the session narrows that the moment it knows better.
+    let (caps_tx, caps_rx) = watch::channel(ProviderKind::MetaTrader.capabilities());
     let symbol = symbol.to_string();
     let settings = settings.clone();
     std::thread::Builder::new()
@@ -80,24 +84,44 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build feed runtime");
-            runtime.block_on(feed_task(symbol, settings, tx, book_tx, notice_tx, cmd_rx));
+            runtime.block_on(feed_task(
+                symbol, settings, tx, book_tx, notice_tx, caps_tx, cmd_rx,
+            ));
         })
         .expect("spawn mt5 feed thread");
     FeedHandle {
         events: rx,
         book_events: book_rx,
         notices: notice_rx,
+        capabilities: caps_rx,
         commands: cmd_tx,
         replay: None,
     }
 }
 
+/// What a session that just said hello can really offer.
+///
+/// The two facts the chart cannot observe for itself: whether this symbol has
+/// a book, and whether it has a tape. Both come from the bridge, and both are
+/// per-symbol — the same terminal serves a B3 contract with real depth and real
+/// prints, and a broker CFD with neither.
+fn session_capabilities(tape: TapeKind, book_levels: Option<u32>) -> FeedCapabilities {
+    FeedCapabilities {
+        book_capture: book_levels.is_some_and(|levels| levels > 0),
+        // MT5 has no fetch-on-demand history: the bridge decides what it sends.
+        history_paging: false,
+        traded_volume: tape == TapeKind::Trades,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn feed_task(
     symbol: String,
     settings: MetaTraderSettings,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
+    caps_tx: watch::Sender<FeedCapabilities>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     // Resolve the UI's initial history load immediately: there is no
@@ -162,8 +186,12 @@ async fn feed_task(
                         // looking. A connected bridge clears whatever the
                         // startup reported; a lost one replaces it.
                         let notice = match &status {
-                            Mt5Status::Connected { .. } => {
+                            Mt5Status::Connected { tape, book_levels, .. } => {
                                 bridge_connected.store(true, Ordering::Relaxed);
+                                // What this symbol really offers is known only
+                                // now. Publishing it withdraws the affordances
+                                // it cannot back — before the user clicks one.
+                                let _ = caps_tx.send(session_capabilities(*tape, *book_levels));
                                 FeedNotice::Clear
                             }
                             Mt5Status::Waiting { .. } => FeedNotice::working(
@@ -395,6 +423,8 @@ fn log_status(symbol: &str, status: &Mt5Status) {
         Mt5Status::Connected {
             symbol: hello_symbol,
             broker_symbol,
+            tape,
+            book_levels,
         } => info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -402,6 +432,10 @@ fn log_status(symbol: &str, status: &Mt5Status) {
             symbol,
             hello_symbol = %hello_symbol,
             broker_symbol = %broker_symbol,
+            // The two facts that decide what the chart may offer — right where
+            // "why is the volume-bar option greyed out?" gets answered.
+            tape = ?tape,
+            book_levels = book_levels.unwrap_or(0),
             "bridge connected and streaming"
         ),
         Mt5Status::Lost { reason } => warn!(
@@ -536,6 +570,95 @@ mod tests {
         };
         assert_eq!(trade.agg_id, 3);
         assert_eq!(trade.side, quantick_engine::Side::Sell);
+    }
+
+    #[test]
+    fn a_session_reports_exactly_what_its_symbol_offers() {
+        // An exchange contract: prints trades, publishes a book.
+        let exchange = session_capabilities(TapeKind::Trades, Some(10));
+        assert!(exchange.traded_volume);
+        assert!(exchange.book_capture);
+
+        // A broker-quoted CFD: neither. Both facts come from the same hello,
+        // and neither is inferable from the provider being MetaTrader.
+        let cfd = session_capabilities(TapeKind::Quotes, None);
+        assert!(!cfd.traded_volume);
+        assert!(!cfd.book_capture);
+
+        // A bridge that subscribed to a DOM with no levels in it has no book
+        // either — "declared" is not "has".
+        assert!(!session_capabilities(TapeKind::Trades, Some(0)).book_capture);
+
+        // Paging is never available on MT5, whatever the symbol is.
+        assert!(!exchange.history_paging && !cfd.history_paging);
+    }
+
+    #[tokio::test]
+    async fn a_quote_only_venue_withdraws_what_it_cannot_back() {
+        // The Tickmill US500 case end to end: the bridge declares a venue that
+        // prints nothing, and the chart's volume-based affordances have to go
+        // dark before the user clicks one — while quotes still chart.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19173".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("US500", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+        // Until a bridge says otherwise, the provider's optimistic answer holds.
+        assert!(
+            feed.capabilities.borrow().traded_volume,
+            "the terminal usually streams a real tape; only this session says otherwise"
+        );
+
+        let mut sock = None;
+        for _ in 0..50 {
+            match tokio::net::TcpStream::connect("127.0.0.1:19173").await {
+                Ok(s) => {
+                    sock = Some(s);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+        let mut sock = sock.expect("could not reach the feed listener");
+
+        // Real US500 shape: quotes only, last "0.00", volume 0, flags BID|ASK,
+        // and no book_levels at all.
+        let script = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"US500\",\"broker_symbol\":\"US500\",\"digits\":2,",
+            "\"server_utc_offset_s\":10800,\"tape\":\"quotes\"}\n",
+            "{\"type\":\"tick\",\"seq\":1,\"time_ms\":1000,\"bid\":\"7447.81\",\"ask\":\"7448.11\",\"last\":\"0.00\",\"volume\":0,\"flags\":6}\n",
+            "{\"type\":\"tick\",\"seq\":2,\"time_ms\":1001,\"bid\":\"7447.82\",\"ask\":\"7448.12\",\"last\":\"0.00\",\"volume\":0,\"flags\":6}\n",
+        );
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        // The quote charts: seq 1 has no tick-rule context, seq 2 is a buy at
+        // the mid, one unit.
+        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            .await
+            .expect("timed out waiting for the live print")
+            .expect("feed closed");
+        let FeedEvent::Live(trade) = event else {
+            panic!("expected a live synthetic print");
+        };
+        assert_eq!(trade.agg_id, 2);
+        assert_eq!(
+            trade.price,
+            rust_decimal::Decimal::from_str_exact("7447.97").unwrap()
+        );
+        assert_eq!(trade.quantity, rust_decimal::Decimal::ONE);
+
+        // And the capability narrowed, so the toolbar's volume/dollar bars,
+        // bubbles and heatmap disable themselves this frame.
+        let caps = *feed.capabilities.borrow();
+        assert!(!caps.traded_volume, "nothing here was ever traded");
+        assert!(!caps.book_capture, "this symbol publishes no book");
     }
 
     #[tokio::test]

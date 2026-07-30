@@ -54,6 +54,22 @@ impl BarKind {
         }
     }
 
+    /// Whether this rule measures traded size, and so needs a venue that
+    /// prints one.
+    ///
+    /// Tick, time and imbalance bars all count *events*: imbalance sums a
+    /// signed ±1 per trade (López de Prado's tick imbalance bars), never a
+    /// quantity. They stay meaningful on a quote-driven feed. Volume and dollar
+    /// bars do not — fed one synthetic unit per tick, a "volume 500" bar is a
+    /// 500-tick bar wearing a misleading label.
+    #[must_use]
+    pub fn needs_traded_volume(self) -> bool {
+        match self {
+            BarKind::Volume | BarKind::Dollar => true,
+            BarKind::Tick | BarKind::Time | BarKind::Imbalance => false,
+        }
+    }
+
     /// The unit the closing rule counts in, for the forming bar's countdown.
     #[must_use]
     pub fn progress_unit(self) -> &'static str {
@@ -333,6 +349,19 @@ mod tests {
             quantity: dec("1.0"),
             side: Side::Buy,
         }
+    }
+
+    #[test]
+    fn only_the_size_measuring_rules_need_a_traded_volume() {
+        // Volume and dollar bars measure size, so a venue that prints none can
+        // only fake them.
+        assert!(BarKind::Volume.needs_traded_volume());
+        assert!(BarKind::Dollar.needs_traded_volume());
+        // The other three count events, not quantity — imbalance included: it
+        // sums a signed ±1 per trade, so it stays honest on a quote feed.
+        assert!(!BarKind::Tick.needs_traded_volume());
+        assert!(!BarKind::Time.needs_traded_volume());
+        assert!(!BarKind::Imbalance.needs_traded_volume());
     }
 
     #[test]

@@ -111,7 +111,13 @@ pub struct StatusModel {
     pub live_bars: usize,
     /// Data-honesty label such as `side: inferred (tick rule)`, when the
     /// aggressor side is not venue truth.
+    ///
+    /// Short enough to sit beside the machinery readouts without pushing into
+    /// them — the full story goes in [`StatusModel::side_detail`].
     pub side_note: Option<String>,
+    /// The hover text behind [`StatusModel::side_note`], where the disclosure
+    /// can be as long as it needs to be. `None` reuses the label itself.
+    pub side_detail: Option<String>,
     /// Whether the viewport follows the live edge.
     pub follows_live: bool,
     /// Whether the price axis is auto-fitting.
@@ -228,8 +234,10 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
     );
     if let Some(note) = &model.side_note {
         // Inferred data wears the amber thread, like every not-quite-venue
-        // truth on this chart.
-        ui.label(egui::RichText::new(note).small().color(theme::AMBER));
+        // truth on this chart. Kept short on purpose: this section shares its
+        // row with the machinery readouts, and a long label overruns them.
+        ui.label(egui::RichText::new(note).small().color(theme::AMBER))
+            .on_hover_text(model.side_detail.as_deref().unwrap_or(note.as_str()));
     }
     if !model.follows_live {
         ui.label(
@@ -358,6 +366,7 @@ mod tests {
                 backfilled_bars: 240,
                 live_bars: 61,
                 side_note: replaying.then(|| "side: inferred (tick rule)".to_owned()),
+                side_detail: None,
                 follows_live: false,
                 price_auto: false,
                 live_trades: 12_345,
@@ -375,5 +384,53 @@ mod tests {
             TzOffset::default(),
             "an un-clicked frame changes nothing"
         );
+    }
+
+    /// The quote-driven disclosure has to reach actual pixels, not just the
+    /// model: a chart of one-unit prints that says nothing reads as a real
+    /// tape where every trade happened to be the same size.
+    #[test]
+    fn the_quote_driven_disclosure_is_really_painted() {
+        let ctx = egui::Context::default();
+        let mut tz = TzOffset::default();
+        let model = StatusModel {
+            venue: "MetaTrader 5".to_owned(),
+            symbol: "US500".to_owned(),
+            replay: None,
+            feed_lag_ms: Some(106),
+            spec_summary: "tick(50)".to_owned(),
+            bar_progress: Some("37/50 ticks".to_owned()),
+            backfilled_bars: 3_999,
+            live_bars: 17,
+            side_note: Some("prints: quote-derived".to_owned()),
+            side_detail: Some(
+                "this venue quotes prices but prints no trades: every candle is built \n                 from one synthetic print per tick"
+                    .to_owned(),
+            ),
+            follows_live: true,
+            price_auto: true,
+            live_trades: 846,
+            fps: Some(60.0),
+            frame_avg_ms: Some(16.7),
+            frame_cpu_ms: Some(4.2),
+            show_perf: false,
+        };
+        // Two passes: egui settles its layout on the second.
+        let mut painted = String::new();
+        for _ in 0..2 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| draw(ctx, &model, &mut tz));
+            painted.clear();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape {
+                    painted.push_str(text.galley.text());
+                    painted.push(' ');
+                }
+            }
+        }
+        assert!(
+            painted.contains("prints: quote-derived"),
+            "the honesty label never reached the screen; painted: {painted}"
+        );
+        assert!(painted.contains("US500"), "painted: {painted}");
     }
 }

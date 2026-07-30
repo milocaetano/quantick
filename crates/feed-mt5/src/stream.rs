@@ -24,7 +24,7 @@ use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
 
 use crate::depth::BookMapper;
 use crate::map::{MapOutcome, SideMode, TickMapper};
-use crate::protocol::{self, BridgeMsg, SCHEMA_VERSION};
+use crate::protocol::{self, BridgeMsg, SCHEMA_VERSION, TapeKind};
 use crate::session::SeqTracker;
 
 /// Default address the feed listens on for the bridge.
@@ -142,6 +142,15 @@ pub enum Mt5Status {
         symbol: String,
         /// The front-month contract the terminal actually streams.
         broker_symbol: String,
+        /// What this venue prints for the symbol, as the hello declared it.
+        ///
+        /// Only a live session knows: the same terminal streams an exchange
+        /// contract with a real tape and a broker CFD with none, and the
+        /// difference decides what the chart may honestly offer.
+        tape: TapeKind,
+        /// Levels per side this session can publish, or `None` when it sends no
+        /// depth at all (the terminal refused the DOM, or the symbol has none).
+        book_levels: Option<u32>,
     },
     /// The bridge went away; the server is looping back to waiting.
     Lost {
@@ -425,12 +434,15 @@ async fn serve_connection(
         broker_symbol = %hello.broker_symbol,
         digits = hello.digits,
         server_utc_offset_s = hello.server_utc_offset_s,
+        tape = ?hello.tape,
         "bridge session established"
     );
     if tx
         .send(Mt5Event::Status(Mt5Status::Connected {
             symbol: hello.symbol.clone(),
             broker_symbol: hello.broker_symbol.clone(),
+            tape: hello.tape,
+            book_levels: hello.book_levels,
         }))
         .await
         .is_err()
@@ -439,7 +451,12 @@ async fn serve_connection(
     }
 
     // 2. Stream messages until something ends the session.
-    let mut mapper = TickMapper::new(config.side_mode, hello.server_utc_offset_s);
+    //
+    // The bridge declares what its venue prints; the configured `side_mode` is
+    // a policy, `tape` is a fact about the instrument, and a fact the feed
+    // cannot observe for itself must come from the side that can see it.
+    let mut mapper =
+        TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
     let mut backfill: Option<Vec<Trade>> = None;
     let mut undecodable: u64 = 0;
