@@ -111,6 +111,33 @@ impl PriceScale {
     }
 }
 
+/// The price window to draw a frame with, given what is in view.
+///
+/// Normally that is [`PriceScale::auto`] over the visible bars. When the view
+/// holds none of them — a rebuild re-cut the series under a panned viewport,
+/// or the user panned into the empty space past the newest bar — the chart
+/// still has to read as a chart, with its axis, its tape and its badges, so
+/// the window falls back to `last` (the previous frame's, so the axis holds
+/// still instead of jumping) and then to the newest bar of the series. `None`
+/// only when there is no data anywhere to scale to.
+#[must_use]
+pub fn price_window(
+    visible: &[Bar],
+    visible_partial: Option<&Bar>,
+    last: Option<(f64, f64)>,
+    newest: Option<&Bar>,
+    top: f32,
+    bottom: f32,
+) -> Option<PriceScale> {
+    PriceScale::auto(visible, visible_partial, top, bottom, AUTO_PAD_FRAC)
+        .or_else(|| last.map(|(lo, hi)| PriceScale::from_range(lo, hi, top, bottom)))
+        .or_else(|| PriceScale::auto(&[], newest, top, bottom, AUTO_PAD_FRAC))
+}
+
+/// Fraction of the price span left as breathing room above and below the
+/// candles, so they never touch the edges of the plot.
+pub const AUTO_PAD_FRAC: f64 = 0.05;
+
 /// An axis-aligned candle body in pixel coordinates.
 ///
 /// [`candle_geometry`] guarantees finite coordinates ordered as
@@ -358,6 +385,44 @@ mod tests {
     #[test]
     fn empty_range_has_no_scale() {
         assert!(PriceScale::auto(&[], None, 0.0, 100.0, 0.05).is_none());
+    }
+
+    /// With bars in view the window is theirs, exactly as before the fallback
+    /// existed.
+    #[test]
+    fn a_populated_view_scales_to_what_it_shows() {
+        let bars = vec![bar("100.0", "110.0")];
+        let window = price_window(&bars, None, Some((1.0, 2.0)), None, 0.0, 100.0).unwrap();
+        let expected = PriceScale::auto(&bars, None, 0.0, 100.0, AUTO_PAD_FRAC).unwrap();
+        assert_eq!(window, expected, "the fallback must not shadow real bars");
+    }
+
+    /// The regression behind the dark chart: an empty view used to yield no
+    /// scale at all, and the frame was abandoned with only its background
+    /// painted.
+    #[test]
+    fn an_empty_view_holds_the_last_window_instead_of_going_blank() {
+        let newest = bar("100.0", "110.0");
+        let window = price_window(&[], None, Some((50.0, 60.0)), Some(&newest), 0.0, 100.0)
+            .expect("an empty view still draws");
+        assert_eq!(window.range(), (50.0, 60.0), "the axis holds still");
+    }
+
+    #[test]
+    fn an_empty_view_with_no_history_falls_back_to_the_newest_bar() {
+        let newest = bar("100.0", "110.0");
+        let window =
+            price_window(&[], None, None, Some(&newest), 0.0, 100.0).expect("the market is there");
+        let (lo, hi) = window.range();
+        assert!(
+            lo < 100.0 && hi > 110.0,
+            "the newest bar, padded: {lo}..{hi}"
+        );
+    }
+
+    #[test]
+    fn with_no_data_at_all_there_is_still_nothing_to_scale() {
+        assert!(price_window(&[], None, None, None, 0.0, 100.0).is_none());
     }
 
     #[test]

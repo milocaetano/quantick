@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, watch};
 use quantick_feed_binance::depth::DepthEvent;
 
 use crate::candle_view::{draw_candle, draw_style_window};
-use crate::chart::PriceScale;
+use crate::chart::{self, PriceScale};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
@@ -67,6 +67,9 @@ const STYLE_LOG_DEBOUNCE: Duration = Duration::from_millis(350);
 const BOOK_GENERATION_STRIDE: u64 = 1_000_000;
 /// Bound depth work per frame so a burst cannot starve egui input/rendering.
 const BOOK_DRAIN_BUDGET: usize = 2_048;
+/// Font size, in points, of the "nothing in view" line drawn where the candles
+/// would be. Matches the "connecting…" line: same voice, same weight.
+const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 
 /// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
 fn dec_from_f64(x: f64) -> Decimal {
@@ -828,10 +831,41 @@ impl QuantickApp {
             Some(pending) if pending != desired => self.pending_spec = Some(desired),
             // Settled since last frame: do the rebuild.
             Some(_) => {
+                // Where the user is looking, in market time — the one thing a
+                // rebuild preserves. The new series cuts the same trades into
+                // a different number of bars, so the old right-edge *index*
+                // may not exist in it at all: keeping it would leave the
+                // window past the end of the data, drawing nothing.
+                let anchor = self.right_edge_time();
                 self.state.set_spec(desired);
+                self.viewport.reanchor(
+                    anchor.and_then(|ms| self.state.slot_at_time(ms)),
+                    self.slots(),
+                );
                 self.loading.set_active(LoadingTask::BarRebuild, false);
             }
         }
+    }
+
+    /// How many bar slots the chart draws: the closed bars plus the forming
+    /// one, which occupies the slot after them.
+    fn slots(&self) -> usize {
+        self.state.bars().len() + usize::from(self.state.partial().is_some())
+    }
+
+    /// The market time under the right edge of the candles' pane, or `None`
+    /// while the view follows live (the right edge is the newest bar by
+    /// definition, so there is nothing to remember) or when there are no bars.
+    fn right_edge_time(&self) -> Option<i64> {
+        if self.viewport.follows_live() {
+            return None;
+        }
+        let slots = self.slots();
+        let edge = self.viewport.right_edge_bar(slots);
+        // Panning into the empty space past the newest bar puts the edge off
+        // the series; the newest bar is the market time it is closest to.
+        let slot = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
+        self.state.slot_open_time(slot)
     }
 
     /// The current background colour as an egui `Color32`.
@@ -1164,7 +1198,7 @@ impl QuantickApp {
         let areas = plot_split(area, self.live_strip_width());
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
-        let total = self.state.bars().len() + usize::from(self.state.partial().is_some());
+        let total = self.slots();
         let divider = self.last_lane_divider_x;
         let in_lane = |position: egui::Pos2| gesture_hits_lane(divider, position.x);
 
@@ -1356,13 +1390,19 @@ impl QuantickApp {
         let visible_closed = &closed[closed_start..closed_end];
         let partial_visible = partial.filter(|_| closed.len() >= start && closed.len() < end);
 
-        // Auto-fit the visible bars, then apply any manual price pan/zoom.
-        let Some(auto_scale) = PriceScale::auto(
+        // Auto-fit the visible bars, then apply any manual price pan/zoom. A
+        // window with no bars in it still gets a scale (the last one, then the
+        // newest bar), because a chart that draws nothing at all is
+        // indistinguishable from a hung app — which is exactly how the blank
+        // frame after a rebuild read.
+        let nothing_in_view = visible_closed.is_empty() && partial_visible.is_none();
+        let Some(auto_scale) = chart::price_window(
             visible_closed,
             partial_visible,
+            self.last_auto_range,
+            partial.or_else(|| closed.last()),
             chart_rect.top(),
             chart_rect.bottom(),
-            0.05,
         ) else {
             return;
         };
@@ -1486,6 +1526,18 @@ impl QuantickApp {
             split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
             self.orderflow.live_lane_window_ms(closed),
         );
+        // Panned off the data (or a rebuild re-cut the series under the
+        // window): the chart is whole — axis, tape, badges — but there is
+        // nothing in the candles' pane, so say so and say the way back.
+        if nothing_in_view {
+            painter.text(
+                history_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "no bars in view — double-click to return to the live edge",
+                egui::FontId::proportional(EMPTY_VIEW_FONT_SIZE),
+                theme::TEXT_MUTED,
+            );
+        }
         self.draw_crosshair(painter, chart_rect, axis_x, &scale);
         self.orderflow.draw_status_badge(painter, chart_rect);
 
@@ -2088,12 +2140,24 @@ impl QuantickApp {
 
 impl eframe::App for QuantickApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let now = Instant::now();
-        if let Some(last) = self.last_frame {
-            self.frames.record((now - last).as_secs_f32() * 1000.0);
-        }
         if let Some(cpu) = frame.info().cpu_usage {
             self.cpu_frames.record(cpu * 1000.0);
+        }
+        self.draw_frame(ctx, Instant::now());
+    }
+}
+
+impl QuantickApp {
+    /// One frame of the application: drain, lay out the chrome, draw the
+    /// chart.
+    ///
+    /// Everything `update` does that is not eframe's own bookkeeping, so a
+    /// test can run a real frame against a headless [`egui::Context`] and read
+    /// what was painted — the only honest way to assert that a chart is on
+    /// screen rather than a blank rectangle.
+    fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
+        if let Some(last) = self.last_frame {
+            self.frames.record((now - last).as_secs_f32() * 1000.0);
         }
         self.last_frame = Some(now);
 
@@ -2565,6 +2629,196 @@ mod tests {
         app.apply_spec_change();
         assert!(!app.loading.is_active(LoadingTask::BarRebuild));
         assert!(app.pending_spec.is_none());
+    }
+
+    /// A trade a tenth of a second after the last, one unit at a walking
+    /// price, so bars carry distinct times and a readable price range.
+    fn trade(agg_id: u64) -> quantick_engine::Trade {
+        quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: 1_000 + agg_id as i64 * 100,
+            price: Decimal::from(100) + Decimal::new(agg_id as i64 % 20, 1),
+            quantity: Decimal::ONE,
+            side: if agg_id.is_multiple_of(2) {
+                quantick_engine::Side::Buy
+            } else {
+                quantick_engine::Side::Sell
+            },
+        }
+    }
+
+    /// An app holding `count` backfilled trades, built into tick(1) bars — one
+    /// bar per trade, the finest series a spec change can coarsen.
+    fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+        let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
+        app.tick_n = 1;
+        app.apply_spec_change();
+        app.apply_spec_change();
+        let trades: Vec<_> = (1..=count).map(trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.drain_feed();
+        assert_eq!(app.state.bars().len() as u64, count);
+        (app, cmd_rx)
+    }
+
+    /// The dark chart: with the view panned into history, a coarser spec cuts
+    /// the same trades into far fewer bars, and the old right-edge index falls
+    /// off the end of the series — leaving the window over empty space, where
+    /// nothing is drawn at all.
+    #[test]
+    fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        // Pan back to bar 200 of 400 and remember what the edge was showing.
+        app.viewport.pan_pixels(200.0 * 8.0, app.slots());
+        assert!(!app.viewport.follows_live());
+        let was_showing = app.right_edge_time().expect("a bar under the edge");
+
+        // Coarsen: 400 trades become 10 bars, so index 200 no longer exists.
+        app.tick_n = 40;
+        app.apply_spec_change();
+        app.apply_spec_change();
+        assert_eq!(app.state.bars().len(), 10);
+
+        let slots = app.slots();
+        let (start, end) = app.viewport.visible_range(800.0, slots);
+        assert!(
+            start < end,
+            "the window must still hold bars, got {start}..{end} of {slots}"
+        );
+        let now_showing = app.right_edge_time().expect("still on a bar");
+        let bar = &app.state.bars()[app.viewport.right_edge_bar(slots) as usize];
+        assert!(
+            bar.open_time <= was_showing && was_showing <= bar.close_time,
+            "the edge bar ({}..{}) must span the time it was showing ({was_showing})",
+            bar.open_time,
+            bar.close_time
+        );
+        assert!(now_showing <= was_showing, "never jumps into the future");
+    }
+
+    /// Finer, not coarser: the series grows and the same market time moves to
+    /// a much higher index. Following that is what keeps the user's place.
+    #[test]
+    fn a_finer_spec_follows_the_same_market_time_forward() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        app.tick_n = 40;
+        app.apply_spec_change();
+        app.apply_spec_change();
+        app.viewport.pan_pixels(5.0 * 8.0, app.slots()); // back to bar 4 of 10
+        let was_showing = app.right_edge_time().expect("a bar under the edge");
+
+        app.tick_n = 1;
+        app.apply_spec_change();
+        app.apply_spec_change();
+        assert_eq!(app.state.bars().len(), 400);
+        let edge = app.viewport.right_edge_bar(app.slots());
+        assert_eq!(
+            edge, 160.0,
+            "bar 4 of tick(40) opens on trade 161 — bar 160 of tick(1)"
+        );
+        assert_eq!(app.right_edge_time(), Some(was_showing));
+    }
+
+    /// A view following the live edge is already anchored to the newest bar,
+    /// whatever the rebuild does to the ones behind it.
+    #[test]
+    fn a_rebuild_leaves_a_live_view_at_the_live_edge() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        assert!(app.viewport.follows_live());
+        app.tick_n = 40;
+        app.apply_spec_change();
+        app.apply_spec_change();
+        assert!(app.viewport.follows_live());
+        assert_eq!(app.viewport.right_edge_bar(app.slots()), 9.0);
+    }
+
+    /// Every string the frame painted, panels and chart alike.
+    fn painted_text(output: &egui::FullOutput) -> Vec<String> {
+        fn walk(shape: &egui::Shape, found: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    /// Whether the frame drew the price axis over the test's price range —
+    /// the labels only exist once the chart really scaled and painted itself.
+    fn has_price_axis(texts: &[String]) -> bool {
+        texts.iter().any(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|price| (95.0..=115.0).contains(&price))
+        })
+    }
+
+    fn run_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(1400.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    /// The whole point, on a real frame: after a spec change with the view
+    /// panned into history, the chart is drawn — not a black rectangle.
+    #[test]
+    fn a_rebuilt_chart_still_paints_itself() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx); // one frame to settle the layout
+        app.viewport.pan_pixels(200.0 * 8.0, app.slots());
+
+        app.tick_n = 40;
+        let armed = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            armed.iter().any(|text| text.contains("rebuilding bars")),
+            "the arming frame says what it is doing: {armed:?}"
+        );
+
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            has_price_axis(&texts),
+            "the chart must be on screen after the rebuild: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text.contains("no bars in view")),
+            "and it must be showing bars, not an empty window: {texts:?}"
+        );
+    }
+
+    /// The other way to empty the window — panning into the space past the
+    /// newest bar, zoomed in far enough that no bar is left on screen. The
+    /// chart keeps its axis and says how to get back.
+    #[test]
+    fn an_empty_window_says_so_instead_of_going_dark() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        app.viewport.zoom(8.0); // 64 px candles: only a dozen fit
+        app.viewport.pan_pixels(-10_000.0, app.slots()); // into the empty future
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts.iter().any(|text| text.contains("no bars in view")),
+            "an empty window must explain itself: {texts:?}"
+        );
+        assert!(
+            has_price_axis(&texts),
+            "and keep the axis, so the chart never reads as hung: {texts:?}"
+        );
     }
 
     #[test]

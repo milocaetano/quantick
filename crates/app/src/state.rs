@@ -277,6 +277,48 @@ impl ChartState {
         self.backfill_boundary
     }
 
+    /// When the bar in chart slot `index` opened — a closed bar, or the forming
+    /// bar in the slot right after them (the chart draws it as one more).
+    ///
+    /// Bar indices are only meaningful for one spec at a time; the market time
+    /// under them survives a rebuild, so this is how a caller remembers where
+    /// the user was looking across one. `None` for a slot the series has not
+    /// got.
+    #[must_use]
+    pub fn slot_open_time(&self, index: usize) -> Option<i64> {
+        match self.bars.get(index) {
+            Some(bar) => Some(bar.open_time),
+            None if index == self.bars.len() => self.partial.as_ref().map(|bar| bar.open_time),
+            None => None,
+        }
+    }
+
+    /// The slot showing market time `timestamp_ms`: the newest bar that opened
+    /// at or before it, or slot 0 when the whole series is younger than it.
+    ///
+    /// Bars are pushed in trade order, so their open times are non-decreasing
+    /// and this is a binary search. The forming bar counts as the slot after
+    /// the closed ones, matching [`Self::slot_open_time`]. `None` when there is
+    /// no series to point into.
+    #[must_use]
+    pub fn slot_at_time(&self, timestamp_ms: i64) -> Option<usize> {
+        let slots = self.bars.len() + usize::from(self.partial.is_some());
+        if slots == 0 {
+            return None;
+        }
+        if self
+            .partial
+            .as_ref()
+            .is_some_and(|bar| bar.open_time <= timestamp_ms)
+        {
+            return Some(self.bars.len());
+        }
+        let after = self
+            .bars
+            .partition_point(|bar| bar.open_time <= timestamp_ms);
+        Some(after.saturating_sub(1))
+    }
+
     /// How far the forming bar is from closing, in the rule's own measure, and
     /// the unit to print it in.
     ///
@@ -412,6 +454,49 @@ mod tests {
         let added = s.prepend_history(&[]);
         assert_eq!(added, 0);
         assert_eq!(s.bars().len(), before);
+    }
+
+    /// Bar indices mean a different thing per spec; market time does not. This
+    /// is the lookup that carries the user's position across a rebuild.
+    #[test]
+    fn a_slot_is_found_by_the_market_time_it_shows() {
+        let mut s = ChartState::new(BarSpec::Tick(2));
+        // trade(n) is stamped at 1000 + n*100, so tick(2) bars open at 1100,
+        // 1300, 1500 and the partial (trade 7) at 1700.
+        let trades: Vec<Trade> = (1..=7).map(trade).collect();
+        s.ingest_backfill(&trades);
+        assert_eq!(s.bars().len(), 3);
+        assert!(s.partial().is_some());
+
+        assert_eq!(s.slot_open_time(0), Some(1100));
+        assert_eq!(s.slot_open_time(3), Some(1700), "the forming bar's slot");
+        assert_eq!(s.slot_open_time(4), None, "no such slot");
+
+        assert_eq!(s.slot_at_time(1300), Some(1), "exactly on an open");
+        assert_eq!(s.slot_at_time(1400), Some(1), "inside a bar");
+        assert_eq!(s.slot_at_time(9_999), Some(3), "past the end: the newest");
+        assert_eq!(s.slot_at_time(0), Some(0), "before the start: the oldest");
+    }
+
+    #[test]
+    fn an_empty_series_has_no_slot_to_point_at() {
+        let s = ChartState::new(BarSpec::Tick(2));
+        assert_eq!(s.slot_at_time(1_000), None);
+        assert_eq!(s.slot_open_time(0), None);
+    }
+
+    /// The rebuild is what makes the lookup necessary: the same market time
+    /// lands on a different index once the bars are re-cut.
+    #[test]
+    fn the_slot_of_a_time_moves_when_the_spec_changes() {
+        let mut s = ChartState::new(BarSpec::Tick(1));
+        let trades: Vec<Trade> = (1..=8).map(trade).collect();
+        s.ingest_backfill(&trades);
+        let slot = s.slot_at_time(1500).expect("a slot for trade 5");
+        assert_eq!(slot, 4, "tick(1): one bar per trade");
+
+        s.set_spec(BarSpec::Tick(4));
+        assert_eq!(s.slot_at_time(1500), Some(1), "tick(4): the second bar");
     }
 
     #[test]
