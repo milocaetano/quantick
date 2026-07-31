@@ -15,11 +15,15 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
+use smallvec::SmallVec;
 
 use crate::candle_view::{draw_candle, draw_style_window};
 use crate::chart::{self, PriceScale};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::dock::{Dock, DockEnv, DockTab};
+use crate::drawings::{
+    self, ChartPoint, Drawings, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
+};
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
@@ -45,6 +49,31 @@ fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
 const AXIS_GUTTER: f32 = 64.0;
 /// Height of the bottom time-axis strip, in pixels (§5 zone 6).
 const TIME_STRIP: f32 = 24.0;
+/// Hit radius for selecting a drawing anchor, in logical pixels.
+const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
+/// Hit radius for a selected drawing's editable anchor.
+const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
+/// Minimum pointer travel that turns one press/release into drag placement.
+const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
+/// Initial position of the selected-drawing inspector.
+const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum DrawingDrag {
+    #[default]
+    None,
+    Translate,
+    Anchor {
+        drawing_index: usize,
+        point_index: usize,
+    },
+}
+
+impl DrawingDrag {
+    const fn is_active(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
 
 /// Alpha of the last-price line: legible at a glance without competing with a
 /// candle or a bubble for attention.
@@ -231,10 +260,13 @@ pub struct QuantickApp {
     replay: Option<ReplayLink>,
     replay_view: ReplayView,
 
-    // The two chrome zones the design model reserves beside the chart: the
-    // tabbed right dock (settings) and the left tool rail (chart tools).
+    // External chart chrome: the tabbed right dock and the corner-docked
+    // drawing toolbox. Neither is painted over the chart canvas.
     dock: Dock,
     toolrail: ToolRail,
+    /// User drawings live entirely in the app overlay layer, never in market
+    /// state, so chart/backtest/bot determinism stays untouched.
+    drawings: Drawings,
 
     // How many older trades to pull per "load older" click, and how many
     // trades have been backfilled in total (for the readout).
@@ -273,8 +305,15 @@ pub struct QuantickApp {
     // in the input handler (which runs before the draw computes them).
     last_auto_range: Option<(f64, f64)>,
     last_chart_height: f32,
+    last_chart_top: f32,
     // Pointer position over the plot this frame, for the crosshair.
     hover_pos: Option<egui::Pos2>,
+    // Drawing placement/movement state. Anchors are chart coordinates; only
+    // the current hover and press position are transient pixels.
+    drawing_hover: Option<ChartPoint>,
+    drawing_press_position: Option<egui::Pos2>,
+    drawing_press_started_empty: bool,
+    drawing_drag: DrawingDrag,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -349,6 +388,7 @@ impl QuantickApp {
             replay_view: ReplayView::new(),
             dock: Dock::new(),
             toolrail: ToolRail::new(),
+            drawings: Drawings::default(),
             config,
             feed_id,
             symbol,
@@ -366,7 +406,12 @@ impl QuantickApp {
             last_lane_divider_x: None,
             last_auto_range: None,
             last_chart_height: 1.0,
+            last_chart_top: 0.0,
             hover_pos: None,
+            drawing_hover: None,
+            drawing_press_position: None,
+            drawing_press_started_empty: false,
+            drawing_drag: DrawingDrag::None,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -791,6 +836,7 @@ impl QuantickApp {
         self.price_view = PriceView::new();
         self.last_auto_range = None;
         self.hover_pos = None;
+        self.reset_drawing_overlay();
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
@@ -838,6 +884,7 @@ impl QuantickApp {
                 // window past the end of the data, drawing nothing.
                 let anchor = self.right_edge_time();
                 self.state.set_spec(desired);
+                self.reset_drawing_overlay();
                 self.viewport.reanchor(
                     anchor.and_then(|ms| self.state.slot_at_time(ms)),
                     self.slots(),
@@ -947,6 +994,7 @@ impl QuantickApp {
                     self.history_trades += trades.len();
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
+                    self.drawings.shift_bars(added);
                 }
                 Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
                 Ok(FeedEvent::LiveBatch(trades)) => {
@@ -991,6 +1039,7 @@ impl QuantickApp {
         self.price_view = PriceView::new();
         self.last_auto_range = None;
         self.hover_pos = None;
+        self.reset_drawing_overlay();
         self.history_trades = 0;
         self.latest_trade_ms = None;
         self.last_lane_divider_x = None;
@@ -999,6 +1048,18 @@ impl QuantickApp {
         // never be answered, so the count restarts rather than accumulates.
         self.loading.restart(LoadingTask::History);
         self.orderflow.reset_for_symbol(self.symbol.clone());
+    }
+
+    /// Bar-index anchors are meaningful only for the market/spec that created
+    /// them. Clear them on a source or aggregation rebuild rather than
+    /// silently attaching a mark to different market data.
+    fn reset_drawing_overlay(&mut self) {
+        self.drawings.clear();
+        self.toolrail.arm(Tool::Pointer);
+        self.drawing_hover = None;
+        self.drawing_press_position = None;
+        self.drawing_press_started_empty = false;
+        self.drawing_drag = DrawingDrag::None;
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -1183,6 +1244,189 @@ impl QuantickApp {
         self.last_summary = now;
     }
 
+    /// Convert a chart pixel into an overlay anchor. The x coordinate is a
+    /// fractional bar slot, so drawings follow pan/zoom instead of being stuck
+    /// to one screen pixel.
+    fn drawing_point_at(
+        &self,
+        pos: egui::Pos2,
+        history_right: f32,
+        total: usize,
+    ) -> Option<ChartPoint> {
+        let (auto_lo, auto_hi) = self.last_auto_range?;
+        if total == 0 || self.last_chart_height <= 1.0 {
+            return None;
+        }
+        let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+        let scale = PriceScale::from_range(
+            lo,
+            hi,
+            self.last_chart_top,
+            self.last_chart_top + self.last_chart_height,
+        );
+        let bar = self.viewport.right_edge_bar(total) + 0.5
+            - (history_right - pos.x) / self.viewport.candle_width();
+        Some(ChartPoint {
+            bar,
+            price: scale.price_at(pos.y),
+        })
+    }
+
+    /// Placement consumes clicks while a drawing tool is armed, preventing a
+    /// mark from also panning the chart. A completed object returns to Pointer,
+    /// matching the one-shot TradingView interaction.
+    fn handle_drawing_placement(&mut self, ui: &egui::Ui, area: egui::Rect) -> bool {
+        let Some(tool) = self.toolrail.tool().drawing_tool() else {
+            self.drawings.cancel_draft();
+            self.drawing_hover = None;
+            self.drawing_press_position = None;
+            self.drawing_press_started_empty = false;
+            return false;
+        };
+        let areas = plot_split(area, self.live_strip_width());
+        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let history = egui::Rect::from_min_max(
+            areas.chart.min,
+            egui::pos2(history_right, areas.chart.bottom()),
+        );
+        let response = ui.interact(
+            history,
+            egui::Id::new("drawing_placement"),
+            egui::Sense::click_and_drag(),
+        );
+        self.hover_pos = response.hover_pos();
+        self.drawing_hover = response
+            .hover_pos()
+            .and_then(|position| self.drawing_point_at(position, history_right, self.slots()));
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+
+        let pressed_position = ui.input(|input| {
+            input
+                .pointer
+                .primary_pressed()
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        });
+        if let Some(position) = pressed_position.filter(|position| history.contains(*position))
+            && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
+        {
+            self.drawing_press_started_empty = self.drawings.draft_len() == 0;
+            self.drawing_press_position = Some(position);
+            self.place_drawing_point(tool, point);
+        }
+
+        let released_position = ui.input(|input| {
+            input
+                .pointer
+                .primary_released()
+                .then(|| input.pointer.latest_pos())
+                .flatten()
+        });
+        if tool.required_points() > 1
+            && self.drawing_press_started_empty
+            && let Some(start) = self.drawing_press_position
+            && let Some(position) = released_position
+            && history.contains(position)
+            && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
+            && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
+        {
+            self.place_drawing_point(tool, point);
+        }
+        if released_position.is_some() {
+            self.drawing_press_position = None;
+            self.drawing_press_started_empty = false;
+        }
+        true
+    }
+
+    fn place_drawing_point(&mut self, tool: drawings::DrawingTool, point: ChartPoint) {
+        if self.drawings.place(tool, point) {
+            self.toolrail.arm(Tool::Pointer);
+            self.drawing_hover = None;
+        }
+    }
+
+    fn projected_drawing_points(
+        &self,
+        drawing: &drawings::Drawing,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> SmallVec<[egui::Pos2; 4]> {
+        drawing
+            .points
+            .iter()
+            .map(|point| self.drawing_screen_point(*point, history_right, total, scale))
+            .collect()
+    }
+
+    fn drawing_at(
+        &self,
+        pos: egui::Pos2,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        self.drawings
+            .items()
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, drawing)| {
+                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                drawing
+                    .tool
+                    .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX)
+                    .then_some(index)
+            })
+    }
+
+    fn drawing_anchor_in(
+        &self,
+        drawing_index: usize,
+        pos: egui::Pos2,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        let drawing = self.drawings.items().get(drawing_index)?;
+        self.projected_drawing_points(drawing, history_right, total, scale)
+            .iter()
+            .enumerate()
+            .map(|(point_index, point)| (point_index, point.distance_sq(pos)))
+            .filter(|(_, distance_sq)| {
+                *distance_sq <= DRAWING_ANCHOR_RADIUS_PX * DRAWING_ANCHOR_RADIUS_PX
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(point_index, _)| point_index)
+    }
+
+    fn drawing_anchor_at(
+        &self,
+        pos: egui::Pos2,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<(usize, usize)> {
+        let selected = self.drawings.selected();
+        if let Some(drawing_index) = selected
+            && let Some(point_index) =
+                self.drawing_anchor_in(drawing_index, pos, history_right, total, scale)
+        {
+            return Some((drawing_index, point_index));
+        }
+        (0..self.drawings.items().len())
+            .rev()
+            .filter(|drawing_index| Some(*drawing_index) != selected)
+            .find_map(|drawing_index| {
+                self.drawing_anchor_in(drawing_index, pos, history_right, total, scale)
+                    .map(|point_index| (drawing_index, point_index))
+            })
+    }
+
     /// Handle mouse navigation, TradingView-style:
     /// - drag the candles → pan time (x, moves the whole chart) and price (y);
     /// - scroll over them → zoom time;
@@ -1195,6 +1439,9 @@ impl QuantickApp {
     /// that starts inside the tape moves nothing, and scrolling there zooms the
     /// tape's own window instead of the candles.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
+        if self.handle_drawing_placement(ui, area) {
+            return;
+        }
         let areas = plot_split(area, self.live_strip_width());
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
@@ -1209,12 +1456,119 @@ impl QuantickApp {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
+        let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
+            let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+            PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
+        });
+        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let drawing_area = egui::Rect::from_min_max(
+            areas.chart.min,
+            egui::pos2(history_right, areas.chart.bottom()),
+        );
+        let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
+            .input(|input| {
+                (
+                    input.pointer.primary_pressed(),
+                    input.pointer.primary_down(),
+                    input.pointer.primary_released(),
+                    input.pointer.latest_pos(),
+                    input.pointer.delta(),
+                )
+            });
+        let mut drawing_drag_consumes_gesture = false;
+        if self.toolrail.tool() == Tool::Pointer {
+            if let Some(position) =
+                pointer_position.filter(|position| drawing_area.contains(*position))
+                && let Some(scale) = drawing_scale
+                && let Some(selected) = self.drawings.selected()
+                && self
+                    .drawing_anchor_in(selected, position, history_right, total, &scale)
+                    .is_some()
+            {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+            }
+            if chart.clicked()
+                && let Some(position) = chart.interact_pointer_pos()
+                && let Some(scale) = drawing_scale
+            {
+                let selected = self.drawing_at(position, areas.chart, history_right, total, &scale);
+                self.drawings.select(selected);
+            }
+            // Floating inspectors normally own pointer input over their whole
+            // rectangle. Read the raw press so an already-selected drawing
+            // remains draggable even when its stroke or handle is underneath
+            // that inspector. Only an actual drawing hit takes precedence;
+            // every other inspector click remains a style interaction.
+            let mut drawing_drag_started = false;
+            if primary_pressed
+                && let Some(position) =
+                    pointer_position.filter(|position| drawing_area.contains(*position))
+                && let Some(scale) = drawing_scale
+            {
+                if let Some((drawing_index, point_index)) =
+                    self.drawing_anchor_at(position, history_right, total, &scale)
+                {
+                    self.drawings.select(Some(drawing_index));
+                    self.drawing_drag = DrawingDrag::Anchor {
+                        drawing_index,
+                        point_index,
+                    };
+                } else {
+                    let selected =
+                        self.drawing_at(position, areas.chart, history_right, total, &scale);
+                    self.drawings.select(selected);
+                    self.drawing_drag = if selected.is_some() {
+                        DrawingDrag::Translate
+                    } else {
+                        DrawingDrag::None
+                    };
+                }
+                drawing_drag_started = self.drawing_drag.is_active();
+            }
+            if primary_down && !drawing_drag_started {
+                match self.drawing_drag {
+                    DrawingDrag::Anchor {
+                        drawing_index,
+                        point_index,
+                    } => {
+                        if let Some(position) = pointer_position {
+                            let position = egui::pos2(
+                                position.x.clamp(areas.chart.left(), history_right),
+                                position.y.clamp(areas.chart.top(), areas.chart.bottom()),
+                            );
+                            if let Some(point) =
+                                self.drawing_point_at(position, history_right, total)
+                            {
+                                self.drawings.move_anchor(drawing_index, point_index, point);
+                            }
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                        }
+                    }
+                    DrawingDrag::Translate => {
+                        if let Some(scale) = drawing_scale {
+                            let (lo, hi) = scale.range();
+                            let delta_bar = pointer_delta.x / self.viewport.candle_width();
+                            let delta_price =
+                                -f64::from(pointer_delta.y / areas.chart.height()) * (hi - lo);
+                            self.drawings.translate_selected(delta_bar, delta_price);
+                        }
+                    }
+                    DrawingDrag::None => {}
+                }
+            }
+            drawing_drag_consumes_gesture = self.drawing_drag.is_active();
+            if primary_released {
+                self.drawing_drag = DrawingDrag::None;
+            }
+        } else {
+            self.drawing_drag = DrawingDrag::None;
+        }
         // Where the press landed, not where the pointer is now: a pan that
         // started on the candles keeps working when it crosses the divider.
         let dragging_candles = chart
             .interact_pointer_pos()
             .is_some_and(|press| !in_lane(press));
-        if total > 0 && chart.dragged() && dragging_candles {
+        if total > 0 && chart.dragged() && dragging_candles && !drawing_drag_consumes_gesture {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
@@ -1513,6 +1867,10 @@ impl QuantickApp {
             );
         }
 
+        // Drawings sit above market layers and remain anchored to chart space,
+        // not the screen, while the viewport moves beneath them.
+        self.draw_drawings(painter, chart_rect, right, total, &scale);
+
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
         if let Some(bar) = partial.or_else(|| closed.last()) {
@@ -1545,6 +1903,7 @@ impl QuantickApp {
         // runs before the draw and needs them for pixel↔price conversion.
         self.last_auto_range = Some(auto_range);
         self.last_chart_height = chart_rect.height();
+        self.last_chart_top = chart_rect.top();
     }
 
     /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
@@ -1716,6 +2075,52 @@ impl QuantickApp {
         );
         painter.rect_filled(bg, egui::Rounding::same(2.0), color);
         painter.galley(text_pos, galley, LAST_PRICE_CHIP_TEXT);
+    }
+
+    fn drawing_screen_point(
+        &self,
+        point: ChartPoint,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> egui::Pos2 {
+        egui::pos2(
+            self.viewport
+                .x_at_bar_position(point.bar, history_right, total),
+            scale.y(point.price),
+        )
+    }
+
+    /// Paint the completed drawing objects. This runs once per frame and is
+    /// O(number of drawings); it never touches the per-trade ingestion path.
+    fn draw_drawings(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) {
+        let clipped = painter.with_clip_rect(chart_rect);
+        for (index, drawing) in self.drawings.items().iter().enumerate() {
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            let selected = self.drawings.selected() == Some(index);
+            drawing
+                .tool
+                .paint(&clipped, chart_rect, drawing.style, &points, selected);
+        }
+
+        if let Some(draft) = self.drawings.draft() {
+            let mut points = self.projected_drawing_points(draft, history_right, total, scale);
+            if points.len() < draft.tool.required_points()
+                && let Some(hover) = self.drawing_hover
+            {
+                points.push(self.drawing_screen_point(hover, history_right, total, scale));
+            }
+            draft
+                .tool
+                .paint(&clipped, chart_rect, draft.style, &points, false);
+        }
     }
 
     /// Crosshair following the pointer, with the price shown on the axis.
@@ -1958,6 +2363,15 @@ impl QuantickApp {
                             self.dock.toggle_visible();
                             ui.close_menu();
                         }
+                        let toolbox_label = if self.toolrail.visible() {
+                            "Hide drawing toolbox"
+                        } else {
+                            "Show drawing toolbox"
+                        };
+                        if ui.button(toolbox_label).clicked() {
+                            self.toolrail.toggle_visible();
+                            ui.close_menu();
+                        }
                         for (tab, label) in [
                             (DockTab::L2, "L2 settings"),
                             (DockTab::Bubbles, "Bubble settings"),
@@ -2000,6 +2414,55 @@ impl QuantickApp {
                     });
                 });
             });
+    }
+
+    /// The selected object's inspector mirrors the compact, contextual drawing
+    /// controls traders expect: styles are per object rather than global.
+    fn draw_drawing_inspector(&mut self, ctx: &egui::Context) {
+        let Some(index) = self.drawings.selected() else {
+            return;
+        };
+        let title = self.drawings.items()[index].tool.settings_title();
+        let mut delete = false;
+        let mut open = true;
+        let inspector_interactable = !self.drawing_drag.is_active();
+        egui::Window::new(title)
+            .id(egui::Id::new("drawing_inspector"))
+            .open(&mut open)
+            .default_pos(DRAWING_INSPECTOR_DEFAULT_POSITION)
+            .collapsible(false)
+            .movable(true)
+            .interactable(inspector_interactable)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if let Some(drawing) = self.drawings.selected_mut() {
+                    ui.label("Style");
+                    ui.color_edit_button_srgba(&mut drawing.style.color);
+                    ui.add(
+                        egui::Slider::new(
+                            &mut drawing.style.width_px,
+                            MIN_DRAWING_WIDTH_PX..=MAX_DRAWING_WIDTH_PX,
+                        )
+                        .text("line width (px)"),
+                    );
+                    ui.add(
+                        egui::Slider::new(
+                            &mut drawing.style.fill_alpha,
+                            0..=MAX_DRAWING_FILL_ALPHA,
+                        )
+                        .text("fill opacity"),
+                    );
+                    ui.separator();
+                    if ui.button("Delete drawing").clicked() {
+                        delete = true;
+                    }
+                }
+            });
+        if delete {
+            self.drawings.delete_selected();
+        } else if !open {
+            self.drawings.select(None);
+        }
     }
 
     /// Carry out what the replay interface asked for.
@@ -2179,8 +2642,8 @@ impl QuantickApp {
         self.toolrail.handle_keys(ctx);
         // Chrome panels claim their zones outside-in (§5): menu and toolbar
         // on top, the status line at the very bottom with the replay
-        // transport directly above it, then the tool rail and the dock on the
-        // sides. The chart keeps whatever remains.
+        // transport directly above it, then the corner toolbox and right dock.
+        // The chart keeps whatever remains.
         self.draw_menu_bar(ctx);
         self.draw_toolbar(ctx);
         let status = self.status_model();
@@ -2237,6 +2700,9 @@ impl QuantickApp {
                     notice_action = notice_card::draw(ui, area, &self.notice);
                 }
             });
+        // Floating drawing controls must be registered after the opaque
+        // central canvas so they stay in front of the chart.
+        self.draw_drawing_inspector(ctx);
         if notice_action == notice_card::NoticeAction::Retry {
             self.restart_feed();
         }
@@ -2580,16 +3046,34 @@ mod tests {
         app.request_older_history();
         app.request_older_history();
         assert_eq!(app.loading.count(LoadingTask::History), 3);
+        app.drawings.place(
+            drawing_tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
 
         evt_tx.try_send(FeedEvent::Reset).unwrap();
         app.drain_feed();
         assert_eq!(app.loading.count(LoadingTask::History), 1);
+        assert!(
+            app.drawings.items().is_empty(),
+            "bar-index drawings cannot survive a source reset honestly"
+        );
     }
 
     #[test]
     fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
         let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
         app.tick_n = 100;
+        app.drawings.place(
+            drawing_tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
 
         app.apply_spec_change();
         assert!(app.loading.is_active(LoadingTask::BarRebuild));
@@ -2601,6 +3085,10 @@ mod tests {
 
         app.apply_spec_change();
         assert_eq!(app.state.spec(), &BarSpec::Tick(100));
+        assert!(
+            app.drawings.items().is_empty(),
+            "a new bar partition must not inherit old bar-index anchors"
+        );
         assert!(!app.loading.is_active(LoadingTask::BarRebuild));
     }
 
@@ -2762,14 +3250,302 @@ mod tests {
     }
 
     fn run_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+        run_frame_with_events(app, ctx, Vec::new())
+    }
+
+    fn run_frame_with_events(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::pos2(0.0, 0.0),
                 egui::vec2(1400.0, 900.0),
             )),
+            events,
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    fn pointer_button(position: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
+        run_frame_with_events(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(position),
+                pointer_button(position, true),
+            ],
+        );
+        run_frame_with_events(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(position),
+                pointer_button(position, false),
+            ],
+        );
+    }
+
+    fn drag_chart(app: &mut QuantickApp, ctx: &egui::Context, start: egui::Pos2, end: egui::Pos2) {
+        run_frame_with_events(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(end)]);
+        run_frame_with_events(
+            app,
+            ctx,
+            vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
+        );
+    }
+
+    fn drawing_tool(id: &str) -> drawings::DrawingTool {
+        drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == id)
+            .expect("drawing tool is registered")
+    }
+
+    fn arm_drawing_from_toolbox(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        id: &str,
+    ) -> drawings::DrawingTool {
+        let drawing = drawing_tool(id);
+        let tool = Tool::Drawing(drawing);
+        let button = app
+            .toolrail
+            .button_rect(tool)
+            .expect("drawing button was rendered");
+        click_chart(app, ctx, button.center());
+        assert_eq!(
+            app.toolrail.tool(),
+            tool,
+            "clicking {id} must arm that drawing tool"
+        );
+        drawing
+    }
+
+    /// Full UI interaction proof: every registered drawing is placed through
+    /// egui pointer events against the real chart frame. This catches the
+    /// original regression where multi-point tools silently ignored drags.
+    #[test]
+    fn every_toolbox_drawing_can_be_plotted_on_the_chart() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        click_chart(&mut app, &ctx, egui::pos2(600.0, 250.0));
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(620.0, 300.0),
+            egui::pos2(800.0, 450.0),
+        );
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(650.0, 500.0),
+            egui::pos2(820.0, 350.0),
+        );
+        click_chart(&mut app, &ctx, egui::pos2(900.0, 280.0));
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(700.0, 620.0),
+            egui::pos2(950.0, 300.0),
+        );
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-extension");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(620.0, 650.0),
+            egui::pos2(820.0, 500.0),
+        );
+        click_chart(&mut app, &ctx, egui::pos2(1_000.0, 350.0));
+
+        let tools: Vec<_> = app
+            .drawings
+            .items()
+            .iter()
+            .map(|drawing| drawing.tool)
+            .collect();
+        assert_eq!(tools, drawings::DRAWING_TOOLS);
+        assert!(
+            app.drawings
+                .items()
+                .iter()
+                .all(|drawing| drawing.points.len() == drawing.tool.required_points())
+        );
+        assert_eq!(
+            app.toolrail.tool(),
+            Tool::Pointer,
+            "placing a complete drawing restores navigation"
+        );
+    }
+
+    #[test]
+    fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+
+        let before = app.drawings.items()[0].points[0];
+        let viewport_before = app.viewport.right_edge_bar(app.slots());
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(1_000.0, 300.0),
+            egui::pos2(1_040.0, 340.0),
+        );
+        let after = app.drawings.items()[0].points[0];
+
+        assert!(
+            after.bar > before.bar,
+            "dragging right moves the anchor right"
+        );
+        assert!(
+            after.price < before.price,
+            "dragging down moves the anchor to a lower price"
+        );
+        assert_eq!(
+            app.viewport.right_edge_bar(app.slots()),
+            viewport_before,
+            "moving a drawing must not pan the market underneath it"
+        );
+        assert_eq!(
+            app.drawing_drag,
+            DrawingDrag::None,
+            "release ends the move gesture"
+        );
+    }
+
+    #[test]
+    fn an_open_inspector_never_blocks_moving_a_horizontal_line() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let start = egui::pos2(300.0, 250.0);
+        click_chart(&mut app, &ctx, start);
+
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("placing the selected line opens its inspector");
+        assert!(
+            inspector.contains(start),
+            "the regression requires the floating inspector to cover the line handle"
+        );
+        let before = app.drawings.items()[0].points[0];
+
+        drag_chart(&mut app, &ctx, start, egui::pos2(300.0, 350.0));
+
+        assert_ne!(
+            app.drawings.items()[0].points[0].price,
+            before.price,
+            "the open inspector must not trap the line underneath it"
+        );
+    }
+
+    #[test]
+    fn a_selected_drawing_exposes_its_edit_and_delete_controls() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(620.0, 300.0),
+            egui::pos2(800.0, 450.0),
+        );
+        assert_eq!(app.drawings.items().len(), 1);
+        assert_eq!(app.drawings.selected(), Some(0));
+
+        let output = run_frame(&mut app, &ctx);
+        assert_eq!(app.drawings.selected(), Some(0));
+        let texts = painted_text(&output);
+        for label in [
+            "Rectangle settings",
+            "Style",
+            "line width (px)",
+            "fill opacity",
+            "Delete drawing",
+        ] {
+            assert!(
+                texts.iter().any(|text| text.contains(label)),
+                "selected drawing inspector omitted {label:?}; painted text: {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
+        let first_anchor = egui::pos2(620.0, 300.0);
+        let second_anchor = egui::pos2(800.0, 450.0);
+        drag_chart(&mut app, &ctx, first_anchor, second_anchor);
+        let before = app.drawings.items()[0].points.clone();
+        let viewport_before = app.viewport.right_edge_bar(app.slots());
+
+        let inspector = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            inspector
+                .iter()
+                .any(|text| text.contains("Rectangle settings")),
+            "the settings window must be visible before the resize gesture"
+        );
+
+        drag_chart(&mut app, &ctx, first_anchor, egui::pos2(560.0, 240.0));
+        let after = &app.drawings.items()[0].points;
+
+        assert_ne!(after[0], before[0], "the dragged corner must move");
+        assert_eq!(
+            after[1], before[1],
+            "resizing one corner must leave the opposite corner fixed"
+        );
+        assert_eq!(
+            app.viewport.right_edge_bar(app.slots()),
+            viewport_before,
+            "resizing a drawing must not pan the chart"
+        );
+        assert_eq!(app.drawing_drag, DrawingDrag::None);
+        assert!(
+            painted_text(&run_frame(&mut app, &ctx))
+                .iter()
+                .any(|text| text.contains("Rectangle settings")),
+            "the non-modal settings window remains usable after resizing"
+        );
     }
 
     /// The whole point, on a real frame: after a spec change with the view

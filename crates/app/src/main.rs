@@ -17,6 +17,7 @@ mod candle_view;
 mod chart;
 mod config;
 mod dock;
+mod drawings;
 mod feed;
 mod live_strip;
 mod loading;
