@@ -1,5 +1,6 @@
 //! Renderer-independent projection of RLE history into normalized primitives.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -353,6 +354,9 @@ impl SettledProjection {
         } else {
             0
         };
+        // Capped first, then ordered: the cap picks by size, but what a frame
+        // draws is ordered by time, so a chart that is over the budget stacks
+        // its bubbles the same way as one that is under it.
         cap_aggressions(&mut aggressions, config.max_aggression_primitives);
         aggressions.sort_by(|a, b| {
             a.first_timestamp_ms
@@ -375,8 +379,17 @@ impl SettledProjection {
             AggressorSide::Sell => config.show_sell_aggressions,
         });
 
+        // Both halves capped themselves where they were built; the join is
+        // capped again for the same reason the bubbles are, so the markers a
+        // frame draws stay inside one budget rather than one per half.
         let mut liquidity_events = self.liquidity_events.clone();
         liquidity_events.extend(live.liquidity_events);
+        let dropped_liquidity_events = self.dropped_liquidity_events
+            + live.dropped_liquidity_events
+            + liquidity_events
+                .len()
+                .saturating_sub(config.max_visible_cells);
+        cap_events(&mut liquidity_events, config.max_visible_cells);
 
         HeatmapProjection {
             enabled: self.enabled,
@@ -391,7 +404,7 @@ impl SettledProjection {
             summary_reference: self.summary_reference,
             dropped_cells: self.dropped_cells,
             dropped_aggressions,
-            dropped_liquidity_events: self.dropped_liquidity_events + live.dropped_liquidity_events,
+            dropped_liquidity_events,
         }
     }
 }
@@ -1005,19 +1018,50 @@ fn filter_events(
 
     let dropped = events.len().saturating_sub(config.max_visible_cells);
     if dropped > 0 {
-        events.sort_by(|a, b| {
-            // Aligned events first: they are the evidence bubbles point at.
-            let a_aligned = matches!(a.evidence, LiquidityEvidence::AggressionAligned);
-            let b_aligned = matches!(b.evidence, LiquidityEvidence::AggressionAligned);
-            b_aligned
-                .cmp(&a_aligned)
-                .then_with(|| b.removed.cmp(&a.removed))
-                .then_with(|| a.timestamp_ms.cmp(&b.timestamp_ms))
-                .then_with(|| a.event_id.cmp(&b.event_id))
+        events.sort_by_key(|event| {
+            event_cap_key(
+                event.evidence,
+                event.removed,
+                event.timestamp_ms,
+                event.event_id,
+            )
         });
         events.truncate(config.max_visible_cells);
     }
     dropped
+}
+
+/// How the safety cap ranks reductions, wherever it is applied: aligned
+/// evidence first, because it is what a bubble points at, then the biggest
+/// reduction, then time and id so the same book always yields the same markers.
+fn event_cap_key(
+    evidence: LiquidityEvidence,
+    removed: Decimal,
+    timestamp_ms: i64,
+    event_id: u64,
+) -> (Reverse<bool>, Reverse<Decimal>, i64, u64) {
+    (
+        Reverse(matches!(evidence, LiquidityEvidence::AggressionAligned)),
+        Reverse(removed),
+        timestamp_ms,
+        event_id,
+    )
+}
+
+/// Keep the strongest `limit` reductions of a whole frame.
+fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
+    if events.len() <= limit {
+        return;
+    }
+    events.sort_by_key(|event| {
+        event_cap_key(
+            event.evidence,
+            event.removed,
+            event.timestamp_ms,
+            event.event_id,
+        )
+    });
+    events.truncate(limit);
 }
 
 /// Keep the strongest `limit` marks, deterministically.
@@ -1366,6 +1410,63 @@ mod tests {
             price_grouping: Decimal::ONE,
             ..HeatmapConfig::default()
         }
+    }
+
+    /// The reduction cap is a budget for the whole frame too. Each half caps
+    /// itself where it is built, so without a cap over the join a frame could
+    /// draw twice the markers the budget allows — one full cap per half.
+    #[test]
+    fn the_reduction_cap_is_one_budget_for_both_halves() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            max_visible_cells: 2,
+            min_unattributed_reduction: 0.0,
+            min_unattributed_pull_share: 0.0,
+            ..HeatmapConfig::default()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        // Two pulls each side of the seam at 2 000 ms.
+        for (update_id, timestamp_ms, bids, asks) in [
+            (11_u64, 300_i64, vec![level("100", "1")], vec![]),
+            (12, 900, vec![level("99", "0.5")], vec![]),
+            (13, 2_300, vec![], vec![level("101", "1")]),
+            (14, 2_900, vec![], vec![level("102", "1")]),
+        ] {
+            history
+                .apply_delta(
+                    timestamp_ms,
+                    &BookDelta::new(update_id, update_id, bids, asks),
+                )
+                .unwrap();
+        }
+        history
+            .apply_delta(3_900, &BookDelta::new(15, 15, vec![], vec![]))
+            .unwrap();
+
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 3_900,
+                window_ms: 1_500,
+                on_newest_bar: true,
+            }),
+        );
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        assert_eq!(
+            projection.liquidity_events.len(),
+            2,
+            "a cap of two is two markers for the frame, not two per half"
+        );
+        assert_eq!(projection.dropped_liquidity_events, 2);
     }
 
     /// The primitive cap is a budget for the whole frame, not one per half.
