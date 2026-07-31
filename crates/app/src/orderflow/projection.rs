@@ -279,6 +279,13 @@ pub struct SettledProjection {
     pub summary_reference: Decimal,
     /// Cells omitted by the configured primitive cap.
     pub dropped_cells: usize,
+    /// Bubbles this half was already over the primitive cap by.
+    ///
+    /// Capping here as well as over the whole frame keeps the per-frame merge
+    /// proportional to what can be drawn rather than to the visible tape. It
+    /// costs nothing in what is shown: a mark the frame would keep is by
+    /// definition among the strongest of this half too.
+    pub dropped_aggressions: usize,
     /// Liquidity events omitted by the visible-cell safety cap.
     pub dropped_liquidity_events: usize,
     /// Exchange time this half stops at, and the live half takes over from.
@@ -321,6 +328,7 @@ impl SettledProjection {
             aggression_reference: Decimal::ZERO,
             summary_reference: Decimal::ZERO,
             dropped_cells: 0,
+            dropped_aggressions: 0,
             dropped_liquidity_events: 0,
             live_from_ms: None,
             live_events: Vec::new(),
@@ -337,6 +345,15 @@ impl SettledProjection {
         let mut aggressions = Vec::with_capacity(self.aggressions.len() + live.aggressions.len());
         aggressions.extend(self.aggressions.iter().cloned());
         aggressions.extend(live.aggressions);
+        let dropped_aggressions = if config.show_aggressions {
+            self.dropped_aggressions
+                + aggressions
+                    .len()
+                    .saturating_sub(config.max_aggression_primitives)
+        } else {
+            0
+        };
+        cap_aggressions(&mut aggressions, config.max_aggression_primitives);
         aggressions.sort_by(|a, b| {
             a.first_timestamp_ms
                 .cmp(&b.first_timestamp_ms)
@@ -346,23 +363,8 @@ impl SettledProjection {
                 .then_with(|| a.agg_id.cmp(&b.agg_id))
         });
 
-        let dropped_aggressions = if config.show_aggressions {
-            aggressions
-                .len()
-                .saturating_sub(config.max_aggression_primitives)
-        } else {
-            0
-        };
         if !config.show_aggressions {
             aggressions.clear();
-        } else if dropped_aggressions > 0 {
-            aggressions.sort_by(|a, b| {
-                b.quantity
-                    .cmp(&a.quantity)
-                    .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
-                    .then_with(|| a.agg_id.cmp(&b.agg_id))
-            });
-            aggressions.truncate(config.max_aggression_primitives);
         }
 
         // Side switches are display-only and run last: the size reference, the
@@ -764,13 +766,17 @@ pub fn project_settled(
         aggression_reference
     };
 
-    let aggressions = tier_primitives(
+    let mut aggressions = tier_primitives(
         settled_marks,
         timeline,
         prices,
         aggression_reference,
         summary_reference,
     );
+    let dropped_aggressions = aggressions
+        .len()
+        .saturating_sub(config.max_aggression_primitives);
+    cap_aggressions(&mut aggressions, config.max_aggression_primitives);
 
     let liquidity_events = event_primitives(events, timeline, prices, effective_grouping);
 
@@ -846,6 +852,7 @@ pub fn project_settled(
         aggression_reference,
         summary_reference,
         dropped_cells,
+        dropped_aggressions,
         dropped_liquidity_events,
         live_from_ms,
         live_events,
@@ -1013,6 +1020,23 @@ fn filter_events(
     dropped
 }
 
+/// Keep the strongest `limit` marks, deterministically.
+///
+/// Ties are broken by time and then by id so the same set of prints always
+/// yields the same marks, whichever half of the frame they came from.
+fn cap_aggressions(marks: &mut Vec<AggressionPrimitive>, limit: usize) {
+    if marks.len() <= limit {
+        return;
+    }
+    marks.sort_by(|a, b| {
+        b.quantity
+            .cmp(&a.quantity)
+            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
+    marks.truncate(limit);
+}
+
 /// Place reductions on the chart.
 fn event_primitives(
     events: Vec<LiquidityEvent>,
@@ -1061,8 +1085,13 @@ struct TierClusters {
 
 /// Cluster the retained prints timestamped inside `range`, as `[from, until)`.
 ///
-/// The range is tested before anything else so the half that runs every frame
-/// pays for its own prints only, not for the whole retained tape behind them.
+/// The whole retained tape is walked, but the range is tested first and it is
+/// two integer comparisons: the half that runs every frame pays the per-print
+/// cost — locating it, placing it, clustering it — only for its own prints.
+/// The walk is deliberately linear rather than a search inward from the newest
+/// print: the retained tape is only *almost* ordered by timestamp, and one
+/// print delivered out of order must not be able to hide every print behind
+/// it.
 fn cluster_tier(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
@@ -1337,6 +1366,69 @@ mod tests {
             price_grouping: Decimal::ONE,
             ..HeatmapConfig::default()
         }
+    }
+
+    /// The primitive cap is a budget for the whole frame, not one per half.
+    /// Each half is capped where it is built — that is what keeps the per-frame
+    /// merge proportional to what can be drawn — so this proves the two-stage
+    /// cut keeps exactly the marks one cut over everything would have kept, and
+    /// still reports every mark it left out.
+    #[test]
+    fn the_primitive_cap_is_one_budget_for_both_halves() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: 0,
+            max_aggression_primitives: 3,
+            ..config()
+        });
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
+        // Three prints each side of the seam at 2 000 ms, interleaved by size so
+        // the winners cannot be picked by half.
+        for (agg_id, timestamp_ms, quantity) in [
+            (1_u64, 100_i64, "10"),
+            (2, 300, "1"),
+            (3, 1_100, "9"),
+            (4, 2_100, "2"),
+            (5, 3_100, "8"),
+            (6, 3_300, "3"),
+        ] {
+            history.record_aggression(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: dec("101"),
+                quantity: dec(quantity),
+                side: Side::Buy,
+            });
+        }
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 3_900,
+                window_ms: 1_500,
+                on_newest_bar: true,
+            }),
+        );
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        let mut kept: Vec<Decimal> = projection
+            .aggressions
+            .iter()
+            .map(|mark| mark.quantity)
+            .collect();
+        kept.sort();
+        assert_eq!(
+            kept,
+            [dec("8"), dec("9"), dec("10")],
+            "the three biggest prints survive, from whichever half"
+        );
+        assert_eq!(projection.dropped_aggressions, 3);
     }
 
     /// The chart is built in two halves that meet at a bar's open time. This is
