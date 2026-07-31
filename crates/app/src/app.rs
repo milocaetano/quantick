@@ -1096,6 +1096,7 @@ impl QuantickApp {
             heatmap_dropped_aggressions = book.dropped_aggressions,
             heatmap_dropped_liquidity_events = book.dropped_liquidity_events,
             heatmap_projection_ms = book.projection_ms,
+            heatmap_live_ms = book.live_ms,
             heatmap_projection_builds = book.projection_builds,
             heatmap_projection_cache_hits = book.projection_cache_hits,
             heatmap_config_revision = book.config_revision,

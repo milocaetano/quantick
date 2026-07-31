@@ -16,9 +16,14 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::orderflow::{
     BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
-    PriceWindow, project, reserved_span_ms,
+    PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
 };
 
+/// How often the finished half of the chart is rebuilt.
+///
+/// It is the depth feed's own cadence, near enough: the map behind the candles
+/// cannot say anything new until the book does. The live half ignores this
+/// interval entirely — see [`BookEngine::project`].
 pub(crate) const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
 
 /// Maximum raw book levels per side copied into a published [`BookLadder`].
@@ -180,7 +185,9 @@ impl ProjectionRequest {
 struct ProjectionCache {
     built_at: Instant,
     layout: ProjectionLayout,
-    frame: Arc<VisibleOrderflow>,
+    /// The finished half of the chart, reused frame after frame until the
+    /// layout moves or the cadence comes round again.
+    settled: Arc<SettledProjection>,
 }
 
 /// Health data consumed by the periodic AI-first application summary.
@@ -206,6 +213,8 @@ pub struct OrderflowHealth {
     pub effective_grouping: Decimal,
     pub effective_grouping_multiple: u32,
     pub projection_ms: f32,
+    /// Cost of the half rebuilt for every frame.
+    pub live_ms: f32,
     pub projection_builds: u64,
     pub projection_cache_hits: u64,
     pub config_revision: u64,
@@ -239,6 +248,7 @@ impl OrderflowHealth {
             effective_grouping: Decimal::new(1, 2),
             effective_grouping_multiple: 1,
             projection_ms: 0.0,
+            live_ms: 0.0,
             projection_builds: 0,
             projection_cache_hits: 0,
             config_revision: 0,
@@ -386,6 +396,9 @@ pub struct BookEngine {
     last_effective_grouping: Decimal,
     last_effective_grouping_multiple: u32,
     last_projection_ms: f32,
+    /// Cost of the half rebuilt on every request, which is the one that has to
+    /// stay inside a frame's budget.
+    last_live_ms: f32,
     projection_builds: u64,
     projection_cache_hits: u64,
     projection_cache: Option<ProjectionCache>,
@@ -425,6 +438,7 @@ impl BookEngine {
             last_effective_grouping: HeatmapConfig::default().price_grouping,
             last_effective_grouping_multiple: 1,
             last_projection_ms: 0.0,
+            last_live_ms: 0.0,
             projection_builds: 0,
             projection_cache_hits: 0,
             projection_cache: None,
@@ -479,6 +493,7 @@ impl BookEngine {
         self.last_effective_grouping = self.config.price_grouping;
         self.last_effective_grouping_multiple = 1;
         self.last_projection_ms = 0.0;
+        self.last_live_ms = 0.0;
         self.projection_builds = 0;
         self.projection_cache_hits = 0;
         self.projection_cache = None;
@@ -874,20 +889,19 @@ impl BookEngine {
         })
     }
 
+    /// Build the frame for `request`.
+    ///
+    /// The finished half of the chart is rebuilt on the cadence above, because
+    /// it costs tens of milliseconds and says nothing new in between. The half
+    /// that is still moving is rebuilt here every single time, because it is
+    /// cheap and because a print the engine has already accepted has no business
+    /// waiting for a cadence to be seen.
     pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
         }
         let layout = request.layout();
         let now = Instant::now();
-        if let Some(cache) = &self.projection_cache
-            && cache.layout == layout
-            && now.saturating_duration_since(cache.built_at) < PROJECTION_INTERVAL
-        {
-            self.projection_cache_hits = self.projection_cache_hits.saturating_add(1);
-            return Some(Arc::clone(&cache.frame));
-        }
-
         let low = Decimal::from_f64(request.price_range.0)?;
         let high = Decimal::from_f64(request.price_range.1)?;
         let prices = PriceWindow::new(low, high)?;
@@ -900,27 +914,44 @@ impl BookEngine {
         if timeline.is_empty() {
             return None;
         }
-        let started = now;
-        let projection = project(&self.history, &timeline, prices);
-        self.last_projection_ms = started.elapsed().as_secs_f32() * 1000.0;
-        self.last_projection_cells = projection.cells.len();
+
+        let settled = match &self.projection_cache {
+            Some(cache)
+                if cache.layout == layout
+                    && now.saturating_duration_since(cache.built_at) < PROJECTION_INTERVAL =>
+            {
+                self.projection_cache_hits = self.projection_cache_hits.saturating_add(1);
+                Arc::clone(&cache.settled)
+            }
+            _ => {
+                let settled = Arc::new(project_settled(&self.history, &timeline, prices));
+                self.last_projection_ms = now.elapsed().as_secs_f32() * 1000.0;
+                self.last_projection_cells = settled.cells.len();
+                self.last_dropped_cells = settled.dropped_cells;
+                self.last_effective_grouping = settled.effective_grouping.bucket_width;
+                self.last_effective_grouping_multiple = settled.effective_grouping.multiple;
+                self.projection_builds = self.projection_builds.saturating_add(1);
+                self.projection_cache = Some(ProjectionCache {
+                    built_at: now,
+                    layout,
+                    settled: Arc::clone(&settled),
+                });
+                settled
+            }
+        };
+
+        let live_started = Instant::now();
+        let live = project_live(&self.history, &timeline, prices, &settled);
+        let projection = settled.with_live(live, &self.config);
+        self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
-        self.last_dropped_cells = projection.dropped_cells;
         self.last_dropped_aggressions = projection.dropped_aggressions;
         self.last_dropped_liquidity_events = projection.dropped_liquidity_events;
-        self.last_effective_grouping = projection.effective_grouping.bucket_width;
-        self.last_effective_grouping_multiple = projection.effective_grouping.multiple;
-        self.projection_builds = self.projection_builds.saturating_add(1);
         let frame = Arc::new(VisibleOrderflow {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
             slot_count: timeline.region_count(),
-        });
-        self.projection_cache = Some(ProjectionCache {
-            built_at: now,
-            layout,
-            frame: Arc::clone(&frame),
         });
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
@@ -1005,6 +1036,7 @@ impl BookEngine {
             effective_grouping: self.last_effective_grouping,
             effective_grouping_multiple: self.last_effective_grouping_multiple,
             projection_ms: self.last_projection_ms,
+            live_ms: self.last_live_ms,
             projection_builds: self.projection_builds,
             projection_cache_hits: self.projection_cache_hits,
             config_revision: self.config_revision,
@@ -1415,6 +1447,46 @@ mod tests {
         assert_eq!(engine.last_snapshot_observed_ms, Some(1_100));
     }
 
+    /// A print the engine has accepted is drawable on the next projection, with
+    /// no cadence in between — which is the whole point of splitting the frame.
+    /// The map behind it still moves on the projection interval, so this asserts
+    /// the two are decoupled: the trade lands while `projection_builds` is flat.
+    #[test]
+    fn a_print_reaches_the_next_frame_without_waiting_for_the_cadence() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        engine.apply_visual_config(HeatmapConfig {
+            show_aggressions: true,
+            ..engine.config.clone()
+        });
+        let bars = [bar(900, 1_100)];
+
+        let before = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
+        assert!(before.projection.aggressions.is_empty());
+        assert_eq!(engine.projection_builds, 1);
+
+        engine.record_trade(&Trade {
+            agg_id: 7,
+            timestamp_ms: 1_050,
+            price: Decimal::from(101),
+            quantity: Decimal::from(3),
+            side: Side::Buy,
+        });
+
+        let after = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
+        assert_eq!(
+            after.projection.aggressions.len(),
+            1,
+            "the print is on the very next frame"
+        );
+        assert_eq!(after.projection.aggressions[0].agg_id, 7);
+        assert_eq!(
+            engine.projection_builds, 1,
+            "and it cost no rebuild of the settled half"
+        );
+    }
+
     #[test]
     fn projection_is_cached_at_depth_cadence_and_gap_invalidates_it() {
         let mut engine = BookEngine::new("BTCUSDT");
@@ -1422,16 +1494,21 @@ mod tests {
         engine.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
 
+        // Every request composes its own frame — the live half is rebuilt for
+        // each one — so what the cadence saves is the *settled* half, and that
+        // is what the counters and the identical cells below assert.
         let first = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
         let second = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
-        assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(engine.projection_builds, 1);
         assert_eq!(engine.projection_cache_hits, 1);
+        assert_eq!(
+            first.projection.liquidity_reference,
+            second.projection.liquidity_reference
+        );
 
         // A price-window change (pan/zoom, auto-fit shift) must rebuild:
         // cached cell positions are normalized against the old window.
-        let panned = engine.project(&request(&bars, (97.0, 103.0))).unwrap();
-        assert!(!Arc::ptr_eq(&first, &panned));
+        engine.project(&request(&bars, (97.0, 103.0))).unwrap();
         assert_eq!(engine.projection_builds, 2);
 
         engine.handle_depth_event(DepthEvent::Status {
@@ -1445,13 +1522,12 @@ mod tests {
                 },
             },
         });
-        let after_gap = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
-        assert!(!Arc::ptr_eq(&first, &after_gap));
+        let _ = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
         assert_eq!(engine.projection_builds, 3);
     }
 
     #[test]
-    fn sub_quantum_price_wiggle_reuses_the_cached_frame() {
+    fn sub_quantum_price_wiggle_reuses_the_settled_half() {
         let mut engine = BookEngine::new("BTCUSDT");
         engine.set_enabled(true, 10);
         engine.handle_depth_event(snapshot_event(10));
@@ -1464,12 +1540,18 @@ mod tests {
         let wiggled = engine
             .project(&request(&bars, (98.000_5, 102.000_5)))
             .unwrap();
-        assert!(Arc::ptr_eq(&first, &wiggled), "sub-quantum shift is a hit");
-        assert_eq!(engine.projection_builds, 1);
+        assert_eq!(
+            engine.projection_builds, 1,
+            "sub-quantum shift reuses the settled half"
+        );
+        assert_eq!(engine.projection_cache_hits, 1);
+        assert_eq!(
+            first.projection.cells, wiggled.projection.cells,
+            "and draws the very same map"
+        );
 
         // A shift past the quantum is a real pan and must rebuild.
-        let panned = engine.project(&request(&bars, (98.05, 102.05))).unwrap();
-        assert!(!Arc::ptr_eq(&first, &panned));
+        engine.project(&request(&bars, (98.05, 102.05))).unwrap();
         assert_eq!(engine.projection_builds, 2);
     }
 
