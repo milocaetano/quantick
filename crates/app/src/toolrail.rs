@@ -104,6 +104,8 @@ pub struct ToolRail {
     hide_all_rect: Option<egui::Rect>,
     #[cfg(test)]
     lock_all_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    objects_rect: Option<egui::Rect>,
 }
 
 impl Default for ToolRail {
@@ -120,6 +122,8 @@ impl Default for ToolRail {
             hide_all_rect: None,
             #[cfg(test)]
             lock_all_rect: None,
+            #[cfg(test)]
+            objects_rect: None,
         }
     }
 }
@@ -159,6 +163,11 @@ impl ToolRail {
             .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
     }
 
+    #[cfg(test)]
+    pub(crate) fn objects_button_rect(&self) -> Option<egui::Rect> {
+        self.objects_rect
+    }
+
     pub fn handle_keys(&mut self, ctx: &egui::Context) {
         if ctx.memory(|memory| memory.focused().is_some()) {
             return;
@@ -175,9 +184,9 @@ impl ToolRail {
 
     /// Draw the toolbox in an external top/bottom strip. Drag the grip and
     /// release anywhere: the closest of the four screen corners becomes its
-    /// new dock. The rail also hosts the global protection toggles
-    /// (hide-all / lock-all), which act on the drawings store.
-    pub fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings) {
+    /// new dock. The rail also hosts the object-manager entry and the global
+    /// protection toggles (hide-all / lock-all), which act on the store.
+    pub fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool) {
         if !self.visible {
             return;
         }
@@ -199,7 +208,23 @@ impl ToolRail {
                         TOOLBOX_ITEM_GAP_PX,
                     )),
             )
-            .show(ctx, |ui| self.draw_contents(ui, drawings));
+            .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open));
+    }
+
+    /// The entry to the drawn-objects manager. A toggle, not a tool: it never
+    /// changes which tool is armed.
+    fn draw_objects_button(&mut self, ui: &mut egui::Ui, manager_open: &mut bool) {
+        let response = IconButton::new(icons::LIST, RAIL_ICON)
+            .active(*manager_open)
+            .hover_text("Drawn objects")
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.objects_rect = Some(response.rect);
+        }
+        if response.clicked() {
+            *manager_open = !*manager_open;
+        }
     }
 
     /// The reversible global protections. Hide-all is a view layer over each
@@ -253,13 +278,19 @@ impl ToolRail {
         }
     }
 
-    fn draw_contents(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
+    fn draw_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        drawings: &mut Drawings,
+        manager_open: &mut bool,
+    ) {
         #[cfg(test)]
         {
             self.button_rects.fill(None);
             self.grip_rect = None;
             self.hide_all_rect = None;
             self.lock_all_rect = None;
+            self.objects_rect = None;
         }
         let left = self.dock.is_left();
         let layout = if left {
@@ -294,9 +325,11 @@ impl ToolRail {
                     self.draw_button(ui, Tool::Drawing(tool));
                 }
                 ui.separator();
+                self.draw_objects_button(ui, manager_open);
                 self.draw_global_buttons(ui, drawings);
             } else {
                 self.draw_global_buttons(ui, drawings);
+                self.draw_objects_button(ui, manager_open);
                 ui.separator();
                 for tool in DRAWING_TOOLS.into_iter().rev() {
                     self.draw_button(ui, Tool::Drawing(tool));
@@ -377,7 +410,10 @@ mod tests {
             ..Default::default()
         };
         let mut drawings = Drawings::default();
-        let _ = ctx.run(input, |ctx| rail.draw(ctx, &mut drawings));
+        let mut manager_open = false;
+        let _ = ctx.run(input, |ctx| {
+            rail.draw(ctx, &mut drawings, &mut manager_open)
+        });
     }
 
     fn primary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
@@ -451,7 +487,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| rail.draw(ctx, drawings));
+        let mut manager_open = false;
+        let _ = ctx.run(input, |ctx| rail.draw(ctx, drawings, &mut manager_open));
     }
 
     fn click_at(
@@ -540,8 +577,9 @@ mod tests {
                 ..Default::default()
             };
             let mut drawings = Drawings::default();
+            let mut manager_open = false;
             let _ = ctx.run(input, |ctx| {
-                rail.draw(ctx, &mut drawings);
+                rail.draw(ctx, &mut drawings, &mut manager_open);
                 egui::CentralPanel::default().show(ctx, |ui| {
                     central = ui.max_rect();
                 });

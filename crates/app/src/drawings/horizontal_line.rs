@@ -11,6 +11,9 @@ impl DrawingToolImpl for HorizontalLine {
     fn id(&self) -> &'static str {
         "horizontal-line"
     }
+    fn name(&self) -> &'static str {
+        "Horizontal line"
+    }
     fn settings_title(&self) -> &'static str {
         "Horizontal line settings"
     }

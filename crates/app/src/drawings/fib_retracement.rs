@@ -23,6 +23,9 @@ impl DrawingToolImpl for FibRetracement {
     fn id(&self) -> &'static str {
         "fib-retracement"
     }
+    fn name(&self) -> &'static str {
+        "Fib retracement"
+    }
     fn settings_title(&self) -> &'static str {
         "Fib retracement settings"
     }

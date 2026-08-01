@@ -21,6 +21,9 @@ impl DrawingToolImpl for FibExtension {
     fn id(&self) -> &'static str {
         "fib-extension"
     }
+    fn name(&self) -> &'static str {
+        "Fib extension"
+    }
     fn settings_title(&self) -> &'static str {
         "Fib extension settings"
     }

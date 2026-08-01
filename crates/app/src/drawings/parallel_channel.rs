@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawingStyle, DrawingToolImpl, distance_to_segment, drawing_stroke};
+use super::{DrawingStyle, DrawingToolImpl, distance_to_segment, drawing_fill, drawing_stroke};
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
 
@@ -21,6 +21,9 @@ impl DrawingToolImpl for ParallelChannel {
     fn id(&self) -> &'static str {
         "parallel-channel"
     }
+    fn name(&self) -> &'static str {
+        "Parallel channel"
+    }
     fn settings_title(&self) -> &'static str {
         "Parallel channel settings"
     }
@@ -32,6 +35,9 @@ impl DrawingToolImpl for ParallelChannel {
     }
     fn required_points(&self) -> usize {
         3
+    }
+    fn supports_fill(&self) -> bool {
+        true
     }
     fn paint(
         &self,
@@ -46,6 +52,13 @@ impl DrawingToolImpl for ParallelChannel {
         }
         if points.len() == 3 {
             let offset = channel_offset(points);
+            if style.fill_alpha > 0 {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![points[0], points[1], points[1] + offset, points[0] + offset],
+                    drawing_fill(style),
+                    egui::Stroke::NONE,
+                ));
+            }
             painter.line_segment([points[0] + offset, points[1] + offset], stroke);
             painter.line_segment([points[0], points[0] + offset], stroke);
             painter.line_segment([points[1], points[1] + offset], stroke);

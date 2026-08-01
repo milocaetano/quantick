@@ -6,6 +6,8 @@
 //! Market data remains immutable and the deterministic engine never learns
 //! about UI marks.
 
+pub mod action_bar;
+
 use std::fmt;
 
 use eframe::egui;
@@ -56,13 +58,21 @@ impl FibLevel {
 
 /// The implementation port every drawing plugs into. Selection visuals (halo
 /// and anchor handles) are common chrome painted by the wrapper, so a tool
-/// only ever paints its own geometry in the style it is given.
+/// only ever paints its own geometry in the style it is given. Capability
+/// methods drive which inspector sections exist for the tool — an
+/// unsupported property is absent, never disabled.
 trait DrawingToolImpl: Sync {
     fn id(&self) -> &'static str;
+    /// Human name shown in the inspector header and the object manager.
+    fn name(&self) -> &'static str;
     fn settings_title(&self) -> &'static str;
     fn icon(&self) -> &'static str;
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
+    /// Whether the tool paints an interior that the fill controls affect.
+    fn supports_fill(&self) -> bool {
+        false
+    }
     fn paint(
         &self,
         painter: &egui::Painter,
@@ -92,8 +102,18 @@ impl DrawingTool {
     }
 
     #[must_use]
+    pub fn name(self) -> &'static str {
+        self.0.name()
+    }
+
+    #[must_use]
     pub fn settings_title(self) -> &'static str {
         self.0.settings_title()
+    }
+
+    #[must_use]
+    pub fn supports_fill(self) -> bool {
+        self.0.supports_fill()
     }
 
     #[must_use]
@@ -465,19 +485,53 @@ impl Drawings {
     }
 
     pub fn set_selected_locked(&mut self, locked: bool) {
+        if let Some(index) = self.selected {
+            self.set_locked_at(index, locked);
+        }
+    }
+
+    pub fn set_selected_hidden(&mut self, hidden: bool) {
+        if let Some(index) = self.selected {
+            self.set_hidden_at(index, hidden);
+        }
+    }
+
+    pub fn set_locked_at(&mut self, index: usize, locked: bool) {
         let before = self.snapshot();
-        if let Some(drawing) = self.selected_mut() {
+        if let Some(drawing) = self.items.get_mut(index) {
             drawing.locked = locked;
             self.record(before);
         }
     }
 
-    pub fn set_selected_hidden(&mut self, hidden: bool) {
+    pub fn set_hidden_at(&mut self, index: usize, hidden: bool) {
         let before = self.snapshot();
-        if let Some(drawing) = self.selected_mut() {
+        if let Some(drawing) = self.items.get_mut(index) {
             drawing.hidden = hidden;
             self.record(before);
         }
+    }
+
+    /// Z-order: painting walks the list front-to-back, hit-testing walks it
+    /// back-to-front, so the last item is the topmost object.
+    pub fn bring_to_front(&mut self, index: usize) {
+        if index >= self.items.len() || index + 1 == self.items.len() {
+            return;
+        }
+        let before = self.snapshot();
+        let drawing = self.items.remove(index);
+        self.items.push(drawing);
+        // Selection follows the object, not the slot it used to occupy.
+        self.selected = self.selected.map(|selected| {
+            if selected == index {
+                self.items.len() - 1
+            } else if selected > index {
+                selected - 1
+            } else {
+                selected
+            }
+        });
+        self.record(before);
     }
 
     pub fn set_all_hidden(&mut self, hidden: bool) {

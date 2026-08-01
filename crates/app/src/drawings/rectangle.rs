@@ -11,6 +11,9 @@ impl DrawingToolImpl for Rectangle {
     fn id(&self) -> &'static str {
         "rectangle"
     }
+    fn name(&self) -> &'static str {
+        "Rectangle"
+    }
     fn settings_title(&self) -> &'static str {
         "Rectangle settings"
     }
@@ -22,6 +25,9 @@ impl DrawingToolImpl for Rectangle {
     }
     fn required_points(&self) -> usize {
         2
+    }
+    fn supports_fill(&self) -> bool {
+        true
     }
     fn paint(
         &self,
