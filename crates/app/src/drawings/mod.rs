@@ -10,14 +10,27 @@ use std::fmt;
 
 use eframe::egui;
 
+use crate::theme;
+
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
 pub const DEFAULT_DRAWING_WIDTH_PX: f32 = 1.5;
 pub const DEFAULT_DRAWING_FILL_ALPHA: u8 = 24;
 pub const MIN_DRAWING_WIDTH_PX: f32 = 0.5;
 pub const MAX_DRAWING_WIDTH_PX: f32 = 6.0;
 pub const MAX_DRAWING_FILL_ALPHA: u8 = 160;
+/// Undo history depth. One entry per committed command (a whole drag or
+/// slider gesture is one command), so this bounds memory without cutting a
+/// working session short.
+const UNDO_HISTORY_LIMIT: usize = 64;
 const SELECTED_ANCHOR_RADIUS_PX: f32 = 4.0;
 const SELECTED_ANCHOR_FILL: egui::Color32 = egui::Color32::WHITE;
+const SELECTED_ANCHOR_RING_WIDTH_PX: f32 = 1.5;
+/// Selection never repaints the object white: it keeps the configured colour
+/// and paints this soft halo underneath instead, plus white anchor handles.
+/// Premultiplied ~16% white, matching the UX spec's `.halo` treatment.
+const SELECTION_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
+/// How much wider than the object's own stroke the halo pass paints.
+const SELECTION_HALO_EXTRA_WIDTH_PX: f32 = 3.5;
 pub(super) const FIB_LABEL_OFFSET_PX: f32 = 3.0;
 pub(super) const FIB_LABEL_SIZE_PX: f32 = 10.0;
 
@@ -41,7 +54,9 @@ impl FibLevel {
     }
 }
 
-/// The implementation port every drawing plugs into.
+/// The implementation port every drawing plugs into. Selection visuals (halo
+/// and anchor handles) are common chrome painted by the wrapper, so a tool
+/// only ever paints its own geometry in the style it is given.
 trait DrawingToolImpl: Sync {
     fn id(&self) -> &'static str;
     fn settings_title(&self) -> &'static str;
@@ -54,7 +69,6 @@ trait DrawingToolImpl: Sync {
         chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
     );
     fn hit_test(
         &self,
@@ -97,6 +111,9 @@ impl DrawingTool {
         self.0.required_points()
     }
 
+    /// Paint the object. Selection adds a halo *under* the geometry and, when
+    /// `show_handles` (not locked), white anchor handles on top — the object's
+    /// configured colour keeps carrying meaning either way.
     pub fn paint(
         self,
         painter: &egui::Painter,
@@ -104,13 +121,22 @@ impl DrawingTool {
         style: DrawingStyle,
         points: &[egui::Pos2],
         selected: bool,
+        show_handles: bool,
     ) {
-        self.0.paint(painter, chart_rect, style, points, selected);
         if selected {
-            let stroke = drawing_stroke(style, true);
+            let halo = DrawingStyle {
+                color: SELECTION_HALO_COLOR,
+                width_px: style.width_px + SELECTION_HALO_EXTRA_WIDTH_PX,
+                fill_alpha: 0,
+            };
+            self.0.paint(painter, chart_rect, halo, points);
+        }
+        self.0.paint(painter, chart_rect, style, points);
+        if selected && show_handles {
+            let ring = egui::Stroke::new(SELECTED_ANCHOR_RING_WIDTH_PX, theme::ACCENT);
             for point in points {
                 painter.circle_filled(*point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
-                painter.circle_stroke(*point, SELECTED_ANCHOR_RADIUS_PX, stroke);
+                painter.circle_stroke(*point, SELECTED_ANCHOR_RADIUS_PX, ring);
             }
         }
     }
@@ -198,6 +224,28 @@ pub struct Drawing {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
     pub style: DrawingStyle,
+    /// A locked drawing keeps rejecting geometry edits and unforced deletes;
+    /// its style stays editable.
+    pub locked: bool,
+    /// A hidden drawing neither paints nor hit-tests, and stays recoverable.
+    pub hidden: bool,
+}
+
+/// What a delete request did. Locked objects demand an explicit `force`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    Deleted,
+    NeedsConfirmation,
+    NothingSelected,
+}
+
+/// One undo step: the whole collection plus the global-hide layer. Selection,
+/// viewport and inspector state deliberately stay out, so undo never yanks
+/// the camera or the UI around.
+#[derive(Debug, Clone, PartialEq)]
+struct UndoEntry {
+    items: Vec<Drawing>,
+    all_hidden: bool,
 }
 
 #[derive(Debug, Default)]
@@ -205,6 +253,14 @@ pub struct Drawings {
     items: Vec<Drawing>,
     draft: Option<Drawing>,
     selected: Option<usize>,
+    /// Global hide layer. Independent from each drawing's own eye, so
+    /// "show all" restores exactly the per-object visibility it found.
+    all_hidden: bool,
+    undo: Vec<UndoEntry>,
+    redo: Vec<UndoEntry>,
+    /// Snapshot taken when a pointer gesture starts; committed (as one undo
+    /// entry) on release, so a whole drag coalesces into one command.
+    gesture_baseline: Option<UndoEntry>,
 }
 
 impl Drawings {
@@ -237,21 +293,112 @@ impl Drawings {
         self.draft.as_ref().map_or(0, |draft| draft.points.len())
     }
 
-    /// Add a placement anchor. `true` means the object became complete.
+    #[must_use]
+    pub fn all_hidden(&self) -> bool {
+        self.all_hidden
+    }
+
+    /// Whether the object at `index` paints and hit-tests this frame.
+    #[must_use]
+    pub fn is_visible(&self, index: usize) -> bool {
+        !self.all_hidden && self.items.get(index).is_some_and(|item| !item.hidden)
+    }
+
+    fn snapshot(&self) -> UndoEntry {
+        UndoEntry {
+            items: self.items.clone(),
+            all_hidden: self.all_hidden,
+        }
+    }
+
+    /// Push `before` as one undo step if the store actually changed since.
+    fn record(&mut self, before: UndoEntry) {
+        if before == self.snapshot() {
+            return;
+        }
+        self.undo.push(before);
+        if self.undo.len() > UNDO_HISTORY_LIMIT {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    /// Start coalescing: the next [`Self::commit_gesture`] records everything
+    /// mutated in between as a single undo entry. Idempotent within a gesture.
+    pub fn begin_gesture(&mut self) {
+        if self.gesture_baseline.is_none() {
+            self.gesture_baseline = Some(self.snapshot());
+        }
+    }
+
+    /// End coalescing. A gesture that changed nothing records nothing.
+    pub fn commit_gesture(&mut self) {
+        if let Some(baseline) = self.gesture_baseline.take() {
+            self.record(baseline);
+        }
+    }
+
+    /// Record an already-applied edit to one object, given its pre-edit
+    /// state. Used by the inspector to coalesce slider/color gestures.
+    pub fn record_edit_of(&mut self, index: usize, before_drawing: Drawing) {
+        let mut before = self.snapshot();
+        let Some(slot) = before.items.get_mut(index) else {
+            return;
+        };
+        *slot = before_drawing;
+        self.record(before);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    fn restore(&mut self, entry: UndoEntry) {
+        self.items = entry.items;
+        self.all_hidden = entry.all_hidden;
+        self.draft = None;
+        self.selected = self.selected.filter(|&index| index < self.items.len());
+    }
+
+    pub fn undo(&mut self) -> bool {
+        let Some(entry) = self.undo.pop() else {
+            return false;
+        };
+        self.redo.push(self.snapshot());
+        self.restore(entry);
+        true
+    }
+
+    pub fn redo(&mut self) -> bool {
+        let Some(entry) = self.redo.pop() else {
+            return false;
+        };
+        self.undo.push(self.snapshot());
+        self.restore(entry);
+        true
+    }
+
+    /// Add a placement anchor. `true` means the object became complete;
+    /// completing an object records one undo entry for the whole creation.
     pub fn place(&mut self, tool: DrawingTool, point: ChartPoint) -> bool {
         if self.draft.as_ref().is_none_or(|draft| draft.tool != tool) {
             self.draft = Some(Drawing {
                 tool,
                 points: Vec::with_capacity(tool.required_points()),
                 style: DrawingStyle::default(),
+                locked: false,
+                hidden: false,
             });
         }
         let draft = self.draft.as_mut().expect("draft was installed above");
         draft.points.push(point);
         if draft.points.len() == tool.required_points() {
+            let before = self.snapshot();
             self.items
                 .push(self.draft.take().expect("draft has points"));
             self.selected = Some(self.items.len() - 1);
+            self.record(before);
             true
         } else {
             false
@@ -262,55 +409,128 @@ impl Drawings {
         self.draft = None;
     }
 
+    /// Honest reset: the anchors cannot survive a source or bar-spec change,
+    /// and neither can a history that would resurrect them onto different
+    /// market data.
     pub fn clear(&mut self) {
         self.items.clear();
         self.draft = None;
         self.selected = None;
+        self.all_hidden = false;
+        self.undo.clear();
+        self.redo.clear();
+        self.gesture_baseline = None;
     }
 
     pub fn shift_bars(&mut self, added: usize) {
         let delta = added as f32;
-        for drawing in &mut self.items {
-            for point in &mut drawing.points {
-                point.bar += delta;
+        let shift = |items: &mut Vec<Drawing>| {
+            for drawing in items {
+                for point in &mut drawing.points {
+                    point.bar += delta;
+                }
             }
-        }
+        };
+        shift(&mut self.items);
         if let Some(draft) = &mut self.draft {
             for point in &mut draft.points {
                 point.bar += delta;
             }
         }
-    }
-
-    pub fn delete_selected(&mut self) {
-        if let Some(index) = self.selected.take()
-            && index < self.items.len()
-        {
-            self.items.remove(index);
+        // History snapshots hold the same bar-index coordinates, so a prepend
+        // shifts them too — undoing later must not re-anchor objects to bars
+        // that moved underneath them.
+        for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            shift(&mut entry.items);
+        }
+        if let Some(baseline) = &mut self.gesture_baseline {
+            shift(&mut baseline.items);
         }
     }
 
+    /// One delete command for every trigger (button, manager, keyboard).
+    /// A locked object is never deleted without `force`.
+    pub fn delete_selected(&mut self, force: bool) -> DeleteOutcome {
+        let Some(index) = self.selected.filter(|&index| index < self.items.len()) else {
+            return DeleteOutcome::NothingSelected;
+        };
+        if self.items[index].locked && !force {
+            return DeleteOutcome::NeedsConfirmation;
+        }
+        let before = self.snapshot();
+        self.items.remove(index);
+        self.selected = None;
+        self.record(before);
+        DeleteOutcome::Deleted
+    }
+
+    pub fn set_selected_locked(&mut self, locked: bool) {
+        let before = self.snapshot();
+        if let Some(drawing) = self.selected_mut() {
+            drawing.locked = locked;
+            self.record(before);
+        }
+    }
+
+    pub fn set_selected_hidden(&mut self, hidden: bool) {
+        let before = self.snapshot();
+        if let Some(drawing) = self.selected_mut() {
+            drawing.hidden = hidden;
+            self.record(before);
+        }
+    }
+
+    pub fn set_all_hidden(&mut self, hidden: bool) {
+        let before = self.snapshot();
+        self.all_hidden = hidden;
+        self.record(before);
+    }
+
+    /// Whether every drawing is individually locked (used by the toolbox's
+    /// lock-all toggle). An empty collection is not "all locked".
+    #[must_use]
+    pub fn all_locked(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|item| item.locked)
+    }
+
+    /// Reversible bulk protection: locks (or unlocks) every drawing as one
+    /// undo entry. Never deletes anything.
+    pub fn set_all_locked(&mut self, locked: bool) {
+        let before = self.snapshot();
+        for item in &mut self.items {
+            item.locked = locked;
+        }
+        self.record(before);
+    }
+
+    /// Rigid translation of the selected object. Locked geometry stays put.
     pub fn translate_selected(&mut self, delta_bar: f32, delta_price: f64) {
         let Some(drawing) = self.selected_mut() else {
             return;
         };
+        if drawing.locked {
+            return;
+        }
         for point in &mut drawing.points {
             point.bar += delta_bar;
             point.price += delta_price;
         }
     }
 
+    /// Move one anchor of one object. Locked geometry stays put.
     pub fn move_anchor(
         &mut self,
         drawing_index: usize,
         point_index: usize,
         point: ChartPoint,
     ) -> bool {
-        let Some(anchor) = self
-            .items
-            .get_mut(drawing_index)
-            .and_then(|drawing| drawing.points.get_mut(point_index))
-        else {
+        let Some(drawing) = self.items.get_mut(drawing_index) else {
+            return false;
+        };
+        if drawing.locked {
+            return false;
+        }
+        let Some(anchor) = drawing.points.get_mut(point_index) else {
             return false;
         };
         *anchor = point;
@@ -318,15 +538,8 @@ impl Drawings {
     }
 }
 
-pub(super) fn drawing_stroke(style: DrawingStyle, selected: bool) -> egui::Stroke {
-    egui::Stroke::new(
-        style.width_px,
-        if selected {
-            egui::Color32::WHITE
-        } else {
-            style.color
-        },
-    )
+pub(super) fn drawing_stroke(style: DrawingStyle) -> egui::Stroke {
+    egui::Stroke::new(style.width_px, style.color)
 }
 
 pub(super) fn drawing_fill(style: DrawingStyle) -> egui::Color32 {
@@ -526,10 +739,274 @@ mod tests {
         ));
         assert_eq!(drawings.selected(), Some(0));
 
-        drawings.delete_selected();
+        assert_eq!(drawings.delete_selected(false), DeleteOutcome::Deleted);
 
         assert!(drawings.items().is_empty());
         assert_eq!(drawings.selected(), None);
+    }
+
+    #[test]
+    fn a_locked_drawing_ignores_geometry_edits_until_unlocked() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 2.0,
+                price: 100.0,
+            },
+        );
+        drawings.set_selected_locked(true);
+
+        drawings.translate_selected(3.0, 5.0);
+        assert!(!drawings.move_anchor(
+            0,
+            0,
+            ChartPoint {
+                bar: 9.0,
+                price: 50.0,
+            }
+        ));
+        assert_eq!(
+            drawings.items()[0].points[0],
+            ChartPoint {
+                bar: 2.0,
+                price: 100.0,
+            },
+            "locked geometry must not move"
+        );
+
+        drawings.set_selected_locked(false);
+        drawings.translate_selected(3.0, 5.0);
+        assert_eq!(
+            drawings.items()[0].points[0],
+            ChartPoint {
+                bar: 5.0,
+                price: 105.0,
+            }
+        );
+    }
+
+    #[test]
+    fn deleting_a_locked_drawing_requires_explicit_force() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        drawings.set_selected_locked(true);
+
+        assert_eq!(
+            drawings.delete_selected(false),
+            DeleteOutcome::NeedsConfirmation
+        );
+        assert_eq!(drawings.items().len(), 1, "unforced delete must not land");
+
+        assert_eq!(drawings.delete_selected(true), DeleteOutcome::Deleted);
+        assert!(drawings.items().is_empty());
+
+        assert!(drawings.undo(), "a forced delete is still undoable");
+        assert_eq!(drawings.items().len(), 1);
+        assert!(drawings.items()[0].locked, "undo restores the lock too");
+    }
+
+    #[test]
+    fn creating_dragging_and_deleting_are_one_undo_entry_each() {
+        let mut drawings = Drawings::default();
+        let rectangle = tool("rectangle");
+        // Creation: two anchors, one entry.
+        drawings.place(
+            rectangle,
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        drawings.place(
+            rectangle,
+            ChartPoint {
+                bar: 3.0,
+                price: 110.0,
+            },
+        );
+        assert_eq!(drawings.undo_depth(), 1);
+
+        // One drag over many frames: one entry.
+        drawings.begin_gesture();
+        for _ in 0..5 {
+            drawings.translate_selected(0.5, 1.0);
+        }
+        drawings.commit_gesture();
+        assert_eq!(drawings.undo_depth(), 2);
+
+        // A gesture that changes nothing records nothing.
+        drawings.begin_gesture();
+        drawings.commit_gesture();
+        assert_eq!(drawings.undo_depth(), 2);
+
+        drawings.delete_selected(false);
+        assert_eq!(drawings.undo_depth(), 3);
+
+        assert!(drawings.undo(), "undo the delete");
+        assert_eq!(drawings.items().len(), 1);
+        assert!(drawings.undo(), "undo the drag");
+        assert_eq!(
+            drawings.items()[0].points[0],
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            }
+        );
+        assert!(drawings.undo(), "undo the creation");
+        assert!(drawings.items().is_empty());
+        assert!(!drawings.undo(), "history is exhausted");
+    }
+
+    #[test]
+    fn redo_replays_an_undone_edit_until_a_new_command_clears_it() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        drawings.undo();
+        assert!(drawings.items().is_empty());
+        assert!(drawings.redo());
+        assert_eq!(drawings.items().len(), 1);
+
+        drawings.undo();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 4.0,
+                price: 90.0,
+            },
+        );
+        assert!(!drawings.redo(), "a new command clears the redo stack");
+    }
+
+    #[test]
+    fn hide_all_is_a_layer_over_each_drawings_own_eye() {
+        let mut drawings = Drawings::default();
+        for price in [100.0, 105.0] {
+            drawings.place(tool("horizontal-line"), ChartPoint { bar: 1.0, price });
+        }
+        drawings.select(Some(0));
+        drawings.set_selected_hidden(true);
+        assert!(!drawings.is_visible(0));
+        assert!(drawings.is_visible(1));
+
+        drawings.set_all_hidden(true);
+        assert!(!drawings.is_visible(0));
+        assert!(!drawings.is_visible(1));
+
+        drawings.set_all_hidden(false);
+        assert!(
+            !drawings.is_visible(0),
+            "show-all must preserve the individual eye"
+        );
+        assert!(drawings.is_visible(1));
+
+        drawings.select(Some(0));
+        drawings.set_selected_hidden(false);
+        assert!(drawings.is_visible(0));
+    }
+
+    #[test]
+    fn lock_all_is_one_reversible_undo_entry_and_never_deletes() {
+        let mut drawings = Drawings::default();
+        for price in [100.0, 105.0] {
+            drawings.place(tool("horizontal-line"), ChartPoint { bar: 1.0, price });
+        }
+        let depth_before = drawings.undo_depth();
+
+        drawings.set_all_locked(true);
+        assert!(drawings.all_locked());
+        assert_eq!(drawings.items().len(), 2);
+        assert_eq!(drawings.undo_depth(), depth_before + 1);
+
+        assert!(drawings.undo());
+        assert!(!drawings.all_locked(), "undo releases the bulk lock");
+        assert_eq!(drawings.items().len(), 2);
+    }
+
+    #[test]
+    fn undo_snapshots_shift_with_prepended_history() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 2.0,
+                price: 100.0,
+            },
+        );
+        drawings.begin_gesture();
+        drawings.translate_selected(1.0, 0.0);
+        drawings.commit_gesture();
+
+        drawings.shift_bars(3);
+        assert_eq!(drawings.items()[0].points[0].bar, 6.0);
+
+        drawings.undo();
+        assert_eq!(
+            drawings.items()[0].points[0].bar,
+            5.0,
+            "the undone position must sit on the shifted bars, not the stale ones"
+        );
+    }
+
+    #[test]
+    fn selection_preserves_the_drawing_color_and_adds_white_handles() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let color = egui::Color32::from_rgb(0xFF, 0x9F, 0x43);
+        let style = DrawingStyle {
+            color,
+            ..DrawingStyle::default()
+        };
+        let line = tool("horizontal-line");
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(chart),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("selection-test"),
+            ));
+            line.paint(
+                &painter,
+                chart,
+                style,
+                &[egui::pos2(100.0, 120.0)],
+                true,
+                true,
+            );
+        });
+
+        let mut kept_color = false;
+        let mut white_handle = false;
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::LineSegment { stroke, .. } => {
+                    kept_color |= stroke.color == egui::epaint::ColorMode::Solid(color);
+                }
+                egui::Shape::Circle(circle) => {
+                    white_handle |= circle.fill == SELECTED_ANCHOR_FILL;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            kept_color,
+            "selection must keep painting the configured colour"
+        );
+        assert!(white_handle, "selection must add white anchor handles");
     }
 
     #[test]
@@ -608,7 +1085,14 @@ mod tests {
                     egui::Order::Foreground,
                     egui::Id::new(drawing_tool.id()),
                 ));
-                drawing_tool.paint(&painter, chart, DrawingStyle::default(), &points, false);
+                drawing_tool.paint(
+                    &painter,
+                    chart,
+                    DrawingStyle::default(),
+                    &points,
+                    false,
+                    false,
+                );
             });
             assert!(
                 !output.shapes.is_empty(),

@@ -7,7 +7,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::drawings::{DRAWING_TOOLS, DrawingTool};
+use crate::drawings::{DRAWING_TOOLS, DrawingTool, Drawings};
 use crate::theme;
 use crate::widgets::{IconButton, RAIL_ICON};
 
@@ -100,6 +100,10 @@ pub struct ToolRail {
     button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
     #[cfg(test)]
     grip_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    hide_all_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    lock_all_rect: Option<egui::Rect>,
 }
 
 impl Default for ToolRail {
@@ -112,6 +116,10 @@ impl Default for ToolRail {
             button_rects: [None; TOOLBOX_BUTTON_COUNT],
             #[cfg(test)]
             grip_rect: None,
+            #[cfg(test)]
+            hide_all_rect: None,
+            #[cfg(test)]
+            lock_all_rect: None,
         }
     }
 }
@@ -167,8 +175,9 @@ impl ToolRail {
 
     /// Draw the toolbox in an external top/bottom strip. Drag the grip and
     /// release anywhere: the closest of the four screen corners becomes its
-    /// new dock.
-    pub fn draw(&mut self, ctx: &egui::Context) {
+    /// new dock. The rail also hosts the global protection toggles
+    /// (hide-all / lock-all), which act on the drawings store.
+    pub fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings) {
         if !self.visible {
             return;
         }
@@ -190,14 +199,67 @@ impl ToolRail {
                         TOOLBOX_ITEM_GAP_PX,
                     )),
             )
-            .show(ctx, |ui| self.draw_contents(ui));
+            .show(ctx, |ui| self.draw_contents(ui, drawings));
     }
 
-    fn draw_contents(&mut self, ui: &mut egui::Ui) {
+    /// The reversible global protections. Hide-all is a view layer over each
+    /// drawing's own eye; lock-all mutates every lock at once. Neither is a
+    /// delete, and both are one undo entry.
+    fn draw_global_buttons(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
+        let all_hidden = drawings.all_hidden();
+        let eye_icon = if all_hidden {
+            icons::EYE_SLASH
+        } else {
+            icons::EYE
+        };
+        let eye_hover = if all_hidden {
+            "Show all drawings"
+        } else {
+            "Hide all drawings"
+        };
+        let eye = IconButton::new(eye_icon, RAIL_ICON)
+            .active(all_hidden)
+            .hover_text(eye_hover)
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.hide_all_rect = Some(eye.rect);
+        }
+        if eye.clicked() {
+            drawings.set_all_hidden(!all_hidden);
+        }
+
+        let all_locked = drawings.all_locked();
+        let lock_icon = if all_locked {
+            icons::LOCK_SIMPLE
+        } else {
+            icons::LOCK_SIMPLE_OPEN
+        };
+        let lock_hover = if all_locked {
+            "Unlock all drawings"
+        } else {
+            "Lock all drawings"
+        };
+        let lock = IconButton::new(lock_icon, RAIL_ICON)
+            .active(all_locked)
+            .hover_text(lock_hover)
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.lock_all_rect = Some(lock.rect);
+        }
+        if lock.clicked() {
+            drawings.set_all_locked(!all_locked);
+        }
+    }
+
+    fn draw_contents(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
         #[cfg(test)]
         {
             self.button_rects.fill(None);
             self.grip_rect = None;
+            self.hide_all_rect = None;
+            self.lock_all_rect = None;
         }
         let left = self.dock.is_left();
         let layout = if left {
@@ -231,7 +293,11 @@ impl ToolRail {
                 for tool in DRAWING_TOOLS {
                     self.draw_button(ui, Tool::Drawing(tool));
                 }
+                ui.separator();
+                self.draw_global_buttons(ui, drawings);
             } else {
+                self.draw_global_buttons(ui, drawings);
+                ui.separator();
                 for tool in DRAWING_TOOLS.into_iter().rev() {
                     self.draw_button(ui, Tool::Drawing(tool));
                 }
@@ -310,7 +376,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| rail.draw(ctx));
+        let mut drawings = Drawings::default();
+        let _ = ctx.run(input, |ctx| rail.draw(ctx, &mut drawings));
     }
 
     fn primary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
@@ -372,6 +439,85 @@ mod tests {
         }
     }
 
+    fn rail_frame_with(
+        rail: &mut ToolRail,
+        drawings: &mut Drawings,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        events: Vec<egui::Event>,
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| rail.draw(ctx, drawings));
+    }
+
+    fn click_at(
+        rail: &mut ToolRail,
+        drawings: &mut Drawings,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        position: egui::Pos2,
+    ) {
+        rail_frame_with(
+            rail,
+            drawings,
+            ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(position),
+                primary_button(position, true),
+            ],
+        );
+        rail_frame_with(
+            rail,
+            drawings,
+            ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(position),
+                primary_button(position, false),
+            ],
+        );
+    }
+
+    #[test]
+    fn global_eye_and_lock_buttons_protect_every_drawing_without_deleting() {
+        use crate::drawings::ChartPoint;
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        drawings.place(
+            DRAWING_TOOLS[0],
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+
+        let eye = rail.hide_all_rect.expect("hide-all rendered").center();
+        click_at(&mut rail, &mut drawings, &ctx, screen, eye);
+        assert!(drawings.all_hidden(), "hide-all engages the global layer");
+        click_at(&mut rail, &mut drawings, &ctx, screen, eye);
+        assert!(!drawings.all_hidden(), "hide-all toggles back off");
+
+        let lock = rail.lock_all_rect.expect("lock-all rendered").center();
+        click_at(&mut rail, &mut drawings, &ctx, screen, lock);
+        assert!(drawings.all_locked(), "lock-all locks every drawing");
+        click_at(&mut rail, &mut drawings, &ctx, screen, lock);
+        assert!(!drawings.all_locked(), "lock-all toggles back to unlocked");
+        assert_eq!(
+            drawings.items().len(),
+            1,
+            "global protections must never delete"
+        );
+    }
+
     #[test]
     fn every_dock_position_reserves_space_outside_the_central_chart() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -393,8 +539,9 @@ mod tests {
                 screen_rect: Some(screen),
                 ..Default::default()
             };
+            let mut drawings = Drawings::default();
             let _ = ctx.run(input, |ctx| {
-                rail.draw(ctx);
+                rail.draw(ctx, &mut drawings);
                 egui::CentralPanel::default().show(ctx, |ui| {
                     central = ui.max_rect();
                 });

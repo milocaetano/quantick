@@ -41,7 +41,6 @@ impl DrawingToolImpl for FibRetracement {
         _chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
     ) {
         if points.len() == 2 {
             paint_fib_levels(
@@ -54,7 +53,7 @@ impl DrawingToolImpl for FibRetracement {
                     origin_y: points[0].y,
                 },
                 &LEVELS,
-                drawing_stroke(style, selected),
+                drawing_stroke(style),
                 style.color,
             );
         }

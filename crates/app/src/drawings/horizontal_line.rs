@@ -29,7 +29,6 @@ impl DrawingToolImpl for HorizontalLine {
         chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
     ) {
         if let Some(point) = points.first() {
             painter.line_segment(
@@ -37,7 +36,7 @@ impl DrawingToolImpl for HorizontalLine {
                     egui::pos2(chart_rect.left(), point.y),
                     egui::pos2(chart_rect.right(), point.y),
                 ],
-                drawing_stroke(style, selected),
+                drawing_stroke(style),
             );
         }
     }

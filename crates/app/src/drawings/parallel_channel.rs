@@ -39,9 +39,8 @@ impl DrawingToolImpl for ParallelChannel {
         _chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
     ) {
-        let stroke = drawing_stroke(style, selected);
+        let stroke = drawing_stroke(style);
         if points.len() >= 2 {
             painter.line_segment([points[0], points[1]], stroke);
         }

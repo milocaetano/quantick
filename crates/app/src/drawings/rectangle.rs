@@ -29,7 +29,6 @@ impl DrawingToolImpl for Rectangle {
         _chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
     ) {
         if points.len() == 2 {
             let rect = egui::Rect::from_two_pos(points[0], points[1]);
@@ -37,7 +36,7 @@ impl DrawingToolImpl for Rectangle {
             painter.rect_stroke(
                 rect,
                 egui::Rounding::ZERO,
-                drawing_stroke(style, selected),
+                drawing_stroke(style),
             );
         }
     }

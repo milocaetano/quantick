@@ -22,7 +22,8 @@ use crate::chart::{self, PriceScale};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{
-    self, ChartPoint, Drawings, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
+    self, ChartPoint, DeleteOutcome, Drawings, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
+    MIN_DRAWING_WIDTH_PX,
 };
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::loading::{self, LoadingTask, LoadingTracker};
@@ -57,6 +58,10 @@ const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
+/// How long the delete toast keeps its Undo affordance on screen (UX spec).
+const TOAST_UNDO_MS: u64 = 8_000;
+/// Vertical clearance between the toast and the bottom chrome.
+const TOAST_BOTTOM_MARGIN_PX: f32 = 44.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DrawingDrag {
@@ -67,12 +72,24 @@ enum DrawingDrag {
         drawing_index: usize,
         point_index: usize,
     },
+    /// The press landed on a locked drawing: the gesture belongs to the
+    /// object (the chart must not pan) but the geometry stays put.
+    Blocked,
 }
 
 impl DrawingDrag {
     const fn is_active(self) -> bool {
         !matches!(self, Self::None)
     }
+}
+
+/// Transient confirmation of a destructive drawing command, with its escape
+/// hatch. Undo works from the button for [`TOAST_UNDO_MS`] and from Ctrl+Z
+/// for as long as the history holds.
+#[derive(Debug)]
+struct DrawingToast {
+    message: &'static str,
+    shown_at: Instant,
 }
 
 /// Alpha of the last-price line: legible at a glance without competing with a
@@ -314,6 +331,12 @@ pub struct QuantickApp {
     drawing_press_position: Option<egui::Pos2>,
     drawing_press_started_empty: bool,
     drawing_drag: DrawingDrag,
+    // Delete confirmation for a locked drawing, shown next to the trigger.
+    drawing_delete_confirm: bool,
+    // Pre-edit copy of the selected drawing while an inspector style gesture
+    // (slider/color drag) is in flight; committed as one undo entry.
+    drawing_style_baseline: Option<(usize, drawings::Drawing)>,
+    drawing_toast: Option<DrawingToast>,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -412,6 +435,9 @@ impl QuantickApp {
             drawing_press_position: None,
             drawing_press_started_empty: false,
             drawing_drag: DrawingDrag::None,
+            drawing_delete_confirm: false,
+            drawing_style_baseline: None,
+            drawing_toast: None,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -1060,6 +1086,11 @@ impl QuantickApp {
         self.drawing_press_position = None;
         self.drawing_press_started_empty = false;
         self.drawing_drag = DrawingDrag::None;
+        self.drawing_delete_confirm = false;
+        self.drawing_style_baseline = None;
+        // The cleared history cannot resurrect anything, so the toast's Undo
+        // affordance would lie — drop it with the drawings.
+        self.drawing_toast = None;
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -1375,6 +1406,7 @@ impl QuantickApp {
             .iter()
             .enumerate()
             .rev()
+            .filter(|(index, _)| self.drawings.is_visible(*index))
             .find_map(|(index, drawing)| {
                 let projected = self.projected_drawing_points(drawing, history_right, total, scale);
                 drawing
@@ -1392,6 +1424,9 @@ impl QuantickApp {
         total: usize,
         scale: &PriceScale,
     ) -> Option<usize> {
+        if !self.drawings.is_visible(drawing_index) {
+            return None;
+        }
         let drawing = self.drawings.items().get(drawing_index)?;
         self.projected_drawing_points(drawing, history_right, total, scale)
             .iter()
@@ -1485,7 +1520,12 @@ impl QuantickApp {
                     .drawing_anchor_in(selected, position, history_right, total, &scale)
                     .is_some()
             {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                ui.ctx()
+                    .set_cursor_icon(if self.drawings.items()[selected].locked {
+                        egui::CursorIcon::NotAllowed
+                    } else {
+                        egui::CursorIcon::ResizeNwSe
+                    });
             }
             if chart.clicked()
                 && let Some(position) = chart.interact_pointer_pos()
@@ -1509,18 +1549,26 @@ impl QuantickApp {
                     self.drawing_anchor_at(position, history_right, total, &scale)
                 {
                     self.drawings.select(Some(drawing_index));
-                    self.drawing_drag = DrawingDrag::Anchor {
-                        drawing_index,
-                        point_index,
+                    self.drawing_drag = if self.drawings.items()[drawing_index].locked {
+                        DrawingDrag::Blocked
+                    } else {
+                        self.drawings.begin_gesture();
+                        DrawingDrag::Anchor {
+                            drawing_index,
+                            point_index,
+                        }
                     };
                 } else {
                     let selected =
                         self.drawing_at(position, areas.chart, history_right, total, &scale);
                     self.drawings.select(selected);
-                    self.drawing_drag = if selected.is_some() {
-                        DrawingDrag::Translate
-                    } else {
-                        DrawingDrag::None
+                    self.drawing_drag = match selected {
+                        Some(index) if self.drawings.items()[index].locked => DrawingDrag::Blocked,
+                        Some(_) => {
+                            self.drawings.begin_gesture();
+                            DrawingDrag::Translate
+                        }
+                        None => DrawingDrag::None,
                     };
                 }
                 drawing_drag_started = self.drawing_drag.is_active();
@@ -1553,11 +1601,16 @@ impl QuantickApp {
                             self.drawings.translate_selected(delta_bar, delta_price);
                         }
                     }
+                    DrawingDrag::Blocked => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+                    }
                     DrawingDrag::None => {}
                 }
             }
             drawing_drag_consumes_gesture = self.drawing_drag.is_active();
             if primary_released {
+                // One gesture, one undo entry — recorded only if it moved.
+                self.drawings.commit_gesture();
                 self.drawing_drag = DrawingDrag::None;
             }
         } else {
@@ -2103,11 +2156,21 @@ impl QuantickApp {
     ) {
         let clipped = painter.with_clip_rect(chart_rect);
         for (index, drawing) in self.drawings.items().iter().enumerate() {
+            if !self.drawings.is_visible(index) {
+                continue;
+            }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
             let selected = self.drawings.selected() == Some(index);
-            drawing
-                .tool
-                .paint(&clipped, chart_rect, drawing.style, &points, selected);
+            // A locked object shows no resize handles: its geometry is not
+            // editable, so the affordance would lie.
+            drawing.tool.paint(
+                &clipped,
+                chart_rect,
+                drawing.style,
+                &points,
+                selected,
+                selected && !drawing.locked,
+            );
         }
 
         if let Some(draft) = self.drawings.draft() {
@@ -2119,7 +2182,7 @@ impl QuantickApp {
             }
             draft
                 .tool
-                .paint(&clipped, chart_rect, draft.style, &points, false);
+                .paint(&clipped, chart_rect, draft.style, &points, false, false);
         }
     }
 
@@ -2416,14 +2479,127 @@ impl QuantickApp {
             });
     }
 
-    /// The selected object's inspector mirrors the compact, contextual drawing
-    /// controls traders expect: styles are per object rather than global.
-    fn draw_drawing_inspector(&mut self, ctx: &egui::Context) {
-        let Some(index) = self.drawings.selected() else {
+    /// One delete command for every trigger (inspector button, keyboard,
+    /// manager). A locked object raises the confirmation next to the trigger
+    /// instead of deleting; a landed delete raises the Undo toast.
+    fn request_delete_selected(&mut self, now: Instant) {
+        match self.drawings.delete_selected(false) {
+            DeleteOutcome::Deleted => {
+                self.drawing_delete_confirm = false;
+                self.drawing_toast = Some(DrawingToast {
+                    message: "Drawing deleted.",
+                    shown_at: now,
+                });
+            }
+            DeleteOutcome::NeedsConfirmation => self.drawing_delete_confirm = true,
+            DeleteOutcome::NothingSelected => {}
+        }
+    }
+
+    /// Keyboard grammar for drawings. Any focused widget wins: while an input
+    /// owns the keyboard, chart shortcuts stay suspended.
+    fn handle_drawing_keys(&mut self, ctx: &egui::Context, now: Instant) {
+        if ctx.memory(|memory| memory.focused().is_some()) {
+            return;
+        }
+        let (delete, undo, redo) = ctx.input(|input| {
+            let command = input.modifiers.command;
+            let shift = input.modifiers.shift;
+            (
+                input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace),
+                command && !shift && input.key_pressed(egui::Key::Z),
+                (command && input.key_pressed(egui::Key::Y))
+                    || (command && shift && input.key_pressed(egui::Key::Z)),
+            )
+        });
+        // While a draft is being placed the delete keys belong to the draft
+        // workflow, not to the previously selected object.
+        if delete && self.drawings.draft().is_none() {
+            self.request_delete_selected(now);
+        }
+        if undo {
+            self.drawings.undo();
+        }
+        if redo {
+            self.drawings.redo();
+        }
+    }
+
+    /// Commit a pending inspector style gesture as one undo entry.
+    fn commit_style_gesture(&mut self) {
+        if let Some((index, before)) = self.drawing_style_baseline.take() {
+            self.drawings.record_edit_of(index, before);
+        }
+    }
+
+    /// The delete toast: visible for [`TOAST_UNDO_MS`], with an Undo button
+    /// driving the same history as Ctrl+Z.
+    fn draw_drawing_toast(&mut self, ctx: &egui::Context, now: Instant) {
+        let Some(toast) = &self.drawing_toast else {
             return;
         };
-        let title = self.drawings.items()[index].tool.settings_title();
-        let mut delete = false;
+        if now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_UNDO_MS) {
+            self.drawing_toast = None;
+            return;
+        }
+        let message = toast.message;
+        let mut undo_clicked = false;
+        egui::Area::new(egui::Id::new("drawing_toast"))
+            .anchor(
+                egui::Align2::CENTER_BOTTOM,
+                egui::vec2(0.0, -TOAST_BOTTOM_MARGIN_PX),
+            )
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(theme::TAG_BG)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .rounding(6.0_f32)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(message);
+                            if ui.button("Undo").clicked() {
+                                undo_clicked = true;
+                            }
+                        });
+                    });
+            });
+        if undo_clicked {
+            self.drawings.undo();
+            self.drawing_toast = None;
+        }
+    }
+
+    /// The selected object's inspector mirrors the compact, contextual drawing
+    /// controls traders expect: styles are per object rather than global.
+    /// Non-modal by contract: it never captures the whole canvas and never
+    /// blocks moving the geometry underneath it.
+    fn draw_drawing_inspector(&mut self, ctx: &egui::Context, now: Instant) {
+        let Some(index) = self.drawings.selected() else {
+            self.drawing_delete_confirm = false;
+            self.commit_style_gesture();
+            return;
+        };
+        // A style gesture that outlived its object's selection commits now.
+        if self
+            .drawing_style_baseline
+            .as_ref()
+            .is_some_and(|(baseline_index, _)| *baseline_index != index)
+        {
+            self.commit_style_gesture();
+        }
+        let before = self.drawings.items()[index].clone();
+        let title = before.tool.settings_title();
+        let locked = before.locked;
+        let hidden = before.hidden;
+        let show_confirm = self.drawing_delete_confirm && locked;
+        let mut delete_requested = false;
+        let mut toggle_lock = false;
+        let mut toggle_hidden = false;
+        let mut cancel_delete = false;
+        let mut force_delete = false;
+        let mut style_changed = false;
         let mut open = true;
         let inspector_interactable = !self.drawing_drag.is_active();
         egui::Window::new(title)
@@ -2435,33 +2611,109 @@ impl QuantickApp {
             .interactable(inspector_interactable)
             .resizable(false)
             .show(ctx, |ui| {
+                // Always-visible, textual object actions (UX spec: never
+                // glyph-only, never behind a scroll).
+                ui.horizontal(|ui| {
+                    let eye_label = if hidden {
+                        "Show drawing"
+                    } else {
+                        "Hide drawing"
+                    };
+                    if ui.button(eye_label).clicked() {
+                        toggle_hidden = true;
+                    }
+                    let lock_label = if locked {
+                        "Unlock drawing"
+                    } else {
+                        "Lock drawing"
+                    };
+                    if ui.button(lock_label).clicked() {
+                        toggle_lock = true;
+                    }
+                    if ui.button("Delete drawing").clicked() {
+                        delete_requested = true;
+                    }
+                });
+                if locked {
+                    ui.label("Locked - protected from accidental moves. Style stays editable.");
+                }
+                if hidden {
+                    ui.label("Hidden - Show drawing brings it back.");
+                }
+                if show_confirm {
+                    ui.separator();
+                    ui.label("Delete locked drawing?");
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            cancel_delete = true;
+                        }
+                        if ui.button("Delete anyway").clicked() {
+                            force_delete = true;
+                        }
+                    });
+                }
+                ui.separator();
                 if let Some(drawing) = self.drawings.selected_mut() {
                     ui.label("Style");
-                    ui.color_edit_button_srgba(&mut drawing.style.color);
-                    ui.add(
-                        egui::Slider::new(
-                            &mut drawing.style.width_px,
-                            MIN_DRAWING_WIDTH_PX..=MAX_DRAWING_WIDTH_PX,
+                    style_changed |= ui
+                        .color_edit_button_srgba(&mut drawing.style.color)
+                        .changed();
+                    style_changed |= ui
+                        .add(
+                            egui::Slider::new(
+                                &mut drawing.style.width_px,
+                                MIN_DRAWING_WIDTH_PX..=MAX_DRAWING_WIDTH_PX,
+                            )
+                            .text("line width (px)"),
                         )
-                        .text("line width (px)"),
-                    );
-                    ui.add(
-                        egui::Slider::new(
-                            &mut drawing.style.fill_alpha,
-                            0..=MAX_DRAWING_FILL_ALPHA,
+                        .changed();
+                    style_changed |= ui
+                        .add(
+                            egui::Slider::new(
+                                &mut drawing.style.fill_alpha,
+                                0..=MAX_DRAWING_FILL_ALPHA,
+                            )
+                            .text("fill opacity"),
                         )
-                        .text("fill opacity"),
-                    );
-                    ui.separator();
-                    if ui.button("Delete drawing").clicked() {
-                        delete = true;
-                    }
+                        .changed();
                 }
             });
-        if delete {
-            self.drawings.delete_selected();
-        } else if !open {
+        // Coalesce the style gesture: capture the pre-edit object at the
+        // first change, commit one undo entry once pointer and keyboard let
+        // go. A whole slider drag lands as a single command.
+        if style_changed && self.drawing_style_baseline.is_none() {
+            self.drawing_style_baseline = Some((index, before));
+        }
+        let gesture_settled = ctx.input(|input| !input.pointer.any_down())
+            && ctx.memory(|memory| memory.focused().is_none());
+        if gesture_settled {
+            self.commit_style_gesture();
+        }
+        if toggle_hidden {
+            self.drawings.set_selected_hidden(!hidden);
+        }
+        if toggle_lock {
+            self.drawings.set_selected_locked(!locked);
+            self.drawing_delete_confirm = false;
+        }
+        if delete_requested {
+            self.request_delete_selected(now);
+        }
+        if cancel_delete {
+            self.drawing_delete_confirm = false;
+        }
+        if force_delete {
+            self.drawing_delete_confirm = false;
+            if self.drawings.delete_selected(true) == DeleteOutcome::Deleted {
+                self.drawing_toast = Some(DrawingToast {
+                    message: "Drawing deleted.",
+                    shown_at: now,
+                });
+            }
+        }
+        if !open {
             self.drawings.select(None);
+            self.drawing_delete_confirm = false;
         }
     }
 
@@ -2640,6 +2892,7 @@ impl QuantickApp {
         // Rail shortcuts first: Esc/1/2 must be read before any widget can
         // claim the keyboard this frame.
         self.toolrail.handle_keys(ctx);
+        self.handle_drawing_keys(ctx, now);
         // Chrome panels claim their zones outside-in (§5): menu and toolbar
         // on top, the status line at the very bottom with the replay
         // transport directly above it, then the corner toolbox and right dock.
@@ -2652,7 +2905,12 @@ impl QuantickApp {
         if let Some(action) = self.replay_view.draw(ctx, self.replay.as_ref()) {
             self.apply_replay_action(action);
         }
-        self.toolrail.draw(ctx);
+        {
+            let Self {
+                toolrail, drawings, ..
+            } = self;
+            toolrail.draw(ctx, drawings);
+        }
         let dock_response = {
             let Self {
                 dock,
@@ -2702,7 +2960,8 @@ impl QuantickApp {
             });
         // Floating drawing controls must be registered after the opaque
         // central canvas so they stay in front of the chart.
-        self.draw_drawing_inspector(ctx);
+        self.draw_drawing_inspector(ctx, now);
+        self.draw_drawing_toast(ctx, now);
         if notice_action == notice_card::NoticeAction::Retry {
             self.restart_feed();
         }
@@ -3258,12 +3517,22 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        run_frame_with_modifiers(app, ctx, events, egui::Modifiers::NONE)
+    }
+
+    fn run_frame_with_modifiers(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::pos2(0.0, 0.0),
                 egui::vec2(1400.0, 900.0),
             )),
             events,
+            modifiers,
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
@@ -3545,6 +3814,247 @@ mod tests {
                 .iter()
                 .any(|text| text.contains("Rectangle settings")),
             "the non-modal settings window remains usable after resizing"
+        );
+    }
+
+    fn key_press(key: egui::Key) -> egui::Event {
+        key_press_with(key, egui::Modifiers::NONE)
+    }
+
+    fn key_press_with(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// Whether any painted line segment uses `color` — proof a stroke of that
+    /// colour reached the screen (or, negated, that a hidden object did not).
+    fn painted_line_with_color(output: &egui::FullOutput, color: egui::Color32) -> bool {
+        output.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::LineSegment { stroke, .. } => {
+                stroke.color == egui::epaint::ColorMode::Solid(color)
+            }
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn locked_drawing_rejects_geometry_and_keyboard_delete() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        app.drawings.set_selected_locked(true);
+
+        let before = app.drawings.items()[0].points[0];
+        let viewport_before = app.viewport.right_edge_bar(app.slots());
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(1_000.0, 300.0),
+            egui::pos2(1_040.0, 340.0),
+        );
+        assert_eq!(
+            app.drawings.items()[0].points[0],
+            before,
+            "locked geometry must not move"
+        );
+        assert_eq!(
+            app.viewport.right_edge_bar(app.slots()),
+            viewport_before,
+            "the blocked gesture still belongs to the drawing - the chart must not pan"
+        );
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+        assert_eq!(
+            app.drawings.items().len(),
+            1,
+            "keyboard delete must not remove a locked drawing"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("Delete locked drawing?")),
+            "the same confirmation appears next to the trigger; painted: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn one_drag_creates_one_undo_entry() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        assert_eq!(
+            app.drawings.undo_depth(),
+            1,
+            "creating the drawing is the first undo entry"
+        );
+
+        let before_drag = app.drawings.items()[0].points[0];
+        let start = egui::pos2(1_000.0, 300.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        for step in [egui::pos2(1_010.0, 312.0), egui::pos2(1_025.0, 326.0)] {
+            run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(step)]);
+        }
+        let end = egui::pos2(1_040.0, 340.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
+        );
+        assert_ne!(
+            app.drawings.items()[0].points[0],
+            before_drag,
+            "the drag really moved the line"
+        );
+
+        assert_eq!(
+            app.drawings.undo_depth(),
+            2,
+            "a multi-frame drag coalesces into exactly one undo entry"
+        );
+        assert!(app.drawings.undo(), "undo the drag");
+        assert_eq!(
+            app.drawings.items()[0].points[0],
+            before_drag,
+            "one undo rewinds the whole drag"
+        );
+        assert!(app.drawings.undo(), "undo the creation");
+        assert!(app.drawings.items().is_empty());
+    }
+
+    #[test]
+    fn delete_and_backspace_never_leak_out_of_focused_inputs() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        assert_eq!(app.drawings.items().len(), 1);
+
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("test-text-input")));
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                key_press(egui::Key::Delete),
+                key_press(egui::Key::Backspace),
+            ],
+        );
+        assert_eq!(
+            app.drawings.items().len(),
+            1,
+            "while an input owns the keyboard the delete keys stay in it"
+        );
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+        assert!(
+            app.drawings.items().is_empty(),
+            "with focus released the same key deletes the selection"
+        );
+    }
+
+    #[test]
+    fn keyboard_delete_offers_an_undo_toast_and_ctrl_z_restores() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+        assert!(app.drawings.items().is_empty());
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        for label in ["Drawing deleted.", "Undo"] {
+            assert!(
+                texts.iter().any(|text| text.contains(label)),
+                "the toast must offer {label:?}; painted: {texts:?}"
+            );
+        }
+
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+        assert_eq!(
+            app.drawings.items().len(),
+            1,
+            "Ctrl+Z drives the same history as the toast's Undo"
+        );
+
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::Y, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+        assert!(
+            app.drawings.items().is_empty(),
+            "Ctrl+Y redoes the undone delete"
+        );
+    }
+
+    #[test]
+    fn hidden_drawing_neither_paints_nor_hit_tests() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let stroke_position = egui::pos2(700.0, 300.0);
+        click_chart(&mut app, &ctx, stroke_position);
+        let marker = egui::Color32::from_rgb(1, 2, 3);
+        app.drawings
+            .selected_mut()
+            .expect("placement selects the line")
+            .style
+            .color = marker;
+        assert!(
+            painted_line_with_color(&run_frame(&mut app, &ctx), marker),
+            "the visible line paints its stroke"
+        );
+
+        app.drawings.set_selected_hidden(true);
+        assert!(
+            !painted_line_with_color(&run_frame(&mut app, &ctx), marker),
+            "a hidden drawing must not paint"
+        );
+
+        app.drawings.select(None);
+        click_chart(&mut app, &ctx, stroke_position);
+        assert_eq!(
+            app.drawings.selected(),
+            None,
+            "a hidden drawing must not hit-test"
+        );
+
+        let viewport_before = app.viewport.right_edge_bar(app.slots());
+        drag_chart(&mut app, &ctx, stroke_position, egui::pos2(640.0, 260.0));
+        assert_ne!(
+            app.viewport.right_edge_bar(app.slots()),
+            viewport_before,
+            "over a hidden drawing the gesture belongs to the chart again"
         );
     }
 

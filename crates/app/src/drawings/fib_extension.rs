@@ -39,10 +39,9 @@ impl DrawingToolImpl for FibExtension {
         _chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
     ) {
         if points.len() == 2 {
-            painter.line_segment([points[0], points[1]], drawing_stroke(style, selected));
+            painter.line_segment([points[0], points[1]], drawing_stroke(style));
         } else if points.len() == 3 {
             paint_fib_levels(
                 painter,
@@ -54,7 +53,7 @@ impl DrawingToolImpl for FibExtension {
                     origin_y: points[2].y,
                 },
                 &LEVELS,
-                drawing_stroke(style, selected),
+                drawing_stroke(style),
                 style.color,
             );
         }
