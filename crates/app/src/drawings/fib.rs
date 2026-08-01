@@ -8,10 +8,11 @@
 //! differ between the two kinds.
 
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX,
@@ -28,6 +29,10 @@ pub const MAX_BAND_ALPHA: u8 = 153;
 pub const DEFAULT_BAND_ALPHA: u8 = 24;
 /// Dash geometry of the anchor guides shown while selected.
 const GUIDE_DASH_PX: f32 = 4.0;
+/// Inline capacity of the per-frame level projection — one slot above the
+/// largest built-in preset (Extended, 11 levels), so no shipped preset ever
+/// touches the heap while painting.
+const PROJECTED_LEVELS_INLINE: usize = 12;
 /// Version stamp of the exported preset format.
 const PRESET_FORMAT_VERSION: u32 = 1;
 
@@ -203,7 +208,7 @@ struct LabelCache {
 }
 
 /// The tool-owned state of one Fib object.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FibPayload {
     pub kind: FibKind,
     pub levels: Vec<FibLevelSpec>,
@@ -217,6 +222,25 @@ pub struct FibPayload {
     /// Bumped by the editor so the label cache notices config edits.
     revision: u64,
     cache: RefCell<LabelCache>,
+}
+
+impl Clone for FibPayload {
+    fn clone(&self) -> Self {
+        Self {
+            kind: self.kind,
+            levels: self.levels.clone(),
+            band_alpha: self.band_alpha,
+            log_scale: self.log_scale,
+            label_mode: self.label_mode,
+            label_position: self.label_position,
+            extend: self.extend,
+            revision: self.revision,
+            // The cache is memoization, not state: a clone (undo snapshot,
+            // inspector pre-edit copy) starts cold instead of copying
+            // formatted strings around.
+            cache: RefCell::new(LabelCache::default()),
+        }
+    }
 }
 
 impl PartialEq for FibPayload {
@@ -490,38 +514,42 @@ pub(super) fn paint(
     let log = effective_log(payload, a, b, c);
     let (left, right) = level_span(points, chart_rect, payload.extend);
 
+    // Project every visible level once — the bands, the lines and the label
+    // slots all read this one pass, so they can never drift apart.
+    struct ProjectedLevel<'a> {
+        level: &'a FibLevelSpec,
+        y: f32,
+        color: egui::Color32,
+    }
+    let projected: SmallVec<[ProjectedLevel<'_>; PROJECTED_LEVELS_INLINE]> = payload
+        .levels
+        .iter()
+        .filter(|level| level.visible)
+        .filter_map(|level| {
+            level_price(payload.kind, log, a, b, c, level.ratio).map(|price| ProjectedLevel {
+                level,
+                y: ctxt.scale.y(price),
+                color: level_color(level, style),
+            })
+        })
+        .collect();
+
     // Band fills first, under the level lines. Skipped on the halo pass.
     if !ctxt.halo && payload.band_alpha > 0 {
-        let visible: Vec<(f32, egui::Color32)> = payload
-            .levels
-            .iter()
-            .filter(|level| level.visible)
-            .filter_map(|level| {
-                level_price(payload.kind, log, a, b, c, level.ratio)
-                    .map(|price| (ctxt.scale.y(price), level_color(level, style)))
-            })
-            .collect();
-        for (index, level) in payload
-            .levels
-            .iter()
-            .filter(|level| level.visible)
-            .enumerate()
-        {
-            if !level.fill_to_next || index + 1 >= visible.len() {
+        for pair in projected.windows(2) {
+            if !pair[0].level.fill_to_next {
                 continue;
             }
-            let (y, color) = visible[index];
-            let (next_y, _) = visible[index + 1];
             let fill = egui::Color32::from_rgba_unmultiplied(
-                color.r(),
-                color.g(),
-                color.b(),
+                pair[0].color.r(),
+                pair[0].color.g(),
+                pair[0].color.b(),
                 payload.band_alpha,
             );
             painter.rect_filled(
                 egui::Rect::from_min_max(
-                    egui::pos2(left, y.min(next_y)),
-                    egui::pos2(right, y.max(next_y)),
+                    egui::pos2(left, pair[0].y.min(pair[1].y)),
+                    egui::pos2(right, pair[0].y.max(pair[1].y)),
                 ),
                 egui::Rounding::ZERO,
                 fill,
@@ -529,22 +557,21 @@ pub(super) fn paint(
         }
     }
 
-    // Level lines (and cached labels on the real pass).
+    // Level lines, with the cached labels on the real pass — the cache is
+    // borrowed, never copied, on the frame path.
     let labels = (!ctxt.halo).then(|| labels_for(payload, a, b, c, log));
-    let mut label_index = 0usize;
-    for level in payload.levels.iter().filter(|level| level.visible) {
-        let Some(price) = level_price(payload.kind, log, a, b, c, level.ratio) else {
-            continue;
-        };
-        let y = ctxt.scale.y(price);
+    for (index, level) in projected.iter().enumerate() {
         let line_stroke = if ctxt.halo {
             stroke
         } else {
-            egui::Stroke::new(style.width_px, level_color(level, style))
+            egui::Stroke::new(style.width_px, level.color)
         };
-        painter.line_segment([egui::pos2(left, y), egui::pos2(right, y)], line_stroke);
+        painter.line_segment(
+            [egui::pos2(left, level.y), egui::pos2(right, level.y)],
+            line_stroke,
+        );
         if let Some(labels) = &labels
-            && let Some(text) = labels.get(label_index)
+            && let Some(text) = labels.labels.get(index)
         {
             let (anchor, x) = match payload.label_position {
                 LabelPosition::RightOutside => {
@@ -556,14 +583,13 @@ pub(super) fn paint(
                 LabelPosition::Left => (egui::Align2::LEFT_BOTTOM, left + FIB_LABEL_OFFSET_PX),
             };
             painter.text(
-                egui::pos2(x, y),
+                egui::pos2(x, level.y),
                 anchor,
                 text,
                 egui::FontId::monospace(FIB_LABEL_SIZE_PX),
-                level_color(level, style),
+                level.color,
             );
         }
-        label_index += 1;
     }
 
     // Anchor guides while selected: dashed A-B (and B-C for extension).
@@ -586,30 +612,31 @@ pub(super) fn paint(
     }
 }
 
-/// Rebuild the label cache if anchors or config changed; return a clone of
-/// the cached strings (cheap: a handful of small strings, only while a Fib
-/// is actually painting labels).
-fn labels_for(payload: &FibPayload, a: f64, b: f64, c: f64, log: bool) -> Vec<String> {
+/// Rebuild the label cache if anchors or config changed, then hand out a
+/// borrow of it — the frame path never copies the formatted strings.
+fn labels_for(payload: &FibPayload, a: f64, b: f64, c: f64, log: bool) -> Ref<'_, LabelCache> {
     let key = (
         a.to_bits() ^ u64::from(log),
         b.to_bits(),
         c.to_bits(),
         payload.revision,
     );
-    let mut cache = payload.cache.borrow_mut();
-    if cache.key != key {
-        cache.key = key;
-        cache.labels = payload
-            .levels
-            .iter()
-            .filter(|level| level.visible)
-            .filter_map(|level| {
-                level_price(payload.kind, log, a, b, c, level.ratio)
-                    .map(|price| format_label(payload.label_mode, level, price))
-            })
-            .collect();
+    {
+        let mut cache = payload.cache.borrow_mut();
+        if cache.key != key {
+            cache.key = key;
+            cache.labels = payload
+                .levels
+                .iter()
+                .filter(|level| level.visible)
+                .filter_map(|level| {
+                    level_price(payload.kind, log, a, b, c, level.ratio)
+                        .map(|price| format_label(payload.label_mode, level, price))
+                })
+                .collect();
+        }
     }
-    cache.labels.clone()
+    payload.cache.borrow()
 }
 
 /// Hit-test one Fib object: any visible level line, or the anchor legs.
@@ -1112,14 +1139,18 @@ mod tests {
     #[test]
     fn the_label_cache_rebuilds_only_when_prices_or_config_change() {
         let mut payload = FibPayload::new(FibKind::Retracement);
-        let first = labels_for(&payload, 200.0, 100.0, 100.0, false);
+        let first = labels_for(&payload, 200.0, 100.0, 100.0, false)
+            .labels
+            .clone();
         assert_eq!(first.len(), 7);
-        let again = labels_for(&payload, 200.0, 100.0, 100.0, false);
+        let again = labels_for(&payload, 200.0, 100.0, 100.0, false)
+            .labels
+            .clone();
         assert_eq!(first, again);
         // A config edit bumps the revision and the labels follow.
         payload.levels[0].label = "top".to_owned();
         payload.touch();
         let after = labels_for(&payload, 200.0, 100.0, 100.0, false);
-        assert!(after[0].starts_with("top"));
+        assert!(after.labels[0].starts_with("top"));
     }
 }

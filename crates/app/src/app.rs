@@ -69,6 +69,15 @@ const INSPECTOR_DEFAULT_WIDTH_PX: f32 = 320.0;
 const INSPECTOR_LEVELS_WIDTH_PX: f32 = 360.0;
 /// Gap kept between the inspector and the selected object's bounding box.
 const INSPECTOR_OBJECT_GAP_PX: f32 = 12.0;
+/// Assumed inspector height for placement before its first frame reports one.
+const INSPECTOR_FALLBACK_HEIGHT_PX: f32 = 280.0;
+/// Dragging the price field across the whole visible range takes this many
+/// steps, whatever the symbol's price magnitude.
+const PRICE_DRAG_STEPS: f64 = 200.0;
+/// DragValue speed of bar-index coordinates, in bars per drag point.
+const BAR_DRAG_SPEED: f64 = 0.25;
+/// Where the object manager first opens: under the toolbox's home corner.
+const DRAWING_MANAGER_DEFAULT_POSITION: egui::Pos2 = egui::pos2(70.0, 140.0);
 /// How long the delete toast keeps its Undo affordance on screen (UX spec).
 const TOAST_UNDO_MS: u64 = 8_000;
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
@@ -2933,9 +2942,9 @@ impl QuantickApp {
         ui.separator();
 
         let tab = self.inspector_tab;
-        let price_speed = self
-            .last_auto_range
-            .map_or(1.0, |(lo, hi)| ((hi - lo) / 200.0).abs().max(1e-9));
+        let price_speed = self.last_auto_range.map_or(1.0, |(lo, hi)| {
+            ((hi - lo) / PRICE_DRAG_STEPS).abs().max(1e-9)
+        });
         let Self {
             drawings,
             drawing_presets,
@@ -2986,7 +2995,7 @@ impl QuantickApp {
                             actions.edited |= ui
                                 .add(
                                     egui::DragValue::new(&mut point.bar)
-                                        .speed(0.25)
+                                        .speed(BAR_DRAG_SPEED)
                                         .prefix("bar "),
                                 )
                                 .changed();
@@ -3085,9 +3094,10 @@ impl QuantickApp {
         let bbox = bbox.expand(DRAWING_ANCHOR_RADIUS_PX);
         let size = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-            .map_or(egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, 280.0), |rect| {
-                rect.size()
-            });
+            .map_or(
+                egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
+                |rect| rect.size(),
+            );
         let gap = INSPECTOR_OBJECT_GAP_PX;
         let candidates = [
             egui::pos2(bbox.right() + gap, bbox.top()),
@@ -3228,7 +3238,7 @@ impl QuantickApp {
         egui::Window::new("Drawn objects")
             .id(egui::Id::new("drawing_manager"))
             .open(&mut open)
-            .default_pos(egui::pos2(70.0, 140.0))
+            .default_pos(DRAWING_MANAGER_DEFAULT_POSITION)
             .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
             .collapsible(false)
             .resizable(false)
