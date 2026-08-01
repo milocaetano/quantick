@@ -103,6 +103,10 @@ impl DrawingDrag {
 struct DrawingToast {
     message: &'static str,
     shown_at: Instant,
+    /// Whether the toast offers Undo. A delete does; the honest clear after
+    /// a bar rebuild does not — its history is gone with the drawings, and
+    /// a dead Undo button would lie.
+    offers_undo: bool,
 }
 
 /// Which inspector tab is open. Tabs exist per capability: every tool gets
@@ -1148,8 +1152,9 @@ impl QuantickApp {
 
     /// Bar-index anchors are meaningful only for the market/spec that created
     /// them. Clear them on a source or aggregation rebuild rather than
-    /// silently attaching a mark to different market data.
+    /// silently attaching a mark to different market data — and say so.
     fn reset_drawing_overlay(&mut self) {
+        let had_drawings = !self.drawings.items().is_empty();
         self.drawings.clear();
         self.toolrail.arm(Tool::Pointer);
         self.drawing_hover = None;
@@ -1159,9 +1164,14 @@ impl QuantickApp {
         self.drawing_delete_confirm = false;
         self.inspector_edit_baseline = None;
         self.inspector_last_selection = None;
-        // The cleared history cannot resurrect anything, so the toast's Undo
-        // affordance would lie — drop it with the drawings.
-        self.drawing_toast = None;
+        // The cleared history cannot resurrect anything, so this toast
+        // offers no Undo — a dead button would lie. But losing the marks is
+        // never silent.
+        self.drawing_toast = had_drawings.then(|| DrawingToast {
+            message: "Drawings cleared - the bars were rebuilt under them.",
+            shown_at: Instant::now(),
+            offers_undo: false,
+        });
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -2676,6 +2686,7 @@ impl QuantickApp {
                 self.drawing_toast = Some(DrawingToast {
                     message: "Drawing deleted.",
                     shown_at: now,
+                    offers_undo: true,
                 });
             }
             DeleteOutcome::NeedsConfirmation => self.drawing_delete_confirm = true,
@@ -2802,6 +2813,7 @@ impl QuantickApp {
             return;
         }
         let message = toast.message;
+        let offers_undo = toast.offers_undo;
         let mut undo_clicked = false;
         egui::Area::new(egui::Id::new("drawing_toast"))
             .anchor(
@@ -2818,7 +2830,7 @@ impl QuantickApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(message);
-                            if ui.button("Undo").clicked() {
+                            if offers_undo && ui.button("Undo").clicked() {
                                 undo_clicked = true;
                             }
                         });
@@ -3037,6 +3049,7 @@ impl QuantickApp {
                 self.drawing_toast = Some(DrawingToast {
                     message: "Drawing deleted.",
                     shown_at: now,
+                    offers_undo: true,
                 });
             }
         }
@@ -4856,6 +4869,41 @@ mod tests {
             app.viewport.right_edge_bar(app.slots()),
             viewport_before,
             "over a hidden drawing the gesture belongs to the chart again"
+        );
+    }
+
+    #[test]
+    fn a_bar_rebuild_clears_drawings_with_an_explicit_notice_and_no_dead_undo() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.drawings.place(
+            drawing_tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+
+        evt_tx.try_send(FeedEvent::Reset).unwrap();
+        app.drain_feed();
+        assert!(app.drawings.items().is_empty());
+        assert!(
+            app.drawing_toast.is_some(),
+            "the clear must raise the notice toast"
+        );
+
+        // A fresh egui Area sizes itself on its first frame; the text is
+        // on screen from the second one.
+        run_frame(&mut app, &ctx);
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts.iter().any(|text| text.contains("Drawings cleared")),
+            "losing the marks is never silent; painted: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text == "Undo"),
+            "the clear toast must not offer an Undo it cannot honour"
         );
     }
 
