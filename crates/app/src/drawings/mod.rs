@@ -7,11 +7,15 @@
 //! about UI marks.
 
 pub mod action_bar;
+pub mod fib;
+pub mod presets;
 
+use std::any::Any;
 use std::fmt;
 
 use eframe::egui;
 
+use crate::chart::PriceScale;
 use crate::theme;
 
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
@@ -36,24 +40,112 @@ const SELECTION_HALO_EXTRA_WIDTH_PX: f32 = 3.5;
 pub(super) const FIB_LABEL_OFFSET_PX: f32 = 3.0;
 pub(super) const FIB_LABEL_SIZE_PX: f32 = 10.0;
 
-pub(super) struct FibGeometry {
-    pub left: f32,
-    pub right: f32,
-    pub first_y: f32,
-    pub second_y: f32,
-    pub origin_y: f32,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct FibLevel {
-    ratio: f64,
-    label: &'static str,
-}
-
-impl FibLevel {
-    pub(super) const fn new(ratio: f64, label: &'static str) -> Self {
-        Self { ratio, label }
+/// Tool-owned state beyond anchors and common style. A property unique to
+/// one tool lives in that tool's payload, never in the shared envelope, so
+/// the next tool cannot force the model or the central inspector open.
+pub trait DrawingPayload: fmt::Debug {
+    fn clone_box(&self) -> Box<dyn DrawingPayload>;
+    fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    /// Serialize the payload for a named preset. Coordinates, lock and
+    /// visibility never travel with a preset, only the tool-owned config.
+    fn export_preset(&self) -> Option<toml::Value> {
+        None
     }
+    /// Apply a previously exported preset. `false` leaves the payload alone.
+    fn import_preset(&mut self, _value: &toml::Value) -> bool {
+        false
+    }
+}
+
+impl Clone for Box<dyn DrawingPayload> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+/// Payload of tools whose whole state is anchors + common style.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NoPayload;
+
+impl DrawingPayload for NoPayload {
+    fn clone_box(&self) -> Box<dyn DrawingPayload> {
+        Box::new(Self)
+    }
+    fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {
+        other.as_any().downcast_ref::<Self>().is_some()
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Named-preset storage a tool's inspector tab can talk to without knowing
+/// where presets live. Presets carry an opaque payload export; the host
+/// stores them per tool id, versioned, surviving restarts.
+pub trait PresetHost {
+    fn custom_preset_names(&self, tool_id: &str) -> Vec<String>;
+    fn load_custom_preset(&self, tool_id: &str, name: &str) -> Option<toml::Value>;
+    /// `false` means the name exists and `overwrite` was not set — the
+    /// caller asks the user before trying again.
+    fn save_custom_preset(
+        &mut self,
+        tool_id: &str,
+        name: &str,
+        value: toml::Value,
+        overwrite: bool,
+    ) -> bool;
+    fn delete_custom_preset(&mut self, tool_id: &str, name: &str);
+    fn default_preset(&self, tool_id: &str) -> Option<String>;
+    fn set_default_preset(&mut self, tool_id: &str, name: Option<String>);
+}
+
+/// A host with no storage: custom presets are absent, saving reports success
+/// and drops the value. For contexts without a store (tests, previews).
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub struct NullPresetHost;
+
+#[cfg(test)]
+impl PresetHost for NullPresetHost {
+    fn custom_preset_names(&self, _tool_id: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn load_custom_preset(&self, _tool_id: &str, _name: &str) -> Option<toml::Value> {
+        None
+    }
+    fn save_custom_preset(
+        &mut self,
+        _tool_id: &str,
+        _name: &str,
+        _value: toml::Value,
+        _overwrite: bool,
+    ) -> bool {
+        true
+    }
+    fn delete_custom_preset(&mut self, _tool_id: &str, _name: &str) {}
+    fn default_preset(&self, _tool_id: &str) -> Option<String> {
+        None
+    }
+    fn set_default_preset(&mut self, _tool_id: &str, _name: Option<String>) {}
+}
+
+/// Everything a tool may need beyond raw screen anchors when painting or
+/// hit-testing: its own payload, the chart-space anchors and the price scale
+/// that projected them (log-scaled tools compute prices, then project).
+#[derive(Clone, Copy)]
+pub struct DrawContext<'a> {
+    pub payload: &'a dyn DrawingPayload,
+    pub anchors: &'a [ChartPoint],
+    pub scale: &'a PriceScale,
+    pub selected: bool,
+    /// True while the wrapper paints the selection halo pass: tools draw
+    /// only their stroke geometry then — no fills, no labels.
+    pub halo: bool,
 }
 
 /// The implementation port every drawing plugs into. Selection visuals (halo
@@ -73,12 +165,31 @@ trait DrawingToolImpl: Sync {
     fn supports_fill(&self) -> bool {
         false
     }
+    /// Fresh tool-owned state for a newly placed object.
+    fn default_payload(&self) -> Box<dyn DrawingPayload> {
+        Box::new(NoPayload)
+    }
+    /// Title of the tool-owned inspector tab, if the tool brings one.
+    fn extra_tab(&self) -> Option<&'static str> {
+        None
+    }
+    /// Draw the tool-owned inspector tab. Returns whether anything was
+    /// edited (the caller folds it into the shared undo coalescing).
+    fn draw_extra_tab(
+        &self,
+        _ui: &mut egui::Ui,
+        _drawing: &mut Drawing,
+        _host: &mut dyn PresetHost,
+    ) -> bool {
+        false
+    }
     fn paint(
         &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
     );
     fn hit_test(
         &self,
@@ -86,6 +197,7 @@ trait DrawingToolImpl: Sync {
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
+        ctxt: &DrawContext<'_>,
     ) -> bool;
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2);
@@ -117,6 +229,26 @@ impl DrawingTool {
     }
 
     #[must_use]
+    pub fn default_payload(self) -> Box<dyn DrawingPayload> {
+        self.0.default_payload()
+    }
+
+    #[must_use]
+    pub fn extra_tab(self) -> Option<&'static str> {
+        self.0.extra_tab()
+    }
+
+    /// Draw the tool-owned inspector tab; returns whether anything changed.
+    pub fn draw_extra_tab(
+        self,
+        ui: &mut egui::Ui,
+        drawing: &mut Drawing,
+        host: &mut dyn PresetHost,
+    ) -> bool {
+        self.0.draw_extra_tab(ui, drawing, host)
+    }
+
+    #[must_use]
     pub fn icon(self) -> &'static str {
         self.0.icon()
     }
@@ -140,19 +272,24 @@ impl DrawingTool {
         chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
-        selected: bool,
+        ctxt: &DrawContext<'_>,
         show_handles: bool,
     ) {
-        if selected {
-            let halo = DrawingStyle {
+        if ctxt.selected {
+            let halo_style = DrawingStyle {
                 color: SELECTION_HALO_COLOR,
                 width_px: style.width_px + SELECTION_HALO_EXTRA_WIDTH_PX,
                 fill_alpha: 0,
             };
-            self.0.paint(painter, chart_rect, halo, points);
+            let halo_ctxt = DrawContext {
+                halo: true,
+                ..*ctxt
+            };
+            self.0
+                .paint(painter, chart_rect, halo_style, points, &halo_ctxt);
         }
-        self.0.paint(painter, chart_rect, style, points);
-        if selected && show_handles {
+        self.0.paint(painter, chart_rect, style, points, ctxt);
+        if ctxt.selected && show_handles {
             let ring = egui::Stroke::new(SELECTED_ANCHOR_RING_WIDTH_PX, theme::ACCENT);
             for point in points {
                 painter.circle_filled(*point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
@@ -168,11 +305,14 @@ impl DrawingTool {
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
+        ctxt: &DrawContext<'_>,
     ) -> bool {
         points
             .iter()
             .any(|point| point.distance_sq(position) <= radius_px * radius_px)
-            || self.0.hit_test(chart_rect, points, position, radius_px)
+            || self
+                .0
+                .hit_test(chart_rect, points, position, radius_px, ctxt)
     }
 
     #[cfg(test)]
@@ -239,7 +379,7 @@ impl Default for DrawingStyle {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Drawing {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
@@ -249,6 +389,20 @@ pub struct Drawing {
     pub locked: bool,
     /// A hidden drawing neither paints nor hit-tests, and stays recoverable.
     pub hidden: bool,
+    /// Tool-owned state (Fib levels, a future tool's own properties). The
+    /// registry creates it; the shared envelope never learns its fields.
+    pub payload: Box<dyn DrawingPayload>,
+}
+
+impl PartialEq for Drawing {
+    fn eq(&self, other: &Self) -> bool {
+        self.tool == other.tool
+            && self.points == other.points
+            && self.style == other.style
+            && self.locked == other.locked
+            && self.hidden == other.hidden
+            && self.payload.eq_dyn(other.payload.as_ref())
+    }
 }
 
 /// What a delete request did. Locked objects demand an explicit `force`.
@@ -399,9 +553,22 @@ impl Drawings {
         true
     }
 
-    /// Add a placement anchor. `true` means the object became complete;
-    /// completing an object records one undo entry for the whole creation.
+    /// [`Self::place_with`] with the tool's stock payload — the test-side
+    /// shorthand; the app always goes through `place_with` to honour the
+    /// user's default preset.
+    #[cfg(test)]
     pub fn place(&mut self, tool: DrawingTool, point: ChartPoint) -> bool {
+        self.place_with(tool, point, DrawingTool::default_payload)
+    }
+
+    /// [`Self::place`] with a caller-chosen payload for a new draft — how the
+    /// app applies the user's default preset to newly created objects only.
+    pub fn place_with(
+        &mut self,
+        tool: DrawingTool,
+        point: ChartPoint,
+        new_payload: impl FnOnce(DrawingTool) -> Box<dyn DrawingPayload>,
+    ) -> bool {
         if self.draft.as_ref().is_none_or(|draft| draft.tool != tool) {
             self.draft = Some(Drawing {
                 tool,
@@ -409,6 +576,7 @@ impl Drawings {
                 style: DrawingStyle::default(),
                 locked: false,
                 hidden: false,
+                payload: new_payload(tool),
             });
         }
         let draft = self.draft.as_mut().expect("draft was installed above");
@@ -613,52 +781,6 @@ pub(super) fn distance_to_segment(position: egui::Pos2, start: egui::Pos2, end: 
     }
     let projection = ((position - start).dot(segment) / length_sq).clamp(0.0, 1.0);
     position.distance(start + segment * projection)
-}
-
-pub(super) fn paint_fib_levels(
-    painter: &egui::Painter,
-    geometry: FibGeometry,
-    levels: &[FibLevel],
-    stroke: egui::Stroke,
-    color: egui::Color32,
-) {
-    for level in levels {
-        let y = geometry.origin_y + (geometry.second_y - geometry.first_y) * level.ratio as f32;
-        painter.line_segment(
-            [egui::pos2(geometry.left, y), egui::pos2(geometry.right, y)],
-            stroke,
-        );
-        painter.text(
-            egui::pos2(geometry.left + FIB_LABEL_OFFSET_PX, y),
-            egui::Align2::LEFT_BOTTOM,
-            level.label,
-            egui::FontId::monospace(FIB_LABEL_SIZE_PX),
-            color,
-        );
-    }
-}
-
-pub(super) fn hit_fib_levels(
-    position: egui::Pos2,
-    points: &[egui::Pos2],
-    levels: &[FibLevel],
-    origin_y: f32,
-    radius_px: f32,
-) -> bool {
-    let left = points
-        .iter()
-        .map(|point| point.x)
-        .fold(f32::INFINITY, f32::min);
-    let right = points
-        .iter()
-        .map(|point| point.x)
-        .fold(f32::NEG_INFINITY, f32::max);
-    position.x >= left - radius_px
-        && position.x <= right + radius_px
-        && levels.iter().any(|level| {
-            let y = origin_y + (points[1].y - points[0].y) * level.ratio as f32;
-            (position.y - y).abs() <= radius_px
-        })
 }
 
 #[cfg(test)]
@@ -1028,17 +1150,30 @@ mod tests {
             screen_rect: Some(chart),
             ..Default::default()
         };
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
+        let payload = line.default_payload();
+        let anchors = [ChartPoint {
+            bar: 0.0,
+            price: scale.price_at(120.0),
+        }];
         let output = ctx.run(input, |ctx| {
             let painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
                 egui::Id::new("selection-test"),
             ));
+            let ctxt = DrawContext {
+                payload: payload.as_ref(),
+                anchors: &anchors,
+                scale: &scale,
+                selected: true,
+                halo: false,
+            };
             line.paint(
                 &painter,
                 chart,
                 style,
                 &[egui::pos2(100.0, 120.0)],
-                true,
+                &ctxt,
                 true,
             );
         });
@@ -1106,25 +1241,55 @@ mod tests {
         );
     }
 
+    /// Chart anchors consistent with `points` under `scale` — the identity
+    /// projection the tool tests run with.
+    fn anchors_for(points: &[egui::Pos2], scale: &PriceScale) -> Vec<ChartPoint> {
+        points
+            .iter()
+            .enumerate()
+            .map(|(index, point)| ChartPoint {
+                bar: index as f32,
+                price: scale.price_at(point.y),
+            })
+            .collect()
+    }
+
     #[test]
     fn horizontal_line_is_selectable_from_anywhere_on_its_stroke() {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
-        assert!(tool("horizontal-line").hit_test(
-            chart,
-            &[egui::pos2(100.0, 120.0)],
-            egui::pos2(450.0, 123.0),
-            5.0
-        ));
+        let line = tool("horizontal-line");
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
+        let payload = line.default_payload();
+        let points = [egui::pos2(100.0, 120.0)];
+        let anchors = anchors_for(&points, &scale);
+        let ctxt = DrawContext {
+            payload: payload.as_ref(),
+            anchors: &anchors,
+            scale: &scale,
+            selected: false,
+            halo: false,
+        };
+        assert!(line.hit_test(chart, &points, egui::pos2(450.0, 123.0), 5.0, &ctxt));
     }
 
     #[test]
     fn every_registered_tool_paints_and_hits_its_finished_geometry() {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
         for drawing_tool in DRAWING_TOOLS {
             let (points, hit) = drawing_tool.test_geometry();
             assert_eq!(points.len(), drawing_tool.required_points());
+            let payload = drawing_tool.default_payload();
+            let anchors = anchors_for(&points, &scale);
+            let ctxt = DrawContext {
+                payload: payload.as_ref(),
+                anchors: &anchors,
+                scale: &scale,
+                selected: false,
+                halo: false,
+            };
             assert!(
-                drawing_tool.hit_test(chart, &points, hit, 5.0),
+                drawing_tool.hit_test(chart, &points, hit, 5.0, &ctxt),
                 "{} cannot be selected from its visible geometry",
                 drawing_tool.id()
             );
@@ -1144,7 +1309,7 @@ mod tests {
                     chart,
                     DrawingStyle::default(),
                     &points,
-                    false,
+                    &ctxt,
                     false,
                 );
             });
@@ -1154,5 +1319,166 @@ mod tests {
                 drawing_tool.id()
             );
         }
+    }
+
+    /// The extension port, proven end to end: a fake tool with a property no
+    /// other tool has (`ray_count`) docks through the registry surface alone.
+    /// Its payload rides the envelope, survives undo snapshots and renders
+    /// its own inspector tab — with zero edits to the shared model or the
+    /// central inspector code.
+    #[test]
+    fn a_fake_tool_with_its_own_payload_docks_without_touching_the_model() {
+        #[derive(Debug, Clone, PartialEq)]
+        struct RayPayload {
+            ray_count: u32,
+        }
+        impl DrawingPayload for RayPayload {
+            fn clone_box(&self) -> Box<dyn DrawingPayload> {
+                Box::new(self.clone())
+            }
+            fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {
+                other
+                    .as_any()
+                    .downcast_ref::<Self>()
+                    .is_some_and(|other| self == other)
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+                self
+            }
+        }
+        struct RayTool;
+        impl DrawingToolImpl for RayTool {
+            fn id(&self) -> &'static str {
+                "test-ray"
+            }
+            fn name(&self) -> &'static str {
+                "Ray fan"
+            }
+            fn settings_title(&self) -> &'static str {
+                "Ray fan settings"
+            }
+            fn icon(&self) -> &'static str {
+                "R"
+            }
+            fn hover_text(&self) -> &'static str {
+                "Ray fan - test tool"
+            }
+            fn required_points(&self) -> usize {
+                1
+            }
+            fn default_payload(&self) -> Box<dyn DrawingPayload> {
+                Box::new(RayPayload { ray_count: 2 })
+            }
+            fn extra_tab(&self) -> Option<&'static str> {
+                Some("Rays")
+            }
+            fn draw_extra_tab(
+                &self,
+                ui: &mut egui::Ui,
+                drawing: &mut Drawing,
+                _host: &mut dyn PresetHost,
+            ) -> bool {
+                let payload = drawing
+                    .payload
+                    .as_any_mut()
+                    .downcast_mut::<RayPayload>()
+                    .expect("a ray tool always carries a ray payload");
+                ui.add(egui::Slider::new(&mut payload.ray_count, 1..=8).text("rays"))
+                    .changed()
+            }
+            fn paint(
+                &self,
+                painter: &egui::Painter,
+                _chart_rect: egui::Rect,
+                style: DrawingStyle,
+                points: &[egui::Pos2],
+                ctxt: &DrawContext<'_>,
+            ) {
+                let payload = ctxt
+                    .payload
+                    .as_any()
+                    .downcast_ref::<RayPayload>()
+                    .expect("ray payload");
+                if let Some(origin) = points.first() {
+                    for ray in 0..payload.ray_count {
+                        let target = *origin + egui::vec2(40.0, 10.0 * (ray as f32 + 1.0));
+                        painter.line_segment([*origin, target], drawing_stroke(style));
+                    }
+                }
+            }
+            fn hit_test(
+                &self,
+                _chart_rect: egui::Rect,
+                points: &[egui::Pos2],
+                position: egui::Pos2,
+                radius_px: f32,
+                _ctxt: &DrawContext<'_>,
+            ) -> bool {
+                points
+                    .first()
+                    .is_some_and(|point| point.distance(position) <= radius_px * 10.0)
+            }
+            #[cfg(test)]
+            fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
+                (vec![egui::pos2(50.0, 50.0)], egui::pos2(60.0, 60.0))
+            }
+        }
+        static RAY: RayTool = RayTool;
+        let ray_tool = DrawingTool(&RAY);
+
+        let mut drawings = Drawings::default();
+        assert!(drawings.place(
+            ray_tool,
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            }
+        ));
+        // The unique property lives in the payload and rides the undo
+        // history exactly like the shared fields do.
+        drawings.begin_gesture();
+        drawings
+            .selected_mut()
+            .expect("placement selects")
+            .payload
+            .as_any_mut()
+            .downcast_mut::<RayPayload>()
+            .expect("ray payload")
+            .ray_count = 5;
+        drawings.commit_gesture();
+        assert!(drawings.undo(), "the payload edit is one undo entry");
+        let restored = drawings.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<RayPayload>()
+            .expect("ray payload")
+            .ray_count;
+        assert_eq!(restored, 2, "undo restores the tool-owned property");
+
+        // The tool-owned inspector tab renders through the same port every
+        // tool uses — no central match, no central form edit.
+        assert_eq!(ray_tool.extra_tab(), Some("Rays"));
+        let ctx = egui::Context::default();
+        let mut host = NullPresetHost;
+        let mut painted = Vec::new();
+        let input = egui::RawInput::default();
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let drawing = drawings.selected_mut().expect("still selected");
+                ray_tool.draw_extra_tab(ui, drawing, &mut host);
+            });
+        });
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                painted.push(text.galley.text().to_owned());
+            }
+        }
+        assert!(
+            painted.iter().any(|text| text.contains("rays")),
+            "the fake tool's own section rendered: {painted:?}"
+        );
     }
 }

@@ -22,8 +22,8 @@ use crate::chart::{self, PriceScale};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{
-    self, ChartPoint, DeleteOutcome, Drawings, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
-    MIN_DRAWING_WIDTH_PX,
+    self, ChartPoint, DeleteOutcome, DrawContext, Drawings, MAX_DRAWING_FILL_ALPHA,
+    MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, PresetHost,
 };
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::loading::{self, LoadingTask, LoadingTracker};
@@ -65,6 +65,8 @@ const INSPECTOR_MAX_WIDTH_PX: f32 = 440.0;
 /// Default inspector width for the shipped tools (the spec reserves 360 px
 /// for the Fib level editor).
 const INSPECTOR_DEFAULT_WIDTH_PX: f32 = 320.0;
+/// Default inspector width for tools that mount a level editor tab.
+const INSPECTOR_LEVELS_WIDTH_PX: f32 = 360.0;
 /// Gap kept between the inspector and the selected object's bounding box.
 const INSPECTOR_OBJECT_GAP_PX: f32 = 12.0;
 /// How long the delete toast keeps its Undo affordance on screen (UX spec).
@@ -102,11 +104,13 @@ struct DrawingToast {
 }
 
 /// Which inspector tab is open. Tabs exist per capability: every tool gets
-/// Style and Coordinates; a tool with levels adds its own tab.
+/// Style and Coordinates; a tool that brings its own tab (the Fib level
+/// editor) mounts it as Extra without the central code knowing its fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum InspectorTab {
     #[default]
     Style,
+    Extra,
     Coordinates,
 }
 
@@ -381,6 +385,9 @@ pub struct QuantickApp {
     // for inspector placement and manager centring.
     last_chart_area: Option<egui::Rect>,
     drawing_manager_open: bool,
+    // Custom drawing presets (named payload exports + default-for-new),
+    // persisted across restarts in a versioned file.
+    drawing_presets: drawings::presets::PresetStore,
     #[cfg(test)]
     inspector_pin_rect: Option<egui::Rect>,
     #[cfg(test)]
@@ -492,6 +499,9 @@ impl QuantickApp {
             inspector_last_selection: None,
             last_chart_area: None,
             drawing_manager_open: false,
+            drawing_presets: drawings::presets::PresetStore::load_from(
+                drawings::presets::PresetStore::default_path(),
+            ),
             #[cfg(test)]
             inspector_pin_rect: None,
             #[cfg(test)]
@@ -1432,7 +1442,19 @@ impl QuantickApp {
     }
 
     fn place_drawing_point(&mut self, tool: drawings::DrawingTool, point: ChartPoint) {
-        if self.drawings.place(tool, point) {
+        // A new object starts from the user's explicit default preset when
+        // one is set; existing objects are never touched by that choice.
+        let presets = &self.drawing_presets;
+        let completed = self.drawings.place_with(tool, point, |tool| {
+            let mut payload = tool.default_payload();
+            if let Some(name) = presets.default_preset(tool.id())
+                && let Some(value) = presets.load_custom_preset(tool.id(), &name)
+            {
+                payload.import_preset(&value);
+            }
+            payload
+        });
+        if completed {
             self.toolrail.arm(Tool::Pointer);
             self.drawing_hover = None;
         }
@@ -1468,9 +1490,16 @@ impl QuantickApp {
             .filter(|(index, _)| self.drawings.is_visible(*index))
             .find_map(|(index, drawing)| {
                 let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                let ctxt = DrawContext {
+                    payload: drawing.payload.as_ref(),
+                    anchors: &drawing.points,
+                    scale,
+                    selected: self.drawings.selected() == Some(index),
+                    halo: false,
+                };
                 drawing
                     .tool
-                    .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX)
+                    .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
                     .then_some(index)
             })
     }
@@ -2225,6 +2254,13 @@ impl QuantickApp {
             }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
             let selected = self.drawings.selected() == Some(index);
+            let ctxt = DrawContext {
+                payload: drawing.payload.as_ref(),
+                anchors: &drawing.points,
+                scale,
+                selected,
+                halo: false,
+            };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
             drawing.tool.paint(
@@ -2232,21 +2268,33 @@ impl QuantickApp {
                 chart_rect,
                 drawing.style,
                 &points,
-                selected,
+                &ctxt,
                 selected && !drawing.locked,
             );
         }
 
         if let Some(draft) = self.drawings.draft() {
             let mut points = self.projected_drawing_points(draft, history_right, total, scale);
+            // The preview completes the geometry with the hovered anchor, in
+            // both screen and chart space, so payload-driven tools can show
+            // their real shape while placing.
+            let mut anchors: SmallVec<[ChartPoint; 4]> = SmallVec::from_slice(&draft.points);
             if points.len() < draft.tool.required_points()
                 && let Some(hover) = self.drawing_hover
             {
                 points.push(self.drawing_screen_point(hover, history_right, total, scale));
+                anchors.push(hover);
             }
+            let ctxt = DrawContext {
+                payload: draft.payload.as_ref(),
+                anchors: &anchors,
+                scale,
+                selected: false,
+                halo: false,
+            };
             draft
                 .tool
-                .paint(&clipped, chart_rect, draft.style, &points, false, false);
+                .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);
         }
     }
 
@@ -2706,8 +2754,17 @@ impl QuantickApp {
         }
         ui.separator();
 
+        if self.inspector_tab == InspectorTab::Extra && tool.extra_tab().is_none() {
+            // The previous selection had an extra tab; this tool brings none.
+            self.inspector_tab = InspectorTab::Style;
+        }
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.inspector_tab, InspectorTab::Style, "Style");
+            // A tool that brings its own tab (the Fib level editor) mounts it
+            // here by name; the central code never learns what is inside.
+            if let Some(extra) = tool.extra_tab() {
+                ui.selectable_value(&mut self.inspector_tab, InspectorTab::Extra, extra);
+            }
             ui.selectable_value(
                 &mut self.inspector_tab,
                 InspectorTab::Coordinates,
@@ -2720,10 +2777,18 @@ impl QuantickApp {
         let price_speed = self
             .last_auto_range
             .map_or(1.0, |(lo, hi)| ((hi - lo) / 200.0).abs().max(1e-9));
-        let Some(drawing) = self.drawings.selected_mut() else {
+        let Self {
+            drawings,
+            drawing_presets,
+            ..
+        } = self;
+        let Some(drawing) = drawings.selected_mut() else {
             return actions;
         };
         match tab {
+            InspectorTab::Extra => {
+                actions.edited |= tool.draw_extra_tab(ui, drawing, drawing_presets);
+            }
             InspectorTab::Style => {
                 ui.label("Style");
                 actions.edited |= ui
@@ -2945,11 +3010,17 @@ impl QuantickApp {
         let mut actions = InspectorActions::default();
         let mut open = true;
         let inspector_interactable = !self.drawing_drag.is_active();
+        // The level editor earns the wider default the spec reserves for it.
+        let default_width = if before.tool.extra_tab().is_some() {
+            INSPECTOR_LEVELS_WIDTH_PX
+        } else {
+            INSPECTOR_DEFAULT_WIDTH_PX
+        };
         let mut window = egui::Window::new(before.tool.settings_title())
             .id(egui::Id::new("drawing_inspector"))
             .open(&mut open)
             .default_pos(DRAWING_INSPECTOR_DEFAULT_POSITION)
-            .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
+            .default_width(default_width)
             .min_width(INSPECTOR_MIN_WIDTH_PX)
             .max_width(INSPECTOR_MAX_WIDTH_PX)
             .collapsible(false)
@@ -4639,6 +4710,125 @@ mod tests {
             viewport_before,
             "over a hidden drawing the gesture belongs to the chart again"
         );
+    }
+
+    #[test]
+    fn the_fib_inspector_mounts_its_level_editor_tab() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 250.0),
+            egui::pos2(900.0, 400.0),
+        );
+        assert_eq!(app.drawings.items().len(), 1);
+
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts.iter().any(|text| text.contains("Levels")),
+            "the tool-owned tab is offered by name; painted: {texts:?}"
+        );
+
+        app.inspector_tab = InspectorTab::Extra;
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        for label in ["Preset", "Standard", "band opacity", "log scale"] {
+            assert!(
+                texts.iter().any(|text| text.contains(label)),
+                "the level editor must show {label:?}; painted: {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_placed_fib_paints_its_levels_and_labels() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 250.0),
+            egui::pos2(900.0, 400.0),
+        );
+
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        for label in ["61.8%", "38.2%", "50.0%"] {
+            assert!(
+                texts.iter().any(|text| text.contains(label)),
+                "the standard retracement labels paint on the chart; painted: {texts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_preset_shapes_new_fibs_and_leaves_existing_ones_alone() {
+        use crate::drawings::DrawingPayload as _;
+        use crate::drawings::fib::FibPayload;
+
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        // First fib: the built-in standard start.
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 250.0),
+            egui::pos2(900.0, 400.0),
+        );
+        let standard_levels = app.drawings.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<FibPayload>()
+            .expect("fib payload")
+            .levels
+            .len();
+        assert_eq!(standard_levels, 7);
+
+        // Save a compact custom preset and make it the default for new fibs.
+        let mut store = drawings::presets::PresetStore::load_from(std::env::temp_dir().join(
+            format!("quantick-default-preset-test-{}.toml", std::process::id()),
+        ));
+        let mut compact = FibPayload::new(drawings::fib::FibKind::Retracement);
+        compact.apply_preset(&drawings::fib::RETRACEMENT_PRESETS[1]);
+        let exported = compact.export_preset().expect("fib exports presets");
+        assert!(store.save_custom_preset("fib-retracement", "mine", exported, false));
+        store.set_default_preset("fib-retracement", Some("mine".into()));
+        let preset_path = store.path().to_path_buf();
+        app.drawing_presets = store;
+
+        // Second fib starts from the default preset...
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(400.0, 250.0),
+            egui::pos2(550.0, 400.0),
+        );
+        let new_levels = app.drawings.items()[1]
+            .payload
+            .as_any()
+            .downcast_ref::<FibPayload>()
+            .expect("fib payload")
+            .levels
+            .len();
+        assert_eq!(new_levels, 5, "a new fib starts from the default preset");
+
+        // ...and the first one is untouched.
+        let old_levels = app.drawings.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<FibPayload>()
+            .expect("fib payload")
+            .levels
+            .len();
+        assert_eq!(old_levels, 7, "the default never rewrites existing objects");
+        let _ = std::fs::remove_file(preset_path);
     }
 
     /// The whole point, on a real frame: after a spec change with the view

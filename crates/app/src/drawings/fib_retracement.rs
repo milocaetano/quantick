@@ -1,21 +1,10 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{
-    DrawingStyle, DrawingToolImpl, FibGeometry, FibLevel, drawing_stroke, hit_fib_levels,
-    paint_fib_levels,
-};
+use super::fib::{self, FibKind, FibPayload};
+use super::{DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost};
 
 pub(super) static TOOL: FibRetracement = FibRetracement;
-const LEVELS: [FibLevel; 7] = [
-    FibLevel::new(0.0, "0.000"),
-    FibLevel::new(0.236, "0.236"),
-    FibLevel::new(0.382, "0.382"),
-    FibLevel::new(0.5, "0.500"),
-    FibLevel::new(0.618, "0.618"),
-    FibLevel::new(0.786, "0.786"),
-    FibLevel::new(1.0, "1.000"),
-];
 
 pub(super) struct FibRetracement;
 
@@ -36,40 +25,42 @@ impl DrawingToolImpl for FibRetracement {
         "Fib retracement - click two points or drag"
     }
     fn required_points(&self) -> usize {
-        2
+        FibKind::Retracement.required_points()
+    }
+    fn default_payload(&self) -> Box<dyn DrawingPayload> {
+        Box::new(FibPayload::new(FibKind::Retracement))
+    }
+    fn extra_tab(&self) -> Option<&'static str> {
+        Some("Levels")
+    }
+    fn draw_extra_tab(
+        &self,
+        ui: &mut egui::Ui,
+        drawing: &mut Drawing,
+        host: &mut dyn PresetHost,
+    ) -> bool {
+        fib::remember_drawing_color(ui, drawing.style.color);
+        fib::draw_levels_tab(ui, drawing, host)
     }
     fn paint(
         &self,
         painter: &egui::Painter,
-        _chart_rect: egui::Rect,
+        chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
     ) {
-        if points.len() == 2 {
-            paint_fib_levels(
-                painter,
-                FibGeometry {
-                    left: points[0].x.min(points[1].x),
-                    right: points[0].x.max(points[1].x),
-                    first_y: points[0].y,
-                    second_y: points[1].y,
-                    origin_y: points[0].y,
-                },
-                &LEVELS,
-                drawing_stroke(style),
-                style.color,
-            );
-        }
+        fib::paint(painter, chart_rect, style, points, ctxt);
     }
     fn hit_test(
         &self,
-        _chart_rect: egui::Rect,
+        chart_rect: egui::Rect,
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
+        ctxt: &DrawContext<'_>,
     ) -> bool {
-        points.len() == 2
-            && hit_fib_levels(position, points, &LEVELS, points[0].y, radius_px)
+        fib::hit_test(chart_rect, points, position, radius_px, ctxt)
     }
 
     #[cfg(test)]

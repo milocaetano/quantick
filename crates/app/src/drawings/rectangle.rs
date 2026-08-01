@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawingStyle, DrawingToolImpl, drawing_fill, drawing_stroke};
+use super::{DrawContext, DrawingStyle, DrawingToolImpl, drawing_fill, drawing_stroke};
 
 pub(super) static TOOL: Rectangle = Rectangle;
 
@@ -35,6 +35,7 @@ impl DrawingToolImpl for Rectangle {
         _chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
     ) {
         if points.len() == 2 {
             let rect = egui::Rect::from_two_pos(points[0], points[1]);
@@ -52,6 +53,7 @@ impl DrawingToolImpl for Rectangle {
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
+        _ctxt: &DrawContext<'_>,
     ) -> bool {
         points.len() == 2
             && egui::Rect::from_two_pos(points[0], points[1])

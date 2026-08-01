@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawingStyle, DrawingToolImpl, drawing_stroke};
+use super::{DrawContext, DrawingStyle, DrawingToolImpl, drawing_stroke};
 
 pub(super) static TOOL: HorizontalLine = HorizontalLine;
 
@@ -32,6 +32,7 @@ impl DrawingToolImpl for HorizontalLine {
         chart_rect: egui::Rect,
         style: DrawingStyle,
         points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
     ) {
         if let Some(point) = points.first() {
             painter.line_segment(
@@ -49,6 +50,7 @@ impl DrawingToolImpl for HorizontalLine {
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
+        _ctxt: &DrawContext<'_>,
     ) -> bool {
         points.first().is_some_and(|point| {
             chart_rect.x_range().contains(position.x)
