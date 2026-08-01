@@ -142,10 +142,21 @@ pub struct DrawContext<'a> {
     pub payload: &'a dyn DrawingPayload,
     pub anchors: &'a [ChartPoint],
     pub scale: &'a PriceScale,
+    /// The object's own style — hit-testing reads it too (an invisible fill
+    /// takes no part in the interior hit-test).
+    pub style: DrawingStyle,
     pub selected: bool,
     /// True while the wrapper paints the selection halo pass: tools draw
     /// only their stroke geometry then — no fills, no labels.
     pub halo: bool,
+}
+
+/// A tool's arming shortcut, declared by the tool itself so the keyboard
+/// map never becomes a central match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolShortcut {
+    pub key: egui::Key,
+    pub shift: bool,
 }
 
 /// The implementation port every drawing plugs into. Selection visuals (halo
@@ -161,6 +172,10 @@ trait DrawingToolImpl: Sync {
     fn icon(&self) -> &'static str;
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
+    /// The key that arms this tool from the chart, if it has one.
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        None
+    }
     /// Whether the tool paints an interior that the fill controls affect.
     fn supports_fill(&self) -> bool {
         false
@@ -231,6 +246,11 @@ impl DrawingTool {
     #[must_use]
     pub fn default_payload(self) -> Box<dyn DrawingPayload> {
         self.0.default_payload()
+    }
+
+    #[must_use]
+    pub fn shortcut(self) -> Option<ToolShortcut> {
+        self.0.shortcut()
     }
 
     #[must_use]
@@ -595,6 +615,34 @@ impl Drawings {
 
     pub fn cancel_draft(&mut self) {
         self.draft = None;
+    }
+
+    /// Backspace during placement: drop the last placed anchor; dropping the
+    /// only one cancels the draft.
+    pub fn remove_last_draft_anchor(&mut self) {
+        if let Some(draft) = &mut self.draft {
+            draft.points.pop();
+            if draft.points.is_empty() {
+                self.draft = None;
+            }
+        }
+    }
+
+    /// Duplicate the selected object as one undo entry: the copy lands
+    /// `offset_bars` to the right, unlocked, and becomes the selection.
+    pub fn duplicate_selected(&mut self, offset_bars: f32) {
+        let Some(index) = self.selected.filter(|&index| index < self.items.len()) else {
+            return;
+        };
+        let before = self.snapshot();
+        let mut copy = self.items[index].clone();
+        for point in &mut copy.points {
+            point.bar += offset_bars;
+        }
+        copy.locked = false;
+        self.items.push(copy);
+        self.selected = Some(self.items.len() - 1);
+        self.record(before);
     }
 
     /// Honest reset: the anchors cannot survive a source or bar-spec change,
@@ -1094,6 +1142,89 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_lands_offset_unlocked_and_selected_as_one_entry() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 4.0,
+                price: 100.0,
+            },
+        );
+        drawings.set_selected_locked(true);
+        let depth = drawings.undo_depth();
+
+        drawings.duplicate_selected(2.0);
+
+        assert_eq!(drawings.items().len(), 2);
+        assert_eq!(drawings.selected(), Some(1), "the copy becomes selected");
+        assert_eq!(drawings.items()[1].points[0].bar, 6.0, "the copy is offset");
+        assert!(
+            !drawings.items()[1].locked,
+            "a copy starts unlocked even when the source was locked"
+        );
+        assert_eq!(drawings.undo_depth(), depth + 1);
+        drawings.undo();
+        assert_eq!(drawings.items().len(), 1);
+    }
+
+    #[test]
+    fn backspace_steps_back_one_draft_anchor_at_a_time() {
+        let mut drawings = Drawings::default();
+        let channel = tool("parallel-channel");
+        for bar in [1.0, 2.0] {
+            drawings.place(channel, ChartPoint { bar, price: 1.0 });
+        }
+        assert_eq!(drawings.draft_len(), 2);
+
+        drawings.remove_last_draft_anchor();
+        assert_eq!(drawings.draft_len(), 1);
+        drawings.remove_last_draft_anchor();
+        assert!(
+            drawings.draft().is_none(),
+            "dropping the only anchor cancels the draft"
+        );
+    }
+
+    #[test]
+    fn rectangle_interior_hit_tests_only_while_the_fill_is_visible() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let rectangle = tool("rectangle");
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
+        let payload = rectangle.default_payload();
+        let points = [egui::pos2(100.0, 100.0), egui::pos2(200.0, 200.0)];
+        let anchors = anchors_for(&points, &scale);
+        let center = egui::pos2(150.0, 150.0);
+        let border = egui::pos2(100.0, 150.0);
+
+        let filled = DrawContext {
+            payload: payload.as_ref(),
+            anchors: &anchors,
+            scale: &scale,
+            style: DrawingStyle::default(),
+            selected: false,
+            halo: false,
+        };
+        assert!(rectangle.hit_test(chart, &points, center, 5.0, &filled));
+
+        let outline_only = DrawContext {
+            style: DrawingStyle {
+                fill_alpha: 0,
+                ..DrawingStyle::default()
+            },
+            ..filled
+        };
+        assert!(
+            !rectangle.hit_test(chart, &points, center, 5.0, &outline_only),
+            "with no visible fill the interior belongs to the chart"
+        );
+        assert!(
+            rectangle.hit_test(chart, &points, border, 5.0, &outline_only),
+            "the border stays selectable without a fill"
+        );
+    }
+
+    #[test]
     fn lock_all_is_one_reversible_undo_entry_and_never_deletes() {
         let mut drawings = Drawings::default();
         for price in [100.0, 105.0] {
@@ -1165,6 +1296,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                style,
                 selected: true,
                 halo: false,
             };
@@ -1266,6 +1398,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            style: DrawingStyle::default(),
             selected: false,
             halo: false,
         };
@@ -1285,6 +1418,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                style: DrawingStyle::default(),
                 selected: false,
                 halo: false,
             };

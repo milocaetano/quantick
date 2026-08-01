@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use super::fib::{self, FibKind, FibPayload};
-use super::{DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost};
+use super::{DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, ToolShortcut, PresetHost};
 
 pub(super) static TOOL: FibRetracement = FibRetracement;
 
@@ -22,10 +22,16 @@ impl DrawingToolImpl for FibRetracement {
         icons::ROWS
     }
     fn hover_text(&self) -> &'static str {
-        "Fib retracement - click two points or drag"
+        "Fib retracement - click two points or drag (F)"
     }
     fn required_points(&self) -> usize {
         FibKind::Retracement.required_points()
+    }
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        Some(ToolShortcut {
+            key: egui::Key::F,
+            shift: false,
+        })
     }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(FibPayload::new(FibKind::Retracement))

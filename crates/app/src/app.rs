@@ -71,6 +71,8 @@ const INSPECTOR_LEVELS_WIDTH_PX: f32 = 360.0;
 const INSPECTOR_OBJECT_GAP_PX: f32 = 12.0;
 /// How long the delete toast keeps its Undo affordance on screen (UX spec).
 const TOAST_UNDO_MS: u64 = 8_000;
+/// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
+const DUPLICATE_OFFSET_BARS: f32 = 2.0;
 /// Vertical clearance between the toast and the bottom chrome.
 const TOAST_BOTTOM_MARGIN_PX: f32 = 44.0;
 
@@ -1455,7 +1457,11 @@ impl QuantickApp {
             payload
         });
         if completed {
-            self.toolrail.arm(Tool::Pointer);
+            // One-shot by default; the toolbox repeat pin keeps the tool
+            // armed for the next object.
+            if !self.toolrail.repeat() {
+                self.toolrail.arm(Tool::Pointer);
+            }
             self.drawing_hover = None;
         }
     }
@@ -1494,6 +1500,7 @@ impl QuantickApp {
                     payload: drawing.payload.as_ref(),
                     anchors: &drawing.points,
                     scale,
+                    style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
                 };
@@ -1502,6 +1509,46 @@ impl QuantickApp {
                     .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
                     .then_some(index)
             })
+    }
+
+    /// Alt+click: deterministic z-order cycling through every visible object
+    /// under the pointer. From the current selection, the next hit beneath
+    /// it wins; past the bottom it wraps back to the top.
+    fn drawing_below_selection(
+        &self,
+        pos: egui::Pos2,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        let hits: Vec<usize> = (0..self.drawings.items().len())
+            .rev()
+            .filter(|&index| self.drawings.is_visible(index))
+            .filter(|&index| {
+                let drawing = &self.drawings.items()[index];
+                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                let ctxt = DrawContext {
+                    payload: drawing.payload.as_ref(),
+                    anchors: &drawing.points,
+                    scale,
+                    style: drawing.style,
+                    selected: self.drawings.selected() == Some(index),
+                    halo: false,
+                };
+                drawing
+                    .tool
+                    .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+            })
+            .collect();
+        match self
+            .drawings
+            .selected()
+            .and_then(|current| hits.iter().position(|&index| index == current))
+        {
+            Some(at) => Some(hits[(at + 1) % hits.len()]),
+            None => hits.first().copied(),
+        }
     }
 
     fn drawing_anchor_in(
@@ -1603,26 +1650,52 @@ impl QuantickApp {
             });
         let mut drawing_drag_consumes_gesture = false;
         if self.toolrail.tool() == Tool::Pointer {
+            // Hover feedback: a resize cursor over a selected anchor, a move
+            // cursor over any visible body, and not-allowed over locked
+            // geometry (visible objects in the viewport only — bounded work).
             if let Some(position) =
                 pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
-                && let Some(selected) = self.drawings.selected()
-                && self
-                    .drawing_anchor_in(selected, position, history_right, total, &scale)
-                    .is_some()
             {
-                ui.ctx()
-                    .set_cursor_icon(if self.drawings.items()[selected].locked {
-                        egui::CursorIcon::NotAllowed
-                    } else {
-                        egui::CursorIcon::ResizeNwSe
-                    });
+                if let Some(selected) = self.drawings.selected()
+                    && self
+                        .drawing_anchor_in(selected, position, history_right, total, &scale)
+                        .is_some()
+                {
+                    ui.ctx()
+                        .set_cursor_icon(if self.drawings.items()[selected].locked {
+                            egui::CursorIcon::NotAllowed
+                        } else {
+                            egui::CursorIcon::ResizeNwSe
+                        });
+                } else if let Some(hovered) =
+                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                {
+                    ui.ctx()
+                        .set_cursor_icon(if self.drawings.items()[hovered].locked {
+                            egui::CursorIcon::NotAllowed
+                        } else {
+                            egui::CursorIcon::Move
+                        });
+                }
             }
             if chart.clicked()
                 && let Some(position) = chart.interact_pointer_pos()
                 && let Some(scale) = drawing_scale
             {
-                let selected = self.drawing_at(position, areas.chart, history_right, total, &scale);
+                // Alt+click walks down the z-order through overlapping
+                // objects; a plain click selects the topmost hit.
+                let selected = if ui.input(|input| input.modifiers.alt) {
+                    self.drawing_below_selection(
+                        position,
+                        areas.chart,
+                        history_right,
+                        total,
+                        &scale,
+                    )
+                } else {
+                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                };
                 self.drawings.select(selected);
             }
             // Floating inspectors normally own pointer input over their whole
@@ -2258,6 +2331,7 @@ impl QuantickApp {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
+                style: drawing.style,
                 selected,
                 halo: false,
             };
@@ -2289,6 +2363,7 @@ impl QuantickApp {
                 payload: draft.payload.as_ref(),
                 anchors: &anchors,
                 scale,
+                style: draft.style,
                 selected: false,
                 halo: false,
             };
@@ -2614,26 +2689,98 @@ impl QuantickApp {
         if ctx.memory(|memory| memory.focused().is_some()) {
             return;
         }
-        let (delete, undo, redo) = ctx.input(|input| {
+        struct DrawingKeys {
+            escape: bool,
+            delete: bool,
+            backspace: bool,
+            undo: bool,
+            redo: bool,
+            lock: bool,
+            hide: bool,
+            duplicate: bool,
+            nudge_bars: f32,
+            nudge_px: f32,
+        }
+        let keys = ctx.input(|input| {
             let command = input.modifiers.command;
             let shift = input.modifiers.shift;
-            (
-                input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace),
-                command && !shift && input.key_pressed(egui::Key::Z),
-                (command && input.key_pressed(egui::Key::Y))
+            let alt = input.modifiers.alt;
+            // Shift turns a nudge into ten steps (UX spec).
+            let step = if shift { 10.0 } else { 1.0 };
+            let horizontal = f32::from(input.key_pressed(egui::Key::ArrowRight))
+                - f32::from(input.key_pressed(egui::Key::ArrowLeft));
+            let vertical = f32::from(input.key_pressed(egui::Key::ArrowUp))
+                - f32::from(input.key_pressed(egui::Key::ArrowDown));
+            DrawingKeys {
+                escape: input.key_pressed(egui::Key::Escape),
+                delete: input.key_pressed(egui::Key::Delete),
+                backspace: input.key_pressed(egui::Key::Backspace),
+                undo: command && !shift && input.key_pressed(egui::Key::Z),
+                redo: (command && input.key_pressed(egui::Key::Y))
                     || (command && shift && input.key_pressed(egui::Key::Z)),
-            )
+                lock: alt && input.key_pressed(egui::Key::L),
+                hide: alt && input.key_pressed(egui::Key::H),
+                duplicate: command && input.key_pressed(egui::Key::D),
+                nudge_bars: horizontal * step,
+                nudge_px: vertical * step,
+            }
         });
-        // While a draft is being placed the delete keys belong to the draft
-        // workflow, not to the previously selected object.
-        if delete && self.drawings.draft().is_none() {
+        // The escape stack: pending confirmation → draft → selection →
+        // Pointer, one layer per press.
+        if keys.escape {
+            if self.drawing_delete_confirm {
+                self.drawing_delete_confirm = false;
+            } else if self.drawings.draft().is_some() {
+                self.drawings.cancel_draft();
+                self.toolrail.arm(Tool::Pointer);
+            } else if self.drawings.selected().is_some() {
+                self.drawings.select(None);
+            } else {
+                self.toolrail.arm(Tool::Pointer);
+            }
+        }
+        if self.drawings.draft().is_some() {
+            // During placement the delete keys belong to the draft workflow:
+            // Backspace steps back one anchor.
+            if keys.backspace {
+                self.drawings.remove_last_draft_anchor();
+            }
+        } else if keys.delete || keys.backspace {
             self.request_delete_selected(now);
         }
-        if undo {
+        if keys.undo {
             self.drawings.undo();
         }
-        if redo {
+        if keys.redo {
             self.drawings.redo();
+        }
+        if keys.lock
+            && let Some(index) = self.drawings.selected()
+        {
+            let locked = self.drawings.items()[index].locked;
+            self.drawings.set_selected_locked(!locked);
+        }
+        if keys.hide
+            && let Some(index) = self.drawings.selected()
+        {
+            let hidden = self.drawings.items()[index].hidden;
+            self.drawings.set_selected_hidden(!hidden);
+        }
+        if keys.duplicate {
+            self.drawings.duplicate_selected(DUPLICATE_OFFSET_BARS);
+        }
+        if (keys.nudge_bars != 0.0 || keys.nudge_px != 0.0) && self.drawings.selected().is_some() {
+            // Arrows write the same honest chart coordinates a drag does:
+            // one bar per horizontal step, one pixel's worth of price per
+            // vertical step. Each press lands as one undo entry.
+            let price_per_px = self.last_auto_range.map_or(0.0, |auto| {
+                let (lo, hi) = self.price_view.resolve(auto);
+                (hi - lo) / f64::from(self.last_chart_height.max(1.0))
+            });
+            self.drawings.begin_gesture();
+            self.drawings
+                .translate_selected(keys.nudge_bars, f64::from(keys.nudge_px) * price_per_px);
+            self.drawings.commit_gesture();
         }
     }
 
@@ -4710,6 +4857,181 @@ mod tests {
             viewport_before,
             "over a hidden drawing the gesture belongs to the chart again"
         );
+    }
+
+    #[test]
+    fn escape_walks_confirm_draft_selection_then_pointer() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        // Draft first: Esc cancels it and returns to Pointer.
+        arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        assert_eq!(app.drawings.draft_len(), 1);
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+        assert!(app.drawings.draft().is_none(), "Esc cancels the draft");
+        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+
+        // A locked selection with a pending confirmation: Esc peels one
+        // layer per press — confirm, then selection, then nothing new.
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        app.drawings.set_selected_locked(true);
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+        assert!(app.drawing_delete_confirm, "the confirmation is pending");
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+        assert!(!app.drawing_delete_confirm, "first Esc cancels the confirm");
+        assert!(app.drawings.selected().is_some(), "the selection survives");
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+        assert_eq!(app.drawings.selected(), None, "second Esc deselects");
+        assert_eq!(app.drawings.items().len(), 1, "nothing was deleted");
+    }
+
+    #[test]
+    fn backspace_steps_back_through_the_draft_anchors() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        click_chart(&mut app, &ctx, egui::pos2(650.0, 280.0));
+        click_chart(&mut app, &ctx, egui::pos2(750.0, 300.0));
+        assert_eq!(app.drawings.draft_len(), 2);
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Backspace)]);
+        assert_eq!(
+            app.drawings.draft_len(),
+            1,
+            "Backspace removes the last placed anchor"
+        );
+        assert!(
+            app.drawings.items().is_empty(),
+            "the draft workflow never deletes finished objects"
+        );
+    }
+
+    #[test]
+    fn alt_l_and_alt_h_protect_the_selection_from_the_keyboard() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::L, egui::Modifiers::ALT)],
+            egui::Modifiers::ALT,
+        );
+        assert!(app.drawings.items()[0].locked, "Alt+L locks the selection");
+
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::H, egui::Modifiers::ALT)],
+            egui::Modifiers::ALT,
+        );
+        assert!(app.drawings.items()[0].hidden, "Alt+H hides the selection");
+        assert_eq!(
+            app.toolrail.tool(),
+            Tool::Pointer,
+            "Alt+H must not arm the horizontal-line tool"
+        );
+    }
+
+    #[test]
+    fn ctrl_d_duplicates_the_selection_offset_and_selected() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let original_bar = app.drawings.items()[0].points[0].bar;
+
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::D, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+        assert_eq!(app.drawings.items().len(), 2);
+        assert_eq!(app.drawings.selected(), Some(1));
+        assert_eq!(
+            app.drawings.items()[1].points[0].bar,
+            original_bar + DUPLICATE_OFFSET_BARS
+        );
+    }
+
+    #[test]
+    fn arrow_nudges_move_the_selection_and_shift_multiplies_by_ten() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let start = app.drawings.items()[0].points[0];
+        let depth = app.drawings.undo_depth();
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::ArrowRight)]);
+        assert_eq!(
+            app.drawings.items()[0].points[0].bar,
+            start.bar + 1.0,
+            "one press is one bar"
+        );
+        assert_eq!(app.drawings.undo_depth(), depth + 1, "one press, one entry");
+
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(
+                egui::Key::ArrowRight,
+                egui::Modifiers::SHIFT,
+            )],
+            egui::Modifiers::SHIFT,
+        );
+        assert_eq!(
+            app.drawings.items()[0].points[0].bar,
+            start.bar + 11.0,
+            "Shift multiplies the nudge by ten"
+        );
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::ArrowUp)]);
+        assert!(
+            app.drawings.items()[0].points[0].price > start.price,
+            "ArrowUp raises the price"
+        );
+    }
+
+    #[test]
+    fn the_repeat_pin_keeps_the_drawing_tool_armed() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        // Default: one-shot back to Pointer.
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(650.0, 280.0));
+        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+
+        // Pinned: the tool stays armed for the next object.
+        app.toolrail.set_repeat(true);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 320.0));
+        assert_eq!(
+            app.toolrail.tool().drawing_tool().map(|tool| tool.id()),
+            Some("horizontal-line"),
+            "the repeat pin keeps the tool armed"
+        );
+        assert_eq!(app.drawings.items().len(), 2);
     }
 
     #[test]

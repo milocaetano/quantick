@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use super::fib::{self, FibKind, FibPayload};
-use super::{DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost};
+use super::{DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, ToolShortcut, PresetHost};
 
 pub(super) static TOOL: FibExtension = FibExtension;
 
@@ -22,10 +22,16 @@ impl DrawingToolImpl for FibExtension {
         icons::ROWS_PLUS_TOP
     }
     fn hover_text(&self) -> &'static str {
-        "Fib extension - set the first leg, then click the projection origin"
+        "Fib extension - set the first leg, then click the projection origin (Shift+F)"
     }
     fn required_points(&self) -> usize {
         FibKind::Extension.required_points()
+    }
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        Some(ToolShortcut {
+            key: egui::Key::F,
+            shift: true,
+        })
     }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(FibPayload::new(FibKind::Extension))

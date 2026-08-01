@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, distance_to_segment, drawing_fill, drawing_stroke};
+use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke};
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
 
@@ -31,10 +31,16 @@ impl DrawingToolImpl for ParallelChannel {
         icons::PARALLELOGRAM
     }
     fn hover_text(&self) -> &'static str {
-        "Parallel channel - set the baseline, then click the channel width"
+        "Parallel channel - set the baseline, then click the channel width (C)"
     }
     fn required_points(&self) -> usize {
         3
+    }
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        Some(ToolShortcut {
+            key: egui::Key::C,
+            shift: false,
+        })
     }
     fn supports_fill(&self) -> bool {
         true

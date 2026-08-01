@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, drawing_fill, drawing_stroke};
+use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolShortcut, drawing_fill, drawing_stroke};
 
 pub(super) static TOOL: Rectangle = Rectangle;
 
@@ -21,10 +21,16 @@ impl DrawingToolImpl for Rectangle {
         icons::RECTANGLE
     }
     fn hover_text(&self) -> &'static str {
-        "Rectangle - click two corners or drag"
+        "Rectangle - click two corners or drag (R)"
     }
     fn required_points(&self) -> usize {
         2
+    }
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        Some(ToolShortcut {
+            key: egui::Key::R,
+            shift: false,
+        })
     }
     fn supports_fill(&self) -> bool {
         true
@@ -53,12 +59,19 @@ impl DrawingToolImpl for Rectangle {
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
-        _ctxt: &DrawContext<'_>,
+        ctxt: &DrawContext<'_>,
     ) -> bool {
-        points.len() == 2
-            && egui::Rect::from_two_pos(points[0], points[1])
-                .expand(radius_px)
-                .contains(position)
+        if points.len() != 2 {
+            return false;
+        }
+        let rect = egui::Rect::from_two_pos(points[0], points[1]);
+        if !rect.expand(radius_px).contains(position) {
+            return false;
+        }
+        // The interior only takes part in the hit-test while the fill is
+        // visible; an outline-only rectangle is selectable by its border,
+        // and clicks through its middle keep belonging to the chart.
+        ctxt.style.fill_alpha > 0 || !rect.shrink(radius_px).contains(position)
     }
 
     #[cfg(test)]

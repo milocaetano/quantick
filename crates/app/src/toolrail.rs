@@ -14,8 +14,23 @@ use crate::widgets::{IconButton, RAIL_ICON};
 const TOOLBOX_HEIGHT_PX: f32 = 44.0;
 const TOOLBOX_HORIZONTAL_MARGIN_PX: f32 = 8.0;
 const TOOLBOX_ITEM_GAP_PX: f32 = 6.0;
+/// One 32 px rail button plus its gap — the slot the width budget counts.
+const TOOLBOX_BUTTON_SLOT_PX: f32 = 32.0 + TOOLBOX_ITEM_GAP_PX;
+/// Room the grip and the two separators take beyond the button slots.
+const TOOLBOX_CHROME_ALLOWANCE_PX: f32 = 60.0;
 #[cfg(test)]
 const TOOLBOX_BUTTON_COUNT: usize = DRAWING_TOOLS.len() + 2;
+
+/// The width the full strip needs. Below this the drawing tools collapse
+/// into the More-tools flyout; Pointer, the active tool and Objects always
+/// survive, and the strip never wraps into a second row.
+fn full_toolbox_width() -> f32 {
+    // Pointer + Crosshair + every tool + repeat + objects + two globals.
+    let buttons = (2 + DRAWING_TOOLS.len() + 4) as f32;
+    2.0 * TOOLBOX_HORIZONTAL_MARGIN_PX
+        + buttons * TOOLBOX_BUTTON_SLOT_PX
+        + TOOLBOX_CHROME_ALLOWANCE_PX
+}
 
 /// A chart-acting tool. Only one is armed at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,6 +111,9 @@ pub struct ToolRail {
     tool: Tool,
     visible: bool,
     dock: ToolboxDock,
+    /// The repeat pin: `true` keeps a drawing tool armed after it completes
+    /// an object; the default is one-shot back to Pointer.
+    repeat: bool,
     #[cfg(test)]
     button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
     #[cfg(test)]
@@ -114,6 +132,7 @@ impl Default for ToolRail {
             tool: Tool::Pointer,
             visible: true,
             dock: ToolboxDock::TopLeft,
+            repeat: false,
             #[cfg(test)]
             button_rects: [None; TOOLBOX_BUTTON_COUNT],
             #[cfg(test)]
@@ -155,6 +174,17 @@ impl ToolRail {
         self.tool = tool;
     }
 
+    /// Whether the repeat pin keeps the tool armed after an object completes.
+    #[must_use]
+    pub fn repeat(&self) -> bool {
+        self.repeat
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_repeat(&mut self, repeat: bool) {
+        self.repeat = repeat;
+    }
+
     #[cfg(test)]
     pub(crate) fn button_rect(&self, tool: Tool) -> Option<egui::Rect> {
         self.button_rects
@@ -168,18 +198,34 @@ impl ToolRail {
         self.objects_rect
     }
 
+    /// Tool-arming keys. Escape lives in the app's escape stack (input →
+    /// draft → selection → Pointer), not here. Each drawing tool declares
+    /// its own shortcut through the registry.
     pub fn handle_keys(&mut self, ctx: &egui::Context) {
         if ctx.memory(|memory| memory.focused().is_some()) {
             return;
         }
-        ctx.input(|input| {
-            if input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Num1) {
-                self.arm(Tool::Pointer);
+        let armed = ctx.input(|input| {
+            if input.modifiers.command || input.modifiers.alt {
+                return None;
+            }
+            if input.key_pressed(egui::Key::Num1) {
+                return Some(Tool::Pointer);
             }
             if input.key_pressed(egui::Key::Num2) {
-                self.arm(Tool::Crosshair);
+                return Some(Tool::Crosshair);
             }
+            DRAWING_TOOLS.into_iter().find_map(|tool| {
+                tool.shortcut()
+                    .filter(|shortcut| {
+                        input.key_pressed(shortcut.key) && input.modifiers.shift == shortcut.shift
+                    })
+                    .map(|_| Tool::Drawing(tool))
+            })
         });
+        if let Some(tool) = armed {
+            self.arm(tool);
+        }
     }
 
     /// Draw the toolbox in an external top/bottom strip. Drag the grip and
@@ -209,6 +255,58 @@ impl ToolRail {
                     )),
             )
             .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open));
+    }
+
+    /// The repeat pin: keep the armed drawing tool active after it completes
+    /// an object, instead of the one-shot return to Pointer.
+    fn draw_repeat_button(&mut self, ui: &mut egui::Ui) {
+        let response = IconButton::new(icons::ARROW_CLOCKWISE, RAIL_ICON)
+            .active(self.repeat)
+            .hover_text("Keep the drawing tool active after drawing")
+            .show(ui);
+        if response.clicked() {
+            self.repeat = !self.repeat;
+        }
+    }
+
+    /// The More-tools flyout of the collapsed strip: everything that lost
+    /// its slot stays reachable by name, plus the global protections.
+    fn draw_more_tools_menu(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
+        ui.menu_button(icons::PLUS, |ui| {
+            for tool in [Tool::Crosshair]
+                .into_iter()
+                .chain(DRAWING_TOOLS.into_iter().map(Tool::Drawing))
+            {
+                let name = match tool {
+                    Tool::Crosshair => "Crosshair",
+                    Tool::Drawing(tool) => tool.name(),
+                    Tool::Pointer => unreachable!("pointer keeps its own slot"),
+                };
+                if ui.button(name).clicked() {
+                    self.arm(tool);
+                    ui.close_menu();
+                }
+            }
+            ui.separator();
+            let all_hidden = drawings.all_hidden();
+            if ui
+                .button(if all_hidden { "Show all" } else { "Hide all" })
+                .clicked()
+            {
+                drawings.set_all_hidden(!all_hidden);
+                ui.close_menu();
+            }
+            let all_locked = drawings.all_locked();
+            if ui
+                .button(if all_locked { "Unlock all" } else { "Lock all" })
+                .clicked()
+            {
+                drawings.set_all_locked(!all_locked);
+                ui.close_menu();
+            }
+        })
+        .response
+        .on_hover_text("More tools");
     }
 
     /// The entry to the drawn-objects manager. A toggle, not a tool: it never
@@ -317,13 +415,26 @@ impl ToolRail {
                 self.dock = ToolboxDock::nearest(pointer, ui.ctx().screen_rect());
             }
 
-            if left {
+            // Below the full-strip budget the tools collapse into the
+            // More-tools flyout: Pointer, the active tool and Objects keep
+            // their slots, and the strip never wraps into a second row.
+            let overflow = ui.available_width() < full_toolbox_width();
+            if overflow {
+                self.draw_button(ui, Tool::Pointer);
+                if let Some(active) = self.tool.drawing_tool() {
+                    self.draw_button(ui, Tool::Drawing(active));
+                }
+                self.draw_more_tools_menu(ui, drawings);
+                ui.separator();
+                self.draw_objects_button(ui, manager_open);
+            } else if left {
                 for tool in [Tool::Pointer, Tool::Crosshair] {
                     self.draw_button(ui, tool);
                 }
                 for tool in DRAWING_TOOLS {
                     self.draw_button(ui, Tool::Drawing(tool));
                 }
+                self.draw_repeat_button(ui);
                 ui.separator();
                 self.draw_objects_button(ui, manager_open);
                 self.draw_global_buttons(ui, drawings);
@@ -331,6 +442,7 @@ impl ToolRail {
                 self.draw_global_buttons(ui, drawings);
                 self.draw_objects_button(ui, manager_open);
                 ui.separator();
+                self.draw_repeat_button(ui);
                 for tool in DRAWING_TOOLS.into_iter().rev() {
                     self.draw_button(ui, Tool::Drawing(tool));
                 }
@@ -518,6 +630,88 @@ mod tests {
                 primary_button(position, false),
             ],
         );
+    }
+
+    #[test]
+    fn tool_shortcuts_arm_their_declared_tools() {
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let send = |rail: &mut ToolRail, key: egui::Key, modifiers: egui::Modifiers| {
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                modifiers,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| rail.handle_keys(ctx));
+        };
+
+        send(&mut rail, egui::Key::H, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("horizontal-line")
+        );
+        send(&mut rail, egui::Key::R, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("rectangle")
+        );
+        send(&mut rail, egui::Key::C, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("parallel-channel")
+        );
+        send(&mut rail, egui::Key::F, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("fib-retracement")
+        );
+        send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("fib-extension")
+        );
+        send(&mut rail, egui::Key::Num1, egui::Modifiers::NONE);
+        assert_eq!(rail.tool(), Tool::Pointer);
+        // A held command modifier keeps the letters out of the tool map.
+        send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND);
+        assert_eq!(rail.tool(), Tool::Pointer);
+    }
+
+    #[test]
+    fn the_narrow_strip_keeps_pointer_active_tool_and_objects() {
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
+        let mut drawings = Drawings::default();
+
+        // Narrow: the strip collapses; Pointer, the active tool and the
+        // Objects entry survive, the rest folds into the More flyout.
+        let narrow = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 600.0));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, narrow, Vec::new());
+        assert!(rail.button_rect(Tool::Pointer).is_some());
+        assert!(rail.button_rect(Tool::Drawing(DRAWING_TOOLS[1])).is_some());
+        assert!(
+            rail.button_rect(Tool::Drawing(DRAWING_TOOLS[0])).is_none(),
+            "inactive tools give up their slots in the narrow strip"
+        );
+        assert!(rail.objects_button_rect().is_some());
+
+        // Wide: every tool has its slot back.
+        let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
+        for tool in DRAWING_TOOLS {
+            assert!(
+                rail.button_rect(Tool::Drawing(tool)).is_some(),
+                "{} lost its slot on a wide strip",
+                tool.id()
+            );
+        }
     }
 
     #[test]

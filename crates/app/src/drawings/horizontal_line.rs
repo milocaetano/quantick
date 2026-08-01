@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, drawing_stroke};
+use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolShortcut, drawing_stroke};
 
 pub(super) static TOOL: HorizontalLine = HorizontalLine;
 
@@ -21,10 +21,16 @@ impl DrawingToolImpl for HorizontalLine {
         icons::MINUS
     }
     fn hover_text(&self) -> &'static str {
-        "Horizontal line - click a price"
+        "Horizontal line - click a price (H)"
     }
     fn required_points(&self) -> usize {
         1
+    }
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        Some(ToolShortcut {
+            key: egui::Key::H,
+            shift: false,
+        })
     }
     fn paint(
         &self,
