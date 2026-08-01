@@ -8,6 +8,11 @@ live today, and where they will live as the app grows into indicators, drawing
 tools and beyond. This document is the reference for every future UI change:
 a new feature first finds its home here, then gets built.
 
+The detailed interaction target for user-authored chart objects lives in
+[Drawing tools UX specification](drawing-tools-ux-spec.html). It covers the
+toolbox, non-modal inspector, selection, lock/visibility/delete semantics,
+keyboard grammar, object management and the complete Fibonacci level editor.
+
 The companion images in [`img/`](img/) are part of the spec, not decoration.
 Everything in `CLAUDE.md` applies unchanged; this model adds UI placement rules
 on top of it.
@@ -197,7 +202,11 @@ bar §8) and both panel-opening buttons (the dock's tab strip replaces them).
 ![Tool rail and dock](img/04-tool-rail-dock.svg)
 
 > The diagram records the original vertical-rail skeleton. The corner-docked
-> external toolbox described below supersedes that rail geometry.
+> external toolbox described below supersedes that rail geometry, and the
+> detailed [Drawing tools UX specification](drawing-tools-ux-spec.html) is
+> authoritative for drawing interactions beyond it: favourites/flyouts, the
+> repeat pin, the Objects manager, lock/visibility/delete semantics, the
+> keyboard grammar and the complete Fibonacci level editor.
 
 **Drawing toolbox (external, 44 px).** Exclusive selection; exactly one tool
 is armed and `Esc` always returns to Pointer. Its grip docks the controls at
@@ -228,6 +237,10 @@ When the floating inspector overlaps selected geometry, that stroke or anchor
 keeps pointer priority during its drag; all other clicks still edit the
 inspector normally.
 Closing the inspector deselects the object.
+
+The target keeps destructive bulk actions inside the Objects manager. Lock-all
+and hide-all are reversible protection/view actions; neither shares the
+selected object's delete control.
 
 **Dock (right, 280–360 px).** One tabbed panel replaces today's stack of
 left `SidePanel`s: tabs **L2**, **Bubbles**, **Indicators**, **Session**.
