@@ -38,6 +38,16 @@ enum Column {
 }
 
 impl Column {
+    /// The variant name for panic messages — never `{:?}` a column into a
+    /// panic: Debug would dump every cell of a 100k-row history.
+    fn kind(&self) -> &'static str {
+        match self {
+            Column::F64(_) => "f64",
+            Column::Bool(_) => "bool",
+            Column::Color(_) => "color",
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             Column::F64(v) => v.len(),
@@ -132,7 +142,7 @@ impl SeriesStore {
         let committed = self.committed_len;
         match &mut self.columns[id.0] {
             Column::F64(v) => Self::stage_cell(v, committed, value),
-            other => panic!("series {id:?} is not f64 (got {other:?})"),
+            other => panic!("series {id:?} is not f64 (it is {})", other.kind()),
         }
     }
 
@@ -150,7 +160,7 @@ impl SeriesStore {
         };
         match &mut self.columns[id.0] {
             Column::Bool(v) => Self::stage_cell(v, committed, encoded),
-            other => panic!("series {id:?} is not bool (got {other:?})"),
+            other => panic!("series {id:?} is not bool (it is {})", other.kind()),
         }
     }
 
@@ -163,7 +173,7 @@ impl SeriesStore {
         let committed = self.committed_len;
         match &mut self.columns[id.0] {
             Column::Color(v) => Self::stage_cell(v, committed, value),
-            other => panic!("series {id:?} is not color (got {other:?})"),
+            other => panic!("series {id:?} is not color (it is {})", other.kind()),
         }
     }
 
@@ -187,7 +197,7 @@ impl SeriesStore {
     pub fn get_f64(&self, id: SeriesId, back: usize) -> f64 {
         match &self.columns[id.0] {
             Column::F64(v) => Self::read_cell(v, back).copied().unwrap_or(f64::NAN),
-            other => panic!("series {id:?} is not f64 (got {other:?})"),
+            other => panic!("series {id:?} is not f64 (it is {})", other.kind()),
         }
     }
 
@@ -204,7 +214,7 @@ impl SeriesStore {
                 Some(&1) => Some(true),
                 _ => None,
             },
-            other => panic!("series {id:?} is not bool (got {other:?})"),
+            other => panic!("series {id:?} is not bool (it is {})", other.kind()),
         }
     }
 
@@ -218,7 +228,7 @@ impl SeriesStore {
     pub fn get_color(&self, id: SeriesId, back: usize) -> u32 {
         match &self.columns[id.0] {
             Column::Color(v) => Self::read_cell(v, back).copied().unwrap_or(NA_COLOR),
-            other => panic!("series {id:?} is not color (got {other:?})"),
+            other => panic!("series {id:?} is not color (it is {})", other.kind()),
         }
     }
 

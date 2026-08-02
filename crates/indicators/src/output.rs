@@ -115,6 +115,9 @@ pub struct PlotSpec {
 #[derive(Debug, Clone, Default)]
 pub struct PlotBuffer {
     columns: Vec<Vec<f64>>,
+    /// Tracked explicitly rather than derived from a column: an indicator
+    /// with zero plots (a draw-objects-only script) still commits rows.
+    rows: usize,
 }
 
 impl PlotBuffer {
@@ -123,6 +126,7 @@ impl PlotBuffer {
     pub fn new(plot_count: usize) -> Self {
         Self {
             columns: vec![Vec::new(); plot_count],
+            rows: 0,
         }
     }
 
@@ -135,7 +139,7 @@ impl PlotBuffer {
     /// Number of committed rows (closed bars evaluated).
     #[must_use]
     pub fn len(&self) -> usize {
-        self.columns.first().map_or(0, Vec::len)
+        self.rows
     }
 
     /// True when no rows have been committed.
@@ -162,6 +166,7 @@ impl PlotBuffer {
         for (column, &value) in self.columns.iter_mut().zip(row) {
             column.push(value);
         }
+        self.rows += 1;
     }
 
     /// The full committed column of one plot.
@@ -189,6 +194,7 @@ impl PlotBuffer {
         for column in &mut self.columns {
             column.clear();
         }
+        self.rows = 0;
     }
 }
 
@@ -226,6 +232,16 @@ mod tests {
     fn wrong_row_shape_is_rejected_loudly() {
         let mut buffer = PlotBuffer::new(3);
         buffer.push_row(&[1.0, 2.0]);
+    }
+
+    #[test]
+    fn zero_plot_indicators_still_count_rows() {
+        let mut buffer = PlotBuffer::new(0);
+        buffer.push_row(&[]);
+        buffer.push_row(&[]);
+        assert_eq!(buffer.len(), 2, "rows exist even with no plot columns");
+        buffer.clear();
+        assert!(buffer.is_empty());
     }
 
     #[test]
