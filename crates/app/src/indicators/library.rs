@@ -27,6 +27,10 @@ pub(crate) const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
         "delta_histogram.pine",
         include_str!("../../scripts/delta_histogram.pine"),
     ),
+    (
+        "vwap_cumulative.pine",
+        include_str!("../../scripts/vwap_cumulative.pine"),
+    ),
     ("zigzag.pine", include_str!("../../scripts/zigzag.pine")),
     (
         "range_box.pine",
@@ -115,6 +119,21 @@ impl ScriptLibrary {
     /// Every loadable script, embedded first, then files (sorted).
     pub(crate) fn entries(&self) -> &[ScriptEntry] {
         &self.entries
+    }
+
+    /// The file behind an entry (embedded scripts have none) plus its
+    /// modification time — what the hot-reload poll compares.
+    pub(crate) fn file_info(
+        &self,
+        index: usize,
+    ) -> Option<(std::path::PathBuf, std::time::SystemTime)> {
+        match &self.entries.get(index)?.origin {
+            ScriptOrigin::Embedded(_) => None,
+            ScriptOrigin::File(path) => {
+                let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+                Some((path.clone(), mtime))
+            }
+        }
     }
 
     /// Read a script's text. Embedded text is free; a file read can fail and

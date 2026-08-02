@@ -321,3 +321,15 @@ fn shape_plots_stage_condition_cells() {
     assert_eq!(cond_col[1], 1.0);
     assert_eq!(h.column(1), vec![10.0, 20.0], "absolute markers keep the y");
 }
+
+#[test]
+fn switch_matches_subjects_conditions_and_defaults() {
+    let source = "//@version=5\nindicator(\"t\")\ntrend = switch\n    close > 10 => 1\n    close < 5 => -1\n    => 0\nsize = switch trend\n    1 => close - 10\n    -1 => 10 - close\n    => 0.5\nplot(size)\n";
+    let mut h = Harness::load(source);
+    h.close_all(&[20.0, 2.0, 7.0]);
+    assert_eq!(
+        h.column(0),
+        vec![10.0, 8.0, 0.5],
+        "condition arm, mirrored arm, default arm"
+    );
+}

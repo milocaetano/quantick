@@ -123,6 +123,13 @@ pub(crate) enum IndicatorCommand {
         slot: SlotId,
         values: Vec<InputValue>,
     },
+    /// Replace a slot's source wholesale (hot reload). On a compile error
+    /// the last good version keeps running and the UI is told the slot is
+    /// stale — an edit with errors must never take a working chart away.
+    Reload {
+        slot: SlotId,
+        source: IndicatorSource,
+    },
     /// Drop a slot.
     Remove(SlotId),
     /// Test barrier: acknowledged only after every earlier command has been
@@ -161,6 +168,9 @@ pub(crate) enum IndicatorEvent {
         slot: SlotId,
         objects: ObjectSnapshot,
     },
+    /// A hot reload failed to compile; the previous version keeps running
+    /// ("stale — edit has errors").
+    ReloadFailed { slot: SlotId, message: String },
 }
 
 /// Worker-side bookkeeping for one slot: the host id plus what the UI is
@@ -352,6 +362,37 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                         message,
                                     },
                                 });
+                            }
+                        }
+                    }
+                }
+                IndicatorCommand::Reload { slot, source } => {
+                    if let Some(mirror) = slots.get_mut(&slot) {
+                        match source.build() {
+                            Ok(indicator) => {
+                                let values: Vec<InputValue> = indicator
+                                    .descriptor()
+                                    .inputs
+                                    .iter()
+                                    .map(quantick_indicators::InputSpec::default_value)
+                                    .collect();
+                                match mirror.host_id {
+                                    Some(host_id) => {
+                                        host.replace(host_id, indicator);
+                                    }
+                                    // The slot never loaded (its first
+                                    // compile failed): the reload is its
+                                    // first working version.
+                                    None => mirror.host_id = Some(host.add(indicator)),
+                                }
+                                mirror.source = source;
+                                mirror.values = values;
+                                mirror.known_rows = 0;
+                                mirror.error_reported = false;
+                                mirror.objects_revision = 0;
+                            }
+                            Err(message) => {
+                                let _ = events.send(IndicatorEvent::ReloadFailed { slot, message });
                             }
                         }
                     }
@@ -789,6 +830,93 @@ mod set_inputs_tests {
             format!("{:?}", view.columns[0]),
             format!("{:?}", reference.plots(id).unwrap().column(PlotId::new(0))),
             "SetInputs must replay as if the new inputs had always been set"
+        );
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    use crate::indicators::IndicatorViews;
+
+    const GOOD_V1: &str = "//@version=5\nindicator(\"r\")\nplot(close)\n";
+    const GOOD_V2: &str = "//@version=5\nindicator(\"r2\")\nplot(close * 2)\n";
+    const BROKEN: &str = "//@version=5\nindicator(\"r\")\nplot(request.security(close))\n";
+
+    fn drive() -> (
+        IndicatorWorker,
+        IndicatorViews,
+        SlotId,
+        Vec<quantick_engine::Bar>,
+    ) {
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::Script {
+                name: "r.pine".to_owned(),
+                text: GOOD_V1.to_owned(),
+            },
+        });
+        let trades: Vec<quantick_engine::Trade> = (1..=8).map(tests::trade).collect();
+        let mut builder = quantick_engine::TickBarBuilder::new(2);
+        let bars = quantick_engine::golden::replay(&mut builder, &trades);
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        // Drain the initial publication (a frame passes before any reload
+        // in reality; batching them would let the initial Rebuilt clear the
+        // stale flag the reload sets).
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        (worker, views, slot, bars)
+    }
+
+    #[test]
+    fn a_good_reload_recompiles_and_replays() {
+        let (worker, mut views, slot, bars) = drive();
+        worker.send(IndicatorCommand::Reload {
+            slot,
+            source: IndicatorSource::Script {
+                name: "r.pine".to_owned(),
+                text: GOOD_V2.to_owned(),
+            },
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        let view = &views.all()[0];
+        assert_eq!(view.descriptor.title, "r2", "the new version runs");
+        assert!(view.stale.is_none());
+        assert_eq!(view.rows(), bars.len(), "replayed over the full history");
+    }
+
+    #[test]
+    fn a_broken_reload_keeps_the_last_good_version_and_flags_stale() {
+        let (worker, mut views, slot, bars) = drive();
+        worker.send(IndicatorCommand::Reload {
+            slot,
+            source: IndicatorSource::Script {
+                name: "r.pine".to_owned(),
+                text: BROKEN.to_owned(),
+            },
+        });
+        worker.send(IndicatorCommand::BarClosed(bars[0].clone()));
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        let view = &views.all()[0];
+        assert_eq!(view.descriptor.title, "r", "the old version keeps running");
+        assert!(view.error.is_none(), "stale is not a runtime error");
+        let stale = view.stale.as_ref().expect("flagged stale");
+        assert!(stale.contains("PINE_NO_SECURITY"), "{stale}");
+        assert_eq!(
+            view.rows(),
+            bars.len() + 1,
+            "the running version even saw the new bar"
         );
     }
 }

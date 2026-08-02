@@ -1,0 +1,6 @@
+//@version=5
+indicator("VWAP (cumulative)", overlay=true)
+// Honest name: cumulative from the loaded history, not session-anchored —
+// activity-sampled charts have no sessions to anchor to.
+vwap = ta.cum(hlc3 * volume) / ta.cum(volume)
+plot(vwap, title="vwap", color=color.purple, linewidth=2)

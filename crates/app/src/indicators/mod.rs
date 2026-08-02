@@ -45,6 +45,9 @@ pub(crate) struct IndicatorView {
     /// The values currently bound to the declared inputs (what the
     /// settings dialog opens with).
     pub input_values: Vec<InputValue>,
+    /// A failed hot reload's errors: the running version is stale relative
+    /// to the file on disk, and the panel says so.
+    pub stale: Option<String>,
 }
 
 impl IndicatorView {
@@ -111,6 +114,7 @@ impl IndicatorViews {
                     view.input_values = inputs;
                     view.preview = None;
                     view.error = None;
+                    view.stale = None;
                 } else {
                     self.views.push(IndicatorView {
                         slot,
@@ -121,6 +125,7 @@ impl IndicatorViews {
                         hidden: false,
                         objects: ObjectSnapshot::default(),
                         input_values: inputs,
+                        stale: None,
                     });
                 }
             }
@@ -149,6 +154,11 @@ impl IndicatorViews {
             IndicatorEvent::Objects { slot, objects } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.objects = objects;
+                }
+            }
+            IndicatorEvent::ReloadFailed { slot, message } => {
+                if let Some(view) = self.view_mut(slot) {
+                    view.stale = Some(message);
                 }
             }
         }

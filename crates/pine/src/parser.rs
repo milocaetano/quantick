@@ -7,9 +7,8 @@
 //! resynchronises at the next logical line, so a script with three bad
 //! statements reports three.
 //!
-//! `switch` is recognised and rejected here with an honest message (it may
-//! land in M4, per the plan); everything else in the reject list is a
-//! *compile pass* concern — the parser builds the tree, the passes judge it.
+//! Everything in the reject list is a *compile pass* concern — the parser
+//! builds the tree, the passes judge it.
 
 use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::error::{ErrorCode, PineError, Span};
@@ -271,15 +270,7 @@ impl Parser<'_> {
                     _ => self.expression_statement(start),
                 }
             }
-            Tok::KwSwitch => {
-                self.errors.push(PineError::new(
-                    ErrorCode::PineUnsupported,
-                    start,
-                    "`switch` is not supported yet (planned for a later milestone); \
-                     use if/else chains",
-                ));
-                None
-            }
+            Tok::KwSwitch => self.expression_statement(start),
             _ => self.expression_statement(start),
         }
     }
@@ -399,16 +390,7 @@ impl Parser<'_> {
             Tok::KwIf => Some((self.if_expression()?, true)),
             Tok::KwFor => Some((self.for_expression()?, true)),
             Tok::KwWhile => Some((self.while_expression()?, true)),
-            Tok::KwSwitch => {
-                let span = self.span();
-                self.errors.push(PineError::new(
-                    ErrorCode::PineUnsupported,
-                    span,
-                    "`switch` is not supported yet (planned for a later milestone); \
-                     use if/else chains",
-                ));
-                None
-            }
+            Tok::KwSwitch => Some((self.switch_expression()?, true)),
             _ => Some((self.expression()?, false)),
         }
     }
@@ -537,6 +519,61 @@ impl Parser<'_> {
             },
             span,
         ))
+    }
+
+    fn switch_expression(&mut self) -> Option<NodeId> {
+        let start = self.span();
+        self.advance(); // `switch`
+        let subject = if *self.peek() == Tok::Newline {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.expect(&Tok::Newline, "a newline after the switch header");
+        if !self.expect(&Tok::Indent, "an indented arm list") {
+            return None;
+        }
+        let mut arms = Vec::new();
+        loop {
+            match self.peek() {
+                Tok::Dedent => {
+                    self.advance();
+                    break;
+                }
+                Tok::Eof => break,
+                Tok::Newline => {
+                    self.advance();
+                }
+                _ => {
+                    // A bare `=>` is the default arm; anything else is a
+                    // match value (or condition, in subject-less form).
+                    let condition = if *self.peek() == Tok::Arrow {
+                        None
+                    } else {
+                        Some(self.expression()?)
+                    };
+                    self.expect(&Tok::Arrow, "`=>` of the switch arm");
+                    let body = if self.eat(&Tok::Newline) {
+                        self.block()?
+                    } else {
+                        let body = self.expression()?;
+                        self.end_of_statement();
+                        body
+                    };
+                    arms.push((condition, body));
+                }
+            }
+        }
+        if arms.is_empty() {
+            self.errors.push(PineError::new(
+                ErrorCode::PineSyntax,
+                start,
+                "a switch needs at least one arm",
+            ));
+            return None;
+        }
+        let span = self.spanned_from(start);
+        Some(self.ast.push(NodeKind::Switch { subject, arms }, span))
     }
 
     fn while_expression(&mut self) -> Option<NodeId> {
@@ -1009,12 +1046,28 @@ double(x) => x * 2\ntriple(x) =>\n    y = x * 3\n    y\n";
     }
 
     #[test]
-    fn switch_is_rejected_honestly() {
-        let errors = parse_err("switch x\n    1 => 2\n");
-        assert!(
-            errors.iter().any(|e| e.code == ErrorCode::PineUnsupported),
-            "{errors:?}"
-        );
+    fn switch_parses_subject_and_condition_forms() {
+        let (ast, root) = parse_ok("y = switch x\n    1 => 2\n    => 3\nswitch\n    a > b => 1\n");
+        let stmts = root_statements(&ast, root);
+        let NodeKind::Declare { value, .. } = &ast.node(stmts[0]).kind else {
+            panic!("not a declare");
+        };
+        let NodeKind::Switch {
+            subject: Some(_),
+            arms,
+        } = &ast.node(*value).kind
+        else {
+            panic!("not a subject switch: {:?}", ast.node(*value).kind);
+        };
+        assert_eq!(arms.len(), 2);
+        assert!(arms[1].0.is_none(), "bare => is the default arm");
+        let NodeKind::ExprStmt { expr } = &ast.node(stmts[1]).kind else {
+            panic!("not an expr stmt");
+        };
+        assert!(matches!(
+            &ast.node(*expr).kind,
+            NodeKind::Switch { subject: None, .. }
+        ));
     }
 
     #[test]

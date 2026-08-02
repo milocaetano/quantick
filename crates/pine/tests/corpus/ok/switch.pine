@@ -1,0 +1,11 @@
+//@version=5
+indicator("switch demo")
+trend = switch
+    close > open => 1
+    close < open => -1
+    => 0
+size = switch trend
+    1 => close - open
+    -1 => open - close
+    => 0.0
+plot(trend * size)

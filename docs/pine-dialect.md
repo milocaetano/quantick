@@ -38,10 +38,12 @@ by golden tests.
   builtins.
 - Operators: arithmetic (`+ - * / %`), comparison, `and or not` (short-
   circuit; `na` counts as false), ternary `? :`, history `[n]`.
-- `if` / `for … to … by` / `while` are **expressions**; an indented block's
-  value is its last statement's value. Loops are capped at 10 000 iterations
-  per bar (`PINE_LOOP_BUDGET`). `switch` is not supported yet
-  (`PINE_UNSUPPORTED`).
+- `if` / `for … to … by` / `while` / `switch` are **expressions**; an
+  indented block's value is its last statement's value. Loops are capped at
+  10 000 iterations per bar (`PINE_LOOP_BUDGET`). `switch` takes both forms:
+  with a subject (`switch x` + `value => body` arms, matched by `==` rules)
+  and without (`switch` + `condition => body` arms); a bare `=> body` arm
+  is the default.
 - User functions: `f(x) => expr` or an indented block; tuples for multi-
   returns; no recursion (`PINE_RECURSION`); no nested definitions.
 - Division (and `%`) by zero yields `na`, never ±infinity.

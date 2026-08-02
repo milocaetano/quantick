@@ -66,6 +66,8 @@ const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
 /// generated from `InputSpec` replaces this in M4).
 const DEFAULT_EMA_LEN: usize = 9;
+/// How often the hot-reload poll checks script files for changes.
+const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 /// Inspector width bounds (UX spec: resizable between 300 and 440 px).
 const INSPECTOR_MIN_WIDTH_PX: f32 = 300.0;
 /// See [`INSPECTOR_MIN_WIDTH_PX`].
@@ -325,6 +327,12 @@ pub struct QuantickApp {
     script_library: ScriptLibrary,
     /// The open indicator-settings dialog, if any (one at a time).
     indicator_settings: Option<SettingsDialog>,
+    /// File-backed script slots: (slot, library index, last seen mtime) —
+    /// what the hot-reload poll walks.
+    script_files: Vec<(SlotId, usize, std::time::SystemTime)>,
+    /// Last hot-reload poll instant (the poll runs about once a second;
+    /// file metadata every frame would be waste).
+    last_script_poll: Instant,
     book_capture_epoch: u64,
     book_channel_closed_reported: bool,
     /// Whether the user wants the live strip shown. The pixels it actually
@@ -496,6 +504,8 @@ impl QuantickApp {
             indicators: IndicatorViews::new(),
             script_library: ScriptLibrary::scan(),
             indicator_settings: None,
+            script_files: Vec::new(),
+            last_script_poll: Instant::now(),
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
             live_strip_visible: false,
@@ -749,6 +759,7 @@ impl QuantickApp {
                     label: view.label().to_owned(),
                     hidden: view.hidden,
                     errored: view.error.is_some(),
+                    stale: view.stale.is_some(),
                 })
                 .collect(),
             scripts: self
@@ -852,7 +863,14 @@ impl QuantickApp {
         let name = entry.name.clone();
         match self.script_library.read(index) {
             Some(Ok(text)) => {
-                self.add_indicator(IndicatorSource::Script { name, text });
+                let slot = self.indicators.allocate_slot();
+                self.indicator_worker.send(IndicatorCommand::Add {
+                    slot,
+                    source: IndicatorSource::Script { name, text },
+                });
+                if let Some((_, mtime)) = self.script_library.file_info(index) {
+                    self.script_files.push((slot, index, mtime));
+                }
             }
             Some(Err(message)) => {
                 tracing::warn!(
@@ -1373,6 +1391,62 @@ impl QuantickApp {
             self.state.bars().to_vec(),
             self.state.partial().cloned(),
         ));
+    }
+
+    /// Hot reload: about once a second, compare each file-backed script's
+    /// mtime; a changed file is re-read and sent as a Reload — recompiled
+    /// and replayed on success, or flagged stale (the last good version
+    /// keeps running) on errors. The mtime updates even when the compile
+    /// fails, so a broken save does not re-fire every second.
+    fn poll_script_files(&mut self) {
+        if self.script_files.is_empty()
+            || self.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
+        {
+            return;
+        }
+        self.last_script_poll = Instant::now();
+        let mut reloads: Vec<(SlotId, String, String)> = Vec::new();
+        for (slot, index, seen_mtime) in &mut self.script_files {
+            let Some((path, mtime)) = self.script_library.file_info(*index) else {
+                continue;
+            };
+            if mtime == *seen_mtime {
+                continue;
+            }
+            *seen_mtime = mtime;
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    reloads.push((*slot, name, text));
+                }
+                Err(error) => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                    script = %path.display(),
+                    error = %error,
+                    action = "reload_skipped",
+                    "cannot re-read a changed indicator script"
+                ),
+            }
+        }
+        for (slot, name, text) in reloads {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "INDICATOR_SCRIPT_RELOAD",
+                script = %name,
+                action = "recompile_and_replay",
+                "indicator script changed on disk"
+            );
+            self.indicator_worker.send(IndicatorCommand::Reload {
+                slot,
+                source: IndicatorSource::Script { name, text },
+            });
+        }
     }
 
     /// Reserve a slot and ask the worker to instantiate `source` behind it.
@@ -3843,6 +3917,7 @@ impl QuantickApp {
         self.draw_menu_bar(ctx);
         self.draw_toolbar(ctx);
         self.draw_indicator_settings(ctx);
+        self.poll_script_files();
         let status = self.status_model();
         statusbar::draw(ctx, &status, &mut self.tz);
         // The browser window and, while a session plays, the transport bar.
