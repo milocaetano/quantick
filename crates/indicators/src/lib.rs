@@ -36,15 +36,18 @@
 
 pub mod fmath;
 pub mod golden;
+pub mod native;
 pub mod ta;
 
 mod bar;
+mod host;
 mod indicator;
 mod input;
 mod output;
 mod series;
 
 pub use bar::IndicatorBar;
+pub use host::{IndicatorHost, InstanceId};
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 pub use input::{InputSpec, InputValue, SourceId};
 pub use output::{PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8};

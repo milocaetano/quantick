@@ -68,6 +68,24 @@ impl SourceId {
         }
     }
 
+    /// True when this series lives on the price scale — an overlay of it
+    /// belongs on the price chart. Flow series (volume, delta, cvd, …) need
+    /// their own pane; drawing them over price would be a scale lie.
+    #[must_use]
+    pub fn is_price_scaled(self) -> bool {
+        matches!(
+            self,
+            SourceId::Open
+                | SourceId::High
+                | SourceId::Low
+                | SourceId::Close
+                | SourceId::Hl2
+                | SourceId::Hlc3
+                | SourceId::Ohlc4
+                | SourceId::Hlcc4
+        )
+    }
+
     /// The script-facing / persistence name of this source.
     #[must_use]
     pub fn as_str(self) -> &'static str {
