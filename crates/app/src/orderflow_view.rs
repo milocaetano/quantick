@@ -50,6 +50,35 @@ fn status_color(status: &CaptureStatus) -> egui::Color32 {
     }
 }
 
+/// Borrowed chart timeline handed to one order-flow projection request.
+///
+/// Keeping the boundary revision beside the exact bar slice prevents callers
+/// from accidentally pairing a new timeline with an old cache identity.
+#[derive(Clone, Copy)]
+pub(crate) struct VisibleBarTimeline<'a> {
+    revision: u64,
+    first_bar_index: usize,
+    closed: &'a [Bar],
+    partial: Option<&'a Bar>,
+}
+
+impl<'a> VisibleBarTimeline<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        revision: u64,
+        first_bar_index: usize,
+        closed: &'a [Bar],
+        partial: Option<&'a Bar>,
+    ) -> Self {
+        Self {
+            revision,
+            first_bar_index,
+            closed,
+            partial,
+        }
+    }
+}
+
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
     symbol: String,
@@ -385,10 +414,7 @@ impl OrderflowView {
     /// next frame swap, not the UI.
     pub fn project_visible(
         &mut self,
-        timeline_revision: u64,
-        first_bar_index: usize,
-        closed: &[Bar],
-        partial: Option<&Bar>,
+        timeline: VisibleBarTimeline<'_>,
         lane: bool,
         on_newest_bar: bool,
         price_range: (f64, f64),
@@ -398,10 +424,10 @@ impl OrderflowView {
         }
         self.sync_published();
         let request = ProjectionRequest {
-            timeline_revision,
-            first_bar_index,
-            closed: closed.to_vec(),
-            partial: partial.cloned(),
+            timeline_revision: timeline.revision,
+            first_bar_index: timeline.first_bar_index,
+            closed: timeline.closed.to_vec(),
+            partial: timeline.partial.cloned(),
             lane,
             on_newest_bar,
             price_range,
@@ -1770,6 +1796,10 @@ mod tests {
         }
     }
 
+    fn visible_timeline(bars: &[Bar]) -> VisibleBarTimeline<'_> {
+        VisibleBarTimeline::new(0, 0, bars, None)
+    }
+
     #[test]
     fn capture_reads_as_syncing_only_while_enabled_and_settling() {
         let mut view = OrderflowView::new("BTCUSDT");
@@ -1807,11 +1837,11 @@ mod tests {
 
         let bars = [bar(900, 1_100)];
         // First call queues the projection; the frame appears after a flush.
-        let first = view.project_visible(0, 0, &bars, None, true, true, (98.0, 102.0));
+        let first = view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
         assert!(first.is_none());
         view.flush_for_test();
         let frame = view
-            .project_visible(0, 0, &bars, None, true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
@@ -1877,7 +1907,7 @@ mod tests {
         // One 99 bid and one 101 ask (see `snapshot_event`).
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, 0, &bars, None, true, true, (100.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, (100.0, 102.0));
         view.flush_for_test();
 
         let ladder = view.published.ladder.as_ref().expect("published ladder");
@@ -1955,10 +1985,10 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1);
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, 0, &bars, None, true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(0, 0, &bars, None, true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
             .expect("published frame");
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
@@ -1966,7 +1996,7 @@ mod tests {
         // Turning the bubbles off closes the pipeline again.
         view.set_bubbles_enabled(false);
         assert!(
-            view.project_visible(0, 0, &bars, None, true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()
         );
     }
@@ -1977,16 +2007,16 @@ mod tests {
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, 0, &bars, None, true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
         view.flush_for_test();
         assert!(
-            view.project_visible(0, 0, &bars, None, true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_some()
         );
 
         view.set_enabled(false, 11);
         assert!(
-            view.project_visible(0, 0, &bars, None, true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()
         );
         view.flush_for_test();

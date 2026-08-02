@@ -29,7 +29,7 @@ use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLi
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
-use crate::orderflow_view::OrderflowView;
+use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::price_view::PriceView;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::{BarKind, BarSpec, ChartState};
@@ -2088,10 +2088,12 @@ impl QuantickApp {
         // same thing: with them apart, the newest prints would be clustered and
         // sized as lane prints and then squeezed into a single candle slot.
         let orderflow_frame = self.orderflow.project_visible(
-            self.state.timeline_revision(),
-            closed_start,
-            visible_closed,
-            partial_visible,
+            VisibleBarTimeline::new(
+                self.state.timeline_revision(),
+                closed_start,
+                visible_closed,
+                partial_visible,
+            ),
             lane_width_px > 0.0,
             end == total,
             scale.range(),
