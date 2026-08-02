@@ -12,7 +12,7 @@
 
 <p align="center"><em>Live BTCUSDT tick bars over the Bookmap-inspired L2 liquidity heatmap, with buy/sell aggression bubbles, L2 reduction marks and a live lane where the forming bar's tape keeps moving — this is <code>cargo run -p quantick-app</code> out of the box.</em></p>
 
-> ⚠️ Early development, but already runnable. The Rust bar engine, the live Binance feed and the native desktop chart work today — you can clone, build and watch bars form in real time in a few minutes (see [Quick start](#quick-start--build-test-run)). APIs will still churn. Star/watch the repo to follow along.
+> ⚠️ Early development, but already runnable. The Rust bar engine, public Binance and Hyperliquid feeds, and the native desktop chart work today — you can clone, build and watch bars form in real time in a few minutes (see [Quick start](#quick-start--build-test-run)). APIs will still churn. Star/watch the repo to follow along.
 
 ## Why this exists
 
@@ -95,6 +95,12 @@ symbols = ["BTCUSDT", "ETHUSDT"]
 ```
 
 The full set of options — available feeds, the optional MetaTrader 5 bridge, the L2 heatmap toggles and logging — is documented in [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml) and in the [L2 liquidity map](#optional-l2-liquidity-map) section below.
+
+The built-in selector also includes Hyperliquid perpetuals (`BTC`, `ETH`,
+`HYPE`, `SOL`, `ZEC`). They need no account or API key: select **Hyperliquid**,
+pick a coin, then use the same **⚙ L2** and **⚙ bubbles** controls as Binance.
+Hyperliquid exposes only a short recent-trades recovery window, so older-history
+paging is disabled instead of being reconstructed from candles.
 
 ### Contributing
 
@@ -221,8 +227,8 @@ evenly across each second for smoother playback and marks the session
 
 ## Optional L2 liquidity map
 
-The chart can capture Binance Spot level-2 order-book depth and render a
-Bookmap-inspired liquidity map. Capture starts with any feed that can stream
+The chart can capture Binance Spot, Hyperliquid perpetual and MetaTrader DOM
+depth and render a Bookmap-inspired liquidity map. Capture starts with any feed that can stream
 depth; the map itself is **hidden by default** and shown from the chart
 controls. The **⚙ L2** button docks a settings panel to
 the left of the chart — the chart keeps the remaining width instead of being
@@ -252,11 +258,11 @@ a feed or symbol switch, or a replay taking the chart over.
 
 The visualization follows a few data-honesty rules:
 
-- History begins at the first successfully synchronized live snapshot/update sequence. Binance does not provide historical L2 backfill through this feed, so candles before that point are marked as unavailable instead of being reconstructed. That stretch is marked by a single dashed line where the book begins, plus a label: it can span most of the chart, and tinting it would bury candles and bubbles that are perfectly real there.
+- History begins at the first successfully synchronized live snapshot/update sequence. Neither Binance nor Hyperliquid provides historical L2 backfill through these feeds, so candles before that point are marked as unavailable instead of being reconstructed. That stretch is marked by a single dashed line where the book begins, plus a label: it can span most of the chart, and tinting it would bury candles and bubbles that are perfectly real there.
 - Depth update IDs are checked continuously. A disconnect, sequence gap or resynchronization closes the current liquidity runs, marks the affected interval with a faint fill between dashed vertical boundaries, and starts again from a fresh snapshot. Stale book state is never stretched across a gap. Interior gaps keep their fill precisely because they are narrow — an untinted sliver would read as "no resting liquidity" rather than "no data".
-- Heatmap quantities are resting bid/ask amounts from the snapshot plus absolute depth updates, limited to the configured number of price levels on each side. Liquidity outside that coverage is unknown.
+- Heatmap quantities are resting bid/ask amounts from the snapshot plus absolute depth updates, limited to the source's declared coverage. Hyperliquid publishes complete visible images of at most 20 levels per side; Binance's requested depth is configurable. Liquidity outside either coverage is unknown.
 - A displayed band records the bucket total observed when its run opened; changes smaller than ~10% merge into the open run instead of cutting a new one. This churn-merge tolerance is a disclosed granularity choice — larger moves, appearances and full removals always cut a new run at their exact value.
-- `aggTrade` bubbles are confirmed market aggression. Their area is quantity-proportional and nearby prints can be clustered without changing total volume.
+- Trade bubbles are confirmed market aggression (`aggTrade` on Binance and venue-side `trades` on Hyperliquid). Their area is quantity-proportional and nearby prints can be clustered without changing total volume.
 - A dark **bite** and impact ring mean an aggression and an L2 reduction were compatible in passive side, displayed price range, synchronized generation and time. This is an association, not a claim that one event caused the other.
 - A violet dashed tail means displayed liquidity decreased without compatible aggression. It is deliberately called an **unattributed L2 reduction**, not a cancellation: a depth reduction can be an execution, cancellation, replacement or a combination of those events.
 - Window clipping, retention boundaries, snapshots and synchronization gaps never create fake reduction markers.
@@ -287,7 +293,7 @@ The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `QUANTICK_BOOK_DEPTH` | `1000` | Binance snapshot depth per side. Numeric values are clamped to `1`–`5000`; a missing or invalid value uses the default. Higher values increase initial REST payload, synchronization work and memory use. |
+| `QUANTICK_BOOK_DEPTH` | `1000` | Binance snapshot depth per side. Numeric values are clamped to `1`–`5000`; a missing or invalid value uses the default. Hyperliquid's public L2 coverage is fixed by the venue at up to 20 levels per side. |
 | `QUANTICK_BOOK_AUTOSTART` | unset | Set to `1` to show the L2 map on startup without clicking the chart toggle (development/ops convenience; same code path as the toggle). Capture itself needs no flag — it runs for every depth-capable feed. |
 | `QUANTICK_LOG_FORMAT` | `text` | Set to `json` for newline-delimited JSON diagnostic logs on stderr. |
 | `RUST_LOG` | `quantick=info` | Standard tracing filter; for example, use `quantick=debug` for deeper diagnostics. |
@@ -305,7 +311,7 @@ JSON logs include stable fields such as `schema_version`, `event_code`, symbol, 
 The project is a Cargo workspace of small, one-way-dependent crates (`app` / `feed-*` → `engine` / `orderbook` / `replay`). Status today:
 
 - **Bar engine (Rust)** — ✅ raw trades in → alternative bars out; deterministic and headless, usable with no UI attached (`crates/engine`)
-- **Live feeds** — ✅ Binance aggTrades over public data, works out of the box with no API key (`crates/feed-binance`); ✅ MetaTrader 5 via a local bridge EA (`crates/feed-mt5`)
+- **Live feeds** — ✅ Binance aggTrades + synchronized L2 (`crates/feed-binance`); ✅ Hyperliquid perpetual trades + visible L2 (`crates/feed-hyperliquid`); ✅ MetaTrader 5 via a local bridge EA (`crates/feed-mt5`)
 - **Market replay** — ✅ recorded sessions played back through the live feed channel, at 1×–50× (`crates/replay`)
 - **Desktop app** — ✅ native chart (egui) showing bars form in real time, with a Bookmap-inspired L2 liquidity heatmap (`crates/app`)
 - **Bindings** — ⏳ Python bindings and a C API are planned, so the engine plugs into existing backtest stacks and bots in any language
@@ -321,6 +327,7 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` / `fe
 
 - [x] Core bar engine (tick / volume / dollar / time bars)
 - [x] Binance aggTrades feed
+- [x] Hyperliquid perpetual trades and L2 feed
 - [x] Desktop chart
 - [x] Imbalance bars (López de Prado information-driven sampling)
 - [x] MetaTrader 5 feed

@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-feed-binance = { path = "../feed-binance" }
+quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }

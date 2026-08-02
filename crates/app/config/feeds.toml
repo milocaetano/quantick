@@ -17,7 +17,7 @@ default_symbol = "BTCUSDT"
 #   id            — stable identifier, referenced by `default_feed` (unique).
 #   name          — label shown in the feed selector.
 #   provider      — which backend streams it; maps to a code path.
-#                   Supported today: "binance", "metatrader".
+#                   Supported today: "binance", "hyperliquid", "metatrader".
 #   symbols       — the assets offered for this feed (first is its fallback).
 #   bubble_preset — optional: a bubble preset (by name, from bubbles.toml)
 #                   applied whenever this feed is selected. Leave it out and
@@ -28,6 +28,19 @@ id = "binance"
 name = "Binance"
 provider = "binance"
 symbols = ["BTCUSDT", "ETHUSDT"]
+
+# Hyperliquid perpetuals, over unauthenticated public REST/WebSocket endpoints.
+# These were the five largest non-delisted markets by 24h notional volume in
+# `metaAndAssetCtxs` when this built-in seed was reviewed on 2026-08-02. The
+# list is deliberately configuration (not provider code), so it remains easy
+# to review or override as leadership changes. Hyperliquid publishes factual
+# aggressor sides and complete snapshots of its visible top 20 L2 levels; it
+# does not expose pageable public trade history, so "load older" is disabled.
+[[feeds]]
+id = "hyperliquid"
+name = "Hyperliquid"
+provider = "hyperliquid"
+symbols = ["BTC", "ETH", "HYPE", "SOL", "ZEC"]
 
 # MetaTrader 5, via the QuantickBridge EA (see bridge/mt5/README.md for the
 # one-time setup). The EA streams the chart it is attached to; the symbol

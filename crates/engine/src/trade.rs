@@ -9,10 +9,11 @@ use rust_decimal::Decimal;
 /// liquidity and, by convention, "caused" the print. Order-flow bars track how
 /// much volume was taker-buy vs taker-sell.
 ///
-/// # Mapping from Binance aggTrades
+/// # Venue mappings
 ///
-/// Binance reports `m` (`is_buyer_maker`) per aggregate trade. If the buyer is
-/// the maker, then the taker — the aggressor — is the seller, and vice versa:
+/// A feed maps its venue vocabulary here before the engine sees it. Binance
+/// reports `m` (`is_buyer_maker`) per aggregate trade. If the buyer is the
+/// maker, then the taker — the aggressor — is the seller, and vice versa:
 ///
 /// | `is_buyer_maker` | aggressor      |
 /// |------------------|----------------|
@@ -31,7 +32,7 @@ pub enum Side {
 impl Side {
     /// Map Binance's `is_buyer_maker` flag to the aggressor side.
     ///
-    /// See the [type-level docs](Side#mapping-from-binance-aggtrades) for why
+    /// See the [type-level docs](Side#venue-mappings) for why
     /// the flag inverts.
     #[must_use]
     pub fn from_buyer_is_maker(is_buyer_maker: bool) -> Self {
@@ -54,11 +55,13 @@ impl Side {
 
 /// A single executed trade — the engine's sole input.
 ///
-/// One `Trade` corresponds to one Binance *aggregate* trade (`aggTrade`): a run
-/// of individual fills at the same price from the same taker order, collapsed
-/// into a single print. [`agg_id`](Trade::agg_id) is that aggregate trade's id,
-/// monotonic per symbol; the live feed uses it to detect gaps and out-of-order
-/// delivery.
+/// One `Trade` corresponds to the smallest factual execution unit a source
+/// publishes: one Binance aggregate trade, one Hyperliquid public trade, or one
+/// mapped terminal tick. [`agg_id`](Trade::agg_id) is monotonic within the
+/// source stream. It may be venue-assigned (Binance) or explicitly synthetic
+/// when the venue has no monotonic id (Hyperliquid and MetaTrader); each feed
+/// documents that boundary and retains the venue identity it needs for
+/// deduplication.
 ///
 /// Prices and quantities are [`Decimal`] for exact, deterministic arithmetic: no
 /// binary-float rounding error accumulates as bars are built across a session.
@@ -66,7 +69,7 @@ impl Side {
 /// never reads a wall clock (see the determinism rule in `CLAUDE.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trade {
-    /// Exchange aggregate-trade id, monotonic per symbol.
+    /// Source trade id, monotonic within one symbol/session stream.
     pub agg_id: u64,
     /// Trade time, in milliseconds since the Unix epoch.
     pub timestamp_ms: i64,

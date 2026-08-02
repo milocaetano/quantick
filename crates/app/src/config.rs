@@ -32,6 +32,8 @@ pub const CONFIG_FILENAME: &str = "quantick.toml";
 pub enum ProviderKind {
     /// Binance public aggTrades (REST backfill + live WebSocket).
     Binance,
+    /// Hyperliquid public perpetual trades and complete L2 images.
+    Hyperliquid,
     /// MetaTrader 5 via the local QuantickBridge EA (see `bridge/mt5/`).
     MetaTrader,
 }
@@ -41,7 +43,10 @@ impl ProviderKind {
     /// land as config-visible placeholders first, labelled "(soon)" in the UI.
     #[must_use]
     pub fn is_implemented(self) -> bool {
-        matches!(self, ProviderKind::Binance | ProviderKind::MetaTrader)
+        matches!(
+            self,
+            ProviderKind::Binance | ProviderKind::Hyperliquid | ProviderKind::MetaTrader
+        )
     }
 
     /// What this provider's backend can do before a session says otherwise.
@@ -59,6 +64,14 @@ impl ProviderKind {
             ProviderKind::Binance => FeedCapabilities {
                 book_capture: true,
                 history_paging: true,
+                traded_volume: true,
+            },
+            // `recentTrades` is a short recovery window, not a pageable
+            // historical API. Trades and the visible 20-level book are factual;
+            // older history is withheld rather than synthesized from candles.
+            ProviderKind::Hyperliquid => FeedCapabilities {
+                book_capture: true,
+                history_paging: false,
                 traded_volume: true,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
@@ -238,7 +251,7 @@ impl AppConfig {
     #[must_use]
     pub fn side_note(&self, id: &str) -> Option<&'static str> {
         match self.provider_of(id)? {
-            ProviderKind::Binance => None,
+            ProviderKind::Binance | ProviderKind::Hyperliquid => None,
             ProviderKind::MetaTrader => Some(match self.metatrader.side_source {
                 Mt5SideSource::TickRule => "side: inferred (tick rule)",
                 Mt5SideSource::Flags => "side: broker flags",
@@ -410,6 +423,19 @@ mod tests {
         assert!(binance.symbols.contains(&"BTCUSDT".to_string()));
         assert!(binance.symbols.contains(&"ETHUSDT".to_string()));
 
+        let hyperliquid = config.feed("hyperliquid").expect("Hyperliquid feed");
+        assert_eq!(hyperliquid.provider, ProviderKind::Hyperliquid);
+        assert_eq!(hyperliquid.symbols, ["BTC", "ETH", "HYPE", "SOL", "ZEC"]);
+        assert_eq!(
+            hyperliquid.provider.capabilities(),
+            FeedCapabilities {
+                book_capture: true,
+                history_paging: false,
+                traded_volume: true,
+            }
+        );
+        assert_eq!(config.side_note("hyperliquid"), None);
+
         let mt5 = config.feed("metatrader").expect("metatrader feed");
         assert_eq!(mt5.provider, ProviderKind::MetaTrader);
         assert!(mt5.symbols.contains(&"WIN$N".to_string()));
@@ -489,6 +515,7 @@ mod tests {
         assert_eq!(config.provider_of("mt"), Some(ProviderKind::MetaTrader));
         assert!(ProviderKind::MetaTrader.is_implemented());
         assert!(ProviderKind::Binance.is_implemented());
+        assert!(ProviderKind::Hyperliquid.is_implemented());
         // No [metatrader] section: defaults apply.
         assert_eq!(config.metatrader, MetaTraderSettings::default());
     }

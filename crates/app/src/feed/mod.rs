@@ -8,11 +8,13 @@
 //! Which backend runs is chosen at [`spawn`] time from a [`FeedSource`], so the
 //! UI is provider-agnostic: it drains the same [`FeedHandle`] regardless of
 //! where the trades come from. [`binance`] streams public aggTrades directly;
+//! [`hyperliquid`] streams public perpetual trades and complete L2 images;
 //! [`metatrader`] listens for the local QuantickBridge EA (see `bridge/mt5/`);
 //! [`replay`] plays a recorded session back through the very same channel, which
 //! is what lets market replay reuse the whole chart untouched.
 
 pub mod binance;
+pub mod hyperliquid;
 pub mod metatrader;
 pub mod mt5_bridge;
 pub mod replay;
@@ -210,6 +212,7 @@ pub fn spawn(source: FeedSource, config: &crate::config::AppConfig) -> FeedHandl
     match source {
         FeedSource::Live { provider, symbol } => match provider {
             ProviderKind::Binance => binance::spawn(&symbol),
+            ProviderKind::Hyperliquid => hyperliquid::spawn(&symbol),
             ProviderKind::MetaTrader => metatrader::spawn(&symbol, &config.metatrader),
         },
         FeedSource::Replay(request) => replay::spawn(*request),
