@@ -34,7 +34,9 @@
 //! - guarded by [`golden`] tests that replay fixed fixtures twice and require
 //!   byte-identical plot output.
 
+pub mod fmath;
 pub mod golden;
+pub mod ta;
 
 mod bar;
 mod indicator;
