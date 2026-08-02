@@ -1,34 +1,37 @@
 //! Hyperliquid backend for the provider-neutral app feed bridge.
 //!
-//! Startup reads the venue's short `recentTrades` recovery window, then a
-//! reconnecting WebSocket carries factual aggressor-side prints. A separately
-//! cancellable `l2Book` connection publishes the visible 20-level book through
-//! the same neutral [`DepthEvent`] channel Binance and MetaTrader use.
+//! A reconnecting WebSocket starts with the venue's recovery batch and then
+//! carries factual aggressor-side prints. Preserving each venue batch through
+//! the app bridge avoids per-trade channel overhead. A separately cancellable
+//! `l2Book` connection publishes the visible 20-level book through the same
+//! neutral [`DepthEvent`] channel Binance and MetaTrader use.
 
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, HYPERLIQUID_WS_URL, HyperliquidHttp, TradeMapper,
+    Backoff, HYPERLIQUID_WS_URL, TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
-    fetch_recent_trades, run_trades_with_reconnect,
+    run_trades_with_reconnect,
 };
 
 use super::{FeedCommand, FeedEvent, FeedHandle};
 use crate::config::ProviderKind;
 
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
-const TRADE_EVENT_CHANNEL_CAPACITY: usize = 4_096;
+const FEED_EVENT_CHANNEL_CAPACITY: usize = 4_096;
+const TRADE_BATCH_CHANNEL_CAPACITY: usize = 1_024;
 const COMMAND_CHANNEL_CAPACITY: usize = 16;
 const FEED_RUNTIME_WORKERS: usize = 2;
+const STARTUP_RECOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const TRADE_RECONNECT_SEED: u64 = 0x4859_5045_525F_5452;
 const DEPTH_RECONNECT_SEED: u64 = 0x4859_5045_525F_4C32;
 
 /// Start the selected Hyperliquid perpetual on a background runtime.
 #[must_use]
 pub fn spawn(symbol: &str) -> FeedHandle {
-    let (tx, rx) = mpsc::channel(TRADE_EVENT_CHANNEL_CAPACITY);
+    let (tx, rx) = mpsc::channel(FEED_EVENT_CHANNEL_CAPACITY);
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
     let symbol = symbol.to_owned();
@@ -61,39 +64,8 @@ async fn feed_task(
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     let symbol = symbol.to_uppercase();
-    let http = HyperliquidHttp::new();
-    let mut mapper = TradeMapper::new(&symbol);
-
-    match fetch_recent_trades(&http, &symbol).await {
-        Ok(raw) => {
-            let batch = mapper.map_batch(raw);
-            log_mapping_ledger(&symbol, "startup", &batch);
-            info!(
-                target: "quantick::app",
-                provider = "hyperliquid",
-                symbol,
-                count = batch.trades.len(),
-                "recent Hyperliquid trades ready"
-            );
-            if tx.send(FeedEvent::Backfilled(batch.trades)).await.is_err() {
-                return;
-            }
-        }
-        Err(error) => {
-            error!(
-                target: "quantick::app",
-                provider = "hyperliquid",
-                symbol,
-                %error,
-                "recent-trades fetch failed; continuing with live data"
-            );
-            if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
-                return;
-            }
-        }
-    }
-
-    let (live_tx, mut live_rx) = mpsc::channel::<Trade>(TRADE_EVENT_CHANNEL_CAPACITY);
+    let mapper = TradeMapper::new(&symbol);
+    let (live_tx, mut live_rx) = mpsc::channel::<Vec<Trade>>(TRADE_BATCH_CHANNEL_CAPACITY);
     let stream_symbol = symbol.clone();
     let trade_backoff = Backoff::for_feed(TRADE_RECONNECT_SEED);
     let reconnect = tokio::spawn(async move {
@@ -107,17 +79,46 @@ async fn feed_task(
         .await;
     });
     let mut book_capture: Option<BookCaptureTask> = None;
+    let mut recovery_pending = true;
+    let recovery_timeout = tokio::time::sleep(STARTUP_RECOVERY_TIMEOUT);
+    tokio::pin!(recovery_timeout);
 
     loop {
         tokio::select! {
-            maybe_trade = live_rx.recv() => {
-                match maybe_trade {
-                    Some(trade) => {
-                        if tx.send(FeedEvent::Live(trade)).await.is_err() {
+            maybe_batch = live_rx.recv() => {
+                match maybe_batch {
+                    Some(trades) => {
+                        let is_recovery = recovery_pending;
+                        let count = trades.len();
+                        let event = classify_trade_batch(trades, &mut recovery_pending);
+                        if is_recovery {
+                            info!(
+                                target: "quantick::app",
+                                provider = "hyperliquid",
+                                symbol,
+                                count,
+                                "initial Hyperliquid websocket recovery ready"
+                            );
+                        }
+                        if tx.send(event).await.is_err() {
                             break;
                         }
                     }
                     None => break,
+                }
+            }
+            () = &mut recovery_timeout, if recovery_pending => {
+                recovery_pending = false;
+                warn!(
+                    target: "quantick::app",
+                    provider = "hyperliquid",
+                    symbol,
+                    timeout_ms = STARTUP_RECOVERY_TIMEOUT.as_millis() as u64,
+                    action = "continue_live",
+                    "initial Hyperliquid websocket recovery timed out"
+                );
+                if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
+                    break;
                 }
             }
             maybe_cmd = cmd_rx.recv() => {
@@ -189,27 +190,12 @@ async fn feed_task(
     stop_book_capture(&mut book_capture, &symbol, "feed_dropped").await;
 }
 
-fn log_mapping_ledger(
-    symbol: &str,
-    stage: &'static str,
-    batch: &quantick_feed_hyperliquid::MappedBatch,
-) {
-    if batch.errors.is_empty() && batch.stale == 0 {
-        return;
+fn classify_trade_batch(trades: Vec<Trade>, recovery_pending: &mut bool) -> FeedEvent {
+    if std::mem::take(recovery_pending) {
+        FeedEvent::Backfilled(trades)
+    } else {
+        FeedEvent::LiveBatch(trades)
     }
-    warn!(
-        target: "quantick::app",
-        provider = "hyperliquid",
-        symbol,
-        stage,
-        accepted = batch.trades.len(),
-        duplicates = batch.duplicates,
-        stale = batch.stale,
-        malformed = batch.errors.len(),
-        first_error = batch.errors.first().map(ToString::to_string),
-        action = "skip_invalid_rows",
-        "Hyperliquid trade mapping was partially usable"
-    );
 }
 
 struct BookCaptureTask {
@@ -282,4 +268,39 @@ async fn stop_book_capture(task: &mut Option<BookCaptureTask>, symbol: &str, rea
         action = "stop",
         "Hyperliquid book capture stopped"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_decimal::Decimal;
+
+    use super::*;
+
+    fn trade(id: u64) -> Trade {
+        Trade {
+            agg_id: id,
+            timestamp_ms: i64::try_from(id).expect("test id fits in i64"),
+            price: Decimal::ONE,
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        }
+    }
+
+    #[test]
+    fn first_websocket_batch_is_recovery_then_batches_stay_live() {
+        let mut recovery_pending = true;
+        let first = classify_trade_batch(vec![trade(1), trade(2)], &mut recovery_pending);
+        assert!(matches!(first, FeedEvent::Backfilled(trades) if trades.len() == 2));
+        assert!(!recovery_pending);
+
+        let second = classify_trade_batch(vec![trade(3)], &mut recovery_pending);
+        assert!(matches!(second, FeedEvent::LiveBatch(trades) if trades.len() == 1));
+    }
+
+    #[test]
+    fn batch_after_recovery_timeout_is_live() {
+        let mut recovery_pending = false;
+        let event = classify_trade_batch(vec![trade(1)], &mut recovery_pending);
+        assert!(matches!(event, FeedEvent::LiveBatch(trades) if trades.len() == 1));
+    }
 }

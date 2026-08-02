@@ -1,8 +1,8 @@
 //! Recent public trades from Hyperliquid's `info` endpoint.
 //!
-//! `recentTrades` is a short recovery window, not pageable history. The app
-//! therefore uses it to open with factual prints and reports history paging as
-//! unsupported; it never synthesizes older trades from candles.
+//! `recentTrades` is a short recovery window, not pageable history. This
+//! optional utility remains available for consumers that need an explicit HTTP
+//! sample; the desktop app uses the larger initial WebSocket recovery batch.
 
 use std::time::Duration;
 

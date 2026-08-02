@@ -44,12 +44,11 @@ pub enum FeedEvent {
     HistoryPrepended(Vec<Trade>),
     /// One live trade.
     Live(Trade),
-    /// Several live trades that fell due together.
+    /// Several live trades received or released together.
     ///
     /// A replay at 50× can release hundreds of prints between two frames, and a
-    /// per-trade channel message for each is pure overhead on both ends. Live
-    /// feeds keep sending [`FeedEvent::Live`]; the UI treats a batch exactly as
-    /// the trades in it, in order.
+    /// per-trade channel message for each is pure overhead on both ends. The UI
+    /// treats a batch exactly as the trades in it, in order.
     LiveBatch(Vec<Trade>),
     /// Discard everything loaded and start over from an empty chart.
     ///

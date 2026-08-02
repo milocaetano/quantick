@@ -65,8 +65,8 @@ impl std::error::Error for TradeSessionError {}
 
 /// Run one subscribed trade connection until it closes.
 ///
-/// The mapper lives outside a connection so REST overlap and reconnect replay
-/// are deduplicated against the already-published timeline.
+/// The mapper lives outside a connection so the initial recovery batch and
+/// reconnect replay are deduplicated against the already-published timeline.
 ///
 /// # Errors
 ///
@@ -74,7 +74,7 @@ impl std::error::Error for TradeSessionError {}
 pub async fn run_trade_session(
     url: &str,
     symbol: &str,
-    trades: &Sender<Trade>,
+    trades: &Sender<Vec<Trade>>,
     mapper: &mut TradeMapper,
 ) -> Result<(), TradeSessionError> {
     let symbol = symbol.to_uppercase();
@@ -139,9 +139,9 @@ pub async fn run_trade_session(
                                         "suppressed Hyperliquid recovery overlap"
                                     );
                                 }
-                                for trade in batch.trades {
+                                if !batch.trades.is_empty() {
                                     trades
-                                        .send(trade)
+                                        .send(batch.trades)
                                         .await
                                         .map_err(|_| TradeSessionError::ConsumerClosed)?;
                                 }
@@ -176,7 +176,7 @@ pub async fn run_trade_session(
 pub async fn run_trades_with_reconnect(
     url: &str,
     symbol: &str,
-    trades: &Sender<Trade>,
+    trades: &Sender<Vec<Trade>>,
     mut mapper: TradeMapper,
     mut backoff: Backoff,
 ) {

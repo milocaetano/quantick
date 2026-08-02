@@ -22,12 +22,23 @@ async fn all_seeded_markets_stream_trades_and_l2() {
             let mut mapper = TradeMapper::new(&symbol_owned);
             run_trade_session(HYPERLIQUID_WS_URL, &symbol_owned, &trade_tx, &mut mapper).await
         });
-        let trade = tokio::time::timeout(MARKET_TIMEOUT, trade_rx.recv())
+        let trades = tokio::time::timeout(MARKET_TIMEOUT, trade_rx.recv())
             .await
-            .unwrap_or_else(|_| panic!("{symbol}: timed out waiting for a trade"))
+            .unwrap_or_else(|_| panic!("{symbol}: timed out waiting for a trade batch"))
             .unwrap_or_else(|| panic!("{symbol}: trade channel closed"));
-        assert!(trade.price > rust_decimal::Decimal::ZERO, "{symbol}");
-        assert!(trade.quantity > rust_decimal::Decimal::ZERO, "{symbol}");
+        assert!(!trades.is_empty(), "{symbol}: empty trade batch");
+        assert!(
+            trades
+                .iter()
+                .all(|trade| trade.price > rust_decimal::Decimal::ZERO),
+            "{symbol}"
+        );
+        assert!(
+            trades
+                .iter()
+                .all(|trade| trade.quantity > rust_decimal::Decimal::ZERO),
+            "{symbol}"
+        );
         trade_task.abort();
         let _ = trade_task.await;
 
@@ -56,6 +67,6 @@ async fn all_seeded_markets_stream_trades_and_l2() {
         depth_task.abort();
         let _ = depth_task.await;
 
-        println!("{symbol}: trade + L2 OK");
+        println!("{symbol}: {} trades + L2 OK", trades.len());
     }
 }
