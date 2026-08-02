@@ -181,6 +181,9 @@ pub struct ToolbarModel<'a> {
     pub appearance_open: bool,
     /// Active indicators, for the INDICATORS menu (add order).
     pub indicators: Vec<IndicatorMenuEntry>,
+    /// Loadable script names, embedded first (the INDICATORS menu's "add"
+    /// section; indices map straight to [`ToolbarAction::AddScriptIndicator`]).
+    pub scripts: Vec<String>,
 }
 
 /// One active indicator as the INDICATORS menu shows it. Raw slot numbers
@@ -225,6 +228,8 @@ pub enum ToolbarAction {
     ToggleIndicatorHidden(u64),
     /// Remove an indicator.
     RemoveIndicator(u64),
+    /// Load a script from the library, by index into `ToolbarModel::scripts`.
+    AddScriptIndicator(usize),
 }
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
@@ -524,6 +529,20 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
             actions.push(ToolbarAction::AddCvdIndicator);
             ui.close_menu();
         }
+        if !model.scripts.is_empty() {
+            ui.separator();
+            ui.label(
+                egui::RichText::new("scripts")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            for (index, name) in model.scripts.iter().enumerate() {
+                if ui.button(format!("{} {name}", icons::FILE_CODE)).clicked() {
+                    actions.push(ToolbarAction::AddScriptIndicator(index));
+                    ui.close_menu();
+                }
+            }
+        }
         if any_active {
             ui.separator();
         }
@@ -741,6 +760,7 @@ mod tests {
                         dock_visible: true,
                         appearance_open: false,
                         indicators: Vec::new(),
+                        scripts: Vec::new(),
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");
@@ -795,6 +815,7 @@ mod tests {
                         dock_visible: true,
                         appearance_open: false,
                         indicators: Vec::new(),
+                        scripts: Vec::new(),
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");

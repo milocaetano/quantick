@@ -29,6 +29,7 @@ use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLi
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
 use crate::indicators::IndicatorViews;
+use crate::indicators::library::ScriptLibrary;
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -318,6 +319,9 @@ pub struct QuantickApp {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     indicators: IndicatorViews,
+    /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
+    /// startup; hot reload is the M4 milestone.
+    script_library: ScriptLibrary,
     book_capture_epoch: u64,
     book_channel_closed_reported: bool,
     /// Whether the user wants the live strip shown. The pixels it actually
@@ -487,6 +491,7 @@ impl QuantickApp {
             orderflow: OrderflowView::new(symbol.clone()),
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
+            script_library: ScriptLibrary::scan(),
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
             live_strip_visible: false,
@@ -719,6 +724,12 @@ impl QuantickApp {
                     errored: view.error.is_some(),
                 })
                 .collect(),
+            scripts: self
+                .script_library
+                .entries()
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect(),
         };
         let actions = toolbar::draw(ctx, &mut model);
         // A newly picked feed may not offer the current symbol. Never during
@@ -760,6 +771,34 @@ impl QuantickApp {
                 self.indicator_worker
                     .send(IndicatorCommand::Remove(SlotId(slot)));
             }
+            ToolbarAction::AddScriptIndicator(index) => self.add_script_indicator(index),
+        }
+    }
+
+    /// Load a library script behind a fresh slot. A file that no longer
+    /// reads or a script that no longer compiles becomes the slot's error —
+    /// shown with lines and codes, never silently dropped.
+    fn add_script_indicator(&mut self, index: usize) {
+        let Some(entry) = self.script_library.entries().get(index) else {
+            return;
+        };
+        let name = entry.name.clone();
+        match self.script_library.read(index) {
+            Some(Ok(text)) => {
+                self.add_indicator(IndicatorSource::Script { name, text });
+            }
+            Some(Err(message)) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                    script = %name,
+                    error = %message,
+                    action = "script_not_loaded",
+                    "cannot read an indicator script"
+                );
+            }
+            None => {}
         }
     }
 

@@ -7,6 +7,8 @@
 //!
 //! [`IndicatorHost`]: quantick_indicators::IndicatorHost
 
+pub(crate) mod library;
+
 use eframe::egui;
 use quantick_indicators::{EvalError, IndicatorDescriptor, PreviewFrame};
 

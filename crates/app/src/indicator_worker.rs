@@ -28,21 +28,50 @@ use quantick_indicators::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct SlotId(pub u64);
 
-/// What to instantiate behind a slot. Scripted sources join in M2 as one
-/// more variant — no existing code path changes.
+/// What to instantiate behind a slot.
 #[derive(Debug, Clone)]
 pub(crate) enum IndicatorSource {
     /// Native EMA over a selectable source series.
     NativeEma { len: usize, source: SourceId },
     /// Native cumulative volume delta pane.
     NativeCvd,
+    /// A Quantick Pine script: display name + source text (the UI owns
+    /// files; the worker only ever sees text).
+    Script { name: String, text: String },
 }
 
 impl IndicatorSource {
-    fn build(&self) -> Box<dyn Indicator> {
+    /// Build the indicator, or explain why the script does not load. The
+    /// error string is the full human rendering — every problem, each with
+    /// file:line:col and its stable code.
+    fn build(&self) -> Result<Box<dyn Indicator>, String> {
         match self {
-            IndicatorSource::NativeEma { len, source } => Box::new(Ema::new(*len, *source)),
-            IndicatorSource::NativeCvd => Box::new(Cvd::new()),
+            IndicatorSource::NativeEma { len, source } => Ok(Box::new(Ema::new(*len, *source))),
+            IndicatorSource::NativeCvd => Ok(Box::new(Cvd::new())),
+            IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
+                Ok(compiled) => Ok(Box::new(quantick_pine::ScriptIndicator::new(
+                    compiled,
+                    text.clone(),
+                ))),
+                Err(errors) => Err(errors
+                    .iter()
+                    .map(|e| e.render(name, text))
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    )),
+            },
+        }
+    }
+
+    /// The display title used when the source cannot load (a healthy
+    /// instance's title comes from its descriptor).
+    fn fallback_title(&self) -> String {
+        match self {
+            IndicatorSource::NativeEma { len, .. } => format!("EMA({len})"),
+            IndicatorSource::NativeCvd => "CVD".to_owned(),
+            IndicatorSource::Script { name, .. } => name.clone(),
         }
     }
 }
@@ -96,7 +125,9 @@ pub(crate) enum IndicatorEvent {
 /// Worker-side bookkeeping for one slot: the host id plus what the UI is
 /// known to have, so every event is an exact delta.
 struct SlotMirror {
-    host_id: InstanceId,
+    /// `None`: the source never loaded (script compile error) — the slot
+    /// exists only as a UI entry carrying its error.
+    host_id: Option<InstanceId>,
     /// Committed rows the UI has (via Rebuilt/Appended events).
     known_rows: usize,
     /// Whether the UI has been told about the current error state.
@@ -194,20 +225,55 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     // override it backwards.
                     partial_update = None;
                 }
-                IndicatorCommand::Add { slot, source } => {
-                    let host_id = host.add(source.build());
-                    slots.insert(
-                        slot,
-                        SlotMirror {
-                            host_id,
-                            known_rows: 0,
-                            error_reported: false,
-                        },
-                    );
-                }
+                IndicatorCommand::Add { slot, source } => match source.build() {
+                    Ok(indicator) => {
+                        let host_id = host.add(indicator);
+                        slots.insert(
+                            slot,
+                            SlotMirror {
+                                host_id: Some(host_id),
+                                known_rows: 0,
+                                error_reported: false,
+                            },
+                        );
+                    }
+                    Err(message) => {
+                        // The slot still exists UI-side, carrying its load
+                        // error: a script that does not compile is shown,
+                        // with lines and codes, never silently dropped.
+                        let _ = events.send(IndicatorEvent::Rebuilt {
+                            slot,
+                            descriptor: IndicatorDescriptor {
+                                title: source.fallback_title(),
+                                short_title: None,
+                                overlay: false,
+                                plots: Vec::new(),
+                                inputs: Vec::new(),
+                            },
+                            columns: Vec::new(),
+                        });
+                        let _ = events.send(IndicatorEvent::Error {
+                            slot,
+                            error: EvalError {
+                                bar_index: 0,
+                                message,
+                            },
+                        });
+                        slots.insert(
+                            slot,
+                            SlotMirror {
+                                host_id: None,
+                                known_rows: 0,
+                                error_reported: true,
+                            },
+                        );
+                    }
+                },
                 IndicatorCommand::Remove(slot) => {
-                    if let Some(mirror) = slots.remove(&slot) {
-                        host.remove(mirror.host_id);
+                    if let Some(mirror) = slots.remove(&slot)
+                        && let Some(host_id) = mirror.host_id
+                    {
+                        host.remove(host_id);
                     }
                 }
                 IndicatorCommand::Flush(ack) => flushes.push(ack),
@@ -235,11 +301,14 @@ fn publish_deltas(
     rebuilt: bool,
 ) {
     for (&slot, mirror) in slots.iter_mut() {
-        let Some(plots) = host.plots(mirror.host_id) else {
+        let Some(host_id) = mirror.host_id else {
+            continue;
+        };
+        let Some(plots) = host.plots(host_id) else {
             continue;
         };
         let descriptor = host
-            .descriptor(mirror.host_id)
+            .descriptor(host_id)
             .expect("instance with plots has a descriptor");
         let rows = plots.len();
 
@@ -268,7 +337,7 @@ fn publish_deltas(
             mirror.known_rows = rows;
         }
 
-        match host.error(mirror.host_id) {
+        match host.error(host_id) {
             Some(error) if !mirror.error_reported => {
                 let _ = events.send(IndicatorEvent::Error {
                     slot,
@@ -282,7 +351,7 @@ fn publish_deltas(
 
         let _ = events.send(IndicatorEvent::Preview {
             slot,
-            frame: host.preview(mirror.host_id).cloned(),
+            frame: host.preview(host_id).cloned(),
         });
     }
 }
@@ -295,7 +364,7 @@ mod tests {
     use quantick_indicators::{PlotId, native::Ema};
     use rust_decimal::Decimal;
 
-    fn trade(i: u64) -> Trade {
+    pub(super) fn trade(i: u64) -> Trade {
         Trade {
             agg_id: i,
             timestamp_ms: 1_000 + i as i64 * 100,
@@ -433,5 +502,79 @@ mod tests {
         assert_eq!(views.all().len(), 1);
         assert_eq!(views.all()[0].slot, survivor);
         assert_eq!(views.all()[0].rows(), 3, "the survivor saw the new bar");
+    }
+}
+
+#[cfg(test)]
+mod script_load_tests {
+    use super::*;
+    use crate::indicators::IndicatorViews;
+
+    /// The M2 acceptance: a script using request.security loads into an
+    /// error slot whose message carries the line number and the stable code.
+    #[test]
+    fn a_rejected_script_surfaces_its_error_with_line_and_code() {
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::Script {
+                name: "sec.pine".to_owned(),
+                text: "//@version=5\nindicator(\"t\")\ns = request.security(close)\nplot(s)\n"
+                    .to_owned(),
+            },
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        let view = &views.all()[0];
+        let error = view.error.as_ref().expect("the slot carries the error");
+        assert!(error.message.contains("sec.pine:3:"), "{}", error.message);
+        assert!(
+            error.message.contains("PINE_NO_SECURITY"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("activity-sampled"),
+            "{}",
+            error.message
+        );
+    }
+
+    /// An embedded starter script runs end to end through the worker: bars
+    /// in, plot columns out — the whole scripted pipe.
+    #[test]
+    fn an_embedded_script_plots_through_the_worker() {
+        let (name, text) = crate::indicators::library::EMBEDDED_SCRIPTS[0];
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::Script {
+                name: name.to_owned(),
+                text: text.to_owned(),
+            },
+        });
+        let trades: Vec<quantick_engine::Trade> = (1..=24).map(tests::trade).collect();
+        let mut builder = quantick_engine::TickBarBuilder::new(2);
+        let bars = quantick_engine::golden::replay(&mut builder, &trades);
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        let view = &views.all()[0];
+        assert!(view.error.is_none(), "{:?}", view.error);
+        assert_eq!(view.descriptor.title, "EMA");
+        assert!(view.descriptor.overlay);
+        assert_eq!(view.rows(), bars.len());
+        // EMA(9) over 12 bars: warmup NaN then values.
+        let column = &view.columns[0];
+        assert!(column[0].is_nan());
+        assert!(column.last().is_some_and(|v| !v.is_nan()));
     }
 }
