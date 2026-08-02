@@ -1199,12 +1199,11 @@ impl QuantickApp {
                     self.feed_connection = FeedConnectionState::Connected;
                     self.notice = FeedNotice::Clear;
                 }
-                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => {
-                    if self.feed_connection == FeedConnectionState::Connected {
-                        self.feed_connection = FeedConnectionState::Reconnecting;
-                    }
+                FeedNotice::Reconnecting { .. } => {
+                    self.feed_connection = FeedConnectionState::Reconnecting;
                     self.notice = notice;
                 }
+                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => self.notice = notice,
                 FeedNotice::Clear => self.notice = FeedNotice::Clear,
             }
         }
@@ -3927,7 +3926,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_notices_drive_connect_reconnect_live_without_trade_inference() {
+    fn only_explicit_connection_notices_drive_transport_state() {
         let (mut app, notices, _feed_ends) = test_app_with_notices();
         app.latest_trade_latency_ms = Some(42);
         assert_eq!(app.feed_connection, FeedConnectionState::Connecting);
@@ -3937,8 +3936,34 @@ mod tests {
         assert_eq!(app.feed_connection, FeedConnectionState::Connected);
         assert_eq!(app.notice, FeedNotice::Clear);
 
+        // The MetaTrader bridge supervisor and bridge server share this
+        // channel. Progress or attention from either can arrive after the
+        // server has reported Connected, so neither is a transport transition.
         notices
-            .blocking_send(FeedNotice::working(
+            .blocking_send(FeedNotice::working("late supervisor progress"))
+            .unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+
+        notices
+            .blocking_send(FeedNotice::attention(
+                "late supervisor warning",
+                "No transport action.",
+            ))
+            .unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+
+        notices
+            .blocking_send(FeedNotice::reconnecting(
                 "Hyperliquid disconnected — reconnecting",
             ))
             .unwrap();

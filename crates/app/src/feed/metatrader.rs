@@ -205,7 +205,7 @@ async fn feed_task(
                             // nobody keeps.
                             Mt5Status::Lost { .. } => {
                                 bridge_connected.store(false, Ordering::Relaxed);
-                                FeedNotice::working(
+                                FeedNotice::reconnecting(
                                     "the MetaTrader bridge disconnected — reconnecting",
                                 )
                             }
@@ -753,10 +753,10 @@ mod tests {
         // UI already has, plus one genuinely new tick at 1003.
         drop(sock);
         let reconnecting = notice_matching(&mut feed.notices, |notice| {
-            matches!(notice, FeedNotice::Working { headline } if headline.contains("disconnected"))
+            matches!(notice, FeedNotice::Reconnecting { headline } if headline.contains("disconnected"))
         })
         .await;
-        assert!(matches!(reconnecting, FeedNotice::Working { .. }));
+        assert!(matches!(reconnecting, FeedNotice::Reconnecting { .. }));
         let mut sock = connect().await;
         let mut script = String::from(HELLO);
         script.push_str("{\"type\":\"backfill_start\",\"count_hint\":4}\n");

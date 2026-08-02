@@ -114,11 +114,12 @@ pub enum FeedConnectionState {
 /// reason only ever reached a log file, and the chart stayed blank with a
 /// faint "connecting" dot: honest, but useless to anyone not reading stderr.
 ///
-/// The distinction the UI acts on is **who has to do something next**.
+/// [`Connected`](Self::Connected) and [`Reconnecting`](Self::Reconnecting) are
+/// explicit transport transitions. The other variants are presentation only:
 /// [`Working`](Self::Working) is the feed's own business, still in progress;
 /// [`Attention`](Self::Attention) needs a human, and always carries the one
-/// next step in plain words. Feeds that never get stuck simply never send
-/// anything.
+/// next step in plain words. Keeping those roles separate prevents unrelated
+/// supervisor output from changing a healthy connection's state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FeedNotice {
     /// The live trade transport is established.
@@ -127,6 +128,15 @@ pub enum FeedNotice {
     /// connection-progress notice and marks the provider-neutral transport
     /// connected without waiting for a trade to infer it.
     Connected,
+    /// A previously established live transport ended and is reconnecting.
+    ///
+    /// Like [`Connected`](Self::Connected), this explicitly drives the
+    /// provider-neutral connection state. The headline can also explain an
+    /// empty chart while the reconnect loop is working.
+    Reconnecting {
+        /// One line, e.g. `Hyperliquid disconnected — reconnecting`.
+        headline: String,
+    },
     /// Whatever was being reported is over; the chart speaks for itself now.
     Clear,
     /// A step is under way and needs nobody: connecting, waiting, retrying.
@@ -161,6 +171,14 @@ pub fn fixed_capabilities(capabilities: FeedCapabilities) -> watch::Receiver<Fee
 }
 
 impl FeedNotice {
+    /// Shorthand for an explicit reconnecting transport transition.
+    #[must_use]
+    pub fn reconnecting(headline: impl Into<String>) -> Self {
+        Self::Reconnecting {
+            headline: headline.into(),
+        }
+    }
+
     /// Shorthand for a step in progress.
     #[must_use]
     pub fn working(headline: impl Into<String>) -> Self {
@@ -191,7 +209,7 @@ pub(super) fn connection_notice(
         *ever_connected = true;
         FeedNotice::Connected
     } else if *ever_connected {
-        FeedNotice::working(format!("{provider} disconnected — reconnecting"))
+        FeedNotice::reconnecting(format!("{provider} disconnected — reconnecting"))
     } else {
         FeedNotice::working(format!("connecting to {provider}"))
     }
@@ -271,4 +289,28 @@ pub fn spawn_live(
         },
         config,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_loop_lifecycle_uses_explicit_transport_notices() {
+        let mut ever_connected = false;
+
+        assert!(matches!(
+            connection_notice(false, &mut ever_connected, "Binance"),
+            FeedNotice::Working { headline } if headline == "connecting to Binance"
+        ));
+        assert_eq!(
+            connection_notice(true, &mut ever_connected, "Binance"),
+            FeedNotice::Connected
+        );
+        assert!(matches!(
+            connection_notice(false, &mut ever_connected, "Binance"),
+            FeedNotice::Reconnecting { headline }
+                if headline == "Binance disconnected — reconnecting"
+        ));
+    }
 }

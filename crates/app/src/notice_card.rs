@@ -11,7 +11,8 @@
 //! So the card exists to carry a [`FeedNotice`] at a size a person notices,
 //! and to obey one rule: **never cover a working chart**. It draws when the
 //! chart has nothing to show, or when the notice needs the user; a
-//! [`FeedNotice::Working`] over a live chart is what the status bar is for.
+//! [`FeedNotice::Working`] or [`FeedNotice::Reconnecting`] over a live chart is
+//! what the status bar is for.
 
 use eframe::egui;
 
@@ -72,7 +73,7 @@ pub fn should_draw(notice: &FeedNotice, bars: usize) -> bool {
     match notice {
         FeedNotice::Connected | FeedNotice::Clear => false,
         FeedNotice::Attention { .. } => true,
-        FeedNotice::Working { .. } => bars == 0,
+        FeedNotice::Reconnecting { .. } | FeedNotice::Working { .. } => bars == 0,
     }
 }
 
@@ -98,7 +99,9 @@ struct Geometry {
 fn geometry(painter: &egui::Painter, area: egui::Rect, notice: &FeedNotice) -> Option<Geometry> {
     let (accent, headline, next_step) = match notice {
         FeedNotice::Connected | FeedNotice::Clear => return None,
-        FeedNotice::Working { headline } => (theme::TEXT_MUTED, headline.as_str(), None),
+        FeedNotice::Reconnecting { headline } | FeedNotice::Working { headline } => {
+            (theme::TEXT_MUTED, headline.as_str(), None)
+        }
         FeedNotice::Attention {
             headline,
             next_step,
@@ -244,6 +247,10 @@ mod tests {
             !should_draw(&working, 1),
             "one bar is enough to prefer the chart"
         );
+
+        let reconnecting = FeedNotice::reconnecting("Binance disconnected — reconnecting");
+        assert!(should_draw(&reconnecting, 0));
+        assert!(!should_draw(&reconnecting, 1));
     }
 
     #[test]
@@ -263,6 +270,7 @@ mod tests {
         let ctx = egui::Context::default();
         let notices = [
             FeedNotice::working("starting the MetaTrader bridge"),
+            FeedNotice::reconnecting("Hyperliquid disconnected — reconnecting"),
             FeedNotice::attention(
                 "MetaTrader does not list WINQ26",
                 "Add the contract to Market Watch, or pick the exact name your broker \
