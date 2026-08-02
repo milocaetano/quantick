@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/engine",
+    "crates/indicators",
     "crates/orderbook",
     "crates/replay",
     "crates/feed-binance",

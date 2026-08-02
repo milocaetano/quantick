@@ -1,0 +1,11 @@
+# Six trades that close three tick(2) bars, plus one leftover trade that
+# stays in the partial bar. Hand-written so the expected plots are checkable
+# by eye: bar deltas are -1.0, +2.0, -2.0 => cvd -1.0, +1.0, -1.0.
+agg_id,timestamp_ms,price,quantity,side
+1,1700000000000,100.0,1.0,buy
+2,1700000000100,101.0,2.0,sell
+3,1700000000200,102.0,1.5,buy
+4,1700000000300,103.0,0.5,buy
+5,1700000000400,102.5,1.0,sell
+6,1700000000500,102.0,1.0,sell
+7,1700000000600,104.0,3.0,buy
