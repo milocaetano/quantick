@@ -213,6 +213,8 @@ impl Builtin {
                 | Builtin::TaPivotHigh
                 | Builtin::TaPivotLow
                 | Builtin::MathSum
+                // fixnan carries the last non-na value across bars: state.
+                | Builtin::Fixnan
         )
     }
 

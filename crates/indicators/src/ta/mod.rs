@@ -26,10 +26,12 @@
 //!   for `crossover`/`crossunder`.
 
 mod flow;
+mod pivot;
 mod smooth;
 mod window;
 
 pub use flow::{Atr, Change, Cross, CrossOver, CrossUnder, Cum, Mom, Rsi, Tr};
+pub use pivot::{PivotHigh, PivotLow};
 pub use smooth::{Ema, Rma, Sma, Vwma, Wma};
 pub use window::{
     BarsSince, Highest, HighestBars, Lowest, LowestBars, Stdev, ValueWhen, WindowSum,

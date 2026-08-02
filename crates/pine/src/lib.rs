@@ -19,8 +19,11 @@ pub mod ast;
 pub mod builtins;
 pub mod compile;
 pub mod error;
+pub mod eval;
 pub mod lexer;
 pub mod parser;
+pub mod script;
 
 pub use compile::{CompiledScript, compile};
 pub use error::{ErrorCode, PineError, Span};
+pub use script::ScriptIndicator;

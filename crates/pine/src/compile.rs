@@ -25,7 +25,7 @@
 
 use quantick_indicators::{InputSpec, PlotId, PlotSpec, PlotStyle, Rgba8, SourceId};
 
-use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp};
+use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::builtins::{Builtin, did_you_mean, rejection_of};
 use crate::error::{ErrorCode, PineError, Span};
 use crate::lexer;
@@ -113,6 +113,8 @@ pub struct CompiledScript {
     pub functions: Vec<FunctionInfo>,
     /// Number of global slots.
     pub global_slots: usize,
+    /// Declaration mode per global slot (preview rollback exempts `varip`).
+    pub slot_modes: Vec<VarMode>,
     /// Total stateful call sites.
     pub call_site_count: usize,
     /// Total implicit history series.
@@ -300,6 +302,7 @@ struct Compiler {
     functions: Vec<FunctionInfo>,
     function_names: Vec<String>,
     global_slots: u32,
+    slot_modes: Vec<VarMode>,
     call_site_count: u32,
     history_series_count: u32,
     max_bars_back: usize,
@@ -330,6 +333,7 @@ impl Compiler {
             functions: Vec::new(),
             function_names: Vec::new(),
             global_slots: 0,
+            slot_modes: Vec::new(),
             call_site_count: 0,
             history_series_count: 0,
             max_bars_back: 1,
@@ -355,6 +359,7 @@ impl Compiler {
             history_series: self.history_series,
             functions: self.functions,
             global_slots: self.global_slots as usize,
+            slot_modes: self.slot_modes,
             call_site_count: self.call_site_count as usize,
             history_series_count: self.history_series_count as usize,
             max_bars_back: self.max_bars_back,
@@ -412,9 +417,24 @@ impl Compiler {
             };
             match Builtin::lookup(&name) {
                 Some(Builtin::Indicator) => self.indicator_header(expr, &args),
-                Some(Builtin::Plot) => self.plot_call(expr, &args, None),
-                Some(Builtin::PlotShape) => self.plot_call(expr, &args, Some("shape")),
-                Some(Builtin::PlotChar) => self.plot_call(expr, &args, Some("char")),
+                Some(Builtin::Plot) => self.plot_call(expr, &args, false),
+                Some(Builtin::Hline) => self.plot_call(expr, &args, true),
+                Some(
+                    kind @ (Builtin::PlotShape
+                    | Builtin::PlotChar
+                    | Builtin::Fill
+                    | Builtin::Bgcolor
+                    | Builtin::Barcolor),
+                ) => {
+                    let span = self.span(expr);
+                    self.warnings.push(PineError::new(
+                        ErrorCode::PineUnsupported,
+                        span,
+                        format!(
+                            "{kind:?} is accepted but not drawn yet (shape plots and bar                              colors land with the drawing milestone)"
+                        ),
+                    ));
+                }
                 Some(Builtin::AlertCondition) => {
                     let span = self.span(expr);
                     self.warnings.push(PineError::new(
@@ -467,7 +487,7 @@ impl Compiler {
         let _ = call;
     }
 
-    fn plot_call(&mut self, call: NodeId, args: &[Arg], marker: Option<&str>) {
+    fn plot_call(&mut self, call: NodeId, args: &[Arg], is_hline: bool) {
         let index = self.plots.len();
         let title = self
             .arg(args, 1, "title")
@@ -476,17 +496,17 @@ impl Compiler {
                 _ => None,
             })
             .unwrap_or_else(|| format!("plot {index}"));
-        let style = match marker {
-            // plotshape/plotchar render as markers; the style tag rides the
-            // spec so M3 can refine shapes without changing the registry.
-            Some(_) => PlotStyle::Circles,
-            None => self
-                .arg(args, 4, "style")
+        let style = if is_hline {
+            // hline is a plot column of a constant value; a Line spec keeps
+            // one render path for both.
+            PlotStyle::Line
+        } else {
+            self.arg(args, 4, "style")
                 .and_then(|a| match self.fold(a.value) {
                     Some(Const::Enum(tag)) => Some(style_of_tag(tag)),
                     _ => None,
                 })
-                .unwrap_or(PlotStyle::Line),
+                .unwrap_or(PlotStyle::Line)
         };
         let base_color = self
             .arg(args, 2, "color")
@@ -631,9 +651,16 @@ impl Compiler {
         }
     }
 
-    fn declare_global(&mut self, name: &str, init: Option<NodeId>, scope: &mut Scope) -> u32 {
+    fn declare_global(
+        &mut self,
+        name: &str,
+        init: Option<NodeId>,
+        mode: VarMode,
+        scope: &mut Scope,
+    ) -> u32 {
         let slot = self.global_slots;
         self.global_slots += 1;
+        self.slot_modes.push(mode);
         self.global_init.push(init);
         self.reassigned.push(false);
         scope
@@ -644,7 +671,7 @@ impl Compiler {
 
     fn walk_statement(&mut self, id: NodeId, scope: &mut Scope, ctx: &mut WalkCtx) {
         match self.kind(id).clone() {
-            NodeKind::Declare { name, value, .. } => {
+            NodeKind::Declare { mode, name, value } => {
                 self.walk_expr(value, scope, ctx);
                 if let Some(frame) = ctx.frame.as_mut() {
                     let slot = frame.next_slot;
@@ -653,7 +680,7 @@ impl Compiler {
                     self.resolutions[id.index()] = Resolution::Local(slot);
                     return;
                 }
-                let slot = self.declare_global(&name, Some(value), scope);
+                let slot = self.declare_global(&name, Some(value), mode, scope);
                 self.resolutions[id.index()] = Resolution::Global(slot);
             }
             NodeKind::TupleDeclare { names, value } => {
@@ -673,7 +700,7 @@ impl Compiler {
                 }
                 let first = self.global_slots;
                 for name in &names {
-                    self.declare_global(name, None, scope);
+                    self.declare_global(name, None, VarMode::Plain, scope);
                 }
                 self.resolutions[id.index()] = Resolution::Global(first);
             }
@@ -785,7 +812,7 @@ impl Compiler {
                     scope.names.push((var, Resolution::Local(slot)));
                     Resolution::Local(slot)
                 } else {
-                    let slot = self.declare_global(&var, None, scope);
+                    let slot = self.declare_global(&var, None, VarMode::Plain, scope);
                     Resolution::Global(slot)
                 };
                 self.resolutions[id.index()] = resolution;
@@ -959,7 +986,12 @@ impl Compiler {
             let site = CallSiteId(self.call_site_count);
             self.call_site_count += 1;
             self.call_sites[call.index()] = Some(site);
-            self.check_kernel_length(call, builtin, args);
+            // Inside a function body a length may be a parameter, which no
+            // load-time folder can see through; the interpreter re-validates
+            // every kernel length with the same error code at bar time.
+            if ctx.frame.is_none() {
+                self.check_kernel_length(call, builtin, args);
+            }
         }
         if builtin.is_top_level_only() && (ctx.frame.is_some() || ctx.in_loop) {
             let span = self.span(call);

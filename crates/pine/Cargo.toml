@@ -10,3 +10,7 @@ license.workspace = true
 # (supply-chain minimalism; full control over spans and errors).
 [dependencies]
 quantick-indicators = { path = "../indicators" }
+
+[[bench]]
+name = "interp"
+harness = false
