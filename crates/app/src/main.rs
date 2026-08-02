@@ -1,8 +1,8 @@
 //! quantick-app — desktop chart rendering alternative bars from live trades.
 //!
 //! A consumer of `quantick-engine`, never the other way around. On startup it
-//! reads the feed/asset configuration (see [`config`]), backfills recent history
-//! over REST so the chart opens populated, then streams live trades on top,
+//! reads the feed/asset configuration (see [`config`]), recovers the factual
+//! recent trades available from that source, then streams live trades on top,
 //! forming bars in real time. The feed and symbol can be switched live from the
 //! chart. Frame time and feed lag are surfaced on screen and in structured logs.
 

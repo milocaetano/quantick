@@ -70,7 +70,11 @@ cargo test --workspace
 cargo run -p quantick-app
 ```
 
-A native window titled **quantick** opens, backfills recent history over REST and then streams live trades, forming bars as they happen. From the controls bar you can switch the **bar type** live — tick, volume, dollar, time or imbalance — and tune its parameter. For the smoothest rendering on a busy order book, build optimized:
+A native window titled **quantick** opens, recovers the factual recent trades
+available from the selected source and then streams live trades, forming bars as
+they happen. From the controls bar you can switch the **bar type** live — tick,
+volume, dollar, time or imbalance — and tune its parameter. For the smoothest
+rendering on a busy order book, build optimized:
 
 ```sh
 cargo run --release -p quantick-app
@@ -102,8 +106,9 @@ and logging.
 The built-in selector also includes Hyperliquid perpetuals (`BTC`, `ETH`,
 `HYPE`, `SOL`, `ZEC`). They need no account or API key: select **Hyperliquid**,
 pick a coin, then use the same **⚙ L2** and **⚙ bubbles** controls as Binance.
-Hyperliquid exposes only a short recent-trades recovery window, so older-history
-paging is disabled instead of being reconstructed from candles.
+Hyperliquid's initial WebSocket response carries only a short recent-trades
+recovery window, so older-history paging is disabled instead of being
+reconstructed from candles.
 
 ### Contributing
 
