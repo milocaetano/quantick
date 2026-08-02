@@ -1,0 +1,1402 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Quantick · UX das ferramentas de desenho</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas:#131722; --chrome:#171b26; --inset:#10141d; --control:#232936;
+      --border:#2e3648; --soft:#252c3b; --text:#d2dae2; --muted:#96a0af;
+      --faint:#8692a4; --faint-token:#6e7887; --buy:#26a69a; --sell:#ef5350; --accent:#8ab4f8;
+      --amber:#f0b90b; --warn:#ff6347; --tag:#373f50; --yellow:#ffd166;
+      --purple:#b39ddb; --cyan:#4dd0e1; --orange:#ff9f43;
+      --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+      --sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    }
+    * { box-sizing:border-box }
+    html { scroll-behavior:smooth; background:#0c0f16 }
+    body {
+      margin:0; color:var(--text); font:15px/1.58 var(--sans);
+      background:
+        radial-gradient(900px 500px at 78% -10%,rgb(138 180 248/.09),transparent 62%),
+        radial-gradient(700px 400px at 8% 2%,rgb(38 166 154/.05),transparent 58%),#0c0f16;
+      -webkit-font-smoothing:antialiased;
+    }
+    button,input,select { font:inherit }
+    button { color:inherit }
+    a { color:var(--accent) }
+    code,kbd,.mono { font-family:var(--mono) }
+    code { padding:2px 5px; color:#cfe1ff; background:rgb(138 180 248/.09); border-radius:4px; font-size:.9em }
+    kbd {
+      display:inline-flex; min-width:24px; min-height:22px; padding:1px 6px;
+      align-items:center; justify-content:center; color:var(--text); background:var(--control);
+      border:1px solid var(--border); border-bottom-color:#4a556c; border-radius:5px;
+      box-shadow:0 1px 0 rgb(255 255 255/.04); font:11px/1 var(--mono);
+    }
+    .page { width:min(1220px,calc(100% - 36px)); margin:auto; padding:38px 0 84px }
+    .hero {
+      display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:40px; align-items:end;
+      padding:24px 0 30px; border-bottom:1px solid var(--soft);
+    }
+    .eyebrow,.index,.micro {
+      font:11px var(--mono); letter-spacing:.13em; text-transform:uppercase;
+    }
+    .eyebrow { margin:0 0 13px; color:var(--accent) }
+    h1 { max-width:840px; margin:0; font-size:clamp(32px,5vw,54px); line-height:1.04; letter-spacing:-.035em; font-weight:650 }
+    h1 span { color:var(--muted); font-weight:420 }
+    .lede { max-width:780px; margin:19px 0 0; color:var(--muted); font-size:17px }
+    .meta { display:grid; gap:7px }
+    .meta div { display:flex; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px solid var(--soft); font:11px var(--mono) }
+    .meta span:first-child { color:var(--faint) }
+    .meta span:last-child { text-align:right }
+    nav {
+      position:sticky; z-index:50; top:0; display:flex; gap:4px; margin:0 -8px; padding:9px 8px;
+      overflow:auto; background:rgb(12 15 22/.92); border-bottom:1px solid var(--soft);
+      backdrop-filter:blur(14px);
+    }
+    nav a { flex:none; padding:7px 9px; color:var(--muted); border-radius:6px; text-decoration:none; font:10px var(--mono) }
+    nav a:hover,nav a:focus-visible { color:var(--text); background:var(--control) }
+    section { scroll-margin-top:62px; padding-top:58px }
+    .head { display:grid; grid-template-columns:145px minmax(0,1fr); gap:24px; margin-bottom:23px }
+    .index { padding-top:8px; color:var(--faint) }
+    h2 { margin:0; font-size:clamp(25px,3vw,34px); line-height:1.16; letter-spacing:-.02em; font-weight:620 }
+    h3 { margin:0 0 8px; font-size:18px; line-height:1.3; font-weight:620 }
+    h4 { margin:0 0 5px; font-size:14px }
+    p { margin:0 0 12px }
+    .sub { max-width:800px; margin:10px 0 0; color:var(--muted) }
+    .grid2,.grid3,.grid4 { display:grid; gap:14px }
+    .grid2 { grid-template-columns:repeat(2,minmax(0,1fr)) }
+    .grid3 { grid-template-columns:repeat(3,minmax(0,1fr)) }
+    .grid4 { grid-template-columns:repeat(4,minmax(0,1fr)) }
+    .card {
+      padding:18px; background:linear-gradient(180deg,rgb(23 27 38/.98),rgb(16 20 29/.98));
+      border:1px solid var(--soft); border-radius:10px;
+    }
+    .card p,.card li { color:var(--muted) }
+    .card strong { color:var(--text) }
+    .top-accent { border-top:2px solid var(--accent) }
+    .top-buy { border-top:2px solid var(--buy) }
+    .top-yellow { border-top:2px solid var(--yellow) }
+    .micro { display:block; margin-bottom:8px; color:var(--faint) }
+    .rule {
+      display:grid; grid-template-columns:40px minmax(0,1fr); gap:13px; align-items:start;
+      margin-top:17px; padding:15px 17px; color:var(--muted); background:rgb(138 180 248/.065);
+      border:1px solid rgb(138 180 248/.25); border-radius:10px;
+    }
+    .rule strong { color:var(--text) }
+    .rule i {
+      display:grid; width:36px; height:36px; place-items:center; color:var(--accent);
+      background:rgb(138 180 248/.12); border-radius:9px; font-style:normal; font-size:18px;
+    }
+    ul.clean,ol.clean { margin:0; padding-left:20px }
+    ul.clean li,ol.clean li { margin:7px 0 }
+    .table { overflow:auto; border-top:1px solid var(--border); border-bottom:1px solid var(--border) }
+    table { width:100%; border-collapse:collapse; font-size:13px }
+    th,td { padding:11px 12px; border-bottom:1px solid var(--soft); text-align:left; vertical-align:top }
+    tr:last-child td { border-bottom:0 }
+    th { color:var(--faint); white-space:nowrap; font:10px var(--mono); letter-spacing:.06em; text-transform:uppercase }
+    td { color:var(--muted) }
+    td:first-child,td strong { color:var(--text) }
+
+    /* Protótipo */
+    .prototype { overflow:hidden; background:#0c1018; border:1px solid var(--border); border-radius:14px; box-shadow:0 22px 58px rgb(0 0 0/.38) }
+    .proto-top {
+      display:flex; min-height:42px; align-items:center; gap:14px; padding:0 14px;
+      background:var(--chrome); border-bottom:1px solid var(--border); font:11px var(--mono);
+    }
+    .spacer { flex:1 }
+    .live { display:flex; align-items:center; gap:6px; color:var(--buy) }
+    .live::before { content:""; width:6px; height:6px; background:currentColor; border-radius:50%; box-shadow:0 0 8px currentColor }
+    .stage { position:relative; min-height:620px; overflow:hidden; outline:none; background:var(--canvas) }
+    .stage:focus-visible { outline:2px solid var(--accent); outline-offset:-3px }
+    .stage.drawing-hover { cursor:move }
+    .stage.anchor-hover { cursor:nwse-resize }
+    .stage.locked.drawing-hover,.stage.locked.anchor-hover { cursor:not-allowed }
+    .chart { position:absolute; inset:0; width:100%; height:100%; transition:width .12s }
+    .gridline { stroke:var(--control); stroke-width:1; opacity:.7 }
+    .up { stroke:var(--buy); fill:rgb(38 166 154/.23) }
+    .down { stroke:var(--sell); fill:rgb(239 83 80/.2) }
+    .wick-up { stroke:var(--buy) }.wick-down { stroke:var(--sell) }
+    .fib { cursor:move; transition:opacity .12s }
+    .fib.hidden { opacity:0; pointer-events:none }
+    .fib.unselected .halo,.fib.unselected .handle,.fib.unselected .guide,.fib.unselected .anchorlabel,.fib.unselected #direction-label { opacity:0 }
+    .fib.hovered.unselected .halo { opacity:.14 }
+    .band { fill:rgb(138 180 248/.04) }
+    .level { stroke:var(--draw-color,var(--accent)); stroke-width:var(--draw-width,1.5); vector-effect:non-scaling-stroke }
+    .fib text { fill:var(--draw-color,var(--accent)); font:10px var(--mono) }
+    .guide { stroke:var(--draw-color,var(--accent)); stroke-width:1; stroke-dasharray:4 4; opacity:.55; vector-effect:non-scaling-stroke }
+    .anchorlabel { font-weight:700!important }
+    .halo { stroke:#f3f6fb; stroke-width:5; opacity:.16; vector-effect:non-scaling-stroke }
+    .handle { fill:#f3f6fb; stroke:var(--accent); stroke-width:2; cursor:nwse-resize; vector-effect:non-scaling-stroke }
+    .stage.locked .fib,.stage.locked .handle { cursor:not-allowed }
+    .stage.locked .handle { opacity:0 }
+    .stage.locked .halo { stroke-dasharray:5 4; opacity:.28 }
+    .toolbox {
+      position:absolute; z-index:8; top:14px; left:14px; display:flex; flex-direction:column;
+      gap:3px; width:44px; padding:5px; background:rgb(23 27 38/.98); border:1px solid var(--border);
+      border-radius:10px; box-shadow:0 12px 28px rgb(0 0 0/.3);
+    }
+    .toolbox.dock-right { right:14px; left:auto }
+    .stage.docked.inspector-open .toolbox.dock-right { right:374px }
+    .toolbox.dock-top,.toolbox.dock-bottom { flex-direction:row; width:auto; height:44px }
+    .toolbox.dock-top { top:14px; bottom:auto; left:14px; right:auto }
+    .toolbox.dock-bottom { top:auto; bottom:14px; left:14px; right:auto }
+    .grip { width:32px; height:15px; padding:0; color:var(--faint); text-align:center; background:none; border:0; cursor:grab; line-height:11px }
+    .toolbox.dock-top .grip,.toolbox.dock-bottom .grip { width:15px; height:32px }
+    .toolbox.dock-top .divider,.toolbox.dock-bottom .divider { width:1px; height:24px; margin:4px 3px }
+    .divider { height:1px; margin:3px 2px; background:var(--soft) }
+    .ib {
+      display:grid; width:32px; height:32px; padding:0; place-items:center; color:var(--muted);
+      background:transparent; border:0; border-radius:6px; cursor:pointer; line-height:1;
+    }
+    .ib:hover { color:var(--text); background:var(--border) }
+    .ib:focus-visible,.small:focus-visible,.tab:focus-visible { outline:2px solid var(--accent); outline-offset:1px }
+    .ib[aria-pressed=true],.ib.active { color:var(--accent); background:rgb(138 180 248/.18) }
+    .toolstate {
+      position:absolute; z-index:5; left:70px; bottom:13px; display:flex; gap:8px; padding:7px 10px;
+      color:var(--muted); background:rgb(16 20 29/.92); border:1px solid var(--soft);
+      border-radius:7px; font:11px var(--mono); cursor:default;
+    }
+    .toolstate:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+    .toolstate b { color:var(--text); font-weight:500 }
+    .lockbadge {
+      position:absolute; z-index:7; left:42%; top:43%; display:none; padding:4px 7px; transform:translate(-50%,-100%);
+      background:var(--tag); border:1px solid var(--border); border-radius:999px; font:10px var(--mono);
+    }
+    .stage.locked.drawing-visible .lockbadge { display:block }
+    .inspector {
+      position:absolute; z-index:12; top:14px; right:14px; width:360px; min-width:300px; max-width:440px;
+      max-height:calc(100% - 28px); overflow:auto; resize:both; background:rgb(23 27 38/.99);
+      border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px rgb(0 0 0/.4);
+      transition:opacity .12s,transform .12s; scrollbar-color:var(--border) transparent;
+    }
+    .stage.docked.inspector-open .chart { width:calc(100% - 360px) }
+    .stage.docked .inspector { top:0!important; right:0!important; bottom:0; left:auto!important; width:360px; max-width:440px; max-height:none; border-radius:0; resize:horizontal }
+    .inspector.closed { opacity:0; pointer-events:none; transform:translateX(10px) }
+    .inspector-sticky { position:sticky; z-index:3; top:0; background:rgb(23 27 38/.99) }
+    .ins-head {
+      position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto;
+      gap:7px; align-items:center; min-height:48px; padding:7px 8px 7px 12px;
+      background:rgb(23 27 38/.99); border-bottom:1px solid var(--soft); cursor:grab;
+    }
+    .obj { display:flex; min-width:0; gap:8px; align-items:center }
+    .obj strong,.obj small { display:block }
+    .obj strong { overflow:hidden; font-size:13px; text-overflow:ellipsis; white-space:nowrap }
+    .obj small { color:var(--faint); font:9px var(--mono) }
+    .actions { display:flex; gap:1px }.actions .ib { width:28px; height:28px }
+    .state-chip { display:none!important; width:max-content; margin-top:3px; padding:2px 6px; color:var(--yellow); background:rgb(255 209 102/.1); border:1px solid rgb(255 209 102/.28); border-radius:999px; font:9px var(--mono) }
+    .inspector.is-locked .state-chip { display:inline-flex!important }
+    .drawing-actions {
+      display:grid; grid-template-columns:1fr 1fr; gap:6px;
+      padding:7px 10px; background:rgb(23 27 38/.99); border-bottom:1px solid var(--soft);
+    }
+    .drawing-action {
+      display:flex; min-height:38px; min-width:0; align-items:center; justify-content:center; gap:7px; padding:6px 8px;
+      color:var(--text); background:var(--control); border:1px solid var(--border); border-radius:7px; cursor:pointer; font-size:11px;
+    }
+    .drawing-action:hover { background:var(--border) }
+    .drawing-action:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+    .drawing-action[aria-pressed=true] { color:var(--yellow); background:rgb(255 209 102/.1); border-color:rgb(255 209 102/.34) }
+    .drawing-action.danger { color:#ffab9c; border-color:rgb(255 99 71/.28) }
+    .drawing-action kbd { margin-left:auto; color:var(--faint) }
+    .tabs {
+      position:relative; display:grid; grid-template-columns:repeat(3,1fr);
+      padding:0 10px; background:rgb(23 27 38/.99); border-bottom:1px solid var(--soft);
+    }
+    .tab { padding:10px 4px 8px; color:var(--faint); background:none; border:0; border-bottom:2px solid transparent; cursor:pointer; font-size:11px }
+    .tab[aria-selected=true] { color:var(--accent); border-bottom-color:var(--accent) }
+    .panel { display:none; padding:13px }.panel.active { display:block }
+    .group { padding:12px 0; border-bottom:1px solid var(--soft) }.group:first-child { padding-top:0 }.group:last-child { border:0 }
+    .fieldtitle { display:flex; justify-content:space-between; gap:10px; margin-bottom:8px; color:var(--muted); font-size:11px; font-weight:600 }
+    .fieldtitle output { color:var(--text); font:11px var(--mono) }
+    .row { display:flex; gap:8px; align-items:center; margin-top:8px }.row:first-child { margin-top:0 }.wrap { flex-wrap:wrap }.between { justify-content:space-between }
+    .swatch { width:24px; height:24px; padding:0; background:var(--c); border:2px solid transparent; border-radius:50%; cursor:pointer; box-shadow:inset 0 0 0 1px rgb(255 255 255/.17) }
+    .swatch[aria-pressed=true] { border-color:#fff; box-shadow:0 0 0 2px rgb(138 180 248/.34) }
+    .input,.select {
+      min-width:0; height:31px; color:var(--text); background:var(--inset);
+      border:1px solid var(--border); border-radius:6px; outline:none; font-size:11px;
+    }
+    .input:focus-visible,.select:focus-visible,input[type=color]:focus-visible,input[type=range]:focus-visible { border-color:var(--accent); outline:2px solid var(--accent); outline-offset:2px }
+    .input { width:100%; padding:0 8px }.number { font-family:var(--mono) }.select { flex:1; padding:0 8px }
+    input[type=range] { width:100%; accent-color:var(--accent) }
+    .check { display:flex; gap:6px; align-items:center; color:var(--muted); font-size:11px }.check input { accent-color:var(--accent) }
+    .small {
+      display:inline-flex; min-height:30px; align-items:center; justify-content:center; padding:5px 9px;
+      color:var(--muted); background:var(--control); border:1px solid var(--border); border-radius:6px;
+      cursor:pointer; font-size:11px;
+    }
+    .small:hover { color:var(--text); background:var(--border) }.small.primary { color:var(--accent) }.small.danger { color:#ff9a86 }
+    .small:disabled { opacity:.4; cursor:not-allowed }
+    .levels { display:grid; gap:4px }
+    .levelrow {
+      display:grid; grid-template-columns:24px 18px 58px minmax(0,1fr) 20px 26px; gap:5px; align-items:center;
+      min-height:31px; padding:3px; border-radius:6px;
+    }
+    .levelrow:hover { background:var(--control) }.dots { color:var(--faint); cursor:grab }
+    .levelrow .input { height:26px; padding:0 5px }.levelrow .ib { width:24px; height:24px }.levelcolor { width:20px; height:20px; padding:0; background:none; border:0; border-radius:4px; cursor:pointer }
+    .banner { display:none; margin-bottom:10px; padding:8px 9px; color:var(--yellow); background:rgb(255 209 102/.08); border:1px solid rgb(255 209 102/.25); border-radius:7px; font-size:11px }
+    .inspector.is-hidden .banner { display:block }
+    .lock-notice { display:none; gap:6px; align-items:flex-start; padding:8px 11px; color:var(--yellow); background:rgb(255 209 102/.07); border-bottom:1px solid rgb(255 209 102/.2); font-size:11px }
+    .inspector.is-locked .lock-notice { display:flex }
+    .lock-notice strong { color:#ffe19a; white-space:nowrap }
+    .footer { display:flex; justify-content:space-between; gap:8px; padding:10px 13px 12px; border-top:1px solid var(--soft) }
+    .confirm { display:none; margin:0 13px 11px; padding:9px; background:rgb(255 99 71/.08); border:1px solid rgb(255 99 71/.3); border-radius:7px; color:#ffab9c; font-size:11px }
+    .confirm.visible { display:block }
+    .manager-pop {
+      position:absolute; z-index:18; top:14px; left:64px; width:min(310px,calc(100% - 16px)); overflow:hidden;
+      background:rgb(23 27 38/.99); border:1px solid var(--border); border-radius:10px;
+      box-shadow:0 16px 36px rgb(0 0 0/.38);
+    }
+    .manager-pop[hidden] { display:none }
+    .tool-pop { position:absolute; z-index:19; display:none; gap:4px; padding:6px; background:rgb(23 27 38/.99); border:1px solid var(--border); border-radius:9px; box-shadow:0 12px 28px rgb(0 0 0/.35) }
+    .tool-pop[hidden] { display:none }
+    .more-tools { display:none }
+    .manager-pop header { display:flex; justify-content:space-between; align-items:center; padding:10px 11px; border-bottom:1px solid var(--soft); font-size:12px }
+    .manager-live-row { display:grid; grid-template-columns:minmax(0,1fr); gap:4px; align-items:center; padding:7px 8px 4px }
+    .manager-live-row .small { min-width:0; padding:4px }
+    .manager-select { justify-content:flex-start; text-align:left }
+    .manager-actions { display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:0 8px 8px }
+    .manager-actions .small { min-width:0; justify-content:flex-start }
+    .toast {
+      position:absolute; z-index:30; left:50%; bottom:14px; display:flex; min-width:290px; max-width:calc(100% - 30px);
+      justify-content:space-between; align-items:center; gap:16px; padding:9px 10px 9px 13px;
+      background:var(--tag); border:1px solid #4a556c; border-radius:8px; box-shadow:0 12px 28px rgb(0 0 0/.34);
+      opacity:0; pointer-events:none; transform:translate(-50%,10px); transition:.16s; font-size:12px;
+    }
+    .toast.show { opacity:1; pointer-events:auto; transform:translate(-50%,0) }.toast button { color:var(--accent); background:none; border:0; cursor:pointer; font-weight:600 }
+    .proto-note { display:flex; flex-wrap:wrap; gap:8px 18px; padding:12px 14px; color:var(--faint); background:var(--inset); border-top:1px solid var(--border); font:10px var(--mono) }
+    .proto-note span::before { content:"•"; margin-right:6px; color:var(--accent) }
+
+    .flow { display:grid; grid-template-columns:repeat(5,1fr); gap:24px }
+    .step { position:relative; padding:14px; background:var(--chrome); border:1px solid var(--soft); border-radius:9px }
+    .step:not(:last-child)::after { content:"→"; position:absolute; top:50%; right:-18px; color:var(--faint); transform:translateY(-50%) }
+    .step b { display:block; margin-bottom:4px; font-size:12px }.step span { color:var(--muted); font-size:11px }
+    .chip { display:inline-flex; align-items:center; gap:6px; padding:3px 7px; background:var(--control); border-radius:999px; white-space:nowrap; font:10px var(--mono) }
+    .chip::before { content:""; width:6px; height:6px; background:var(--s,var(--faint)); border-radius:50% }
+    .formula { padding:13px 15px; color:#cfe1ff; background:var(--inset); border-left:3px solid var(--accent); border-radius:0 8px 8px 0; font:12px/1.7 var(--mono) }
+    .palette { display:grid; grid-template-columns:repeat(8,1fr); gap:8px }
+    .colorcard { padding:9px 5px; text-align:center; background:var(--chrome); border:1px solid var(--soft); border-radius:8px }
+    .colorcard i { display:block; width:22px; height:22px; margin:0 auto 6px; background:var(--c); border:1px solid rgb(255 255 255/.16); border-radius:50% }
+    .colorcard b { display:block; color:var(--muted); font:9px var(--mono) }
+    .manager { display:grid; grid-template-columns:330px minmax(0,1fr); gap:22px; align-items:start }
+    .managerbox { overflow:hidden; background:var(--chrome); border:1px solid var(--border); border-radius:10px; box-shadow:0 18px 40px rgb(0 0 0/.3) }
+    .managerhead { display:flex; justify-content:space-between; padding:11px 12px; border-bottom:1px solid var(--soft); font-size:12px; font-weight:620 }
+    .objectrow { display:grid; width:100%; grid-template-columns:24px minmax(0,1fr) 26px 26px; gap:6px; align-items:center; padding:8px 10px; color:var(--text); background:none; border:0; border-bottom:1px solid var(--soft); text-align:left; cursor:pointer; font-size:11px }
+    .objectrow:last-child { border:0 }.objectrow.selected { background:rgb(138 180 248/.1) }.objectrow small { display:block; color:var(--faint); font:9px var(--mono) }
+    .architecture { display:grid; grid-template-columns:repeat(5,1fr); gap:12px }
+    .node { position:relative; padding:14px 10px; text-align:center; background:var(--chrome); border:1px solid var(--border); border-radius:8px }
+    .node:not(:last-child)::after { content:"→"; position:absolute; z-index:2; top:50%; right:-10px; color:var(--accent); transform:translate(50%,-50%) }
+    .node b { display:block; font:11px var(--mono) }.node span { display:block; margin-top:5px; color:var(--faint); font-size:10px }
+    .accept { display:grid; grid-template-columns:repeat(2,1fr); gap:8px 18px; margin:0; padding:0; list-style:none; counter-reset:ac }
+    .accept li { position:relative; min-height:50px; padding:10px 11px 10px 48px; color:var(--muted); background:var(--chrome); border:1px solid var(--soft); border-radius:8px; counter-increment:ac }
+    .accept li::before { content:"AC-" counter(ac,decimal-leading-zero); position:absolute; top:13px; left:10px; color:var(--accent); font:9px var(--mono) }
+    .accept strong { color:var(--text) }
+    .phase { border-top:2px solid var(--pc,var(--accent)) }
+    footer { margin-top:64px; padding-top:21px; color:var(--faint); border-top:1px solid var(--soft); font-size:12px }
+    footer strong { color:var(--muted) }
+    @media(min-width:800px) and (max-width:1179px){
+      .stage.inspector-open .chart { width:calc(100% - 330px) }
+      .stage .inspector { top:0!important; right:0!important; bottom:0; left:auto!important; width:330px; max-height:none; border-radius:0; resize:horizontal }
+      .stage.inspector-open .toolbox.dock-right { right:344px }
+    }
+    @media(max-width:1020px){
+      .hero { grid-template-columns:1fr }.meta { grid-template-columns:repeat(3,1fr) }.meta div { display:grid }
+      .flow { grid-template-columns:repeat(3,1fr) }.step:nth-child(3)::after { display:none }
+      .architecture { grid-template-columns:repeat(3,1fr) }.node:nth-child(3)::after { display:none }
+      .stage { min-height:680px }.inspector { width:330px }
+    }
+    @media(max-width:799px){
+      .page { width:calc(100% - 24px); padding-top:18px }.head { grid-template-columns:1fr; gap:4px }.index { padding:0 }
+      section { padding-top:45px }.grid2,.grid3,.grid4,.accept { grid-template-columns:1fr }
+      .stage { min-height:880px }.stage .chart,.stage.docked.inspector-open .chart { width:100% }.stage .chart { height:100% }.stage.inspector-open .chart { height:44% }.inspector,.stage.docked .inspector { top:auto!important; right:8px!important; bottom:8px; left:58px!important; width:auto; height:calc(56% - 16px); max-width:none; max-height:none; border-radius:12px; resize:none }
+      .toolbox .tool:not(.active):not([data-tool="Pointer"]),.toolbox #all-lock,.toolbox #all-eye { display:none }
+      .toolbox .more-tools { display:grid }
+      .tool-pop { display:grid }
+      .toolstate { left:58px; right:8px; bottom:8px; width:max-content; max-width:calc(100% - 74px); overflow:hidden; white-space:nowrap }
+      .stage.inspector-open .toolstate { bottom:calc(56% + 2px) }
+      .drawing-action { min-height:44px }
+      .flow,.architecture { grid-template-columns:1fr; gap:9px }.step::after,.node::after { display:none!important }
+      .manager { grid-template-columns:1fr }.palette { grid-template-columns:repeat(4,1fr) }
+    }
+    @media(max-width:470px){
+      .meta { grid-template-columns:1fr }.proto-top .market { display:none }.stage { min-height:920px }
+      .stage .inspector,.stage.docked .inspector { left:8px!important; max-height:63% }.grid4 { grid-template-columns:1fr }.footer { flex-wrap:wrap }
+    }
+    @media(prefers-reduced-motion:reduce){ html{scroll-behavior:auto} *,*::before,*::after{transition:none!important} }
+  </style>
+</head>
+<body>
+<main class="page">
+  <header class="hero">
+    <div>
+      <p class="eyebrow">quantick · product/ux specification</p>
+      <h1>Ferramentas de desenho <span>rápidas no gráfico, profundas só quando necessário.</span></h1>
+      <p class="lede">Especificação visual e comportamental da barra, seleção, bloqueio, visibilidade, exclusão, propriedades e configuração completa de Fibonacci. O alvo é um sistema bonito, previsível e modular, no qual novas ferramentas entram sem redesenhar toda a interface.</p>
+    </div>
+    <aside class="meta" aria-label="Metadados">
+      <div><span>Status</span><span>direção recomendada</span></div>
+      <div><span>Base auditada</span><span>drawing tools / PR 94</span></div>
+      <div><span>Atualizado</span><span>31 jul 2026</span></div>
+    </aside>
+  </header>
+
+  <nav aria-label="Índice">
+    <a href="#decision">Decisão</a><a href="#prototype">Protótipo</a><a href="#bar">Barra</a>
+    <a href="#interaction">Interação</a><a href="#inspector-spec">Inspetor</a><a href="#fib">Fibonacci</a>
+    <a href="#tools">Ferramentas</a><a href="#keys">Atalhos</a><a href="#color">Cores</a>
+    <a href="#objects">Objetos</a><a href="#a11y">A11y</a><a href="#architecture">Arquitetura</a><a href="#acceptance">Aceite</a>
+  </nav>
+
+  <section id="decision">
+    <div class="head"><div class="index">01 · decisão</div><div>
+      <h2>Escolher, desenhar, ajustar e proteger — sem prender o gráfico.</h2>
+      <p class="sub">A barra é compacta e acoplável. O inspetor aparece por contexto, mas não é modal. Bloqueio protege a geometria; visibilidade apenas esconde. Delete é rápido, seguro e reversível.</p>
+    </div></div>
+    <div class="grid3">
+      <article class="card top-accent"><span class="micro">Direção 01</span><h3>Barra de 44 px</h3><p>Cápsula vertical por padrão, com botões 32 × 32. Pode acoplar nas laterais; no topo/rodapé gira para horizontal. Nunca ocupa uma faixa vazia da largura inteira.</p></article>
+      <article class="card top-buy"><span class="micro">Direção 02</span><h3>Inspetor não modal</h3><p>Abre ao selecionar, evita alças, continua durante drag e pode ser movido, redimensionado ou fixado no dock. O canvas segue ativo fora da caixa.</p></article>
+      <article class="card top-yellow"><span class="micro">Direção 03</span><h3>Excluir + Undo</h3><p>O botão textual <strong>Excluir desenho</strong> e <kbd>Delete</kbd>/<kbd>Backspace</kbd> usam o mesmo comando. Toast oferece Desfazer por 8 s. Um desenho travado exige confirmação explícita.</p></article>
+    </div>
+    <div class="rule"><i>↔</i><div><strong>Regra crítica:</strong> abrir propriedades nunca muda a ferramenta, nunca captura o canvas inteiro e nunca impede mover/redimensionar. Se a caixa cobrir um traço ou alça, um gesto iniciado exatamente nessa geometria continua pertencendo ao desenho; os demais cliques continuam pertencendo ao inspetor.</div></div>
+    <h3 style="margin-top:26px">Auditoria do protótipo atual</h3>
+    <div class="table"><table><thead><tr><th>Área</th><th>Existe hoje</th><th>Lacuna que esta especificação resolve</th></tr></thead><tbody>
+      <tr><td>Arquitetura</td><td>um módulo por ferramenta e um registry único</td><td>levar a mesma modularidade para propriedades via capabilities, sem form central</td></tr>
+      <tr><td>Toolbox</td><td>44 px, ferramenta exclusiva e dock nos quatro cantos</td><td>evitar a faixa vazia, criar favoritos/flyouts, pin e gerenciador</td></tr>
+      <tr><td>Seleção</td><td>hit-test, movimento do corpo e resize por âncoras</td><td>hover, cursor de movimento, z-order, cor preservada e lock/visibility</td></tr>
+      <tr><td>Inspetor</td><td>móvel e não modal; cor, width, fill e botão delete</td><td>posição inteligente, resize/dock, propriedades específicas e undo</td></tr>
+      <tr><td>Delete</td><td>somente botão no popup</td><td>Delete/Backspace, foco seguro, proteção locked e toast Undo</td></tr>
+      <tr><td>Fib</td><td>níveis fixos, uma cor e rótulo decimal</td><td>editor de níveis, preços/%, presets, bands, rays, direção e escala</td></tr>
+      <tr><td>Rectangle</td><td>interior participa do hit-test mesmo sem fill</td><td>interior só selecionável quando o preenchimento está visível</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="prototype">
+    <div class="head"><div class="index">02 · protótipo</div><div>
+      <h2>Experimente os estados que hoje causam atrito.</h2>
+      <p class="sub">Troque ferramenta, cor e espessura; trave, esconda ou exclua o Fib. As ações essenciais permanecem nomeadas e visíveis sem rolar. A simulação define o comportamento esperado, não afirma que tudo já está implementado.</p>
+    </div></div>
+    <div class="prototype" id="demo">
+      <div class="proto-top"><strong>QUANTICK</strong><span class="market">BTCUSDT · Tick 100</span><span class="live">LIVE</span><span class="spacer"></span><span id="drawing-count" style="color:var(--faint)">1 desenho</span></div>
+      <div class="stage" id="stage" aria-label="Gráfico interativo com Fibonacci selecionado">
+        <svg class="chart" viewBox="0 0 1160 620" preserveAspectRatio="none" role="img" aria-label="Candles com Fibonacci retracement selecionado">
+          <g id="viewport-layer">
+          <g id="market-layer">
+            <path class="gridline" d="M0 80H1160M0 160H1160M0 240H1160M0 320H1160M0 400H1160M0 480H1160M100 0V620M220 0V620M340 0V620M460 0V620M580 0V620M700 0V620M820 0V620M940 0V620"></path>
+            <g class="up"><path class="wick-up" d="M110 420V492M190 382V452M270 352V430M350 310V380M430 286V360M510 244V320M590 210V290M670 178V260M750 146V232"></path><rect x="100" y="440" width="20" height="32"></rect><rect x="180" y="400" width="20" height="35"></rect><rect x="260" y="370" width="20" height="38"></rect><rect x="340" y="328" width="20" height="35"></rect><rect x="420" y="306" width="20" height="34"></rect><rect x="500" y="262" width="20" height="39"></rect><rect x="580" y="229" width="20" height="38"></rect><rect x="660" y="198" width="20" height="37"></rect><rect x="740" y="167" width="20" height="38"></rect></g>
+            <g class="down"><path class="wick-down" d="M150 403V468M230 392V458M310 326V402M390 306V378M470 268V342M550 230V314M630 192V275M710 158V244M790 134V218"></path><rect x="140" y="419" width="20" height="32"></rect><rect x="220" y="409" width="20" height="34"></rect><rect x="300" y="347" width="20" height="35"></rect><rect x="380" y="324" width="20" height="33"></rect><rect x="460" y="286" width="20" height="38"></rect><rect x="540" y="250" width="20" height="39"></rect><rect x="620" y="211" width="20" height="38"></rect><rect x="700" y="179" width="20" height="39"></rect><rect x="780" y="151" width="20" height="37"></rect></g>
+          </g>
+          <g class="fib" id="fib-object">
+            <rect class="band" data-from="0.236" data-to="0.382"></rect>
+            <rect class="band" data-from="0.500" data-to="0.618"></rect>
+            <line class="guide" id="fib-guide"></line>
+            <line class="halo" data-ratio="0"></line><line class="halo" data-ratio="1"></line>
+            <line class="level" data-ratio="0"></line><line class="level" data-ratio="0.236"></line>
+            <line class="level" data-ratio="0.382"></line><line class="level" data-ratio="0.5"></line>
+            <line class="level" data-ratio="0.618"></line><line class="level" data-ratio="0.786"></line>
+            <line class="level" data-ratio="1"></line>
+            <text data-ratio="0">0% · 71.824,50</text><text data-ratio="0.236">23,6% · 71.184,32</text>
+            <text data-ratio="0.382">38,2% · 70.788,14</text><text data-ratio="0.5">50% · 70.468,00</text>
+            <text data-ratio="0.618">61,8% · 70.147,86</text><text data-ratio="0.786">78,6% · 69.692,20</text>
+            <text data-ratio="1">100% · 69.111,50</text>
+            <circle class="handle" data-anchor="a" r="5"></circle><circle class="handle" data-anchor="b" r="5"></circle>
+            <text class="anchorlabel" id="label-a">A</text><text class="anchorlabel" id="label-b">B</text>
+            <text id="direction-label">Baixa · A → B</text>
+          </g>
+          </g>
+        </svg>
+
+        <div class="toolbox" id="toolbox" aria-label="Barra de desenho">
+          <button class="grip" id="tool-grip" aria-label="Arrastar ou pressionar Enter para mudar o acoplamento">⠿</button>
+          <button class="ib tool active" data-tool="Pointer" aria-label="Pointer — 1 ou Esc" aria-pressed="true">➤</button>
+          <button class="ib tool" data-tool="Crosshair" aria-label="Crosshair — 2" aria-pressed="false">⌖</button>
+          <div class="divider"></div>
+          <button class="ib tool" data-tool="Horizontal line" aria-label="Horizontal line — H" aria-pressed="false">―</button>
+          <button class="ib tool" data-tool="Rectangle" aria-label="Rectangle — R" aria-pressed="false">□</button>
+          <button class="ib tool" data-tool="Parallel channel" aria-label="Parallel channel — C" aria-pressed="false">▱</button>
+          <button class="ib tool" data-tool="Fib retracement" aria-label="Fib retracement — F" aria-pressed="false">☷</button>
+          <button class="ib tool" data-tool="Fib extension" aria-label="Fib extension — Shift F" aria-pressed="false">≢</button>
+          <div class="divider"></div>
+          <button class="ib" id="repeat-tool" aria-label="Manter ferramenta ativa após desenhar" aria-pressed="false">↻</button>
+          <button class="ib more-tools" id="more-tools" aria-label="Mais ferramentas" aria-expanded="false">＋</button>
+          <button class="ib" id="objects-button" aria-label="Abrir objetos desenhados — 1 objeto" aria-expanded="false">☰</button>
+          <button class="ib" id="all-lock" aria-label="Travar todos" aria-pressed="false">🔓</button>
+          <button class="ib" id="all-eye" aria-label="Ocultar todos" aria-pressed="false">◉</button>
+        </div>
+        <div class="tool-pop" id="tool-popover" role="menu" aria-label="Mais ferramentas" hidden>
+          <button class="small" role="menuitem" data-tool-target="Crosshair">⌖ Crosshair</button>
+          <button class="small" role="menuitem" data-tool-target="Horizontal line">― Horizontal</button>
+          <button class="small" role="menuitem" data-tool-target="Rectangle">□ Retângulo</button>
+          <button class="small" role="menuitem" data-tool-target="Parallel channel">▱ Canal</button>
+          <button class="small" role="menuitem" data-tool-target="Fib retracement">☷ Fib retracement</button>
+          <button class="small" role="menuitem" data-tool-target="Fib extension">≢ Fib extension</button>
+        </div>
+        <div class="manager-pop" id="object-popover" role="dialog" aria-label="Gerenciador de objetos desenhados" hidden>
+          <header><strong>Objetos desenhados</strong><button class="ib" id="manager-close" aria-label="Fechar gerenciador">×</button></header>
+          <div class="manager-live-row">
+            <button class="small manager-select" id="manager-select"><span>☷ Fib retracement 1<br><small style="color:var(--faint)">BTCUSDT · Tick 100</small></span></button>
+          </div>
+          <div class="manager-actions" aria-label="Ações do Fib retracement">
+            <button class="small" id="manager-eye" aria-label="Ocultar Fib retracement"><span aria-hidden="true">◉</span> <span id="manager-eye-label">Ocultar</span></button>
+            <button class="small" id="manager-lock" aria-label="Travar Fib retracement" aria-pressed="false"><span id="manager-lock-icon" aria-hidden="true">🔓</span> <span id="manager-lock-label">Travar</span></button>
+            <button class="small" id="manager-up" aria-label="Trazer Fib retracement para frente">↑ Trazer à frente</button>
+            <button class="small danger" id="manager-delete" aria-label="Excluir desenho Fib retracement">⌫ Excluir desenho</button>
+          </div>
+          <div class="row" style="padding:0 8px 8px">
+            <button class="small" id="manager-show-all">Mostrar todos</button>
+            <button class="small" id="manager-unlock-all">Destravar todos</button>
+          </div>
+        </div>
+        <div class="toolstate" id="canvas-focus" tabindex="0" role="application" aria-label="Canvas do gráfico. Delete exclui o desenho selecionado; setas movem; Escape remove a seleção."><b id="active-tool">Pointer</b><span>drag no corpo move · alças redimensionam</span></div>
+        <div class="lockbadge">🔒 Travado</div>
+
+        <aside class="inspector" id="inspector" aria-label="Propriedades do Fib retracement">
+          <div class="inspector-sticky">
+          <header class="ins-head">
+            <div class="obj"><span style="color:var(--accent)">☷</span><span><strong>Fib retracement</strong><small>BTCUSDT · Tick 100</small><span class="state-chip" id="lock-chip">🔒 Travado</span></span></div>
+            <div class="actions">
+              <button class="ib" id="eye" aria-label="Ocultar desenho" aria-pressed="false">◉</button>
+              <button class="ib" id="pin" aria-label="Fixar na lateral" aria-pressed="false">⌖</button>
+              <button class="ib" id="close" aria-label="Fechar propriedades">×</button>
+            </div>
+          </header>
+          <div class="drawing-actions" role="toolbar" aria-label="Ações do desenho selecionado">
+            <button class="drawing-action" id="lock" aria-label="Travar desenho" aria-pressed="false"><span id="lock-icon" aria-hidden="true">🔓</span><span id="lock-label">Travar desenho</span></button>
+            <button class="drawing-action danger" id="delete" aria-label="Excluir desenho selecionado — tecla Delete"><span aria-hidden="true">⌫</span><span>Excluir desenho</span><kbd>Del</kbd></button>
+          </div>
+          <div class="confirm" id="confirm" role="alertdialog" aria-modal="false" aria-labelledby="confirm-title" tabindex="-1"><strong id="confirm-title">Excluir desenho travado?</strong><div class="row"><button class="small" id="cancel-delete">Cancelar</button><button class="small danger" id="force-delete">Excluir mesmo assim</button></div></div>
+          <div class="tabs" role="tablist" aria-label="Propriedades">
+            <button class="tab" id="tab-style" role="tab" data-panel="style-panel" aria-controls="style-panel" aria-selected="true" tabindex="0">Estilo</button>
+            <button class="tab" id="tab-levels" role="tab" data-panel="levels-panel" aria-controls="levels-panel" aria-selected="false" tabindex="-1">Níveis</button>
+            <button class="tab" id="tab-coords" role="tab" data-panel="coords-panel" aria-controls="coords-panel" aria-selected="false" tabindex="-1">Coordenadas</button>
+          </div>
+          </div>
+          <div class="lock-notice" role="status"><strong>🔒 Desenho travado</strong><span>Protegido contra movimentos acidentais. Cores e estilo continuam editáveis.</span></div>
+          <div class="panel active" id="style-panel" role="tabpanel" aria-labelledby="tab-style">
+            <div class="banner">Objeto oculto · use o olho para mostrar novamente.</div>
+            <div class="group"><div class="fieldtitle"><span>Cor principal</span><output id="color-value">#8AB4F8</output></div>
+              <div class="row wrap" id="swatches">
+                <button class="swatch" style="--c:#8ab4f8" data-color="#8ab4f8" aria-label="Azul accent" aria-pressed="true"></button>
+                <button class="swatch" style="--c:#4dd0e1" data-color="#4dd0e1" aria-label="Ciano" aria-pressed="false"></button>
+                <button class="swatch" style="--c:#26a69a" data-color="#26a69a" aria-label="Verde teal" aria-pressed="false"></button>
+                <button class="swatch" style="--c:#b39ddb" data-color="#b39ddb" aria-label="Roxo" aria-pressed="false"></button>
+                <button class="swatch" style="--c:#ffd166" data-color="#ffd166" aria-label="Amarelo" aria-pressed="false"></button>
+                <button class="swatch" style="--c:#ff9f43" data-color="#ff9f43" aria-label="Laranja" aria-pressed="false"></button>
+                <button class="swatch" style="--c:#ef5350" data-color="#ef5350" aria-label="Vermelho" aria-pressed="false"></button>
+                <button class="swatch" style="--c:#d2dae2" data-color="#d2dae2" aria-label="Branco neutro" aria-pressed="false"></button>
+              </div>
+              <div class="row between"><label class="check" for="custom-color">Cor personalizada</label><input id="custom-color" type="color" value="#8ab4f8" aria-label="Escolher cor personalizada"></div>
+              <p id="contrast-note" role="status" style="margin:7px 0 0;color:var(--faint);font-size:11px">Contraste adequado no canvas padrão.</p>
+            </div>
+            <div class="group"><div class="fieldtitle"><span>Espessura</span><output id="width-value">1.5 px</output></div>
+              <input id="width" type="range" min=".5" max="6" step=".5" value="1.5" aria-label="Espessura">
+              <div class="row"><select class="select" aria-label="Estilo da linha"><option>Contínua</option><option>Tracejada</option><option>Pontilhada</option></select><select class="select" aria-label="Extensão"><option>Entre âncoras</option><option>À direita</option><option>Ambos os lados</option></select></div>
+            </div>
+            <div class="group"><div class="fieldtitle"><span>Bandas</span><output>8%</output></div>
+              <input type="range" min="0" max="60" value="8" aria-label="Opacidade das bandas">
+              <div class="row between"><label class="check"><input type="checkbox" checked> Alternar fill</label><label class="check"><input type="checkbox"> Sempre mostrar guia</label></div>
+            </div>
+            <div class="group"><div class="fieldtitle"><span>Rótulos</span></div>
+              <div class="row"><select class="select" aria-label="Conteúdo dos rótulos"><option>Percentual + preço</option><option>Razão + preço</option><option>Só preço</option></select><select class="select" aria-label="Posição dos rótulos"><option>Direita · fora</option><option>Direita · dentro</option><option>Esquerda</option></select></div>
+            </div>
+          </div>
+
+          <div class="panel" id="levels-panel" role="tabpanel" aria-labelledby="tab-levels">
+            <div class="group"><div class="row"><select class="select" aria-label="Preset"><option>Standard retracement</option><option>Compact</option><option>Deep</option><option>Extended</option><option>Custom…</option></select><button class="small">Salvar</button></div></div>
+            <div class="group"><div class="fieldtitle"><span>Visível · razão · rótulo</span><output id="level-count">7 níveis</output></div>
+              <div class="levels" id="level-list"></div>
+              <div class="row"><button class="small primary" id="add-level">＋ Adicionar</button><button class="small" id="sort-levels">Ordenar</button><button class="small" id="restore-levels">Restaurar</button></div>
+            </div>
+            <div class="group"><div class="row between"><label class="check"><input type="checkbox" id="log-scale"> Escala log explícita</label><button class="small" id="invert-anchors">Inverter A ↔ B</button></div></div>
+          </div>
+
+          <div class="panel" id="coords-panel" role="tabpanel" aria-labelledby="tab-coords">
+            <div class="group"><div class="fieldtitle"><span>Âncora A</span><output>topo</output></div><div class="row"><input class="input number" id="anchor-a-time" value="2026-07-31 10:42:18" aria-label="Data e hora da âncora A"><input class="input number" id="anchor-a-price" value="71.824,50" aria-label="Preço da âncora A"></div></div>
+            <div class="group"><div class="fieldtitle"><span>Âncora B</span><output>fundo</output></div><div class="row"><input class="input number" id="anchor-b-time" value="2026-07-31 11:07:03" aria-label="Data e hora da âncora B"><input class="input number" id="anchor-b-price" value="69.111,50" aria-label="Preço da âncora B"></div></div>
+            <div class="group"><div class="fieldtitle"><span>Snapping</span></div><select class="select" style="width:100%" aria-label="Modo de snapping"><option>OHLC mais próximo</option><option>High / Low</option><option>Close</option><option>Desligado</option></select><p style="margin-top:8px;color:var(--faint);font-size:11px">O preço salvo é sempre exibido; nada é corrigido silenciosamente.</p></div>
+          </div>
+
+          <div class="footer"><div class="row" style="margin:0"><button class="small">Duplicar</button><button class="small">Redefinir estilo</button></div></div>
+        </aside>
+        <div class="toast" id="toast" role="status" aria-live="polite" aria-hidden="true" inert><span id="toast-text">Desenho excluído.</span><button id="undo">Desfazer</button></div>
+      </div>
+      <div class="proto-note"><span>use “Travar desenho” e tente arrastar</span><span>“Excluir desenho” e Delete usam a mesma regra</span><span>inputs protegem Backspace/Delete</span><span>adicione um nível</span></div>
+    </div>
+  </section>
+
+  <section id="bar">
+    <div class="head"><div class="index">03 · barra</div><div><h2>Pequena no uso diário, expansível para dezenas de ferramentas.</h2><p class="sub">A barra nunca quebra linha nem cresce sem limite. Um registro fornece ícone, atalho, instrução, quantidade de pontos e capacidades; favoritos e flyouts cuidam da escala.</p></div></div>
+    <div class="grid2">
+      <article class="card"><h3>Anatomia e ordem</h3><ol class="clean">
+        <li><strong>Grip:</strong> arrasta e persiste dock/orientação.</li><li><strong>Pointer e Crosshair:</strong> modos de canvas separados.</li>
+        <li><strong>Favoritos:</strong> Horizontal, Rectangle, Channel e dois Fibs.</li><li><strong>Pin:</strong> “manter ferramenta ativa”; padrão one-shot.</li>
+        <li><strong>Objetos:</strong> contador + gerenciador.</li><li><strong>Proteções globais:</strong> lock-all/hide-all em menu ou rodapé.</li>
+      </ol></article>
+      <article class="card"><h3>Geometria e estados</h3><div class="table"><table><tbody>
+        <tr><td>Barra</td><td>44 px; botões 32 × 32; ícones 18–20 px; gap 3 px</td></tr>
+        <tr><td>Idle</td><td>glyph muted, fundo transparente</td></tr><tr><td>Hover</td><td>texto primário sobre border; tooltip após 350 ms</td></tr>
+        <tr><td>Active</td><td>accent sobre tint 22%; draft recebe badge 1/2 ou 2/3</td></tr><tr><td>Focus</td><td>outline 2 px separado de hover/active</td></tr>
+        <tr><td>Disabled</td><td>40% e tooltip explicando o motivo</td></tr>
+      </tbody></table></div></article>
+    </div>
+    <div class="rule"><i>∞</i><div><strong>Adaptação:</strong> abaixo de 960 px os Fibs viram split-button; abaixo de 800 px ficam Pointer, ferramenta ativa e Objetos, com as demais em “Mais ferramentas”. A barra nunca cria outra faixa de chrome.</div></div>
+  </section>
+
+  <section id="interaction">
+    <div class="head"><div class="index">04 · interação</div><div><h2>O objeto responde antes da janela.</h2><p class="sub">Selecionar preserva a cor escolhida e adiciona halo accent. O topo do z-order vence sobreposição; <kbd>Alt</kbd>+click percorre objetos sobrepostos.</p></div></div>
+    <div class="flow">
+      <div class="step"><b>1 · Armar</b><span>ícone active e instrução do ponto A</span></div><div class="step"><b>2 · Preview</b><span>70% opacity; labels A/B/C</span></div>
+      <div class="step"><b>3 · Selecionar</b><span>halo, alças e inspetor</span></div><div class="step"><b>4 · Ajustar</b><span>corpo move; alça edita um ponto</span></div>
+      <div class="step"><b>5 · Proteger</b><span>lock impede geometria e teclado delete</span></div>
+    </div>
+    <div class="table" style="margin-top:22px"><table><thead><tr><th>Estado</th><th>Objeto</th><th>Canvas / cursor</th><th>Inspetor</th></tr></thead><tbody>
+      <tr><td><span class="chip" style="--s:var(--faint)">Idle</span></td><td>cor configurada, sem halo</td><td>pan/zoom normal</td><td>fechado</td></tr>
+      <tr><td><span class="chip" style="--s:var(--accent)">Hover</span></td><td>halo fino; fill só conta quando visível</td><td>move/resize conforme hit</td><td>não muda</td></tr>
+      <tr><td><span class="chip" style="--s:var(--accent)">Selected</span></td><td>cor real + halo + alças brancas</td><td>gesto do objeto vence pan</td><td>abre sem modal</td></tr>
+      <tr><td><span class="chip" style="--s:var(--yellow)">Locked</span></td><td>badge, halo tracejado, sem handles</td><td>drag consumido + cursor proibido</td><td>style editável; delete confirma</td></tr>
+      <tr><td><span class="chip" style="--s:var(--faint)">Hidden</span></td><td>não pinta nem recebe hit-test</td><td>interação passa ao chart</td><td>banner com Mostrar</td></tr>
+      <tr><td><span class="chip" style="--s:var(--buy)">Dragging</span></td><td>preview ao vivo</td><td>um gesto = um comando de undo</td><td>aberto e visualmente normal</td></tr>
+    </tbody></table></div>
+    <div class="grid2" style="margin-top:16px">
+      <article class="card"><h3>Modificadores</h3><ul class="clean"><li><kbd>Shift</kbd> restringe horizontal/vertical, quadrado ou ângulo conforme a ferramenta.</li><li><kbd>Alt</kbd> durante drag desativa snap temporariamente.</li><li><kbd>Backspace</kbd> durante draft remove a última âncora.</li><li><kbd>Esc</kbd> cancela draft e retorna ao Pointer.</li></ul></article>
+      <article class="card"><h3>Undo/redo</h3><p>Criar, mover, resize, style, preset, lock, hide, z-order e delete usam um histórico. Drags, sliders e color picker são coalescidos do pointer-down ao release: uma ação, um undo. <code>ViewportState</code> e <code>UiState</code> ficam fora dos snapshots; cada comando captura apenas o drawing e qualquer estado global que ele próprio altera.</p></article>
+    </div>
+  </section>
+
+  <section id="inspector-spec">
+    <div class="head"><div class="index">05 · inspetor</div><div><h2>Controles comuns estáveis; complexidade somente onde faz sentido.</h2><p class="sub">320 px nas ferramentas simples e 360 px no Fib, redimensionável entre 300–440 px. Conteúdo rola em janela baixa. Fecha = deseleciona; nunca exclui.</p></div></div>
+    <div class="grid2">
+      <article class="card"><h3>Posicionamento</h3><ol class="clean"><li>Tenta 12 px à direita da bounding box + handles.</li><li>Se não couber: esquerda, abaixo e acima.</li><li>Nunca cobre price/time axis nem sai da viewport.</li><li>Sem espaço: acopla ao dock e o canvas encolhe.</li><li>Depois de movido manualmente, mantém a posição na sessão.</li></ol></article>
+      <article class="card"><h3>Cabeçalho e ações</h3><div class="table"><table><tbody>
+        <tr><td>Grip + nome</td><td>tipo, nome customizável e chip textual <code>🔒 Travado</code></td></tr><tr><td>Eye</td><td>hide/show individual; banner quando oculto</td></tr>
+        <tr><td><code>DrawingActionBar</code></td><td>sticky, duas colunas: <strong>Travar/Destravar desenho</strong> e <strong>Excluir desenho · Del</strong>; nunca depende só de glyph</td></tr><tr><td>Pin</td><td>fixa no dock lateral</td></tr><tr><td>Close</td><td>deseleciona, sem mutar o objeto</td></tr>
+      </tbody></table></div></article>
+    </div>
+    <div class="table" style="margin-top:18px"><table><thead><tr><th>Seção</th><th>Campos</th><th>Capacidade</th><th>Regra</th></tr></thead><tbody>
+      <tr><td>Style</td><td>preset, cor/alpha, 0.5–6 px, solid/dashed/dotted</td><td>todas</td><td>preview ao vivo; default opcional para novos</td></tr>
+      <tr><td>Fill</td><td>cor e 0–60%</td><td>rectangle/channel/bandas</td><td>ausente em horizontal line, não disabled</td></tr>
+      <tr><td>Labels</td><td>texto, preço, ratio/%, posição, fundo</td><td>linha/channel/Fib</td><td>decimais Auto seguem o símbolo</td></tr>
+      <tr><td>Geometry</td><td>rays, middle line, direction, snap</td><td>tool-driven</td><td>opções impossíveis não aparecem</td></tr>
+      <tr><td>Levels</td><td>preset + lista editável</td><td>Fib</td><td>linha por nível; validação inline</td></tr>
+      <tr><td>Coordinates</td><td>bar/tempo e preço por A/B/C</td><td>todas</td><td>Enter confirma; Esc reverte o campo</td></tr>
+      <tr><td>Actions</td><td>sticky lock/unlock + delete; duplicate, z-order e reset no rodapé/menu</td><td>todas</td><td>delete travado requer confirmação explícita junto ao gatilho</td></tr>
+    </tbody></table></div>
+    <div class="rule"><i>✦</i><div><strong>Sem Apply:</strong> valores válidos entram ao vivo e podem ser desfeitos. Enquanto um input tem foco, atalhos do chart ficam suspensos. O inspetor nunca fica cinza/desabilitado durante drag.</div></div>
+  </section>
+
+  <section id="fib">
+    <div class="head"><div class="index">06 · fibonacci</div><div><h2>Fib é um modelo de níveis, não sete linhas fixas.</h2><p class="sub">Retracement e Extension compartilham editor, presets, labels e estilos. Mudam somente a geometria e a fórmula. Alças A, B e C são rotuladas na construção e seleção.</p></div></div>
+    <div class="grid2">
+      <article class="card"><span class="micro">Retracement · A/B</span><h3>Devolução do movimento</h3><div class="formula">Preço(r) = PreçoA + (PreçoB − PreçoA) × r<br>Standard: 0 · .236 · .382 · .5 · .618 · .786 · 1</div><p style="margin-top:12px">Direção deriva dos preços. “Inverter” troca A/B em uma ação de undo.</p></article>
+      <article class="card"><span class="micro">Extension · A/B/C</span><h3>Projeção a partir de C</h3><div class="formula">Preço(r) = PreçoC + (PreçoB − PreçoA) × r<br>Standard: 0 · .618 · 1 · 1.272 · 1.618 · 2 · 2.618</div><p style="margin-top:12px">A→B define direção; C é origem. Inverter troca A/B e nunca move C.</p></article>
+    </div>
+    <h3 style="margin-top:26px">Editor de níveis — contrato</h3>
+    <div class="table"><table><thead><tr><th>Campo</th><th>Comportamento</th><th>Validação</th></tr></thead><tbody>
+      <tr><td>Eye</td><td>oculta sem remover a configuração</td><td>ao menos um nível visível</td></tr>
+      <tr><td>Ratio</td><td>número sem símbolo é sempre razão (<code>.618</code> ou <code>0.618</code>); percentual exige <code>61.8%</code>. Separador decimal local também é aceito</td><td>finito; negativos e >100% permitidos; duplicata com tolerância 0.000001 é rejeitada</td></tr>
+      <tr><td>Texto</td><td>Auto ou custom até 40 caracteres</td><td>preço calculado é somente leitura</td></tr>
+      <tr><td>Cor/style</td><td>herdar principal ou override por nível</td><td>override marcado; “aplicar a todos” disponível</td></tr>
+      <tr><td>Fill</td><td>preenche até o próximo nível</td><td>desligado por padrão; recomendação 8–18%</td></tr>
+      <tr><td>Ordem</td><td>drag pelo grip ou ordenar numericamente</td><td>ordenar não inverte a geometria</td></tr>
+      <tr><td>Add/delete</td><td>insere abaixo do foco; remove por menu/lixeira</td><td>undo disponível</td></tr>
+    </tbody></table></div>
+    <div class="grid3" style="margin-top:18px">
+      <article class="card"><h3>Retracement presets</h3><ul class="clean"><li>Standard: 0, .236, .382, .5, .618, .786, 1</li><li>Compact: 0, .382, .5, .618, 1</li><li>Deep: 0, .236, .382, .5, .618, .705, .786, .886, 1</li><li>Extended: −.618, −.272, 0 … 1.272, 1.618</li></ul></article>
+      <article class="card"><h3>Extension presets</h3><ul class="clean"><li>Targets: .618, 1, 1.272, 1.618, 2, 2.618</li><li>Conservative: .618, 1, 1.272, 1.618</li><li>Expanded: .382, .618, 1, 1.272, 1.618, 2, 2.618, 4.236</li></ul></article>
+      <article class="card"><h3>Ciclo dos presets</h3><ul class="clean"><li>Built-ins são somente leitura; custom aceita criar, renomear e excluir.</li><li>Nome é aparado, tem 1–40 caracteres e precisa ser único sem diferenciar maiúsculas/minúsculas.</li><li>Salvar copia levels, styles, fills, labels, rays e guides; nunca coordinates, nome, lock ou visibility.</li><li>Sobrescrever um custom exige confirmação; aplicar ou excluir um custom é uma única ação de undo.</li><li>“Definir como padrão” é explícito, separado por tipo e só afeta novos Fibs.</li><li>Excluir custom não altera objetos que já copiaram seus valores; se era default, volta ao built-in Standard.</li><li>Formato versionado sobrevive ao restart e faz round-trip.</li></ul></article>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <article class="card"><h3>Linhas e guias</h3><ul class="clean"><li>segment, ray left/right ou ambos</li><li>Extension começa em C e projeta à direita por padrão</li><li>guias A–B e B–C tracejadas quando selected</li><li>connector sempre visível opcional</li></ul></article>
+      <article class="card"><h3>Labels e escala</h3><ul class="clean"><li>ratio, percentual, preço e custom independentes</li><li>o protótipo usa pt-BR: <code>61,8% · 101.234,50</code>; armazenamento continua decimal canônico</li><li>posição esquerda/centro/direita; acima/abaixo, com deslocamento por prioridade e leader tick quando colidir</li><li>se não houver espaço, oculta primeiro o label menos prioritário e nunca sobrepõe silenciosamente</li><li>precisão Auto ou 0–8; Linear/Log é explícito e nunca segue o chart silenciosamente</li></ul></article>
+    </div>
+    <div class="rule"><i>ƒ</i><div><strong>Fórmula log, somente para preços positivos:</strong> Retracement usa <code>P(r) = PA × (PB / PA)^r</code>; Extension usa <code>P(r) = PC × (PB / PA)^r</code>. Reverse troca A/B, mantém C e inverte a razão de preços. Preço zero/negativo desabilita Log com explicação. Goldens cobrem alta, baixa, reverse e inputs inválidos.</div></div>
+  </section>
+
+  <section id="tools">
+    <div class="head"><div class="index">07 · ferramentas</div><div><h2>Cada peça encaixa controles próprios no mesmo inspetor.</h2><p class="sub">Comuns nunca são duplicados. Cada módulo declara capabilities e defaults; controles irrelevantes ficam ausentes.</p></div></div>
+    <div class="table"><table><thead><tr><th>Ferramenta</th><th>Colocação</th><th>Propriedades específicas</th><th>Alças/modificadores</th></tr></thead><tbody>
+      <tr><td>Horizontal line</td><td>um click</td><td>preço, label, axis tag, full/segment</td><td>uma alça; Shift mantém tick snap</td></tr>
+      <tr><td>Rectangle</td><td>click-click ou drag</td><td>outline, fill, radius, label, 2 coordinates</td><td>8 alças; Shift quadrado; Alt pelo centro; interior só recebe hit se fill visível</td></tr>
+      <tr><td>Parallel channel</td><td>A–B base, C largura</td><td>bordas, meio, divisões, fill, rays</td><td>A/B inclinação; C largura; Shift restringe ângulo</td></tr>
+      <tr><td>Fib retracement</td><td>A–B</td><td>levels, presets, bands, labels, direction, scale</td><td>A/B, reverse, snap individual</td></tr>
+      <tr><td>Fib extension</td><td>A–B, depois C</td><td>mesmo editor + connectors/projection origin</td><td>A/B impulso; C origem; badge 1/3, 2/3</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="keys">
+    <div class="head"><div class="index">08 · atalhos</div><div><h2>Rápidos no canvas, inofensivos dentro de inputs.</h2><p class="sub">Tooltips mostram nome + tecla + instrução. Todos os atalhos ficam suspensos quando um campo aceita texto.</p></div></div>
+    <div class="table"><table><thead><tr><th>Ação</th><th>Atalho</th><th>Regra</th></tr></thead><tbody>
+      <tr><td>Pointer / cancelar</td><td><kbd>Esc</kbd>, <kbd>1</kbd></td><td>Esc reverte campo/menu antes de draft/seleção/tool</td></tr>
+      <tr><td>Crosshair</td><td><kbd>2</kbd></td><td>modo exclusivo</td></tr>
+      <tr><td>Horizontal / Rectangle / Channel</td><td><kbd>H</kbd> · <kbd>R</kbd> · <kbd>C</kbd></td><td>one-shot salvo pin</td></tr>
+      <tr><td>Fib Retracement / Extension</td><td><kbd>F</kbd> · <kbd>Shift</kbd>+<kbd>F</kbd></td><td>2 ou 3 anchors</td></tr>
+      <tr><td>Excluir desenho</td><td><kbd>Delete</kbd>, <kbd>Backspace</kbd></td><td>travado abre a mesma confirmação do botão; input sempre vence</td></tr>
+      <tr><td>Undo / redo</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd> · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>todas as mutações</td></tr>
+      <tr><td>Lock / hide</td><td><kbd>Alt</kbd>+<kbd>L</kbd> · <kbd>Alt</kbd>+<kbd>H</kbd></td><td>seleção individual</td></tr>
+      <tr><td>Duplicar</td><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>cópia deslocada e selecionada</td></tr>
+      <tr><td>Nudge</td><td>setas; <kbd>Shift</kbd> = 10 passos</td><td>converte para coordinates honestas</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="color">
+    <div class="head"><div class="index">09 · cores</div><div><h2>Cor do desenho é conteúdo; accent é estado.</h2><p class="sub">Seleção nunca pinta tudo de branco. Buy/sell continuam semânticos. O âmbar <code>#F0B90B</code> permanece reservado a replay, backfill e proveniência — não entra na paleta decorativa.</p></div></div>
+    <div class="palette" aria-label="Paleta rápida">
+      <div class="colorcard"><i style="--c:#8ab4f8"></i><b>Blue</b></div><div class="colorcard"><i style="--c:#4dd0e1"></i><b>Cyan</b></div>
+      <div class="colorcard"><i style="--c:#26a69a"></i><b>Green</b></div><div class="colorcard"><i style="--c:#b39ddb"></i><b>Purple</b></div>
+      <div class="colorcard"><i style="--c:#ffd166"></i><b>Yellow</b></div><div class="colorcard"><i style="--c:#ff9f43"></i><b>Orange</b></div>
+      <div class="colorcard"><i style="--c:#ef5350"></i><b>Red</b></div><div class="colorcard"><i style="--c:#d2dae2"></i><b>Neutral</b></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <article class="card"><h3>Fazer</h3><ul class="clean"><li>oito rápidas + custom + recentes</li><li>default por ferramenta, sem alterar existentes</li><li>warning de baixo contraste contra o canvas</li><li>halo/forma/texto além de cor para estados</li></ul></article>
+      <article class="card"><h3>Evitar</h3><ul class="clean"><li>branco substituindo a cor na seleção</li><li>âmbar como decoração</li><li>vermelho como selection ou azul como error</li><li>fill opaco escondendo candles/order flow</li></ul></article>
+    </div>
+  </section>
+
+  <section id="objects">
+    <div class="head"><div class="index">10 · objetos</div><div><h2>Ocultar exige um caminho óbvio para mostrar novamente.</h2><p class="sub">O botão Objetos abre lista não modal. Resolve hidden, overlap, z-order, lock-all e delete-all sem painel permanente.</p></div></div>
+    <div class="manager">
+      <div class="managerbox" aria-label="Gerenciador de objetos">
+        <div class="managerhead"><span>Desenhos · BTCUSDT</span><span style="color:var(--faint)">5</span></div>
+        <button class="objectrow selected" aria-label="Selecionar Fib retracement 1, visível e travado"><span style="color:var(--accent)">☷</span><span>Fib retracement 1<small>Tick 100 · visível · 🔒 Travado</small></span><span>◉</span><span>🔒</span></button>
+        <button class="objectrow" aria-label="Selecionar Resistência 72k"><span style="color:var(--yellow)">―</span><span>Resistência 72k<small>Linha horizontal</small></span><span>◉</span><span>□</span></button>
+        <button class="objectrow" aria-label="Selecionar Canal de rompimento"><span style="color:var(--buy)">▱</span><span>Canal de rompimento<small>Canal paralelo</small></span><span>◉</span><span>□</span></button>
+        <button class="objectrow" style="opacity:.58" aria-label="Selecionar Faixa anterior, oculto e travado"><span>□</span><span>Faixa anterior<small>Retângulo · oculto · 🔒 Travado</small></span><span>○</span><span>🔒</span></button>
+        <button class="objectrow" aria-label="Selecionar Projeção de alvo"><span style="color:var(--purple)">≢</span><span>Projeção de alvo<small>Fib extension</small></span><span>◉</span><span>□</span></button>
+      </div>
+      <article class="card"><h3>Regras</h3><ul class="clean">
+        <li>Clique na linha seleciona e centraliza, sem alterar visibilidade ou trava.</li><li>Ações nomeadas por objeto: Mostrar/Ocultar, Travar/Destravar, z-order e Excluir desenho.</li>
+        <li>Inspetor, manager e menu de contexto enviam os mesmos commands; nenhum replica a regra de lock/delete.</li>
+        <li>Ordem vertical é z-order; drag reordena com undo.</li><li>Hide-all é camada global e preserva eyes individuais.</li>
+        <li>Delete-all sempre confirma, contando visíveis, ocultos e travados.</li><li>Hidden não pinta/hit-test; inspetor mostra banner até fechar.</li>
+      </ul></article>
+    </div>
+  </section>
+
+  <section id="a11y">
+    <div class="head"><div class="index">11 · layout &amp; a11y</div><div><h2>Desktop primeiro, resiliente quando os painéis apertam o canvas.</h2><p class="sub">A adaptação usa o espaço real do chart, não a resolução do monitor.</p></div></div>
+    <div class="grid3">
+      <article class="card"><span class="micro">≥ 1180 px</span><h3>Flutuante</h3><p>Inspetor evita a seleção; barra vertical. Melhor área útil.</p></article>
+      <article class="card"><span class="micro">800–1179 px</span><h3>Dock automático</h3><p>Sem quadrante livre, fixa à direita e recalcula o canvas.</p></article>
+      <article class="card"><span class="micro">&lt; 800 px</span><h3>Drawer inferior</h3><p>Até 56% da altura; favoritos agrupam no overflow.</p></article>
+    </div>
+    <div class="table" style="margin-top:18px"><table><thead><tr><th>Critério</th><th>Contrato</th></tr></thead><tbody>
+      <tr><td>Focus</td><td>ordem barra → canvas → inspector; outline 2 px; close devolve foco ao canvas</td></tr>
+      <tr><td>Teclado</td><td>header, tabs, levels e ações operáveis; Enter confirma input; Esc reverte antes do chart</td></tr>
+      <tr><td>Nomes</td><td>botões anunciam ação, tool, atalho e estado; swatch anuncia nome, hex e alpha</td></tr>
+      <tr><td>Targets</td><td>botões 32 px; anchor visual 7 px e hit area invisível 14–16 px</td></tr>
+      <tr><td>Contraste</td><td>texto 4.5:1; controls/ícones 3:1; supporting text usa <code>#8692A4</code>. O token atual TEXT_FAINT <code>#6E7887</code> fica restrito a decoração/disabled, nunca informação essencial</td></tr>
+      <tr><td>Escala</td><td>DPI e texto a 200%; sem clipping; inspector scrollável</td></tr>
+      <tr><td>Motion</td><td>80–120 ms; sem loop; respeita reduced motion</td></tr>
+      <tr><td>Toast</td><td>live region; Undo por 8 s e também via Ctrl+Z</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="architecture">
+    <div class="head"><div class="index">12 · arquitetura</div><div><h2>O UX vira capabilities e comandos, não condicionais espalhadas.</h2><p class="sub">Tudo continua na crate app. Engine, feeds e domínio não conhecem drawings. O registry modular atual é preservado e o inspetor passa a ser schema-driven.</p></div></div>
+    <div class="architecture" aria-label="Arquitetura modular">
+      <div class="node"><b>Registry</b><span>id, icon, key, points</span></div><div class="node"><b>Section ports</b><span>common + tool-owned sections</span></div>
+      <div class="node"><b>Inspector</b><span>composição, sem match central</span></div><div class="node"><b>Commands</b><span>undo/redo + coalesce</span></div><div class="node"><b>Store</b><span>envelope + payload versionado</span></div>
+    </div>
+    <div class="table" style="margin-top:18px"><table><thead><tr><th>Módulo</th><th>Responsabilidade</th><th>Não faz</th></tr></thead><tbody>
+      <tr><td><code>drawings/registry.rs</code></td><td>metadata/factory/capabilities estáticos</td><td>UI ou mutações</td></tr>
+      <tr><td><code>drawings/model.rs</code></td><td>envelope comum: id, anchors, common style, lock, visibility e z-order</td><td>campos de Fib, rede, clock ou engine</td></tr>
+      <tr><td><code>drawings/tools/*.rs</code></td><td>geometry, paint, hit-test, payload versionado e seções específicas</td><td>editar o form central ou recriar widgets common</td></tr>
+      <tr><td><code>drawings/inspector/*.rs</code></td><td>portas para common sections e composição de seções fornecidas pela tool</td><td>enum/lista fechada de capabilities ou match por tool id</td></tr>
+      <tr><td><code>drawings/action_bar.rs</code></td><td><code>DrawingActionBar</code> reutilizável: lock state + intents de Travar/Destravar e Excluir</td><td>duplicar regras de mutação, confirmação ou Undo</td></tr>
+      <tr><td><code>drawings/commands.rs</code></td><td>mutações reversíveis/coalescing</td><td>render/projection</td></tr>
+      <tr><td><code>drawings/store.rs</code></td><td>collection, selection, z-order, scope, persistence</td><td>depender de feed específico</td></tr>
+      <tr><td><code>toolrail.rs</code></td><td>dock, favorites, active tool, manager entry</td><td>conhecer fields do Fib</td></tr>
+    </tbody></table></div>
+    <p style="margin-top:12px;color:var(--muted)">O envelope guarda um <code>Box&lt;dyn DrawingPayload&gt;</code> (clone/serialize/version/section providers) criado pelo registry. Propriedade inédita pertence ao payload e à seção da própria ferramenta; portanto a próxima tool não reabre <code>model.rs</code> nem o inspetor central. Capabilities comuns são conveniências reutilizáveis, não uma lista fechada.</p>
+    <h3 style="margin-top:24px">Taxa de execução e constantes</h3>
+    <div class="table"><table><thead><tr><th>Caminho</th><th>Taxa</th><th>Contrato</th></tr></thead><tbody>
+      <tr><td>Paint/projection</td><td>por frame, alvo ~60 Hz</td><td>sem alocar metadata/labels estáveis; buffers pequenos reutilizados</td></tr>
+      <tr><td>Hover/hit-test</td><td>por movimento do ponteiro</td><td>somente visíveis no viewport, ordem reversa de z-order, trabalho limitado</td></tr>
+      <tr><td>Drag/slider</td><td>por frame durante o gesto</td><td>preview incremental; um command alocado/gravado no release</td></tr>
+      <tr><td>Editar preset/config</td><td>raro, orientado a evento</td><td>clareza e validação vencem micro-otimização</td></tr>
+      <tr><td>Persistência</td><td>startup/save</td><td>formato versionado, round-trip e nenhum impacto no render loop</td></tr>
+    </tbody></table></div>
+    <p style="margin-top:12px;color:var(--muted)">Geometria de UI não vira literal espalhado: implementação deve nomear <code>TOOLBOX_WIDTH_PX</code>, <code>TOOL_BUTTON_SIZE_PX</code>, <code>INSPECTOR_MIN_WIDTH_PX</code>, <code>INSPECTOR_MAX_WIDTH_PX</code>, <code>ANCHOR_HIT_RADIUS_PX</code>, <code>INSPECTOR_OBJECT_GAP_PX</code>, <code>TOAST_UNDO_MS</code> e <code>INTERACTION_MOTION_MS</code>. Presets e cores rápidas ficam em dados estáticos registráveis.</p>
+    <div class="grid2" style="margin-top:16px">
+      <article class="card"><h3>Contrato de performance</h3><ul class="clean"><li>metadata, tooltips e níveis built-in estáticos</li><li>labels formatados só quando preço/config muda</li><li>buffers pequenos/reutilizados para projection</li><li>hit-test somente visíveis, viewport e z-order</li><li>drag pinta por frame, grava command no release</li></ul></article>
+      <article class="card"><h3>Persistência honesta</h3><ul class="clean"><li>scope: símbolo + feed + bar spec/layout</li><li>lock, visibility, z-order, styles e presets versionados</li><li>rebuild incompatível nunca reaproveita índice silenciosamente</li><li>enquanto for bar-index + price, limpa com aviso explícito</li><li>migração time + price exige round-trip tests</li></ul></article>
+    </div>
+  </section>
+
+  <section id="acceptance">
+    <div class="head"><div class="index">13 · aceite</div><div><h2>Evidências observáveis de que a experiência está pronta.</h2><p class="sub">Cada item deve virar teste unitário/input egui ou roteiro visual manual.</p></div></div>
+    <ol class="accept">
+      <li><strong>Não modal:</strong> inspector aberto não impede pan, zoom, move ou resize fora da caixa.</li>
+      <li><strong>Prioridade:</strong> gesto iniciado no stroke/handle mantém pointer capture mesmo quando o ponteiro cruza sob o inspector.</li>
+      <li><strong>Placement:</strong> popup não sai da tela nem cobre permanentemente handles/eixos.</li>
+      <li><strong>Move/resize:</strong> corpo translada rigidamente até a borda; alça muda só seu ponto; chart não paneia.</li>
+      <li><strong>Ações visíveis:</strong> Travar/Destravar e Excluir desenho aparecem sem scroll em 360 px, com texto e target mínimo de 44 px no mobile.</li>
+      <li><strong>Delete:</strong> botão, manager, menu contextual e teclado enviam o mesmo command; inputs vencem e toast oferece Undo por 8 s.</li>
+      <li><strong>Locked:</strong> chip no header + badge no desenho + estado no manager; sem move/resize, style editável e delete confirma.</li>
+      <li><strong>Hidden:</strong> sem paint/hit-test e sempre recuperável no manager.</li>
+      <li><strong>Seleção:</strong> preserva cor real e adiciona halo/handles.</li>
+      <li><strong>Tool-driven:</strong> somente propriedades suportadas aparecem.</li>
+      <li><strong>Fib:</strong> add/edit/hide/delete/reorder/style por nível atualiza ao vivo.</li>
+      <li><strong>Fórmulas:</strong> Retracement/Extension exatos em alta e baixa; reverse preserva C.</li>
+      <li><strong>Presets:</strong> custom sobrevive restart e default só afeta novos Fibs.</li>
+      <li><strong>Undo:</strong> drag/slider/preset inteiro = uma entrada; pan/zoom e estado do inspetor não voltam junto.</li>
+      <li><strong>Coordenadas:</strong> drag/nudge e edição textual mantêm tempo/bar-index e preço na mesma fonte canônica.</li>
+      <li><strong>Toolbar:</strong> não quebra linha; Pointer/tool active/manager sobrevivem a pouca largura.</li>
+      <li><strong>Esc:</strong> input/menu → draft → selection → Pointer, nessa ordem.</li>
+      <li><strong>A11y:</strong> ações essenciais por teclado, nomes completos e foco visível.</li>
+      <li><strong>Modularidade:</strong> tool fake entra via registry/capabilities sem alterar form central.</li>
+      <li><strong>Performance:</strong> metadata/labels estáveis não alocam por frame.</li>
+      <li><strong>Data honesty:</strong> rebuild incompatível avisa e nunca liga desenho à barra errada.</li>
+      <li><strong>Rectangle:</strong> interior só entra no hit-test quando o fill está visível.</li>
+    </ol>
+    <h3 style="margin-top:28px">Mapa mínimo de testes</h3>
+    <div class="table"><table><thead><tr><th>Camada</th><th>Provas obrigatórias</th></tr></thead><tbody>
+      <tr><td>Modelo/commands</td><td><code>locked_drawing_rejects_geometry_and_keyboard_delete</code>; <code>one_drag_creates_one_undo_entry</code>; undo não restaura viewport/UI; hide/global-hide preservam estados individuais</td></tr>
+      <tr><td>Input egui</td><td><code>inspector_never_blocks_drawing_drag</code>; <code>drawing_actions_visible_without_scroll_at_360px</code>; botão/manager/teclado produzem o mesmo delete command; Delete/Backspace não vazam de inputs; Esc respeita a pilha; locked drag não paneia</td></tr>
+      <tr><td>Fib puro</td><td>goldens das duas fórmulas em alta/baixa; reverse mantém C; parser normaliza decimal/%; presets e levels fazem round-trip</td></tr>
+      <tr><td>Extension port</td><td>uma ferramenta fake traz uma propriedade inédita (<code>ray_count</code>) no próprio payload/section e recebe toolbar, placement, inspector e persistence sem editar modelo ou formulário central</td></tr>
+      <tr><td>Render/hit-test</td><td>selection preserva cor; hidden sai do paint/hit; body move rigidamente nas bordas; cursor segue hit-slop; rectangle sem fill só acerta borda; z-order e Alt+click são determinísticos</td></tr>
+      <tr><td>Persistência</td><td>versão antiga migra; custom presets sobrevivem restart; identity incompatível nunca reaproveita bar-index</td></tr>
+      <tr><td>Layout/a11y</td><td>snapshots em 1280/960/720 px e 200% de texto; foco, nomes e estados no accessibility tree</td></tr>
+    </tbody></table></div>
+    <h3 style="margin-top:28px">Fases recomendadas</h3>
+    <div class="grid4">
+      <article class="card phase" style="--pc:var(--accent)"><h4>1 · Fundamentos</h4><p>Delete, lock/visibility model, undo/redo, selection halo e collision-aware inspector.</p></article>
+      <article class="card phase" style="--pc:var(--buy)"><h4>2 · Inspetor</h4><p>Capabilities, tabs, styles, labels, coords, resize/pin e object manager.</p></article>
+      <article class="card phase" style="--pc:var(--yellow)"><h4>3 · Fib completo</h4><p>Level model, presets, formulas, bands, per-level styles e persistence.</p></article>
+      <article class="card phase" style="--pc:var(--purple)"><h4>4 · Polimento</h4><p>Favorites, repeat, snap, context menu, responsive/a11y e visual QA.</p></article>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>Decisão de produto:</strong> drawings são overlay da aplicação e permanecem fora do engine determinístico. Esta é a direção UX; implementação deve preservar dependências unidirecionais, dados honestos e o orçamento de frame.</p>
+    <p><code>docs/ux/drawing-tools-ux-spec.html</code> · pt-BR · tokens visuais reais do Quantick · sem dependências externas.</p>
+  </footer>
+</main>
+<script>
+(function(){
+  var root=document.getElementById("demo");
+  var stage=document.getElementById("stage");
+  var chart=root.querySelector(".chart");
+  var fib=document.getElementById("fib-object");
+  var viewport=document.getElementById("viewport-layer");
+  var inspector=document.getElementById("inspector");
+  var toolbox=document.getElementById("toolbox");
+  var popover=document.getElementById("object-popover");
+  var toolPopover=document.getElementById("tool-popover");
+  var canvasFocus=document.getElementById("canvas-focus");
+  var lockBadge=root.querySelector(".lockbadge");
+  var toast=document.getElementById("toast");
+  var toastText=document.getElementById("toast-text");
+  var confirmBox=document.getElementById("confirm");
+  var undoButton=document.getElementById("undo");
+  var VIEW_WIDTH=1160,VIEW_HEIGHT=620,PRICE_ORIGIN=72800,PRICE_PER_Y=10;
+  var TIME_PER_X_MS=1485000/340,TIME_AT_X_ZERO_MS=Date.UTC(2026,6,31,10,42,18)-220*TIME_PER_X_MS;
+  var HISTORY_LIMIT=24,TOAST_DURATION_MS=8000,HANDLE_HIT_RADIUS_PX=16,LEVEL_HIT_RADIUS_PX=6,CLICK_SLOP_PX=4;
+  var MIN_DRAWING_X=40,MAX_DRAWING_X=920,MIN_DRAWING_Y=55,MAX_DRAWING_Y=560;
+  var MIN_ZOOM=.82,MAX_ZOOM=1.28,ZOOM_IN_FACTOR=1.06,ZOOM_OUT_FACTOR=.94;
+  var defaultLevels=[
+    {ratio:0,label:"0 · Topo",visible:true,color:null},{ratio:.236,label:"23,6%",visible:true,color:null},
+    {ratio:.382,label:"38,2%",visible:true,color:null},{ratio:.5,label:"50%",visible:true,color:null},
+    {ratio:.618,label:"61,8%",visible:true,color:null},{ratio:.786,label:"78,6%",visible:true,color:null},
+    {ratio:1,label:"1 · Fundo",visible:true,color:null}
+  ];
+  var model={
+    a:{x:220,y:97.55},b:{x:560,y:368.85},locked:false,hidden:false,deleted:false,
+    color:"#8ab4f8",width:1.5,logScale:false,levels:JSON.parse(JSON.stringify(defaultLevels))
+  };
+  var viewportState={panX:0,zoom:1};
+  var uiState={globalHidden:false,selected:true,closed:false,pinned:false,repeat:false};
+  var history=[];
+  var redoHistory=[];
+  var gesture=null;
+  var inspectorGesture=null;
+  var toolboxGesture=null;
+  var inspectorWasMoved=false;
+  var toastTimer=null;
+  var widthBefore=null;
+  var deleteOrigin=null;
+  var dockCycle=["dock-left","dock-top","dock-right","dock-bottom"];
+  var dockIndex=0;
+  var suppressGripClick=false;
+
+  function cloneDrawing(){return JSON.parse(JSON.stringify(model))}
+  function captureUndoState(){return{drawing:cloneDrawing(),globalHidden:uiState.globalHidden}}
+  function say(text,undo){
+    clearTimeout(toastTimer);
+    toastText.textContent=text;
+    undoButton.hidden=!undo;
+    toast.inert=false;
+    toast.setAttribute("aria-hidden","false");
+    toast.classList.add("show");
+    toastTimer=setTimeout(hideToast,TOAST_DURATION_MS);
+  }
+  function hideToast(){
+    var returnFocus=toast.contains(document.activeElement);
+    toast.classList.remove("show");if(returnFocus)canvasFocus.focus({preventScroll:true});toast.inert=true;toast.setAttribute("aria-hidden","true");
+  }
+  function record(before,message){
+    history.push(before);
+    if(history.length>HISTORY_LIMIT)history.shift();
+    redoHistory=[];
+    say(message,true);
+  }
+  function undoAction(){
+    var before=history.pop();if(!before)return;
+    redoHistory.push(captureUndoState());restore(before);
+  }
+  function redoAction(){
+    var after=redoHistory.pop();if(!after)return;
+    history.push(captureUndoState());restore(after);
+  }
+  function restore(snapshot){
+    var wasDeleted=model.deleted;
+    Object.keys(model).forEach(function(key){delete model[key]});
+    Object.assign(model,JSON.parse(JSON.stringify(snapshot.drawing)));
+    uiState.globalHidden=snapshot.globalHidden;
+    if(model.deleted){uiState.selected=false;uiState.closed=true}
+    else if(wasDeleted){uiState.selected=true;uiState.closed=false}
+    renderAll();
+  }
+  function formatPercent(ratio){
+    return new Intl.NumberFormat("pt-BR",{maximumFractionDigits:1}).format(ratio*100)+"%";
+  }
+  function formatPrice(y){
+    var price=PRICE_ORIGIN-y*PRICE_PER_Y;
+    return new Intl.NumberFormat("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2}).format(price);
+  }
+  function parsePtBrNumber(value){
+    var normalized=String(value).trim().replace(/\s/g,"").replace(/\./g,"").replace(",",".");
+    var number=Number(normalized);
+    return Number.isFinite(number)?number:null;
+  }
+  function formatChartTime(x){
+    var date=new Date(TIME_AT_X_ZERO_MS+x*TIME_PER_X_MS),pad=function(value){return String(value).padStart(2,"0")};
+    return date.getUTCFullYear()+"-"+pad(date.getUTCMonth()+1)+"-"+pad(date.getUTCDate())+" "+pad(date.getUTCHours())+":"+pad(date.getUTCMinutes())+":"+pad(date.getUTCSeconds());
+  }
+  function parseChartTime(value){
+    var match=String(value).trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);if(!match)return null;
+    var timestamp=Date.UTC(Number(match[1]),Number(match[2])-1,Number(match[3]),Number(match[4]),Number(match[5]),Number(match[6]));
+    return Number.isFinite(timestamp)?(timestamp-TIME_AT_X_ZERO_MS)/TIME_PER_X_MS:null;
+  }
+  function levelY(ratio){
+    if(!model.logScale)return model.a.y+(model.b.y-model.a.y)*ratio;
+    var priceA=PRICE_ORIGIN-model.a.y*PRICE_PER_Y,priceB=PRICE_ORIGIN-model.b.y*PRICE_PER_Y;
+    var price=Math.exp(Math.log(priceA)+(Math.log(priceB)-Math.log(priceA))*ratio);
+    return(PRICE_ORIGIN-price)/PRICE_PER_Y;
+  }
+  function setLine(line,x1,y1,x2,y2){
+    line.setAttribute("x1",x1);line.setAttribute("y1",y1);
+    line.setAttribute("x2",x2);line.setAttribute("y2",y2);
+  }
+  function renderFib(){
+    var left=Math.min(model.a.x,model.b.x),right=Math.max(model.a.x,model.b.x);
+    fib.querySelectorAll(".level,text[data-ratio]").forEach(function(node){node.remove()});
+    var insertionPoint=fib.querySelector('[data-anchor="a"]');
+    model.levels.filter(function(level){return level.visible}).forEach(function(level){
+      var line=document.createElementNS("http://www.w3.org/2000/svg","line");
+      line.setAttribute("class","level");line.dataset.ratio=String(level.ratio);
+      var y=levelY(level.ratio);setLine(line,left,y,right,y);
+      if(level.color)line.style.stroke=level.color;
+      fib.insertBefore(line,insertionPoint);
+      var label=document.createElementNS("http://www.w3.org/2000/svg","text");
+      label.dataset.ratio=String(level.ratio);label.setAttribute("x",right+10);label.setAttribute("y",y+4);
+      label.textContent=(level.label.trim()||formatPercent(level.ratio))+" · "+formatPrice(y);
+      if(level.color)label.style.fill=level.color;
+      fib.insertBefore(label,insertionPoint);
+    });
+    fib.querySelectorAll("line[data-ratio]").forEach(function(line){
+      var y=levelY(Number(line.dataset.ratio));
+      setLine(line,left,y,right,y);
+    });
+    fib.querySelectorAll(".band").forEach(function(band){
+      var first=levelY(Number(band.dataset.from)),second=levelY(Number(band.dataset.to));
+      band.setAttribute("x",left);band.setAttribute("y",Math.min(first,second));
+      band.setAttribute("width",Math.max(1,right-left));band.setAttribute("height",Math.abs(second-first));
+    });
+    setLine(document.getElementById("fib-guide"),model.a.x,model.a.y,model.b.x,model.b.y);
+    var handleA=fib.querySelector('[data-anchor="a"]'),handleB=fib.querySelector('[data-anchor="b"]');
+    handleA.setAttribute("cx",model.a.x);handleA.setAttribute("cy",model.a.y);
+    handleB.setAttribute("cx",model.b.x);handleB.setAttribute("cy",model.b.y);
+    var labelA=document.getElementById("label-a"),labelB=document.getElementById("label-b");
+    labelA.setAttribute("x",model.a.x+8);labelA.setAttribute("y",model.a.y-8);
+    labelB.setAttribute("x",model.b.x+8);labelB.setAttribute("y",model.b.y-8);
+    var direction=document.getElementById("direction-label");
+    direction.setAttribute("x",left);direction.setAttribute("y",Math.min(model.a.y,model.b.y)-18);
+    direction.textContent=(model.b.y<model.a.y?"Alta":"Baixa")+" · A → B";
+    document.getElementById("anchor-a-time").value=formatChartTime(model.a.x);
+    document.getElementById("anchor-b-time").value=formatChartTime(model.b.x);
+    document.getElementById("anchor-a-price").value=formatPrice(model.a.y);
+    document.getElementById("anchor-b-price").value=formatPrice(model.b.y);
+  }
+  function renderLevelEditor(){
+    var list=document.getElementById("level-list");
+    list.replaceChildren();
+    model.levels.forEach(function(level,index){
+      var row=document.createElement("div");row.className="levelrow";
+      var move=document.createElement("button");move.className="ib dots";move.type="button";move.textContent="⠿";move.disabled=index===0;move.setAttribute("aria-label","Mover nível "+(level.label||formatPercent(level.ratio))+" para cima");
+      var visible=document.createElement("input");visible.type="checkbox";visible.checked=level.visible;visible.setAttribute("aria-label","Mostrar nível "+level.ratio);
+      var ratio=document.createElement("input");ratio.className="input number";ratio.value=Number(level.ratio).toFixed(3);ratio.setAttribute("aria-label","Razão do nível "+level.ratio);
+      var label=document.createElement("input");label.className="input";label.value=level.label;label.setAttribute("aria-label","Rótulo do nível "+level.ratio);
+      var color=document.createElement("input");color.type="color";color.className="levelcolor";color.value=level.color||model.color;color.setAttribute("aria-label","Cor do nível "+level.ratio);
+      var remove=document.createElement("button");remove.className="ib";remove.type="button";remove.textContent="×";remove.disabled=model.levels.length===1;remove.setAttribute("aria-label","Excluir nível "+level.ratio);
+      move.onclick=function(){var before=captureUndoState();model.levels.splice(index-1,0,model.levels.splice(index,1)[0]);renderAll();record(before,"Nível reordenado.")};
+      visible.onchange=function(){var before=captureUndoState();model.levels[index].visible=visible.checked;renderFib();record(before,visible.checked?"Nível exibido.":"Nível ocultado.")};
+      ratio.onchange=function(){
+        var raw=ratio.value.trim(),percent=raw.endsWith("%"),next=Number(raw.replace("%","").replace(",","."));if(percent)next/=100;
+        if(!Number.isFinite(next)||model.levels.some(function(item,i){return i!==index&&Math.abs(item.ratio-next)<.000001})){renderLevelEditor();say("Use uma razão numérica única, como 0,618 ou 61,8%.",false);return}
+        var before=captureUndoState();model.levels[index].ratio=next;renderAll();record(before,"Razão do nível alterada.");
+      };
+      label.onchange=function(){var before=captureUndoState();model.levels[index].label=label.value.trim();renderFib();record(before,"Rótulo do nível alterado.")};
+      color.onchange=function(){var before=captureUndoState();model.levels[index].color=color.value;renderFib();record(before,"Cor do nível alterada.")};
+      remove.onclick=function(){var before=captureUndoState();model.levels.splice(index,1);renderAll();record(before,"Nível excluído.")};
+      row.append(move,visible,ratio,label,color,remove);list.appendChild(row);
+    });
+    document.getElementById("level-count").textContent=model.levels.length+" "+(model.levels.length===1?"nível":"níveis");
+  }
+  function renderState(){
+    var inspectorOpen=!(model.deleted||uiState.closed||!uiState.selected);
+    var drawingVisible=!(model.hidden||uiState.globalHidden||model.deleted);
+    stage.classList.toggle("locked",model.locked);
+    stage.classList.toggle("drawing-visible",drawingVisible);
+    stage.classList.toggle("docked",uiState.pinned);
+    stage.classList.toggle("inspector-open",inspectorOpen);
+    fib.classList.toggle("hidden",model.hidden||uiState.globalHidden||model.deleted);
+    fib.classList.toggle("unselected",!uiState.selected);
+    inspector.classList.toggle("is-hidden",model.hidden);
+    inspector.classList.toggle("is-locked",model.locked);
+    inspector.classList.toggle("closed",!inspectorOpen);
+    inspector.inert=!inspectorOpen;
+    inspector.setAttribute("aria-hidden",String(!inspectorOpen));
+    root.style.setProperty("--draw-color",model.color);
+    root.style.setProperty("--draw-width",model.width);
+    viewport.setAttribute("transform","translate("+viewportState.panX+" 310) scale("+viewportState.zoom+" 1) translate(0 -310)");
+    var badgePoint=svgToClient({x:(model.a.x+model.b.x)/2,y:Math.min(model.a.y,model.b.y)}),stageRect=stage.getBoundingClientRect();
+    lockBadge.style.left=Math.max(54,Math.min(stageRect.width-54,badgePoint.x-stageRect.left))+"px";
+    lockBadge.style.top=Math.max(34,badgePoint.y-stageRect.top-8)+"px";
+    document.getElementById("color-value").textContent=model.color.toUpperCase();
+    document.getElementById("custom-color").value=model.color;
+    root.querySelectorAll(".swatch").forEach(function(item){item.setAttribute("aria-pressed",String(item.dataset.color===model.color))});
+    document.getElementById("width-value").textContent=Number(model.width).toFixed(1)+" px";
+    document.getElementById("width").value=model.width;
+    ["lock","all-lock","manager-lock"].forEach(function(id){document.getElementById(id).setAttribute("aria-pressed",String(model.locked))});
+    document.getElementById("all-lock").setAttribute("aria-label",model.locked?"Destravar todos":"Travar todos");
+    document.getElementById("all-lock").textContent=model.locked?"🔒":"🔓";
+    document.getElementById("eye").setAttribute("aria-pressed",String(model.hidden));
+    document.getElementById("eye").textContent=model.hidden?"○":"◉";
+    document.getElementById("eye").setAttribute("aria-label",model.hidden?"Mostrar desenho":"Ocultar desenho");
+    document.querySelector("#manager-eye [aria-hidden]").textContent=model.hidden?"○":"◉";
+    document.getElementById("manager-eye-label").textContent=model.hidden?"Mostrar":"Ocultar";
+    document.getElementById("manager-eye").setAttribute("aria-label",model.hidden?"Mostrar Fib retracement":"Ocultar Fib retracement");
+    document.getElementById("lock").setAttribute("aria-label",model.locked?"Destravar desenho":"Travar desenho");
+    document.getElementById("lock-icon").textContent=model.locked?"🔒":"🔓";
+    document.getElementById("lock-label").textContent=model.locked?"Destravar desenho":"Travar desenho";
+    document.getElementById("manager-lock").setAttribute("aria-label",model.locked?"Destravar Fib retracement":"Travar Fib retracement");
+    document.getElementById("manager-lock-icon").textContent=model.locked?"🔒":"🔓";
+    document.getElementById("manager-lock-label").textContent=model.locked?"Destravar":"Travar";
+    document.getElementById("all-eye").setAttribute("aria-pressed",String(uiState.globalHidden));
+    document.getElementById("all-eye").setAttribute("aria-label",uiState.globalHidden?"Mostrar todos":"Ocultar todos");
+    document.getElementById("pin").setAttribute("aria-pressed",String(uiState.pinned));
+    document.getElementById("repeat-tool").setAttribute("aria-pressed",String(uiState.repeat));
+    document.getElementById("drawing-count").textContent=model.deleted?"0 desenhos":"1 desenho";
+    document.getElementById("objects-button").setAttribute("aria-label","Abrir objetos desenhados — "+(model.deleted?"0 objetos":"1 objeto"));
+    ["manager-select","manager-eye","manager-lock","manager-up","manager-delete"].forEach(function(id){document.getElementById(id).disabled=model.deleted});
+    document.getElementById("manager-unlock-all").disabled=model.deleted||!model.locked;
+    document.getElementById("log-scale").checked=model.logScale;
+    if(!popover.hidden)requestAnimationFrame(function(){positionPopover(popover,document.getElementById("objects-button"))});
+  }
+  function renderAll(){renderFib();renderLevelEditor();renderState()}
+  function svgToClient(point){
+    var rect=chart.getBoundingClientRect();
+    var projectedX=viewportState.panX+viewportState.zoom*point.x;
+    return{x:rect.left+projectedX/VIEW_WIDTH*rect.width,y:rect.top+point.y/VIEW_HEIGHT*rect.height};
+  }
+  function clientToSvg(x,y){
+    var rect=chart.getBoundingClientRect();
+    var projectedX=(x-rect.left)/rect.width*VIEW_WIDTH;
+    return{x:(projectedX-viewportState.panX)/viewportState.zoom,y:(y-rect.top)/rect.height*VIEW_HEIGHT};
+  }
+  function hitDrawing(clientX,clientY){
+    if(model.deleted||model.hidden||uiState.globalHidden)return null;
+    var a=svgToClient(model.a),b=svgToClient(model.b);
+    function distance(p){return Math.hypot(clientX-p.x,clientY-p.y)}
+    if(uiState.selected&&distance(a)<=HANDLE_HIT_RADIUS_PX)return{kind:"anchor",anchor:"a"};
+    if(uiState.selected&&distance(b)<=HANDLE_HIT_RADIUS_PX)return{kind:"anchor",anchor:"b"};
+    var left=Math.min(a.x,b.x),right=Math.max(a.x,b.x);
+    var ratios=model.levels.filter(function(level){return level.visible}).map(function(level){return level.ratio});
+    var hitLevel=ratios.some(function(ratio){
+      var point=svgToClient({x:model.a.x,y:levelY(ratio)});
+      return clientX>=left-LEVEL_HIT_RADIUS_PX&&clientX<=right+LEVEL_HIT_RADIUS_PX&&Math.abs(clientY-point.y)<=LEVEL_HIT_RADIUS_PX;
+    });
+    return hitLevel?{kind:"body"}:null;
+  }
+  function boundedTranslation(a,b,dx,dy){
+    var boundedDx=Math.max(MIN_DRAWING_X-Math.min(a.x,b.x),Math.min(MAX_DRAWING_X-Math.max(a.x,b.x),dx));
+    var boundedDy=Math.max(MIN_DRAWING_Y-Math.min(a.y,b.y),Math.min(MAX_DRAWING_Y-Math.max(a.y,b.y),dy));
+    return{a:{x:a.x+boundedDx,y:a.y+boundedDy},b:{x:b.x+boundedDx,y:b.y+boundedDy}};
+  }
+  function selectDrawing(){
+    if(model.deleted||model.hidden||uiState.globalHidden)return;
+    uiState.selected=true;uiState.closed=false;renderState();
+  }
+  function deselectDrawing(){
+    uiState.selected=false;uiState.closed=true;renderState();
+  }
+  function placeInspector(){
+    if(uiState.pinned||inspectorWasMoved||window.matchMedia("(max-width:1179px)").matches)return;
+    var stageRect=stage.getBoundingClientRect();
+    var a=svgToClient(model.a),b=svgToClient(model.b);
+    var left=Math.min(a.x,b.x)-stageRect.left-16;
+    var right=Math.max(a.x,b.x)-stageRect.left+165;
+    var top=Math.min(a.y,b.y)-stageRect.top-32;
+    var bottom=Math.max(a.y,b.y)-stageRect.top+20;
+    var width=inspector.offsetWidth||360,height=Math.min(inspector.offsetHeight||500,stageRect.height-28);
+    var candidates=[
+      {x:right+12,y:Math.max(14,top)},
+      {x:left-width-12,y:Math.max(14,top)},
+      {x:Math.max(14,left),y:bottom+12},
+      {x:Math.max(14,left),y:top-height-12}
+    ];
+    var chosen=candidates.find(function(p){return p.x>=14&&p.y>=14&&p.x+width<=stageRect.width-14&&p.y+height<=stageRect.height-14});
+    if(!chosen){uiState.pinned=true;renderState();return}
+    inspector.style.right="auto";inspector.style.left=chosen.x+"px";inspector.style.top=chosen.y+"px";
+  }
+  function toggleDrawingLock(){
+    var before=captureUndoState();model.locked=!model.locked;
+    if(!model.locked&&confirmBox.classList.contains("visible"))cancelDeleteConfirmation();
+    renderState();record(before,model.locked?"Desenho travado contra movimentos acidentais.":"Desenho destravado.");
+  }
+  function toggleDrawingVisibility(){
+    var before=captureUndoState();model.hidden=!model.hidden;renderState();record(before,model.hidden?"Desenho oculto; restaure pelo olho ou gerenciador.":"Desenho visível.");
+  }
+  function cancelDeleteConfirmation(){
+    confirmBox.classList.remove("visible");
+    var origin=deleteOrigin;deleteOrigin=null;
+    if(origin&&origin.isConnected&&!origin.closest("[inert]")&&!origin.closest("[hidden]"))origin.focus({preventScroll:true});
+    else canvasFocus.focus({preventScroll:true});
+  }
+  function removeDrawing(force){
+    if(!uiState.selected){say("Selecione um desenho antes de excluir.",false);return}
+    if(model.locked&&!force){
+      if(!deleteOrigin)deleteOrigin=document.activeElement;
+      confirmBox.classList.add("visible");
+      say("O desenho está travado. Confirme a exclusão no inspetor.",false);
+      setTimeout(function(){confirmBox.scrollIntoView({block:"nearest"});document.getElementById("cancel-delete").focus()},0);
+      return;
+    }
+    var before=captureUndoState();
+    confirmBox.classList.remove("visible");
+    deleteOrigin=null;
+    model.deleted=true;uiState.selected=false;uiState.closed=true;
+    renderState();record(before,"Desenho excluído.");undoButton.focus({preventScroll:true});
+  }
+  function beginDrawingGesture(event,hit){
+    selectDrawing();
+    canvasFocus.focus({preventScroll:true});
+    if(model.locked){
+      event.preventDefault();event.stopPropagation();
+      say("Desenho travado — use “Destravar desenho” para mover ou redimensionar.",false);
+      return;
+    }
+    event.preventDefault();event.stopPropagation();
+    gesture={kind:hit.kind,anchor:hit.anchor,startClient:{x:event.clientX,y:event.clientY},before:captureUndoState()};
+    stage.setPointerCapture(event.pointerId);
+  }
+  function beginPan(event){
+    canvasFocus.focus({preventScroll:true});
+    gesture={kind:"pan",startClient:{x:event.clientX,y:event.clientY},startPan:viewportState.panX,moved:false};
+    stage.setPointerCapture(event.pointerId);
+  }
+  stage.addEventListener("pointerdown",function(event){
+    if(event.button!==0)return;
+    if(event.target.closest(".toolbox,.manager-pop,.tool-pop,.inspector,.toast"))return;
+    var hit=hitDrawing(event.clientX,event.clientY);
+    if(hit){beginDrawingGesture(event,hit);return}
+    beginPan(event);
+  },true);
+  stage.addEventListener("pointermove",function(event){
+    if(!gesture){
+      var overControl=event.target.closest(".toolbox,.manager-pop,.tool-pop,.inspector,.toast");
+      var hoverHit=overControl?null:hitDrawing(event.clientX,event.clientY);
+      fib.classList.toggle("hovered",Boolean(hoverHit));
+      stage.classList.toggle("drawing-hover",Boolean(hoverHit));
+      stage.classList.toggle("anchor-hover",Boolean(hoverHit&&hoverHit.kind==="anchor"));
+      return;
+    }
+    if(gesture.kind==="pan"){
+      gesture.moved=gesture.moved||Math.hypot(event.clientX-gesture.startClient.x,event.clientY-gesture.startClient.y)>CLICK_SLOP_PX;
+      viewportState.panX=gesture.startPan+(event.clientX-gesture.startClient.x)/chart.getBoundingClientRect().width*VIEW_WIDTH;
+      renderState();return;
+    }
+    var current=clientToSvg(event.clientX,event.clientY);
+    var start=clientToSvg(gesture.startClient.x,gesture.startClient.y);
+    var dx=current.x-start.x,dy=current.y-start.y;
+    if(gesture.kind==="anchor"){
+      var point=gesture.before.drawing[gesture.anchor];
+      model[gesture.anchor]={x:Math.max(MIN_DRAWING_X,Math.min(MAX_DRAWING_X,point.x+dx)),y:Math.max(MIN_DRAWING_Y,Math.min(MAX_DRAWING_Y,point.y+dy))};
+    }else{
+      var translated=boundedTranslation(gesture.before.drawing.a,gesture.before.drawing.b,dx,dy);
+      model.a=translated.a;model.b=translated.b;
+    }
+    renderFib();
+  });
+  function finishGesture(event){
+    if(!gesture)return;
+    if(gesture.kind==="pan"&&!gesture.moved)deselectDrawing();
+    if(gesture.kind==="body"||gesture.kind==="anchor"){
+      var changed=gesture.before.drawing.a.x!==model.a.x||gesture.before.drawing.a.y!==model.a.y||gesture.before.drawing.b.x!==model.b.x||gesture.before.drawing.b.y!==model.b.y;
+      if(changed)record(gesture.before,gesture.kind==="body"?"Fib movido.":"Âncora redimensionada.");
+      placeInspector();
+    }
+    if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
+    gesture=null;
+  }
+  stage.addEventListener("pointerup",finishGesture);
+  stage.addEventListener("pointercancel",finishGesture);
+  stage.addEventListener("pointerleave",function(){if(!gesture){fib.classList.remove("hovered");stage.classList.remove("drawing-hover","anchor-hover")}});
+  stage.addEventListener("wheel",function(event){
+    if(event.target.closest(".inspector,.toolbox,.manager-pop,.tool-pop,.toast"))return;
+    event.preventDefault();
+    viewportState.zoom=Math.max(MIN_ZOOM,Math.min(MAX_ZOOM,viewportState.zoom*(event.deltaY<0?ZOOM_IN_FACTOR:ZOOM_OUT_FACTOR)));
+    renderState();say("Zoom do canvas: "+Math.round(viewportState.zoom*100)+"%.",false);
+  },{passive:false});
+
+  document.querySelector(".ins-head").addEventListener("pointerdown",function(event){
+    if(event.button!==0||event.target.closest("button")||uiState.pinned||window.matchMedia("(max-width:1179px)").matches)return;
+    var rect=inspector.getBoundingClientRect(),stageRect=stage.getBoundingClientRect();
+    inspectorGesture={startX:event.clientX,startY:event.clientY,left:rect.left-stageRect.left,top:rect.top-stageRect.top,pointerId:event.pointerId};
+    event.currentTarget.setPointerCapture(event.pointerId);
+  });
+  window.addEventListener("pointermove",function(event){
+    if(inspectorGesture){
+      var stageRect=stage.getBoundingClientRect();
+      var left=Math.max(0,Math.min(stageRect.width-inspector.offsetWidth,inspectorGesture.left+event.clientX-inspectorGesture.startX));
+      var top=Math.max(0,Math.min(stageRect.height-80,inspectorGesture.top+event.clientY-inspectorGesture.startY));
+      inspector.style.right="auto";inspector.style.left=left+"px";inspector.style.top=top+"px";
+      inspectorWasMoved=true;
+    }
+    if(toolboxGesture){
+      toolboxGesture.moved=toolboxGesture.moved||Math.hypot(event.clientX-toolboxGesture.startX,event.clientY-toolboxGesture.startY)>CLICK_SLOP_PX;
+      var stageRect2=stage.getBoundingClientRect();
+      toolbox.className="toolbox";
+      toolbox.style.left=Math.max(0,Math.min(stageRect2.width-toolbox.offsetWidth,event.clientX-stageRect2.left-toolboxGesture.offsetX))+"px";
+      toolbox.style.top=Math.max(0,Math.min(stageRect2.height-toolbox.offsetHeight,event.clientY-stageRect2.top-toolboxGesture.offsetY))+"px";
+    }
+  });
+  window.addEventListener("pointerup",function(event){
+    if(inspectorGesture&&event.pointerId===inspectorGesture.pointerId)inspectorGesture=null;
+    if(toolboxGesture&&event.pointerId===toolboxGesture.pointerId){
+      if(toolboxGesture.moved){
+        var rect=stage.getBoundingClientRect();
+        var distances=[
+          {name:"dock-left",value:event.clientX-rect.left},
+          {name:"dock-top",value:event.clientY-rect.top},
+          {name:"dock-right",value:rect.right-event.clientX},
+          {name:"dock-bottom",value:rect.bottom-event.clientY}
+        ].sort(function(a,b){return a.value-b.value});
+        applyToolboxDock(distances[0].name);
+        suppressGripClick=true;
+      }
+      toolboxGesture=null;
+    }
+  });
+  function applyToolboxDock(name){
+    toolbox.className="toolbox "+name;
+    toolbox.style.left="";toolbox.style.right="";toolbox.style.top="";toolbox.style.bottom="";
+    dockIndex=Math.max(0,dockCycle.indexOf(name));
+    if(!popover.hidden)positionPopover(popover,document.getElementById("objects-button"));
+    if(!toolPopover.hidden)positionPopover(toolPopover,document.getElementById("more-tools"));
+    say("Barra acoplada: "+name.replace("dock-","")+".",false);
+  }
+  document.getElementById("tool-grip").addEventListener("pointerdown",function(event){
+    var rect=toolbox.getBoundingClientRect();
+    toolboxGesture={startX:event.clientX,startY:event.clientY,offsetX:event.clientX-rect.left,offsetY:event.clientY-rect.top,pointerId:event.pointerId,moved:false};
+  });
+  document.getElementById("tool-grip").addEventListener("click",function(){
+    if(suppressGripClick){suppressGripClick=false;return}
+    dockIndex=(dockIndex+1)%dockCycle.length;applyToolboxDock(dockCycle[dockIndex]);
+  });
+
+  document.getElementById("lock").onclick=toggleDrawingLock;
+  document.getElementById("all-lock").onclick=toggleDrawingLock;
+  document.getElementById("eye").onclick=toggleDrawingVisibility;
+  document.getElementById("all-eye").onclick=function(){var before=captureUndoState();uiState.globalHidden=!uiState.globalHidden;renderState();record(before,uiState.globalHidden?"Todos ocultos; estados individuais preservados.":"Visibilidade global restaurada.")};
+  document.getElementById("delete").onclick=function(){removeDrawing(false)};
+  document.getElementById("force-delete").onclick=function(){removeDrawing(true)};
+  document.getElementById("cancel-delete").onclick=cancelDeleteConfirmation;
+  undoButton.onclick=function(){undoAction();hideToast();canvasFocus.focus({preventScroll:true})};
+  document.getElementById("close").onclick=function(){deselectDrawing();canvasFocus.focus({preventScroll:true});say("Propriedades fechadas; desenho preservado.",false)};
+  document.getElementById("pin").onclick=function(){uiState.pinned=!uiState.pinned;inspectorWasMoved=false;inspector.style.left="";inspector.style.top="";inspector.style.right="";renderState();if(!uiState.pinned)placeInspector();say(uiState.pinned?"Inspetor fixado; canvas recalculado.":"Inspetor flutuante.",false)};
+  document.getElementById("repeat-tool").onclick=function(){uiState.repeat=!uiState.repeat;renderState();say(uiState.repeat?"Manter ferramenta ativa: ligado.":"Modo one-shot: ligado.",false)};
+
+  function positionPopover(panel,anchor){
+    var stageRect=stage.getBoundingClientRect(),anchorRect=anchor.getBoundingClientRect();
+    var width=panel.offsetWidth||310,height=panel.offsetHeight||160;
+    var left=anchorRect.right-stageRect.left+8,top=anchorRect.top-stageRect.top;
+    if(left+width>stageRect.width-8)left=anchorRect.left-stageRect.left-width-8;
+    if(top+height>stageRect.height-8)top=anchorRect.bottom-stageRect.top-height;
+    left=Math.max(8,Math.min(stageRect.width-width-8,left));
+    top=Math.max(8,Math.min(stageRect.height-height-8,top));
+    panel.style.left=left+"px";panel.style.top=top+"px";
+  }
+  function closeObjectPopover(returnFocus){
+    popover.hidden=true;document.getElementById("objects-button").setAttribute("aria-expanded","false");
+    if(returnFocus)document.getElementById("objects-button").focus();
+  }
+  document.getElementById("objects-button").onclick=function(){
+    var open=popover.hidden;popover.hidden=!open;
+    this.setAttribute("aria-expanded",String(open));
+    toolPopover.hidden=true;document.getElementById("more-tools").setAttribute("aria-expanded","false");
+    if(open){positionPopover(popover,this);document.getElementById("manager-select").focus()}
+  };
+  document.getElementById("manager-close").onclick=function(){closeObjectPopover(true)};
+  popover.addEventListener("keydown",function(event){if(event.key==="Escape"){event.preventDefault();closeObjectPopover(true)}});
+  document.getElementById("manager-select").onclick=function(){selectDrawing();placeInspector();say("Fib selecionado pelo gerenciador.",false)};
+  document.getElementById("manager-eye").onclick=toggleDrawingVisibility;
+  document.getElementById("manager-lock").onclick=toggleDrawingLock;
+  document.getElementById("manager-up").onclick=function(){var before=captureUndoState();model.zOrder=(model.zOrder||1)+1;record(before,"Fib trazido para frente; z-order atualizado.")};
+  document.getElementById("manager-delete").onclick=function(){var origin=document.getElementById("objects-button");closeObjectPopover(false);uiState.selected=true;uiState.closed=false;renderState();placeInspector();deleteOrigin=origin;removeDrawing(false)};
+  document.getElementById("manager-show-all").onclick=function(){var before=captureUndoState();uiState.globalHidden=false;model.hidden=false;renderState();record(before,"Todos os desenhos visíveis.")};
+  document.getElementById("manager-unlock-all").onclick=function(){if(model.locked)toggleDrawingLock()};
+  document.querySelectorAll(".objectrow").forEach(function(row){
+    row.onclick=function(){
+      document.querySelectorAll(".objectrow").forEach(function(item){item.classList.remove("selected")});
+      row.classList.add("selected");
+      say(row.textContent.trim()+" selecionado no exemplo.",false);
+    };
+  });
+
+  function activateTool(name){
+    var button=Array.from(root.querySelectorAll(".tool")).find(function(item){return item.dataset.tool===name});
+    if(!button)return;
+    root.querySelectorAll(".tool").forEach(function(item){item.classList.remove("active");item.setAttribute("aria-pressed","false")});
+    button.classList.add("active");button.setAttribute("aria-pressed","true");
+    document.getElementById("active-tool").textContent=name;say(name+" ativado.",false);
+  }
+  root.querySelectorAll(".tool").forEach(function(button){button.onclick=function(){activateTool(button.dataset.tool)}});
+  document.getElementById("more-tools").onclick=function(){
+    var open=toolPopover.hidden;toolPopover.hidden=!open;this.setAttribute("aria-expanded",String(open));
+    closeObjectPopover(false);
+    if(open){positionPopover(toolPopover,this);toolPopover.querySelector("button").focus()}
+  };
+  toolPopover.querySelectorAll("[data-tool-target]").forEach(function(button){button.onclick=function(){activateTool(button.dataset.toolTarget);toolPopover.hidden=true;document.getElementById("more-tools").setAttribute("aria-expanded","false");canvasFocus.focus({preventScroll:true})}});
+  toolPopover.addEventListener("keydown",function(event){if(event.key==="Escape"){event.preventDefault();toolPopover.hidden=true;document.getElementById("more-tools").setAttribute("aria-expanded","false");document.getElementById("more-tools").focus()}});
+  window.addEventListener("resize",function(){
+    if(window.matchMedia("(min-width:800px)").matches&&!toolPopover.hidden){toolPopover.hidden=true;document.getElementById("more-tools").setAttribute("aria-expanded","false")}
+    if(!popover.hidden)positionPopover(popover,document.getElementById("objects-button"));if(!toolPopover.hidden)positionPopover(toolPopover,document.getElementById("more-tools"));
+  });
+  root.addEventListener("focusin",function(event){
+    if(event.target.matches("input,select,textarea")){event.target.dataset.escapeValue=event.target.value;event.target.dataset.escapeChecked=String(event.target.checked);event.target.escapeState=captureUndoState();event.target.escapeHistoryLength=history.length}
+  });
+  root.addEventListener("keydown",function(event){
+    if(event.key!=="Escape"||event.target===canvasFocus)return;
+    var target=event.target;
+    function consume(){event.preventDefault();event.stopPropagation()}
+    if(confirmBox.classList.contains("visible")){consume();cancelDeleteConfirmation();return}
+    if(!toolPopover.hidden){consume();toolPopover.hidden=true;document.getElementById("more-tools").setAttribute("aria-expanded","false");document.getElementById("more-tools").focus();return}
+    if(!popover.hidden){consume();closeObjectPopover(true);return}
+    if(toast.contains(target)){consume();hideToast();canvasFocus.focus({preventScroll:true});return}
+    if(target.matches("input,select,textarea")){
+      consume();
+      history.length=Math.min(history.length,target.escapeHistoryLength===undefined?history.length:target.escapeHistoryLength);redoHistory=[];
+      if(target.id==="width"&&widthBefore){restore(widthBefore);widthBefore=null}
+      else{if(target.dataset.escapeValue!==undefined)target.value=target.dataset.escapeValue;if(target.dataset.escapeChecked!==undefined)target.checked=target.dataset.escapeChecked==="true";restore(target.escapeState||captureUndoState())}
+      inspector.querySelector('.tab[aria-selected="true"]').focus();return;
+    }
+    if(inspector.contains(target)){consume();deselectDrawing();canvasFocus.focus({preventScroll:true});say("Propriedades fechadas; desenho preservado.",false);return}
+    if(toolbox.contains(target)){consume();activateTool("Pointer");deselectDrawing();canvasFocus.focus({preventScroll:true});say("Seleção removida; Pointer ativo.",false)}
+  },true);
+  function activateTab(button){
+    root.querySelectorAll(".tab").forEach(function(item){item.setAttribute("aria-selected","false");item.tabIndex=-1});
+    root.querySelectorAll(".panel").forEach(function(panel){panel.classList.remove("active")});
+    button.setAttribute("aria-selected","true");button.tabIndex=0;
+    document.getElementById(button.dataset.panel).classList.add("active");
+  }
+  root.querySelectorAll(".tab").forEach(function(button){
+    button.onclick=function(){activateTab(button)};
+    button.onkeydown=function(event){
+      var tabs=Array.from(root.querySelectorAll(".tab")),index=tabs.indexOf(button),next=null;
+      if(event.key==="ArrowRight")next=tabs[(index+1)%tabs.length];
+      if(event.key==="ArrowLeft")next=tabs[(index-1+tabs.length)%tabs.length];
+      if(event.key==="Home")next=tabs[0];
+      if(event.key==="End")next=tabs[tabs.length-1];
+      if(next){event.preventDefault();activateTab(next);next.focus()}
+    };
+  });
+  function relativeLuminance(hex){
+    var channels=[1,3,5].map(function(index){var value=parseInt(hex.slice(index,index+2),16)/255;return value<=.03928?value/12.92:Math.pow((value+.055)/1.055,2.4)});
+    return .2126*channels[0]+.7152*channels[1]+.0722*channels[2];
+  }
+  function applyColor(color,before){
+    model.color=color;
+    document.getElementById("custom-color").value=color;
+    var light=relativeLuminance(color),dark=relativeLuminance("#131722");
+    var contrast=(Math.max(light,dark)+.05)/(Math.min(light,dark)+.05);
+    var note=document.getElementById("contrast-note");
+    note.textContent=contrast<3?"Contraste baixo no canvas padrão — escolha uma cor mais clara.":"Contraste adequado no canvas padrão.";
+    note.style.color=contrast<3?"var(--warn)":"var(--faint)";
+    renderAll();record(before,"Cor aplicada.");
+  }
+  document.getElementById("swatches").onclick=function(event){
+    var button=event.target.closest(".swatch");if(!button)return;
+    var before=captureUndoState();
+    root.querySelectorAll(".swatch").forEach(function(item){item.setAttribute("aria-pressed",String(item===button))});
+    applyColor(button.dataset.color,before);
+  };
+  document.getElementById("custom-color").onchange=function(event){
+    var before=captureUndoState();
+    root.querySelectorAll(".swatch").forEach(function(item){item.setAttribute("aria-pressed","false")});
+    applyColor(event.target.value,before);
+  };
+  document.getElementById("width").onpointerdown=function(){widthBefore=captureUndoState()};
+  document.getElementById("width").onfocus=function(){if(!widthBefore)widthBefore=captureUndoState()};
+  document.getElementById("width").oninput=function(event){model.width=Number(event.target.value);renderState()};
+  document.getElementById("width").onchange=function(){if(widthBefore){record(widthBefore,"Espessura alterada.");widthBefore=null}};
+  document.getElementById("add-level").onclick=function(){
+    var before=captureUndoState(),candidate=1.272;
+    while(model.levels.some(function(level){return Math.abs(level.ratio-candidate)<.000001}))candidate+=.1;
+    model.levels.push({ratio:candidate,label:formatPercent(candidate),visible:true,color:null});
+    renderAll();record(before,"Nível "+candidate.toFixed(3)+" adicionado.");
+    document.querySelector("#level-list .levelrow:last-child .number").focus();
+  };
+  document.getElementById("sort-levels").onclick=function(){var before=captureUndoState();model.levels.sort(function(a,b){return a.ratio-b.ratio});renderAll();record(before,"Níveis ordenados por razão.")};
+  document.getElementById("restore-levels").onclick=function(){var before=captureUndoState();model.levels=JSON.parse(JSON.stringify(defaultLevels));renderAll();record(before,"Níveis padrão restaurados.")};
+  document.getElementById("invert-anchors").onclick=function(){var before=captureUndoState(),a=model.a;model.a=model.b;model.b=a;renderFib();record(before,"Âncoras A e B invertidas.")};
+  document.getElementById("log-scale").onchange=function(event){var before=captureUndoState();model.logScale=event.target.checked;renderFib();record(before,model.logScale?"Escala logarítmica aplicada.":"Escala linear aplicada.")};
+  ["a","b"].forEach(function(anchor){
+    document.getElementById("anchor-"+anchor+"-time").onchange=function(event){
+      var x=parseChartTime(event.target.value);
+      if(x===null||x<MIN_DRAWING_X||x>MAX_DRAWING_X){renderFib();say("Use AAAA-MM-DD HH:mm:ss dentro da janela demonstrada.",false);return}
+      var before=captureUndoState();model[anchor].x=x;renderFib();record(before,"Data/hora da âncora "+anchor.toUpperCase()+" alterada.");
+    };
+    document.getElementById("anchor-"+anchor+"-price").onchange=function(event){
+      var price=parsePtBrNumber(event.target.value);
+      if(price===null||price<=0){renderFib();say("Informe um preço positivo no formato 71.824,50.",false);return}
+      var before=captureUndoState();model[anchor].y=(PRICE_ORIGIN-price)/PRICE_PER_Y;renderFib();record(before,"Preço da âncora "+anchor.toUpperCase()+" alterado.");
+    };
+  });
+  canvasFocus.onkeydown=function(event){
+    if(event.target!==canvasFocus)return;
+    var key=event.key.toLowerCase();
+    if(event.ctrlKey&&key==="z"){event.preventDefault();if(event.shiftKey)redoAction();else undoAction();return}
+    if(event.ctrlKey&&key==="y"){event.preventDefault();redoAction();return}
+    if(event.altKey&&key==="l"){event.preventDefault();document.getElementById("lock").click();return}
+    if(event.altKey&&key==="h"){event.preventDefault();document.getElementById("eye").click();return}
+    var toolName={"1":"Pointer","2":"Crosshair","h":"Horizontal line","r":"Rectangle","c":"Parallel channel","f":event.shiftKey?"Fib extension":"Fib retracement"}[key];
+    if(toolName){event.preventDefault();activateTool(toolName);return}
+    if(event.key==="Delete"||event.key==="Backspace"){event.preventDefault();removeDrawing(false)}
+    if(event.key==="Escape"){activateTool("Pointer");deselectDrawing();say("Seleção removida; Pointer ativo.",false);return}
+    if(uiState.selected&&!model.locked&&["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(event.key)){
+      event.preventDefault();
+      var before=captureUndoState(),step=event.shiftKey?12:2,dx=event.key==="ArrowLeft"?-step:event.key==="ArrowRight"?step:0,dy=event.key==="ArrowUp"?-step:event.key==="ArrowDown"?step:0;
+      var translated=boundedTranslation(model.a,model.b,dx,dy);model.a=translated.a;model.b=translated.b;renderFib();record(before,"Desenho deslocado pelo teclado.");
+    }
+  };
+  renderAll();
+  placeInspector();
+})();
+</script>
+</body>
+</html>

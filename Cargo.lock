@@ -2470,6 +2470,7 @@ dependencies = [
  "rfd",
  "rust_decimal",
  "serde",
+ "smallvec",
  "tokio",
  "toml 0.8.20",
  "tracing",

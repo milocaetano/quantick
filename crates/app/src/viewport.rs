@@ -101,6 +101,20 @@ impl Viewport {
         self.follow = true;
     }
 
+    /// Bring `bar` to the middle of a window `width_px` wide — the object
+    /// manager's "select and centre". Clamped to the newest bar (no future
+    /// margin: nothing to centre on out there), so centring an object near
+    /// the live edge lands on it and resumes following.
+    pub fn center_on_bar(&mut self, bar: f32, width_px: f32, total: usize) {
+        if total == 0 || self.candle_width <= 0.0 {
+            return;
+        }
+        let newest = (total - 1) as f32;
+        let half_window = 0.5 * width_px / self.candle_width;
+        self.right_bar = (bar + half_window).clamp(0.0, newest);
+        self.follow = (self.right_bar - newest).abs() <= 0.5;
+    }
+
     /// Account for `added` bars newly prepended at the front of the series: shift
     /// the right-edge bar index by the same amount so the visible window keeps
     /// showing the same bars instead of jumping. A no-op while following live —
@@ -187,6 +201,19 @@ mod tests {
         let v = Viewport::new();
         assert!(v.follows_live());
         assert_eq!(v.right_edge_bar(500), 499.0);
+    }
+
+    #[test]
+    fn center_on_bar_puts_the_target_mid_window() {
+        let mut v = Viewport::new();
+        // 100 bars visible in an 800 px window at 8 px per candle.
+        v.center_on_bar(200.0, 800.0, 500);
+        assert!(!v.follows_live());
+        assert_eq!(v.right_edge_bar(500), 250.0);
+
+        // Centring near the newest bar lands on the live edge and follows.
+        v.center_on_bar(499.0, 800.0, 500);
+        assert!(v.follows_live());
     }
 
     #[test]

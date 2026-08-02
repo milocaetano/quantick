@@ -1,120 +1,470 @@
-//! The tool rail: chart-acting tools on the left edge
-//! (`docs/ux/ui-design-model.md` §7).
+//! Drawing-tool selection and the four-corner toolbox dock.
 //!
-//! Exclusive selection — exactly one tool is armed, `Esc` always returns to
-//! Pointer. It ships with Pointer and Crosshair and reserves the geometry the
-//! drawing tools will fill; the selection state machine lives here, pure and
-//! tested, while the chart reads [`ToolRail::tool`] to decide what the pointer
-//! does.
+//! The dock owns only chrome state. Drawing definitions and metadata live in
+//! [`crate::drawings`], so registering a new drawing does not require another
+//! matching list in this module.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::drawings::{DRAWING_TOOLS, DrawingTool, Drawings};
 use crate::theme;
 use crate::widgets::{IconButton, RAIL_ICON};
 
-/// Width of the rail, in pixels (§5 zone 3).
-pub const RAIL_WIDTH: f32 = 44.0;
+const TOOLBOX_HEIGHT_PX: f32 = 44.0;
+const TOOLBOX_HORIZONTAL_MARGIN_PX: f32 = 8.0;
+const TOOLBOX_ITEM_GAP_PX: f32 = 6.0;
+/// One 32 px rail button plus its gap — the slot the width budget counts.
+const TOOLBOX_BUTTON_SLOT_PX: f32 = 32.0 + TOOLBOX_ITEM_GAP_PX;
+/// Room the grip and the two separators take beyond the button slots.
+const TOOLBOX_CHROME_ALLOWANCE_PX: f32 = 60.0;
+#[cfg(test)]
+const TOOLBOX_BUTTON_COUNT: usize = DRAWING_TOOLS.len() + 2;
 
-/// A chart-acting tool. Body slots are exclusive; footer modifiers (magnet,
-/// lock) arrive with the drawing tools.
+/// The width the full strip needs. Below this the drawing tools collapse
+/// into the More-tools flyout; Pointer, the active tool and Objects always
+/// survive, and the strip never wraps into a second row.
+fn full_toolbox_width() -> f32 {
+    // Pointer + Crosshair + every tool + repeat + objects + two globals.
+    let buttons = (2 + DRAWING_TOOLS.len() + 4) as f32;
+    2.0 * TOOLBOX_HORIZONTAL_MARGIN_PX
+        + buttons * TOOLBOX_BUTTON_SLOT_PX
+        + TOOLBOX_CHROME_ALLOWANCE_PX
+}
+
+/// A chart-acting tool. Only one is armed at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tool {
-    /// Pan, zoom and select — the default interaction.
     #[default]
     Pointer,
-    /// The hover crosshair, as an armed mode instead of an always-on layer.
     Crosshair,
+    Drawing(DrawingTool),
 }
 
 impl Tool {
-    /// Every tool, in rail order.
-    pub const ALL: [Self; 2] = [Self::Pointer, Self::Crosshair];
-
-    /// The Phosphor glyph on the rail slot.
     #[must_use]
-    pub fn icon(self) -> &'static str {
+    pub fn drawing_tool(self) -> Option<DrawingTool> {
+        match self {
+            Self::Drawing(tool) => Some(tool),
+            Self::Pointer | Self::Crosshair => None,
+        }
+    }
+
+    #[must_use]
+    fn icon(self) -> &'static str {
         match self {
             Self::Pointer => icons::CURSOR,
             Self::Crosshair => icons::CROSSHAIR,
+            Self::Drawing(tool) => tool.icon(),
         }
     }
 
-    /// Tooltip, shortcut included.
     #[must_use]
-    pub fn hover_text(self) -> &'static str {
+    fn hover_text(self) -> &'static str {
         match self {
-            Self::Pointer => "Pointer — pan, zoom, select (1, Esc)",
+            Self::Pointer => "Pointer - pan, zoom, select and move (1, Esc)",
             Self::Crosshair => "Crosshair (2)",
+            Self::Drawing(tool) => tool.hover_text(),
         }
     }
 }
 
-/// The rail's state: which tool is armed.
-#[derive(Debug, Default)]
+/// One of the four external chart corners where the toolbox can dock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolboxDock {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl ToolboxDock {
+    #[must_use]
+    const fn is_top(self) -> bool {
+        matches!(self, Self::TopLeft | Self::TopRight)
+    }
+
+    #[must_use]
+    const fn is_left(self) -> bool {
+        matches!(self, Self::TopLeft | Self::BottomLeft)
+    }
+
+    #[must_use]
+    fn nearest(pointer: egui::Pos2, screen: egui::Rect) -> Self {
+        match (
+            pointer.y <= screen.center().y,
+            pointer.x <= screen.center().x,
+        ) {
+            (true, true) => Self::TopLeft,
+            (true, false) => Self::TopRight,
+            (false, true) => Self::BottomLeft,
+            (false, false) => Self::BottomRight,
+        }
+    }
+}
+
+/// Toolbox chrome state. The panel is always outside `CentralPanel`, so the
+/// chart never renders behind it.
+#[derive(Debug)]
 pub struct ToolRail {
     tool: Tool,
+    visible: bool,
+    dock: ToolboxDock,
+    /// The repeat pin: `true` keeps a drawing tool armed after it completes
+    /// an object; the default is one-shot back to Pointer.
+    repeat: bool,
+    #[cfg(test)]
+    button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
+    #[cfg(test)]
+    grip_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    hide_all_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    lock_all_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    objects_rect: Option<egui::Rect>,
+}
+
+impl Default for ToolRail {
+    fn default() -> Self {
+        Self {
+            tool: Tool::Pointer,
+            visible: true,
+            dock: ToolboxDock::TopLeft,
+            repeat: false,
+            #[cfg(test)]
+            button_rects: [None; TOOLBOX_BUTTON_COUNT],
+            #[cfg(test)]
+            grip_rect: None,
+            #[cfg(test)]
+            hide_all_rect: None,
+            #[cfg(test)]
+            lock_all_rect: None,
+            #[cfg(test)]
+            objects_rect: None,
+        }
+    }
 }
 
 impl ToolRail {
-    /// A rail with the Pointer armed.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// The armed tool.
     #[must_use]
     pub fn tool(&self) -> Tool {
         self.tool
     }
 
-    /// Arm `tool`, replacing whatever was armed — the exclusive-selection
-    /// rule.
+    #[must_use]
+    pub fn visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn toggle_visible(&mut self) {
+        self.visible = !self.visible;
+        if !self.visible {
+            self.tool = Tool::Pointer;
+        }
+    }
+
     pub fn arm(&mut self, tool: Tool) {
         self.tool = tool;
     }
 
-    /// Apply the rail shortcuts: `Esc`/`1` arm the Pointer, `2` the
-    /// Crosshair. Single letters stay modifier-free, so they are ignored
-    /// whenever a widget owns the keyboard (typing in a field must not switch
-    /// tools).
+    /// Whether the repeat pin keeps the tool armed after an object completes.
+    #[must_use]
+    pub fn repeat(&self) -> bool {
+        self.repeat
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_repeat(&mut self, repeat: bool) {
+        self.repeat = repeat;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn button_rect(&self, tool: Tool) -> Option<egui::Rect> {
+        self.button_rects
+            .iter()
+            .flatten()
+            .find_map(|(candidate, rect)| (*candidate == tool).then_some(*rect))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn objects_button_rect(&self) -> Option<egui::Rect> {
+        self.objects_rect
+    }
+
+    /// Tool-arming keys. Escape lives in the app's escape stack (input →
+    /// draft → selection → Pointer), not here. Each drawing tool declares
+    /// its own shortcut through the registry.
     pub fn handle_keys(&mut self, ctx: &egui::Context) {
         if ctx.memory(|memory| memory.focused().is_some()) {
             return;
         }
-        ctx.input(|input| {
-            if input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Num1) {
-                self.arm(Tool::Pointer);
+        let armed = ctx.input(|input| {
+            if input.modifiers.command || input.modifiers.alt {
+                return None;
+            }
+            if input.key_pressed(egui::Key::Num1) {
+                return Some(Tool::Pointer);
             }
             if input.key_pressed(egui::Key::Num2) {
-                self.arm(Tool::Crosshair);
+                return Some(Tool::Crosshair);
             }
+            DRAWING_TOOLS.into_iter().find_map(|tool| {
+                tool.shortcut()
+                    .filter(|shortcut| {
+                        input.key_pressed(shortcut.key) && input.modifiers.shift == shortcut.shift
+                    })
+                    .map(|_| Tool::Drawing(tool))
+            })
         });
+        if let Some(tool) = armed {
+            self.arm(tool);
+        }
     }
 
-    /// Draw the rail as the left 44 px panel.
-    pub fn draw(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("tool_rail")
-            .exact_width(RAIL_WIDTH)
+    /// Draw the toolbox in an external top/bottom strip. Drag the grip and
+    /// release anywhere: the closest of the four screen corners becomes its
+    /// new dock. The rail also hosts the object-manager entry and the global
+    /// protection toggles (hide-all / lock-all), which act on the store.
+    pub fn draw(&mut self, ctx: &egui::Context, drawings: &mut Drawings, manager_open: &mut bool) {
+        if !self.visible {
+            return;
+        }
+
+        let panel = if self.dock.is_top() {
+            egui::TopBottomPanel::top("drawing_toolbox_top")
+        } else {
+            egui::TopBottomPanel::bottom("drawing_toolbox_bottom")
+        };
+        panel
+            .exact_height(TOOLBOX_HEIGHT_PX)
             .resizable(false)
             .frame(
                 egui::Frame::none()
                     .fill(theme::CHROME)
-                    .inner_margin(egui::Margin::symmetric(7.0, 8.0)),
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .inner_margin(egui::Margin::symmetric(
+                        TOOLBOX_HORIZONTAL_MARGIN_PX,
+                        TOOLBOX_ITEM_GAP_PX,
+                    )),
             )
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                for tool in Tool::ALL {
-                    let response = IconButton::new(tool.icon(), RAIL_ICON)
-                        .active(self.tool == tool)
-                        .hover_text(tool.hover_text())
-                        .show(ui);
-                    if response.clicked() {
-                        self.arm(tool);
-                    }
+            .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open));
+    }
+
+    /// The repeat pin: keep the armed drawing tool active after it completes
+    /// an object, instead of the one-shot return to Pointer.
+    fn draw_repeat_button(&mut self, ui: &mut egui::Ui) {
+        let response = IconButton::new(icons::ARROW_CLOCKWISE, RAIL_ICON)
+            .active(self.repeat)
+            .hover_text("Keep the drawing tool active after drawing")
+            .show(ui);
+        if response.clicked() {
+            self.repeat = !self.repeat;
+        }
+    }
+
+    /// The More-tools flyout of the collapsed strip: everything that lost
+    /// its slot stays reachable by name, plus the global protections.
+    fn draw_more_tools_menu(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
+        ui.menu_button(icons::PLUS, |ui| {
+            for tool in [Tool::Crosshair]
+                .into_iter()
+                .chain(DRAWING_TOOLS.into_iter().map(Tool::Drawing))
+            {
+                let name = match tool {
+                    Tool::Crosshair => "Crosshair",
+                    Tool::Drawing(tool) => tool.name(),
+                    Tool::Pointer => unreachable!("pointer keeps its own slot"),
+                };
+                if ui.button(name).clicked() {
+                    self.arm(tool);
+                    ui.close_menu();
                 }
-            });
+            }
+            ui.separator();
+            let all_hidden = drawings.all_hidden();
+            if ui
+                .button(if all_hidden { "Show all" } else { "Hide all" })
+                .clicked()
+            {
+                drawings.set_all_hidden(!all_hidden);
+                ui.close_menu();
+            }
+            let all_locked = drawings.all_locked();
+            if ui
+                .button(if all_locked { "Unlock all" } else { "Lock all" })
+                .clicked()
+            {
+                drawings.set_all_locked(!all_locked);
+                ui.close_menu();
+            }
+        })
+        .response
+        .on_hover_text("More tools");
+    }
+
+    /// The entry to the drawn-objects manager. A toggle, not a tool: it never
+    /// changes which tool is armed.
+    fn draw_objects_button(&mut self, ui: &mut egui::Ui, manager_open: &mut bool) {
+        let response = IconButton::new(icons::LIST, RAIL_ICON)
+            .active(*manager_open)
+            .hover_text("Drawn objects")
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.objects_rect = Some(response.rect);
+        }
+        if response.clicked() {
+            *manager_open = !*manager_open;
+        }
+    }
+
+    /// The reversible global protections. Hide-all is a view layer over each
+    /// drawing's own eye; lock-all mutates every lock at once. Neither is a
+    /// delete, and both are one undo entry.
+    fn draw_global_buttons(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings) {
+        let all_hidden = drawings.all_hidden();
+        let eye_icon = if all_hidden {
+            icons::EYE_SLASH
+        } else {
+            icons::EYE
+        };
+        let eye_hover = if all_hidden {
+            "Show all drawings"
+        } else {
+            "Hide all drawings"
+        };
+        let eye = IconButton::new(eye_icon, RAIL_ICON)
+            .active(all_hidden)
+            .hover_text(eye_hover)
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.hide_all_rect = Some(eye.rect);
+        }
+        if eye.clicked() {
+            drawings.set_all_hidden(!all_hidden);
+        }
+
+        let all_locked = drawings.all_locked();
+        let lock_icon = if all_locked {
+            icons::LOCK_SIMPLE
+        } else {
+            icons::LOCK_SIMPLE_OPEN
+        };
+        let lock_hover = if all_locked {
+            "Unlock all drawings"
+        } else {
+            "Lock all drawings"
+        };
+        let lock = IconButton::new(lock_icon, RAIL_ICON)
+            .active(all_locked)
+            .hover_text(lock_hover)
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.lock_all_rect = Some(lock.rect);
+        }
+        if lock.clicked() {
+            drawings.set_all_locked(!all_locked);
+        }
+    }
+
+    fn draw_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        drawings: &mut Drawings,
+        manager_open: &mut bool,
+    ) {
+        #[cfg(test)]
+        {
+            self.button_rects.fill(None);
+            self.grip_rect = None;
+            self.hide_all_rect = None;
+            self.lock_all_rect = None;
+            self.objects_rect = None;
+        }
+        let left = self.dock.is_left();
+        let layout = if left {
+            egui::Layout::left_to_right(egui::Align::Center)
+        } else {
+            egui::Layout::right_to_left(egui::Align::Center)
+        };
+
+        ui.with_layout(layout, |ui| {
+            ui.spacing_mut().item_spacing.x = TOOLBOX_ITEM_GAP_PX;
+            let grip = ui
+                .add(egui::Label::new(icons::DOTS_SIX_VERTICAL).sense(egui::Sense::drag()))
+                .on_hover_text("Drag to dock the toolbox in another corner");
+            #[cfg(test)]
+            {
+                self.grip_rect = Some(grip.rect);
+            }
+            if grip.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            if grip.drag_stopped()
+                && let Some(pointer) = ui.ctx().input(|input| input.pointer.interact_pos())
+            {
+                self.dock = ToolboxDock::nearest(pointer, ui.ctx().screen_rect());
+            }
+
+            // Below the full-strip budget the tools collapse into the
+            // More-tools flyout: Pointer, the active tool and Objects keep
+            // their slots, and the strip never wraps into a second row.
+            let overflow = ui.available_width() < full_toolbox_width();
+            if overflow {
+                self.draw_button(ui, Tool::Pointer);
+                if let Some(active) = self.tool.drawing_tool() {
+                    self.draw_button(ui, Tool::Drawing(active));
+                }
+                self.draw_more_tools_menu(ui, drawings);
+                ui.separator();
+                self.draw_objects_button(ui, manager_open);
+            } else if left {
+                for tool in [Tool::Pointer, Tool::Crosshair] {
+                    self.draw_button(ui, tool);
+                }
+                for tool in DRAWING_TOOLS {
+                    self.draw_button(ui, Tool::Drawing(tool));
+                }
+                self.draw_repeat_button(ui);
+                ui.separator();
+                self.draw_objects_button(ui, manager_open);
+                self.draw_global_buttons(ui, drawings);
+            } else {
+                self.draw_global_buttons(ui, drawings);
+                self.draw_objects_button(ui, manager_open);
+                ui.separator();
+                self.draw_repeat_button(ui);
+                for tool in DRAWING_TOOLS.into_iter().rev() {
+                    self.draw_button(ui, Tool::Drawing(tool));
+                }
+                for tool in [Tool::Crosshair, Tool::Pointer] {
+                    self.draw_button(ui, tool);
+                }
+            }
+        });
+    }
+
+    fn draw_button(&mut self, ui: &mut egui::Ui, tool: Tool) {
+        let response = IconButton::new(tool.icon(), RAIL_ICON)
+            .active(self.tool == tool)
+            .hover_text(tool.hover_text())
+            .show(ui);
+        #[cfg(test)]
+        if let Some(slot) = self.button_rects.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some((tool, response.rect));
+        }
+        if response.clicked() {
+            self.arm(tool);
+        }
     }
 }
 
@@ -123,36 +473,316 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_rail_opens_on_the_pointer() {
-        assert_eq!(ToolRail::new().tool(), Tool::Pointer);
+    fn toolbox_opens_outside_the_chart_at_top_left() {
+        let rail = ToolRail::new();
+        assert!(rail.visible());
+        assert_eq!(rail.tool(), Tool::Pointer);
+        assert_eq!(rail.dock, ToolboxDock::TopLeft);
     }
 
     #[test]
-    fn arming_is_exclusive() {
+    fn hiding_the_toolbox_cannot_leave_an_invisible_drawing_tool_armed() {
         let mut rail = ToolRail::new();
-        rail.arm(Tool::Crosshair);
-        assert_eq!(rail.tool(), Tool::Crosshair);
-        rail.arm(Tool::Pointer);
+        rail.arm(Tool::Drawing(DRAWING_TOOLS[0]));
+        rail.toggle_visible();
+        assert!(!rail.visible());
         assert_eq!(rail.tool(), Tool::Pointer);
     }
 
     #[test]
-    fn every_tool_has_a_glyph_and_a_tooltip() {
-        for tool in Tool::ALL {
-            assert!(!tool.icon().is_empty());
-            assert!(!tool.hover_text().is_empty());
+    fn every_quadrant_maps_to_its_nearest_corner() {
+        let screen = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
+        assert_eq!(
+            ToolboxDock::nearest(egui::pos2(10.0, 10.0), screen),
+            ToolboxDock::TopLeft
+        );
+        assert_eq!(
+            ToolboxDock::nearest(egui::pos2(90.0, 10.0), screen),
+            ToolboxDock::TopRight
+        );
+        assert_eq!(
+            ToolboxDock::nearest(egui::pos2(10.0, 90.0), screen),
+            ToolboxDock::BottomLeft
+        );
+        assert_eq!(
+            ToolboxDock::nearest(egui::pos2(90.0, 90.0), screen),
+            ToolboxDock::BottomRight
+        );
+    }
+
+    fn draw_rail_frame(
+        rail: &mut ToolRail,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        events: Vec<egui::Event>,
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        let mut drawings = Drawings::default();
+        let mut manager_open = false;
+        let _ = ctx.run(input, |ctx| {
+            rail.draw(ctx, &mut drawings, &mut manager_open)
+        });
+    }
+
+    fn primary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
         }
     }
 
-    /// Lay the rail out for real, off-screen: an un-clicked frame must leave
-    /// the armed tool alone.
     #[test]
-    fn the_rail_lays_out_against_a_real_context() {
+    fn dragging_the_real_grip_docks_at_each_screen_corner() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let ctx = egui::Context::default();
         let mut rail = ToolRail::new();
-        for _ in 0..2 {
-            let _ = ctx.run(egui::RawInput::default(), |ctx| rail.draw(ctx));
+        draw_rail_frame(&mut rail, &ctx, screen, Vec::new());
+
+        for (target, expected) in [
+            (egui::pos2(790.0, 10.0), ToolboxDock::TopRight),
+            (egui::pos2(10.0, 590.0), ToolboxDock::BottomLeft),
+            (egui::pos2(790.0, 590.0), ToolboxDock::BottomRight),
+            (egui::pos2(10.0, 10.0), ToolboxDock::TopLeft),
+        ] {
+            let start = rail.grip_rect.expect("grip was rendered").center();
+            draw_rail_frame(
+                &mut rail,
+                &ctx,
+                screen,
+                vec![
+                    egui::Event::PointerMoved(start),
+                    primary_button(start, true),
+                ],
+            );
+            draw_rail_frame(
+                &mut rail,
+                &ctx,
+                screen,
+                vec![egui::Event::PointerMoved(target)],
+            );
+            draw_rail_frame(
+                &mut rail,
+                &ctx,
+                screen,
+                vec![
+                    egui::Event::PointerMoved(target),
+                    primary_button(target, false),
+                ],
+            );
+            assert_eq!(rail.dock, expected);
+            draw_rail_frame(&mut rail, &ctx, screen, Vec::new());
         }
+    }
+
+    #[test]
+    fn drawing_tool_carries_the_registered_implementation_without_an_adapter_match() {
+        for tool in DRAWING_TOOLS {
+            assert_eq!(Tool::Drawing(tool).drawing_tool(), Some(tool));
+        }
+    }
+
+    fn rail_frame_with(
+        rail: &mut ToolRail,
+        drawings: &mut Drawings,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        events: Vec<egui::Event>,
+    ) {
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events,
+            ..Default::default()
+        };
+        let mut manager_open = false;
+        let _ = ctx.run(input, |ctx| rail.draw(ctx, drawings, &mut manager_open));
+    }
+
+    fn click_at(
+        rail: &mut ToolRail,
+        drawings: &mut Drawings,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        position: egui::Pos2,
+    ) {
+        rail_frame_with(
+            rail,
+            drawings,
+            ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(position),
+                primary_button(position, true),
+            ],
+        );
+        rail_frame_with(
+            rail,
+            drawings,
+            ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(position),
+                primary_button(position, false),
+            ],
+        );
+    }
+
+    #[test]
+    fn tool_shortcuts_arm_their_declared_tools() {
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let send = |rail: &mut ToolRail, key: egui::Key, modifiers: egui::Modifiers| {
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                }],
+                modifiers,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| rail.handle_keys(ctx));
+        };
+
+        send(&mut rail, egui::Key::H, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("horizontal-line")
+        );
+        send(&mut rail, egui::Key::R, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("rectangle")
+        );
+        send(&mut rail, egui::Key::C, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("parallel-channel")
+        );
+        send(&mut rail, egui::Key::F, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("fib-retracement")
+        );
+        send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("fib-extension")
+        );
+        send(&mut rail, egui::Key::Num1, egui::Modifiers::NONE);
         assert_eq!(rail.tool(), Tool::Pointer);
+        // A held command modifier keeps the letters out of the tool map.
+        send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND);
+        assert_eq!(rail.tool(), Tool::Pointer);
+    }
+
+    #[test]
+    fn the_narrow_strip_keeps_pointer_active_tool_and_objects() {
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        rail.arm(Tool::Drawing(DRAWING_TOOLS[1]));
+        let mut drawings = Drawings::default();
+
+        // Narrow: the strip collapses; Pointer, the active tool and the
+        // Objects entry survive, the rest folds into the More flyout.
+        let narrow = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 600.0));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, narrow, Vec::new());
+        assert!(rail.button_rect(Tool::Pointer).is_some());
+        assert!(rail.button_rect(Tool::Drawing(DRAWING_TOOLS[1])).is_some());
+        assert!(
+            rail.button_rect(Tool::Drawing(DRAWING_TOOLS[0])).is_none(),
+            "inactive tools give up their slots in the narrow strip"
+        );
+        assert!(rail.objects_button_rect().is_some());
+
+        // Wide: every tool has its slot back.
+        let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
+        for tool in DRAWING_TOOLS {
+            assert!(
+                rail.button_rect(Tool::Drawing(tool)).is_some(),
+                "{} lost its slot on a wide strip",
+                tool.id()
+            );
+        }
+    }
+
+    #[test]
+    fn global_eye_and_lock_buttons_protect_every_drawing_without_deleting() {
+        use crate::drawings::ChartPoint;
+
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        drawings.place(
+            DRAWING_TOOLS[0],
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+
+        let eye = rail.hide_all_rect.expect("hide-all rendered").center();
+        click_at(&mut rail, &mut drawings, &ctx, screen, eye);
+        assert!(drawings.all_hidden(), "hide-all engages the global layer");
+        click_at(&mut rail, &mut drawings, &ctx, screen, eye);
+        assert!(!drawings.all_hidden(), "hide-all toggles back off");
+
+        let lock = rail.lock_all_rect.expect("lock-all rendered").center();
+        click_at(&mut rail, &mut drawings, &ctx, screen, lock);
+        assert!(drawings.all_locked(), "lock-all locks every drawing");
+        click_at(&mut rail, &mut drawings, &ctx, screen, lock);
+        assert!(!drawings.all_locked(), "lock-all toggles back to unlocked");
+        assert_eq!(
+            drawings.items().len(),
+            1,
+            "global protections must never delete"
+        );
+    }
+
+    #[test]
+    fn every_dock_position_reserves_space_outside_the_central_chart() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for dock in [
+            ToolboxDock::TopLeft,
+            ToolboxDock::TopRight,
+            ToolboxDock::BottomLeft,
+            ToolboxDock::BottomRight,
+        ] {
+            let ctx = egui::Context::default();
+            let mut rail = ToolRail {
+                tool: Tool::Pointer,
+                visible: true,
+                dock,
+                ..ToolRail::default()
+            };
+            let mut central = egui::Rect::NOTHING;
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            };
+            let mut drawings = Drawings::default();
+            let mut manager_open = false;
+            let _ = ctx.run(input, |ctx| {
+                rail.draw(ctx, &mut drawings, &mut manager_open);
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    central = ui.max_rect();
+                });
+            });
+            if dock.is_top() {
+                assert!(central.top() >= TOOLBOX_HEIGHT_PX);
+            } else {
+                assert!(central.bottom() <= screen.bottom() - TOOLBOX_HEIGHT_PX);
+            }
+        }
     }
 }

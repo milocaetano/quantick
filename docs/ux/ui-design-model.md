@@ -8,6 +8,11 @@ live today, and where they will live as the app grows into indicators, drawing
 tools and beyond. This document is the reference for every future UI change:
 a new feature first finds its home here, then gets built.
 
+The detailed interaction target for user-authored chart objects lives in
+[Drawing tools UX specification](drawing-tools-ux-spec.html). It covers the
+toolbox, non-modal inspector, selection, lock/visibility/delete semantics,
+keyboard grammar, object management and the complete Fibonacci level editor.
+
 The companion images in [`img/`](img/) are part of the spec, not decoration.
 Everything in `CLAUDE.md` applies unchanged; this model adds UI placement rules
 on top of it.
@@ -46,6 +51,8 @@ Inventory, from code:
 | Candle style editor | floating window | `candle_view.rs::draw_style_window` |
 | Market Replay browser | floating window (Ctrl+R) | `replay_view.rs::draw_browser` |
 | Replay transport | bottom panel (while replaying) | `replay_view.rs::draw_transport` |
+| Drawing toolbox | external 44 px top/bottom panel, corner-docked | `toolrail.rs` |
+| Selected-drawing inspector | floating window | `app.rs::draw_drawing_inspector` |
 | Timezone picker | floating area, pinned bottom-right | `app.rs::draw_timezone_selector` |
 | Header line (symbol · spec · bar counts · mode) | text painted on chart | `app.rs::draw_header` |
 | Perf overlay (fps, frame ms, lag, trades) | box painted on chart | `app.rs::draw_overlay` |
@@ -143,7 +150,7 @@ Icons (§6–§7 use them):
 |---|---|---|---|
 | 1 | Menu bar | 28 px | rare actions, discoverability, shortcuts (§10) |
 | 2 | Context toolbar | 44 px | source · bars · history · layers · look · panels (§6) |
-| 3 | Tool rail | 44 px | chart-acting tools: cursor, crosshair, drawings (§7) |
+| 3 | Drawing toolbox | 44 px top/bottom, left/right aligned | cursor, crosshair, drawings (§7) |
 | 4 | Chart canvas | elastic | candles, flow layers, overlay legends, drawings |
 | 5 | Sub-panes | ≤ 40% of 4, max 3 | pane indicators: CVD, delta… (§9) |
 | 6 | Time axis | 24 px | time labels, x-zoom drag |
@@ -151,10 +158,12 @@ Icons (§6–§7 use them):
 | 8 | Dock | 280–360 px, collapsible to 36 | tabbed settings panels (§7) |
 | 9 | Price axis | 64 px | price labels, y-zoom drag |
 
-Vertical chrome while live: 28+44+24+28 = **124 px** — 4 px more than today's
-120 px (menu 26 + controls 36 + time 22 + header/overlays ≈ 36 painted over
-candles). In exchange, nothing is painted over the candles anymore except the
-legend and honest markers.
+Vertical chrome while live with the drawing toolbox visible:
+28+44+44+24+28 = **168 px**. The toolbox can be hidden from **View**, or
+docked above the status area instead of below the context toolbar. In
+exchange, persistent chrome never covers the candles; only contextual floating
+windows such as the selected-drawing inspector may overlap them. Canvas layers
+remain limited to the legend and honest market markers.
 
 **The rule that keeps this stable:** a new feature must claim a slot inside
 zones 1–9. If it genuinely cannot, the shell — not the feature — is what gets
@@ -192,31 +201,46 @@ bar §8) and both panel-opening buttons (the dock's tab strip replaces them).
 
 ![Tool rail and dock](img/04-tool-rail-dock.svg)
 
-**Tool rail (left, 44 px).** Exclusive selection; exactly one tool armed;
-`Esc` always returns to Pointer. Ships now with Pointer and Crosshair —
-2 slots that already earn their place — and gives drawing tools their
-permanent home the day they land:
+> The diagram records the original vertical-rail skeleton. The corner-docked
+> external toolbox described below supersedes that rail geometry, and the
+> detailed [Drawing tools UX specification](drawing-tools-ux-spec.html) is
+> authoritative for drawing interactions beyond it: favourites/flyouts, the
+> repeat pin, the Objects manager, lock/visibility/delete semantics, the
+> keyboard grammar and the complete Fibonacci level editor.
+
+**Drawing toolbox (external, 44 px).** Exclusive selection; exactly one tool
+is armed and `Esc` always returns to Pointer. Its grip docks the controls at
+the nearest of the four chart-shell corners: top-left, top-right, bottom-left
+or bottom-right. The top/bottom panel reserves layout space, so the toolbox
+never floats over market data.
 
 | Tool | Key | Notes |
 |---|---|---|
-| Pointer | `Esc`/`1` | pan/zoom/select — today's default interaction |
-| Crosshair | `2` | today's hover crosshair becomes a mode |
-| Trend line | `T` | two anchors, **bar-index coordinates** (Pine-compatible) |
-| Horizontal level | `H` | one price, extends both ways |
-| Zone (rectangle) | `R` | supply/demand boxes |
-| Measure | `M` | Δprice, Δbars — and Δdelta: an order-flow-native measure |
-| Note | `N` | text pinned to bar + price |
-| *(footer)* Magnet | | snap anchors to nearest bar OHLC |
-| *(footer)* Lock | | drawings ignore edits until unlocked |
+| Pointer | `Esc`/`1` | pan, zoom, select and move |
+| Crosshair | `2` | hover crosshair as an armed mode |
+| Horizontal line | — | one price anchor, extends across the chart |
+| Rectangle | — | two corners; click-click or drag |
+| Parallel channel | — | baseline plus a perpendicular width anchor |
+| Fib retracement | — | two anchors and standard retracement levels |
+| Fib extension | — | first leg plus projection origin |
 
-Footer slots are toggling *modifiers*, body slots are exclusive *tools*.
-Object deletion happens on the selected object (`Del` / context row) — no
-global "clear all" icon within reach of a slip.
+Every drawing implementation owns its metadata, renderer and hit-test in one
+module and is exposed through one static registry. Coordinates are
+bar-index + price. A history prepend shifts every stored bar index by the same
+net bar count as the viewport. A source or bar-spec rebuild clears the active
+set rather than silently attaching anchors to different market data.
 
-User drawings persist per symbol; coordinates are bar-index + price, the same
-x-model the indicator plan locks for scripts, so replay seeks and history
-prepends shift them correctly (`viewport.shift_right_edge` already models
-this).
+Selecting visible geometry opens per-object color, line-width, fill-opacity
+and delete controls. The inspector is non-modal: dragging the visible body
+moves the whole object, while dragging a white anchor edits only that point.
+When the floating inspector overlaps selected geometry, that stroke or anchor
+keeps pointer priority during its drag; all other clicks still edit the
+inspector normally.
+Closing the inspector deselects the object.
+
+The target keeps destructive bulk actions inside the Objects manager. Lock-all
+and hide-all are reversible protection/view actions; neither shares the
+selected object's delete control.
 
 **Dock (right, 280–360 px).** One tabbed panel replaces today's stack of
 left `SidePanel`s: tabs **L2**, **Bubbles**, **Indicators**, **Session**.
@@ -303,9 +327,8 @@ the only path:
 - **Help** — replay file format…, future: Pine dialect reference,
   shortcut list.
 
-Shortcut map (reserved now so nothing collides later):
-`Esc/1` pointer · `2` crosshair · `T/H/R/M/N` drawing tools · `Del` delete
-selected drawing · `Ctrl+R` replay browser · `Ctrl+B` dock · `Space`
+Shortcut map currently implemented:
+`Esc/1` pointer · `2` crosshair · `Ctrl+R` replay browser · `Ctrl+B` dock · `Space`
 play/pause while replaying · `+`/`−` replay speed. Single letters stay free
 of modifiers (no text inputs live on the chart).
 
@@ -316,7 +339,7 @@ Where future features land — decided now, so they never claim new chrome:
 | Future feature | Toggle/entry | Settings | Canvas presence | Status |
 |---|---|---|---|---|
 | Indicators (M1–M5) | LAYERS icon + Insert menu | dock tab Indicators | legend rows, overlays, sub-panes | recompute progress |
-| Drawing tools | tool rail + Insert menu | selected-object popover | drawings layer | object count (View) |
+| Drawing tools | corner-docked toolbox | selected-object inspector | drawings layer | — |
 | Alerts | on indicator/level context | dock tab Alerts | triggered marker on bar | armed count + last fired |
 | Bot / strategy monitor | LAYERS icon | dock tab | order/position markers | connection + P&L cell |
 | Second chart / layouts | File → Layout | — | split canvas (zones 4–6 duplicate per chart; zones 1–3, 7–9 stay singular) | per-chart provenance |
