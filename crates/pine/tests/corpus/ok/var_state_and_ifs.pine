@@ -1,0 +1,14 @@
+//@version=5
+indicator("swing state", overlay=true)
+var float last_ph = na
+ph = ta.pivothigh(high, 3, 3)
+if not na(ph)
+    last_ph := ph
+trend = if close > last_ph
+    1
+else if close < last_ph
+    -1
+else
+    0
+plot(last_ph, style=plot.style_circles)
+plotshape(trend > 0, style=shape.triangleup, location=location.belowbar)

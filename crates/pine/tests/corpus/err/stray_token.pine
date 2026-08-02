@@ -1,0 +1,3 @@
+// expect: PINE_SYNTAX@3
+//@version=5
+x = )

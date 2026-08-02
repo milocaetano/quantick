@@ -1,0 +1,13 @@
+//@version=5
+indicator("functions")
+avg2(a, b) => (a + b) / 2
+bounds(src, len) =>
+    lo = ta.lowest(src, len)
+    hi = ta.highest(src, len)
+    [lo, hi]
+[l, h] = bounds(close, 10)
+s = 0.0
+for i = 0 to 4
+    s := s + close[i]
+plot(avg2(l, h))
+plot(s / 5)

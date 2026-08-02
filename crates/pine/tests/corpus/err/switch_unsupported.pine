@@ -1,0 +1,4 @@
+// expect: PINE_UNSUPPORTED@3
+//@version=5
+switch close > open
+    true => 1
