@@ -116,9 +116,9 @@ impl Indicator for Ema {
         ctx: &mut Ctx<'_>,
     ) -> Result<PreviewFrame, EvalError> {
         let mut kernel = self.kernel.clone();
-        Ok(PreviewFrame {
-            values: vec![kernel.push(self.source.value(partial, ctx.cvd_now()))],
-        })
+        Ok(PreviewFrame::new(vec![
+            kernel.push(self.source.value(partial, ctx.cvd_now())),
+        ]))
     }
 
     fn reset(&mut self) {
@@ -185,9 +185,7 @@ impl Indicator for Cvd {
     ) -> Result<PreviewFrame, EvalError> {
         // The host stages the forming bar's cvd as the slice's last element;
         // there is no state of our own to snapshot.
-        Ok(PreviewFrame {
-            values: vec![ctx.cvd_now()],
-        })
+        Ok(PreviewFrame::new(vec![ctx.cvd_now()]))
     }
 
     fn reset(&mut self) {

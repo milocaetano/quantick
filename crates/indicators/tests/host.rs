@@ -128,7 +128,7 @@ impl Indicator for FailingAt {
         _partial: &IndicatorBar,
         _ctx: &mut Ctx<'_>,
     ) -> Result<PreviewFrame, EvalError> {
-        Ok(PreviewFrame { values: Vec::new() })
+        Ok(PreviewFrame::new(Vec::new()))
     }
     fn reset(&mut self) {
         self.plots.clear();

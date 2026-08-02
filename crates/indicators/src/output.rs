@@ -209,6 +209,21 @@ pub struct PreviewFrame {
     /// One value per declared plot, in [`PlotId`] order; NaN = nothing to
     /// draw.
     pub values: Vec<f64>,
+    /// The forming bar's draw objects (the full transient set), when the
+    /// indicator draws any: replaces the committed set while the bar forms,
+    /// exactly like plot previews (latest-wins).
+    pub objects: Option<crate::objects::ObjectSnapshot>,
+}
+
+impl PreviewFrame {
+    /// A frame of plot values with no draw objects.
+    #[must_use]
+    pub fn new(values: Vec<f64>) -> Self {
+        Self {
+            values,
+            objects: None,
+        }
+    }
 }
 
 #[cfg(test)]

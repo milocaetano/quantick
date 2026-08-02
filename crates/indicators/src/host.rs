@@ -245,4 +245,22 @@ impl IndicatorHost {
     pub fn cvd(&self) -> &[f64] {
         &self.cvd
     }
+
+    /// Change counter of one instance's draw objects (`None`: the indicator
+    /// draws none). Cheap — the worker polls this to decide when to
+    /// re-publish the set.
+    #[must_use]
+    pub fn objects_revision(&self, id: InstanceId) -> Option<u64> {
+        self.instance(id)
+            .and_then(|i| i.indicator.objects())
+            .map(crate::objects::ObjectStore::revision)
+    }
+
+    /// The renderable object set of one instance.
+    #[must_use]
+    pub fn objects_snapshot(&self, id: InstanceId) -> Option<crate::objects::ObjectSnapshot> {
+        self.instance(id)
+            .and_then(|i| i.indicator.objects())
+            .map(crate::objects::ObjectStore::snapshot)
+    }
 }

@@ -43,6 +43,7 @@ mod bar;
 mod host;
 mod indicator;
 mod input;
+mod objects;
 mod output;
 mod series;
 
@@ -50,5 +51,9 @@ pub use bar::IndicatorBar;
 pub use host::{IndicatorHost, InstanceId};
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 pub use input::{InputSpec, InputValue, SourceId};
+pub use objects::{
+    BoxObj, LabelObj, LabelStyle, LineObj, MAX_OBJECTS_PER_KIND, ObjectId, ObjectSnapshot,
+    ObjectStore,
+};
 pub use output::{PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8};
 pub use series::{NA_COLOR, SeriesId, SeriesStore};

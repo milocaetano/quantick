@@ -585,6 +585,29 @@ impl QuantickApp {
             });
             app.add_indicator(IndicatorSource::NativeCvd);
         }
+        // Scripted validation runs can open with library scripts loaded:
+        // a comma-separated list of script names, each through the same
+        // code path the INDICATORS menu takes.
+        if let Ok(names) = std::env::var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
+            for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                match app
+                    .script_library
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.name == name)
+                {
+                    Some(index) => app.add_script_indicator(index),
+                    None => tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "INDICATOR_SCRIPT_UNKNOWN",
+                        script = %name,
+                        action = "autostart_entry_skipped",
+                        "autostart names a script the library does not have"
+                    ),
+                }
+            }
+        }
         // Same convenience for Market Replay: open the folder named by
         // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
         // code path a click takes, so a scripted run and a person get the same
@@ -2281,6 +2304,11 @@ impl QuantickApp {
             end,
             partial_visible.map(|_| closed.len()),
         );
+        // Draw objects (lines/boxes/labels) share the overlays' paint slot:
+        // after candles, before aggression bubbles.
+        for view in self.indicators.visible_overlays() {
+            indicator_render::draw_objects(&clip, view.render_objects(), &plot_x, |v| scale.y(v));
+        }
         // Pane indicators stack in the band carved off above, sharing the
         // candles' x-mapping so bars and their flow read as one chart.
         for (view, pane) in self.indicators.visible_panes().zip(&pane_rects) {

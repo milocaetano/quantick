@@ -80,6 +80,13 @@ impl ScriptIndicator {
         }
     }
 
+    /// Whether this script ever created a draw object — scripts that never
+    /// do stay on the objects-free fast path (no snapshots published).
+    fn draws_objects(&self) -> bool {
+        let (lines, boxes, labels) = self.state.objects.counts();
+        lines + boxes + labels > 0 || self.state.objects.revision() > 0
+    }
+
     /// Load-time warnings (surfaced by the indicator panel).
     #[must_use]
     pub fn warnings(&self) -> &[crate::error::PineError] {
@@ -142,16 +149,24 @@ impl Indicator for ScriptIndicator {
     ) -> Result<PreviewFrame, EvalError> {
         let snapshot = self.state.snapshot();
         let result = self.run_once(partial, ctx, false);
+        // The forming bar's transient objects travel in the frame; the
+        // committed store is restored right after (preview rollback).
+        let objects =
+            (result.is_ok() && self.draws_objects()).then(|| self.state.objects.snapshot());
         self.state.restore(snapshot, &self.compiled.slot_modes);
         result?;
-        Ok(PreviewFrame {
-            values: self.row.clone(),
-        })
+        let mut frame = PreviewFrame::new(self.row.clone());
+        frame.objects = objects;
+        Ok(frame)
     }
 
     fn reset(&mut self) {
         self.state.reset();
         self.plots.clear();
         self.row.fill(f64::NAN);
+    }
+
+    fn objects(&self) -> Option<&quantick_indicators::ObjectStore> {
+        self.draws_objects().then_some(&self.state.objects)
     }
 }

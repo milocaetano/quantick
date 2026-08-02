@@ -136,8 +136,17 @@ carries the last non-na value).
 - `hline(value, …)` — a horizontal line, rendered through the same plot
   path.
 - `plotshape(...)`, `plotchar(...)`, `fill(...)`, `bgcolor(...)`,
-  `barcolor(...)` — accepted but inert until the drawing milestone (each
+  `barcolor(...)` — accepted but inert until the shape-plot milestone (each
   warns at load). `alertcondition(...)` is accepted and inert (no alerts).
+- **Draw objects** — `line.new(x1, y1, x2, y2, color?, width?)`,
+  `box.new(left, top, right, bottom, border_color?, bgcolor?)`,
+  `label.new(x, y, text?, color?, textcolor?, style?)` with styles
+  `label.style_label_up`, `label.style_label_down`, `label.style_none`.
+  X-coordinates are **bar indices only** (no `xloc.bar_time`). Handles
+  support `set_*` mutators and `.delete()`; a stale handle is a no-op.
+  Hard cap: 500 objects per kind per indicator — the 501st collects the
+  oldest. Objects created during a preview run are transient: they render
+  while the bar forms and vanish on rollback.
 - `input.int`, `input.float`, `input.bool`, `input.color`, `input.string`,
   `input.source` — defaults must be constants (`PINE_INPUT_NOT_CONST`);
   `input.source` accepts any series variable including the flow series.

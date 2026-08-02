@@ -137,6 +137,12 @@ pub trait Indicator {
 
     /// Drop all state, ready for a full replay (spec switch, replay seek).
     fn reset(&mut self);
+
+    /// The retained draw objects, for indicators that draw any (scripts
+    /// with `line`/`box`/`label`). `None` — the default — costs nothing.
+    fn objects(&self) -> Option<&crate::objects::ObjectStore> {
+        None
+    }
 }
 
 #[cfg(test)]

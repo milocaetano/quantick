@@ -166,6 +166,14 @@ pub enum Builtin {
     /// `alertcondition(...)` — parsed, inert, load warning.
     AlertCondition,
 
+    // ---- draw objects ----
+    /// `line.new(x1, y1, x2, y2, …)`
+    LineNew,
+    /// `box.new(left, top, right, bottom, …)`
+    BoxNew,
+    /// `label.new(x, y, text, …)`
+    LabelNew,
+
     // ---- input.* ----
     /// `input.int`
     InputInt,
@@ -315,6 +323,9 @@ impl Builtin {
             "bgcolor" => Builtin::Bgcolor,
             "barcolor" => Builtin::Barcolor,
             "alertcondition" => Builtin::AlertCondition,
+            "line.new" => Builtin::LineNew,
+            "box.new" => Builtin::BoxNew,
+            "label.new" => Builtin::LabelNew,
             "input.int" => Builtin::InputInt,
             "input.float" => Builtin::InputFloat,
             "input.bool" => Builtin::InputBool,
@@ -401,6 +412,9 @@ impl Builtin {
             "bgcolor",
             "barcolor",
             "alertcondition",
+            "line.new",
+            "box.new",
+            "label.new",
             "input.int",
             "input.float",
             "input.bool",

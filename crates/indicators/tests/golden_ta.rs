@@ -83,13 +83,11 @@ impl Indicator for TaSmooth {
         let mut sma = self.sma.clone();
         let mut ema = self.ema.clone();
         let mut wma = self.wma.clone();
-        Ok(PreviewFrame {
-            values: vec![
-                sma.push(partial.close),
-                ema.push(partial.close),
-                wma.push(partial.close),
-            ],
-        })
+        Ok(PreviewFrame::new(vec![
+            sma.push(partial.close),
+            ema.push(partial.close),
+            wma.push(partial.close),
+        ]))
     }
 
     fn reset(&mut self) {
