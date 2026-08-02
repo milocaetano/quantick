@@ -24,7 +24,10 @@ use crate::orderflow_engine::{BookEngine, BookPublished, ProjectionRequest};
 
 /// Commands mirror the [`BookEngine`] mutation surface one-to-one.
 pub(crate) enum BookCommand {
-    Depth(DepthEvent),
+    Depth {
+        event: DepthEvent,
+        received_at_ms: i64,
+    },
     Trade(Trade),
     SetEnabled {
         enabled: bool,
@@ -122,7 +125,10 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
         let mut incoming_request: Option<ProjectionRequest> = None;
         for command in batch {
             match command {
-                BookCommand::Depth(event) => engine.handle_depth_event(event),
+                BookCommand::Depth {
+                    event,
+                    received_at_ms,
+                } => engine.handle_depth_event_at(event, received_at_ms),
                 BookCommand::Trade(trade) => engine.record_trade(&trade),
                 BookCommand::SetEnabled {
                     enabled,
@@ -157,7 +163,7 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
             last_request = Some(request);
         }
         // Rebuild against the newest known layout. The engine's own cache
-        // (layout + settled-history revision + minimum cadence) decides whether
+        // (layout + bar/history revisions + minimum cadence) decides whether
         // this is a real rebuild or a no-op, so a chatty batch stays cheap.
         if let Some(request) = &last_request
             && engine.any_layer_enabled()

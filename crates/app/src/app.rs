@@ -428,8 +428,6 @@ pub struct QuantickApp {
     /// Exchange-to-UI delay measured when the newest live trade arrived.
     /// Stable while the tape is quiet: market inactivity is not transport lag.
     latest_trade_latency_ms: Option<i64>,
-    /// Source-to-UI delay measured when the newest timestamped depth event arrived.
-    latest_book_latency_ms: Option<i64>,
     live_trades: u64,
     trades_since_summary: u64,
     last_summary: Instant,
@@ -536,7 +534,6 @@ impl QuantickApp {
             cpu_frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_latency_ms: None,
-            latest_book_latency_ms: None,
             live_trades: 0,
             trades_since_summary: 0,
             last_summary: Instant::now(),
@@ -826,10 +823,7 @@ impl QuantickApp {
             initial_generation: generation,
         };
         match self.commands.try_send(command) {
-            Ok(()) => {
-                self.latest_book_latency_ms = None;
-                self.orderflow.set_enabled(enabled, generation);
-            }
+            Ok(()) => self.orderflow.set_enabled(enabled, generation),
             Err(mpsc::error::TrySendError::Full(_)) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -864,10 +858,7 @@ impl QuantickApp {
         match self.commands.try_send(FeedCommand::RestartBookCapture {
             initial_generation: generation,
         }) {
-            Ok(()) => {
-                self.latest_book_latency_ms = None;
-                self.orderflow.accept_capture_grouping_restart(generation);
-            }
+            Ok(()) => self.orderflow.accept_capture_grouping_restart(generation),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.orderflow
                     .reject_capture_grouping_restart("command_channel_full");
@@ -965,7 +956,6 @@ impl QuantickApp {
         // opens with exactly one backfill in flight.
         self.loading.restart(LoadingTask::History);
         self.latest_trade_latency_ms = None;
-        self.latest_book_latency_ms = None;
         self.orderflow.reset_for_symbol(self.symbol.clone());
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
@@ -1149,6 +1139,12 @@ impl QuantickApp {
     /// Drain every feed event available this frame into the engine, tracking the
     /// observed arrival latency and live-trade counts for the metrics.
     fn drain_feed(&mut self) {
+        self.drain_feed_with_clock(metrics::wall_clock_ms);
+    }
+
+    /// Clock-injected drain used to prove that one UI cycle is one observation.
+    fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
+        let mut received_at_ms = None;
         loop {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
@@ -1166,14 +1162,16 @@ impl QuantickApp {
                     self.viewport.shift_right_edge(added);
                     self.drawings.shift_bars(added);
                 }
-                Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
+                Ok(FeedEvent::Live(trade)) => {
+                    let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                    self.ingest_live_trade_at(&trade, received_at_ms);
+                }
                 Ok(FeedEvent::LiveBatch(trades)) => {
-                    // One channel delivery has one UI observation time. Besides
-                    // making the metric honest, this avoids a wall-clock syscall
-                    // for every print in a recovery burst.
-                    let received_at_ms = metrics::wall_clock_ms();
-                    for trade in &trades {
-                        self.ingest_live_trade_at(trade, received_at_ms);
+                    if !trades.is_empty() {
+                        let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                        for trade in &trades {
+                            self.ingest_live_trade_at(trade, received_at_ms);
+                        }
                     }
                 }
                 Ok(FeedEvent::Reset) => self.reset_market_state(),
@@ -1191,11 +1189,6 @@ impl QuantickApp {
         while let Ok(notice) = self.notices.try_recv() {
             self.notice = notice;
         }
-    }
-
-    /// Ingest one live trade: bars, order flow and the metrics that follow it.
-    fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
-        self.ingest_live_trade_at(trade, metrics::wall_clock_ms());
     }
 
     /// Deterministic half of live ingestion: `received_at_ms` is the UI's epoch
@@ -1223,7 +1216,6 @@ impl QuantickApp {
         self.reset_drawing_overlay();
         self.history_trades = 0;
         self.latest_trade_latency_ms = None;
-        self.latest_book_latency_ms = None;
         self.last_lane_divider_x = None;
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
@@ -1259,11 +1251,19 @@ impl QuantickApp {
     /// Drain a bounded number of synchronized depth events. The separate
     /// channel and budget ensure heatmap work cannot block candle ingestion.
     fn drain_book_feed(&mut self) {
+        self.drain_book_feed_with_clock(metrics::wall_clock_ms);
+    }
+
+    /// Clock-injected depth drain; a burst handled by one UI frame has one
+    /// observation time, matching the trade-side metric and avoiding O(n)
+    /// system-clock reads.
+    fn drain_book_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
+        let mut received_at_ms = None;
         for _ in 0..BOOK_DRAIN_BUDGET {
             match self.book_events.try_recv() {
                 Ok(event) => {
-                    self.observe_book_event_at(&event, metrics::wall_clock_ms());
-                    self.orderflow.handle_depth_event(event);
+                    let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                    self.orderflow.handle_depth_event_at(event, received_at_ms);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -1284,21 +1284,6 @@ impl QuantickApp {
         }
     }
 
-    /// Remember actual source-to-UI delay for timestamped depth data. Lifecycle
-    /// messages carry no market timestamp and therefore leave the last
-    /// observation alone instead of inventing one.
-    fn observe_book_event_at(&mut self, event: &DepthEvent, received_at_ms: i64) {
-        let source_event_ms = match event {
-            DepthEvent::Snapshot { observed_at_ms, .. } => Some(*observed_at_ms),
-            DepthEvent::Update { event_time_ms, .. } => Some(*event_time_ms),
-            DepthEvent::Status { .. } => None,
-        };
-        if let Some(source_event_ms) = source_event_ms {
-            self.latest_book_latency_ms =
-                metrics::feed_lag_ms(received_at_ms, Some(source_event_ms));
-        }
-    }
-
     /// Delay observed when the newest live trade reached the UI.
     ///
     /// `None` while a session is replaying: those prints are as old as the day
@@ -1308,11 +1293,6 @@ impl QuantickApp {
             return None;
         }
         self.latest_trade_latency_ms
-    }
-
-    /// Delay observed when the newest timestamped depth event reached the UI.
-    fn book_lag_ms(&self) -> Option<i64> {
-        self.latest_book_latency_ms
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
@@ -1328,7 +1308,7 @@ impl QuantickApp {
         let worst = self.frames.worst_ms().unwrap_or(0.0);
         let fps = self.frames.fps().unwrap_or(0.0);
         let book = self.orderflow.health();
-        let book_lag = self.book_lag_ms();
+        let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
         let book_queue_len = self.book_events.len();
         let candle_preset =
@@ -2108,6 +2088,7 @@ impl QuantickApp {
         // same thing: with them apart, the newest prints would be clustered and
         // sized as lane prints and then squeezed into a single candle slot.
         let orderflow_frame = self.orderflow.project_visible(
+            self.state.timeline_revision(),
             closed_start,
             visible_closed,
             partial_visible,
@@ -4165,34 +4146,53 @@ mod tests {
     }
 
     #[test]
-    fn quiet_book_keeps_the_observed_arrival_latency() {
-        use quantick_orderbook::{BookCoverage, BookSnapshot};
+    fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
+        use std::cell::Cell;
 
-        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-        let event = DepthEvent::Snapshot {
-            symbol: "TESTUSDT".to_owned(),
-            generation: 1,
-            observed_at_ms: 10_000,
-            effective_at_ms: 9_999,
-            price_step: None,
-            snapshot: BookSnapshot::new(
-                10,
-                Vec::new(),
-                Vec::new(),
-                BookCoverage::Limited {
-                    levels_per_side: 20,
-                },
-            ),
-        };
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let last_trade = trade(3);
+        let received_at_ms = last_trade.timestamp_ms + 75;
+        evt_tx.try_send(FeedEvent::Live(trade(1))).unwrap();
+        evt_tx
+            .try_send(FeedEvent::LiveBatch(vec![trade(2), last_trade]))
+            .unwrap();
+        let clock_calls = Cell::new(0_u32);
 
-        app.observe_book_event_at(&event, 10_025);
+        app.drain_feed_with_clock(|| {
+            clock_calls.set(clock_calls.get() + 1);
+            received_at_ms
+        });
 
-        assert_eq!(app.book_lag_ms(), Some(25));
-        assert_eq!(
-            app.book_lag_ms(),
-            Some(25),
-            "no new image means no new latency observation, not growing lag"
-        );
+        assert_eq!(clock_calls.get(), 1, "one wall-clock read per UI drain");
+        assert_eq!(app.live_trades, 3);
+        assert_eq!(app.trades_since_summary, 3);
+        assert_eq!(app.trade_lag_ms(), Some(75));
+        assert_eq!(app.state.timeline_revision(), 3);
+        assert_eq!(app.state.partial().map(|bar| bar.trade_count), Some(3));
+    }
+
+    #[test]
+    fn one_book_drain_uses_one_clock_observation() {
+        use std::cell::Cell;
+
+        let (mut app, _evt_tx, _cmd_rx, book_tx) = test_app();
+        for _ in 0..2 {
+            book_tx
+                .try_send(DepthEvent::Status {
+                    symbol: "TESTUSDT".to_owned(),
+                    generation: 1,
+                    status: quantick_orderbook::DepthStatus::Connecting,
+                })
+                .unwrap();
+        }
+        let clock_calls = Cell::new(0_u32);
+
+        app.drain_book_feed_with_clock(|| {
+            clock_calls.set(clock_calls.get() + 1);
+            10_000
+        });
+
+        assert_eq!(clock_calls.get(), 1, "one wall-clock read per UI drain");
     }
 
     /// An app holding `count` backfilled trades, built into tick(1) bars — one

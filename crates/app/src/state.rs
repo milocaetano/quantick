@@ -140,6 +140,8 @@ impl BarSpec {
 /// boundary, for the currently selected [`BarSpec`].
 pub struct ChartState {
     spec: BarSpec,
+    /// O(1) identity of the current temporal bar partition.
+    timeline_revision: u64,
     builder: Box<dyn BarBuilder>,
     trades: Vec<Trade>,
     backfill_trade_count: usize,
@@ -156,6 +158,7 @@ impl ChartState {
         let builder = spec.build();
         Self {
             spec,
+            timeline_revision: 0,
             builder,
             trades: Vec::new(),
             backfill_trade_count: 0,
@@ -179,6 +182,7 @@ impl ChartState {
         }
         self.backfill_boundary = Some(self.bars.len());
         self.refresh_partial();
+        self.bump_timeline_revision();
     }
 
     /// Prepend older backfilled history to the front of the retained stream.
@@ -212,6 +216,7 @@ impl ChartState {
             self.bars.push(bar);
         }
         self.refresh_partial();
+        self.bump_timeline_revision();
     }
 
     /// Switch the bar type/parameter, rebuilding all bars from the retained
@@ -247,10 +252,21 @@ impl ChartState {
         self.builder = builder;
         self.bars = bars;
         self.backfill_boundary = boundary;
+        self.bump_timeline_revision();
     }
 
     fn refresh_partial(&mut self) {
         self.partial = self.builder.partial().cloned();
+    }
+
+    fn bump_timeline_revision(&mut self) {
+        self.timeline_revision = self.timeline_revision.saturating_add(1);
+    }
+
+    /// Monotonic identity for order-flow projections keyed by these bar bounds.
+    #[must_use]
+    pub fn timeline_revision(&self) -> u64 {
+        self.timeline_revision
     }
 
     /// The current bar spec.
@@ -410,6 +426,24 @@ mod tests {
             Some(2),
             "all six are backfill -> boundary at the end"
         );
+    }
+
+    #[test]
+    fn timeline_revision_tracks_ingest_prepend_and_rebuilds() {
+        let mut state = ChartState::new(BarSpec::Tick(2));
+        assert_eq!(state.timeline_revision(), 0);
+
+        state.ingest_backfill(&(5..=8).map(trade).collect::<Vec<_>>());
+        assert_eq!(state.timeline_revision(), 1);
+        state.ingest_live(&trade(9));
+        assert_eq!(state.timeline_revision(), 2);
+        state.prepend_history(&(1..=4).map(trade).collect::<Vec<_>>());
+        assert_eq!(state.timeline_revision(), 3);
+
+        state.set_spec(BarSpec::Tick(2));
+        assert_eq!(state.timeline_revision(), 3, "an unchanged spec is a no-op");
+        state.set_spec(BarSpec::Tick(3));
+        assert_eq!(state.timeline_revision(), 4);
     }
 
     #[test]
