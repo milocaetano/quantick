@@ -33,7 +33,7 @@ pub enum FeedState {
     Connecting,
     /// Live and within the lag threshold.
     Live,
-    /// Live but the newest trade is older than [`metrics::HIGH_LAG_MS`].
+    /// Live but the newest trade exceeded [`metrics::HIGH_LAG_MS`] on arrival.
     Stalled,
     /// A recorded session is the source.
     Replay,
@@ -93,8 +93,9 @@ pub struct StatusModel {
     pub symbol: String,
     /// Replay speed/progress while a recording plays, `None` when live.
     pub replay: Option<ReplayFigures>,
-    /// Exchange-to-screen lag of the newest trade; `None` before the first
-    /// trade or while replaying (a recording has no lag to report).
+    /// Exchange-to-screen delay observed when the newest trade arrived; `None`
+    /// before the first live trade or while replaying (a recording has no lag
+    /// to report).
     pub feed_lag_ms: Option<i64>,
     /// The bar spec, e.g. `tick(50)`.
     pub spec_summary: String,

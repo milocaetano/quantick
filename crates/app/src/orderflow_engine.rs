@@ -19,11 +19,11 @@ use crate::orderflow::{
     PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
 };
 
-/// How often the finished half of the chart is rebuilt.
+/// Minimum interval between dirty rebuilds of the finished half of the chart.
 ///
-/// It is the depth feed's own cadence, near enough: the map behind the candles
-/// cannot say anything new until the book does. The live half ignores this
-/// interval entirely — see [`BookEngine::project`].
+/// History changes mark the projection dirty. This cadence coalesces a burst of
+/// updates, while a clean projection remains cached indefinitely. The live half
+/// ignores this interval entirely — see [`BookEngine::project`].
 pub(crate) const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
 
 /// Maximum raw book levels per side copied into a published [`BookLadder`].
@@ -185,8 +185,10 @@ impl ProjectionRequest {
 struct ProjectionCache {
     built_at: Instant,
     layout: ProjectionLayout,
-    /// The finished half of the chart, reused frame after frame until the
-    /// layout moves or the cadence comes round again.
+    /// Settled-history version represented by this projection.
+    settled_revision: u64,
+    /// The finished half of the chart, reused until the layout moves or a dirty
+    /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
 }
 
@@ -401,6 +403,10 @@ pub struct BookEngine {
     last_live_ms: f32,
     projection_builds: u64,
     projection_cache_hits: u64,
+    /// Advances when retained book/trade history can change the settled half.
+    /// Unlike cache invalidation, a revision change respects the cadence so a
+    /// burst is still coalesced into one rebuild.
+    settled_revision: u64,
     projection_cache: Option<ProjectionCache>,
     /// Last successfully built frame. Survives soft cache invalidation so the
     /// UI never flashes to an empty heatmap between rebuilds; cleared by hard
@@ -441,6 +447,7 @@ impl BookEngine {
             last_live_ms: 0.0,
             projection_builds: 0,
             projection_cache_hits: 0,
+            settled_revision: 0,
             projection_cache: None,
             last_frame: None,
             visible_price_window: None,
@@ -496,6 +503,7 @@ impl BookEngine {
         self.last_live_ms = 0.0;
         self.projection_builds = 0;
         self.projection_cache_hits = 0;
+        self.settled_revision = 0;
         self.projection_cache = None;
         self.last_frame = None;
         // A new market has a new price scale; the old view window would clip
@@ -649,6 +657,10 @@ impl BookEngine {
     pub fn record_trade(&mut self, trade: &Trade) {
         if self.config.any_layer_enabled() {
             self.history.record_aggression(trade);
+            // The live half draws this print immediately. The revision only
+            // schedules the settled half's next cadence rebuild, which also
+            // applies retention pruning caused by the new market timestamp.
+            self.mark_settled_dirty();
         }
     }
 
@@ -733,6 +745,7 @@ impl BookEngine {
                     self.mark_gap_at_latest("snapshot_rejected");
                     self.status = CaptureStatus::Error;
                 } else {
+                    self.mark_settled_dirty();
                     tracing::info!(
                         target: "quantick::app",
                         schema_version = 1_u8,
@@ -753,18 +766,25 @@ impl BookEngine {
                 event_time_ms,
                 delta,
                 ..
-            } => match self.history.apply_delta(event_time_ms, &delta) {
-                Ok(_) => {
-                    self.depth_updates = self.depth_updates.saturating_add(1);
-                    self.depth_updates_since_summary =
-                        self.depth_updates_since_summary.saturating_add(1);
+            } => {
+                match self.history.apply_delta(event_time_ms, &delta) {
+                    Ok(_) => {
+                        self.depth_updates = self.depth_updates.saturating_add(1);
+                        self.depth_updates_since_summary =
+                            self.depth_updates_since_summary.saturating_add(1);
+                        self.mark_settled_dirty();
+                    }
+                    Err(error) => {
+                        self.log_history_error("delta", generation, &error);
+                        self.mark_gap_at_latest("delta_rejected");
+                        // `apply_delta` may have opened the gap before returning
+                        // its error, so force the discontinuity visible even if
+                        // `mark_gap_at_latest` found it already open.
+                        self.invalidate_projection();
+                        self.status = CaptureStatus::Error;
+                    }
                 }
-                Err(error) => {
-                    self.log_history_error("delta", generation, &error);
-                    self.mark_gap_at_latest("delta_rejected");
-                    self.status = CaptureStatus::Error;
-                }
-            },
+            }
         }
     }
 
@@ -800,6 +820,7 @@ impl BookEngine {
         if let Err(error) = self.history.mark_gap(timestamp_ms, reason) {
             self.log_history_error("gap", self.latest_generation.unwrap_or(0), &error);
         } else {
+            self.mark_settled_dirty();
             self.invalidate_projection();
         }
     }
@@ -891,17 +912,24 @@ impl BookEngine {
 
     /// Build the frame for `request`.
     ///
-    /// The finished half of the chart is rebuilt on the cadence above, because
-    /// it costs tens of milliseconds and says nothing new in between. The half
-    /// that is still moving is rebuilt here every single time, because it is
-    /// cheap and because a print the engine has already accepted has no business
-    /// waiting for a cadence to be seen.
+    /// The finished half rebuilds only after its history changes, with the
+    /// cadence above coalescing a burst. The half that is still moving is rebuilt
+    /// here every single time, because it is cheap and because a print the engine
+    /// has already accepted has no business waiting for a cadence to be seen.
     pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
+        self.project_at(request, Instant::now())
+    }
+
+    /// Clock-injected projection entry point for deterministic cache tests.
+    fn project_at(
+        &mut self,
+        request: &ProjectionRequest,
+        cache_now: Instant,
+    ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
         }
         let layout = request.layout();
-        let now = Instant::now();
         let low = Decimal::from_f64(request.price_range.0)?;
         let high = Decimal::from_f64(request.price_range.1)?;
         let prices = PriceWindow::new(low, high)?;
@@ -918,22 +946,26 @@ impl BookEngine {
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
-                    && now.saturating_duration_since(cache.built_at) < PROJECTION_INTERVAL =>
+                    && (cache.settled_revision == self.settled_revision
+                        || cache_now.saturating_duration_since(cache.built_at)
+                            < PROJECTION_INTERVAL) =>
             {
                 self.projection_cache_hits = self.projection_cache_hits.saturating_add(1);
                 Arc::clone(&cache.settled)
             }
             _ => {
+                let projection_started = Instant::now();
                 let settled = Arc::new(project_settled(&self.history, &timeline, prices));
-                self.last_projection_ms = now.elapsed().as_secs_f32() * 1000.0;
+                self.last_projection_ms = projection_started.elapsed().as_secs_f32() * 1000.0;
                 self.last_projection_cells = settled.cells.len();
                 self.last_dropped_cells = settled.dropped_cells;
                 self.last_effective_grouping = settled.effective_grouping.bucket_width;
                 self.last_effective_grouping_multiple = settled.effective_grouping.multiple;
                 self.projection_builds = self.projection_builds.saturating_add(1);
                 self.projection_cache = Some(ProjectionCache {
-                    built_at: now,
+                    built_at: cache_now,
                     layout,
+                    settled_revision: self.settled_revision,
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -959,6 +991,13 @@ impl BookEngine {
 
     fn invalidate_projection(&mut self) {
         self.projection_cache = None;
+    }
+
+    /// Mark retained history newer without throwing away the last good frame.
+    /// The cache may serve that frame until the cadence elapses, coalescing all
+    /// intervening updates into one settled projection.
+    fn mark_settled_dirty(&mut self) {
+        self.settled_revision = self.settled_revision.saturating_add(1);
     }
 
     fn apply_non_grouping_config(&mut self) {
@@ -1524,6 +1563,73 @@ mod tests {
         });
         let _ = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
         assert_eq!(engine.projection_builds, 3);
+    }
+
+    #[test]
+    fn clean_projection_cache_survives_cadence_and_dirty_updates_coalesce() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let bars = [bar(900, 1_100)];
+        let request = request(&bars, (98.0, 102.0));
+        let started = Instant::now();
+
+        engine.project_at(&request, started).unwrap();
+        engine
+            .project_at(&request, started + PROJECTION_INTERVAL * 2)
+            .unwrap();
+        assert_eq!(
+            engine.projection_builds, 1,
+            "elapsed cadence alone must not rescan unchanged history"
+        );
+
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_000,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        let rebuilt_at = started + PROJECTION_INTERVAL * 2;
+        engine.project_at(&request, rebuilt_at).unwrap();
+        assert_eq!(
+            engine.projection_builds, 2,
+            "the first update after an idle period rebuilds immediately"
+        );
+
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_001,
+            delta: BookDelta::new(
+                12,
+                12,
+                Vec::new(),
+                vec![BookLevel::new(Decimal::from(101), Decimal::from(8)).unwrap()],
+            ),
+        });
+        engine
+            .project_at(&request, rebuilt_at + Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(
+            engine.projection_builds, 2,
+            "a second update inside the cadence is coalesced"
+        );
+
+        let after_cadence = rebuilt_at + PROJECTION_INTERVAL + Duration::from_millis(1);
+        engine.project_at(&request, after_cadence).unwrap();
+        assert_eq!(engine.projection_builds, 3);
+        engine
+            .project_at(&request, after_cadence + PROJECTION_INTERVAL * 2)
+            .unwrap();
+        assert_eq!(
+            engine.projection_builds, 3,
+            "the rebuilt clean revision stays cached across later cadences"
+        );
     }
 
     #[test]

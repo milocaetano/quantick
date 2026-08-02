@@ -76,13 +76,14 @@ pub fn wall_clock_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Feed lag: how far behind the latest trade's timestamp we are right now.
+/// Source-to-consumer delay observed when an event arrives.
 ///
-/// `None` until a trade has been seen. Can be slightly negative if the local
-/// clock is behind the exchange's — reported as-is (honest), not clamped.
+/// `None` when there is no event timestamp to compare. Can be slightly negative
+/// if the local clock is behind the source's — reported as-is (honest), not
+/// clamped.
 #[must_use]
-pub fn feed_lag_ms(now_ms: i64, latest_trade_ms: Option<i64>) -> Option<i64> {
-    latest_trade_ms.map(|t| now_ms - t)
+pub fn feed_lag_ms(received_at_ms: i64, event_time_ms: Option<i64>) -> Option<i64> {
+    event_time_ms.map(|timestamp_ms| received_at_ms - timestamp_ms)
 }
 
 #[cfg(test)]
@@ -119,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn lag_is_now_minus_trade_time() {
+    fn lag_is_observation_minus_event_time() {
         assert_eq!(feed_lag_ms(1_000, Some(600)), Some(400));
         assert_eq!(feed_lag_ms(1_000, None), None);
         // Local clock behind the exchange: negative lag, reported honestly.

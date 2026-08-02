@@ -157,8 +157,8 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
             last_request = Some(request);
         }
         // Rebuild against the newest known layout. The engine's own cache
-        // (layout equality + depth-cadence interval) decides whether this is
-        // a real rebuild or a no-op, so a chatty batch stays cheap.
+        // (layout + settled-history revision + minimum cadence) decides whether
+        // this is a real rebuild or a no-op, so a chatty batch stays cheap.
         if let Some(request) = &last_request
             && engine.any_layer_enabled()
         {
