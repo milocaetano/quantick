@@ -385,6 +385,8 @@ impl QuantickApp {
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.
         app.ensure_book_capture();
+        // A feed that declares its own look opens wearing it.
+        app.apply_feed_bubble_preset();
         // The map itself stays hidden until asked for — a layer nobody
         // requested must cost no projection. Dev/ops can open it without a
         // click; capture is already running either way.
@@ -742,6 +744,7 @@ impl QuantickApp {
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
             return;
         }
+        let previous_feed = self.active.0.clone();
         let Some(provider) = self.config.provider_of(&self.feed_id) else {
             tracing::warn!(
                 target: "quantick::app",
@@ -800,6 +803,55 @@ impl QuantickApp {
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.ensure_book_capture();
+        self.apply_feed_bubble_preset_after_switch(&previous_feed);
+    }
+
+    /// Apply the arrived-at feed's declared preset — only when the switch
+    /// actually crossed feeds. A symbol hop inside one feed keeps the user's
+    /// panel tweaks: the declared look belongs to the feed, not the symbol.
+    fn apply_feed_bubble_preset_after_switch(&mut self, previous_feed: &str) {
+        if previous_feed == self.feed_id {
+            return;
+        }
+        self.apply_feed_bubble_preset();
+    }
+
+    /// Apply the bubble preset the current feed declares, if it declares one.
+    ///
+    /// A feed with no `bubble_preset` changes nothing: the panel keeps the look
+    /// the user last chose. An unknown name is reported and ignored — the
+    /// presets file is user-edited, and a typo there must not silently restyle
+    /// the chart.
+    fn apply_feed_bubble_preset(&mut self) {
+        let Some(name) = self
+            .config
+            .feed(&self.feed_id)
+            .and_then(|feed| feed.bubble_preset.clone())
+        else {
+            return;
+        };
+        let applied = self.orderflow.apply_preset(&name);
+        if applied {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "FEED_BUBBLE_PRESET",
+                feed = %self.feed_id,
+                preset = name.as_str(),
+                action = "apply_preset",
+                "feed declares a bubble preset; applied"
+            );
+        } else {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "FEED_BUBBLE_PRESET_UNKNOWN",
+                feed = %self.feed_id,
+                preset = name.as_str(),
+                action = "keep_current_look",
+                "feed declares a bubble preset that is not in the presets file; ignoring"
+            );
+        }
     }
 
     /// Apply a bar-type/parameter change one frame after the selectors settle.
@@ -2323,6 +2375,7 @@ mod tests {
                 name: "Binance".to_string(),
                 provider: ProviderKind::Binance,
                 symbols: vec!["TESTUSDT".to_string(), "ETHUSDT".to_string()],
+                bubble_preset: None,
             }],
             metatrader: Default::default(),
         }
@@ -2837,12 +2890,14 @@ mod tests {
                     name: "A".to_string(),
                     provider: ProviderKind::Binance,
                     symbols: vec!["AAA".to_string()],
+                    bubble_preset: None,
                 },
                 FeedConfig {
                     id: "b".to_string(),
                     name: "B".to_string(),
                     provider: ProviderKind::Binance,
                     symbols: vec!["BBB".to_string()],
+                    bubble_preset: None,
                 },
             ],
             metatrader: Default::default(),
@@ -2870,6 +2925,103 @@ mod tests {
         app.symbol = "BBB".to_string();
         app.ensure_symbol_valid();
         assert_eq!(app.symbol, "BBB");
+    }
+
+    /// One app on `config`, opened on `feed_id`/symbol — the smallest harness
+    /// that exercises the constructor path (where a feed's declared bubble
+    /// preset is applied).
+    fn app_on(config: AppConfig, feed_id: &str, symbol: &str) -> QuantickApp {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        QuantickApp::new(
+            config,
+            feed_id,
+            symbol,
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        )
+    }
+
+    #[test]
+    fn a_feed_declaring_a_bubble_preset_opens_wearing_it() {
+        let mut config = test_config();
+        config.feeds[0].bubble_preset = Some("live lane pie".to_string());
+        let app = app_on(config, "binance", "TESTUSDT");
+        assert_eq!(app.orderflow.active_preset_for_test(), "live lane pie");
+        assert!(
+            app.orderflow.config_for_test().bubble_candle_summary,
+            "the pie preset folds closed bars into per-price summaries"
+        );
+    }
+
+    #[test]
+    fn a_feed_declaring_an_unknown_bubble_preset_changes_nothing() {
+        let mut config = test_config();
+        config.feeds[0].bubble_preset = Some("no such preset".to_string());
+        let with_unknown = app_on(config, "binance", "TESTUSDT");
+        let untouched = app_on(test_config(), "binance", "TESTUSDT");
+        assert_eq!(
+            with_unknown.orderflow.active_preset_for_test(),
+            untouched.orderflow.active_preset_for_test(),
+            "a typo in the config must not restyle the chart"
+        );
+        assert_eq!(
+            with_unknown.orderflow.config_for_test(),
+            untouched.orderflow.config_for_test()
+        );
+    }
+
+    #[test]
+    fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
+        // Feed "binance" declares nothing; a second feed declares the pie
+        // look. Opening on the first must not apply it — moving to the
+        // second must.
+        let mut config = test_config();
+        config.feeds.push(FeedConfig {
+            id: "mt".to_string(),
+            name: "MetaTrader 5".to_string(),
+            provider: ProviderKind::MetaTrader,
+            symbols: vec!["WINQ26".to_string()],
+            bubble_preset: Some("live lane pie".to_string()),
+        });
+        let mut app = app_on(config, "binance", "TESTUSDT");
+        let opened_with = app.orderflow.active_preset_for_test().to_string();
+        assert_ne!(
+            opened_with, "live lane pie",
+            "nothing declared, nothing applied"
+        );
+
+        // The switch path runs this after installing the new feed handle.
+        app.feed_id = "mt".to_string();
+        app.apply_feed_bubble_preset_after_switch("binance");
+        assert_eq!(app.orderflow.active_preset_for_test(), "live lane pie");
+    }
+
+    #[test]
+    fn a_symbol_hop_inside_one_feed_keeps_the_panel_look() {
+        let mut config = test_config();
+        config.feeds[0].bubble_preset = Some("live lane pie".to_string());
+        let mut app = app_on(config, "binance", "TESTUSDT");
+        assert_eq!(app.orderflow.active_preset_for_test(), "live lane pie");
+
+        // The user picks a different look by hand mid-session...
+        assert!(app.orderflow.apply_preset("dense tape"));
+        // ...then hops symbols inside the same feed: the hand-picked look
+        // survives — the declared preset belongs to the feed, not the symbol.
+        app.apply_feed_bubble_preset_after_switch("binance");
+        assert_eq!(app.orderflow.active_preset_for_test(), "dense tape");
+
+        // Arriving from another feed is what re-applies the declared look.
+        app.apply_feed_bubble_preset_after_switch("other-feed");
+        assert_eq!(app.orderflow.active_preset_for_test(), "live lane pie");
     }
 
     #[test]
