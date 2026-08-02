@@ -62,6 +62,7 @@ impl Ema {
                     base_color: EMA_COLOR,
                     width: PLOT_WIDTH,
                     offset: 0,
+                    marker: None,
                 }],
                 inputs: vec![
                     InputSpec::Int {
@@ -79,6 +80,7 @@ impl Ema {
                         default: SourceId::Close,
                     },
                 ],
+                fills: Vec::new(),
             },
             plots: PlotBuffer::new(1),
             kernel: ta::Ema::new(len),
@@ -150,8 +152,10 @@ impl Cvd {
                     base_color: CVD_COLOR,
                     width: PLOT_WIDTH,
                     offset: 0,
+                    marker: None,
                 }],
                 inputs: Vec::new(),
+                fills: Vec::new(),
             },
             plots: PlotBuffer::new(1),
         }

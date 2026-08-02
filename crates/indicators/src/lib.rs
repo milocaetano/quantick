@@ -55,5 +55,8 @@ pub use objects::{
     BoxObj, LabelObj, LabelStyle, LineObj, MAX_OBJECTS_PER_KIND, ObjectId, ObjectSnapshot,
     ObjectStore,
 };
-pub use output::{PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8};
+pub use output::{
+    FillSpec, MarkerLocation, MarkerShape, MarkerSpec, PlotBuffer, PlotId, PlotSpec, PlotStyle,
+    PreviewFrame, Rgba8,
+};
 pub use series::{NA_COLOR, SeriesId, SeriesStore};

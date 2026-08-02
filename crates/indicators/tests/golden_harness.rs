@@ -31,6 +31,7 @@ impl CloseCvd {
             base_color: Rgba8::opaque(255, 255, 255),
             width: 1.0,
             offset: 0,
+            marker: None,
         };
         Self {
             descriptor: IndicatorDescriptor {
@@ -39,6 +40,7 @@ impl CloseCvd {
                 overlay: false,
                 plots: vec![plot(0, "close"), plot(1, "cvd")],
                 inputs: Vec::new(),
+                fills: Vec::new(),
             },
             plots: PlotBuffer::new(2),
         }

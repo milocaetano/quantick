@@ -99,6 +99,7 @@ impl FailingAt {
                 overlay: false,
                 plots: Vec::new(),
                 inputs: Vec::new(),
+                fills: Vec::new(),
             },
             plots: PlotBuffer::new(0),
             fail_at,

@@ -23,7 +23,10 @@
 //! is what "slot resolution" means here — the interpreter never touches a
 //! map or a string on the per-bar path.
 
-use quantick_indicators::{InputSpec, PlotId, PlotSpec, PlotStyle, Rgba8, SourceId};
+use quantick_indicators::{
+    FillSpec, InputSpec, MarkerLocation, MarkerShape, MarkerSpec, PlotId, PlotSpec, PlotStyle,
+    Rgba8, SourceId,
+};
 
 use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::builtins::{Builtin, did_you_mean, rejection_of};
@@ -39,6 +42,8 @@ pub const MAX_BARS_BACK_CAP: usize = 500;
 const DEFAULT_PLOT_WIDTH: f32 = 1.5;
 /// Default plot color when a `plot()` gives none (egui-agnostic amber).
 const DEFAULT_PLOT_COLOR: Rgba8 = Rgba8::opaque(255, 179, 0);
+/// Default fill color when `fill()` gives none: translucent amber.
+const DEFAULT_FILL_COLOR: Rgba8 = Rgba8::new(255, 179, 0, 40);
 
 /// Identity of one stateful kernel call site (§2.5 locked decision).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,6 +100,8 @@ pub struct CompiledScript {
     pub inputs: Vec<InputSpec>,
     /// The fixed plot registry, in top-level declaration order.
     pub plots: Vec<PlotSpec>,
+    /// Fills between plot pairs, resolved at load time.
+    pub fills: Vec<FillSpec>,
     /// Load-time warnings (ignored args, inert `alertcondition`, missing
     /// version directive) — surfaced in the UI, never fatal.
     pub warnings: Vec<PineError>,
@@ -153,6 +160,7 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
 
     compiler.collect_declarations();
     compiler.resolve_and_scan();
+    compiler.resolve_fills();
     if compiler.errors.is_empty() {
         Ok(compiler.finish())
     } else {
@@ -313,6 +321,10 @@ struct Compiler {
     global_init: Vec<Option<NodeId>>,
     /// Slots reassigned anywhere (`:=`): never const-foldable.
     reassigned: Vec<bool>,
+    /// `fill(...)` calls, resolved after name resolution (their plot-handle
+    /// arguments need the global-init map).
+    pending_fills: Vec<(NodeId, Vec<Arg>)>,
+    fills: Vec<FillSpec>,
 }
 
 impl Compiler {
@@ -342,6 +354,8 @@ impl Compiler {
             max_bars_back: 1,
             global_init: Vec::new(),
             reassigned: Vec::new(),
+            pending_fills: Vec::new(),
+            fills: Vec::new(),
         }
     }
 
@@ -354,6 +368,7 @@ impl Compiler {
             overlay: self.overlay,
             inputs: self.inputs,
             plots: self.plots,
+            fills: self.fills,
             warnings: self.warnings,
             resolutions: self.resolutions,
             call_sites: self.call_sites,
@@ -408,8 +423,9 @@ impl Compiler {
         for statement in statements {
             let expr = match self.kind(statement) {
                 NodeKind::ExprStmt { expr } => *expr,
-                // Inputs live on declaration RHSes; collected during
-                // resolution's const walk instead (they need slot context).
+                // `a = plot(...)`: the handle a fill() will reference — the
+                // plot registers exactly like a bare plot statement.
+                NodeKind::Declare { value, .. } => *value,
                 _ => continue,
             };
             let NodeKind::Call { callee, args } = self.kind(expr).clone() else {
@@ -422,19 +438,16 @@ impl Compiler {
                 Some(Builtin::Indicator) => self.indicator_header(expr, &args),
                 Some(Builtin::Plot) => self.plot_call(expr, &args, false),
                 Some(Builtin::Hline) => self.plot_call(expr, &args, true),
-                Some(
-                    kind @ (Builtin::PlotShape
-                    | Builtin::PlotChar
-                    | Builtin::Fill
-                    | Builtin::Bgcolor
-                    | Builtin::Barcolor),
-                ) => {
+                Some(Builtin::PlotShape) => self.shape_call(expr, &args, false),
+                Some(Builtin::PlotChar) => self.shape_call(expr, &args, true),
+                Some(Builtin::Fill) => self.pending_fills.push((expr, args.clone())),
+                Some(kind @ (Builtin::Bgcolor | Builtin::Barcolor)) => {
                     let span = self.span(expr);
                     self.warnings.push(PineError::new(
                         ErrorCode::PineUnsupported,
                         span,
                         format!(
-                            "{kind:?} is accepted but not drawn yet (shape plots and bar                              colors land with the drawing milestone)"
+                            "{kind:?} is accepted but not drawn yet (per-bar color                              columns land with a later milestone)"
                         ),
                     ));
                 }
@@ -529,8 +542,125 @@ impl Compiler {
             base_color,
             width,
             offset: 0,
+            marker: None,
         });
         self.plot_of_call[call.index()] = Some(index);
+    }
+
+    /// `plotshape`/`plotchar`: a marker column. The cells are na (nothing)
+    /// or a value; for `location.absolute` the value is the y.
+    fn shape_call(&mut self, call: NodeId, args: &[Arg], is_char: bool) {
+        let index = self.plots.len();
+        let title = self
+            .arg(args, 1, "title")
+            .and_then(|a| match self.fold(a.value) {
+                Some(Const::Str(s)) => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| format!("shape {index}"));
+        let shape = self
+            .arg(args, 2, if is_char { "char" } else { "style" })
+            .and_then(|a| match self.fold(a.value) {
+                Some(Const::Enum(tag)) => Some(match tag {
+                    "triangledown" => MarkerShape::TriangleDown,
+                    "circle" => MarkerShape::Circle,
+                    "labelup" => MarkerShape::LabelUp,
+                    "labeldown" => MarkerShape::LabelDown,
+                    "cross" => MarkerShape::Cross,
+                    _ => MarkerShape::TriangleUp,
+                }),
+                // plotchar's char argument is a string; any char renders as
+                // a circle with text.
+                Some(Const::Str(_)) => Some(MarkerShape::Circle),
+                _ => None,
+            })
+            .unwrap_or(MarkerShape::TriangleUp);
+        let location = self
+            .arg(args, 3, "location")
+            .and_then(|a| match self.fold(a.value) {
+                Some(Const::Enum("belowbar")) => Some(MarkerLocation::BelowBar),
+                Some(Const::Enum("absolute")) => Some(MarkerLocation::Absolute),
+                Some(Const::Enum(_)) => Some(MarkerLocation::AboveBar),
+                _ => None,
+            })
+            .unwrap_or(MarkerLocation::AboveBar);
+        let base_color = self
+            .arg(args, 4, "color")
+            .and_then(|a| match self.fold(a.value) {
+                Some(Const::Color(rgba)) => Some(Rgba8::from_u32(rgba)),
+                _ => None,
+            })
+            .unwrap_or(DEFAULT_PLOT_COLOR);
+        let text = args
+            .iter()
+            .find(|a| a.name.as_deref() == Some(if is_char { "char" } else { "text" }))
+            .and_then(|a| match self.fold(a.value) {
+                Some(Const::Str(s)) if !s.is_empty() => Some(s),
+                _ => None,
+            });
+        self.plots.push(PlotSpec {
+            id: PlotId::new(index),
+            title,
+            style: PlotStyle::Circles,
+            base_color,
+            width: DEFAULT_PLOT_WIDTH,
+            offset: 0,
+            marker: Some(MarkerSpec {
+                shape,
+                location,
+                text,
+            }),
+        });
+        self.plot_of_call[call.index()] = Some(index);
+    }
+
+    /// `fill(p1, p2, color)`: both arguments must resolve to `plot()`
+    /// results at load time — a fill between unknowable columns cannot be
+    /// drawn honestly.
+    fn resolve_fills(&mut self) {
+        for (call, args) in std::mem::take(&mut self.pending_fills) {
+            let a = args.first().and_then(|arg| self.plot_ref_of(arg.value));
+            let b = args.get(1).and_then(|arg| self.plot_ref_of(arg.value));
+            let color = self
+                .arg(&args, 2, "color")
+                .and_then(|arg| match self.fold(arg.value) {
+                    Some(Const::Color(rgba)) => Some(Rgba8::from_u32(rgba)),
+                    _ => None,
+                })
+                .unwrap_or(DEFAULT_FILL_COLOR);
+            match (a, b) {
+                (Some(a), Some(b)) => self.fills.push(FillSpec {
+                    a: PlotId::new(a),
+                    b: PlotId::new(b),
+                    color,
+                }),
+                _ => {
+                    let span = self.span(call);
+                    self.errors.push(PineError::new(
+                        ErrorCode::PineUnsupported,
+                        span,
+                        "fill() arguments must be plot() results (assign the plot to a \
+                         variable and pass that)",
+                    ));
+                }
+            }
+        }
+    }
+
+    /// A node that denotes a plot column: a `plot(...)` call itself, or a
+    /// name whose initialiser is one.
+    fn plot_ref_of(&self, node: NodeId) -> Option<usize> {
+        if let Some(index) = self.plot_of_call[node.index()] {
+            return Some(index);
+        }
+        if let NodeKind::Name(_) = self.kind(node)
+            && let Resolution::Global(slot) = self.resolutions[node.index()]
+            && !self.reassigned.get(slot as usize).copied().unwrap_or(true)
+            && let Some(init) = self.global_init.get(slot as usize).copied().flatten()
+        {
+            return self.plot_of_call[init.index()];
+        }
+        None
     }
 
     // ---- pass 4 support: const folding ------------------------------------

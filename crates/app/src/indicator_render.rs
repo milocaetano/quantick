@@ -31,6 +31,10 @@ const AREA_FILL_ALPHA: u8 = 48;
 const PANE_PAD_FRAC: f64 = 0.08;
 /// Pane label font size.
 const PANE_LABEL_FONT: f32 = 11.0;
+/// Marker size (triangle half-height / circle radius), in pixels.
+const MARKER_SIZE_PX: f32 = 4.0;
+/// Gap between a bar's extreme and its above/below marker, in pixels.
+const MARKER_GAP_PX: f32 = 6.0;
 
 fn color32(c: Rgba8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -88,9 +92,19 @@ pub(crate) fn draw_overlays<'a>(
     start: usize,
     end: usize,
     partial_slot: Option<usize>,
+    bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
     for view in overlays {
-        draw_view_plots(painter, view, x, |v| scale.y(v), start, end, partial_slot);
+        draw_view_plots(
+            painter,
+            view,
+            x,
+            |v| scale.y(v),
+            start,
+            end,
+            partial_slot,
+            bar_extents,
+        );
     }
 }
 
@@ -138,7 +152,22 @@ pub(crate) fn draw_pane(
         );
     }
 
-    draw_view_plots(&clipped, view, x, |v| scale.y(v), start, end, partial_slot);
+    let pane_extents = |_slot: usize| {
+        Some((
+            pane.top() + MARKER_GAP_PX * 2.0,
+            pane.bottom() - MARKER_GAP_PX * 2.0,
+        ))
+    };
+    draw_view_plots(
+        &clipped,
+        view,
+        x,
+        |v| scale.y(v),
+        start,
+        end,
+        partial_slot,
+        &pane_extents,
+    );
     draw_objects(&clipped, view.render_objects(), x, |v| scale.y(v));
 
     painter.text(
@@ -208,6 +237,7 @@ fn format_value(v: f64) -> String {
 }
 
 /// Draw all plots of one view with a shared y mapping.
+#[allow(clippy::too_many_arguments)]
 fn draw_view_plots(
     painter: &egui::Painter,
     view: &IndicatorView,
@@ -216,7 +246,12 @@ fn draw_view_plots(
     start: usize,
     end: usize,
     partial_slot: Option<usize>,
+    bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
+    // Fills first: bands read as background, never covering their plots.
+    for fill in &view.descriptor.fills {
+        draw_fill(painter, view, fill, x, &y_of, start, end, partial_slot);
+    }
     for (index, spec) in view.descriptor.plots.iter().enumerate() {
         let Some(column) = view.columns.get(index) else {
             continue;
@@ -233,6 +268,10 @@ fn draw_view_plots(
         };
         let color = color32(spec.base_color);
         let stroke = Stroke::new(spec.width, color);
+        if let Some(marker) = &spec.marker {
+            draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
+            continue;
+        }
         match spec.style {
             PlotStyle::Line => draw_line(painter, &visible, x, &y_of, stroke, false),
             PlotStyle::StepLine => draw_line(painter, &visible, x, &y_of, stroke, true),
@@ -461,5 +500,151 @@ pub(crate) fn draw_objects(
             galley,
             color32(label.text_color),
         );
+    }
+}
+
+/// A band between two plot columns: one convex quad per adjacent pair where
+/// all four cells are finite. A pair whose sides cross inside one slot
+/// renders as a pinched quad — acceptable at candle widths; splitting at
+/// the crossing is a later nicety.
+#[allow(clippy::too_many_arguments)]
+fn draw_fill(
+    painter: &egui::Painter,
+    view: &IndicatorView,
+    fill: &quantick_indicators::FillSpec,
+    x: &PlotX<'_>,
+    y_of: &impl Fn(f64) -> f32,
+    start: usize,
+    end: usize,
+    partial_slot: Option<usize>,
+) {
+    let (Some(col_a), Some(col_b)) = (
+        view.columns.get(fill.a.index()),
+        view.columns.get(fill.b.index()),
+    ) else {
+        return;
+    };
+    let preview_pair = partial_slot.and_then(|slot| {
+        let frame = view.preview.as_ref()?;
+        let a = frame.values.get(fill.a.index()).copied()?;
+        let b = frame.values.get(fill.b.index()).copied()?;
+        Some((slot, a, b))
+    });
+    let color = color32(fill.color);
+    let cell = |row: usize| -> Option<(f32, f32, f32)> {
+        let (a, b) = if row < col_a.len().min(col_b.len()) {
+            (col_a[row], col_b[row])
+        } else if let Some((slot, a, b)) = preview_pair
+            && row == slot
+        {
+            (a, b)
+        } else {
+            return None;
+        };
+        (a.is_finite() && b.is_finite()).then(|| (x.x(row), y_of(a), y_of(b)))
+    };
+    let last = preview_pair.map_or(end.saturating_sub(1), |(slot, ..)| slot);
+    let mut previous: Option<(f32, f32, f32)> = None;
+    for row in start..=last {
+        let current = cell(row);
+        if let (Some((x0, a0, b0)), Some((x1, a1, b1))) = (previous, current) {
+            painter.add(Shape::convex_polygon(
+                vec![pos2(x0, a0), pos2(x1, a1), pos2(x1, b1), pos2(x0, b0)],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        previous = current;
+    }
+}
+
+/// Markers for a `plotshape`/`plotchar` column: na cells draw nothing;
+/// above/below cells anchor to the bar's extremes, absolute cells to their
+/// own value.
+fn draw_shape_markers(
+    painter: &egui::Painter,
+    plot: &VisiblePlot<'_>,
+    x: &PlotX<'_>,
+    y_of: &impl Fn(f64) -> f32,
+    color: Color32,
+    marker: &quantick_indicators::MarkerSpec,
+    bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
+) {
+    use quantick_indicators::{MarkerLocation, MarkerShape};
+    for (row, value) in plot.cells() {
+        if value.is_nan() {
+            continue;
+        }
+        let cx = x.x(row);
+        let cy = match marker.location {
+            MarkerLocation::Absolute => y_of(value),
+            MarkerLocation::AboveBar => match bar_extents(row) {
+                Some((high_y, _)) => high_y - MARKER_GAP_PX,
+                None => continue,
+            },
+            MarkerLocation::BelowBar => match bar_extents(row) {
+                Some((_, low_y)) => low_y + MARKER_GAP_PX,
+                None => continue,
+            },
+        };
+        if !cy.is_finite() {
+            continue;
+        }
+        let center = pos2(cx, cy);
+        let r = MARKER_SIZE_PX;
+        match marker.shape {
+            MarkerShape::TriangleUp | MarkerShape::LabelUp => {
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        center + egui::vec2(0.0, -r),
+                        center + egui::vec2(r, r),
+                        center + egui::vec2(-r, r),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+            MarkerShape::TriangleDown | MarkerShape::LabelDown => {
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        center + egui::vec2(0.0, r),
+                        center + egui::vec2(-r, -r),
+                        center + egui::vec2(r, -r),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+            MarkerShape::Circle => {
+                painter.circle_filled(center, r, color);
+            }
+            MarkerShape::Cross => {
+                let stroke = Stroke::new(1.5_f32, color);
+                painter.line_segment(
+                    [center + egui::vec2(-r, -r), center + egui::vec2(r, r)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [center + egui::vec2(-r, r), center + egui::vec2(r, -r)],
+                    stroke,
+                );
+            }
+        }
+        if let Some(text) = &marker.text {
+            let above = matches!(marker.location, MarkerLocation::BelowBar);
+            let anchor = if above {
+                egui::Align2::CENTER_TOP
+            } else {
+                egui::Align2::CENTER_BOTTOM
+            };
+            let offset = if above { r + 2.0 } else { -(r + 2.0) };
+            painter.text(
+                center + egui::vec2(0.0, offset),
+                anchor,
+                text,
+                egui::FontId::proportional(OBJECT_LABEL_FONT),
+                color,
+            );
+        }
     }
 }

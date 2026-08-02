@@ -36,6 +36,8 @@ pub struct IndicatorDescriptor {
     pub plots: Vec<PlotSpec>,
     /// The declared user inputs, in declaration order.
     pub inputs: Vec<InputSpec>,
+    /// Fills between plot pairs, drawn behind the plots.
+    pub fills: Vec<crate::output::FillSpec>,
 }
 
 /// Per-evaluation context the host provides: values that belong to the chart

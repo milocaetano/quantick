@@ -224,9 +224,11 @@ mod tests {
                     base_color: Rgba8::opaque(255, 255, 255),
                     width: 1.0,
                     offset: 0,
+                    marker: None,
                 })
                 .collect(),
             inputs: Vec::new(),
+            fills: Vec::new(),
         }
     }
 

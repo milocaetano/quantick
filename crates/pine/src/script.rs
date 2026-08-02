@@ -65,6 +65,7 @@ impl ScriptIndicator {
             overlay: compiled.overlay,
             plots: compiled.plots.clone(),
             inputs: compiled.inputs.clone(),
+            fills: compiled.fills.clone(),
         };
         let plots = PlotBuffer::new(compiled.plots.len());
         let state = ScriptState::new(compiled.global_slots);
