@@ -26,6 +26,9 @@ use crate::drawings::{
     MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, PresetHost,
 };
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
+use crate::indicator_render::{self, PlotX};
+use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
+use crate::indicators::IndicatorViews;
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -58,6 +61,9 @@ const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
+/// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
+/// generated from `InputSpec` replaces this in M4).
+const DEFAULT_EMA_LEN: usize = 9;
 /// Inspector width bounds (UX spec: resizable between 300 and 440 px).
 const INSPECTOR_MIN_WIDTH_PX: f32 = 300.0;
 /// See [`INSPECTOR_MIN_WIDTH_PX`].
@@ -306,6 +312,12 @@ pub struct QuantickApp {
     feed_capabilities: watch::Receiver<FeedCapabilities>,
     commands: mpsc::Sender<FeedCommand>,
     orderflow: OrderflowView,
+    /// Background thread owning the `IndicatorHost`; the UI only sends
+    /// commands and applies the delta events back.
+    indicator_worker: IndicatorWorker,
+    /// The UI's copy of every indicator's plot columns (see
+    /// [`crate::indicators`]).
+    indicators: IndicatorViews,
     book_capture_epoch: u64,
     book_channel_closed_reported: bool,
     /// Whether the user wants the live strip shown. The pixels it actually
@@ -473,6 +485,8 @@ impl QuantickApp {
             notice: FeedNotice::Clear,
             commands: feed.commands,
             orderflow: OrderflowView::new(symbol.clone()),
+            indicator_worker: IndicatorWorker::spawn(),
+            indicators: IndicatorViews::new(),
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
             live_strip_visible: false,
@@ -555,6 +569,16 @@ impl QuantickApp {
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.orderflow.set_bubbles_enabled(true);
+        }
+        // Same convenience for indicators: open with the two M1 natives on
+        // (EMA overlay + CVD pane), through the same code path the toolbar
+        // menu takes, so a scripted validation run needs no clicks.
+        if std::env::var("QUANTICK_INDICATORS_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.add_indicator(IndicatorSource::NativeEma {
+                len: DEFAULT_EMA_LEN,
+                source: quantick_indicators::SourceId::Close,
+            });
+            app.add_indicator(IndicatorSource::NativeCvd);
         }
         // Same convenience for Market Replay: open the folder named by
         // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
@@ -684,6 +708,17 @@ impl QuantickApp {
             live_strip_on: self.live_strip_visible,
             dock_visible: self.dock.visible(),
             appearance_open: self.show_style,
+            indicators: self
+                .indicators
+                .all()
+                .iter()
+                .map(|view| toolbar::IndicatorMenuEntry {
+                    slot: view.slot.0,
+                    label: view.label().to_owned(),
+                    hidden: view.hidden,
+                    errored: view.error.is_some(),
+                })
+                .collect(),
         };
         let actions = toolbar::draw(ctx, &mut model);
         // A newly picked feed may not offer the current symbol. Never during
@@ -710,6 +745,21 @@ impl QuantickApp {
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+            ToolbarAction::AddEmaIndicator => self.add_indicator(IndicatorSource::NativeEma {
+                len: DEFAULT_EMA_LEN,
+                source: quantick_indicators::SourceId::Close,
+            }),
+            ToolbarAction::AddCvdIndicator => self.add_indicator(IndicatorSource::NativeCvd),
+            ToolbarAction::ToggleIndicatorHidden(slot) => {
+                self.indicators.toggle_hidden(SlotId(slot));
+            }
+            ToolbarAction::RemoveIndicator(slot) => {
+                // UI first (the entry vanishes this frame), worker second;
+                // events already in flight for the slot are dropped on apply.
+                self.indicators.remove(SlotId(slot));
+                self.indicator_worker
+                    .send(IndicatorCommand::Remove(SlotId(slot)));
+            }
         }
     }
 
@@ -1045,6 +1095,7 @@ impl QuantickApp {
                 // window past the end of the data, drawing nothing.
                 let anchor = self.right_edge_time();
                 self.state.set_spec(desired);
+                self.send_indicator_rebuild();
                 self.reset_drawing_overlay();
                 self.viewport.reanchor(
                     anchor.and_then(|ms| self.state.slot_at_time(ms)),
@@ -1146,6 +1197,11 @@ impl QuantickApp {
                     }
                     self.history_trades += trades.len();
                     self.state.ingest_backfill(&trades);
+                    self.indicator_worker
+                        .send(IndicatorCommand::Backfilled(self.state.bars().to_vec()));
+                    self.indicator_worker.send(IndicatorCommand::PartialUpdated(
+                        self.state.partial().cloned(),
+                    ));
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
@@ -1156,6 +1212,8 @@ impl QuantickApp {
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
                     self.drawings.shift_bars(added);
+                    // Older trades re-cut every bar; replay from scratch.
+                    self.send_indicator_rebuild();
                 }
                 Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
                 Ok(FeedEvent::LiveBatch(trades)) => {
@@ -1186,7 +1244,36 @@ impl QuantickApp {
         self.live_trades += 1;
         self.trades_since_summary += 1;
         self.orderflow.record_trade(trade);
+        let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
+        // At most one bar closes per trade (an atomic market event is never
+        // split), so "grew" identifies exactly the bar that closed.
+        if self.state.bars().len() > bars_before
+            && let Some(closed) = self.state.bars().last()
+        {
+            self.indicator_worker
+                .send(IndicatorCommand::BarClosed(closed.clone()));
+        }
+        self.indicator_worker.send(IndicatorCommand::PartialUpdated(
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Ask the worker to replay the chart's bars from scratch — the one
+    /// command behind spec switches, prepended history and source resets, so
+    /// indicators inherit correct behavior for every rebuild path.
+    fn send_indicator_rebuild(&mut self) {
+        self.indicator_worker.send(IndicatorCommand::Rebuild(
+            self.state.bars().to_vec(),
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Reserve a slot and ask the worker to instantiate `source` behind it.
+    fn add_indicator(&mut self, source: IndicatorSource) {
+        let slot = self.indicators.allocate_slot();
+        self.indicator_worker
+            .send(IndicatorCommand::Add { slot, source });
     }
 
     /// Throw away everything loaded and wait for the source to refill it.
@@ -1196,6 +1283,10 @@ impl QuantickApp {
     /// because bars that already closed cannot be reopened.
     fn reset_market_state(&mut self) {
         self.state = ChartState::new(self.current_spec());
+        // Indicators follow the chart into the empty state; the refill's
+        // Backfilled event replays them (replay seek funnels through here,
+        // so seeking inherits correct indicator behavior for free).
+        self.send_indicator_rebuild();
         self.viewport = Viewport::new();
         self.price_view = PriceView::new();
         self.last_auto_range = None;
@@ -1985,7 +2076,10 @@ impl QuantickApp {
         let partial = self.state.partial();
         let total = closed.len() + usize::from(partial.is_some());
         let areas = plot_split(area, self.live_strip_width());
-        let chart_rect = areas.chart;
+        // Indicator panes claim the bottom band before anything scales to the
+        // chart rect; the candles keep the rest (plan §4.3, fixed fraction v1).
+        let (chart_rect, pane_rects) =
+            crate::indicators::split_panes(areas.chart, self.indicators.visible_panes().count());
         if total == 0 {
             painter.text(
                 area.center(),
@@ -2130,6 +2224,41 @@ impl QuantickApp {
         if let Some(partial) = partial_visible {
             let xc = self.viewport.x_center(closed.len(), right, total);
             draw_candle(&clip, xc, half, &scale, partial, true, &self.style.candles);
+        }
+        // Overlay indicator plots ride the candles' own clip, scale and
+        // x-mapping — after candles, before aggression bubbles (the same
+        // paint-order slot draw objects will take in M3).
+        let plot_x = PlotX {
+            viewport: &self.viewport,
+            right,
+            total,
+        };
+        indicator_render::draw_overlays(
+            &clip,
+            self.indicators.visible_overlays(),
+            &plot_x,
+            &scale,
+            start,
+            end,
+            partial_visible.map(|_| closed.len()),
+        );
+        // Pane indicators stack in the band carved off above, sharing the
+        // candles' x-mapping so bars and their flow read as one chart.
+        for (view, pane) in self.indicators.visible_panes().zip(&pane_rects) {
+            let pane = egui::Rect::from_min_max(
+                egui::pos2(history_rect.left(), pane.top()),
+                egui::pos2(history_rect.right(), pane.bottom()),
+            );
+            indicator_render::draw_pane(
+                painter,
+                pane,
+                view,
+                &plot_x,
+                start,
+                end,
+                partial_visible.map(|_| closed.len()),
+                canvas_background,
+            );
         }
         if let Some(frame) = &orderflow_frame {
             self.orderflow.draw_aggressions(
@@ -3561,6 +3690,10 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_feed();
+        // Apply the indicator worker's deltas before the draw reads columns.
+        for event in self.indicator_worker.drain_events() {
+            self.indicators.apply(event);
+        }
         self.drain_book_feed();
         self.drain_notices();
         // Heartbeat for the recorder. The lifecycle calls below already start

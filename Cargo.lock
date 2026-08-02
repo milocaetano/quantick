@@ -2471,6 +2471,7 @@ dependencies = [
  "quantick-engine",
  "quantick-feed-binance",
  "quantick-feed-mt5",
+ "quantick-indicators",
  "quantick-orderbook",
  "quantick-replay",
  "rfd",
