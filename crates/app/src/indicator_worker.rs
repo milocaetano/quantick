@@ -18,8 +18,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use quantick_engine::Bar;
 use quantick_indicators::{
-    EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InstanceId, ObjectSnapshot,
-    PreviewFrame, SourceId,
+    EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
+    ObjectSnapshot, PreviewFrame, SourceId,
     native::{Cvd, Ema},
 };
 
@@ -46,14 +46,39 @@ impl IndicatorSource {
     /// error string is the full human rendering — every problem, each with
     /// file:line:col and its stable code.
     fn build(&self) -> Result<Box<dyn Indicator>, String> {
+        self.build_with(None)
+    }
+
+    /// Build with bound input values (the settings apply path). `None` =
+    /// declared defaults. Values are defensive: a missing or mistyped cell
+    /// falls back to its default rather than panicking the worker.
+    fn build_with(&self, values: Option<&[InputValue]>) -> Result<Box<dyn Indicator>, String> {
         match self {
-            IndicatorSource::NativeEma { len, source } => Ok(Box::new(Ema::new(*len, *source))),
+            IndicatorSource::NativeEma { len, source } => {
+                let mut len = *len;
+                let mut src = *source;
+                if let Some(values) = values {
+                    if let Some(InputValue::Int(v)) = values.first() {
+                        len = usize::try_from((*v).max(1)).unwrap_or(1);
+                    }
+                    if let Some(InputValue::Source(s)) = values.get(1) {
+                        src = *s;
+                    }
+                }
+                Ok(Box::new(Ema::new(len, src)))
+            }
             IndicatorSource::NativeCvd => Ok(Box::new(Cvd::new())),
             IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
-                Ok(compiled) => Ok(Box::new(quantick_pine::ScriptIndicator::new(
-                    compiled,
-                    text.clone(),
-                ))),
+                Ok(compiled) => Ok(Box::new(match values {
+                    Some(values) if values.len() == compiled.inputs.len() => {
+                        quantick_pine::ScriptIndicator::with_inputs(
+                            compiled,
+                            text.clone(),
+                            values.to_vec(),
+                        )
+                    }
+                    _ => quantick_pine::ScriptIndicator::new(compiled, text.clone()),
+                })),
                 Err(errors) => Err(errors
                     .iter()
                     .map(|e| e.render(name, text))
@@ -92,6 +117,12 @@ pub(crate) enum IndicatorCommand {
         slot: SlotId,
         source: IndicatorSource,
     },
+    /// Rebind a slot input set: construct anew, replace, replay — the
+    /// running instance never observes an input changing mid-stream.
+    SetInputs {
+        slot: SlotId,
+        values: Vec<InputValue>,
+    },
     /// Drop a slot.
     Remove(SlotId),
     /// Test barrier: acknowledged only after every earlier command has been
@@ -111,6 +142,9 @@ pub(crate) enum IndicatorEvent {
         slot: SlotId,
         descriptor: IndicatorDescriptor,
         columns: Vec<Vec<f64>>,
+        /// The values currently bound to the declared inputs (defaults on
+        /// first load) — what the settings dialog opens with.
+        inputs: Vec<InputValue>,
     },
     /// One committed row (one closed bar) for one slot.
     Appended { slot: SlotId, row: Vec<f64> },
@@ -135,6 +169,10 @@ struct SlotMirror {
     /// `None`: the source never loaded (script compile error) — the slot
     /// exists only as a UI entry carrying its error.
     host_id: Option<InstanceId>,
+    /// What to rebuild from when inputs change or a script reloads.
+    source: IndicatorSource,
+    /// Values currently bound to the declared inputs.
+    values: Vec<InputValue>,
     /// Committed rows the UI has (via Rebuilt/Appended events).
     known_rows: usize,
     /// Whether the UI has been told about the current error state.
@@ -236,11 +274,19 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
+                        let values: Vec<InputValue> = indicator
+                            .descriptor()
+                            .inputs
+                            .iter()
+                            .map(quantick_indicators::InputSpec::default_value)
+                            .collect();
                         let host_id = host.add(indicator);
                         slots.insert(
                             slot,
                             SlotMirror {
                                 host_id: Some(host_id),
+                                source,
+                                values,
                                 known_rows: 0,
                                 error_reported: false,
                                 objects_revision: 0,
@@ -262,6 +308,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 fills: Vec::new(),
                             },
                             columns: Vec::new(),
+                            inputs: Vec::new(),
                         });
                         let _ = events.send(IndicatorEvent::Error {
                             slot,
@@ -274,6 +321,8 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                             slot,
                             SlotMirror {
                                 host_id: None,
+                                source,
+                                values: Vec::new(),
                                 known_rows: 0,
                                 error_reported: true,
                                 objects_revision: 0,
@@ -281,6 +330,32 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                         );
                     }
                 },
+                IndicatorCommand::SetInputs { slot, values } => {
+                    if let Some(mirror) = slots.get_mut(&slot)
+                        && let Some(host_id) = mirror.host_id
+                    {
+                        match mirror.source.build_with(Some(&values)) {
+                            Ok(indicator) => {
+                                host.replace(host_id, indicator);
+                                mirror.values = values;
+                                // Force a full Rebuilt on publish: the new
+                                // instance replayed the whole history.
+                                mirror.known_rows = 0;
+                                mirror.error_reported = false;
+                                mirror.objects_revision = 0;
+                            }
+                            Err(message) => {
+                                let _ = events.send(IndicatorEvent::Error {
+                                    slot,
+                                    error: EvalError {
+                                        bar_index: 0,
+                                        message,
+                                    },
+                                });
+                            }
+                        }
+                    }
+                }
                 IndicatorCommand::Remove(slot) => {
                     if let Some(mirror) = slots.remove(&slot)
                         && let Some(host_id) = mirror.host_id
@@ -334,6 +409,7 @@ fn publish_deltas(
                 slot,
                 descriptor: descriptor.clone(),
                 columns,
+                inputs: mirror.values.clone(),
             });
             mirror.known_rows = rows;
             mirror.error_reported = false;
@@ -661,6 +737,58 @@ mod object_event_tests {
             *views.all()[0].render_objects(),
             before,
             "same bars in, same objects out"
+        );
+    }
+}
+
+#[cfg(test)]
+mod set_inputs_tests {
+    use super::*;
+    use crate::indicators::IndicatorViews;
+    use quantick_indicators::{IndicatorHost, PlotId, native::Ema};
+
+    /// Applying settings = construct anew + replace + replay: the columns
+    /// after SetInputs must equal a host that ran the new inputs from bar
+    /// zero, and the UI must receive a full Rebuilt carrying the new values.
+    #[test]
+    fn set_inputs_recomputes_like_a_fresh_instance() {
+        let trades: Vec<quantick_engine::Trade> = (1..=20).map(tests::trade).collect();
+        let mut builder = quantick_engine::TickBarBuilder::new(2);
+        let bars = quantick_engine::golden::replay(&mut builder, &trades);
+
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::NativeEma {
+                len: 3,
+                source: SourceId::Close,
+            },
+        });
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        worker.send(IndicatorCommand::SetInputs {
+            slot,
+            values: vec![InputValue::Int(2), InputValue::Source(SourceId::Close)],
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+
+        let mut reference = IndicatorHost::new();
+        let id = reference.add(Box::new(Ema::new(2, SourceId::Close)));
+        for bar in &bars {
+            reference.push_closed_bar(bar);
+        }
+
+        let view = &views.all()[0];
+        assert_eq!(view.descriptor.title, "EMA(2)", "descriptor followed");
+        assert_eq!(view.input_values[0], InputValue::Int(2), "values followed");
+        assert_eq!(
+            format!("{:?}", view.columns[0]),
+            format!("{:?}", reference.plots(id).unwrap().column(PlotId::new(0))),
+            "SetInputs must replay as if the new inputs had always been set"
         );
     }
 }

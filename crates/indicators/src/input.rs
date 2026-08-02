@@ -46,6 +46,24 @@ pub enum SourceId {
 }
 
 impl SourceId {
+    /// Every selectable source, for building a settings dropdown.
+    pub const ALL: [SourceId; 14] = [
+        SourceId::Open,
+        SourceId::High,
+        SourceId::Low,
+        SourceId::Close,
+        SourceId::Hl2,
+        SourceId::Hlc3,
+        SourceId::Ohlc4,
+        SourceId::Hlcc4,
+        SourceId::Volume,
+        SourceId::Delta,
+        SourceId::BuyVolume,
+        SourceId::SellVolume,
+        SourceId::TradeCount,
+        SourceId::Cvd,
+    ];
+
     /// Resolve this source against one bar. `cvd` is passed in because it is
     /// the one cross-bar series — the host maintains it, the bar cannot.
     #[must_use]

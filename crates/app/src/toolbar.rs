@@ -230,6 +230,8 @@ pub enum ToolbarAction {
     RemoveIndicator(u64),
     /// Load a script from the library, by index into `ToolbarModel::scripts`.
     AddScriptIndicator(usize),
+    /// Open the settings dialog of an indicator.
+    OpenIndicatorSettings(u64),
 }
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
@@ -568,6 +570,13 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
                     .clicked()
                 {
                     actions.push(ToolbarAction::ToggleIndicatorHidden(entry.slot));
+                }
+                if ui
+                    .small_button(icons::GEAR)
+                    .on_hover_text("settings (applying recomputes from scratch)")
+                    .clicked()
+                {
+                    actions.push(ToolbarAction::OpenIndicatorSettings(entry.slot));
                 }
                 if ui
                     .small_button(icons::TRASH)
