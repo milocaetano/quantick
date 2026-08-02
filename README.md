@@ -326,7 +326,8 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` / `fe
 - [x] MetaTrader 5 feed
 - [x] Bookmap-inspired L2 liquidity heatmap (egui/glow; wgpu migration still open)
 - [x] Market replay of recorded sessions (trades; depth replay still open)
-- [ ] CVD & delta visuals (engine already stores per-bar buy/sell volume and delta; charting them is next)
+- [x] CVD & delta visuals (native EMA/CVD indicators, delta histograms, order-flow series in scripts)
+- [x] Scriptable indicators — "Quantick Pine", a Pine v5 subset with order-flow builtins (`delta`, `cvd`, `buy_volume`, …), drawing objects, hot reload and a persisted indicator set; see [docs/pine-dialect.md](docs/pine-dialect.md)
 - [ ] Python bindings
 - [ ] C API, so bots in C++ (or any language) can consume the engine
 
