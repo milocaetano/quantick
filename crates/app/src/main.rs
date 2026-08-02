@@ -81,7 +81,7 @@ fn main() -> eframe::Result {
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
-    let (config, source) = match config::load() {
+    let (mut config, source) = match config::load() {
         Ok(loaded) => loaded,
         Err(e) => {
             tracing::error!(
@@ -93,6 +93,15 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     };
+    if let Err(e) = config::apply_startup_selection_from_env(&mut config) {
+        tracing::error!(
+            target: "quantick::app",
+            event_code = "STARTUP_SELECTION_ERROR",
+            %e,
+            "cannot apply startup feed/symbol selection; fix or unset QUANTICK_DEFAULT_FEED and QUANTICK_DEFAULT_SYMBOL"
+        );
+        std::process::exit(1);
+    }
 
     let feed_id = config.default_feed.clone();
     let symbol = config.default_symbol.clone();

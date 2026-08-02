@@ -80,21 +80,24 @@ cargo run --release -p quantick-app
 
 ### 5. (Optional) Pick a different feed or symbol
 
-Feeds and symbols are configuration, never hardcoded. To change what the chart opens on, drop a `quantick.toml` in the working directory (it's git-ignored, so it stays local) or point `QUANTICK_CONFIG` at any TOML file. For example, to open on Ethereum:
+Feeds and symbols are configuration, never hardcoded. For a one-off startup
+selection, set `QUANTICK_DEFAULT_FEED` and `QUANTICK_DEFAULT_SYMBOL`; these
+change only what opens and keep every configured feed in the selector. For
+example, to open directly on Hyperliquid BTC:
 
-```toml
-# quantick.toml
-default_feed = "binance"
-default_symbol = "ETHUSDT"
-
-[[feeds]]
-id = "binance"
-name = "Binance"
-provider = "binance"
-symbols = ["BTCUSDT", "ETHUSDT"]
+```sh
+QUANTICK_DEFAULT_FEED=hyperliquid \
+QUANTICK_DEFAULT_SYMBOL=BTC \
+cargo run --release -p quantick-app
 ```
 
-The full set of options — available feeds, the optional MetaTrader 5 bridge, the L2 heatmap toggles and logging — is documented in [`crates/app/config/feeds.toml`](crates/app/config/feeds.toml) and in the [L2 liquidity map](#optional-l2-liquidity-map) section below.
+For a custom catalog, point `QUANTICK_CONFIG` at a TOML file or place a
+git-ignored `quantick.toml` in the working directory. These files replace the
+complete built-in catalog; they are not merged with it. Start by copying
+[`crates/app/config/feeds.toml`](crates/app/config/feeds.toml), then edit the
+copy so Binance, Hyperliquid or MetaTrader are removed only intentionally.
+The same file documents the optional MetaTrader 5 bridge, L2 heatmap toggles
+and logging.
 
 The built-in selector also includes Hyperliquid perpetuals (`BTC`, `ETH`,
 `HYPE`, `SOL`, `ZEC`). They need no account or API key: select **Hyperliquid**,
