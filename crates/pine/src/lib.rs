@@ -16,8 +16,11 @@
 //! folders; this crate only ever sees source text.
 
 pub mod ast;
+pub mod builtins;
+pub mod compile;
 pub mod error;
 pub mod lexer;
 pub mod parser;
 
+pub use compile::{CompiledScript, compile};
 pub use error::{ErrorCode, PineError, Span};
