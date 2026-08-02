@@ -27,8 +27,8 @@ pub struct BookStats {
     pub crossed: u64,
     /// Images rejected due to symbol, time, price, or size.
     pub malformed: u64,
-    /// Backwards timestamps held at the latest published instant.
-    pub clamped_timestamps: u64,
+    /// Images rejected because venue time moved behind the last published event.
+    pub timestamp_regressions: u64,
 }
 
 /// A complete image that cannot be published honestly.
@@ -38,6 +38,13 @@ pub enum BookMapError {
     Symbol { expected: String, got: String },
     /// Epoch timestamp is negative.
     Timestamp(i64),
+    /// Venue time moved behind the last event published by this capture task.
+    TimestampRegression {
+        /// Last factual timestamp published by the mapper.
+        last_published_ms: i64,
+        /// Regressive timestamp supplied by the venue.
+        got_ms: i64,
+    },
     /// Level price is not positive decimal data.
     Price {
         /// `bid` or `ask`.
@@ -70,6 +77,13 @@ impl std::fmt::Display for BookMapError {
                 write!(f, "expected {expected} book, got {got}")
             }
             Self::Timestamp(value) => write!(f, "invalid book timestamp {value}"),
+            Self::TimestampRegression {
+                last_published_ms,
+                got_ms,
+            } => write!(
+                f,
+                "book timestamp regressed to {got_ms} after {last_published_ms}"
+            ),
             Self::Price { side, value } => write!(f, "invalid {side} price {value:?}"),
             Self::Size { side, value } => write!(f, "invalid {side} size {value:?}"),
             Self::LevelCount { side, got, max } => {
@@ -138,13 +152,18 @@ impl BookMapper {
     ///
     /// # Errors
     ///
-    /// Rejects the complete image if any field is malformed. A partial book is
-    /// never substituted for an authoritative image.
+    /// Rejects the complete image if any field is malformed or its timestamp
+    /// regresses. A partial book or invented replacement time is never
+    /// substituted for an authoritative image.
     pub fn map(&mut self, image: &BookImage) -> Result<Option<DepthEvent>, BookMapError> {
         self.stats.images = self.stats.images.saturating_add(1);
         let result = self.map_inner(image);
-        if result.is_err() {
+        if let Err(error) = &result {
             self.stats.malformed = self.stats.malformed.saturating_add(1);
+            if matches!(error, BookMapError::TimestampRegression { .. }) {
+                self.stats.timestamp_regressions =
+                    self.stats.timestamp_regressions.saturating_add(1);
+            }
         }
         result
     }
@@ -159,18 +178,20 @@ impl BookMapper {
         if image.time < 0 {
             return Err(BookMapError::Timestamp(image.time));
         }
+        if let Some(last_published_ms) = self.last_event_ms
+            && image.time < last_published_ms
+        {
+            return Err(BookMapError::TimestampRegression {
+                last_published_ms,
+                got_ms: image.time,
+            });
+        }
         validate_level_count(&image.levels[0], "bid")?;
         validate_level_count(&image.levels[1], "ask")?;
         read_levels(&image.levels[0], "bid", &mut self.bids)?;
         read_levels(&image.levels[1], "ask", &mut self.asks)?;
 
-        let event_time_ms = match self.last_event_ms {
-            Some(last) if image.time < last => {
-                self.stats.clamped_timestamps = self.stats.clamped_timestamps.saturating_add(1);
-                last
-            }
-            _ => image.time,
-        };
+        let event_time_ms = image.time;
 
         let event = match self.differ.observe(&self.bids, &self.asks) {
             ImageOutcome::Snapshot(snapshot) => {
@@ -342,18 +363,41 @@ mod tests {
     }
 
     #[test]
-    fn backwards_time_is_clamped_and_counted() {
+    fn backwards_time_rejects_the_entire_image_and_preserves_state() {
         let mut mapper = BookMapper::new("BTC", 1);
-        mapper.map(&image(2_000, "2")).unwrap();
-        let event = mapper.map(&image(1_999, "3")).unwrap().unwrap();
-        assert!(matches!(
-            event,
-            DepthEvent::Update {
-                event_time_ms: 2_000,
-                ..
-            }
-        ));
-        assert_eq!(mapper.stats.clamped_timestamps, 1);
+        let initial = mapper.map(&image(2_000, "2")).unwrap().unwrap();
+        let DepthEvent::Snapshot { snapshot, .. } = initial else {
+            panic!("expected initial snapshot");
+        };
+        let initial_update_id = snapshot.last_update_id();
+        let status_before = mapper.synchronized_status();
+
+        assert_eq!(
+            mapper.map(&image(1_999, "3")),
+            Err(BookMapError::TimestampRegression {
+                last_published_ms: 2_000,
+                got_ms: 1_999,
+            })
+        );
+        assert_eq!(mapper.synchronized_status(), status_before);
+        assert_eq!(mapper.stats.snapshots, 1);
+        assert_eq!(mapper.stats.deltas, 0);
+        assert_eq!(mapper.stats.malformed, 1);
+        assert_eq!(mapper.stats.timestamp_regressions, 1);
+
+        let event = mapper.map(&image(2_001, "3")).unwrap().unwrap();
+        let DepthEvent::Update {
+            event_time_ms,
+            delta,
+            ..
+        } = event
+        else {
+            panic!("expected delta after rejected image");
+        };
+        assert_eq!(event_time_ms, 2_001);
+        assert_eq!(delta.first_update_id(), initial_update_id + 1);
+        assert_eq!(delta.final_update_id(), initial_update_id + 1);
+        assert_eq!(delta.bids().len(), 1);
     }
 
     #[test]

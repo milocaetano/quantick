@@ -44,6 +44,13 @@ pub async fn run_depth_with_reconnect(
             symbol,
             generation,
             error_class,
+            images_total = mapper.stats.images,
+            snapshots_total = mapper.stats.snapshots,
+            deltas_total = mapper.stats.deltas,
+            unchanged_total = mapper.stats.unchanged,
+            crossed_total = mapper.stats.crossed,
+            malformed_total = mapper.stats.malformed,
+            timestamp_regressions_total = mapper.stats.timestamp_regressions,
             %error,
             action = "reconnect",
             "Hyperliquid L2 generation ended"

@@ -17,7 +17,9 @@
 //! The venue publishes at most 20 L2 levels per side and sends a complete image
 //! roughly every half second. [`depth::BookMapper`] labels that limited coverage
 //! and uses the deterministic order-book [`quantick_orderbook::SnapshotDiffer`]
-//! to publish only actual changes after the first image.
+//! to publish only actual changes after the first image. A venue timestamp that
+//! moves behind the last published event rejects the complete image and ends
+//! that connection generation; it is never clamped to an invented time.
 
 pub mod backfill;
 pub mod depth;
