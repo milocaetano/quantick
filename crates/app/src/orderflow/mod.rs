@@ -39,7 +39,8 @@ pub use interaction::{
 #[allow(unused_imports)]
 pub use projection::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiquidityEvidence, PriceWindow, project,
+    LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PriceWindow, SettledProjection,
+    project_live, project_settled,
 };
 #[allow(unused_imports)]
 pub use timeline::{BarTimeline, LiveEdge, TimelinePosition, reserved_span_ms};

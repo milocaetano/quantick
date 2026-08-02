@@ -184,6 +184,27 @@ impl BarTimeline {
         self.locate_clamped(self.lane?.end_ms)
     }
 
+    /// Where the part of the chart that is still moving begins.
+    ///
+    /// Everything at or after it is redrawn from the tape on every frame: the
+    /// prints rolling through the lane, and the bar still taking orders. What
+    /// comes before it is finished — its bars are closed and their prints are
+    /// all in — so it can be reused until the layout itself changes.
+    ///
+    /// The answer is snapped back to a bar's own open time, never left at the
+    /// lane's edge: a bar split across the two halves would be summarized
+    /// twice, once per half, and draw two partial marks where the chart owes
+    /// one whole one.
+    #[must_use]
+    pub fn live_boundary_ms(&self) -> Option<i64> {
+        let newest = self.slots.last()?;
+        let from = self
+            .lane
+            .map_or(newest.start_ms, |lane| lane.start_ms.min(newest.start_ms));
+        let partition = self.slots.partition_point(|slot| slot.start_ms <= from);
+        Some(self.slots[partition.saturating_sub(1)].start_ms)
+    }
+
     /// Number of represented bar slots.
     #[must_use]
     #[allow(dead_code)]

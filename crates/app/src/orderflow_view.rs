@@ -8,7 +8,6 @@
 //! dense book: drawing always uses the latest already-built frame.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
@@ -28,8 +27,7 @@ use crate::orderflow::{
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM, reserved_span_ms,
 };
 use crate::orderflow_engine::{
-    BookPublished, CaptureStatus, OrderflowHealth, PROJECTION_INTERVAL, ProjectionLayout,
-    ProjectionRequest, VisibleOrderflow,
+    BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
 };
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
@@ -65,8 +63,6 @@ pub struct OrderflowView {
     last_seen_base: Decimal,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
-    last_requested_layout: Option<ProjectionLayout>,
-    last_request_at: Option<Instant>,
     /// Named bubble looks, loaded from the versionable presets file.
     presets: BubblePresetFile,
     /// Where those presets came from, shown in the panel.
@@ -119,8 +115,6 @@ impl OrderflowView {
             last_seen_base: base_grouping,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
-            last_requested_layout: None,
-            last_request_at: None,
             presets,
             presets_source,
             preset_name_draft,
@@ -291,8 +285,6 @@ impl OrderflowView {
         self.symbol = symbol.into();
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
-        self.last_requested_layout = None;
-        self.last_request_at = None;
         self.published = BookPublished::initial();
         self.worker
             .send(BookCommand::ResetForSymbol(self.symbol.clone()));
@@ -397,15 +389,12 @@ impl OrderflowView {
             on_newest_bar,
             price_range,
         };
-        let layout = request.layout();
-        let due = self
-            .last_request_at
-            .is_none_or(|at| at.elapsed() >= PROJECTION_INTERVAL);
-        if self.last_requested_layout != Some(layout) || due {
-            self.worker.send(BookCommand::Project(request));
-            self.last_requested_layout = Some(layout);
-            self.last_request_at = Some(Instant::now());
-        }
+        // Every frame, with no gate of its own. The worker coalesces requests
+        // latest-wins and decides for itself what is worth rebuilding, so the
+        // only thing a gate here could add is a bar snapshot older than the
+        // prints it is supposed to place — which is how a fresh print ends up
+        // outside the timeline and drawn nowhere.
+        self.worker.send(BookCommand::Project(request));
         self.published.frame.clone()
     }
 

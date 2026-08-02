@@ -1,16 +1,18 @@
 //! Renderer-independent projection of RLE history into normalized primitives.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use super::config::{BubbleSizeReference, HeatmapConfig, IntensityMode};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
-use super::history::{AggressorSide, LiquidityHistory, RestingSide};
+use super::history::{AggressorSide, CoverageSegment, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
 use super::interaction::{
-    AggressionCluster, cluster_aggressions, correlate_liquidity, liquidity_events,
+    AggressionCluster, LiquidityEvent, cluster_aggressions, correlate_liquidity, liquidity_events,
     merge_dust_clusters, summarize_clusters,
 };
 use super::timeline::BarTimeline;
@@ -190,13 +192,17 @@ pub struct HeatmapProjection {
     /// Whether the feature was enabled in sanitized configuration.
     pub enabled: bool,
     /// Visible heatmap rectangles.
-    pub cells: Vec<HeatmapCell>,
+    ///
+    /// Shared rather than owned: this layer is rebuilt on the projection
+    /// cadence while the frame around it is rebuilt per frame, so copying it
+    /// every time would cost more than building the live half does.
+    pub cells: Arc<Vec<HeatmapCell>>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
     /// Visible factual displayed-liquidity reductions.
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
-    /// Visible continuity gaps.
-    pub gaps: Vec<GapPrimitive>,
+    /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
+    pub gaps: Arc<Vec<GapPrimitive>>,
     /// Normalized x the live edge has reached inside the lane, and the signal
     /// that this frame has a lane at all. `None` when it follows no live edge.
     ///
@@ -222,15 +228,19 @@ pub struct HeatmapProjection {
 }
 
 impl HeatmapProjection {
-    /// A frame with nothing to draw. Also the seed the render tests build a
+    /// A frame with nothing to draw: the seed the render tests build a
     /// projection from, so they exercise the same struct the pipeline emits.
+    ///
+    /// The pipeline itself starts from [`SettledProjection::empty`] — it always
+    /// has a live half to attach, even when that half is empty too.
+    #[cfg(test)]
     pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
-            cells: Vec::new(),
+            cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
             liquidity_events: Vec::new(),
-            gaps: Vec::new(),
+            gaps: Arc::new(Vec::new()),
             live_now_x: None,
             effective_grouping,
             liquidity_reference: Decimal::ZERO,
@@ -239,6 +249,162 @@ impl HeatmapProjection {
             dropped_cells: 0,
             dropped_aggressions: 0,
             dropped_liquidity_events: 0,
+        }
+    }
+}
+
+/// The half of a frame that is finished, and can therefore be kept.
+///
+/// Its bars are closed and their prints are all in, so nothing in here changes
+/// until the layout does. The other half — [`LiveMarks`] — is whatever is still
+/// moving, and is rebuilt as often as the chart draws.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettledProjection {
+    /// Whether the feature was enabled in sanitized configuration.
+    pub enabled: bool,
+    /// Visible heatmap rectangles.
+    pub cells: Arc<Vec<HeatmapCell>>,
+    /// Bubbles of the bars that are done.
+    pub aggressions: Vec<AggressionPrimitive>,
+    /// Visible factual displayed-liquidity reductions.
+    pub liquidity_events: Vec<LiquidityEventPrimitive>,
+    /// Visible continuity gaps.
+    pub gaps: Arc<Vec<GapPrimitive>>,
+    /// Exact visual grouping resolved for this frame.
+    pub effective_grouping: EffectiveGrouping,
+    /// Quantity that maps to full cell intensity.
+    pub liquidity_reference: Decimal,
+    /// Quantity that maps to full aggression size for a single-print bubble.
+    pub aggression_reference: Decimal,
+    /// Quantity that maps to full size for a closed-bar summary.
+    pub summary_reference: Decimal,
+    /// Cells omitted by the configured primitive cap.
+    pub dropped_cells: usize,
+    /// Bubbles this half was already over the primitive cap by.
+    ///
+    /// Capping here as well as over the whole frame keeps the per-frame merge
+    /// proportional to what can be drawn rather than to the visible tape. It
+    /// costs nothing in what is shown: a mark the frame would keep is by
+    /// definition among the strongest of this half too.
+    pub dropped_aggressions: usize,
+    /// Liquidity events omitted by the visible-cell safety cap.
+    pub dropped_liquidity_events: usize,
+    /// Exchange time this half stops at, and the live half takes over from.
+    ///
+    /// Snapped to a bar's open time, so no bar is summarized twice — once per
+    /// half — and drawn as two partial marks where one whole one is owed.
+    pub live_from_ms: Option<i64>,
+    /// Reductions timestamped inside the live half, still unallocated.
+    ///
+    /// They are swept here, where the book is read, and handed over rather than
+    /// matched: the prints that could account for them are the ones the live
+    /// half rebuilds, so it is the half that must do the matching.
+    pub live_events: Vec<LiquidityEvent>,
+}
+
+/// The marks of the part of the chart that is still moving.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LiveMarks {
+    /// Bubbles for the prints after [`SettledProjection::live_from_ms`].
+    pub aggressions: Vec<AggressionPrimitive>,
+    /// Markers for the reductions those same prints were matched against.
+    pub liquidity_events: Vec<LiquidityEventPrimitive>,
+    /// Reductions the safety cap left out of this half.
+    pub dropped_liquidity_events: usize,
+    /// Normalized x the live edge has reached inside the lane.
+    pub live_now_x: Option<f64>,
+}
+
+impl SettledProjection {
+    /// A settled half with nothing in it.
+    pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
+        Self {
+            enabled,
+            cells: Arc::new(Vec::new()),
+            aggressions: Vec::new(),
+            liquidity_events: Vec::new(),
+            gaps: Arc::new(Vec::new()),
+            effective_grouping,
+            liquidity_reference: Decimal::ZERO,
+            aggression_reference: Decimal::ZERO,
+            summary_reference: Decimal::ZERO,
+            dropped_cells: 0,
+            dropped_aggressions: 0,
+            dropped_liquidity_events: 0,
+            live_from_ms: None,
+            live_events: Vec::new(),
+        }
+    }
+
+    /// Put the two halves together into the frame a renderer draws.
+    ///
+    /// The primitive cap is applied here, over both halves at once, so the
+    /// budget a frame is allowed to spend on bubbles is the whole chart's and
+    /// not one per half.
+    #[must_use]
+    pub fn with_live(&self, live: LiveMarks, config: &HeatmapConfig) -> HeatmapProjection {
+        let mut aggressions = Vec::with_capacity(self.aggressions.len() + live.aggressions.len());
+        aggressions.extend(self.aggressions.iter().cloned());
+        aggressions.extend(live.aggressions);
+        let dropped_aggressions = if config.show_aggressions {
+            self.dropped_aggressions
+                + aggressions
+                    .len()
+                    .saturating_sub(config.max_aggression_primitives)
+        } else {
+            0
+        };
+        // Capped first, then ordered: the cap picks by size, but what a frame
+        // draws is ordered by time, so a chart that is over the budget stacks
+        // its bubbles the same way as one that is under it.
+        cap_aggressions(&mut aggressions, config.max_aggression_primitives);
+        aggressions.sort_by(|a, b| {
+            a.first_timestamp_ms
+                .cmp(&b.first_timestamp_ms)
+                .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+                .then_with(|| a.live.cmp(&b.live))
+                .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+                .then_with(|| a.agg_id.cmp(&b.agg_id))
+        });
+
+        if !config.show_aggressions {
+            aggressions.clear();
+        }
+
+        // Side switches are display-only and run last: the size reference, the
+        // dust merge and the liquidity association all saw both sides, so
+        // hiding one side never rescales or re-associates the other.
+        aggressions.retain(|mark| match mark.side {
+            AggressorSide::Buy => config.show_buy_aggressions,
+            AggressorSide::Sell => config.show_sell_aggressions,
+        });
+
+        // Both halves capped themselves where they were built; the join is
+        // capped again for the same reason the bubbles are, so the markers a
+        // frame draws stay inside one budget rather than one per half.
+        let mut liquidity_events = self.liquidity_events.clone();
+        liquidity_events.extend(live.liquidity_events);
+        let dropped_liquidity_events = self.dropped_liquidity_events
+            + live.dropped_liquidity_events
+            + liquidity_events
+                .len()
+                .saturating_sub(config.max_visible_cells);
+        cap_events(&mut liquidity_events, config.max_visible_cells);
+
+        HeatmapProjection {
+            enabled: self.enabled,
+            cells: Arc::clone(&self.cells),
+            aggressions,
+            liquidity_events,
+            gaps: Arc::clone(&self.gaps),
+            live_now_x: live.live_now_x,
+            effective_grouping: self.effective_grouping,
+            liquidity_reference: self.liquidity_reference,
+            aggression_reference: self.aggression_reference,
+            summary_reference: self.summary_reference,
+            dropped_cells: self.dropped_cells,
+            dropped_aggressions,
+            dropped_liquidity_events,
         }
     }
 }
@@ -274,12 +440,39 @@ struct SlotHeat {
 ///
 /// Capture buckets are swept into visual ranges only for this frame. Retained
 /// base history remains untouched when grouping or zoom changes.
+///
+/// The whole frame in one call, which is how the tests read a projection.
+///
+/// The app itself never takes this path: it redraws the tape far faster than it
+/// redraws the map, so it holds the two halves apart — [`project_settled`] and
+/// [`project_live`] — and puts them together per frame with
+/// [`SettledProjection::with_live`]. Composing them here, in one call, is what
+/// keeps that split honest: every test that asserts on a whole frame is
+/// asserting on both halves joined exactly as the app joins them.
+#[cfg(test)]
 #[must_use]
 pub fn project(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
     prices: PriceWindow,
 ) -> HeatmapProjection {
+    let settled = project_settled(history, timeline, prices);
+    let live = project_live(history, timeline, prices, &settled);
+    settled.with_live(live, history.config())
+}
+
+/// Build the half of the frame that is finished.
+///
+/// Everything here is a statement about time that has stopped moving: resting
+/// liquidity as it was, the reductions it went through, and the bubbles of bars
+/// whose prints are all in. It is what a caller may keep and redraw unchanged
+/// until the layout moves under it.
+#[must_use]
+pub fn project_settled(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+) -> SettledProjection {
     let config = history.config();
     let effective_grouping = EffectiveGrouping::resolve(
         config.display_grouping,
@@ -287,10 +480,10 @@ pub fn project(
         prices.high - prices.low,
     );
     if !config.any_layer_enabled() {
-        return HeatmapProjection::empty(false, effective_grouping);
+        return SettledProjection::empty(false, effective_grouping);
     }
     let Some((time_start, time_end)) = timeline.timestamp_range() else {
-        return HeatmapProjection::empty(true, effective_grouping);
+        return SettledProjection::empty(true, effective_grouping);
     };
 
     // The depth layer is projected only while the map is both recording and on
@@ -486,167 +679,83 @@ pub fn project(
     // orders arrive, so the left side reads what is happening now instead of
     // only what already happened. Raw prints are still drawn exactly once; only
     // the aggregate is allowed to overlap the tape it was computed from.
-    let lane_start_ms = timeline.lane_start_ms();
-    let in_lane = |timestamp_ms: i64| lane_start_ms.is_some_and(|start| timestamp_ms >= start);
     // Both sides have to be on screen for a two-sided mark to be honest: a
     // bubble summing buys and sells would lie about its size if one of them
     // were hidden.
     let summarizing =
         config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
 
-    let mut tape_prints = Vec::new();
-    let mut slot_prints = Vec::new();
-    for trade in history.aggressions() {
-        if timeline.locate(trade.timestamp_ms).is_none() || prices.y(trade.price).is_none() {
-            continue;
-        }
-        let on_tape = in_lane(trade.timestamp_ms);
-        if on_tape {
-            tape_prints.push(trade);
-        }
-        if summarizing || !on_tape {
-            slot_prints.push(trade);
-        }
-    }
-
-    // Each view clusters on its own window: the tape has room the compressed
-    // slots do not, and the split is also what keeps a cluster from straddling
-    // the boundary between them.
-    let mut tape_clusters = cluster_aggressions(
-        tape_prints,
+    // The chart is cut in two at the oldest bar still taking orders. What
+    // follows that instant is redrawn from the tape every frame, so this half
+    // deliberately stops short of it; what precedes it is finished and is what
+    // this build is for.
+    let live_from_ms = timeline.live_boundary_ms();
+    let mut settled = cluster_tier(
+        history,
+        timeline,
+        prices,
         &coverage,
         effective_grouping,
-        config
-            .live_lane
-            .effective_cluster_ms(config.bubble_cluster_ms),
+        (None, live_from_ms),
+        summarizing,
     );
-    let mut slot_clusters = cluster_aggressions(
-        slot_prints,
+    // Clustered here too, and then thrown away: the size scale is a statement
+    // about everything on screen, so it has to see the prints still rolling or
+    // one area would mean one quantity beside the tape and another inside it.
+    let live = cluster_tier(
+        history,
+        timeline,
+        prices,
         &coverage,
         effective_grouping,
-        config.bubble_cluster_ms,
+        (live_from_ms, None),
+        summarizing,
     );
     // Computed over every visible cluster, before the display filter below:
     // hiding small prints must not silently rescale the ones left on screen.
     // This is the scale for a *raw* print, which is what the tape draws and
     // what a slot draws until its bar is summarized.
     let aggression_reference = size_reference(
-        &tape_clusters
+        &settled
+            .tape
             .iter()
-            .chain(slot_clusters.iter())
+            .chain(settled.slot.iter())
+            .chain(live.tape.iter())
+            .chain(live.slot.iter())
             .cloned()
             .collect::<Vec<_>>(),
         config,
     );
 
+    // A reduction is allocated by the half that owns the prints around it, so
+    // the same removed quantity is never claimed as evidence twice. Cut at the
+    // same instant the prints were.
     let mut events = if config.liquidity_events_enabled() {
         liquidity_events(&grouped.transitions)
     } else {
         Vec::new()
     };
-    if summarizing {
-        // The views overlap, so they are correlated apart: neither may allocate
-        // the same reduction twice within itself, and a print drawn in both
-        // places carries the same fact in both. The markers themselves keep the
-        // settled pass's numbers, which cover every print of every closed bar.
-        correlate_liquidity(
-            &mut events.clone(),
-            &mut tape_clusters,
-            config.liquidity_correlation_ms,
-        );
-        correlate_liquidity(
-            &mut events,
-            &mut slot_clusters,
-            config.liquidity_correlation_ms,
-        );
-    } else {
-        // Disjoint: one pass over both, so a reduction is allocated across the
-        // whole visible tape exactly as it always was. `correlate_liquidity`
-        // mutates in place without reordering, so the halves split back apart.
-        let tape_len = tape_clusters.len();
-        let mut both = std::mem::take(&mut tape_clusters);
-        both.append(&mut slot_clusters);
-        correlate_liquidity(&mut events, &mut both, config.liquidity_correlation_ms);
-        slot_clusters = both.split_off(tape_len);
-        tape_clusters = both;
-    }
-
-    // Display floors: a busy book shrinks buckets constantly, and a marker per
-    // wiggle is violet drizzle. An unattributed pull must be deep (fraction of
-    // its level, or a full pull) AND big (share of the visible full-intensity
-    // reference) to draw. Aggression-aligned reductions are exempt from the
-    // floors, and the safety cap below keeps them ahead of unattributed ones,
-    // so a bubble can only point at a hidden event in the extreme case where
-    // aligned events alone exceed the cap (reported via dropped counters).
-    let pull_floor = Decimal::from_f32(config.min_unattributed_pull_share)
-        .map(|share| liquidity_reference * share)
-        .unwrap_or(Decimal::ZERO);
-    events.retain(|event| {
-        if matches!(event.evidence, LiquidityEvidence::AggressionAligned) {
-            return true;
+    let live_events = match live_from_ms {
+        Some(from) => {
+            let mut live = Vec::new();
+            let mut kept = Vec::with_capacity(events.len());
+            for event in std::mem::take(&mut events) {
+                if event.timestamp_ms >= from {
+                    live.push(event);
+                } else {
+                    kept.push(event);
+                }
+            }
+            events = kept;
+            live
         }
-        (event.full_removal || event.fraction >= config.min_unattributed_reduction)
-            && event.removed >= pull_floor
-    });
-
-    // Per-layer display switches, applied after correlation so bubbles keep
-    // their matched evidence (and their consumption marks) even when the
-    // depletion markers themselves are hidden.
-    events.retain(|event| match event.evidence {
-        LiquidityEvidence::AggressionAligned => config.show_aligned_depletion,
-        LiquidityEvidence::DepthOnly => config.show_unattributed_reductions,
-    });
-
-    let dropped_liquidity_events = events.len().saturating_sub(config.max_visible_cells);
-    if dropped_liquidity_events > 0 {
-        events.sort_by(|a, b| {
-            // Aligned events first: they are the evidence bubbles point at.
-            let a_aligned = matches!(a.evidence, LiquidityEvidence::AggressionAligned);
-            let b_aligned = matches!(b.evidence, LiquidityEvidence::AggressionAligned);
-            b_aligned
-                .cmp(&a_aligned)
-                .then_with(|| b.removed.cmp(&a.removed))
-                .then_with(|| a.timestamp_ms.cmp(&b.timestamp_ms))
-                .then_with(|| a.event_id.cmp(&b.event_id))
-        });
-        events.truncate(config.max_visible_cells);
-    }
-
-    // Display floor for bubbles. Applied after association so a hidden small
-    // print still counts as the evidence behind an aligned reduction: the
-    // marker keeps saying "a trade ate this", the tape just stays readable.
-    if let Some(floor) = config.bubbles.min_quantity_decimal() {
-        tape_clusters.retain(|cluster| cluster.quantity >= floor);
-        slot_clusters.retain(|cluster| cluster.quantity >= floor);
-    }
-
-    // Readability floor, then the closed-bar summary. Association already
-    // happened, so folding moves no evidence: a merged bubble carries the
-    // summed quantity and the union of the event ids its parts pointed at.
-    // Sized against the reference computed above, which is deliberately *not*
-    // recomputed — merging is a drawing decision and must not rescale the
-    // bubbles that were already readable.
-    if let Some(dust) = config.bubbles.dust_quantity(aggression_reference) {
-        tape_clusters = merge_dust_clusters(tape_clusters, dust, config.bubble_dust_merge_ms);
-        slot_clusters = merge_dust_clusters(slot_clusters, dust, config.bubble_dust_merge_ms);
-    }
-
-    // Every bar with prints in its slot gets one mark per price range, the
-    // forming one included: its pie is a running total that grows with each
-    // order, which is how the compressed left side says what is happening now
-    // rather than only what already happened. It is honest because it is
-    // exactly what the bar has taken so far — and the tape beside it still
-    // shows those same prints one by one.
-    let bar_of = |cluster: &AggressionCluster| {
-        timeline
-            .locate(cluster.timestamp_ms)
-            .map(|position| position.bar_index)
+        None => Vec::new(),
     };
-    let settled_clusters = if summarizing {
-        summarize_clusters(slot_clusters, bar_of)
-    } else {
-        slot_clusters
-    };
+    correlate_tier(&mut events, &mut settled, config, summarizing);
+    let dropped_liquidity_events = filter_events(&mut events, config, liquidity_reference);
+
+    let settled_marks = refine_tier(settled, config, aggression_reference, timeline, summarizing);
+    let live_marks = refine_tier(live, config, aggression_reference, timeline, summarizing);
     // While every mark is a raw print they share one size scale, so an area
     // means the same thing everywhere. The summary breaks that premise: a pie
     // carries a whole bar and a tape mark carries one print, quantities an
@@ -654,115 +763,35 @@ pub fn project(
     // the largest radius while flattening the tape into dots. Pies then get
     // their own reference — pies stay comparable with pies, prints with prints
     // — except under a fixed reference, where the user pinned an absolute
-    // quantity precisely so that nothing on screen may rescale it.
+    // quantity precisely so that nothing on screen may rescale it. Measured
+    // over both halves, for the reason the print scale is.
     let summary_reference = if summarizing && config.bubbles.size_reference.is_visible() {
-        size_reference(&settled_clusters, config)
+        size_reference(
+            &settled_marks
+                .slot
+                .iter()
+                .chain(live_marks.slot.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+            config,
+        )
     } else {
         aggression_reference
     };
 
-    // One list again, each mark carrying the view it belongs to and the scale
-    // that view reads on.
-    let mut aggression_clusters: Vec<(AggressionCluster, bool, Decimal)> =
-        Vec::with_capacity(tape_clusters.len() + settled_clusters.len());
-    aggression_clusters.extend(
-        tape_clusters
-            .into_iter()
-            .map(|cluster| (cluster, true, aggression_reference)),
+    let mut aggressions = tier_primitives(
+        settled_marks,
+        timeline,
+        prices,
+        aggression_reference,
+        summary_reference,
     );
-    aggression_clusters.extend(
-        settled_clusters
-            .into_iter()
-            .map(|cluster| (cluster, false, summary_reference)),
-    );
-    aggression_clusters.sort_by(|(a, a_live, _), (b, b_live, _)| {
-        a.first_timestamp_ms
-            .cmp(&b.first_timestamp_ms)
-            .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
-            .then_with(|| a_live.cmp(b_live))
-            .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-            .then_with(|| a.agg_id.cmp(&b.agg_id))
-    });
+    let dropped_aggressions = aggressions
+        .len()
+        .saturating_sub(config.max_aggression_primitives);
+    cap_aggressions(&mut aggressions, config.max_aggression_primitives);
 
-    let dropped_aggressions = if config.show_aggressions {
-        aggression_clusters
-            .len()
-            .saturating_sub(config.max_aggression_primitives)
-    } else {
-        0
-    };
-    if !config.show_aggressions {
-        aggression_clusters.clear();
-    } else if dropped_aggressions > 0 {
-        aggression_clusters.sort_by(|(a, _, _), (b, _, _)| {
-            b.quantity
-                .cmp(&a.quantity)
-                .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
-                .then_with(|| a.agg_id.cmp(&b.agg_id))
-        });
-        aggression_clusters.truncate(config.max_aggression_primitives);
-    }
-
-    let liquidity_events = events
-        .into_iter()
-        .filter_map(|event| {
-            let x = timeline.locate(event.timestamp_ms)?.normalized;
-            let clipped_low = event.price_bucket.max(prices.low);
-            let clipped_high =
-                (event.price_bucket + effective_grouping.bucket_width).min(prices.high);
-            let y0 = prices.y(clipped_high)?;
-            let y1 = prices.y(clipped_low)?;
-            (y1 > y0).then_some(LiquidityEventPrimitive {
-                event_id: event.event_id,
-                generation: event.generation,
-                side: event.side,
-                price_bucket: event.price_bucket,
-                timestamp_ms: event.timestamp_ms,
-                before: event.before,
-                after: event.after,
-                removed: event.removed,
-                fraction: event.fraction,
-                full_removal: event.full_removal,
-                matched_quantity: event.matched_quantity,
-                matched_fraction: event.matched_fraction,
-                evidence: event.evidence,
-                x,
-                y0,
-                y1,
-            })
-        })
-        .collect();
-
-    // Side switches are display-only and run last: the size reference, the
-    // dust merge and the liquidity association above all saw both sides, so
-    // hiding one side never rescales or re-associates the other.
-    aggression_clusters.retain(|(cluster, _, _)| match cluster.side {
-        AggressorSide::Buy => config.show_buy_aggressions,
-        AggressorSide::Sell => config.show_sell_aggressions,
-    });
-
-    let aggressions = aggression_clusters
-        .into_iter()
-        .filter_map(|(cluster, live, reference)| {
-            // A tape mark is placed by the live edge it is measured from; a
-            // slot mark by the bar it belongs to. `locate` answers the first,
-            // so a settled mark has to ask for its bar's slot explicitly.
-            let position = if live {
-                timeline.locate(cluster.timestamp_ms)?
-            } else {
-                timeline.locate_in_slot(cluster.timestamp_ms)?
-            };
-            let y = prices.y(cluster.price)?;
-            let size = normalized_area_size(cluster.quantity, reference);
-            Some(aggression_primitive(
-                cluster,
-                position.normalized,
-                y,
-                size,
-                live,
-            ))
-        })
-        .collect();
+    let liquidity_events = event_primitives(events, timeline, prices, effective_grouping);
 
     // Coverage primitives describe the depth layer. With L2 capture off there
     // is no map whose absence needs explaining, so a bubbles-only frame emits
@@ -825,15 +854,12 @@ pub fn project(
     }
     gaps.sort_by(|a, b| a.x0.total_cmp(&b.x0).then_with(|| a.x1.total_cmp(&b.x1)));
 
-    HeatmapProjection {
+    SettledProjection {
         enabled: true,
-        cells,
+        cells: Arc::new(cells),
         aggressions,
         liquidity_events,
-        gaps,
-        live_now_x: timeline
-            .live_now_position()
-            .map(|position| position.normalized),
+        gaps: Arc::new(gaps),
         effective_grouping,
         liquidity_reference,
         aggression_reference,
@@ -841,7 +867,405 @@ pub fn project(
         dropped_cells,
         dropped_aggressions,
         dropped_liquidity_events,
+        live_from_ms,
+        live_events,
     }
+}
+
+/// Build the marks of the part of the chart that is still moving: the prints
+/// rolling through the lane, and the bar still taking orders.
+///
+/// Cheap by construction — it only ever touches the prints after
+/// [`SettledProjection::live_from_ms`] — so a caller may run it on every frame
+/// and have a print reach the screen in the frame after it arrived.
+///
+/// `settled` supplies the two size scales, so a bubble drawn here reads on
+/// exactly the scale the settled bubbles beside it were drawn on. Those scales
+/// are as old as the settled half; a print large enough to move them therefore
+/// resizes the chart when that half is next rebuilt, not the instant it lands.
+#[must_use]
+pub fn project_live(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    settled: &SettledProjection,
+) -> LiveMarks {
+    let config = history.config();
+    if !settled.enabled || !config.any_layer_enabled() {
+        return LiveMarks::default();
+    }
+    let live_now_x = timeline
+        .live_now_position()
+        .map(|position| position.normalized);
+    // No boundary means no bar is represented at all, so there is no live half
+    // to draw — and no reason to walk the retained tape looking for one.
+    //
+    // Hidden bubbles are *not* a reason to skip this: a reduction is labelled
+    // as aggression-aligned by the print that explains it, so the prints are
+    // still clustered and matched, and only the marks are dropped later.
+    let Some(live_from_ms) = settled.live_from_ms else {
+        return LiveMarks {
+            live_now_x,
+            ..LiveMarks::default()
+        };
+    };
+    let summarizing =
+        config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
+    let coverage: Vec<_> = if config.depth_visible() {
+        history.coverage_segments().cloned().collect()
+    } else {
+        Vec::new()
+    };
+    let mut tier = cluster_tier(
+        history,
+        timeline,
+        prices,
+        &coverage,
+        settled.effective_grouping,
+        (Some(live_from_ms), None),
+        summarizing,
+    );
+    let mut events = settled.live_events.clone();
+    correlate_tier(&mut events, &mut tier, config, summarizing);
+    let dropped_liquidity_events = filter_events(&mut events, config, settled.liquidity_reference);
+    let marks = refine_tier(
+        tier,
+        config,
+        settled.aggression_reference,
+        timeline,
+        summarizing,
+    );
+    LiveMarks {
+        aggressions: tier_primitives(
+            marks,
+            timeline,
+            prices,
+            settled.aggression_reference,
+            settled.summary_reference,
+        ),
+        liquidity_events: event_primitives(events, timeline, prices, settled.effective_grouping),
+        dropped_liquidity_events,
+        live_now_x,
+    }
+}
+
+/// Allocate `events` to the prints of one half of the chart.
+///
+/// Each half is handed only the reductions timestamped inside it, so a removed
+/// quantity is claimed as evidence exactly once however the chart is cut.
+fn correlate_tier(
+    events: &mut [LiquidityEvent],
+    tier: &mut TierClusters,
+    config: &HeatmapConfig,
+    summarizing: bool,
+) {
+    if summarizing {
+        // The views overlap, so they are correlated apart: neither may allocate
+        // the same reduction twice within itself, and a print drawn in both
+        // places carries the same fact in both. The markers themselves keep the
+        // slot pass's numbers, which cover every print of every bar.
+        correlate_liquidity(
+            &mut events.to_vec(),
+            &mut tier.tape,
+            config.liquidity_correlation_ms,
+        );
+        correlate_liquidity(events, &mut tier.slot, config.liquidity_correlation_ms);
+    } else {
+        // Disjoint: one pass over both, so a reduction is allocated across the
+        // whole visible tape exactly as it always was. `correlate_liquidity`
+        // mutates in place without reordering, so the halves split back apart.
+        let tape_len = tier.tape.len();
+        let mut both = std::mem::take(&mut tier.tape);
+        both.append(&mut tier.slot);
+        correlate_liquidity(events, &mut both, config.liquidity_correlation_ms);
+        tier.slot = both.split_off(tape_len);
+        tier.tape = both;
+    }
+}
+
+/// Drop the reductions not worth a marker, and report how many the safety cap
+/// took with them.
+fn filter_events(
+    events: &mut Vec<LiquidityEvent>,
+    config: &HeatmapConfig,
+    liquidity_reference: Decimal,
+) -> usize {
+    // Display floors: a busy book shrinks buckets constantly, and a marker per
+    // wiggle is violet drizzle. An unattributed pull must be deep (fraction of
+    // its level, or a full pull) AND big (share of the visible full-intensity
+    // reference) to draw. Aggression-aligned reductions are exempt from the
+    // floors, and the safety cap below keeps them ahead of unattributed ones,
+    // so a bubble can only point at a hidden event in the extreme case where
+    // aligned events alone exceed the cap (reported via dropped counters).
+    let pull_floor = Decimal::from_f32(config.min_unattributed_pull_share)
+        .map(|share| liquidity_reference * share)
+        .unwrap_or(Decimal::ZERO);
+    events.retain(|event| {
+        if matches!(event.evidence, LiquidityEvidence::AggressionAligned) {
+            return true;
+        }
+        (event.full_removal || event.fraction >= config.min_unattributed_reduction)
+            && event.removed >= pull_floor
+    });
+
+    // Per-layer display switches, applied after correlation so bubbles keep
+    // their matched evidence (and their consumption marks) even when the
+    // depletion markers themselves are hidden.
+    events.retain(|event| match event.evidence {
+        LiquidityEvidence::AggressionAligned => config.show_aligned_depletion,
+        LiquidityEvidence::DepthOnly => config.show_unattributed_reductions,
+    });
+
+    let dropped = events.len().saturating_sub(config.max_visible_cells);
+    if dropped > 0 {
+        events.sort_by_key(|event| {
+            event_cap_key(
+                event.evidence,
+                event.removed,
+                event.timestamp_ms,
+                event.event_id,
+            )
+        });
+        events.truncate(config.max_visible_cells);
+    }
+    dropped
+}
+
+/// How the safety cap ranks reductions, wherever it is applied: aligned
+/// evidence first, because it is what a bubble points at, then the biggest
+/// reduction, then time and id so the same book always yields the same markers.
+fn event_cap_key(
+    evidence: LiquidityEvidence,
+    removed: Decimal,
+    timestamp_ms: i64,
+    event_id: u64,
+) -> (Reverse<bool>, Reverse<Decimal>, i64, u64) {
+    (
+        Reverse(matches!(evidence, LiquidityEvidence::AggressionAligned)),
+        Reverse(removed),
+        timestamp_ms,
+        event_id,
+    )
+}
+
+/// Keep the strongest `limit` reductions of a whole frame.
+fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
+    if events.len() <= limit {
+        return;
+    }
+    events.sort_by_key(|event| {
+        event_cap_key(
+            event.evidence,
+            event.removed,
+            event.timestamp_ms,
+            event.event_id,
+        )
+    });
+    events.truncate(limit);
+}
+
+/// Keep the strongest `limit` marks, deterministically.
+///
+/// Ties are broken by time and then by id so the same set of prints always
+/// yields the same marks, whichever half of the frame they came from.
+fn cap_aggressions(marks: &mut Vec<AggressionPrimitive>, limit: usize) {
+    if marks.len() <= limit {
+        return;
+    }
+    marks.sort_by(|a, b| {
+        b.quantity
+            .cmp(&a.quantity)
+            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
+    marks.truncate(limit);
+}
+
+/// Place reductions on the chart.
+fn event_primitives(
+    events: Vec<LiquidityEvent>,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    grouping: EffectiveGrouping,
+) -> Vec<LiquidityEventPrimitive> {
+    events
+        .into_iter()
+        .filter_map(|event| {
+            let x = timeline.locate(event.timestamp_ms)?.normalized;
+            let clipped_low = event.price_bucket.max(prices.low);
+            let clipped_high = (event.price_bucket + grouping.bucket_width).min(prices.high);
+            let y0 = prices.y(clipped_high)?;
+            let y1 = prices.y(clipped_low)?;
+            (y1 > y0).then_some(LiquidityEventPrimitive {
+                event_id: event.event_id,
+                generation: event.generation,
+                side: event.side,
+                price_bucket: event.price_bucket,
+                timestamp_ms: event.timestamp_ms,
+                before: event.before,
+                after: event.after,
+                removed: event.removed,
+                fraction: event.fraction,
+                full_removal: event.full_removal,
+                matched_quantity: event.matched_quantity,
+                matched_fraction: event.matched_fraction,
+                evidence: event.evidence,
+                x,
+                y0,
+                y1,
+            })
+        })
+        .collect()
+}
+
+/// The clustered prints of one stretch of the chart, in the two views a print
+/// can be drawn in.
+struct TierClusters {
+    /// Raw prints, placed by the live edge they are measured from.
+    tape: Vec<AggressionCluster>,
+    /// Prints read against the bar they belong to.
+    slot: Vec<AggressionCluster>,
+}
+
+/// Cluster the retained prints timestamped inside `range`, as `[from, until)`.
+///
+/// The whole retained tape is walked, but the range is tested first and it is
+/// two integer comparisons: the half that runs every frame pays the per-print
+/// cost — locating it, placing it, clustering it — only for its own prints.
+/// The walk is deliberately linear rather than a search inward from the newest
+/// print: the retained tape is only *almost* ordered by timestamp, and one
+/// print delivered out of order must not be able to hide every print behind
+/// it.
+fn cluster_tier(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    coverage: &[CoverageSegment],
+    grouping: EffectiveGrouping,
+    range: (Option<i64>, Option<i64>),
+    summarizing: bool,
+) -> TierClusters {
+    let config = history.config();
+    let lane_start_ms = timeline.lane_start_ms();
+    let (from_ms, until_ms) = range;
+    let mut tape_prints = Vec::new();
+    let mut slot_prints = Vec::new();
+    for trade in history.aggressions() {
+        if from_ms.is_some_and(|from| trade.timestamp_ms < from)
+            || until_ms.is_some_and(|until| trade.timestamp_ms >= until)
+        {
+            continue;
+        }
+        if timeline.locate(trade.timestamp_ms).is_none() || prices.y(trade.price).is_none() {
+            continue;
+        }
+        let on_tape = lane_start_ms.is_some_and(|start| trade.timestamp_ms >= start);
+        if on_tape {
+            tape_prints.push(trade);
+        }
+        if summarizing || !on_tape {
+            slot_prints.push(trade);
+        }
+    }
+
+    // Each view clusters on its own window: the tape has room the compressed
+    // slots do not, and the split is also what keeps a cluster from straddling
+    // the boundary between them.
+    TierClusters {
+        tape: cluster_aggressions(
+            tape_prints,
+            coverage,
+            grouping,
+            config
+                .live_lane
+                .effective_cluster_ms(config.bubble_cluster_ms),
+        ),
+        slot: cluster_aggressions(slot_prints, coverage, grouping, config.bubble_cluster_ms),
+    }
+}
+
+/// Apply the display floors, fold what is too small to read, and summarize.
+fn refine_tier(
+    mut tier: TierClusters,
+    config: &HeatmapConfig,
+    print_reference: Decimal,
+    timeline: &BarTimeline,
+    summarizing: bool,
+) -> TierClusters {
+    // Display floor for bubbles. Applied after association so a hidden small
+    // print still counts as the evidence behind an aligned reduction: the
+    // marker keeps saying "a trade ate this", the tape just stays readable.
+    if let Some(floor) = config.bubbles.min_quantity_decimal() {
+        tier.tape.retain(|cluster| cluster.quantity >= floor);
+        tier.slot.retain(|cluster| cluster.quantity >= floor);
+    }
+
+    // Readability floor, then the closed-bar summary. Association already
+    // happened, so folding moves no evidence: a merged bubble carries the
+    // summed quantity and the union of the event ids its parts pointed at.
+    // Sized against the reference computed above, which is deliberately *not*
+    // recomputed — merging is a drawing decision and must not rescale the
+    // bubbles that were already readable.
+    if let Some(dust) = config.bubbles.dust_quantity(print_reference) {
+        tier.tape = merge_dust_clusters(tier.tape, dust, config.bubble_dust_merge_ms);
+        tier.slot = merge_dust_clusters(tier.slot, dust, config.bubble_dust_merge_ms);
+    }
+
+    // Every bar with prints in its slot gets one mark per price range, the
+    // forming one included: its pie is a running total that grows with each
+    // order, which is how the compressed left side says what is happening now
+    // rather than only what already happened. It is honest because it is
+    // exactly what the bar has taken so far — and the tape beside it still
+    // shows those same prints one by one.
+    if summarizing {
+        let bar_of = |cluster: &AggressionCluster| {
+            timeline
+                .locate(cluster.timestamp_ms)
+                .map(|position| position.bar_index)
+        };
+        tier.slot = summarize_clusters(std::mem::take(&mut tier.slot), bar_of);
+    }
+    tier
+}
+
+/// Place one tier's marks on the chart, each on the scale its view reads on.
+fn tier_primitives(
+    marks: TierClusters,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    print_reference: Decimal,
+    summary_reference: Decimal,
+) -> Vec<AggressionPrimitive> {
+    marks
+        .tape
+        .into_iter()
+        .map(|cluster| (cluster, true, print_reference))
+        .chain(
+            marks
+                .slot
+                .into_iter()
+                .map(|cluster| (cluster, false, summary_reference)),
+        )
+        .filter_map(|(cluster, live, reference)| {
+            // A tape mark is placed by the live edge it is measured from; a
+            // slot mark by the bar it belongs to. `locate` answers the first,
+            // so a settled mark has to ask for its bar's slot explicitly.
+            let position = if live {
+                timeline.locate(cluster.timestamp_ms)?
+            } else {
+                timeline.locate_in_slot(cluster.timestamp_ms)?
+            };
+            let y = prices.y(cluster.price)?;
+            let size = normalized_area_size(cluster.quantity, reference);
+            Some(aggression_primitive(
+                cluster,
+                position.normalized,
+                y,
+                size,
+                live,
+            ))
+        })
+        .collect()
 }
 
 /// Quantity that maps to a full-size bubble for this set of clusters.
@@ -985,6 +1409,208 @@ mod tests {
             show_aggressions: true,
             price_grouping: Decimal::ONE,
             ..HeatmapConfig::default()
+        }
+    }
+
+    /// The reduction cap is a budget for the whole frame too. Each half caps
+    /// itself where it is built, so without a cap over the join a frame could
+    /// draw twice the markers the budget allows — one full cap per half.
+    #[test]
+    fn the_reduction_cap_is_one_budget_for_both_halves() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            max_visible_cells: 2,
+            min_unattributed_reduction: 0.0,
+            min_unattributed_pull_share: 0.0,
+            ..HeatmapConfig::default()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        // Two pulls each side of the seam at 2 000 ms.
+        for (update_id, timestamp_ms, bids, asks) in [
+            (11_u64, 300_i64, vec![level("100", "1")], vec![]),
+            (12, 900, vec![level("99", "0.5")], vec![]),
+            (13, 2_300, vec![], vec![level("101", "1")]),
+            (14, 2_900, vec![], vec![level("102", "1")]),
+        ] {
+            history
+                .apply_delta(
+                    timestamp_ms,
+                    &BookDelta::new(update_id, update_id, bids, asks),
+                )
+                .unwrap();
+        }
+        history
+            .apply_delta(3_900, &BookDelta::new(15, 15, vec![], vec![]))
+            .unwrap();
+
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 3_900,
+                window_ms: 1_500,
+                on_newest_bar: true,
+            }),
+        );
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        assert_eq!(
+            projection.liquidity_events.len(),
+            2,
+            "a cap of two is two markers for the frame, not two per half"
+        );
+        assert_eq!(projection.dropped_liquidity_events, 2);
+    }
+
+    /// The primitive cap is a budget for the whole frame, not one per half.
+    /// Each half is capped where it is built — that is what keeps the per-frame
+    /// merge proportional to what can be drawn — so this proves the two-stage
+    /// cut keeps exactly the marks one cut over everything would have kept, and
+    /// still reports every mark it left out.
+    #[test]
+    fn the_primitive_cap_is_one_budget_for_both_halves() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: 0,
+            max_aggression_primitives: 3,
+            ..config()
+        });
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
+        // Three prints each side of the seam at 2 000 ms, interleaved by size so
+        // the winners cannot be picked by half.
+        for (agg_id, timestamp_ms, quantity) in [
+            (1_u64, 100_i64, "10"),
+            (2, 300, "1"),
+            (3, 1_100, "9"),
+            (4, 2_100, "2"),
+            (5, 3_100, "8"),
+            (6, 3_300, "3"),
+        ] {
+            history.record_aggression(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: dec("101"),
+                quantity: dec(quantity),
+                side: Side::Buy,
+            });
+        }
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 3_900,
+                window_ms: 1_500,
+                on_newest_bar: true,
+            }),
+        );
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        let mut kept: Vec<Decimal> = projection
+            .aggressions
+            .iter()
+            .map(|mark| mark.quantity)
+            .collect();
+        kept.sort();
+        assert_eq!(
+            kept,
+            [dec("8"), dec("9"), dec("10")],
+            "the three biggest prints survive, from whichever half"
+        );
+        assert_eq!(projection.dropped_aggressions, 3);
+    }
+
+    /// The chart is built in two halves that meet at a bar's open time. This is
+    /// the seam: with the summary on, a bar whose prints landed on both sides of
+    /// it must still draw *one* pie carrying all of them, never one pie per half
+    /// — and the lane's raw prints must be neither dropped nor doubled.
+    #[test]
+    fn the_seam_between_the_halves_neither_splits_a_bar_nor_doubles_a_print() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_candle_summary: true,
+            bubble_cluster_ms: 500,
+            bubble_dust_merge_ms: 0,
+            ..config()
+        });
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
+        // Four bars of 1 000 ms, one print every 100 ms at one price.
+        for step in 0..40_i64 {
+            history.record_aggression(&Trade {
+                agg_id: step as u64,
+                timestamp_ms: step * 100 + 50,
+                price: dec("101"),
+                quantity: Decimal::ONE,
+                side: Side::Buy,
+            });
+        }
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+
+        // Walk the live edge across a whole bar, so the seam lands at every
+        // offset inside it — including exactly on a bar boundary.
+        for now_ms in [3_400_i64, 3_500, 3_600, 3_999, 4_000] {
+            let timeline = BarTimeline::from_bars(
+                0,
+                &closed,
+                None,
+                Some(crate::orderflow::LiveEdge {
+                    now_ms,
+                    // A lane wide enough to cover more than one bar, which is
+                    // what makes the seam fall inside a bar rather than on it.
+                    window_ms: 1_500,
+                    on_newest_bar: true,
+                }),
+            );
+            let projection = project(&history, &timeline, prices);
+
+            let pies: Vec<_> = projection
+                .aggressions
+                .iter()
+                .filter(|mark| !mark.live)
+                .collect();
+            // A print is carried by exactly one mark. Split the seam wrong and
+            // this drops (a print landing in neither half) or doubles (a bar
+            // summarized once per half).
+            let summarized: Decimal = pies.iter().map(|pie| pie.quantity).sum();
+            assert_eq!(
+                summarized,
+                Decimal::from(
+                    history
+                        .aggressions()
+                        .filter(|print| timeline.locate(print.timestamp_ms).is_some())
+                        .count()
+                ),
+                "now_ms={now_ms}: the pies must carry every print exactly once"
+            );
+
+            // And they carry it in one place. A summary is drawn in its bar's
+            // slot, so the slot it lands in names the bar it is about: two
+            // summaries in one slot at one price are one bar counted twice,
+            // which is exactly what a seam left mid-bar would produce.
+            let regions = timeline.region_count() as f64;
+            let mut slots: Vec<(usize, Decimal)> = pies
+                .iter()
+                .map(|pie| ((pie.x * regions) as usize, pie.price_bucket))
+                .collect();
+            slots.sort_unstable();
+            let mut once = slots.clone();
+            once.dedup();
+            assert_eq!(
+                slots, once,
+                "now_ms={now_ms}: a bar was summarized twice, once per half"
+            );
         }
     }
 
@@ -1558,7 +2184,7 @@ mod tests {
             PriceWindow::new(dec("98"), dec("103")).unwrap(),
         );
         assert_eq!(
-            projection.gaps,
+            projection.gaps.as_slice(),
             [GapPrimitive {
                 from_generation: None,
                 to_generation: None,

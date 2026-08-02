@@ -903,7 +903,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
     mesh.indices
         .reserve(context.projection.cells.len().saturating_mul(12));
 
-    for cell in &context.projection.cells {
+    for cell in context.projection.cells.iter() {
         let rect = context
             .layout
             .band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
@@ -936,7 +936,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         clip.add(egui::Shape::mesh(mesh));
     }
 
-    for gap in &context.projection.gaps {
+    for gap in context.projection.gaps.iter() {
         let x0 = context.layout.x(gap.x0);
         let x1 = context.layout.x(gap.x1);
         let rect = egui::Rect::from_min_max(
