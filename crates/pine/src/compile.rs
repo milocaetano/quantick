@@ -58,9 +58,12 @@ pub enum Resolution {
     Local(u32),
     /// A user function, by index into [`CompiledScript::functions`].
     Function(u32),
-    /// An enum-like member constant (`plot.style_line`, `color.red`, …),
+    /// An enum-like member constant (`plot.style_line`, `shape.circle`, …),
     /// resolved to its tag for the interpreter.
     EnumConst(&'static str),
+    /// A color constant (`color.red`, …), resolved to its packed RGBA so the
+    /// per-bar path never re-derives it from names.
+    ColorConst(u32),
 }
 
 /// One user function, resolved.
@@ -844,11 +847,12 @@ impl Compiler {
                         return;
                     }
                     if let Some(constant) = member_constant(&namespace, &field) {
-                        if let Const::Enum(tag) = constant {
-                            self.resolutions[id.index()] = Resolution::EnumConst(tag);
-                        }
-                        // Color constants resolve at fold time; mark the
-                        // namespace as known either way.
+                        self.resolutions[id.index()] = match constant {
+                            Const::Enum(tag) => Resolution::EnumConst(tag),
+                            Const::Color(rgba) => Resolution::ColorConst(rgba),
+                            // member_constant only produces enums and colors.
+                            _ => Resolution::None,
+                        };
                         return;
                     }
                     if let Some((code, reason)) = rejection_of(&dotted) {
