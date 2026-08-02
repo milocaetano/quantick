@@ -92,6 +92,21 @@ pub enum FeedSource {
     Replay(Box<replay::ReplayRequest>),
 }
 
+/// Provider-neutral state of the live trade transport.
+///
+/// This is deliberately independent from trade arrival latency: a quiet market
+/// says nothing about whether a socket is connected, and a latency observation
+/// made before a disconnect must not keep the status bar green.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedConnectionState {
+    /// The selected feed has not established its first session yet.
+    Connecting,
+    /// A previously established session ended and its reconnect loop is active.
+    Reconnecting,
+    /// The provider confirmed that the live trade transport is established.
+    Connected,
+}
+
 /// What a feed wants the person watching the chart to know.
 ///
 /// A feed that cannot deliver trades knows *why* — the terminal is closed, a
@@ -106,6 +121,12 @@ pub enum FeedSource {
 /// anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FeedNotice {
+    /// The live trade transport is established.
+    ///
+    /// This is a control signal rather than a card: the app clears any
+    /// connection-progress notice and marks the provider-neutral transport
+    /// connected without waiting for a trade to infer it.
+    Connected,
     /// Whatever was being reported is over; the chart speaks for itself now.
     Clear,
     /// A step is under way and needs nobody: connecting, waiting, retrying.
@@ -155,6 +176,24 @@ impl FeedNotice {
             headline: headline.into(),
             next_step: next_step.into(),
         }
+    }
+}
+
+/// Translate the boolean lifecycle emitted by a provider reconnect loop into
+/// the app's notice protocol. `ever_connected` distinguishes first-connect
+/// retries from a real reconnect without consulting trade arrival.
+pub(super) fn connection_notice(
+    connected: bool,
+    ever_connected: &mut bool,
+    provider: &str,
+) -> FeedNotice {
+    if connected {
+        *ever_connected = true;
+        FeedNotice::Connected
+    } else if *ever_connected {
+        FeedNotice::working(format!("{provider} disconnected — reconnecting"))
+    } else {
+        FeedNotice::working(format!("connecting to {provider}"))
     }
 }
 

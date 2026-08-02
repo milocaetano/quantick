@@ -25,7 +25,9 @@ use crate::drawings::{
     self, ChartPoint, DeleteOutcome, DrawContext, Drawings, MAX_DRAWING_FILL_ALPHA,
     MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, PresetHost,
 };
-use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
+use crate::feed::{
+    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
+};
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -301,6 +303,9 @@ pub struct QuantickApp {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     notice: FeedNotice,
+    /// State reported by the live trade transport, independent from how often
+    /// that market prints and from the last observed arrival latency.
+    feed_connection: FeedConnectionState,
     /// What the running feed can really do, read fresh every frame. The feed
     /// narrows it once a session tells it what the symbol actually offers.
     feed_capabilities: watch::Receiver<FeedCapabilities>,
@@ -473,6 +478,7 @@ impl QuantickApp {
             notices: feed.notices,
             feed_capabilities: feed.capabilities,
             notice: FeedNotice::Clear,
+            feed_connection: FeedConnectionState::Connecting,
             commands: feed.commands,
             orderflow: OrderflowView::new(symbol.clone()),
             book_capture_epoch: 0,
@@ -939,6 +945,7 @@ impl QuantickApp {
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -1187,7 +1194,19 @@ impl QuantickApp {
     /// A closed channel (a feed with nothing to report) simply yields nothing.
     fn drain_notices(&mut self) {
         while let Ok(notice) = self.notices.try_recv() {
-            self.notice = notice;
+            match notice {
+                FeedNotice::Connected => {
+                    self.feed_connection = FeedConnectionState::Connected;
+                    self.notice = FeedNotice::Clear;
+                }
+                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => {
+                    if self.feed_connection == FeedConnectionState::Connected {
+                        self.feed_connection = FeedConnectionState::Reconnecting;
+                    }
+                    self.notice = notice;
+                }
+                FeedNotice::Clear => self.notice = FeedNotice::Clear,
+            }
         }
     }
 
@@ -2624,6 +2643,7 @@ impl QuantickApp {
                 speed: link.status.speed(),
                 progress: link.status.progress(),
             }),
+            connection: self.feed_connection,
             feed_lag_ms: self.trade_lag_ms(),
             spec_summary: self.state.spec().summary(),
             bar_progress: self
@@ -3471,6 +3491,7 @@ impl QuantickApp {
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -3517,6 +3538,7 @@ impl QuantickApp {
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -3552,6 +3574,7 @@ impl QuantickApp {
         self.notices = handle.notices;
         self.feed_capabilities = handle.capabilities;
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -3904,6 +3927,39 @@ mod tests {
     }
 
     #[test]
+    fn connection_notices_drive_connect_reconnect_live_without_trade_inference() {
+        let (mut app, notices, _feed_ends) = test_app_with_notices();
+        app.latest_trade_latency_ms = Some(42);
+        assert_eq!(app.feed_connection, FeedConnectionState::Connecting);
+
+        notices.blocking_send(FeedNotice::Connected).unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(app.notice, FeedNotice::Clear);
+
+        notices
+            .blocking_send(FeedNotice::working(
+                "Hyperliquid disconnected — reconnecting",
+            ))
+            .unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Reconnecting);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Reconnecting,
+            "a previous latency observation must not keep a disconnected socket green"
+        );
+
+        notices.blocking_send(FeedNotice::Connected).unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+    }
+
+    #[test]
     fn a_feed_with_nothing_to_report_leaves_the_chart_alone() {
         // Binance and replay hand over a closed channel; draining it must be a
         // no-op rather than an error the app has to special-case.
@@ -4114,6 +4170,7 @@ mod tests {
     #[test]
     fn quiet_market_keeps_the_observed_arrival_latency_live() {
         let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.feed_connection = FeedConnectionState::Connected;
         let trade = trade(1);
         let received_at_ms = trade.timestamp_ms + 42;
 
@@ -4121,7 +4178,7 @@ mod tests {
 
         assert_eq!(app.trade_lag_ms(), Some(42));
         assert_eq!(
-            statusbar::feed_state(false, app.trade_lag_ms()),
+            statusbar::feed_state(false, app.feed_connection),
             statusbar::FeedState::Live
         );
         assert_eq!(
@@ -4142,7 +4199,7 @@ mod tests {
 
         assert_eq!(app.trade_lag_ms(), None);
         assert_eq!(
-            statusbar::feed_state(false, app.trade_lag_ms()),
+            statusbar::feed_state(false, app.feed_connection),
             statusbar::FeedState::Connecting
         );
     }

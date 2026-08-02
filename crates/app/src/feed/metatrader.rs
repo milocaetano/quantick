@@ -192,7 +192,7 @@ async fn feed_task(
                                 // now. Publishing it withdraws the affordances
                                 // it cannot back — before the user clicks one.
                                 let _ = caps_tx.send(session_capabilities(*tape, *book_levels));
-                                FeedNotice::Clear
+                                FeedNotice::Connected
                             }
                             Mt5Status::Waiting { .. } => FeedNotice::working(
                                 "waiting for the MetaTrader bridge to connect",
@@ -454,6 +454,22 @@ mod tests {
     use super::*;
     use std::time::Duration;
     use tokio::io::AsyncWriteExt as _;
+
+    async fn notice_matching(
+        notices: &mut mpsc::Receiver<FeedNotice>,
+        predicate: impl Fn(&FeedNotice) -> bool,
+    ) -> FeedNotice {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let notice = notices.recv().await.expect("notice channel closed");
+                if predicate(&notice) {
+                    return notice;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for feed notice")
+    }
 
     /// Spawn the feed on an ephemeral port and return its handle.
     fn test_feed(symbol: &str) -> FeedHandle {
@@ -727,10 +743,20 @@ mod tests {
             panic!("expected the live trade");
         };
         assert_eq!(live.timestamp_ms, 1002 + 10_800_000);
+        let connected = notice_matching(&mut feed.notices, |notice| {
+            matches!(notice, FeedNotice::Connected)
+        })
+        .await;
+        assert_eq!(connected, FeedNotice::Connected);
 
         // Session 2 (reconnect): the re-sent window overlaps everything the
         // UI already has, plus one genuinely new tick at 1003.
         drop(sock);
+        let reconnecting = notice_matching(&mut feed.notices, |notice| {
+            matches!(notice, FeedNotice::Working { headline } if headline.contains("disconnected"))
+        })
+        .await;
+        assert!(matches!(reconnecting, FeedNotice::Working { .. }));
         let mut sock = connect().await;
         let mut script = String::from(HELLO);
         script.push_str("{\"type\":\"backfill_start\",\"count_hint\":4}\n");
@@ -752,5 +778,10 @@ mod tests {
         };
         assert_eq!(fresh.timestamp_ms, 1003 + 10_800_000);
         assert_eq!(fresh.agg_id, 4);
+        let connected_again = notice_matching(&mut feed.notices, |notice| {
+            matches!(notice, FeedNotice::Connected)
+        })
+        .await;
+        assert_eq!(connected_again, FeedNotice::Connected);
     }
 }

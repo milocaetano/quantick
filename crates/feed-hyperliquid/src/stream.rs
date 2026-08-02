@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use quantick_engine::Trade;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc::Sender, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
@@ -75,6 +75,7 @@ pub async fn run_trade_session(
     url: &str,
     symbol: &str,
     trades: &Sender<Vec<Trade>>,
+    connected: &watch::Sender<bool>,
     mapper: &mut TradeMapper,
 ) -> Result<(), TradeSessionError> {
     let symbol = symbol.to_uppercase();
@@ -147,6 +148,7 @@ pub async fn run_trade_session(
                                 }
                             }
                             TradeMessage::Subscribed => {
+                                let _ = connected.send(true);
                                 debug!(target: "quantick::feed", symbol, "trade subscription acknowledged");
                             }
                             TradeMessage::Pong => {}
@@ -177,13 +179,14 @@ pub async fn run_trades_with_reconnect(
     url: &str,
     symbol: &str,
     trades: &Sender<Vec<Trade>>,
+    connected: &watch::Sender<bool>,
     mut mapper: TradeMapper,
     mut backoff: Backoff,
 ) {
     let symbol = symbol.to_uppercase();
     loop {
         let published_before = mapper.published_count();
-        let result = run_trade_session(url, &symbol, trades, &mut mapper).await;
+        let result = run_trade_session(url, &symbol, trades, connected, &mut mapper).await;
         if mapper.published_count() > published_before {
             // A connection that carried data was healthy, however long it
             // lasted. The next isolated disconnect starts at the base delay.
@@ -196,6 +199,10 @@ pub async fn run_trades_with_reconnect(
                 return;
             }
             Err(error) => {
+                // Publish the transport loss before the reconnect wait. A
+                // quiet tape is not evidence either way; only the socket and
+                // subscription lifecycle drive this signal.
+                let _ = connected.send(false);
                 warn!(
                     target: "quantick::feed",
                     symbol,
@@ -221,5 +228,105 @@ pub async fn run_trades_with_reconnect(
             () = trades.closed() => return,
             () = tokio::time::sleep(delay) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use tokio::sync::{Notify, watch};
+
+    async fn wait_for_status(status: &mut watch::Receiver<bool>, expected: bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                status.changed().await.expect("connection status closed");
+                if *status.borrow_and_update() == expected {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for connection status");
+    }
+
+    async fn accept_subscription(
+        listener: &TcpListener,
+    ) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let subscription = socket.next().await.unwrap().unwrap();
+        assert!(
+            matches!(subscription, Message::Text(text) if text.contains("\"type\":\"trades\""))
+        );
+        socket
+    }
+
+    #[tokio::test]
+    async fn connection_status_tracks_disconnect_and_resubscribe() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let close_first = Arc::new(Notify::new());
+        let allow_second_ack = Arc::new(Notify::new());
+        let close_second = Arc::new(Notify::new());
+        let server = {
+            let close_first = Arc::clone(&close_first);
+            let allow_second_ack = Arc::clone(&allow_second_ack);
+            let close_second = Arc::clone(&close_second);
+            tokio::spawn(async move {
+                let mut socket = accept_subscription(&listener).await;
+                socket
+                    .send(Message::Text(
+                        r#"{"channel":"subscriptionResponse","data":{}}"#.into(),
+                    ))
+                    .await
+                    .unwrap();
+                close_first.notified().await;
+                socket.close(None).await.unwrap();
+
+                let mut socket = accept_subscription(&listener).await;
+                allow_second_ack.notified().await;
+                socket
+                    .send(Message::Text(
+                        r#"{"channel":"subscriptionResponse","data":{}}"#.into(),
+                    ))
+                    .await
+                    .unwrap();
+                close_second.notified().await;
+                let _ = socket.close(None).await;
+            })
+        };
+
+        let (trades_tx, trades_rx) = tokio::sync::mpsc::channel(8);
+        let (connected_tx, mut connected_rx) = watch::channel(false);
+        let feed = tokio::spawn(async move {
+            run_trades_with_reconnect(
+                &format!("ws://{address}"),
+                "BTC",
+                &trades_tx,
+                &connected_tx,
+                TradeMapper::new("BTC"),
+                Backoff::new(Duration::from_millis(2), Duration::from_millis(2), 7),
+            )
+            .await;
+        });
+
+        wait_for_status(&mut connected_rx, true).await;
+        close_first.notify_one();
+        wait_for_status(&mut connected_rx, false).await;
+        allow_second_ack.notify_one();
+        wait_for_status(&mut connected_rx, true).await;
+
+        drop(trades_rx);
+        close_second.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), feed)
+            .await
+            .expect("feed did not stop")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("server did not stop")
+            .unwrap();
     }
 }

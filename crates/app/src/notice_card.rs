@@ -70,7 +70,7 @@ pub enum NoticeAction {
 #[must_use]
 pub fn should_draw(notice: &FeedNotice, bars: usize) -> bool {
     match notice {
-        FeedNotice::Clear => false,
+        FeedNotice::Connected | FeedNotice::Clear => false,
         FeedNotice::Attention { .. } => true,
         FeedNotice::Working { .. } => bars == 0,
     }
@@ -97,7 +97,7 @@ struct Geometry {
 /// no other state, and both the drawing and the tests go through it.
 fn geometry(painter: &egui::Painter, area: egui::Rect, notice: &FeedNotice) -> Option<Geometry> {
     let (accent, headline, next_step) = match notice {
-        FeedNotice::Clear => return None,
+        FeedNotice::Connected | FeedNotice::Clear => return None,
         FeedNotice::Working { headline } => (theme::TEXT_MUTED, headline.as_str(), None),
         FeedNotice::Attention {
             headline,

@@ -15,6 +15,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::feed::FeedConnectionState;
 use crate::metrics;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -29,24 +30,24 @@ const CELL_SPACING_PX: f32 = 8.0;
 /// What the provenance dot reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedState {
-    /// No trade has arrived yet.
+    /// The first live transport is not established yet.
     Connecting,
-    /// Live and within the lag threshold.
+    /// A previously established live transport is reconnecting.
+    Reconnecting,
+    /// The provider reports an established live transport.
     Live,
-    /// Live but the newest trade exceeded [`metrics::HIGH_LAG_MS`] on arrival.
-    Stalled,
     /// A recorded session is the source.
     Replay,
 }
 
 impl FeedState {
-    /// Dot colour: green live, amber replay, red stalled, faint connecting.
+    /// Dot colour: green live, amber replay/reconnect, faint connecting.
     #[must_use]
     pub fn color(self) -> egui::Color32 {
         match self {
             Self::Connecting => theme::TEXT_FAINT,
+            Self::Reconnecting => theme::WARN,
             Self::Live => theme::BUY,
-            Self::Stalled => theme::WARN,
             Self::Replay => theme::AMBER,
         }
     }
@@ -56,8 +57,8 @@ impl FeedState {
     pub fn label(self) -> &'static str {
         match self {
             Self::Connecting => "connecting",
+            Self::Reconnecting => "reconnecting",
             Self::Live => "live",
-            Self::Stalled => "stalled",
             Self::Replay => "replay",
         }
     }
@@ -65,14 +66,14 @@ impl FeedState {
 
 /// Classify the feed for the provenance dot.
 #[must_use]
-pub fn feed_state(replaying: bool, lag_ms: Option<i64>) -> FeedState {
+pub fn feed_state(replaying: bool, connection: FeedConnectionState) -> FeedState {
     if replaying {
         return FeedState::Replay;
     }
-    match lag_ms {
-        None => FeedState::Connecting,
-        Some(lag) if lag > metrics::HIGH_LAG_MS => FeedState::Stalled,
-        Some(_) => FeedState::Live,
+    match connection {
+        FeedConnectionState::Connecting => FeedState::Connecting,
+        FeedConnectionState::Reconnecting => FeedState::Reconnecting,
+        FeedConnectionState::Connected => FeedState::Live,
     }
 }
 
@@ -93,6 +94,8 @@ pub struct StatusModel {
     pub symbol: String,
     /// Replay speed/progress while a recording plays, `None` when live.
     pub replay: Option<ReplayFigures>,
+    /// Provider-neutral live transport state, reported by the reconnect loop.
+    pub connection: FeedConnectionState,
     /// Exchange-to-screen delay observed when the newest trade arrived; `None`
     /// before the first live trade or while replaying (a recording has no lag
     /// to report).
@@ -183,7 +186,7 @@ pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) {
 
 /// Left section: state dot, venue, symbol, lag.
 fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
-    let state = feed_state(model.replay.is_some(), model.feed_lag_ms);
+    let state = feed_state(model.replay.is_some(), model.connection);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(STATE_DOT_DIAMETER_PX, STATE_DOT_DIAMETER_PX),
         egui::Sense::hover(),
@@ -201,10 +204,10 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
             .monospace()
             .color(theme::TEXT_PRIMARY),
     );
-    let lag_color = match state {
-        FeedState::Stalled => theme::WARN,
-        FeedState::Replay => theme::AMBER,
-        FeedState::Live | FeedState::Connecting => theme::TEXT_MUTED,
+    let lag_color = match (state, model.feed_lag_ms) {
+        (FeedState::Replay, _) => theme::AMBER,
+        (_, Some(lag)) if lag > metrics::HIGH_LAG_MS => theme::WARN,
+        (FeedState::Connecting | FeedState::Reconnecting | FeedState::Live, _) => theme::TEXT_MUTED,
     };
     ui.label(
         egui::RichText::new(lag_text(model.replay, model.feed_lag_ms))
@@ -302,22 +305,34 @@ mod tests {
 
     #[test]
     fn the_dot_reads_the_feed_honestly() {
-        assert_eq!(feed_state(false, None), FeedState::Connecting);
-        assert_eq!(feed_state(false, Some(120)), FeedState::Live);
         assert_eq!(
-            feed_state(false, Some(metrics::HIGH_LAG_MS + 1)),
-            FeedState::Stalled
+            feed_state(false, FeedConnectionState::Connecting),
+            FeedState::Connecting
         );
-        // A recording is replay, whatever its (meaningless) lag would be.
-        assert_eq!(feed_state(true, None), FeedState::Replay);
-        assert_eq!(feed_state(true, Some(999_999)), FeedState::Replay);
+        assert_eq!(
+            feed_state(false, FeedConnectionState::Reconnecting),
+            FeedState::Reconnecting
+        );
+        assert_eq!(
+            feed_state(false, FeedConnectionState::Connected),
+            FeedState::Live
+        );
+        // A recording is replay, whatever the displaced live transport says.
+        assert_eq!(
+            feed_state(true, FeedConnectionState::Connecting),
+            FeedState::Replay
+        );
+        assert_eq!(
+            feed_state(true, FeedConnectionState::Connected),
+            FeedState::Replay
+        );
     }
 
     #[test]
     fn dot_colours_follow_the_tokens() {
         assert_eq!(FeedState::Live.color(), theme::BUY);
         assert_eq!(FeedState::Replay.color(), theme::AMBER);
-        assert_eq!(FeedState::Stalled.color(), theme::WARN);
+        assert_eq!(FeedState::Reconnecting.color(), theme::WARN);
         assert_eq!(FeedState::Connecting.color(), theme::TEXT_FAINT);
     }
 
@@ -361,6 +376,7 @@ mod tests {
                     speed: 10.0,
                     progress: 0.4,
                 }),
+                connection: FeedConnectionState::Connected,
                 feed_lag_ms: (!replaying).then_some(120),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
@@ -398,6 +414,7 @@ mod tests {
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,
+            connection: FeedConnectionState::Connected,
             feed_lag_ms: Some(106),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),

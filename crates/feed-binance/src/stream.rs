@@ -9,7 +9,7 @@
 //! runner ([`run_agg_trade_stream`]) is exercised by an `#[ignore]`d live test.
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc::Sender, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
@@ -57,11 +57,13 @@ pub async fn run_agg_trade_stream(
     url: &str,
     tx: &Sender<Trade>,
     tracker: &mut ContinuityTracker,
+    connected: &watch::Sender<bool>,
 ) -> Result<u64, FeedError> {
     info!(target: "quantick::feed", url, "connecting aggTrade websocket");
     let (mut ws, _resp) = tokio_tungstenite::connect_async(url)
         .await
         .map_err(|e| FeedError::Http(e.to_string()))?;
+    let _ = connected.send(true);
     info!(target: "quantick::feed", url, "aggTrade websocket connected");
 
     let mut forwarded: u64 = 0;
@@ -135,10 +137,11 @@ mod tests {
     #[ignore = "hits the live Binance websocket; run manually with --ignored"]
     async fn live_stream_forwards_a_few_trades() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let (connected_tx, _connected_rx) = tokio::sync::watch::channel(false);
         let url = agg_trade_url(BINANCE_WS_BASE, "BTCUSDT");
         let handle = tokio::spawn(async move {
             let mut tracker = ContinuityTracker::new();
-            run_agg_trade_stream(&url, &tx, &mut tracker).await
+            run_agg_trade_stream(&url, &tx, &mut tracker, &connected_tx).await
         });
 
         let mut seen = 0;

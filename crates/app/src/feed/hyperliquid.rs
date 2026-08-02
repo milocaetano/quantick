@@ -6,7 +6,10 @@
 //! `l2Book` connection publishes the visible 20-level book through the same
 //! neutral [`DepthEvent`] channel Binance and MetaTrader use.
 
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tracing::{info, warn};
 
 use quantick_engine::Trade;
@@ -16,13 +19,14 @@ use quantick_feed_hyperliquid::{
     run_trades_with_reconnect,
 };
 
-use super::{FeedCommand, FeedEvent, FeedHandle};
+use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
 use crate::config::ProviderKind;
 
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 const FEED_EVENT_CHANNEL_CAPACITY: usize = 4_096;
 const TRADE_BATCH_CHANNEL_CAPACITY: usize = 1_024;
 const COMMAND_CHANNEL_CAPACITY: usize = 16;
+const NOTICE_CHANNEL_CAPACITY: usize = 32;
 const FEED_RUNTIME_WORKERS: usize = 2;
 const STARTUP_RECOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const TRADE_RECONNECT_SEED: u64 = 0x4859_5045_525F_5452;
@@ -33,6 +37,7 @@ const DEPTH_RECONNECT_SEED: u64 = 0x4859_5045_525F_4C32;
 pub fn spawn(symbol: &str) -> FeedHandle {
     let (tx, rx) = mpsc::channel(FEED_EVENT_CHANNEL_CAPACITY);
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
+    let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
     let symbol = symbol.to_owned();
     std::thread::Builder::new()
@@ -43,14 +48,14 @@ pub fn spawn(symbol: &str) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build Hyperliquid feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, cmd_rx));
+            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx));
         })
         .expect("spawn Hyperliquid feed thread");
 
     FeedHandle {
         events: rx,
         book_events: book_rx,
-        notices: super::silent_notices(),
+        notices: notice_rx,
         capabilities: super::fixed_capabilities(ProviderKind::Hyperliquid.capabilities()),
         commands: cmd_tx,
         replay: None,
@@ -61,6 +66,7 @@ async fn feed_task(
     symbol: String,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     let symbol = symbol.to_uppercase();
@@ -68,17 +74,20 @@ async fn feed_task(
     let (live_tx, mut live_rx) = mpsc::channel::<Vec<Trade>>(TRADE_BATCH_CHANNEL_CAPACITY);
     let stream_symbol = symbol.clone();
     let trade_backoff = Backoff::for_feed(TRADE_RECONNECT_SEED);
+    let (connected_tx, mut connected_rx) = watch::channel(false);
     let reconnect = tokio::spawn(async move {
         run_trades_with_reconnect(
             HYPERLIQUID_WS_URL,
             &stream_symbol,
             &live_tx,
+            &connected_tx,
             mapper,
             trade_backoff,
         )
         .await;
     });
     let mut book_capture: Option<BookCaptureTask> = None;
+    let mut ever_connected = false;
     let mut recovery_pending = true;
     let recovery_timeout = tokio::time::sleep(STARTUP_RECOVERY_TIMEOUT);
     tokio::pin!(recovery_timeout);
@@ -105,6 +114,19 @@ async fn feed_task(
                         }
                     }
                     None => break,
+                }
+            }
+            changed = connected_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let notice = connection_notice(
+                    *connected_rx.borrow_and_update(),
+                    &mut ever_connected,
+                    "Hyperliquid",
+                );
+                if notice_tx.send(notice).await.is_err() {
+                    break;
                 }
             }
             () = &mut recovery_timeout, if recovery_pending => {

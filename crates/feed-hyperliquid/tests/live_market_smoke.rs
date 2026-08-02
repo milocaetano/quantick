@@ -17,10 +17,18 @@ const MARKET_TIMEOUT: Duration = Duration::from_secs(20);
 async fn all_seeded_markets_stream_trades_and_l2() {
     for symbol in SEEDED_MARKETS {
         let (trade_tx, mut trade_rx) = tokio::sync::mpsc::channel(64);
+        let (connected_tx, _connected_rx) = tokio::sync::watch::channel(false);
         let symbol_owned = symbol.to_owned();
         let trade_task = tokio::spawn(async move {
             let mut mapper = TradeMapper::new(&symbol_owned);
-            run_trade_session(HYPERLIQUID_WS_URL, &symbol_owned, &trade_tx, &mut mapper).await
+            run_trade_session(
+                HYPERLIQUID_WS_URL,
+                &symbol_owned,
+                &trade_tx,
+                &connected_tx,
+                &mut mapper,
+            )
+            .await
         });
         let trades = tokio::time::timeout(MARKET_TIMEOUT, trade_rx.recv())
             .await
