@@ -52,6 +52,11 @@ pub struct IndicatorHost {
     /// `bars` — except transiently during a preview, when the forming bar's
     /// staged value is pushed and popped (truncate-don't-clone).
     cvd: Vec<f64>,
+    /// The forming bar, retained so that an instance added or replaced
+    /// mid-bar can be previewed on the spot. Without it, such an instance
+    /// would show nothing until the next partial update arrived — a blink
+    /// live, and permanent on a paused replay.
+    partial: Option<IndicatorBar>,
 }
 
 impl IndicatorHost {
@@ -74,6 +79,7 @@ impl IndicatorHost {
             error,
             preview: None,
         });
+        self.preview_retained(self.instances.len() - 1);
         id
     }
 
@@ -82,12 +88,15 @@ impl IndicatorHost {
     /// input change mid-stream — it is replaced wholesale. Returns false for
     /// an unknown id.
     pub fn replace(&mut self, id: InstanceId, mut indicator: Box<dyn Indicator>) -> bool {
-        let Some(instance) = self.instances.iter_mut().find(|i| i.id == id) else {
+        let Some(index) = self.instances.iter().position(|i| i.id == id) else {
             return false;
         };
-        instance.error = Self::catch_up(indicator.as_mut(), &self.bars, &self.cvd).err();
+        let error = Self::catch_up(indicator.as_mut(), &self.bars, &self.cvd).err();
+        let instance = &mut self.instances[index];
+        instance.error = error;
         instance.indicator = indicator;
         instance.preview = None;
+        self.preview_retained(index);
         true
     }
 
@@ -112,30 +121,58 @@ impl IndicatorHost {
     /// the series store uses, so a preview costs no allocation here.
     pub fn set_partial(&mut self, partial: Option<&Bar>) {
         let Some(bar) = partial else {
+            self.partial = None;
             for instance in &mut self.instances {
                 instance.preview = None;
             }
             return;
         };
         let bar = IndicatorBar::from(bar);
+        self.partial = Some(bar);
         let bar_index = self.bars.len();
         let staged_cvd = self.cvd.last().copied().unwrap_or(0.0) + bar.delta();
         self.cvd.push(staged_cvd);
         let cvd = &self.cvd;
         for instance in &mut self.instances {
-            if instance.error.is_some() {
-                continue;
-            }
-            let mut ctx = Ctx { bar_index, cvd };
-            match instance.indicator.preview(&bar, &mut ctx) {
-                Ok(frame) => instance.preview = Some(frame),
-                Err(e) => {
-                    instance.error = Some(e);
-                    instance.preview = None;
-                }
-            }
+            Self::preview_instance(instance, &bar, bar_index, cvd);
         }
         self.cvd.pop();
+    }
+
+    /// Preview the retained forming bar into one instance — the tail of
+    /// `add`/`replace`, so a newcomer is as current as its neighbours.
+    fn preview_retained(&mut self, index: usize) {
+        let Some(bar) = self.partial else {
+            return;
+        };
+        let bar_index = self.bars.len();
+        let staged_cvd = self.cvd.last().copied().unwrap_or(0.0) + bar.delta();
+        self.cvd.push(staged_cvd);
+        if let Some(instance) = self.instances.get_mut(index) {
+            Self::preview_instance(instance, &bar, bar_index, &self.cvd);
+        }
+        self.cvd.pop();
+    }
+
+    /// One instance's preview run. A failure disables that instance and
+    /// leaves its neighbours alone, exactly as on the commit path.
+    fn preview_instance(
+        instance: &mut Instance,
+        bar: &IndicatorBar,
+        bar_index: usize,
+        cvd: &[f64],
+    ) {
+        if instance.error.is_some() {
+            return;
+        }
+        let mut ctx = Ctx { bar_index, cvd };
+        match instance.indicator.preview(bar, &mut ctx) {
+            Ok(frame) => instance.preview = Some(frame),
+            Err(e) => {
+                instance.error = Some(e);
+                instance.preview = None;
+            }
+        }
     }
 
     /// Reset everything and replay `bars` from scratch (spec switch, replay
@@ -157,6 +194,8 @@ impl IndicatorHost {
 
     fn commit_bar(&mut self, bar: &IndicatorBar) {
         let bar_index = self.bars.len();
+        // The forming bar is now closed; nothing may preview against it.
+        self.partial = None;
         self.bars.push(*bar);
         let prev = self.cvd.last().copied().unwrap_or(0.0);
         self.cvd.push(prev + bar.delta());

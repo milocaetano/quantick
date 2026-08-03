@@ -23,7 +23,11 @@ impl ExtremeCore {
     fn new(len: usize, is_max: bool) -> Self {
         Self {
             window: Window::new(len),
-            deque: VecDeque::with_capacity(len),
+            // `len + 1`: a push appends before the out-of-window entry is
+            // popped, so on a monotone series the deque transiently holds one
+            // more than the window. Sizing for the peak keeps the per-bar
+            // path allocation-free instead of paying one regrowth.
+            deque: VecDeque::with_capacity(len + 1),
             seen: 0,
             is_max,
         }
@@ -178,12 +182,20 @@ impl LowestBars {
 /// `ta.stdev(src, len)` — **population** standard deviation over the window
 /// (divide by `len`, not `len − 1`; documented in the dialect reference).
 ///
-/// Incremental via running sum and sum of squares; the tiny negative variance
-/// floating rounding can produce is clamped to zero rather than handed to
-/// `sqrt` as NaN.
+/// Incremental via running sum and sum of squares, both accumulated relative
+/// to an `offset` captured from the first real input. Variance is invariant
+/// under a shift, so this is the same number — but the sums then live at
+/// deviation scale instead of price scale, and `sum_sq/len − mean²` stops
+/// being a difference of two nearly equal large quantities. Without it, a
+/// tight spread around a 1e5 price loses most of its significant digits to
+/// cancellation, and the `.max(0.0)` below would be absorbing real error
+/// rather than the last-ulp negative it is meant for.
 #[derive(Debug, Clone)]
 pub struct Stdev {
     window: Window,
+    /// Shift applied to every accumulated value; NaN until the first real
+    /// input sets it.
+    offset: f64,
     sum: f64,
     sum_sq: f64,
 }
@@ -196,6 +208,7 @@ impl Stdev {
     pub fn new(len: usize) -> Self {
         Self {
             window: Window::new(len),
+            offset: f64::NAN,
             sum: 0.0,
             sum_sq: 0.0,
         }
@@ -203,9 +216,18 @@ impl Stdev {
 
     /// Advance one bar; NaN during warmup / while a NaN is in the window.
     pub fn push(&mut self, x: f64) -> f64 {
-        let clean = zero_if_nan(x);
+        if self.offset.is_nan() && !x.is_nan() {
+            self.offset = x;
+        }
+        // A NaN contributes 0.0 in shifted space, on the way in and on the way
+        // out — the same substitution `zero_if_nan` makes, expressed so that
+        // adding a value and later evicting it cancel exactly even though the
+        // offset was still unset when a leading NaN went in. The output is
+        // gated on the NaN count either way, so the substitute never leaks.
+        let shifted = |v: f64| if v.is_nan() { 0.0 } else { v - self.offset };
+        let clean = shifted(x);
         if let Some(evicted) = self.window.push(x) {
-            let e = zero_if_nan(evicted);
+            let e = shifted(evicted);
             self.sum -= e;
             self.sum_sq -= e * e;
         }
@@ -393,6 +415,25 @@ mod tests {
         let mut flat = Stdev::new(2);
         flat.push(4.0);
         assert_eq!(flat.push(4.0), 0.0);
+    }
+
+    #[test]
+    fn stdev_keeps_its_digits_at_instrument_scale() {
+        // The case the exact-arithmetic test above cannot see: a tight spread
+        // on a five-figure price. `sum_sq/len` and `mean²` are both ~1.09e10
+        // while the variance is 4e-4, so accumulating raw values loses the
+        // answer to cancellation — ulp(1.09e10) alone is ~2e-6, five orders
+        // of magnitude above what the result needs to resolve.
+        let base = 104_532.0_f64;
+        let mut sd = Stdev::new(4);
+        for step in [0.02, -0.02, 0.02, -0.02] {
+            sd.push(base + step);
+        }
+        let deviation = sd.push(base + 0.02);
+        assert!(
+            (deviation - 0.02).abs() < 1e-9,
+            "expected 0.02, got {deviation} — the accumulator lost its digits"
+        );
     }
 
     #[test]
