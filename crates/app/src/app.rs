@@ -342,7 +342,8 @@ pub struct QuantickApp {
     /// [`crate::indicators`]).
     indicators: IndicatorViews,
     /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
-    /// startup; hot reload is the M4 milestone.
+    /// startup. A file-backed script then follows its file: `poll_script_files`
+    /// checks mtimes on a debounce and reloads on a save.
     script_library: ScriptLibrary,
     /// The open indicator-settings dialog, if any (one at a time).
     indicator_settings: Option<SettingsDialog>,
@@ -2686,7 +2687,7 @@ impl QuantickApp {
         }
         // Overlay indicator plots ride the candles' own clip, scale and
         // x-mapping — after candles, before aggression bubbles (the same
-        // paint-order slot draw objects will take in M3).
+        // paint-order slot draw objects take).
         let plot_x = PlotX {
             viewport: &self.viewport,
             right,

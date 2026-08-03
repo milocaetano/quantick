@@ -105,9 +105,11 @@ fn bench_host(bars: &[Bar]) {
     }
     report("host preview (EMA+CVD)", previews, start.elapsed());
 
-    // Full recompute: the §5 budget says 10 scripts x 5000 bars <= 1.5 s;
-    // 2 native indicators over the full burst approximate one script's
-    // recompute share.
+    // Native full recompute. This is *not* the §5 budget's workload: that
+    // budget is 10 scripts x 5000 bars <= 1.5 s, and a script costs several
+    // times what a native does per bar (see `pine/benches/interp.rs`, which
+    // measures the scripted path this number must not be read as). Reported
+    // here as what it is — the host's own replay cost over the burst.
     let start = Instant::now();
     host.rebuild(bars, None);
     let elapsed = start.elapsed();

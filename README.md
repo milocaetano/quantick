@@ -302,12 +302,13 @@ JSON logs include stable fields such as `schema_version`, `event_code`, symbol, 
 
 ## Architecture
 
-The project is a Cargo workspace of small, one-way-dependent crates (`app` / `feed-*` → `engine` / `orderbook` / `replay`). Status today:
+The project is a Cargo workspace of small, one-way-dependent crates (`app` → `pine` → `indicators` → `engine`; `app` also on `orderbook`, `replay` and the feeds; `feed-*` → `engine` / `orderbook`). Status today:
 
 - **Bar engine (Rust)** — ✅ raw trades in → alternative bars out; deterministic and headless, usable with no UI attached (`crates/engine`)
 - **Live feeds** — ✅ Binance aggTrades over public data, works out of the box with no API key (`crates/feed-binance`); ✅ MetaTrader 5 via a local bridge EA (`crates/feed-mt5`)
 - **Market replay** — ✅ recorded sessions played back through the live feed channel, at 1×–50× (`crates/replay`)
 - **Desktop app** — ✅ native chart (egui) showing bars form in real time, with a Bookmap-inspired L2 liquidity heatmap (`crates/app`)
+- **Indicators & scripting** — ✅ an indicator runtime with incremental `ta.*` kernels, and "Quantick Pine", a Pine v5 subset compiled and run in-process, plotted on the chart and readable headlessly by a backtest or bot (`crates/indicators`, `crates/pine`)
 - **Bindings** — ⏳ Python bindings and a C API are planned, so the engine plugs into existing backtest stacks and bots in any language
 
 ## Design principles
@@ -326,7 +327,8 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` / `fe
 - [x] MetaTrader 5 feed
 - [x] Bookmap-inspired L2 liquidity heatmap (egui/glow; wgpu migration still open)
 - [x] Market replay of recorded sessions (trades; depth replay still open)
-- [ ] CVD & delta visuals (engine already stores per-bar buy/sell volume and delta; charting them is next)
+- [x] CVD & delta visuals (native EMA/CVD indicators, delta histograms, order-flow series in scripts)
+- [x] Scriptable indicators — "Quantick Pine", a Pine v5 subset with order-flow builtins (`delta`, `cvd`, `buy_volume`, …), drawing objects, hot reload and a persisted indicator set; see [docs/pine-dialect.md](docs/pine-dialect.md)
 - [ ] Python bindings
 - [ ] C API, so bots in C++ (or any language) can consume the engine
 

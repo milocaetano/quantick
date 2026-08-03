@@ -96,10 +96,9 @@ pub enum Builtin {
     TaBarsSince,
     /// `ta.valuewhen`
     TaValueWhen,
-    /// `ta.pivothigh` (kernel lands in M3; accepted by the registry so the
-    /// error is honest until then)
+    /// `ta.pivothigh`
     TaPivotHigh,
-    /// `ta.pivotlow` (M3, as above)
+    /// `ta.pivotlow`
     TaPivotLow,
     /// `math.sum` (stateful window sum)
     MathSum,
