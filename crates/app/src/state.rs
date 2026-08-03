@@ -124,6 +124,19 @@ impl BarSpec {
         }
     }
 
+    /// The interval this spec cuts bars at, when it cuts by time at all.
+    ///
+    /// Only a time spec has one: a tick or volume bar covers whatever span its
+    /// count happened to take, which is not an interval anything can be folded
+    /// to.
+    #[must_use]
+    pub fn time_interval_ms(&self) -> Option<i64> {
+        match self {
+            Self::Time(ms) => Some(*ms),
+            _ => None,
+        }
+    }
+
     /// A human-readable summary, e.g. `tick(50)` or `dollar(500000)`.
     #[must_use]
     pub fn summary(&self) -> String {

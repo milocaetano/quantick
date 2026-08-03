@@ -47,15 +47,18 @@ pub enum LoadingTask {
     BookSync,
     /// A recorded session is being parsed on a worker thread.
     ReplaySession,
+    /// Venue candle history is on its way for a time pane.
+    VenueHistory,
 }
 
 impl LoadingTask {
     /// Every task, in the order the overlay stacks their rows.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::History,
         Self::BarRebuild,
         Self::BookSync,
         Self::ReplaySession,
+        Self::VenueHistory,
     ];
 
     /// What the row says, without the trailing ellipsis.
@@ -66,6 +69,7 @@ impl LoadingTask {
             Self::BarRebuild => "rebuilding bars",
             Self::BookSync => "syncing order book",
             Self::ReplaySession => "loading replay session",
+            Self::VenueHistory => "loading venue history",
         }
     }
 

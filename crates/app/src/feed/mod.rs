@@ -43,10 +43,6 @@ pub const DEFAULT_BACKFILL_TARGET: usize = 1000;
 /// in full detail. Candles are the context around it, and a quarter is the
 /// shortest span in which a daily or weekly chart says anything at all.
 ///
-/// Only the tests reach for this today: the providers that answer the request
-/// are built, and the pane that makes it is not. Delete this attribute when the
-/// time pane starts asking.
-#[allow(dead_code)]
 pub const TIME_HISTORY_SPAN_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 
 /// Wall-clock epoch milliseconds, for the one thing a feed legitimately needs
@@ -108,9 +104,6 @@ pub enum FeedEvent {
     /// itself is the signal that loading ended — a provider that stayed silent
     /// would strand a spinner forever.
     ///
-    /// Every provider sends this; nothing reads the bars yet, because the pane
-    /// that draws them is not built. Delete the attribute when it is.
-    #[allow(dead_code)]
     OhlcvHistory {
         /// The interval each bar covers. Always
         /// [`OHLCV_BASE_INTERVAL_MS`] today, and tagged rather than assumed:
@@ -175,9 +168,6 @@ pub enum FeedCommand {
     ///   [`Bar::volume`] exact and makes [`Bar::delta`] identically zero — read
     ///   as "not measured", never as "measured and found balanced".
     ///
-    /// Every provider answers this; only the tests send it so far, because the
-    /// pane that would is not built. Delete the attribute when it is.
-    #[allow(dead_code)]
     FetchOhlcv {
         /// How far back to reach, in milliseconds. See
         /// [`TIME_HISTORY_SPAN_MS`].

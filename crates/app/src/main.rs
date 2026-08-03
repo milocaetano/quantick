@@ -35,6 +35,7 @@ mod orderflow_worker;
 mod pane;
 mod price_view;
 mod replay_view;
+mod resample;
 mod state;
 mod statusbar;
 mod style;
