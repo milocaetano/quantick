@@ -32,6 +32,7 @@ mod orderflow_engine;
 mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
+mod pane;
 mod price_view;
 mod replay_view;
 mod state;

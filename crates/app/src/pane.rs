@@ -1,0 +1,1606 @@
+//! One chart pane: everything that answers "what is on this canvas".
+//!
+//! A pane owns the bar series it aggregates, the viewport and price scale it is
+//! read through, the drawings anchored to its bar indices and the indicator
+//! slots computed over it. What it deliberately does *not* own is the market
+//! feeding it — feed channels, connection state and notices belong to the tab
+//! around it — or the window chrome (menus, toolbar, dock, status bar), which
+//! belongs to the application around that.
+//!
+//! That split is what lets one tab hold two panes over the same trades: a flow
+//! pane and a time-frame pane, the split view of `docs/ux/ui-design-model.md`
+//! §11. Every egui interaction id a pane registers is derived from
+//! [`ChartPane::id`] for the same reason — two panes registering one id would
+//! share a drag.
+
+use eframe::egui;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use smallvec::SmallVec;
+
+use crate::app::{
+    PlotAreas, fmt_time, fmt_window, gesture_hits_lane, plot_split, split_time_strip,
+};
+use crate::candle_view::draw_candle;
+use crate::chart::{self, PriceScale};
+use crate::drawings::{self, ChartPoint, DrawContext, Drawings, PresetHost};
+use crate::indicator_render::{self, PlotX};
+use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
+use crate::indicators::IndicatorViews;
+use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
+use crate::price_view::PriceView;
+use crate::state::{BarKind, BarSpec, ChartState};
+use crate::style::ChartStyle;
+use crate::theme;
+use crate::timezone::TzOffset;
+use crate::toolrail::{Tool, ToolRail};
+use crate::viewport::Viewport;
+
+/// Hit radius for selecting a drawing anchor, in logical pixels.
+const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
+/// Hit radius for a selected drawing's editable anchor.
+pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
+/// Minimum pointer travel that turns one press/release into drag placement.
+const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
+
+/// Alpha of the last-price line: legible at a glance without competing with a
+/// candle or a bubble for attention.
+const LAST_PRICE_LINE_ALPHA: f32 = 0.55;
+/// Dash length, in pixels, of the last-price line. Dashed so it never reads as
+/// a level someone drew.
+const LAST_PRICE_DASH_PX: f32 = 4.0;
+/// See [`LAST_PRICE_DASH_PX`].
+const LAST_PRICE_GAP_PX: f32 = 4.0;
+/// Ink on the last-price chip. The chip is filled with a saturated candle
+/// colour, so its text is the one place on the chrome that goes dark.
+const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
+
+/// Font size, in points, of the "nothing in view" line drawn where the candles
+/// would be. Matches the "connecting…" line: same voice, same weight.
+const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
+
+/// Half-width, in pixels, of the grab area over the live lane's divider.
+///
+/// The line itself stays a hairline — it marks where the present begins and a
+/// thick rule there would read as a wall in the data. The handle around it is
+/// what makes it draggable, and the resize cursor is the only thing that says
+/// so.
+const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
+
+/// Pixels of drag on the lane's own time strip that double or halve its window.
+///
+/// Matches the candles' own feel: dragging the time axis zooms it by
+/// `exp(dx / 120)`, so the two panes answer a drag at the same rate even
+/// though they are zooming different things.
+const LANE_ZOOM_DRAG_PX: f32 = 120.0;
+
+/// Convert an explicit unmultiplied RGBA style colour to egui.
+fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+
+/// The canvas background colour `style` asks for.
+pub fn background_color(style: &ChartStyle) -> egui::Color32 {
+    color32(style.canvas.background_rgba())
+}
+
+/// The chart-grid colour `style` asks for. `TRANSPARENT` disables grid painting
+/// without branching throughout the axis code.
+pub fn grid_color(style: &ChartStyle) -> egui::Color32 {
+    style
+        .canvas
+        .grid_rgba()
+        .map_or(egui::Color32::TRANSPARENT, color32)
+}
+
+/// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
+fn dec_from_f64(x: f64) -> Decimal {
+    Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
+}
+
+/// What the pointer is currently doing to a drawing, if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DrawingDrag {
+    #[default]
+    None,
+    Translate,
+    Anchor {
+        drawing_index: usize,
+        point_index: usize,
+    },
+    /// The press landed on a locked drawing: the gesture belongs to the
+    /// object (the chart must not pan) but the geometry stays put.
+    Blocked,
+}
+
+impl DrawingDrag {
+    pub const fn is_active(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// What a pane borrows from the window around it to read one frame's input.
+///
+/// The armed tool and the preset store are single-instance chrome: whichever
+/// pane the pointer is over, there is one toolbox and one set of user presets.
+pub struct PaneInput<'a> {
+    pub toolrail: &'a mut ToolRail,
+    pub presets: &'a drawings::presets::PresetStore,
+}
+
+/// What a pane borrows from the window around it to paint one frame: the
+/// appearance the user chose, the timezone its time axis is read in, the armed
+/// tool (the crosshair is a mode, not an always-on layer) and the symbol to
+/// name while the series is still empty.
+pub struct PaneRender<'a> {
+    pub style: &'a ChartStyle,
+    pub tz: TzOffset,
+    pub tool: Tool,
+    pub symbol: &'a str,
+}
+
+/// One chart pane. See the module docs for what does and does not live here.
+pub struct ChartPane {
+    /// Namespaces this pane's egui interaction ids. Ids are the one piece of
+    /// gesture state egui keeps on our behalf, so two panes sharing an id
+    /// would share a drag.
+    pub id: u64,
+    pub state: ChartState,
+    pub orderflow: OrderflowView,
+    /// Background thread owning the `IndicatorHost`; the UI only sends
+    /// commands and applies the delta events back.
+    pub indicator_worker: IndicatorWorker,
+    /// The UI's copy of every indicator's plot columns (see
+    /// [`crate::indicators`]).
+    pub indicators: IndicatorViews,
+    /// Whether the user wants the live strip shown. The pixels it actually
+    /// gets are still capability-gated — see [`Self::live_strip_width`].
+    pub live_strip_visible: bool,
+
+    // Bar-type selector state (one parameter retained per kind).
+    pub kind: BarKind,
+    // The spec the selectors ask for, applied one frame after they settle so
+    // the frame carrying the change paints the loading overlay before the
+    // synchronous rebuild holds this thread. See QuantickApp::apply_spec_change.
+    pub pending_spec: Option<BarSpec>,
+    pub tick_n: u64,
+    pub volume_units: f64,
+    pub dollar_notional: f64,
+    pub time_interval_ms: i64,
+    pub imbalance_target: u64,
+
+    // Pan/zoom navigation over the bar series. It owns the history pane only:
+    // the live lane is a band of screen to its right that answers to nothing
+    // it does.
+    pub viewport: Viewport,
+    // Where the history pane ended last frame — the lane's divider, and the
+    // handle that resizes it. The input pass runs before the draw computes it.
+    pub last_lane_divider_x: Option<f32>,
+    // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
+    pub price_view: PriceView,
+    // Last frame's auto-fit price range and chart height, for pixel↔price maths
+    // in the input handler (which runs before the draw computes them).
+    pub last_auto_range: Option<(f64, f64)>,
+    pub last_chart_height: f32,
+    pub last_chart_top: f32,
+    // The chart pane from the last frame (excludes axes and the live lane),
+    // for inspector placement and manager centring.
+    pub last_chart_area: Option<egui::Rect>,
+    // Pointer position over the plot this frame, for the crosshair.
+    pub hover_pos: Option<egui::Pos2>,
+
+    /// User drawings live entirely in the app overlay layer, never in market
+    /// state, so chart/backtest/bot determinism stays untouched.
+    pub drawings: Drawings,
+    // Drawing placement/movement state. Anchors are chart coordinates; only
+    // the current hover and press position are transient pixels.
+    pub drawing_hover: Option<ChartPoint>,
+    pub drawing_press_position: Option<egui::Pos2>,
+    pub drawing_press_started_empty: bool,
+    pub drawing_drag: DrawingDrag,
+}
+
+impl ChartPane {
+    /// A pane over `symbol`, opening on bar `spec`. `id` namespaces its egui
+    /// interaction ids and must be unique among the panes on screen.
+    #[must_use]
+    pub fn new(id: u64, spec: BarSpec, symbol: String) -> Self {
+        // Defaults for every kind, with the initial spec's parameter applied.
+        let mut tick_n = 50;
+        let mut volume_units = 5.0;
+        let mut dollar_notional = 500_000.0;
+        let mut time_interval_ms = 1_000;
+        let mut imbalance_target = 100;
+        match &spec {
+            BarSpec::Tick(n) => tick_n = *n,
+            BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
+            BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
+            BarSpec::Time(ms) => time_interval_ms = *ms,
+            BarSpec::Imbalance(target) => imbalance_target = *target,
+        }
+
+        Self {
+            id,
+            kind: spec.kind(),
+            state: ChartState::new(spec),
+            orderflow: OrderflowView::new(symbol),
+            indicator_worker: IndicatorWorker::spawn(),
+            indicators: IndicatorViews::new(),
+            live_strip_visible: false,
+            pending_spec: None,
+            tick_n,
+            volume_units,
+            dollar_notional,
+            time_interval_ms,
+            imbalance_target,
+            viewport: Viewport::new(),
+            last_lane_divider_x: None,
+            price_view: PriceView::new(),
+            last_auto_range: None,
+            last_chart_height: 1.0,
+            last_chart_top: 0.0,
+            last_chart_area: None,
+            hover_pos: None,
+            drawings: Drawings::default(),
+            drawing_hover: None,
+            drawing_press_position: None,
+            drawing_press_started_empty: false,
+            drawing_drag: DrawingDrag::None,
+        }
+    }
+
+    /// An egui interaction id scoped to this pane.
+    fn interaction_id(&self, name: &'static str) -> egui::Id {
+        egui::Id::new((name, self.id))
+    }
+
+    /// The bar spec implied by the current selector state.
+    pub fn current_spec(&self) -> BarSpec {
+        match self.kind {
+            BarKind::Tick => BarSpec::Tick(self.tick_n.max(1)),
+            BarKind::Volume => BarSpec::Volume(dec_from_f64(self.volume_units)),
+            BarKind::Dollar => BarSpec::Dollar(dec_from_f64(self.dollar_notional)),
+            BarKind::Time => BarSpec::Time(self.time_interval_ms.max(1)),
+            BarKind::Imbalance => BarSpec::Imbalance(self.imbalance_target.max(1)),
+        }
+    }
+
+    /// How many bar slots the chart draws: the closed bars plus the forming
+    /// one, which occupies the slot after them.
+    pub fn slots(&self) -> usize {
+        self.state.bars().len() + usize::from(self.state.partial().is_some())
+    }
+
+    /// The market time under the right edge of the candles' pane, or `None`
+    /// while the view follows live (the right edge is the newest bar by
+    /// definition, so there is nothing to remember) or when there are no bars.
+    pub fn right_edge_time(&self) -> Option<i64> {
+        if self.viewport.follows_live() {
+            return None;
+        }
+        let slots = self.slots();
+        let edge = self.viewport.right_edge_bar(slots);
+        // Panning into the empty space past the newest bar puts the edge off
+        // the series; the newest bar is the market time it is closest to.
+        let slot = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
+        self.state.slot_open_time(slot)
+    }
+
+    /// Width reserved for the live strip this frame. No capability gate any
+    /// more: the aggression histogram runs on the trade stream, which every
+    /// source provides (replay included), and without book data the strip
+    /// honestly degrades to that histogram alone.
+    pub fn live_strip_width(&self) -> f32 {
+        if self.live_strip_visible {
+            crate::live_strip::LIVE_STRIP_WIDTH_PX
+        } else {
+            0.0
+        }
+    }
+
+    /// This pane's regions inside `area`, carved once so the input handler and
+    /// the renderer can never disagree about a boundary.
+    fn plot_areas(&self, area: egui::Rect) -> PlotAreas {
+        plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        )
+    }
+
+    /// Reserve a slot and ask the worker to instantiate `source` behind it.
+    pub fn add_indicator(&mut self, source: IndicatorSource) -> SlotId {
+        let slot = self.indicators.allocate_slot();
+        self.indicator_worker
+            .send(IndicatorCommand::Add { slot, source });
+        slot
+    }
+
+    /// Ask the worker to replay the chart's bars from scratch — the one
+    /// command behind spec switches, prepended history and source resets, so
+    /// indicators inherit correct behavior for every rebuild path.
+    pub fn send_indicator_rebuild(&mut self) {
+        self.indicator_worker.send(IndicatorCommand::Rebuild(
+            self.state.bars().to_vec(),
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Apply the indicator worker's deltas, before the draw reads columns.
+    pub fn apply_indicator_events(&mut self) {
+        for event in self.indicator_worker.drain_events() {
+            self.indicators.apply(event);
+        }
+    }
+
+    /// Take a backfill batch into the series and hand the indicators the bars
+    /// it produced.
+    pub fn ingest_backfill(&mut self, trades: &[quantick_engine::Trade]) {
+        self.state.ingest_backfill(trades);
+        self.indicator_worker
+            .send(IndicatorCommand::Backfilled(self.state.bars().to_vec()));
+        self.indicator_worker.send(IndicatorCommand::PartialUpdated(
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Prepend older trades and shift everything anchored to a bar index by the
+    /// number of bars they added, which is what this returns.
+    pub fn prepend_history(&mut self, trades: &[quantick_engine::Trade]) -> usize {
+        // Older bars shift every index up; keep the view steady.
+        let added = self.state.prepend_history(trades);
+        self.viewport.shift_right_edge(added);
+        self.drawings.shift_bars(added);
+        // Indicator columns shift with them: the rebuild below is a round-trip
+        // away, and until it lands every value would otherwise be drawn
+        // `added` slots off its own candle.
+        self.indicators.shift_rows(added);
+        // Older trades re-cut every bar; replay from scratch.
+        self.send_indicator_rebuild();
+        added
+    }
+
+    /// Take one live trade into the series, the tape and the indicators.
+    pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
+        self.orderflow.record_trade(trade);
+        let bars_before = self.state.bars().len();
+        self.state.ingest_live(trade);
+        // At most one bar closes per trade (an atomic market event is never
+        // split), so "grew" identifies exactly the bar that closed.
+        if self.state.bars().len() > bars_before
+            && let Some(closed) = self.state.bars().last()
+        {
+            self.indicator_worker
+                .send(IndicatorCommand::BarClosed(closed.clone()));
+        }
+        self.indicator_worker.send(IndicatorCommand::PartialUpdated(
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Convert a chart pixel into an overlay anchor. The x coordinate is a
+    /// fractional bar slot, so drawings follow pan/zoom instead of being stuck
+    /// to one screen pixel.
+    fn drawing_point_at(
+        &self,
+        pos: egui::Pos2,
+        history_right: f32,
+        total: usize,
+    ) -> Option<ChartPoint> {
+        let (auto_lo, auto_hi) = self.last_auto_range?;
+        if total == 0 || self.last_chart_height <= 1.0 {
+            return None;
+        }
+        let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+        let scale = PriceScale::from_range(
+            lo,
+            hi,
+            self.last_chart_top,
+            self.last_chart_top + self.last_chart_height,
+        );
+        let bar = self.viewport.right_edge_bar(total) + 0.5
+            - (history_right - pos.x) / self.viewport.candle_width();
+        Some(ChartPoint {
+            bar,
+            price: scale.price_at(pos.y),
+        })
+    }
+
+    /// Placement consumes clicks while a drawing tool is armed, preventing a
+    /// mark from also panning the chart. A completed object returns to Pointer,
+    /// matching the one-shot TradingView interaction.
+    fn handle_drawing_placement(
+        &mut self,
+        ui: &egui::Ui,
+        area: egui::Rect,
+        input: &mut PaneInput<'_>,
+    ) -> bool {
+        let Some(tool) = input.toolrail.tool().drawing_tool() else {
+            self.drawings.cancel_draft();
+            self.drawing_hover = None;
+            self.drawing_press_position = None;
+            self.drawing_press_started_empty = false;
+            return false;
+        };
+        let areas = self.plot_areas(area);
+        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let history = egui::Rect::from_min_max(
+            areas.chart.min,
+            egui::pos2(history_right, areas.chart.bottom()),
+        );
+        let response = ui.interact(
+            history,
+            self.interaction_id("drawing_placement"),
+            egui::Sense::click_and_drag(),
+        );
+        self.hover_pos = response.hover_pos();
+        self.drawing_hover = response
+            .hover_pos()
+            .and_then(|position| self.drawing_point_at(position, history_right, self.slots()));
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+
+        let pressed_position = ui.input(|input| {
+            input
+                .pointer
+                .primary_pressed()
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        });
+        if let Some(position) = pressed_position.filter(|position| history.contains(*position))
+            && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
+        {
+            self.drawing_press_started_empty = self.drawings.draft_len() == 0;
+            self.drawing_press_position = Some(position);
+            self.place_drawing_point(tool, point, input);
+        }
+
+        let released_position = ui.input(|input| {
+            input
+                .pointer
+                .primary_released()
+                .then(|| input.pointer.latest_pos())
+                .flatten()
+        });
+        if tool.required_points() > 1
+            && self.drawing_press_started_empty
+            && let Some(start) = self.drawing_press_position
+            && let Some(position) = released_position
+            && history.contains(position)
+            && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
+            && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
+        {
+            self.place_drawing_point(tool, point, input);
+        }
+        if released_position.is_some() {
+            self.drawing_press_position = None;
+            self.drawing_press_started_empty = false;
+        }
+        true
+    }
+
+    fn place_drawing_point(
+        &mut self,
+        tool: drawings::DrawingTool,
+        point: ChartPoint,
+        input: &mut PaneInput<'_>,
+    ) {
+        // A new object starts from the user's explicit default preset when
+        // one is set; existing objects are never touched by that choice.
+        let presets = input.presets;
+        let completed = self.drawings.place_with(tool, point, |tool| {
+            let mut payload = tool.default_payload();
+            if let Some(name) = presets.default_preset(tool.id())
+                && let Some(value) = presets.load_custom_preset(tool.id(), &name)
+            {
+                payload.import_preset(&value);
+            }
+            payload
+        });
+        if completed {
+            // One-shot by default; the toolbox repeat pin keeps the tool
+            // armed for the next object.
+            if !input.toolrail.repeat() {
+                input.toolrail.arm(Tool::Pointer);
+            }
+            self.drawing_hover = None;
+        }
+    }
+
+    pub fn projected_drawing_points(
+        &self,
+        drawing: &drawings::Drawing,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> SmallVec<[egui::Pos2; 4]> {
+        drawing
+            .points
+            .iter()
+            .map(|point| self.drawing_screen_point(*point, history_right, total, scale))
+            .collect()
+    }
+
+    fn drawing_at(
+        &self,
+        pos: egui::Pos2,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        self.drawings
+            .items()
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(index, _)| self.drawings.is_visible(*index))
+            .find_map(|(index, drawing)| {
+                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                let ctxt = DrawContext {
+                    payload: drawing.payload.as_ref(),
+                    anchors: &drawing.points,
+                    scale,
+                    style: drawing.style,
+                    selected: self.drawings.selected() == Some(index),
+                    halo: false,
+                };
+                drawing
+                    .tool
+                    .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+                    .then_some(index)
+            })
+    }
+
+    /// Alt+click: deterministic z-order cycling through every visible object
+    /// under the pointer. From the current selection, the next hit beneath
+    /// it wins; past the bottom it wraps back to the top.
+    fn drawing_below_selection(
+        &self,
+        pos: egui::Pos2,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        let hits: Vec<usize> = (0..self.drawings.items().len())
+            .rev()
+            .filter(|&index| self.drawings.is_visible(index))
+            .filter(|&index| {
+                let drawing = &self.drawings.items()[index];
+                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                let ctxt = DrawContext {
+                    payload: drawing.payload.as_ref(),
+                    anchors: &drawing.points,
+                    scale,
+                    style: drawing.style,
+                    selected: self.drawings.selected() == Some(index),
+                    halo: false,
+                };
+                drawing
+                    .tool
+                    .hit_test(chart_rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+            })
+            .collect();
+        match self
+            .drawings
+            .selected()
+            .and_then(|current| hits.iter().position(|&index| index == current))
+        {
+            Some(at) => Some(hits[(at + 1) % hits.len()]),
+            None => hits.first().copied(),
+        }
+    }
+
+    fn drawing_anchor_in(
+        &self,
+        drawing_index: usize,
+        pos: egui::Pos2,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        if !self.drawings.is_visible(drawing_index) {
+            return None;
+        }
+        let drawing = self.drawings.items().get(drawing_index)?;
+        self.projected_drawing_points(drawing, history_right, total, scale)
+            .iter()
+            .enumerate()
+            .map(|(point_index, point)| (point_index, point.distance_sq(pos)))
+            .filter(|(_, distance_sq)| {
+                *distance_sq <= DRAWING_ANCHOR_RADIUS_PX * DRAWING_ANCHOR_RADIUS_PX
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(point_index, _)| point_index)
+    }
+
+    fn drawing_anchor_at(
+        &self,
+        pos: egui::Pos2,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<(usize, usize)> {
+        let selected = self.drawings.selected();
+        if let Some(drawing_index) = selected
+            && let Some(point_index) =
+                self.drawing_anchor_in(drawing_index, pos, history_right, total, scale)
+        {
+            return Some((drawing_index, point_index));
+        }
+        (0..self.drawings.items().len())
+            .rev()
+            .filter(|drawing_index| Some(*drawing_index) != selected)
+            .find_map(|drawing_index| {
+                self.drawing_anchor_in(drawing_index, pos, history_right, total, scale)
+                    .map(|point_index| (drawing_index, point_index))
+            })
+    }
+
+    /// Handle mouse navigation, TradingView-style:
+    /// - drag the candles → pan time (x, moves the whole chart) and price (y);
+    /// - scroll over them → zoom time;
+    /// - drag the bottom time strip left/right → zoom time (spread candles);
+    /// - drag the right price gutter up/down → zoom the price scale;
+    /// - scroll over either axis → zoom that axis;
+    /// - double-click → reset to the live edge and auto-fit price.
+    ///
+    /// The live lane is a pane of its own and answers to none of it: a gesture
+    /// that starts inside the tape moves nothing, and scrolling there zooms the
+    /// tape's own window instead of the candles.
+    pub fn handle_navigation(
+        &mut self,
+        ui: &egui::Ui,
+        area: egui::Rect,
+        input: &mut PaneInput<'_>,
+    ) {
+        // Remembered for inspector placement and manager centring: the pane
+        // where drawings live, already free of both axes and the live lane.
+        self.last_chart_area = Some(self.plot_areas(area).chart);
+        if self.handle_drawing_placement(ui, area, input) {
+            return;
+        }
+        let areas = self.plot_areas(area);
+        let auto = self.last_auto_range;
+        let height = self.last_chart_height;
+        let total = self.slots();
+        let divider = self.last_lane_divider_x;
+        let in_lane = |position: egui::Pos2| gesture_hits_lane(divider, position.x);
+
+        // Chart body: drag pans both axes; scroll zooms time.
+        let chart = ui.interact(
+            areas.chart,
+            self.interaction_id("chart_nav"),
+            egui::Sense::click_and_drag(),
+        );
+        self.hover_pos = chart.hover_pos();
+        let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
+            let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+            PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
+        });
+        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let drawing_area = egui::Rect::from_min_max(
+            areas.chart.min,
+            egui::pos2(history_right, areas.chart.bottom()),
+        );
+        let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
+            .input(|input| {
+                (
+                    input.pointer.primary_pressed(),
+                    input.pointer.primary_down(),
+                    input.pointer.primary_released(),
+                    input.pointer.latest_pos(),
+                    input.pointer.delta(),
+                )
+            });
+        let mut drawing_drag_consumes_gesture = false;
+        if input.toolrail.tool() == Tool::Pointer {
+            // Hover feedback: a resize cursor over a selected anchor, a move
+            // cursor over any visible body, and not-allowed over locked
+            // geometry (visible objects in the viewport only — bounded work).
+            if let Some(position) =
+                pointer_position.filter(|position| drawing_area.contains(*position))
+                && let Some(scale) = drawing_scale
+            {
+                if let Some(selected) = self.drawings.selected()
+                    && self
+                        .drawing_anchor_in(selected, position, history_right, total, &scale)
+                        .is_some()
+                {
+                    ui.ctx()
+                        .set_cursor_icon(if self.drawings.items()[selected].locked {
+                            egui::CursorIcon::NotAllowed
+                        } else {
+                            egui::CursorIcon::ResizeNwSe
+                        });
+                } else if let Some(hovered) =
+                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                {
+                    ui.ctx()
+                        .set_cursor_icon(if self.drawings.items()[hovered].locked {
+                            egui::CursorIcon::NotAllowed
+                        } else {
+                            egui::CursorIcon::Move
+                        });
+                }
+            }
+            if chart.clicked()
+                && let Some(position) = chart.interact_pointer_pos()
+                && let Some(scale) = drawing_scale
+            {
+                // Alt+click walks down the z-order through overlapping
+                // objects; a plain click selects the topmost hit.
+                let selected = if ui.input(|input| input.modifiers.alt) {
+                    self.drawing_below_selection(
+                        position,
+                        areas.chart,
+                        history_right,
+                        total,
+                        &scale,
+                    )
+                } else {
+                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                };
+                self.drawings.select(selected);
+            }
+            // Floating inspectors normally own pointer input over their whole
+            // rectangle. Read the raw press so an already-selected drawing
+            // remains draggable even when its stroke or handle is underneath
+            // that inspector. Only an actual drawing hit takes precedence;
+            // every other inspector click remains a style interaction.
+            let mut drawing_drag_started = false;
+            if primary_pressed
+                && let Some(position) =
+                    pointer_position.filter(|position| drawing_area.contains(*position))
+                && let Some(scale) = drawing_scale
+            {
+                if let Some((drawing_index, point_index)) =
+                    self.drawing_anchor_at(position, history_right, total, &scale)
+                {
+                    self.drawings.select(Some(drawing_index));
+                    self.drawing_drag = if self.drawings.items()[drawing_index].locked {
+                        DrawingDrag::Blocked
+                    } else {
+                        self.drawings.begin_gesture();
+                        DrawingDrag::Anchor {
+                            drawing_index,
+                            point_index,
+                        }
+                    };
+                } else if let Some(index) =
+                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                {
+                    self.drawings.select(Some(index));
+                    self.drawing_drag = if self.drawings.items()[index].locked {
+                        DrawingDrag::Blocked
+                    } else {
+                        self.drawings.begin_gesture();
+                        DrawingDrag::Translate
+                    };
+                }
+                // A press that hits no geometry is not ours to interpret: it
+                // belongs to whatever egui routed it to (inspector, manager,
+                // chart pan). Deselection happens through the egui-routed
+                // click above, which already respects floating windows.
+                drawing_drag_started = self.drawing_drag.is_active();
+            }
+            if primary_down && !drawing_drag_started {
+                match self.drawing_drag {
+                    DrawingDrag::Anchor {
+                        drawing_index,
+                        point_index,
+                    } => {
+                        if let Some(position) = pointer_position {
+                            let position = egui::pos2(
+                                position.x.clamp(areas.chart.left(), history_right),
+                                position.y.clamp(areas.chart.top(), areas.chart.bottom()),
+                            );
+                            if let Some(point) =
+                                self.drawing_point_at(position, history_right, total)
+                            {
+                                self.drawings.move_anchor(drawing_index, point_index, point);
+                            }
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                        }
+                    }
+                    DrawingDrag::Translate => {
+                        if let Some(scale) = drawing_scale {
+                            let (lo, hi) = scale.range();
+                            let delta_bar = pointer_delta.x / self.viewport.candle_width();
+                            let delta_price =
+                                -f64::from(pointer_delta.y / areas.chart.height()) * (hi - lo);
+                            self.drawings.translate_selected(delta_bar, delta_price);
+                        }
+                    }
+                    DrawingDrag::Blocked => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+                    }
+                    DrawingDrag::None => {}
+                }
+            }
+            drawing_drag_consumes_gesture = self.drawing_drag.is_active();
+            if primary_released {
+                // One gesture, one undo entry — recorded only if it moved.
+                self.drawings.commit_gesture();
+                self.drawing_drag = DrawingDrag::None;
+            }
+        } else {
+            self.drawing_drag = DrawingDrag::None;
+        }
+        // Where the press landed, not where the pointer is now: a pan that
+        // started on the candles keeps working when it crosses the divider.
+        let dragging_candles = chart
+            .interact_pointer_pos()
+            .is_some_and(|press| !in_lane(press));
+        if total > 0 && chart.dragged() && dragging_candles && !drawing_drag_consumes_gesture {
+            let drag = chart.drag_delta();
+            self.viewport.pan_pixels(drag.x, total);
+            if let Some(auto) = auto
+                && drag.y != 0.0
+                && height > 1.0
+            {
+                let (lo, hi) = self.price_view.resolve(auto);
+                let price_per_px = (hi - lo) / f64::from(height);
+                self.price_view.pan(f64::from(drag.y) * price_per_px, auto);
+            }
+        }
+        if chart.double_clicked() {
+            self.viewport.snap_to_live();
+            self.price_view.reset();
+        }
+        if chart.hovered() {
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                // Scroll up (positive) zooms in. Over the tape that means less
+                // market time in the band; over the candles, wider candles.
+                if chart.hover_pos().is_some_and(in_lane) {
+                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                } else {
+                    self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                }
+            }
+        }
+
+        // The lane's divider, as a resize handle. Registered after the chart
+        // body so it takes the drag that would otherwise pan the candles
+        // behind it, and it is the only place the pointer changes shape: the
+        // line stays a hairline, the cursor is what says it can be moved.
+        let divider = self.last_lane_divider_x.map(|x| {
+            ui.interact(
+                egui::Rect::from_min_max(
+                    egui::pos2(x - LANE_HANDLE_HALF_WIDTH_PX, areas.chart.top()),
+                    egui::pos2(x + LANE_HANDLE_HALF_WIDTH_PX, areas.chart.bottom()),
+                ),
+                self.interaction_id("lane_divider"),
+                egui::Sense::drag(),
+            )
+        });
+        if let Some(divider) = &divider {
+            if divider.hovered() || divider.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if divider.dragged() {
+                // Drag left → a wider tape, at the expense of the candles.
+                self.orderflow
+                    .resize_live_lane(divider.drag_delta().x, areas.chart.width());
+            }
+        }
+
+        // Bottom time strip: drag or scroll to zoom. The segment under the
+        // lane zooms the lane's window, the rest zooms the candle spacing —
+        // each pane's own time axis, under the pane it belongs to.
+        let (history_strip, lane_strip) =
+            split_time_strip(areas.time_strip, self.last_lane_divider_x);
+        let time = ui.interact(
+            history_strip,
+            self.interaction_id("time_nav"),
+            egui::Sense::click_and_drag(),
+        );
+        if time.dragged() {
+            // Drag right → wider candles (zoom in); left → narrower (zoom out).
+            self.viewport
+                .zoom((time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
+        }
+        if time.hovered() {
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+            }
+        }
+        if let Some(lane_strip) = lane_strip {
+            let lane_time = ui.interact(
+                lane_strip,
+                self.interaction_id("lane_time_nav"),
+                egui::Sense::click_and_drag(),
+            );
+            if lane_time.dragged() {
+                // Drag right → less market time in the band (zoom in), so
+                // prints run across it faster and further apart.
+                self.orderflow
+                    .zoom_live_lane((lane_time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
+            }
+            if lane_time.hovered() {
+                let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                if scroll.abs() > 0.0 {
+                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                }
+            }
+        }
+
+        // Right price gutter: drag or scroll to zoom the price scale.
+        let price = ui.interact(
+            areas.price_gutter,
+            self.interaction_id("price_nav"),
+            egui::Sense::click_and_drag(),
+        );
+        if let Some(auto) = auto {
+            if price.dragged() {
+                // Drag up → compress span (bigger candles); down → expand.
+                self.price_view
+                    .zoom(f64::from(price.drag_delta().y / 150.0).exp(), auto);
+            }
+            if price.double_clicked() {
+                self.price_view.reset();
+            }
+            if price.hovered() {
+                let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                if scroll.abs() > 0.0 {
+                    self.price_view.zoom(f64::from(-scroll / 200.0).exp(), auto);
+                }
+            }
+        }
+    }
+
+    pub fn draw_chart(
+        &mut self,
+        painter: &egui::Painter,
+        area: egui::Rect,
+        render: &PaneRender<'_>,
+    ) {
+        let canvas_background = background_color(render.style);
+        painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
+
+        let closed = self.state.bars();
+        let partial = self.state.partial();
+        let total = closed.len() + usize::from(partial.is_some());
+        let areas = self.plot_areas(area);
+        // Indicator panes claimed the bottom band inside `plot_split`, so the
+        // rect the candles scale to is the same one the input handler uses.
+        let chart_rect = areas.chart;
+        let pane_rects = areas.indicator_panes.clone();
+        if total == 0 {
+            painter.text(
+                area.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("connecting to {} …", render.symbol),
+                egui::FontId::proportional(16.0),
+                theme::TEXT_MUTED,
+            );
+            self.orderflow.draw_status_badge(painter, chart_rect);
+            return;
+        }
+
+        // The live lane: a pane of its own, pinned to the right edge of the
+        // chart, showing a fixed window of market time that always ends at
+        // now. Fixed width, fixed pixels-per-ms: a print enters at the right
+        // edge and slides left until it leaves into the slot of its own bar.
+        //
+        // It belongs to the tape rather than to the forming bar, which is what
+        // keeps a bar close from emptying it — the reset that made the book
+        // look like it was restarting every few seconds. And it is a pane
+        // rather than a reservation inside the viewport, which is what keeps
+        // every chart movement out of it: panning, zooming and dragging move
+        // the candles beside the tape and never the tape itself, so the most
+        // recent prints are on screen whatever the rest of the chart is doing.
+        let lane_width_px = self
+            .orderflow
+            .live_lane_width_px(chart_rect.width())
+            .unwrap_or(0.0);
+        // Everything left of the divider is the candles' pane. They pan and
+        // zoom inside it exactly as they did when it was the whole chart.
+        self.last_lane_divider_x =
+            crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        let history_rect = egui::Rect::from_min_max(
+            chart_rect.min,
+            egui::pos2(
+                self.last_lane_divider_x
+                    .unwrap_or_else(|| chart_rect.right()),
+                chart_rect.bottom(),
+            ),
+        );
+
+        let (start, end) = self.viewport.visible_range(history_rect.width(), total);
+
+        // The visible closed bars, plus the partial if it falls in view.
+        let closed_start = start.min(closed.len());
+        let closed_end = end.min(closed.len());
+        let visible_closed = &closed[closed_start..closed_end];
+        let partial_visible = partial.filter(|_| closed.len() >= start && closed.len() < end);
+
+        // Auto-fit the visible bars, then apply any manual price pan/zoom. A
+        // window with no bars in it still gets a scale (the last one, then the
+        // newest bar), because a chart that draws nothing at all is
+        // indistinguishable from a hung app — which is exactly how the blank
+        // frame after a rebuild read.
+        let nothing_in_view = visible_closed.is_empty() && partial_visible.is_none();
+        let Some(auto_scale) = chart::price_window(
+            visible_closed,
+            partial_visible,
+            self.last_auto_range,
+            partial.or_else(|| closed.last()),
+            chart_rect.top(),
+            chart_rect.bottom(),
+        ) else {
+            return;
+        };
+        let auto_range = auto_scale.range();
+        let (lo, hi) = self.price_view.resolve(auto_range);
+        let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
+
+        let cw = self.viewport.candle_width();
+        let half = (cw * render.style.candles.clamped_width_frac() / 2.0).max(0.5);
+        let right = history_rect.right();
+
+        // Resting liquidity is the bottom visual layer. Projection is pure with
+        // respect to candles and uses the same bar-warped viewport coordinates.
+        // The projection builds a lane exactly when the layout draws one. Tied
+        // to `lane_width_px` rather than restated, because the two decide the
+        // same thing: with them apart, the newest prints would be clustered and
+        // sized as lane prints and then squeezed into a single candle slot.
+        let orderflow_frame = self.orderflow.project_visible(
+            VisibleBarTimeline::new(
+                self.state.timeline_revision(),
+                closed_start,
+                visible_closed,
+                partial_visible,
+            ),
+            lane_width_px > 0.0,
+            end == total,
+            scale.range(),
+        );
+        if let Some(frame) = &orderflow_frame {
+            self.orderflow.draw_background(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                lane_width_px,
+            );
+        }
+
+        // Grid + price labels first, behind the candles. Labels anchor on the
+        // gutter's edge, past the live strip when one is shown.
+        let axis_x = areas.price_gutter.left();
+        self.draw_price_axis(painter, chart_rect, axis_x, &scale, render);
+
+        // Candles, clipped to their own pane: panning far enough into history
+        // sends the newest bars off the right of it, and they scroll out of
+        // sight behind the tape instead of being drawn over it.
+        let clip = painter.with_clip_rect(history_rect);
+        // Clear the heat behind each candle's high–low span so a translucent
+        // candle stays a clean divider — no liquidity band shows through it.
+        // Where the price swept, the wall reads as consumed; bands survive only
+        // in the gaps between candles and above/below each bar.
+        if orderflow_frame.is_some() && self.orderflow.depth_visible() {
+            let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
+                let top = scale.y(bar.high.to_f64().unwrap_or(0.0));
+                let bottom = scale.y(bar.low.to_f64().unwrap_or(0.0));
+                clip.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(xc - half, top),
+                        egui::pos2(xc + half, bottom),
+                    ),
+                    egui::Rounding::ZERO,
+                    canvas_background,
+                );
+            };
+            for (offset, bar) in visible_closed.iter().enumerate() {
+                clear_bar(
+                    self.viewport.x_center(closed_start + offset, right, total),
+                    bar,
+                );
+            }
+            if let Some(partial) = partial_visible {
+                clear_bar(self.viewport.x_center(closed.len(), right, total), partial);
+            }
+        }
+        for (offset, bar) in visible_closed.iter().enumerate() {
+            let index = closed_start + offset;
+            let xc = self.viewport.x_center(index, right, total);
+            draw_candle(&clip, xc, half, &scale, bar, false, &render.style.candles);
+        }
+        if let Some(partial) = partial_visible {
+            let xc = self.viewport.x_center(closed.len(), right, total);
+            draw_candle(
+                &clip,
+                xc,
+                half,
+                &scale,
+                partial,
+                true,
+                &render.style.candles,
+            );
+        }
+        // Overlay indicator plots ride the candles' own clip, scale and
+        // x-mapping — after candles, before aggression bubbles (the same
+        // paint-order slot draw objects take).
+        let plot_x = PlotX {
+            viewport: &self.viewport,
+            right,
+            total,
+        };
+        // Slot -> (high_y, low_y) in pixels, for above/below-bar markers.
+        let bar_extents = |slot: usize| -> Option<(f32, f32)> {
+            let bar = if slot < closed.len() {
+                Some(&closed[slot])
+            } else if slot == closed.len() {
+                partial
+            } else {
+                None
+            }?;
+            Some((
+                scale.y(chart::to_f64(bar.high)),
+                scale.y(chart::to_f64(bar.low)),
+            ))
+        };
+        indicator_render::draw_overlays(
+            &clip,
+            self.indicators.visible_overlays(),
+            &plot_x,
+            &scale,
+            start,
+            end,
+            partial_visible.map(|_| closed.len()),
+            &bar_extents,
+        );
+        // Draw objects (lines/boxes/labels) share the overlays' paint slot:
+        // after candles, before aggression bubbles.
+        for view in self.indicators.visible_overlays() {
+            indicator_render::draw_objects(
+                &clip,
+                view.render_objects(),
+                &plot_x,
+                |v| scale.y(v),
+                start,
+                end,
+            );
+        }
+        // Pane indicators stack in the band carved off above, sharing the
+        // candles' x-mapping so bars and their flow read as one chart.
+        for (view, pane) in self.indicators.visible_panes().zip(&pane_rects) {
+            let pane = egui::Rect::from_min_max(
+                egui::pos2(history_rect.left(), pane.top()),
+                egui::pos2(history_rect.right(), pane.bottom()),
+            );
+            indicator_render::draw_pane(
+                painter,
+                pane,
+                view,
+                &plot_x,
+                start,
+                end,
+                partial_visible.map(|_| closed.len()),
+                canvas_background,
+            );
+        }
+        if let Some(frame) = &orderflow_frame {
+            self.orderflow.draw_aggressions(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                lane_width_px,
+            );
+        }
+
+        // The live strip: the book right now plus the forming bar's
+        // aggression histogram, beside the axis the price labels live on.
+        // Its own rect, so chart layers never bleed into it. The histogram
+        // follows `partial` (not its visible filter): the strip reports the
+        // bar forming now even while the user pans through history.
+        if let Some(strip) = areas.live_strip {
+            self.orderflow.draw_live_strip(
+                painter,
+                strip,
+                &scale,
+                canvas_background,
+                partial.map(|bar| bar.open_time),
+            );
+        }
+
+        // Drawings sit above market layers and remain anchored to chart space,
+        // not the screen, while the viewport moves beneath them.
+        self.draw_drawings(painter, chart_rect, right, total, &scale);
+
+        // Above the flow layers: everything else on the canvas is read against
+        // it. Drawn on the unclipped painter so the chip reaches the gutter.
+        if let Some(bar) = partial.or_else(|| closed.last()) {
+            self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, render);
+        }
+        // The candles' own mark, so it is placed and clipped in their pane.
+        self.draw_backfill_divider(painter, history_rect, total, cw);
+        self.draw_time_strip(painter, areas.time_strip, closed, start, end, total, render);
+        self.draw_lane_time_axis(
+            painter,
+            split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
+            self.orderflow.live_lane_window_ms(closed),
+        );
+        // Panned off the data (or a rebuild re-cut the series under the
+        // window): the chart is whole — axis, tape, badges — but there is
+        // nothing in the candles' pane, so say so and say the way back.
+        if nothing_in_view {
+            painter.text(
+                history_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "no bars in view — double-click to return to the live edge",
+                egui::FontId::proportional(EMPTY_VIEW_FONT_SIZE),
+                theme::TEXT_MUTED,
+            );
+        }
+        self.draw_crosshair(painter, chart_rect, axis_x, &scale, render);
+        self.orderflow.draw_status_badge(painter, chart_rect);
+
+        // Cache the auto range + height for next frame's input handler, which
+        // runs before the draw and needs them for pixel↔price conversion.
+        self.last_auto_range = Some(auto_range);
+        self.last_chart_height = chart_rect.height();
+        self.last_chart_top = chart_rect.top();
+    }
+
+    /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
+    /// visible bars. Draggable left/right to zoom the candle spacing.
+    ///
+    /// The labels stay under the candles' own pane; the segment past the lane's
+    /// divider is the tape's time axis and reads its window instead
+    /// ([`Self::draw_lane_time_axis`]).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_time_strip(
+        &self,
+        painter: &egui::Painter,
+        strip: egui::Rect,
+        closed: &[quantick_engine::Bar],
+        start: usize,
+        end: usize,
+        total: usize,
+        render: &PaneRender<'_>,
+    ) {
+        painter.line_segment(
+            [
+                egui::pos2(strip.left(), strip.top()),
+                egui::pos2(strip.right(), strip.top()),
+            ],
+            egui::Stroke::new(1.0_f32, grid_color(render.style)),
+        );
+        let font = egui::FontId::monospace(10.0);
+        let y = strip.center().y;
+        // Up to ~6 evenly-spaced labels across the visible closed bars.
+        let visible = end.saturating_sub(start);
+        if visible == 0 {
+            return;
+        }
+        let (history_strip, _) = split_time_strip(strip, self.last_lane_divider_x);
+        let step = (visible / 6).max(1);
+        let mut index = start;
+        while index < end {
+            if let Some(bar) = closed.get(index) {
+                let x = self.viewport.x_center(index, history_strip.right(), total);
+                if history_strip.x_range().contains(x) {
+                    painter.text(
+                        egui::pos2(x, y),
+                        egui::Align2::CENTER_CENTER,
+                        fmt_time(bar.open_time, render.tz),
+                        font.clone(),
+                        theme::TEXT_MUTED,
+                    );
+                }
+            }
+            index += step;
+        }
+    }
+
+    /// The live lane's own time axis: how much market time the tape is
+    /// showing, under the tape.
+    ///
+    /// The lane has no bar boundaries to label — it is one continuous window —
+    /// so its axis reads the window itself. It is also the only readout of what
+    /// the lane's zoom is currently worth, which is what makes dragging here
+    /// something other than guesswork.
+    fn draw_lane_time_axis(
+        &self,
+        painter: &egui::Painter,
+        lane_strip: Option<egui::Rect>,
+        window_ms: i64,
+    ) {
+        let Some(strip) = lane_strip else {
+            return;
+        };
+        painter.text(
+            strip.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("tape · {}", fmt_window(window_ms)),
+            egui::FontId::monospace(10.0),
+            theme::TEXT_MUTED,
+        );
+    }
+
+    /// Right-hand price axis: round-number gridlines and labels. `axis_x` is
+    /// the gutter's left edge — the chart's right edge normally, the live
+    /// strip's right edge while the strip sits between them.
+    fn draw_price_axis(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        scale: &PriceScale,
+        render: &PaneRender<'_>,
+    ) {
+        let grid = grid_color(render.style);
+        let (lo, hi) = scale.range();
+        let font = egui::FontId::monospace(11.0);
+        for tick in crate::chart::nice_ticks(lo, hi, 8) {
+            let y = scale.y(tick);
+            if y < chart_rect.top() || y > chart_rect.bottom() {
+                continue;
+            }
+            painter.line_segment(
+                [
+                    egui::pos2(chart_rect.left(), y),
+                    egui::pos2(chart_rect.right(), y),
+                ],
+                egui::Stroke::new(1.0_f32, grid),
+            );
+            painter.text(
+                egui::pos2(axis_x + 6.0, y),
+                egui::Align2::LEFT_CENTER,
+                format!("{tick:.2}"),
+                font.clone(),
+                theme::TEXT_MUTED,
+            );
+        }
+        // The axis dividing line.
+        painter.line_segment(
+            [
+                egui::pos2(axis_x, chart_rect.top()),
+                egui::pos2(axis_x, chart_rect.bottom()),
+            ],
+            egui::Stroke::new(1.0_f32, grid),
+        );
+    }
+
+    /// The current price: a dashed line across the chart and a solid chip on
+    /// the price axis, coloured by the direction of the bar carrying it.
+    ///
+    /// This is the always-on answer to "am I above or below?" — the question
+    /// every other mark on the canvas is read against, and the one a wall of
+    /// resting liquidity cannot answer on its own.
+    fn draw_last_price(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        scale: &PriceScale,
+        bar: &quantick_engine::Bar,
+        render: &PaneRender<'_>,
+    ) {
+        let Some(price) = bar.close.to_f64() else {
+            return;
+        };
+        let y = scale.y(price);
+        if y < chart_rect.top() || y > chart_rect.bottom() {
+            return;
+        }
+        // Same predicate and same two colours the candle wears, so the chip
+        // and the bar it reports can never disagree about direction.
+        let rgb = if crate::candle_view::is_bullish(bar) {
+            render.style.candles.bull_outline
+        } else {
+            render.style.candles.bear_outline
+        };
+        let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+
+        // Runs through the live strip when one is shown (`axis_x` then sits
+        // past it): the depth silhouette is read against this exact line.
+        painter.extend(egui::Shape::dashed_line(
+            &[egui::pos2(chart_rect.left(), y), egui::pos2(axis_x, y)],
+            egui::Stroke::new(1.0_f32, color.gamma_multiply(LAST_PRICE_LINE_ALPHA)),
+            LAST_PRICE_DASH_PX,
+            LAST_PRICE_GAP_PX,
+        ));
+
+        // Same geometry as the crosshair tag, so the two never disagree about
+        // where a price sits on the axis.
+        let galley = painter.layout_no_wrap(
+            format!("{price:.2}"),
+            egui::FontId::monospace(11.0),
+            LAST_PRICE_CHIP_TEXT,
+        );
+        let text_pos = egui::pos2(axis_x + 6.0, y - galley.size().y / 2.0);
+        let bg = egui::Rect::from_min_size(
+            text_pos - egui::vec2(3.0, 1.0),
+            galley.size() + egui::vec2(6.0, 2.0),
+        );
+        painter.rect_filled(bg, egui::Rounding::same(2.0), color);
+        painter.galley(text_pos, galley, LAST_PRICE_CHIP_TEXT);
+    }
+
+    fn drawing_screen_point(
+        &self,
+        point: ChartPoint,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> egui::Pos2 {
+        egui::pos2(
+            self.viewport
+                .x_at_bar_position(point.bar, history_right, total),
+            scale.y(point.price),
+        )
+    }
+
+    /// Paint the completed drawing objects. This runs once per frame and is
+    /// O(number of drawings); it never touches the per-trade ingestion path.
+    fn draw_drawings(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) {
+        let clipped = painter.with_clip_rect(chart_rect);
+        for (index, drawing) in self.drawings.items().iter().enumerate() {
+            if !self.drawings.is_visible(index) {
+                continue;
+            }
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            let selected = self.drawings.selected() == Some(index);
+            let ctxt = DrawContext {
+                payload: drawing.payload.as_ref(),
+                anchors: &drawing.points,
+                scale,
+                style: drawing.style,
+                selected,
+                halo: false,
+            };
+            // A locked object shows no resize handles: its geometry is not
+            // editable, so the affordance would lie.
+            drawing.tool.paint(
+                &clipped,
+                chart_rect,
+                drawing.style,
+                &points,
+                &ctxt,
+                selected && !drawing.locked,
+            );
+        }
+
+        if let Some(draft) = self.drawings.draft() {
+            let mut points = self.projected_drawing_points(draft, history_right, total, scale);
+            // The preview completes the geometry with the hovered anchor, in
+            // both screen and chart space, so payload-driven tools can show
+            // their real shape while placing.
+            let mut anchors: SmallVec<[ChartPoint; 4]> = SmallVec::from_slice(&draft.points);
+            if points.len() < draft.tool.required_points()
+                && let Some(hover) = self.drawing_hover
+            {
+                points.push(self.drawing_screen_point(hover, history_right, total, scale));
+                anchors.push(hover);
+            }
+            let ctxt = DrawContext {
+                payload: draft.payload.as_ref(),
+                anchors: &anchors,
+                scale,
+                style: draft.style,
+                selected: false,
+                halo: false,
+            };
+            draft
+                .tool
+                .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);
+        }
+    }
+
+    /// Crosshair following the pointer, with the price shown on the axis.
+    /// Drawn only while the Crosshair tool is armed on the rail (§7 — the
+    /// hover crosshair is a mode, not an always-on layer).
+    fn draw_crosshair(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        scale: &PriceScale,
+        render: &PaneRender<'_>,
+    ) {
+        if render.tool != Tool::Crosshair {
+            return;
+        }
+        let Some(pos) = self.hover_pos else {
+            return;
+        };
+        if !chart_rect.contains(pos) {
+            return;
+        }
+        let stroke = egui::Stroke::new(1.0_f32, theme::TEXT_FAINT);
+        painter.line_segment(
+            [
+                egui::pos2(pos.x, chart_rect.top()),
+                egui::pos2(pos.x, chart_rect.bottom()),
+            ],
+            stroke,
+        );
+        // Reaches the axis through the live strip when one is shown, so the
+        // cursor height can be read against the depth silhouette too.
+        painter.line_segment(
+            [
+                egui::pos2(chart_rect.left(), pos.y),
+                egui::pos2(axis_x, pos.y),
+            ],
+            stroke,
+        );
+
+        // Price tag on the axis at the cursor height.
+        let price = scale.price_at(pos.y);
+        let galley = painter.layout_no_wrap(
+            format!("{price:.2}"),
+            egui::FontId::monospace(11.0),
+            egui::Color32::WHITE,
+        );
+        let text_pos = egui::pos2(axis_x + 6.0, pos.y - galley.size().y / 2.0);
+        let bg = egui::Rect::from_min_size(
+            text_pos - egui::vec2(3.0, 1.0),
+            galley.size() + egui::vec2(6.0, 2.0),
+        );
+        painter.rect_filled(bg, egui::Rounding::same(2.0), theme::TAG_BG);
+        painter.galley(text_pos, galley, egui::Color32::WHITE);
+    }
+
+    /// A vertical marker separating backfilled history (left) from live (right),
+    /// drawn only when the boundary falls inside the candles' pane.
+    ///
+    /// `pane` is the candles' own rect — the chart minus the live lane — since
+    /// that is the space the viewport maps bar indices into.
+    fn draw_backfill_divider(
+        &self,
+        painter: &egui::Painter,
+        pane: egui::Rect,
+        total: usize,
+        candle_width: f32,
+    ) {
+        let Some(boundary) = self.state.backfill_boundary() else {
+            return;
+        };
+        if boundary == 0 {
+            return; // nothing backfilled
+        }
+        // The divider sits at the left edge of the first live bar.
+        let x = self.viewport.x_center(boundary, pane.right(), total) - candle_width / 2.0;
+        if x < pane.left() || x > pane.right() {
+            return; // off-screen
+        }
+        painter.line_segment(
+            [egui::pos2(x, pane.top()), egui::pos2(x, pane.bottom())],
+            egui::Stroke::new(1.0_f32, theme::AMBER),
+        );
+        let font = egui::FontId::proportional(11.0);
+        painter.text(
+            egui::pos2(x - 4.0, pane.bottom() - 4.0),
+            egui::Align2::RIGHT_BOTTOM,
+            "backfill",
+            font.clone(),
+            theme::TEXT_MUTED,
+        );
+        painter.text(
+            egui::pos2(x + 4.0, pane.bottom() - 4.0),
+            egui::Align2::LEFT_BOTTOM,
+            "live",
+            font,
+            theme::AMBER,
+        );
+    }
+}
