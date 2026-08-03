@@ -33,16 +33,17 @@ impl CloseCvd {
             offset: 0,
             marker: None,
         };
+        let descriptor = IndicatorDescriptor {
+            title: "Close + CVD (test)".to_owned(),
+            short_title: None,
+            overlay: false,
+            plots: vec![plot(0, "close"), plot(1, "cvd")],
+            inputs: Vec::new(),
+            fills: Vec::new(),
+        };
         Self {
-            descriptor: IndicatorDescriptor {
-                title: "Close + CVD (test)".to_owned(),
-                short_title: None,
-                overlay: false,
-                plots: vec![plot(0, "close"), plot(1, "cvd")],
-                inputs: Vec::new(),
-                fills: Vec::new(),
-            },
-            plots: PlotBuffer::new(2),
+            plots: PlotBuffer::for_plots(&descriptor.plots),
+            descriptor,
         }
     }
 }

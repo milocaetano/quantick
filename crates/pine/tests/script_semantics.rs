@@ -333,3 +333,86 @@ fn switch_matches_subjects_conditions_and_defaults() {
         "condition arm, mirrored arm, default arm"
     );
 }
+
+#[test]
+fn a_kernel_length_that_changes_between_bars_is_refused() {
+    // The kernel is built once and keeps its window forever, so a length
+    // that moves used to be silently pinned to bar zero's value while the
+    // script read as if it changed.
+    let mut h = Harness::load(
+        "//@version=5
+indicator(\"t\")
+f(n) => ta.sma(close, n)
+plot(f(bar_index + 1))
+",
+    );
+    h.close(&bar(0, 3.0))
+        .expect("the first bar builds the kernel");
+    let err = h
+        .close(&bar(1, 6.0))
+        .expect_err("a changed length must be refused, not silently ignored");
+    assert!(err.message.contains("cannot change"), "{err}");
+}
+
+#[test]
+fn an_absurd_kernel_length_errors_instead_of_aborting() {
+    // `vec![0.0; 2e9]` is 16 GB, and a failed allocation aborts the process
+    // rather than unwinding into this indicator's error state.
+    let source = "//@version=5
+indicator(\"t\")
+plot(ta.sma(close, 2000000000))
+";
+    let Err(errors) = compile(source, "test.pine") else {
+        panic!("an absurd length must be refused at load time");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == quantick_pine::ErrorCode::PineSeriesLength),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn math_max_uses_infinite_identities() {
+    // `f64::MIN`/`MAX` are the extreme *finite* values, so the fold answered
+    // -1.797e308 where -inf is the true maximum of the arguments.
+    let mut h = Harness::load(
+        "//@version=5
+indicator(\"t\")
+plot(math.max(math.log(0), math.log(0)))
+",
+    );
+    h.close_all(&[3.0]);
+    assert_eq!(h.column(0), vec![f64::NEG_INFINITY]);
+}
+
+#[test]
+fn a_varip_handle_that_survives_a_preview_never_aliases_a_committed_object() {
+    // `varip` deliberately survives a rollback, so a handle allocated inside
+    // a preview outlives the preview's store. If the id counter rewound with
+    // the store, the commit run would hand that same id to a different
+    // object and the stale handle would silently mutate a stranger — the one
+    // thing the object ids exist to prevent.
+    let source = "//@version=5
+indicator(\"aliasing\", overlay=true)
+varip line pinned = na
+if na(pinned)
+    pinned := line.new(0, close, 0, close)
+fresh = line.new(bar_index, low, bar_index, high)
+pinned.set_y1(999)
+plot(close)
+";
+    let mut h = Harness::load(source);
+    // The preview allocates the varip line; the commit run does not, because
+    // `pinned` is no longer `na`.
+    let _ = h.preview(&bar(0, 10.0)).expect("preview runs");
+    h.close(&bar(0, 10.0)).expect("commit runs");
+
+    let snapshot = h.indicator.objects().expect("the script draws").snapshot();
+    let stranger = snapshot.lines.iter().find(|l| l.y2 > 900.0 || l.y1 > 900.0);
+    assert!(
+        stranger.is_none(),
+        "the varip handle wrote into a committed line: {snapshot:?}"
+    );
+}

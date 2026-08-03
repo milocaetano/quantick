@@ -12,6 +12,9 @@ use quantick_indicators::{InputSpec, InputValue, Rgba8, SourceId};
 use crate::indicator_worker::SlotId;
 use crate::theme;
 
+/// Drag sensitivity of a float input that declares no `step`.
+const DEFAULT_FLOAT_DRAG_SPEED: f64 = 0.1;
+
 /// An open settings dialog: which slot, and the in-flight draft values.
 pub(crate) struct SettingsDialog {
     /// The slot being edited.
@@ -125,7 +128,7 @@ fn input_row(ui: &mut egui::Ui, spec: &InputSpec, value: &mut InputValue) {
             } else if let Some(hi) = max {
                 drag = drag.range(f64::MIN..=*hi);
             }
-            drag = drag.speed(step.unwrap_or(0.1));
+            drag = drag.speed(step.unwrap_or(DEFAULT_FLOAT_DRAG_SPEED));
             ui.add(drag);
         }
         (InputSpec::Bool { title, .. }, InputValue::Bool(current)) => {

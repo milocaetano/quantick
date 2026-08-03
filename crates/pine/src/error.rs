@@ -35,9 +35,18 @@ impl Span {
 
     /// The 1-based line and column of `self.start` within `source`.
     /// Columns count Unicode scalar values, not bytes — editors agree.
+    ///
+    /// Total by construction: a start that lands inside a multi-byte
+    /// character is floored to the boundary before it rather than slicing
+    /// there. Rendering a diagnostic is the last thing standing between a bad
+    /// script and a crash, so it may not panic on a span it dislikes.
     #[must_use]
     pub fn line_col(&self, source: &str) -> (usize, usize) {
-        let upto = &source[..self.start.min(source.len())];
+        let mut start = self.start.min(source.len());
+        while start > 0 && !source.is_char_boundary(start) {
+            start -= 1;
+        }
+        let upto = &source[..start];
         let line = upto.matches('\n').count() + 1;
         let line_start = upto.rfind('\n').map_or(0, |i| i + 1);
         let col = upto[line_start..].chars().count() + 1;
@@ -89,6 +98,33 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Every code, so a guard can iterate them instead of restating the list.
+    ///
+    /// The doc-drift test used to hand-list all of these; a variant added and
+    /// forgotten there was simply not checked, which is the habit that test
+    /// exists to replace. Adding a variant now fails `as_str`'s exhaustive
+    /// match, and this array sits beside it.
+    pub const ALL: &'static [ErrorCode] = &[
+        ErrorCode::PineLex,
+        ErrorCode::PineSyntax,
+        ErrorCode::PineIndent,
+        ErrorCode::PineNoSecurity,
+        ErrorCode::PineNoTimeframe,
+        ErrorCode::PineNoStrategy,
+        ErrorCode::PineNoCollections,
+        ErrorCode::PineNoCalendar,
+        ErrorCode::PineUnsupported,
+        ErrorCode::PineUnknownName,
+        ErrorCode::PineArity,
+        ErrorCode::PineInputNotConst,
+        ErrorCode::PineSeriesLength,
+        ErrorCode::PineStatefulInLoop,
+        ErrorCode::PineRecursion,
+        ErrorCode::PineVersion,
+        ErrorCode::PineType,
+        ErrorCode::PineLoopBudget,
+    ];
+
     /// The stable string form (logs, tests, the dialect reference).
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -176,6 +212,17 @@ mod tests {
         assert_eq!(Span::new(0, 1).line_col(source), (1, 1));
         assert_eq!(Span::new(4, 5).line_col(source), (2, 1));
         assert_eq!(Span::new(8, 9).line_col(source), (2, 5));
+    }
+
+    #[test]
+    fn line_col_survives_a_span_inside_a_character() {
+        // A file ending in a multi-byte character without a trailing newline
+        // produces an end-of-line span at `len - 1`: the middle of that
+        // character. Rendering it must report a position, not panic.
+        let source = "x = // ré";
+        let inside = source.len() - 1;
+        assert!(!source.is_char_boundary(inside), "the case under test");
+        assert_eq!(Span::at(inside).line_col(source), (1, 9));
     }
 
     #[test]
