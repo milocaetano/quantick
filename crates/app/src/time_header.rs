@@ -1,4 +1,5 @@
-//! The time pane's inline timeframe selector (§11).
+//! The time pane's inline timeframe selector
+//! (`docs/ux/ui-design-model.md` §11).
 //!
 //! Two selectors, two panes, no modes: the toolbar's BARS group governs the
 //! flow pane and this row governs the time pane. It sits in a strip carved off
@@ -18,6 +19,10 @@ use crate::theme;
 /// Height of the header strip, in pixels. Matches the bottom time axis, so the
 /// two horizontal rules framing a time pane read as one pair.
 pub const HEIGHT_PX: f32 = 24.0;
+
+/// Padding inside the header strip: enough horizontally to clear the pane's
+/// edge, and just enough vertically to keep the chips off the rule below.
+const CONTENT_PADDING: egui::Vec2 = egui::vec2(8.0, 2.0);
 
 /// The named timeframes, in the order they are offered.
 pub const PRESETS: [(&str, i64); 4] = [
@@ -64,7 +69,7 @@ pub fn draw(ui: &mut egui::Ui, strip: egui::Rect, interval_ms: &mut i64) -> Head
     );
     let mut content = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(strip.shrink2(egui::vec2(8.0, 2.0)))
+            .max_rect(strip.shrink2(CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     content.label(egui::RichText::new("time").small().color(theme::TEXT_FAINT));

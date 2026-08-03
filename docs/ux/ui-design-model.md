@@ -364,6 +364,15 @@ budget is unchanged.
   replacing that tab's SOURCE group with the amber session label (existing
   behaviour, now scoped). Other tabs keep streaming live.
 - Default open: one tab, the config default (`default_feed`/`default_symbol`).
+- **The last tab is not closable.** Its `×` disables itself and says why: a
+  window with no market has nothing to draw, and an empty canvas is not a
+  state the chrome has anything true to say about.
+- **The same market may be open twice.** Two views of one book — different
+  bar specs, different drawings, different indicator slots — is a legitimate
+  thing to want, so nothing dedupes the strip. For MetaTrader that means two
+  listeners on one mapped port, and the second loses the bind: that tab shows
+  the bridge's own port-in-use notice. One port per *symbol* is what
+  `[metatrader.ports]` buys; one port per tab is not on offer.
 - MT5 tabs each need their own bridge port (`[metatrader.ports]` ↔ the EA's
   `InpPort`); a port collision surfaces as that tab's notice card, never as
   another tab's problem.

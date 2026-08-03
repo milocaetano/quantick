@@ -389,6 +389,13 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
+    /// The display name of feed `id`, or its id when the config has no such
+    /// feed — a borrow, because the chrome reads it every frame.
+    #[must_use]
+    pub fn feed_name<'a>(&'a self, id: &'a str) -> &'a str {
+        self.feed(id).map_or(id, |feed| feed.name.as_str())
+    }
+
     /// The symbol feed `id` should show given a `wanted` selection.
     ///
     /// `Some(wanted)` when the feed offers it, otherwise the feed's first

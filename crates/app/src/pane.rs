@@ -59,6 +59,86 @@ const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 
 /// would be. Matches the "connecting…" line: same voice, same weight.
 const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 
+/// Which of the canvas's panes something belongs to.
+///
+/// Named for where they sit in the split, because that is how the user picks
+/// one: the time pane is on the left, the flow pane on the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaneSide {
+    #[default]
+    Flow,
+    Time,
+}
+
+/// Width of the draggable divider between the two panes, in pixels.
+pub const CANVAS_DIVIDER_PX: f32 = 4.0;
+/// Half-width of the divider's grab area, which reaches a little into both
+/// panes so the handle is catchable without widening the rule itself.
+pub const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
+/// Neither pane may be squeezed below this share of the canvas (§11).
+pub const MIN_PANE_FRACTION: f32 = 0.25;
+/// Where the divider sits when the split is first shown (§11).
+pub const DEFAULT_PANE_FRACTION: f32 = 0.5;
+
+/// The canvas carved for the Time + Flow layout.
+///
+/// A named shape rather than three rects, because a caller should not have to
+/// remember that the middle one is the divider.
+pub struct CanvasAreas {
+    /// The time pane, header included.
+    pub time: egui::Rect,
+    /// The draggable rule between them; belongs to neither pane.
+    pub divider: egui::Rect,
+    /// The flow pane.
+    pub flow: egui::Rect,
+}
+
+/// A time pane's area, split into the strip its selector sits in and the
+/// chart below it.
+pub struct TimePaneAreas {
+    pub header: egui::Rect,
+    pub chart: egui::Rect,
+}
+
+/// Split the canvas for the Time + Flow layout: **time pane left, flow pane
+/// right**, with the divider's own strip between them (§11).
+///
+/// `time_fraction` is the time pane's share of the width, clamped so neither
+/// pane can be squeezed below [`MIN_PANE_FRACTION`] — a pane too narrow to
+/// read is not a layout, it is a lost pane.
+#[must_use]
+pub fn split_canvas(area: egui::Rect, time_fraction: f32) -> CanvasAreas {
+    let fraction = clamp_pane_fraction(time_fraction);
+    let divider_x = area.left() + area.width() * fraction;
+    let half = CANVAS_DIVIDER_PX / 2.0;
+    CanvasAreas {
+        time: egui::Rect::from_min_max(area.min, egui::pos2(divider_x - half, area.bottom())),
+        divider: egui::Rect::from_min_max(
+            egui::pos2(divider_x - half, area.top()),
+            egui::pos2(divider_x + half, area.bottom()),
+        ),
+        flow: egui::Rect::from_min_max(egui::pos2(divider_x + half, area.top()), area.max),
+    }
+}
+
+/// Hold a canvas split inside the 25% minimum each pane is promised (§11).
+#[must_use]
+pub fn clamp_pane_fraction(fraction: f32) -> f32 {
+    fraction.clamp(MIN_PANE_FRACTION, 1.0 - MIN_PANE_FRACTION)
+}
+
+/// Carve the time pane's header strip off the top of its area (§11); the rest
+/// is the chart. The header is a strip rather than an overlay so the selector
+/// is never painted across market data.
+#[must_use]
+pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
+    let split_y = (area.top() + crate::time_header::HEIGHT_PX).min(area.bottom());
+    TimePaneAreas {
+        header: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
+        chart: egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),
+    }
+}
+
 /// Half-width, in pixels, of the grab area over the live lane's divider.
 ///
 /// The line itself stays a hairline — it marks where the present begins and a
@@ -1685,5 +1765,82 @@ impl ChartPane {
             font,
             theme::AMBER,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Time pane left, flow pane right, on a divider that costs both of them
+    /// nothing but its own width (§11).
+    #[test]
+    fn the_canvas_splits_time_left_flow_right_at_the_divider() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let areas = split_canvas(area, 0.5);
+        assert!(
+            areas.time.right() <= areas.flow.left(),
+            "time is the left pane"
+        );
+        assert_eq!(areas.time.right(), areas.divider.left());
+        assert_eq!(areas.divider.right(), areas.flow.left());
+        assert_eq!(areas.divider.width(), CANVAS_DIVIDER_PX);
+        assert_eq!(areas.time.left(), area.left());
+        assert_eq!(areas.flow.right(), area.right());
+        assert_eq!(
+            areas.time.width() + areas.divider.width() + areas.flow.width(),
+            area.width(),
+            "the split spends the canvas exactly once"
+        );
+        // Both panes keep the full height: the split is vertical only.
+        assert_eq!(areas.time.top(), area.top());
+        assert_eq!(areas.flow.bottom(), area.bottom());
+    }
+
+    /// A pane too narrow to read is not a layout, it is a lost pane. §11
+    /// promises each of them a quarter of the canvas, whatever the drag says.
+    #[test]
+    fn neither_pane_can_be_dragged_below_a_quarter_of_the_canvas() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        for (asked, expected) in [
+            (-3.0, 0.25),
+            (0.0, 0.25),
+            (0.1, 0.25),
+            (0.9, 0.75),
+            (7.0, 0.75),
+        ] {
+            let areas = split_canvas(area, asked);
+            // The divider sits *on* the split, so compare where the split is
+            // rather than a pane width that has half a divider taken out of it.
+            let split = (areas.divider.center().x - area.left()) / area.width();
+            assert!(
+                (split - expected).abs() < 1e-3,
+                "asking for {asked} must clamp to {expected}, got {split}"
+            );
+            let floor = area.width() * MIN_PANE_FRACTION - CANVAS_DIVIDER_PX;
+            assert!(
+                areas.time.width() >= floor,
+                "the time pane keeps its quarter"
+            );
+            assert!(areas.flow.width() >= floor, "and so does the flow pane");
+        }
+    }
+
+    /// The header is a strip carved off the pane, not an overlay: the selector
+    /// must never be painted across market data.
+    #[test]
+    fn the_time_pane_header_costs_the_chart_its_own_height() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 600.0));
+        let areas = split_time_pane(area);
+        assert_eq!(areas.header.height(), crate::time_header::HEIGHT_PX);
+        assert_eq!(
+            areas.header.bottom(),
+            areas.chart.top(),
+            "no gap, no overlap"
+        );
+        assert_eq!(areas.chart.bottom(), area.bottom());
+        assert_eq!(areas.header.width(), area.width());
     }
 }

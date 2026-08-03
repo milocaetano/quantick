@@ -1,4 +1,5 @@
-//! The workspace tab strip and the source picker behind its `+` (§11).
+//! The workspace tab strip and the source picker behind its `+`
+//! (`docs/ux/ui-design-model.md` §11).
 //!
 //! One chip per open market, `SYMBOL · venue`, sitting in zone 1 to the right
 //! of the menus — the row already had the horizontal room, so tabs cost no
@@ -15,12 +16,14 @@ use crate::theme;
 const ATTENTION_DOT_RADIUS_PX: f32 = 3.0;
 /// Gap between a chip's label and its close affordance.
 const CHIP_GAP_PX: f32 = 6.0;
+/// How far below a chip's top edge the attention dot sits, so it clears the
+/// selection outline instead of riding it.
+const ATTENTION_DOT_INSET_PX: f32 = 1.0;
 
 /// What one tab looks like on the strip this frame.
 pub struct TabChip<'a> {
-    pub symbol: &'a str,
-    /// The feed's display name from the config, not its id.
-    pub venue: &'a str,
+    /// `SYMBOL · venue`, composed by the tab when its market last changed.
+    pub label: &'a str,
     /// Whether this tab is playing a recording rather than streaming.
     pub replaying: bool,
     /// Whether the feed wants attention — drawn as the amber dot §11 asks
@@ -48,8 +51,7 @@ pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<T
     let closable = chips.len() > 1;
     for (index, chip) in chips.iter().enumerate() {
         let selected = index == active;
-        let label = format!("{} · {}", chip.symbol, chip.venue);
-        let mut text = egui::RichText::new(label);
+        let mut text = egui::RichText::new(chip.label);
         if chip.replaying {
             text = text.color(theme::AMBER);
         }
@@ -61,7 +63,7 @@ pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<T
         if chip.needs_attention && !selected {
             let center = egui::pos2(
                 response.rect.right() - ATTENTION_DOT_RADIUS_PX,
-                response.rect.top() + ATTENTION_DOT_RADIUS_PX + 1.0,
+                response.rect.top() + ATTENTION_DOT_RADIUS_PX + ATTENTION_DOT_INSET_PX,
             );
             ui.painter()
                 .circle_filled(center, ATTENTION_DOT_RADIUS_PX, theme::AMBER);
@@ -193,5 +195,62 @@ impl SourcePicker {
             outcome = PickerOutcome::Cancel;
         }
         outcome
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, FeedConfig, MetaTraderSettings, ProviderKind};
+
+    fn config() -> AppConfig {
+        AppConfig {
+            default_feed: "binance".to_string(),
+            default_symbol: "BTCUSDT".to_string(),
+            feeds: vec![FeedConfig {
+                id: "binance".to_string(),
+                name: "Binance".to_string(),
+                provider: ProviderKind::Binance,
+                symbols: vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()],
+                bubble_preset: None,
+            }],
+            metatrader: MetaTraderSettings::default(),
+        }
+    }
+
+    /// The picker opens on something real, so its Open button always names a
+    /// market that exists.
+    #[test]
+    fn the_picker_opens_on_the_first_feed_and_its_first_symbol() {
+        let picker = SourcePicker::new(&config());
+        assert_eq!(picker.feed_id, "binance");
+        assert_eq!(picker.symbol, "BTCUSDT");
+    }
+
+    /// An empty catalog has no first feed to open on; the picker falls back to
+    /// the configured defaults rather than to an empty selection.
+    #[test]
+    fn an_empty_catalog_falls_back_to_the_configured_defaults() {
+        let mut empty = config();
+        empty.feeds.clear();
+        let picker = SourcePicker::new(&empty);
+        assert_eq!(picker.feed_id, empty.default_feed);
+        assert_eq!(picker.symbol, empty.default_symbol);
+    }
+
+    /// Changing the feed under a symbol it does not offer corrects the symbol,
+    /// by the same rule the toolbar's SOURCE group follows.
+    #[test]
+    fn picking_a_feed_corrects_a_symbol_it_does_not_offer() {
+        let config = config();
+        let mut picker = SourcePicker::new(&config);
+        picker.symbol = "NOT-A-SYMBOL".to_string();
+
+        picker.ensure_symbol_valid(&config);
+
+        assert_eq!(
+            picker.symbol, "BTCUSDT",
+            "the Open button must not offer a market the feed does not have"
+        );
     }
 }

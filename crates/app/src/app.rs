@@ -31,15 +31,14 @@ use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind}
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
-use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX};
+use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
 use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
-use crate::tab::{CanvasChrome, Tab};
+use crate::tab::{CanvasChrome, CanvasLayout, Tab};
 use crate::tabstrip::{self, PickerOutcome, SourcePicker, TabAction};
 use crate::theme;
-use crate::time_header;
 use crate::timezone::TzOffset;
 use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail};
@@ -59,15 +58,6 @@ const FIRST_TAB_ID: u64 = 0;
 const fn pane_ids(tab: u64) -> (u64, u64) {
     (tab * 2, tab * 2 + 1)
 }
-/// Width of the draggable divider between the two panes, in pixels.
-pub const CANVAS_DIVIDER_PX: f32 = 4.0;
-/// Half-width of the divider's grab area, which reaches a little into both
-/// panes so the handle is catchable without widening the rule itself.
-pub const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
-/// Neither pane may be squeezed below this share of the canvas (§11).
-pub const MIN_PANE_FRACTION: f32 = 0.25;
-/// Where the divider sits when the split is first shown (§11).
-pub const DEFAULT_PANE_FRACTION: f32 = 0.5;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
@@ -184,42 +174,6 @@ pub fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) ->
     }
 }
 
-/// Split the canvas for the Time + Flow layout: **time pane left, flow pane
-/// right**, with the divider's own strip between them (§11).
-///
-/// `time_fraction` is the time pane's share of the width, clamped so neither
-/// pane can be squeezed below [`MIN_PANE_FRACTION`] — a pane too narrow to
-/// read is not a layout, it is a lost pane.
-pub fn split_canvas(area: egui::Rect, time_fraction: f32) -> (egui::Rect, egui::Rect, egui::Rect) {
-    let fraction = clamp_pane_fraction(time_fraction);
-    let divider_x = area.left() + area.width() * fraction;
-    let half = CANVAS_DIVIDER_PX / 2.0;
-    (
-        egui::Rect::from_min_max(area.min, egui::pos2(divider_x - half, area.bottom())),
-        egui::Rect::from_min_max(
-            egui::pos2(divider_x - half, area.top()),
-            egui::pos2(divider_x + half, area.bottom()),
-        ),
-        egui::Rect::from_min_max(egui::pos2(divider_x + half, area.top()), area.max),
-    )
-}
-
-/// Hold a canvas split inside the 25% minimum each pane is promised (§11).
-pub fn clamp_pane_fraction(fraction: f32) -> f32 {
-    fraction.clamp(MIN_PANE_FRACTION, 1.0 - MIN_PANE_FRACTION)
-}
-
-/// Carve the time pane's header strip off the top of its area (§11); the rest
-/// is the chart. The header is a strip rather than an overlay so the selector
-/// is never painted across market data.
-pub fn split_time_pane(area: egui::Rect) -> (egui::Rect, egui::Rect) {
-    let split_y = (area.top() + time_header::HEIGHT_PX).min(area.bottom());
-    (
-        egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
-        egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),
-    )
-}
-
 /// Whether a pointer at `x` is over the live lane rather than the candles.
 ///
 /// The divider itself counts as the lane, so the gesture that resizes it and
@@ -249,27 +203,6 @@ pub fn split_time_strip(
             strip.max,
         )),
     )
-}
-
-/// How many charts the canvas shows for one market (§11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CanvasLayout {
-    /// The flow pane alone — quantick's default and its identity.
-    #[default]
-    Single,
-    /// Time pane left, flow pane right, on a draggable divider.
-    TimeAndFlow,
-}
-
-/// Which of the canvas's panes something belongs to.
-///
-/// Named for where they sit in the split, because that is how the user picks
-/// one: the time pane is on the left, the flow pane on the right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PaneSide {
-    #[default]
-    Flow,
-    Time,
 }
 
 /// The interactive regions of the plot, plus the optional live strip.
@@ -331,6 +264,10 @@ pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
 /// layer, which describes a workspace rather than a market.
 pub struct QuantickApp {
     /// The open markets, left to right as the strip shows them (§11).
+    ///
+    /// Retained trades are O(trades × panes × open tabs): every tab keeps its
+    /// own history and a split tab keeps it twice. Nothing caps the count —
+    /// the strip is as long as the user makes it.
     tabs: Vec<Tab>,
     /// Which of them is on screen. Every tab drains every frame; only this one
     /// renders, and the chrome speaks for it.
@@ -539,6 +476,7 @@ impl QuantickApp {
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.
         let config = app.config.clone();
+        app.active_tab_mut().refresh_chip_label(&config);
         app.active_tab_mut().ensure_book_capture(&config);
         // A feed that declares its own look opens wearing it.
         app.active_tab_mut().apply_feed_bubble_preset(&config);
@@ -722,6 +660,7 @@ impl QuantickApp {
             .push(Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed));
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
+        self.active_tab_mut().refresh_chip_label(&config);
         self.active_tab_mut().ensure_book_capture(&config);
         self.active_tab_mut().apply_feed_bubble_preset(&config);
     }
@@ -830,7 +769,7 @@ impl QuantickApp {
                 ),
             });
         let capabilities = self.active_tab().capabilities(&self.config);
-        let feed_display_name = self.active_tab().feed_display_name(&self.config);
+        let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
         let heatmap_on = self.active_tab().tape().depth_visible();
         let bubbles_on = self.active_tab().tape().bubbles_enabled();
         // The focused pane's slots (§11): the menu lists what a command from
@@ -892,6 +831,7 @@ impl QuantickApp {
         if self.active_tab().replay.is_none() {
             let (tab, config) = self.active_with_config();
             tab.ensure_symbol_valid(config);
+            tab.refresh_chip_label(config);
         }
         for action in actions {
             self.apply_toolbar_action(action);
@@ -1597,7 +1537,7 @@ impl QuantickApp {
             venue: if self.active_tab().replay.is_some() {
                 "recording".to_owned()
             } else {
-                self.active_tab().feed_display_name(&self.config)
+                self.active_tab().feed_display_name(&self.config).to_owned()
             },
             symbol: self.active_tab().symbol.clone(),
             replay: self
@@ -1818,18 +1758,11 @@ impl QuantickApp {
 
     /// The chips, built from what each tab actually is right now.
     fn draw_tab_strip(&self, ui: &mut egui::Ui) -> Option<TabAction> {
-        let venues: Vec<String> = self
-            .tabs
-            .iter()
-            .map(|tab| tab.feed_display_name(&self.config))
-            .collect();
         let chips: Vec<tabstrip::TabChip<'_>> = self
             .tabs
             .iter()
-            .zip(&venues)
-            .map(|(tab, venue)| tabstrip::TabChip {
-                symbol: &tab.symbol,
-                venue,
+            .map(|tab| tabstrip::TabChip {
+                label: tab.chip_label(),
                 replaying: tab.replay.is_some(),
                 needs_attention: tab.needs_attention(),
             })
@@ -2865,75 +2798,15 @@ mod tests {
     use crate::drawings::{ChartPoint, PresetHost};
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
     use crate::pane::DrawingDrag;
+    use crate::pane::{CANVAS_DIVIDER_PX, DEFAULT_PANE_FRACTION, MIN_PANE_FRACTION};
     use crate::tab::BOOK_GENERATION_STRIDE;
+    use crate::time_header;
 
     /// Run a tab operation that needs the config, splitting the borrow the
     /// way the frame loop does.
     fn with_config<R>(app: &mut QuantickApp, f: impl FnOnce(&mut Tab, &AppConfig) -> R) -> R {
         let (tab, config) = app.active_with_config();
         f(tab, config)
-    }
-
-    /// Time pane left, flow pane right, on a divider that costs both of them
-    /// nothing but its own width (§11).
-    #[test]
-    fn the_canvas_splits_time_left_flow_right_at_the_divider() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
-
-        let (time, divider, flow) = split_canvas(area, 0.5);
-        assert!(time.right() <= flow.left(), "time is the left pane");
-        assert_eq!(time.right(), divider.left());
-        assert_eq!(divider.right(), flow.left());
-        assert_eq!(divider.width(), CANVAS_DIVIDER_PX);
-        assert_eq!(time.left(), area.left());
-        assert_eq!(flow.right(), area.right());
-        assert_eq!(
-            time.width() + divider.width() + flow.width(),
-            area.width(),
-            "the split spends the canvas exactly once"
-        );
-        // Both panes keep the full height: the split is vertical only.
-        assert_eq!(time.top(), area.top());
-        assert_eq!(flow.bottom(), area.bottom());
-    }
-
-    /// A pane too narrow to read is not a layout, it is a lost pane. §11
-    /// promises each of them a quarter of the canvas, whatever the drag says.
-    #[test]
-    fn neither_pane_can_be_dragged_below_a_quarter_of_the_canvas() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
-
-        for (asked, expected) in [
-            (-3.0, 0.25),
-            (0.0, 0.25),
-            (0.1, 0.25),
-            (0.9, 0.75),
-            (7.0, 0.75),
-        ] {
-            let (time, divider, flow) = split_canvas(area, asked);
-            // The divider sits *on* the split, so compare where the split is
-            // rather than a pane width that has half a divider taken out of it.
-            let split = (divider.center().x - area.left()) / area.width();
-            assert!(
-                (split - expected).abs() < 1e-3,
-                "asking for {asked} must clamp to {expected}, got {split}"
-            );
-            let floor = area.width() * MIN_PANE_FRACTION - CANVAS_DIVIDER_PX;
-            assert!(time.width() >= floor, "the time pane keeps its quarter");
-            assert!(flow.width() >= floor, "and so does the flow pane");
-        }
-    }
-
-    /// The header is a strip carved off the pane, not an overlay: the selector
-    /// must never be painted across market data.
-    #[test]
-    fn the_time_pane_header_costs_the_chart_its_own_height() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 600.0));
-        let (header, chart) = split_time_pane(area);
-        assert_eq!(header.height(), time_header::HEIGHT_PX);
-        assert_eq!(header.bottom(), chart.top(), "no gap, no overlap");
-        assert_eq!(chart.bottom(), area.bottom());
-        assert_eq!(header.width(), area.width());
     }
 
     #[test]
@@ -5868,7 +5741,7 @@ plot(close)
 
         // The 15m chip, clicked where it was actually drawn.
         let (label, expected_ms) = time_header::PRESETS[2];
-        let chip = app.active_tab().time_header_chips[2];
+        let chip = app.active_tab().time_header_chip(2).expect("the 15m chip");
         assert!(chip.is_positive(), "the {label} chip was laid out");
         click_chart(&mut app, &ctx, chip.center());
         // The spec change is deferred one frame, exactly as the toolbar's is.
@@ -5932,11 +5805,12 @@ plot(close)
         );
         // The persisted set is the flow pane's; a time-pane slot must not
         // enter it (see maintain_indicator_state).
+        assert_eq!(app.slot_kinds.len(), 1, "exactly one slot was registered");
         assert!(
             app.slot_kinds
                 .iter()
                 .all(|(owner, _)| owner.side == PaneSide::Time),
-            "the only registered slot is the time pane's"
+            "and it is the time pane's"
         );
     }
 
@@ -6027,7 +5901,7 @@ plot(close)
             .width();
         let divider = app
             .active_tab()
-            .canvas_divider
+            .canvas_divider_rect()
             .expect("the divider was registered");
         let grab = divider.center();
 
@@ -6052,7 +5926,7 @@ plot(close)
         for _ in 0..6 {
             let grab = app
                 .active_tab()
-                .canvas_divider
+                .canvas_divider_rect()
                 .expect("registered")
                 .center();
             drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
@@ -6385,7 +6259,10 @@ plot(close)
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         let undo = app.toast_undo_rect.expect("the toast offers Undo");
-        let divider = app.active_tab().canvas_divider.expect("the split is on");
+        let divider = app
+            .active_tab()
+            .canvas_divider_rect()
+            .expect("the split is on");
         assert!(
             undo.center().x > divider.right(),
             "the regression needs the toast's button to float over the *other* pane"
@@ -6407,6 +6284,70 @@ plot(close)
             app.active_tab().flow_pane.drawings.items().is_empty(),
             "and touches nothing on the pane the button happens to float over"
         );
+    }
+
+    /// §11's amber dot: a background tab says something is wrong with its
+    /// feed without the user having to open it.
+    ///
+    /// It marks trouble, not activity — a tab still connecting has nothing to
+    /// report yet, and a recording has no transport to lose.
+    #[test]
+    fn the_attention_dot_marks_lost_connections_and_nothing_else() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let tab = app.active_tab_mut();
+
+        assert_eq!(tab.feed_connection, FeedConnectionState::Connecting);
+        assert!(
+            !tab.needs_attention(),
+            "still connecting is not yet trouble"
+        );
+
+        tab.feed_connection = FeedConnectionState::Connected;
+        assert!(!tab.needs_attention(), "nor is a healthy feed");
+
+        tab.feed_connection = FeedConnectionState::Reconnecting;
+        assert!(
+            tab.needs_attention(),
+            "a feed that had a connection and lost it is"
+        );
+
+        tab.feed_connection = FeedConnectionState::Connected;
+        tab.notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
+        assert!(
+            tab.needs_attention(),
+            "so is one asking the user to fix something"
+        );
+
+        // A recording has no transport to lose, whatever it is holding.
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        with_config(&mut app, |tab, config| {
+            tab.open_replay(
+                config,
+                crate::feed::ReplayRequest {
+                    session: std::sync::Arc::new(session),
+                    options: crate::feed::ReplayOptions {
+                        autoplay: false,
+                        ..Default::default()
+                    },
+                },
+            )
+        });
+        let tab = app.active_tab_mut();
+        tab.feed_connection = FeedConnectionState::Reconnecting;
+        assert!(
+            !tab.needs_attention(),
+            "a replaying tab has no transport to report on"
+        );
+        run_frame(&mut app, &ctx);
     }
 
     /// (a) The `+` opens the picker, and choosing a market adds a tab that

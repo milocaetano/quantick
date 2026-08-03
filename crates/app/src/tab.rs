@@ -16,10 +16,6 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
-use crate::app::{
-    CANVAS_DIVIDER_HANDLE_PX, CanvasLayout, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction,
-    split_canvas, split_time_pane,
-};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
     self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
@@ -27,11 +23,13 @@ use crate::feed::{
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
-use crate::pane::{ChartPane, DrawingDrag, PaneChrome};
+use crate::pane::{
+    CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneSide,
+    clamp_pane_fraction, split_canvas, split_time_pane,
+};
 use crate::state::{BarKind, BarSpec};
 use crate::style::ChartStyle;
 use crate::theme;
-use crate::time_header;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 
@@ -43,6 +41,16 @@ const BOOK_DRAIN_BUDGET: usize = 2_048;
 /// Thickness of the rule marking the focused pane (§11: an accent under the
 /// pane's top edge, never a box drawn around market data).
 const FOCUS_RULE_PX: f32 = 1.0;
+
+/// How many charts a tab's canvas shows for its market (§11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CanvasLayout {
+    /// The flow pane alone — quantick's default and its identity.
+    #[default]
+    Single,
+    /// Time pane left, flow pane right, on a draggable divider.
+    TimeAndFlow,
+}
 
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
@@ -122,6 +130,8 @@ pub struct Tab {
     /// trades retained twice: one tape, two `ChartState`s, and still only one
     /// bar-building path.
     pub time_pane: Option<ChartPane>,
+    /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
+    chip_label: String,
     /// The id the time pane takes when this tab first shows the split.
     time_pane_id: u64,
     /// Set when the split is asked for and the time pane does not exist yet;
@@ -141,9 +151,9 @@ pub struct Tab {
     pub focus: PaneSide,
 
     #[cfg(test)]
-    pub time_header_chips: [egui::Rect; time_header::PRESETS.len()],
+    time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
     #[cfg(test)]
-    pub canvas_divider: Option<egui::Rect>,
+    canvas_divider: Option<egui::Rect>,
 }
 
 impl Tab {
@@ -187,6 +197,7 @@ impl Tab {
             latest_trade_ms: None,
             live_trades: 0,
             flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
+            chip_label: String::new(),
             time_pane: None,
             time_pane_id: pane_ids.1,
             pending_time_pane: false,
@@ -195,7 +206,7 @@ impl Tab {
             focus: PaneSide::Flow,
             symbol,
             #[cfg(test)]
-            time_header_chips: [egui::Rect::NOTHING; time_header::PRESETS.len()],
+            time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
         }
@@ -245,6 +256,18 @@ impl Tab {
         let flow = self.clear_overlay(PaneSide::Flow);
         let time = self.time_pane.is_some() && self.clear_overlay(PaneSide::Time);
         flow || time
+    }
+
+    /// Where the timeframe chips landed, in `crate::time_header::PRESETS` order.
+    #[cfg(test)]
+    pub(crate) fn time_header_chip(&self, index: usize) -> Option<egui::Rect> {
+        self.time_header_chips.get(index).copied()
+    }
+
+    /// Where the canvas divider landed, while the split is shown.
+    #[cfg(test)]
+    pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
+        self.canvas_divider
     }
 
     /// Swap in a feed the test drives, through the same path a respawn takes.
@@ -375,7 +398,7 @@ impl Tab {
             return;
         }
         self.pending_time_pane = false;
-        let mut pane = ChartPane::time(self.time_pane_id, time_header::DEFAULT_INTERVAL_MS);
+        let mut pane = ChartPane::time(self.time_pane_id, crate::time_header::DEFAULT_INTERVAL_MS);
         pane.seed_from(
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
@@ -384,11 +407,29 @@ impl Tab {
         self.loading.end(LoadingTask::BarRebuild);
     }
 
-    /// The display name of the currently selected feed, or its id as a fallback.
-    pub fn feed_display_name(&self, config: &AppConfig) -> String {
-        config
-            .feed(&self.feed_id)
-            .map_or_else(|| self.feed_id.clone(), |f| f.name.clone())
+    /// The display name of the currently selected feed, or its id as a
+    /// fallback.
+    pub fn feed_display_name<'a>(&'a self, config: &'a AppConfig) -> &'a str {
+        config.feed_name(&self.feed_id)
+    }
+
+    /// This tab's chip label, `SYMBOL · venue`.
+    ///
+    /// Composed when the market changes rather than every frame: the strip
+    /// redraws at frame rate and the string only moves when the selection
+    /// does. [`Self::refresh_chip_label`] is what keeps the two in step.
+    #[must_use]
+    pub fn chip_label(&self) -> &str {
+        &self.chip_label
+    }
+
+    /// Recompose the chip label after a write to `feed_id` or `symbol`.
+    pub fn refresh_chip_label(&mut self, config: &AppConfig) {
+        let venue = config.feed_name(&self.feed_id);
+        self.chip_label.clear();
+        self.chip_label.push_str(&self.symbol);
+        self.chip_label.push_str(" · ");
+        self.chip_label.push_str(venue);
     }
 
     /// Keep `symbol` valid for the selected feed: if the feed changed and no
@@ -621,6 +662,7 @@ impl Tab {
         self.tape_mut().reset_for_symbol(symbol);
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
+        self.refresh_chip_label(config);
         self.ensure_book_capture(config);
         self.apply_feed_bubble_preset_after_switch(config, &previous_feed);
         cleared
@@ -997,6 +1039,7 @@ impl Tab {
         if let Some(link) = &self.replay {
             self.symbol = link.symbol().to_string();
         }
+        self.refresh_chip_label(config);
         // Depth is not in a recording; the toggle is disabled by capability,
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
@@ -1012,6 +1055,7 @@ impl Tab {
         let (feed_id, symbol) = self.active.clone();
         self.feed_id = feed_id;
         self.symbol = symbol;
+        self.refresh_chip_label(config);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -1078,8 +1122,8 @@ impl Tab {
         // Unsplit, the flow pane is handed the whole canvas and the rest of
         // this reduces to nothing: no divider, no header, no focus rule.
         let (time_area, divider, flow_area) = if split {
-            let (time, divider, flow) = split_canvas(area, self.split_fraction);
-            (Some(time), Some(divider), flow)
+            let areas = split_canvas(area, self.split_fraction);
+            (Some(areas.time), Some(areas.divider), areas.flow)
         } else {
             (None, None, area)
         };
@@ -1088,11 +1132,11 @@ impl Tab {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle.
             self.focus_from_pointer(ui, time_area, flow_area);
-            let (header, chart) = split_time_pane(time_area);
+            let areas = split_time_pane(time_area);
             // The time pane's own timeframe selector (§11): its BARS group,
             // beside the toolbar's, which keeps governing the flow pane.
             let mut interval_ms = self.pane(PaneSide::Time).time_interval_ms;
-            let header_layout = time_header::draw(ui, header, &mut interval_ms);
+            let header_layout = crate::time_header::draw(ui, areas.header, &mut interval_ms);
             #[cfg(test)]
             {
                 self.time_header_chips = header_layout.chips;
@@ -1102,7 +1146,7 @@ impl Tab {
                 pane.kind = BarKind::Time;
                 pane.time_interval_ms = interval_ms;
             }
-            chart
+            areas.chart
         });
 
         {
