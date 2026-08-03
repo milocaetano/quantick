@@ -47,7 +47,7 @@
 //! | `MT5_BIND_FAILED` | can't open the port | another quantick, or another symbol on the same port; see `listen_addr` / `[metatrader.ports]` |
 //! | `MT5_ACCEPT_FAILED` | one accept failed; still listening | transient OS error |
 //! | `MT5_BRIDGE_CONNECTED` | socket open, no hello yet | — |
-//! | `MT5_SESSION_BUSY` | a second bridge dialed a port already serving one | two EAs share an `InpPort`; give each symbol its own port |
+//! | `MT5_SESSION_BUSY` | a second bridge dialed a port already serving one | read `diagnosis`: `same_symbol` = two EAs streaming one symbol, remove a chart; `other_symbol` = give `peer_symbol` its own port; `unidentified` = nothing named itself, start from `peer` |
 //! | `MT5_HELLO_TIMEOUT` | connected but silent | wrong client dialed the port |
 //! | `MT5_SCHEMA_MISMATCH` | bridge too old/new | recompile the EA from this repo |
 //! | `MT5_SYMBOL_MISMATCH` | EA runs on another symbol's chart | attach it to the configured symbol |
