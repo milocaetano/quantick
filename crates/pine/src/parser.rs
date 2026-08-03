@@ -604,6 +604,21 @@ impl Parser<'_> {
             ));
             return None;
         }
+        // A bare `=>` matches unconditionally, so anything after it is dead
+        // code — and the evaluator would never reach it. Real Pine requires
+        // the default arm last; saying so beats compiling a script whose
+        // final arms silently do nothing.
+        if arms[..arms.len() - 1]
+            .iter()
+            .any(|(condition, _)| condition.is_none())
+        {
+            self.errors.push(PineError::new(
+                ErrorCode::PineSyntax,
+                start,
+                "the default `=>` arm must be the last arm of a switch                  (arms after it can never match)",
+            ));
+            return None;
+        }
         let span = self.spanned_from(start);
         Some(self.ast.push(NodeKind::Switch { subject, arms }, span))
     }

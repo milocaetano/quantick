@@ -925,6 +925,7 @@ impl QuantickApp {
                     },
                     columns: Vec::new(),
                     inputs: Vec::new(),
+                    stale: None,
                 });
                 self.indicators.apply(IndicatorEvent::Error {
                     slot,

@@ -1,0 +1,6 @@
+// expect: PINE_SYNTAX@3
+//@version=5
+x = switch
+    => 0
+    close > 10 => 1
+plot(x)

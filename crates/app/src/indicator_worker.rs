@@ -150,6 +150,12 @@ pub(crate) enum IndicatorEvent {
         /// The values currently bound to the declared inputs (defaults on
         /// first load) — what the settings dialog opens with.
         inputs: Vec<InputValue>,
+        /// The failed-reload errors, when the running version is older than
+        /// the file on disk. Carried on every rebuild because the worker owns
+        /// this flag: the UI mirrors it rather than guessing, so an unrelated
+        /// rebuild (scrolling back to prepend history, a source reset) cannot
+        /// quietly clear an amber dot while the stale code is still running.
+        stale: Option<String>,
     },
     /// One committed row (one closed bar) for one slot.
     Appended { slot: SlotId, row: Vec<f64> },
@@ -191,6 +197,9 @@ struct SlotMirror {
     synced: bool,
     /// Whether the UI has been told about the current error state.
     error_reported: bool,
+    /// Set when a reload failed to compile: the instance still running is
+    /// older than the file on disk. Cleared by the next good load.
+    stale: Option<String>,
     /// Store revision last published to the UI (0 = nothing yet).
     objects_revision: u64,
 }
@@ -304,6 +313,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 known_rows: 0,
                                 synced: false,
                                 error_reported: false,
+                                stale: None,
                                 objects_revision: 0,
                             },
                         );
@@ -324,6 +334,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                             },
                             columns: Vec::new(),
                             inputs: Vec::new(),
+                            stale: None,
                         });
                         let _ = events.send(IndicatorEvent::Error {
                             slot,
@@ -341,6 +352,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 known_rows: 0,
                                 synced: true,
                                 error_reported: true,
+                                stale: None,
                                 objects_revision: 0,
                             },
                         );
@@ -361,8 +373,10 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 mirror.values = indicator.input_values();
                                 host.replace(host_id, indicator);
                                 // Force a full Rebuilt on publish: the new
-                                // instance replayed the whole history.
+                                // instance replayed the whole history, and
+                                // its descriptor may have changed too.
                                 mirror.known_rows = 0;
+                                mirror.synced = false;
                                 mirror.error_reported = false;
                                 mirror.objects_revision = 0;
                             }
@@ -380,14 +394,14 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                 }
                 IndicatorCommand::Reload { slot, source } => {
                     if let Some(mirror) = slots.get_mut(&slot) {
-                        match source.build() {
+                        // Build with the values the user set, not with the
+                        // declared defaults: editing a comment in a script
+                        // used to reset `len = 50` back to 20 with no
+                        // message. `build_with` falls back to the defaults
+                        // by itself when the input set changed.
+                        match source.build_with(Some(&mirror.values)) {
                             Ok(indicator) => {
-                                let values: Vec<InputValue> = indicator
-                                    .descriptor()
-                                    .inputs
-                                    .iter()
-                                    .map(quantick_indicators::InputSpec::default_value)
-                                    .collect();
+                                let values = indicator.input_values();
                                 match mirror.host_id {
                                     Some(host_id) => {
                                         host.replace(host_id, indicator);
@@ -399,11 +413,18 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 }
                                 mirror.source = source;
                                 mirror.values = values;
+                                // A reload can change the title, the plots
+                                // and the input set, so the UI needs the
+                                // whole slot again, not an append.
                                 mirror.known_rows = 0;
+                                mirror.synced = false;
                                 mirror.error_reported = false;
                                 mirror.objects_revision = 0;
+                                // A good load is no longer stale.
+                                mirror.stale = None;
                             }
                             Err(message) => {
+                                mirror.stale = Some(message.clone());
                                 let _ = events.send(IndicatorEvent::ReloadFailed { slot, message });
                             }
                         }
@@ -462,6 +483,7 @@ fn publish_deltas(
                 slot,
                 descriptor: descriptor.clone(),
                 columns,
+                stale: mirror.stale.clone(),
                 inputs: mirror.values.clone(),
             });
             mirror.known_rows = rows;
@@ -982,6 +1004,86 @@ mod reload_tests {
             view.rows(),
             bars.len() + 1,
             "the running version even saw the new bar"
+        );
+    }
+
+    /// The flag belongs to the worker, so an unrelated rebuild cannot clear
+    /// it. Before this, scrolling back to prepend history dropped the amber
+    /// dot while the pre-edit script was still the one running — and it never
+    /// came back, because the poll had already advanced its mtime.
+    #[test]
+    fn a_rebuild_does_not_clear_the_stale_flag() {
+        let (worker, mut views, slot, bars) = drive();
+        worker.send(IndicatorCommand::Reload {
+            slot,
+            source: IndicatorSource::Script {
+                name: "r.pine".to_owned(),
+                text: BROKEN.to_owned(),
+            },
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        assert!(views.all()[0].stale.is_some(), "flagged after a bad edit");
+
+        // Exactly what scrolling left does.
+        worker.send(IndicatorCommand::Rebuild(bars.clone(), None));
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        let view = &views.all()[0];
+        assert!(
+            view.stale.is_some(),
+            "the file on disk still has errors; the dot must stay"
+        );
+        assert_eq!(view.descriptor.title, "r", "and the old version still runs");
+    }
+
+    /// The branch the commit message advertises — "a slot whose first load
+    /// failed is healed by its first good reload" — reachable whenever a
+    /// script reads but does not compile.
+    #[test]
+    fn a_slot_that_never_loaded_is_healed_by_a_good_reload() {
+        let trades: Vec<quantick_engine::Trade> = (1..=6).map(tests::trade).collect();
+        let mut builder = quantick_engine::TickBarBuilder::new(2);
+        let bars = quantick_engine::golden::replay(&mut builder, &trades);
+
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::Script {
+                name: "r.pine".to_owned(),
+                text: BROKEN.to_owned(),
+            },
+        });
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        assert!(views.all()[0].error.is_some(), "the first load failed");
+
+        worker.send(IndicatorCommand::Reload {
+            slot,
+            source: IndicatorSource::Script {
+                name: "r.pine".to_owned(),
+                text: GOOD_V1.to_owned(),
+            },
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        let view = &views.all()[0];
+        assert!(view.error.is_none(), "the good reload healed the slot");
+        assert_eq!(
+            view.rows(),
+            bars.len(),
+            "and the healed instance caught up over the existing history"
         );
     }
 }

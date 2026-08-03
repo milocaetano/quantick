@@ -107,6 +107,7 @@ impl IndicatorViews {
                 descriptor,
                 columns,
                 inputs,
+                stale,
             } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.descriptor = descriptor;
@@ -114,7 +115,11 @@ impl IndicatorViews {
                     view.input_values = inputs;
                     view.preview = None;
                     view.error = None;
-                    view.stale = None;
+                    // Mirrored from the worker, not cleared: `hidden` and
+                    // `errored` both survive a rebuild, and this used to be
+                    // the one status a routine chart interaction could erase
+                    // while the pre-edit code was still what ran.
+                    view.stale = stale;
                 } else {
                     self.views.push(IndicatorView {
                         slot,
@@ -125,7 +130,7 @@ impl IndicatorViews {
                         hidden: false,
                         objects: ObjectSnapshot::default(),
                         input_values: inputs,
-                        stale: None,
+                        stale,
                     });
                 }
             }
@@ -280,6 +285,7 @@ mod tests {
             descriptor: descriptor(true, 2),
             columns: vec![vec![1.0], vec![10.0]],
             inputs: Vec::new(),
+            stale: None,
         });
         views.apply(IndicatorEvent::Appended {
             slot,
@@ -300,6 +306,7 @@ mod tests {
             descriptor: descriptor(true, 1),
             columns: vec![vec![]],
             inputs: Vec::new(),
+            stale: None,
         });
         views.apply(IndicatorEvent::Preview {
             slot,
@@ -325,6 +332,7 @@ mod tests {
             descriptor: descriptor(true, 1),
             columns: vec![vec![]],
             inputs: Vec::new(),
+            stale: None,
         });
         views.remove(slot);
         views.apply(IndicatorEvent::Appended {
@@ -349,6 +357,7 @@ mod tests {
                 descriptor: descriptor(overlay, 1),
                 columns: vec![vec![]],
                 inputs: Vec::new(),
+                stale: None,
             });
             if hidden {
                 views.toggle_hidden(slot);
