@@ -262,3 +262,134 @@ fn ignored_header_args_and_alertcondition_warn() {
         script.warnings
     );
 }
+
+#[test]
+fn a_plot_outside_the_top_level_is_refused() {
+    // `plot()` inside an `if` had neither a frame nor a loop, so the
+    // top-level rule missed it — and pass 1 only scans top-level statements,
+    // so the plot was never registered either. The script drew nothing and
+    // said nothing.
+    for source in [
+        "//@version=5\nindicator(\"t\")\nif close > open\n    plot(close)\n",
+        "//@version=5\nindicator(\"t\")\nfor i = 0 to 2\n    plot(close)\n",
+        "//@version=5\nindicator(\"t\")\nf() => plot(close)\nplot(close)\n",
+    ] {
+        let errors = compile_err(source);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ErrorCode::PineSyntax && e.message.contains("top level")),
+            "{source:?} -> {errors:?}"
+        );
+    }
+
+    // The same call at the top level is of course fine.
+    let script = compile_ok("//@version=5\nindicator(\"t\")\nplot(close)\n");
+    assert_eq!(script.plots.len(), 1);
+}
+
+#[test]
+fn plot_arguments_fold_through_names() {
+    // Plots are registered after resolution, so a colour or width held in a
+    // variable reaches the spec instead of being silently replaced by the
+    // default.
+    let script = compile_ok(
+        "//@version=5\n\
+         indicator(\"t\")\n\
+         c = color.red\n\
+         w = 3\n\
+         name = \"my plot\"\n\
+         plot(close, title=name, color=c, linewidth=w)\n",
+    );
+    let spec = &script.plots[0];
+    assert_eq!(spec.title, "my plot");
+    assert_eq!(spec.width, 3.0);
+    assert_eq!(
+        (spec.base_color.r, spec.base_color.g, spec.base_color.b),
+        (242, 54, 69),
+        "color.red, not the amber default (255, 179, 0)"
+    );
+}
+
+#[test]
+fn a_plot_argument_that_cannot_fold_says_so() {
+    // One constant look per plot: a per-bar colour cannot be honoured, and
+    // substituting the default in silence is what the warning prevents.
+    let script = compile_ok(
+        "//@version=5\n\
+         indicator(\"t\")\n\
+         up = close > open\n\
+         plot(close, color = up ? color.green : color.red)\n",
+    );
+    assert!(
+        script
+            .warnings
+            .iter()
+            .any(|w| w.code == ErrorCode::PineUnsupported && w.message.contains("`color`")),
+        "{:?}",
+        script.warnings
+    );
+}
+
+#[test]
+fn a_later_reassignment_still_blocks_folding() {
+    // The `:=` sits *after* the call, which the walk could not see when it
+    // filled `reassigned` as it went: the length folded anyway and the kernel
+    // pinned bar zero's window forever.
+    let errors = compile_err(
+        "//@version=5\n\
+         indicator(\"t\")\n\
+         var len = 9\n\
+         plot(ta.sma(close, len))\n\
+         len := len + 1\n",
+    );
+    assert!(
+        errors.iter().any(|e| e.code == ErrorCode::PineSeriesLength),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_dynamic_offset_raises_the_floor_instead_of_replacing_it() {
+    // Order must not decide the answer: a 700-bar constant read needs 701
+    // rows whether it is written before or after the dynamic one.
+    for source in [
+        "//@version=5\nindicator(\"t\")\ni = 3\nplot(close[700] + close[i])\n",
+        "//@version=5\nindicator(\"t\")\ni = 3\nplot(close[i] + close[700])\n",
+    ] {
+        let script = compile_ok(source);
+        assert_eq!(
+            script.max_bars_back,
+            701.max(MAX_BARS_BACK_CAP),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_family_keeps_its_reason_as_a_bare_name() {
+    // `dayofweek` is a variable in Pine, so it reaches the name arm rather
+    // than the call or member arms; "unknown name" would be the wrong reason
+    // for a name the dialect knows and refuses.
+    let errors = compile_err("//@version=5\nindicator(\"t\")\nplot(dayofweek)\n");
+    assert!(
+        errors.iter().any(|e| e.code == ErrorCode::PineNoCalendar),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_folded_division_by_zero_is_na_like_the_interpreter() {
+    // The folder and the evaluator must agree; IEEE would say `inf` here and
+    // that value would reach an input default or a plot width.
+    let script = compile_ok(
+        "//@version=5\n\
+         indicator(\"t\")\n\
+         w = 1.0 / 0\n\
+         plot(close, linewidth=w)\n",
+    );
+    assert_eq!(
+        script.plots[0].width, 1.5,
+        "an `na` width falls back to the default, never to inf"
+    );
+}
