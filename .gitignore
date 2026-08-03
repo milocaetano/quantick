@@ -6,6 +6,8 @@
 /quantick.toml
 # User indicator scripts, created beside the app on first run
 /indicators
+# The indicator set the app remembers between runs
+/indicators-state.toml
 # Python bytecode from the design lab
 __pycache__/
 

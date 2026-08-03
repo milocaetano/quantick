@@ -650,6 +650,13 @@ impl QuantickApp {
                 {
                     Some(index) => {
                         app.add_script_indicator(index);
+                        // An env var is not a user edit. Without this, a
+                        // scripted validation run appended its own scripts to
+                        // the saved set and they opened by themselves on the
+                        // next plain launch — config presence activating
+                        // something, which the rules forbid. The natives hook
+                        // above never registers a kind, so it is already inert.
+                        app.forget_last_indicator_state_change();
                     }
                     None => tracing::warn!(
                         target: "quantick::app",
@@ -1555,6 +1562,15 @@ impl QuantickApp {
         self.last_indicator_change = Some(Instant::now());
     }
 
+    /// Undo the dirty mark an add just set — for indicators an env var asked
+    /// for rather than the user. The slot still exists and still works; it
+    /// simply does not enter the persisted set.
+    fn forget_last_indicator_state_change(&mut self) {
+        self.slot_kinds.pop();
+        self.indicator_state_dirty = false;
+        self.last_indicator_change = None;
+    }
+
     /// Rebuild the persisted set at startup, through the same commands the
     /// menu sends (add, then bind saved inputs, then hide once the view
     /// lands). A script the library no longer has is skipped with a log
@@ -1583,10 +1599,12 @@ impl QuantickApp {
                         .iter()
                         .position(|candidate| candidate.name == *name)
                     {
-                        Some(index) => {
-                            self.add_script_indicator(index);
-                            self.slot_kinds.last().map(|(slot, _)| *slot)
-                        }
+                        // The returned slot, not `slot_kinds.last()`: that
+                        // assumed the add always pushes an entry as its last
+                        // act, and it does not when the file no longer reads
+                        // — the saved inputs would then bind to whatever
+                        // indicator happened to be added before this one.
+                        Some(index) => self.add_script_indicator(index),
                         None => {
                             tracing::warn!(
                                 target: "quantick::app",
@@ -1610,6 +1628,20 @@ impl QuantickApp {
             if !values.is_empty() && values.len() == entry.inputs.len() {
                 self.indicator_worker
                     .send(IndicatorCommand::SetInputs { slot, values });
+            } else if !entry.inputs.is_empty() {
+                // One unreadable cell dropped every input of the entry, in
+                // silence — a hand-edited or stale file lost the whole
+                // parameter set without a word.
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_STATE_INPUTS_DROPPED",
+                    kind = ?entry.kind,
+                    saved = entry.inputs.len(),
+                    readable = values.len(),
+                    action = "declared_defaults_used",
+                    "saved indicator inputs could not be read; using the declared defaults"
+                );
             }
             if entry.hidden {
                 self.pending_hidden.push(slot);
@@ -1640,24 +1672,43 @@ impl QuantickApp {
             .is_some_and(|changed| changed.elapsed() >= INDICATOR_STATE_SAVE_DEBOUNCE);
         if self.indicator_state_dirty && settled {
             self.indicator_state_dirty = false;
+            // The change has been written; the clock starts again with the
+            // next edit rather than ticking on every frame from here on.
+            self.last_indicator_change = None;
+            // What is on disk today, so a slot that failed to build does not
+            // overwrite its own saved parameters with an empty list.
+            let previous = state_file::load(&self.indicator_state_path);
             let saved: Vec<SavedIndicator> = self
                 .indicators
                 .all()
                 .iter()
                 .filter_map(|view| {
-                    let kind = self
+                    let kind_ref = self
                         .slot_kinds
                         .iter()
                         .find(|(slot, _)| *slot == view.slot)
-                        .map(|(_, kind)| kind.clone())?;
+                        .map(|(_, kind)| kind)?;
+                    let kind = kind_ref.clone();
+                    // A slot whose build failed has an empty view: the
+                    // worker's error path sends `Rebuilt { inputs: [] }`.
+                    // Rewriting its entry from that would erase the user's
+                    // saved parameters before they had a chance to fix the
+                    // script, so a broken slot keeps what is already on disk.
+                    let inputs = if view.error.is_some() {
+                        previous
+                            .iter()
+                            .find(|entry| entry.kind == *kind_ref)
+                            .map_or_else(Vec::new, |entry| entry.inputs.clone())
+                    } else {
+                        view.input_values
+                            .iter()
+                            .map(SavedInput::from_value)
+                            .collect()
+                    };
                     Some(SavedIndicator {
                         kind,
                         hidden: view.hidden,
-                        inputs: view
-                            .input_values
-                            .iter()
-                            .map(SavedInput::from_value)
-                            .collect(),
+                        inputs,
                     })
                 })
                 .collect();
@@ -4468,6 +4519,84 @@ plot(close)
         assert!(view.error.is_some(), "and it carries the read failure");
         assert_eq!(view.label(), "vanishing.pine");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The PR's headline behaviour had no test: everything sat on the serde
+    /// layer, and the wiring is where the defects were.
+    #[test]
+    fn the_indicator_set_restores_from_disk_and_saves_back() {
+        use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind};
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let path = std::env::temp_dir().join(format!(
+            "quantick-indicator-state-app-{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        app.indicator_state_path = path.clone();
+
+        // A saved set: one native with bound inputs, one hidden native, and
+        // a script the library does not have.
+        crate::indicators::state_file::save(
+            &path,
+            &[
+                SavedIndicator {
+                    kind: SavedKind::NativeEma,
+                    hidden: false,
+                    inputs: vec![SavedInput::Int(21), SavedInput::Source("close".to_owned())],
+                },
+                SavedIndicator {
+                    kind: SavedKind::NativeCvd,
+                    hidden: true,
+                    inputs: Vec::new(),
+                },
+                SavedIndicator {
+                    kind: SavedKind::Script {
+                        name: "not-in-the-library.pine".to_owned(),
+                    },
+                    hidden: false,
+                    inputs: Vec::new(),
+                },
+            ],
+        );
+
+        app.restore_indicator_state();
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "a script the library lacks adds nothing, not a phantom slot"
+        );
+        assert_eq!(app.slot_kinds[0].1, SavedKind::NativeEma);
+        assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
+        assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
+        assert!(
+            !app.indicator_state_dirty,
+            "restoring is not a user edit and must not rewrite the file"
+        );
+
+        // A user edit, settled: the file must match the live set.
+        app.mark_indicator_state_dirty();
+        app.last_indicator_change =
+            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
+        for event in app.indicator_worker.drain_events() {
+            app.indicators.apply(event);
+        }
+        app.maintain_indicator_state();
+        let written = crate::indicators::state_file::load(&path);
+        assert_eq!(
+            written.len(),
+            app.indicators
+                .all()
+                .iter()
+                .filter(|view| app.slot_kinds.iter().any(|(slot, _)| *slot == view.slot))
+                .count(),
+            "every slot with a known kind is written, and only those"
+        );
+        assert!(
+            !app.indicator_state_dirty,
+            "the debounce fired, so the change is written"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     fn test_app_with_notices() -> (
