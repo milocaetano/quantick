@@ -1128,6 +1128,14 @@ impl Tab {
                 .flatten()
         });
         let Some(position) = pressed else { return };
+        // A press egui routed to another layer belongs to whatever floats
+        // there — the toast, the object manager, the inspector — not to the
+        // pane it happens to cover. Taking those as pane clicks made the
+        // toast's Undo act on the chart the button floated over rather than
+        // the one it was raised for.
+        if ui.ctx().layer_id_at(position) != Some(ui.layer_id()) {
+            return;
+        }
         if time_area.contains(position) {
             self.focus = PaneSide::Time;
         } else if flow_area.contains(position) {

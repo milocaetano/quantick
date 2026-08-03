@@ -395,7 +395,7 @@ pub struct QuantickApp {
     // Pre-edit copy of the selected drawing while an inspector edit gesture
     // (slider/color/coordinate drag) is in flight; committed as one undo
     // entry once pointer and keyboard let go.
-    inspector_edit_baseline: Option<(usize, drawings::Drawing)>,
+    inspector_edit_baseline: Option<InspectorEdit>,
     drawing_toast: Option<DrawingToast>,
     // Inspector chrome state: open tab, dock pin, whether the user moved the
     // floating window this session (manual position wins over placement),
@@ -410,6 +410,8 @@ pub struct QuantickApp {
     drawing_presets: drawings::presets::PresetStore,
     #[cfg(test)]
     inspector_pin_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    toast_undo_rect: Option<egui::Rect>,
     #[cfg(test)]
     manager_action_rects: Vec<(usize, &'static str, egui::Rect)>,
 
@@ -434,6 +436,19 @@ pub struct QuantickApp {
     /// what the window is ingesting, not what one market prints.
     trades_since_summary: u64,
     last_summary: Instant,
+}
+
+/// A drawing edit in flight, with the pane it was captured on.
+///
+/// The commit has to land on *that* pane: focus legitimately moves when the
+/// user clicks the other chart or another tab, and the index alone addresses
+/// a different object there. Pairing the baseline with its owner is what
+/// keeps one gesture one undo entry on one drawing.
+struct InspectorEdit {
+    tab: u64,
+    side: PaneSide,
+    index: usize,
+    before: drawings::Drawing,
 }
 
 /// An indicator slot together with the tab and pane that own it.
@@ -504,6 +519,8 @@ impl QuantickApp {
             ),
             #[cfg(test)]
             inspector_pin_rect: None,
+            #[cfg(test)]
+            toast_undo_rect: None,
             #[cfg(test)]
             manager_action_rects: Vec::new(),
             style: ChartStyle::default(),
@@ -1925,10 +1942,15 @@ impl QuantickApp {
 
     /// Commit a pending inspector edit gesture as one undo entry.
     fn commit_inspector_gesture(&mut self) {
-        if let Some((index, before)) = self.inspector_edit_baseline.take() {
-            self.focused_pane_mut()
+        let Some(edit) = self.inspector_edit_baseline.take() else {
+            return;
+        };
+        // The pane the edit started on. Its tab may have been closed under the
+        // gesture, in which case the object it described is gone with it.
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == edit.tab) {
+            tab.pane_mut(edit.side)
                 .drawings
-                .record_edit_of(index, before);
+                .record_edit_of(edit.index, edit.before);
         }
     }
 
@@ -1945,6 +1967,8 @@ impl QuantickApp {
         let message = toast.message;
         let offers_undo = toast.offers_undo;
         let mut undo_clicked = false;
+        #[cfg(test)]
+        let mut undo_rect = None;
         egui::Area::new(egui::Id::new("drawing_toast"))
             .anchor(
                 egui::Align2::CENTER_BOTTOM,
@@ -1960,12 +1984,21 @@ impl QuantickApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(message);
-                            if offers_undo && ui.button("Undo").clicked() {
-                                undo_clicked = true;
+                            if offers_undo {
+                                let undo = ui.button("Undo");
+                                #[cfg(test)]
+                                {
+                                    undo_rect = Some(undo.rect);
+                                }
+                                undo_clicked = undo.clicked();
                             }
                         });
                     });
             });
+        #[cfg(test)]
+        {
+            self.toast_undo_rect = undo_rect;
+        }
         if undo_clicked {
             self.focused_pane_mut().drawings.undo();
             self.drawing_toast = None;
@@ -2151,7 +2184,12 @@ impl QuantickApp {
         now: Instant,
     ) {
         if actions.edited && self.inspector_edit_baseline.is_none() {
-            self.inspector_edit_baseline = Some((index, before));
+            self.inspector_edit_baseline = Some(InspectorEdit {
+                tab: self.active_tab().id,
+                side: self.active_tab().focused_side(),
+                index,
+                before,
+            });
         }
         let gesture_settled = ctx.input(|input| !input.pointer.any_down())
             && ctx.memory(|memory| memory.focused().is_none());
@@ -2267,7 +2305,7 @@ impl QuantickApp {
         if self
             .inspector_edit_baseline
             .as_ref()
-            .is_some_and(|(baseline_index, _)| *baseline_index != index)
+            .is_some_and(|edit| edit.index != index)
         {
             self.commit_inspector_gesture();
         }
@@ -6135,6 +6173,124 @@ plot(close)
             book: book_tx,
             commands: cmd_rx,
         }
+    }
+
+    /// The other half of the same root cause: an edit committed against
+    /// whatever had focus when the gesture settled, not against the pane it
+    /// was captured on. Focus moves legitimately — clicking the other chart —
+    /// so the baseline has to carry its own owner.
+    #[test]
+    fn an_inspector_edit_commits_on_the_pane_it_started_on() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        // A mark on each pane, so an index means something on both.
+        for side in [PaneSide::Time, PaneSide::Flow] {
+            app.toolrail
+                .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+            let point = pane_point(&app, side);
+            click_chart(&mut app, &ctx, point);
+        }
+        let time_depth = app.active_tab().pane(PaneSide::Time).drawings.undo_depth();
+        let flow_depth = app.active_tab().flow_pane.drawings.undo_depth();
+
+        // An edit begun on the time pane: the baseline, then a real change to
+        // the object (the store records an entry only if something moved).
+        let before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].clone();
+        app.inspector_edit_baseline = Some(InspectorEdit {
+            tab: app.active_tab().id,
+            side: PaneSide::Time,
+            index: 0,
+            before,
+        });
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .drawings
+            .select(Some(0));
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .drawings
+            .selected_mut()
+            .expect("the time pane's mark")
+            .style
+            .width_px = MAX_DRAWING_WIDTH_PX;
+        // ...that settles after focus has moved to the chart beside it.
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
+        app.commit_inspector_gesture();
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).drawings.undo_depth(),
+            time_depth + 1,
+            "the entry lands on the pane the edit started on"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.undo_depth(),
+            flow_depth,
+            "and never on the one that happened to take focus"
+        );
+    }
+
+    /// A press egui routed to a floating window is not a click on the pane
+    /// underneath it.
+    ///
+    /// The toast, the object manager and the inspector all float over the
+    /// canvas. Taking their presses as pane clicks made the focused pane
+    /// follow whichever pane the *window* happened to overlap, so the toast's
+    /// Undo — which acts on the focused pane — undid an edit on the other
+    /// chart, and the manager's list flipped under the click that opened it.
+    #[test]
+    fn a_press_on_a_floating_window_does_not_move_pane_focus() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        // A mark on the time pane, then delete it: the toast comes up with an
+        // Undo that acts on whatever pane has focus.
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            1
+        );
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+        assert!(
+            app.active_tab()
+                .pane(PaneSide::Time)
+                .drawings
+                .items()
+                .is_empty()
+        );
+        // A fresh egui Area sizes itself on its first frame.
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let undo = app.toast_undo_rect.expect("the toast offers Undo");
+        let divider = app.active_tab().canvas_divider.expect("the split is on");
+        assert!(
+            undo.center().x > divider.right(),
+            "the regression needs the toast's button to float over the *other* pane"
+        );
+
+        click_chart(&mut app, &ctx, undo.center());
+
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Time,
+            "a press routed to the toast is not a click on the pane behind it"
+        );
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            1,
+            "so Undo puts back the mark it was offered for"
+        );
+        assert!(
+            app.active_tab().flow_pane.drawings.items().is_empty(),
+            "and touches nothing on the pane the button happens to float over"
+        );
     }
 
     /// (a) The `+` opens the picker, and choosing a market adds a tab that
