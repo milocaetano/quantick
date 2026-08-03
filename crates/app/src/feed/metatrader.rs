@@ -44,7 +44,8 @@ use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
-    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind, run_bridge_server,
+    BookCaptureSwitch, Mt5Error, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind,
+    run_bridge_server,
 };
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
@@ -130,8 +131,22 @@ async fn feed_task(
         return; // UI gone
     }
 
+    // One port carries one symbol, so where this feed listens is a question
+    // about *this* symbol. Resolved once here and handed to both the listener
+    // and the autostarted bridge, which is what keeps the two agreeing.
+    let endpoint = settings.endpoint_for(&symbol);
+    info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "MT5_ENDPOINT_RESOLVED",
+        symbol = %symbol,
+        listen_addr = %endpoint.listen_addr,
+        from_ports_map = endpoint.from_map,
+        "resolved this symbol's bridge port"
+    );
+
     let mut server_cfg = ServerConfig::new(symbol.clone());
-    server_cfg.listen_addr = settings.listen_addr.clone();
+    server_cfg.listen_addr = endpoint.listen_addr.clone();
     server_cfg.side_mode = match settings.side_source {
         Mt5SideSource::TickRule => SideMode::TickRule,
         Mt5SideSource::Flags => SideMode::Flags,
@@ -146,6 +161,7 @@ async fn feed_task(
             settings.clone(),
             Supervision {
                 symbol: symbol.clone(),
+                endpoint: endpoint.clone(),
                 connected: Arc::clone(&bridge_connected),
                 notices: notice_tx.clone(),
             },
@@ -157,7 +173,7 @@ async fn feed_task(
         let _ = notice_tx
             .send(FeedNotice::working(format!(
                 "waiting for a MetaTrader bridge on {}",
-                settings.listen_addr
+                endpoint.listen_addr
             )))
             .await;
     }
@@ -282,14 +298,23 @@ async fn feed_task(
                         // we are shutting down. Keep serving UI commands so
                         // the loader can never hang on a dead feed.
                         match server.await {
-                            Ok(Err(e)) => error!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_BIND_FAILED",
-                                symbol = %symbol,
-                                %e,
-                                "MT5 bridge listener failed; feed is idle (is another quantick running?)"
-                            ),
+                            Ok(Err(e)) => {
+                                error!(
+                                    target: "quantick::app",
+                                    schema_version = 1_u8,
+                                    event_code = "MT5_BIND_FAILED",
+                                    symbol = %symbol,
+                                    listen_addr = %endpoint.listen_addr,
+                                    from_ports_map = endpoint.from_map,
+                                    %e,
+                                    "MT5 bridge listener failed; feed is idle (another quantick, \
+                                     or another symbol already listening on this port?)"
+                                );
+                                // A port already taken is the ordinary failure
+                                // once several symbols stream at once, and a
+                                // log line is not where the user is looking.
+                                let _ = notice_tx.send(bind_failure_notice(&symbol, &e)).await;
+                            }
                             Ok(Ok(())) => {}
                             Err(e) => error!(
                                 target: "quantick::app",
@@ -327,6 +352,24 @@ async fn feed_task(
     if let Some(autostart) = autostart {
         autostart.abort();
     }
+}
+
+/// What to tell the user when this symbol's port could not be opened.
+///
+/// The cause worth naming is the one that arrived with multi-symbol charting:
+/// two feeds asking for the same port. Whoever bound it first keeps streaming,
+/// and the second chart would otherwise just sit there empty.
+fn bind_failure_notice(symbol: &str, error: &Mt5Error) -> FeedNotice {
+    let Mt5Error::Bind { addr, .. } = error;
+    FeedNotice::attention(
+        format!("quantick could not open the MetaTrader port for {symbol}"),
+        format!(
+            "Nothing can listen on {addr} — another quantick has it, or another symbol in \
+             this one does. One port carries one symbol: give {symbol} its own under \
+             [metatrader.ports] in your configuration, and set the matching InpPort on its \
+             EA chart."
+        ),
+    )
 }
 
 /// After a fatal listener error, keep answering UI commands honestly (empty
@@ -586,6 +629,32 @@ mod tests {
         };
         assert_eq!(trade.agg_id, 3);
         assert_eq!(trade.side, quantick_engine::Side::Sell);
+    }
+
+    #[test]
+    fn a_port_that_will_not_open_names_the_port_and_the_way_out() {
+        // The failure multi-symbol charting made ordinary: two feeds asking
+        // for one port. It used to reach a log line only, leaving the second
+        // chart blank with nothing on screen to act on.
+        let FeedNotice::Attention {
+            headline,
+            next_step,
+        } = bind_failure_notice(
+            "US500",
+            &Mt5Error::Bind {
+                addr: "127.0.0.1:9102".to_string(),
+                message: "address already in use".to_string(),
+            },
+        )
+        else {
+            panic!("a dead listener must ask for attention");
+        };
+        assert!(headline.contains("US500"), "headline: {headline}");
+        assert!(next_step.contains("127.0.0.1:9102"), "step: {next_step}");
+        assert!(
+            next_step.contains("[metatrader.ports]") && next_step.contains("InpPort"),
+            "the step names both halves of the pairing: {next_step}"
+        );
     }
 
     #[test]
