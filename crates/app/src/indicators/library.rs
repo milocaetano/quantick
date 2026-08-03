@@ -8,8 +8,9 @@
 //!
 //! The directory resolves from `QUANTICK_INDICATORS_DIR`, falling back to
 //! `./indicators` beside the working directory — the same precedence spirit
-//! as `QUANTICK_CONFIG`. Scanning is deliberately at-startup-only for now;
-//! the hot-reload mtime poll is the M4 milestone.
+//! as `QUANTICK_CONFIG`. The scan itself runs once at startup — the menu is
+//! fixed for the session — but a loaded file-backed script follows its file:
+//! the app polls mtimes on a debounce and reloads on a save.
 
 use std::path::{Path, PathBuf};
 

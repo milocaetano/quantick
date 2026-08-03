@@ -66,9 +66,10 @@ Look for:
 - **Ports vs. concrete types.** Does a consumer depend on a trait it needs, or
   on a concrete producer it happens to have? Downcasting or matching on a
   concrete feed type downstream is a broken port.
-- **Dependency direction.** `app` / `feed-*` → `engine` / `orderbook` /
-  `replay`, one way, and feed crates never depend on each other. A reverse
-  edge is a blocker, no exceptions.
+- **Dependency direction.** One way: `app` → `pine` → `indicators` →
+  `engine`, `app` also on `orderbook` / `replay` / `feed-*`, and `feed-*` →
+  `engine` / `orderbook` only. Feed crates never depend on each other. A
+  reverse edge is a blocker, no exceptions.
 - **Forked logic.** Chart, backtest and bot share one aggregator code path.
   Any per-consumer copy of bar building is a blocker.
 - **Blast radius.** Count the existing files the change modifies versus the
