@@ -96,6 +96,12 @@ pub struct FunctionInfo {
 }
 
 /// A compiled script: the AST plus every dense eval-time table.
+///
+/// `Clone` so that rebinding inputs (the settings dialog's Apply) can build a
+/// second instance from the same compile instead of parsing the source again
+/// — a click-rate path either way, but re-parsing would also mean a script
+/// edited on disk since load would silently change under Apply.
+#[derive(Clone)]
 pub struct CompiledScript {
     /// The arena.
     pub ast: Ast,

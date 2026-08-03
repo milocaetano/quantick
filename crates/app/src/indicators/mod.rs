@@ -10,7 +10,9 @@
 pub(crate) mod library;
 
 use eframe::egui;
-use quantick_indicators::{EvalError, IndicatorDescriptor, ObjectSnapshot, PreviewFrame};
+use quantick_indicators::{
+    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame,
+};
 
 use crate::indicator_worker::{IndicatorEvent, SlotId};
 
@@ -40,6 +42,9 @@ pub(crate) struct IndicatorView {
     /// Committed draw objects (a preview's transient set, when present,
     /// replaces this at render time).
     pub objects: ObjectSnapshot,
+    /// The values currently bound to the declared inputs (what the
+    /// settings dialog opens with).
+    pub input_values: Vec<InputValue>,
 }
 
 impl IndicatorView {
@@ -98,10 +103,12 @@ impl IndicatorViews {
                 slot,
                 descriptor,
                 columns,
+                inputs,
             } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.descriptor = descriptor;
                     view.columns = columns;
+                    view.input_values = inputs;
                     view.preview = None;
                     view.error = None;
                 } else {
@@ -113,6 +120,7 @@ impl IndicatorViews {
                         error: None,
                         hidden: false,
                         objects: ObjectSnapshot::default(),
+                        input_values: inputs,
                     });
                 }
             }
@@ -261,6 +269,7 @@ mod tests {
             slot,
             descriptor: descriptor(true, 2),
             columns: vec![vec![1.0], vec![10.0]],
+            inputs: Vec::new(),
         });
         views.apply(IndicatorEvent::Appended {
             slot,
@@ -280,6 +289,7 @@ mod tests {
             slot,
             descriptor: descriptor(true, 1),
             columns: vec![vec![]],
+            inputs: Vec::new(),
         });
         views.apply(IndicatorEvent::Preview {
             slot,
@@ -304,6 +314,7 @@ mod tests {
             slot,
             descriptor: descriptor(true, 1),
             columns: vec![vec![]],
+            inputs: Vec::new(),
         });
         views.remove(slot);
         views.apply(IndicatorEvent::Appended {
@@ -327,6 +338,7 @@ mod tests {
                 slot,
                 descriptor: descriptor(overlay, 1),
                 columns: vec![vec![]],
+                inputs: Vec::new(),
             });
             if hidden {
                 views.toggle_hidden(slot);

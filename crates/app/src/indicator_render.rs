@@ -824,6 +824,7 @@ mod tests {
             columns,
             preview: preview.map(PreviewFrame::new),
             objects: quantick_indicators::ObjectSnapshot::default(),
+            input_values: Vec::new(),
             error: None,
             hidden: false,
         }

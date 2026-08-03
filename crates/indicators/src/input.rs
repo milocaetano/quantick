@@ -46,6 +46,24 @@ pub enum SourceId {
 }
 
 impl SourceId {
+    /// Every selectable source, for building a settings dropdown.
+    pub const ALL: [SourceId; 14] = [
+        SourceId::Open,
+        SourceId::High,
+        SourceId::Low,
+        SourceId::Close,
+        SourceId::Hl2,
+        SourceId::Hlc3,
+        SourceId::Ohlc4,
+        SourceId::Hlcc4,
+        SourceId::Volume,
+        SourceId::Delta,
+        SourceId::BuyVolume,
+        SourceId::SellVolume,
+        SourceId::TradeCount,
+        SourceId::Cvd,
+    ];
+
     /// Resolve this source against one bar. `cvd` is passed in because it is
     /// the one cross-bar series — the host maintains it, the bar cannot.
     #[must_use]
@@ -236,6 +254,57 @@ pub enum InputValue {
 
 #[cfg(test)]
 mod tests {
+    /// A fifteenth series would vanish from every settings dropdown without
+    /// a word: `ALL` is hand-maintained, and the enum's other matches are
+    /// exhaustive, so nothing else would tell the author. This match is what
+    /// breaks the build until the array is updated.
+    #[test]
+    fn every_source_is_listed_in_all() {
+        for source in [
+            SourceId::Open,
+            SourceId::High,
+            SourceId::Low,
+            SourceId::Close,
+            SourceId::Hl2,
+            SourceId::Hlc3,
+            SourceId::Ohlc4,
+            SourceId::Hlcc4,
+            SourceId::Volume,
+            SourceId::BuyVolume,
+            SourceId::SellVolume,
+            SourceId::Delta,
+            SourceId::Cvd,
+            SourceId::TradeCount,
+        ] {
+            // The exhaustive match: adding a variant fails to compile here.
+            match source {
+                SourceId::Open
+                | SourceId::High
+                | SourceId::Low
+                | SourceId::Close
+                | SourceId::Hl2
+                | SourceId::Hlc3
+                | SourceId::Ohlc4
+                | SourceId::Hlcc4
+                | SourceId::Volume
+                | SourceId::BuyVolume
+                | SourceId::SellVolume
+                | SourceId::Delta
+                | SourceId::Cvd
+                | SourceId::TradeCount => {}
+            }
+            assert!(
+                SourceId::ALL.contains(&source),
+                "{source:?} is missing from SourceId::ALL"
+            );
+        }
+        let mut names: Vec<&str> = SourceId::ALL.iter().map(|s| s.as_str()).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(before, names.len(), "dialect names must be distinct");
+    }
+
     use super::*;
     use quantick_engine::Bar;
     use rust_decimal::Decimal;

@@ -26,6 +26,7 @@ use crate::drawings::{
     MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, PresetHost,
 };
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
+use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
     IndicatorCommand, IndicatorEvent, IndicatorSource, IndicatorWorker, SlotId,
@@ -338,6 +339,8 @@ pub struct QuantickApp {
     /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
     /// startup; hot reload is the M4 milestone.
     script_library: ScriptLibrary,
+    /// The open indicator-settings dialog, if any (one at a time).
+    indicator_settings: Option<SettingsDialog>,
     book_capture_epoch: u64,
     book_channel_closed_reported: bool,
     /// Whether the user wants the live strip shown. The pixels it actually
@@ -508,6 +511,7 @@ impl QuantickApp {
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             script_library: ScriptLibrary::scan(),
+            indicator_settings: None,
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
             live_strip_visible: false,
@@ -819,6 +823,46 @@ impl QuantickApp {
             ToolbarAction::AddScriptIndicator(index) => {
                 self.add_script_indicator(index);
             }
+            ToolbarAction::OpenIndicatorSettings(slot) => {
+                let slot = SlotId(slot);
+                if let Some(view) = self.indicators.all().iter().find(|v| v.slot == slot) {
+                    self.indicator_settings = Some(SettingsDialog {
+                        slot,
+                        title: view.label().to_owned(),
+                        draft: view.input_values.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Draw the settings dialog and execute its outcome. Apply goes through
+    /// the worker (construct anew, replace, replay) — the same path every
+    /// input change takes, UI or not.
+    fn draw_indicator_settings(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.indicator_settings.as_mut() else {
+            return;
+        };
+        let Some(view) = self
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == dialog.slot)
+        else {
+            // The indicator was removed under the dialog.
+            self.indicator_settings = None;
+            return;
+        };
+        match indicator_panel::draw(ctx, dialog, &view.descriptor.inputs) {
+            SettingsOutcome::Open => {}
+            SettingsOutcome::Cancel => self.indicator_settings = None,
+            SettingsOutcome::Apply => {
+                let dialog = self.indicator_settings.take().expect("dialog is open");
+                self.indicator_worker.send(IndicatorCommand::SetInputs {
+                    slot: dialog.slot,
+                    values: dialog.draft,
+                });
+            }
         }
     }
 
@@ -861,6 +905,7 @@ impl QuantickApp {
                         inputs: Vec::new(),
                     },
                     columns: Vec::new(),
+                    inputs: Vec::new(),
                 });
                 self.indicators.apply(IndicatorEvent::Error {
                     slot,
@@ -3879,6 +3924,7 @@ impl QuantickApp {
         // The chart keeps whatever remains.
         self.draw_menu_bar(ctx);
         self.draw_toolbar(ctx);
+        self.draw_indicator_settings(ctx);
         let status = self.status_model();
         statusbar::draw(ctx, &status, &mut self.tz);
         // The browser window and, while a session plays, the transport bar.

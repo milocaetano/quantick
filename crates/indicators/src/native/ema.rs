@@ -3,7 +3,7 @@
 use super::{EMA_COLOR, EMA_DEFAULT_LEN, PLOT_WIDTH_PT};
 use crate::bar::IndicatorBar;
 use crate::indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
-use crate::input::{InputSpec, SourceId};
+use crate::input::{InputSpec, InputValue, SourceId};
 use crate::output::{PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFrame};
 use crate::ta;
 
@@ -104,6 +104,27 @@ impl Indicator for Ema {
         Ok(PreviewFrame::new(vec![
             kernel.push(self.source.value(partial, ctx.cvd_now())),
         ]))
+    }
+
+    fn input_values(&self) -> Vec<InputValue> {
+        // What this instance is actually running with, not what a fresh one
+        // would declare.
+        vec![
+            InputValue::Int(i64::try_from(self.len).unwrap_or(i64::MAX)),
+            InputValue::Source(self.source),
+        ]
+    }
+
+    fn rebind(&self, values: &[InputValue]) -> Option<Box<dyn Indicator>> {
+        let len = match values.first() {
+            Some(InputValue::Int(v)) => usize::try_from((*v).max(1)).unwrap_or(1),
+            _ => self.len,
+        };
+        let source = match values.get(1) {
+            Some(InputValue::Source(s)) => *s,
+            _ => self.source,
+        };
+        Some(Box::new(Self::new(len, source)))
     }
 
     fn reset(&mut self) {

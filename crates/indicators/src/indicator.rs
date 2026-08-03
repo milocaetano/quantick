@@ -18,7 +18,7 @@
 //! consumers" rule applied to indicators.
 
 use crate::bar::IndicatorBar;
-use crate::input::InputSpec;
+use crate::input::{InputSpec, InputValue};
 use crate::output::{PlotBuffer, PlotSpec, PreviewFrame};
 
 /// Static description of an indicator: what it plots, what it asks the user,
@@ -143,6 +143,37 @@ pub trait Indicator {
     /// The retained draw objects, for indicators that draw any (scripts
     /// with `line`/`box`/`label`). `None` — the default — costs nothing.
     fn objects(&self) -> Option<&crate::objects::ObjectStore> {
+        None
+    }
+
+    /// The values this *instance* is running with, in
+    /// [`IndicatorDescriptor::inputs`] order.
+    ///
+    /// The descriptor's `default_value`s are a declaration-time schema, not a
+    /// running instance's state: `Ema::new(3, …)` still declares a default of
+    /// 9. A settings dialog seeded from the declaration therefore shows a
+    /// value the indicator is not using, and pressing Apply without touching
+    /// a widget silently rewrites it. Override this to answer honestly; the
+    /// default returns the declared values, which is correct for an
+    /// indicator whose inputs are the defaults.
+    fn input_values(&self) -> Vec<InputValue> {
+        self.descriptor()
+            .inputs
+            .iter()
+            .map(InputSpec::default_value)
+            .collect()
+    }
+
+    /// A new instance of this indicator bound to `values`, or `None` when it
+    /// declares no inputs to bind.
+    ///
+    /// This is the port behind the settings dialog: the panel is generated
+    /// from `InputSpec`, so binding the values back must be generated too.
+    /// Without it, the author of the next native has to remember to extend a
+    /// `match` in the app — and forgetting means the dialog still renders,
+    /// Apply still rebuilds, and the values are silently ignored.
+    fn rebind(&self, values: &[InputValue]) -> Option<Box<dyn Indicator>> {
+        let _ = values;
         None
     }
 }
