@@ -189,6 +189,26 @@ const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 /// though they are zooming different things.
 const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
+/// Whether a freshly folded prefix differs from the one already installed.
+///
+/// Length and the two end open-times, not a full comparison: the fold is
+/// deterministic over the same base, so two runs agreeing on how many bars
+/// they produced and which windows the first and last cover agree on
+/// everything between. The full compare was ~129k `Decimal`s on every frame
+/// of a settled interval drag.
+fn prefix_differs(current: &[quantick_engine::Bar], next: &[quantick_engine::Bar]) -> bool {
+    if current.len() != next.len() {
+        return true;
+    }
+    let ends = |bars: &[quantick_engine::Bar]| {
+        (
+            bars.first().map(|bar| bar.open_time),
+            bars.last().map(|bar| bar.open_time),
+        )
+    };
+    ends(current) != ends(next)
+}
+
 /// Convert an explicit unmultiplied RGBA style colour to egui.
 fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(r, g, b, a)
@@ -546,24 +566,32 @@ impl ChartPane {
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
-        if bars == self.history_prefix {
+        // Only a time pane ever carries one, and a time pane has no tape. Held
+        // as an assertion rather than a comment because the draw path reads
+        // the two as mutually exclusive.
+        debug_assert!(
+            bars.is_empty() || self.orderflow.is_none(),
+            "a venue prefix belongs to a pane with no tape"
+        );
+        if !prefix_differs(&self.history_prefix, &bars) {
             return false;
         }
         let before = self.history_prefix.len();
         self.history_prefix = bars;
-        // Growing is the case that has to look like nothing happened: the
-        // prefix arrives under a chart the user is already reading, so the
-        // right edge, the marks and the indicator rows all move with it.
-        //
-        // Shrinking only happens when a coarser interval folds the same
-        // history into fewer bars, and that path is a spec change: it
-        // reanchors by market time straight after, which is a better answer
-        // than any index arithmetic here.
-        if let Some(added) = self.history_prefix.len().checked_sub(before)
-            && added > 0
-        {
-            self.viewport.shift_right_edge(added);
-            self.drawings.shift_bars(added);
+        // The prefix moves under a chart the user is already reading, so
+        // everything anchored to a bar index moves with it — in either
+        // direction. It grows when history lands; it shrinks when a coarser
+        // fold makes fewer bars of the same span, or when older trades push
+        // the seam back and the overlapping buckets leave.
+        let delta = self.history_prefix.len() as isize - before as isize;
+        self.viewport.shift_right_edge(delta);
+        self.drawings.shift_bars(delta);
+        // Indicator columns have no signed shift: on growth they are nudged so
+        // the frames before the rebuild lands draw each value against its own
+        // candle, and on a shrink the rebuild below re-cuts them wholesale a
+        // round trip later. Drawings get no such second chance, which is why
+        // they take the signed delta above.
+        if let Ok(added) = usize::try_from(delta) {
             self.indicators.shift_rows(added);
         }
         self.send_indicator_rebuild();
@@ -593,8 +621,8 @@ impl ChartPane {
     pub fn prepend_history(&mut self, trades: &[quantick_engine::Trade]) -> usize {
         // Older bars shift every index up; keep the view steady.
         let added = self.state.prepend_history(trades);
-        self.viewport.shift_right_edge(added);
-        self.drawings.shift_bars(added);
+        self.viewport.shift_right_edge(added as isize);
+        self.drawings.shift_bars(added as isize);
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
         // `added` slots off its own candle.
@@ -611,6 +639,10 @@ impl ChartPane {
     /// reset — because a bar index means nothing across two streams. The
     /// drawings are cleared by the window, which owns the notice saying so.
     pub fn reset_series(&mut self) {
+        // The prefix is bar-indexed against a series that no longer exists,
+        // and its seam was trimmed against a first bar that is gone. A replay
+        // never has one today; the invariant must not depend on that.
+        self.history_prefix.clear();
         self.state = ChartState::new(self.current_spec());
         self.viewport = Viewport::new();
         self.price_view = PriceView::new();
@@ -1316,25 +1348,17 @@ impl ChartPane {
         let (start, end) = self.viewport.visible_range(history_rect.width(), total);
 
         // The visible closed bars, plus the partial if it falls in view. With
-        // a venue prefix the window can straddle both series, so it is
-        // composed here — bounded by what fits on screen — and every consumer
-        // below keeps taking one slice.
+        // a venue prefix the window can straddle both series, so it is two
+        // slices — chained where they are read rather than copied into one.
+        // Copying was 24-48 KB every frame for the life of the pane, including
+        // the common case of following the live edge, where the seam is three
+        // months off screen and the prefix half of the window is empty.
         let closed_start = start.min(closed_total);
         let closed_end = end.min(closed_total);
-        let state_window = closed_start.saturating_sub(prefix.len())
-            ..closed_end.saturating_sub(prefix.len()).min(closed.len());
-        let composed_window: Vec<quantick_engine::Bar>;
-        let visible_closed: &[quantick_engine::Bar] = if prefix.is_empty() {
-            &closed[state_window]
-        } else {
-            let prefix_window = closed_start.min(prefix.len())..closed_end.min(prefix.len());
-            composed_window = prefix[prefix_window]
-                .iter()
-                .chain(&closed[state_window])
-                .cloned()
-                .collect();
-            &composed_window
-        };
+        let visible_prefix = &prefix[closed_start.min(prefix.len())..closed_end.min(prefix.len())];
+        let visible_state = &closed[closed_start.saturating_sub(prefix.len())
+            ..closed_end.saturating_sub(prefix.len()).min(closed.len())];
+        let visible_closed = || visible_prefix.iter().chain(visible_state);
         let partial_visible = partial.filter(|_| closed_total >= start && closed_total < end);
 
         // Auto-fit the visible bars, then apply any manual price pan/zoom. A
@@ -1342,9 +1366,10 @@ impl ChartPane {
         // newest bar), because a chart that draws nothing at all is
         // indistinguishable from a hung app — which is exactly how the blank
         // frame after a rebuild read.
-        let nothing_in_view = visible_closed.is_empty() && partial_visible.is_none();
+        let nothing_in_view =
+            visible_prefix.is_empty() && visible_state.is_empty() && partial_visible.is_none();
         let Some(auto_scale) = chart::price_window(
-            visible_closed,
+            visible_closed(),
             partial_visible,
             self.last_auto_range,
             partial.or_else(|| closed.last()),
@@ -1367,10 +1392,12 @@ impl ChartPane {
         // to `lane_width_px` rather than restated, because the two decide the
         // same thing: with them apart, the newest prints would be clustered and
         // sized as lane prints and then squeezed into a single candle slot.
+        // Flow-pane only: a pane with a tape never carries a venue prefix, so
+        // the state half *is* the window here.
         let timeline = VisibleBarTimeline::new(
             self.state.timeline_revision(),
             closed_start,
-            visible_closed,
+            visible_state,
             partial_visible,
         );
         let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
@@ -1421,7 +1448,7 @@ impl ChartPane {
                     canvas_background,
                 );
             };
-            for (offset, bar) in visible_closed.iter().enumerate() {
+            for (offset, bar) in visible_closed().enumerate() {
                 clear_bar(
                     self.viewport.x_center(closed_start + offset, right, total),
                     bar,
@@ -1431,7 +1458,7 @@ impl ChartPane {
                 clear_bar(self.viewport.x_center(closed_total, right, total), partial);
             }
         }
-        for (offset, bar) in visible_closed.iter().enumerate() {
+        for (offset, bar) in visible_closed().enumerate() {
             let index = closed_start + offset;
             let xc = self.viewport.x_center(index, right, total);
             draw_candle(&clip, xc, half, &scale, bar, false, &chrome.style.candles);

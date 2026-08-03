@@ -63,8 +63,11 @@ pub fn fold(base: &[Bar], interval_ms: i64) -> Vec<Bar> {
                 folded.sell_volume = folded.sell_volume.saturating_add(bar.sell_volume);
                 folded.trade_count = folded.trade_count.saturating_add(bar.trade_count);
             }
-            // A new bucket starts a new bar, opening where the venue's own
-            // candle for that window would.
+            // A new bucket starts a new bar, keeping the base candle's own
+            // `open_time` rather than the window's start: the first minute
+            // that traded is when this bar opened, and rounding it down to the
+            // bucket would claim a price at a moment nothing printed. The
+            // bucket is what groups; the stamp stays the market's.
             _ => {
                 open_bucket = Some(bucket);
                 out.push(bar.clone());

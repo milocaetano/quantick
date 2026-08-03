@@ -407,9 +407,9 @@ pane keeps quantick's identity.
   dock tab. A 1 px accent under the pane's top edge marks focus — no
   border boxes around market data.
 - **Venue history in front of the tape.** The time pane opens on the venue's
-  own candles — ninety days of them, fetched once as 1-minute bars and folded
-  locally to whatever the header asks for, so a chip click costs nothing and
-  never reaches the network. They stand *in front of* the bars quantick cut
+  own candles — ninety days of them, roughly 130 000 1-minute bars and about
+  45 MB per tab, fetched once and folded locally to whatever the header asks
+  for, so a chip click never reaches the network. They stand *in front of* the bars quantick cut
   from prints, never mixed into them: the engine rebuilds its own series from
   retained trades on every spec change, and a prefix living inside it would be
   eaten. Gated on `FeedCapabilities::ohlcv_history`; a recording asks for
@@ -424,8 +424,10 @@ pane keeps quantick's identity.
   replayed from prints. Only Binance publishes an aggressor split, so only
   there does the prefix carry a real delta; on Hyperliquid and MetaTrader the
   volume is exact and the delta is identically zero — read as *not measured*,
-  never as measured and found balanced. The mapping sites record this per
-  provider.
+  never as measured and found balanced. That zero is a *stored representation*:
+  the two sides each carry half the candle's volume, so an indicator reading
+  `buy_volume` directly over the prefix sees half-volumes, not a measured
+  aggressor side. The mapping sites record this per provider.
 - **Honest gaps**: time bars skip empty intervals (engine policy, stated in
   `crates/engine/src/time.rs`); the x-axis stays slot-indexed, so quiet
   periods compress instead of rendering fabricated empty candles. The time

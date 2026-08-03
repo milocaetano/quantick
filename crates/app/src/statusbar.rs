@@ -115,11 +115,11 @@ pub struct StatusModel {
     /// chart never says whether the next print completes the bar or the
     /// fiftieth does.
     pub bar_progress: Option<String>,
-    /// Closed bars built from backfilled history.
     /// Bars that came from the venue's own candle history, in front of
     /// everything this app built from prints. Zero on any pane without a
     /// venue prefix, which is every flow pane.
     pub venue_bars: usize,
+    /// Closed bars built from backfilled history.
     pub backfilled_bars: usize,
     /// Closed bars built live.
     pub live_bars: usize,
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(
             bars_text(0, 240, 61),
             "240+61 bars",
-            "a chart with no prefix discloses nothing about one — `0v+` would              read as a fetch that failed"
+            "a chart with no prefix discloses nothing about one; `0v+` would read as a fetch that failed"
         );
     }
 

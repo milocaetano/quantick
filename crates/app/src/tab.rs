@@ -276,8 +276,7 @@ impl Tab {
         self.ohlcv_base = None;
         self.ohlcv_pending = false;
         self.ohlcv_capable = false;
-        self.loading.restart(LoadingTask::VenueHistory);
-        self.loading.end(LoadingTask::VenueHistory);
+        self.loading.set_active(LoadingTask::VenueHistory, false);
         if let Some(pane) = self.time_pane.as_mut() {
             pane.install_history_prefix(Vec::new());
         }
@@ -371,13 +370,24 @@ impl Tab {
                     "asked the venue for candle history"
                 );
             }
-            // A dropped request is not worth a retry queue: the capability
-            // check runs every frame and will ask again next time.
-            Err(error) => tracing::debug!(
+            // A full channel is a busy frame, and the every-frame poll asks
+            // again. A closed one is a feed thread that is gone, which is
+            // worth saying out loud: nothing will answer, ever.
+            Err(mpsc::error::TrySendError::Full(_)) => tracing::debug!(
                 target: "quantick::app",
-                event_code = "OHLCV_REQUEST_DROPPED",
-                reason = %error,
-                "candle-history request not queued"
+                event_code = "OHLCV_REQUEST_BACKPRESSURE",
+                tab = self.id,
+                action = "retry_next_frame",
+                "candle-history request not queued; channel full"
+            ),
+            Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_REQUEST_CHANNEL_CLOSED",
+                tab = self.id,
+                symbol = %self.symbol,
+                action = "no_history_until_feed_restart",
+                "candle-history request cannot be sent; the feed is gone"
             ),
         }
     }
@@ -393,12 +403,17 @@ impl Tab {
         if rising {
             // A session that narrowed *into* serving candles may have answered
             // an earlier request with nothing; that answer described a feed
-            // that did not know itself yet.
+            // that did not know itself yet. Only the edge clears it — a
+            // steady-state empty base is a real "the venue has none".
             if self.ohlcv_base.as_ref().is_some_and(Vec::is_empty) {
                 self.ohlcv_base = None;
             }
-            self.request_ohlcv_history(config);
         }
+        // Unconditional: every guard inside makes this a no-op once the
+        // request is out or answered, and asking here is what actually retries
+        // a request the command channel refused. The feed ignores a duplicate
+        // while one is in flight, and `ohlcv_pending` means we never send one.
+        self.request_ohlcv_history(config);
     }
 
     /// Take a candle-history reply, and put it in front of the time pane.
@@ -445,17 +460,21 @@ impl Tab {
     /// Rebuild the time pane's prefix from the base at the pane's interval.
     ///
     /// Free of the venue: a chip click lands here, not on the network.
-    pub fn refold_history_prefix(&mut self) {
+    /// Reports whether the prefix actually changed — an installed prefix
+    /// rebuilds the indicators, so the caller can skip sending a second one.
+    pub fn refold_history_prefix(&mut self) -> bool {
         let Some(base) = self.ohlcv_base.as_ref() else {
-            return;
+            return false;
         };
         let Some(pane) = self.time_pane.as_mut() else {
-            return;
+            return false;
         };
         // A pane not cutting by time has no interval to fold to, and a
         // sub-minute one has no whole number of venue candles in it: both get
         // no prefix, which is the honest answer rather than an invented one.
-        let interval = pane.state.spec().time_interval_ms().unwrap_or_default();
+        let Some(interval) = pane.state.spec().time_interval_ms() else {
+            return pane.install_history_prefix(Vec::new());
+        };
         let folded = crate::resample::fold(base, interval);
         let prefix = trim_to_seam(
             folded,
@@ -463,7 +482,7 @@ impl Tab {
             pane.state.partial(),
             interval,
         );
-        pane.install_history_prefix(prefix);
+        pane.install_history_prefix(prefix)
     }
 
     /// Whether this tab has trouble worth showing on its chip while it sits in
@@ -977,12 +996,18 @@ impl Tab {
                 // window past the end of the data, drawing nothing.
                 let anchor = pane.right_edge_time();
                 pane.state.set_spec(desired);
-                pane.send_indicator_rebuild();
                 // The venue prefix folds to the new interval before the view
                 // is reanchored: the market time the user was looking at has
                 // to resolve against the series they will be looking at.
-                if side == PaneSide::Time {
-                    self.refold_history_prefix();
+                //
+                // Installing a prefix rebuilds the indicators over the whole
+                // composed series, so the plain rebuild is only sent when the
+                // refold did not — two rebuilds of ~130k bars per settled drag
+                // frame, with no coalescing in the worker, is the cost of
+                // sending both.
+                let refolded = side == PaneSide::Time && self.refold_history_prefix();
+                if !refolded {
+                    self.pane_mut(side).send_indicator_rebuild();
                 }
                 let pane = self.pane_mut(side);
                 let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
@@ -1025,6 +1050,10 @@ impl Tab {
                     for pane in self.panes_mut() {
                         pane.prepend_history(&trades);
                     }
+                    // The first engine bar just moved backwards in time, and
+                    // the prefix was trimmed against where it used to be. Any
+                    // venue candle now covering a re-cut minute has to go.
+                    self.refold_history_prefix();
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);

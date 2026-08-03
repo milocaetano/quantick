@@ -6423,8 +6423,14 @@ plot(close)
     /// A trade one minute after the one before it, so a fixture fills an M1
     /// pane with real bars rather than one long forming candle.
     fn minute_trade(minute: u64) -> quantick_engine::Trade {
-        let mut trade = trade(minute + 1);
-        trade.timestamp_ms = minute as i64 * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000;
+        minute_trade_at(minute as i64)
+    }
+
+    /// The same, for a minute that may sit before the fixture's first — what
+    /// "load older" delivers.
+    fn minute_trade_at(minute: i64) -> quantick_engine::Trade {
+        let mut trade = trade(minute.unsigned_abs() + 1);
+        trade.timestamp_ms = minute * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000;
         trade
     }
 
@@ -6538,6 +6544,91 @@ plot(close)
         );
     }
 
+    /// "Load older" moves the first engine bar backwards in time, and the
+    /// prefix was trimmed against where that bar used to be.
+    ///
+    /// Three clicks reach this on Binance: split the canvas, let the venue
+    /// history land, pull older trades. The venue candles covering the newly
+    /// re-cut minutes then sat in front of engine bars covering the *same*
+    /// minutes — the window drawn twice, `open_time` going backwards across
+    /// the seam, and the precondition `slot_at_time` documents quietly false.
+    #[test]
+    fn pulling_older_trades_re_trims_the_venue_prefix() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // Something anchored to a bar index, and a view off the live edge, so
+        // the shift has something to preserve.
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .viewport
+            .pan_pixels(40.0, slots);
+        let edge_before = app.active_tab().pane(PaneSide::Time).right_edge_time();
+        let mark_before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].points[0];
+        let mark_time_before = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .slot_open_time(mark_before.bar as usize);
+        assert!(edge_before.is_some(), "the view is off the live edge");
+
+        // Five minutes of older trades, inside the window the prefix covers.
+        let older: Vec<_> = (-5_i64..0).map(minute_trade_at).collect();
+        events.try_send(FeedEvent::HistoryPrepended(older)).unwrap();
+        app.drain_tabs();
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        let first_engine = pane
+            .state
+            .bars()
+            .first()
+            .or_else(|| pane.state.partial())
+            .expect("the pane holds bars")
+            .open_time;
+        assert!(
+            pane.history_prefix.iter().all(|bar| bar.open_time
+                < crate::resample::bucket_start(first_engine, crate::feed::OHLCV_BASE_INTERVAL_MS)),
+            "no venue candle may cover a minute the engine has now re-cut"
+        );
+        assert_eq!(
+            pane.seam_slot(),
+            115,
+            "the five overlapping buckets left the prefix"
+        );
+        let opens: Vec<i64> = (0..pane.closed_slots())
+            .filter_map(|slot| pane.slot_open_time(slot))
+            .collect();
+        assert!(
+            opens.windows(2).all(|pair| pair[0] <= pair[1]),
+            "and open_time still never decreases across the seam"
+        );
+
+        // The user was reading a market moment; they still are, and their mark
+        // is still on the bar they put it on.
+        assert_eq!(
+            pane.right_edge_time(),
+            edge_before,
+            "the view kept the market time it was showing"
+        );
+        assert_eq!(
+            pane.slot_open_time(pane.drawings.items()[0].points[0].bar as usize),
+            mark_time_before,
+            "and the mark kept the bar it was drawn against"
+        );
+    }
+
     /// (b) Changing the timeframe refolds what is already held. A chip click
     /// must never reach the venue.
     #[test]
@@ -6571,6 +6662,125 @@ plot(close)
             0,
             "and the venue was not asked again"
         );
+    }
+
+    /// §11's own clause, and one drag away in the UI: an interval that is not
+    /// a whole number of minutes gets no prefix rather than an approximated
+    /// one, and the pane keeps drawing.
+    #[test]
+    fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // 90 seconds: a minute and a half, which no whole number of venue
+        // candles adds up to.
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .time_interval_ms = 90_000;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "no prefix rather than buckets built from fractions of a candle"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            has_price_axis(&texts),
+            "and the pane keeps drawing what it does have: {texts:?}"
+        );
+
+        // Back to a foldable one, and the history returns from the same base.
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 24);
+    }
+
+    /// A feed switch is a different market: the candles that described the old
+    /// one go with it, and nothing is left waiting on a reply that can never
+    /// arrive down a dropped channel.
+    #[test]
+    fn switching_the_feed_drops_the_prefix_and_clears_the_wait() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // A fresh feed arrives, as a symbol switch installs one.
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        app.active_tab_mut().attach_for_test(FeedHandle {
+            events: evt_rx,
+            book_events: book_rx,
+            notices: feed::silent_notices(),
+            capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            commands: cmd_tx,
+            replay: None,
+        });
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "the old market's candles do not describe the new one"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and nothing waits on a reply that went with the old channel"
+        );
+        run_frame(&mut app, &ctx);
+    }
+
+    /// The interval a reply carries is tagged rather than assumed. A base this
+    /// fold was not written for is refused, not folded wrongly.
+    #[test]
+    fn a_reply_at_an_unexpected_base_interval_is_refused() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                // Five-minute candles, from a venue that one day changes its
+                // mind about what it serves.
+                interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "bars at an unknown base are not folded as if they were minutes"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "the reply still answered the request"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(has_price_axis(&texts), "and the pane draws: {texts:?}");
     }
 
     /// (e) The rebuild an indicator sees spans the prefix, so an average over

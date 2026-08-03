@@ -35,16 +35,16 @@ impl PriceScale {
     /// padded by `pad_frac` of the range on each side so candles don't touch the
     /// edges. Returns `None` if there is nothing to scale.
     #[must_use]
-    pub fn auto(
-        bars: &[Bar],
-        partial: Option<&Bar>,
+    pub fn auto<'a>(
+        bars: impl IntoIterator<Item = &'a Bar>,
+        partial: Option<&'a Bar>,
         top: f32,
         bottom: f32,
         pad_frac: f64,
     ) -> Option<Self> {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
-        for bar in bars.iter().chain(partial) {
+        for bar in bars.into_iter().chain(partial) {
             lo = lo.min(to_f64(bar.low));
             hi = hi.max(to_f64(bar.high));
         }
@@ -121,9 +121,9 @@ impl PriceScale {
 /// still instead of jumping) and then to the newest bar of the series. `None`
 /// only when there is no data anywhere to scale to.
 #[must_use]
-pub fn price_window(
-    visible: &[Bar],
-    visible_partial: Option<&Bar>,
+pub fn price_window<'a>(
+    visible: impl IntoIterator<Item = &'a Bar>,
+    visible_partial: Option<&'a Bar>,
     last: Option<(f64, f64)>,
     newest: Option<&Bar>,
     top: f32,
