@@ -99,13 +99,20 @@ impl ProviderKind {
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
             // runtime information the feed reports honestly; it is not
-            // something to assume either way from here. The same is true of
-            // candle history: only a hello says whether this bridge sends it.
+            // something to assume either way from here.
+            //
+            // Candle history starts **false**, unlike the other two, because on
+            // MetaTrader it does not mean "this provider can serve candles" — it
+            // means "a block is in hand". Nothing can be fetched here: the
+            // bridge pushes when it pushes, and a consumer that asked while the
+            // optimistic answer stood would get an honest empty reply, cache it,
+            // and — seeing no rising edge afterwards — never ask again. The flag
+            // rises once, when the block actually arrives.
             ProviderKind::MetaTrader => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
-                ohlcv_history: true,
+                ohlcv_history: false,
             },
         }
     }

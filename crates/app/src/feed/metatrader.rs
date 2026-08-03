@@ -103,18 +103,29 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
 /// What a session that just said hello can really offer.
 ///
 /// The facts the chart cannot observe for itself: whether this symbol has a
-/// book, whether it has a tape, and whether this bridge sends candle history.
-/// All three come from the bridge, and all three are per-symbol or
-/// per-session — the same terminal serves a B3 contract with real depth and
-/// real prints, and a broker CFD with neither, and the Expert Advisor sends no
-/// candles at all where the Python bridge does.
-fn session_capabilities(tape: TapeKind, book_levels: Option<u32>, rates: bool) -> FeedCapabilities {
+/// book and whether it has a tape. Both come from the bridge, and both are
+/// per-symbol — the same terminal serves a B3 contract with real depth and real
+/// prints, and a broker CFD with neither.
+///
+/// Candle history is not one of them. The hello's `rates` flag is a *hint* that
+/// a block is coming, not a capability: nothing here can be fetched on demand,
+/// so publishing it at hello would advertise data that does not exist yet, and
+/// a consumer asking on the strength of it would cache the honest empty answer
+/// and never see a reason to ask again. What is published instead is
+/// `has_block` — whether a block is in hand *now* — which is false at every
+/// hello except a reconnect that still holds the previous session's, and rises
+/// when the block lands.
+fn session_capabilities(
+    tape: TapeKind,
+    book_levels: Option<u32>,
+    has_block: bool,
+) -> FeedCapabilities {
     FeedCapabilities {
         book_capture: book_levels.is_some_and(|levels| levels > 0),
         // MT5 has no fetch-on-demand history: the bridge decides what it sends.
         history_paging: false,
         traded_volume: tape == TapeKind::Trades,
-        ohlcv_history: rates,
+        ohlcv_history: has_block,
     }
 }
 
@@ -213,12 +224,21 @@ async fn feed_task(
                         // looking. A connected bridge clears whatever the
                         // startup reported; a lost one replaces it.
                         let notice = match &status {
-                            Mt5Status::Connected { tape, book_levels, rates, .. } => {
+                            Mt5Status::Connected { tape, book_levels, .. } => {
                                 bridge_connected.store(true, Ordering::Relaxed);
                                 // What this symbol really offers is known only
                                 // now. Publishing it withdraws the affordances
                                 // it cannot back — before the user clicks one.
-                                let _ = caps_tx.send(session_capabilities(*tape, *book_levels, *rates));
+                                //
+                                // Candle history reports what is held rather
+                                // than what the hello promised: on a first
+                                // connection nothing is, and on a reconnect the
+                                // previous session's block still is.
+                                let _ = caps_tx.send(session_capabilities(
+                                    *tape,
+                                    *book_levels,
+                                    candles.is_some(),
+                                ));
                                 FeedNotice::Connected
                             }
                             Mt5Status::Waiting { .. } => FeedNotice::working(
@@ -311,6 +331,11 @@ async fn feed_task(
                             "bridge pushed candle history; holding it for the next request"
                         );
                         candles = Some(OhlcvBlock { interval_ms, bars });
+                        // Only now is the capability true: a block is in hand.
+                        // This edge is the whole signal a consumer gets — it
+                        // could not have asked for this block earlier, and
+                        // nothing else will tell it the answer changed.
+                        caps_tx.send_modify(|caps| caps.ohlcv_history = true);
                     }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;
@@ -1117,12 +1142,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_pushed_candle_block_answers_the_request_that_comes_later() {
-        // MetaTrader is the provider that cannot be asked anything: MQL5
-        // sockets are one-way, so the bridge pushes its candles when it feels
-        // like it and the request arrives whenever a pane opens. Holding the
-        // block is what lets this provider honour the same exactly-once
-        // contract as the venues that fetch on demand.
+    async fn the_candle_capability_rises_only_when_a_block_is_in_hand() {
+        // The regression this exists for: MetaTrader used to publish
+        // ohlcv_history=true from the moment it spawned. A consumer asked on
+        // the first frame, got the honest empty answer, cached it — and then
+        // saw no rising edge for the rest of the session, because the flag had
+        // been true all along. The block arrived and was held forever.
+        //
+        // So the flag means "a block is in hand", and the sequence below is
+        // exactly the one that used to fail: ask early, get nothing, watch the
+        // flag rise when the block lands, ask again, get the bars.
         let settings = MetaTraderSettings {
             listen_addr: "127.0.0.1:19181".to_string(),
             side_source: Mt5SideSource::TickRule,
@@ -1133,6 +1162,30 @@ mod tests {
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
+        assert!(
+            !feed.capabilities.borrow().ohlcv_history,
+            "nothing has been pushed yet, so nothing may be advertised"
+        );
+
+        // Ask before anything exists, as a pane's first frame does.
+        feed.commands
+            .send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            })
+            .await
+            .expect("the feed is listening");
+        let early = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match feed.events.recv().await {
+                    Some(FeedEvent::OhlcvHistory { bars, .. }) => return bars,
+                    Some(_) => {}
+                    None => panic!("feed closed"),
+                }
+            }
+        })
+        .await
+        .expect("the early request must still be answered");
+        assert!(early.is_empty(), "there was nothing to answer with");
 
         let mut sock = None;
         for _ in 0..50 {
@@ -1185,14 +1238,15 @@ mod tests {
         .expect("timed out waiting for the trade after the candle block");
         assert_eq!(live.agg_id, 2);
 
-        // The session declares candles, so the capability is open too — a pane
-        // can show its loader rather than a dash.
+        // The edge a consumer watches for: false while the early request was
+        // answered empty, true now that the block is held. Without it there is
+        // no second chance — nothing else tells anyone the answer changed.
         assert!(
             feed.capabilities.borrow().ohlcv_history,
-            "the hello declared rates"
+            "the block is in hand, so the capability must have risen"
         );
 
-        // Ask only now, after the block has already been pushed and held.
+        // Ask again on the strength of that edge.
         feed.commands
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
