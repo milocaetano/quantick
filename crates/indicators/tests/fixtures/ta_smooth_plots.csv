@@ -1,0 +1,20 @@
+# Expected plots of the TaSmooth test indicator over trades_ramp.csv with
+# tick(1) bars. Hand-computed:
+#   sma3: mean of the last 3 closes (integral because closes are multiples
+#         of 3 on a linear ramp)
+#   ema3: alpha = 2/(3+1) = 0.5, seed = sma of first 3 = 6.0, then
+#         0.5*x + 0.5*prev (dyadic, exact in f64)
+#   wma3: (1*oldest + 2*mid + 3*newest) / 6
+bar_index,sma3,ema3,wma3
+0,NaN,NaN,NaN
+1,NaN,NaN,NaN
+2,6.0,6.0,7.0
+3,9.0,9.0,10.0
+4,12.0,12.0,13.0
+5,15.0,15.0,16.0
+6,16.0,15.0,16.0
+7,15.0,13.5,14.0
+8,12.0,11.25,11.0
+9,9.0,8.625,8.0
+10,6.0,5.8125,5.0
+11,5.0,5.90625,5.0
