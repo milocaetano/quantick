@@ -248,7 +248,7 @@ pub struct Node {
 /// [`NodeKind::Script`] root last, so node 0 is the *first literal parsed*,
 /// not the root. `parse` returns the root id explicitly — a pass that wants
 /// the top of the tree takes it from there rather than assuming an index.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Ast {
     nodes: Vec<Node>,
 }
