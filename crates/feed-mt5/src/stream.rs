@@ -6,10 +6,17 @@
 //! UI hears about every transition through [`Mt5Event::Status`], so "nothing
 //! is charting" always has a visible, logged reason.
 //!
+//! One port carries one symbol. Charting several MetaTrader symbols at once
+//! means several of these servers, each on its own port with its own EA — so a
+//! connection arriving while a session is being served is a setup mistake, and
+//! [`refuse_busy`] answers it promptly instead of letting it sit in the accept
+//! backlog where neither side can see it.
+//!
 //! Every noteworthy transition emits a structured `tracing` event with an
 //! `event_code` (see the diagnosis table in the crate docs, `lib.rs`): an AI
 //! or operator can reconstruct a session from logs alone.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -17,6 +24,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use quantick_engine::Trade;
@@ -34,6 +42,16 @@ pub const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:9100";
 /// bytes; anything larger is not the bridge, and an unbounded buffer would let
 /// any local process exhaust memory by streaming bytes without a newline.
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// How long a connection arriving mid-session may take to name itself before
+/// it is closed.
+///
+/// A bridge sends its hello the moment it connects, so this only has to cover
+/// a loopback round trip. It is deliberately far shorter than
+/// [`ServerConfig::hello_timeout`]: that one waits on a bridge we intend to
+/// serve, this one only buys the log a line saying *which* EA dialed the wrong
+/// port. The refusal happens either way.
+const BUSY_REFUSAL_WINDOW: Duration = Duration::from_millis(250);
 
 /// Runtime switch controlling whether DOM images are published.
 ///
@@ -252,6 +270,9 @@ pub async fn run_bridge_server(
     // top of the consumer's base, so no reconnect and no mid-session resync
     // can reuse a generation a consumer already retired.
     let mut generation_offset: u64 = 0;
+    // The single refusal slot (see `refuse_busy`): one at a time, so an EA
+    // that reconnects in a loop cannot grow this server's task count.
+    let mut refusal: Option<JoinHandle<()>> = None;
 
     loop {
         if tx
@@ -287,7 +308,29 @@ pub async fn run_bridge_server(
             }
         };
 
-        match serve_connection(stream, &config, &tx, &mut generation_offset).await {
+        // Serve the session and keep accepting alongside it. Accepting is not
+        // a second session — it is how anyone else who dials this port gets an
+        // answer instead of a silence. The served connection is never polled
+        // any less for it: refusing happens on its own task.
+        let served = serve_connection(stream, &config, &tx, &mut generation_offset);
+        tokio::pin!(served);
+        let end = loop {
+            tokio::select! {
+                end = &mut served => break end,
+                accepted = listener.accept() => match accepted {
+                    Ok((extra, peer)) => refuse_busy(extra, peer, &config.symbol, &bound, &mut refusal),
+                    Err(e) => warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_ACCEPT_FAILED",
+                        error = %e,
+                        "accept failed while serving a session; continuing to listen"
+                    ),
+                },
+            }
+        };
+
+        match end {
             ConnEnd::UiGone => return Ok(()),
             ConnEnd::BridgeGone(reason) => {
                 info!(
@@ -306,6 +349,92 @@ pub async fn run_bridge_server(
                 }
             }
         }
+    }
+}
+
+/// Turn away a connection that arrived while a session is being served.
+///
+/// One connection is one session (PROTOCOL.md), and this server serves one
+/// symbol. A second EA dialing the same port is therefore always a setup
+/// mistake — two charts pointed at one `InpPort` — and the only useful thing
+/// to do with it is say so on both sides: the log names the intruder, and the
+/// socket closes so its own reconnect logic reports the disconnect rather than
+/// blocking on a send into a backlog nobody is reading.
+///
+/// `in_flight` bounds the work to **one refusal at a time**. The refusal is a
+/// short read and a close, so a peer reconnecting on a five-second timer never
+/// overlaps itself; a peer reconnecting faster than that gets closed unread
+/// instead of being allowed to spawn tasks without limit.
+fn refuse_busy(
+    stream: TcpStream,
+    peer: SocketAddr,
+    serving: &str,
+    addr: &str,
+    in_flight: &mut Option<JoinHandle<()>>,
+) {
+    if in_flight.as_ref().is_some_and(|task| !task.is_finished()) {
+        warn!(
+            target: "quantick::feed",
+            schema_version = 1_u8,
+            event_code = "MT5_SESSION_BUSY",
+            peer = %peer,
+            addr = %addr,
+            symbol = %serving,
+            peer_said = "not_read",
+            action = "closed_unread",
+            "another connection arrived while a refusal was still in flight; closing it unread"
+        );
+        return; // dropping `stream` closes it
+    }
+    let serving = serving.to_string();
+    let addr = addr.to_string();
+    *in_flight = Some(tokio::spawn(async move {
+        let identity = identify(stream).await;
+        warn!(
+            target: "quantick::feed",
+            schema_version = 1_u8,
+            event_code = "MT5_SESSION_BUSY",
+            peer = %peer,
+            addr = %addr,
+            symbol = %serving,
+            peer_said = identity.said,
+            peer_symbol = %identity.symbol.as_deref().unwrap_or("-"),
+            window_ms = BUSY_REFUSAL_WINDOW.as_millis() as u64,
+            action = "closed",
+            "a second bridge dialed a port that is already serving a session; \
+             refusing it (one port carries one symbol — give each symbol its own)"
+        );
+    }));
+}
+
+/// What a refused connection managed to say about itself before being closed.
+struct PeerIdentity {
+    /// How its first line read: `hello`, `other_message`, `undecodable`,
+    /// `nothing` (the window expired), or `closed`.
+    said: &'static str,
+    /// The symbol its hello declared, when it sent one. This is the field that
+    /// turns "something dialed 9100" into "the XAUUSD chart's EA did".
+    symbol: Option<String>,
+}
+
+/// Read one line from `stream` within [`BUSY_REFUSAL_WINDOW`], for the log.
+/// The stream is dropped — and so closed — when this returns.
+async fn identify(stream: TcpStream) -> PeerIdentity {
+    let plain = |said| PeerIdentity { said, symbol: None };
+    let mut lines = BoundedLineReader::new(stream);
+    match tokio::time::timeout(BUSY_REFUSAL_WINDOW, lines.next_line()).await {
+        Err(_) => plain("nothing"),
+        Ok(Err(_)) => plain("undecodable"),
+        Ok(Ok(BoundedLine::Eof)) => plain("closed"),
+        Ok(Ok(BoundedLine::TooLong | BoundedLine::NotUtf8 { .. })) => plain("undecodable"),
+        Ok(Ok(BoundedLine::Line(line))) => match protocol::parse_line(&line) {
+            Ok(BridgeMsg::Hello(hello)) => PeerIdentity {
+                said: "hello",
+                symbol: Some(hello.symbol),
+            },
+            Ok(_) => plain("other_message"),
+            Err(_) => plain("undecodable"),
+        },
     }
 }
 

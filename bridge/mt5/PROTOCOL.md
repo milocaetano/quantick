@@ -5,6 +5,11 @@ dials out** (MQL5 sockets are client-only); the quantick feed listens
 (default `127.0.0.1:9100`). One connection = one session. The stream is
 one-way: bridge → feed.
 
+**One port carries one symbol.** A listener serves a single session at a time
+and refuses the `hello` of any other symbol, so streaming several symbols means
+several listeners, each on its own port with its own bridge (quantick:
+`[metatrader.ports]`; EA: `InpPort`).
+
 Two bridges implement it — `quantick_bridge.py` (outside the terminal, via the
 official Python package) and `QuantickBridge.mq5` (inside it) — and the feed
 accepts either without knowing the difference. The protocol is the contract;
@@ -24,6 +29,16 @@ backfill_end
 tick | book | heartbeat × …  live, until the session ends
 bye                          optional clean goodbye
 ```
+
+A session lasts until the connection ends; the feed then goes back to
+accepting. While one is being served, **a second connection to the same port is
+accepted and closed**, not queued: it gets a short window (250 ms) to send its
+`hello` so the feed's log can name the symbol that dialed the wrong port, then
+the socket is closed with no reply — the stream is one-way, so a close is the
+only answer the protocol has. The served session is untouched. A bridge sees
+this as an ordinary disconnect and retries on its own schedule; the feed logs
+`MT5_SESSION_BUSY` every time, which is what makes two EAs sharing one
+`InpPort` visible instead of looking like a hang.
 
 ## Messages
 
@@ -147,5 +162,7 @@ Clean goodbye (EA removed, terminal closing). Anything after it is ignored.
   would let any local process exhaust the feed's memory.
 - Wrong first message, schema or symbol mismatch: session refused, feed keeps
   listening.
+- A connection arriving while a session is being served: refused and closed
+  (`MT5_SESSION_BUSY`), the running session unaffected.
 - A session that dies mid-backfill discards the partial block; the next
   connection re-sends history.
