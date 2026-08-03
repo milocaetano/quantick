@@ -27,7 +27,9 @@ use crate::drawings::{
 };
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::indicator_render::{self, PlotX};
-use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
+use crate::indicator_worker::{
+    IndicatorCommand, IndicatorEvent, IndicatorSource, IndicatorWorker, SlotId,
+};
 use crate::indicators::IndicatorViews;
 use crate::indicators::library::ScriptLibrary;
 use crate::loading::{self, LoadingTask, LoadingTracker};
@@ -770,11 +772,15 @@ impl QuantickApp {
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
-            ToolbarAction::AddEmaIndicator => self.add_indicator(IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
-            }),
-            ToolbarAction::AddCvdIndicator => self.add_indicator(IndicatorSource::NativeCvd),
+            ToolbarAction::AddEmaIndicator => {
+                self.add_indicator(IndicatorSource::NativeEma {
+                    len: DEFAULT_EMA_LEN,
+                    source: quantick_indicators::SourceId::Close,
+                });
+            }
+            ToolbarAction::AddCvdIndicator => {
+                self.add_indicator(IndicatorSource::NativeCvd);
+            }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
                 self.indicators.toggle_hidden(SlotId(slot));
             }
@@ -785,22 +791,24 @@ impl QuantickApp {
                 self.indicator_worker
                     .send(IndicatorCommand::Remove(SlotId(slot)));
             }
-            ToolbarAction::AddScriptIndicator(index) => self.add_script_indicator(index),
+            ToolbarAction::AddScriptIndicator(index) => {
+                self.add_script_indicator(index);
+            }
         }
     }
 
     /// Load a library script behind a fresh slot. A file that no longer
     /// reads or a script that no longer compiles becomes the slot's error —
     /// shown with lines and codes, never silently dropped.
-    fn add_script_indicator(&mut self, index: usize) {
-        let Some(entry) = self.script_library.entries().get(index) else {
-            return;
-        };
+    ///
+    /// Returns the slot it claimed, so a caller that needs to address the new
+    /// indicator (restoring saved inputs, say) does not have to guess which
+    /// one it is.
+    fn add_script_indicator(&mut self, index: usize) -> Option<SlotId> {
+        let entry = self.script_library.entries().get(index)?;
         let name = entry.name.clone();
         match self.script_library.read(index) {
-            Some(Ok(text)) => {
-                self.add_indicator(IndicatorSource::Script { name, text });
-            }
+            Some(Ok(text)) => Some(self.add_indicator(IndicatorSource::Script { name, text })),
             Some(Err(message)) => {
                 tracing::warn!(
                     target: "quantick::app",
@@ -808,11 +816,36 @@ impl QuantickApp {
                     event_code = "INDICATOR_SCRIPT_UNREADABLE",
                     script = %name,
                     error = %message,
-                    action = "script_not_loaded",
+                    action = "error_slot_shown",
                     "cannot read an indicator script"
                 );
+                // A click that produces nothing at all is the failure this
+                // function's own doc comment rules out. The compile half of
+                // that promise runs worker-side; the read half never leaves
+                // the UI thread, so the error slot is built here, from the
+                // same two events the worker would have sent.
+                let slot = self.indicators.allocate_slot();
+                self.indicators.apply(IndicatorEvent::Rebuilt {
+                    slot,
+                    descriptor: quantick_indicators::IndicatorDescriptor {
+                        title: name,
+                        short_title: None,
+                        overlay: false,
+                        plots: Vec::new(),
+                        inputs: Vec::new(),
+                    },
+                    columns: Vec::new(),
+                });
+                self.indicators.apply(IndicatorEvent::Error {
+                    slot,
+                    error: quantick_indicators::EvalError {
+                        bar_index: 0,
+                        message,
+                    },
+                });
+                Some(slot)
             }
-            None => {}
+            None => None,
         }
     }
 
@@ -1327,10 +1360,11 @@ impl QuantickApp {
     }
 
     /// Reserve a slot and ask the worker to instantiate `source` behind it.
-    fn add_indicator(&mut self, source: IndicatorSource) {
+    fn add_indicator(&mut self, source: IndicatorSource) -> SlotId {
         let slot = self.indicators.allocate_slot();
         self.indicator_worker
             .send(IndicatorCommand::Add { slot, source });
+        slot
     }
 
     /// Throw away everything loaded and wait for the source to refill it.
@@ -4065,6 +4099,49 @@ mod tests {
     /// ends come back so the caller keeps the channels open, exactly as a live
     /// feed thread would.
     #[allow(clippy::type_complexity)]
+    /// A library entry whose file is gone must still produce something the
+    /// user can see: the click used to log a warning and leave the chart
+    /// unchanged, while this function's doc promised an error slot.
+    #[test]
+    fn a_script_that_no_longer_reads_becomes_a_visible_error_slot() {
+        let (mut app, _events, _commands, _book) = test_app();
+        let dir = std::env::temp_dir().join(format!("quantick-app-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("vanishing.pine");
+        std::fs::write(
+            &path,
+            "//@version=5
+plot(close)
+",
+        )
+        .expect("write");
+
+        app.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
+        let index = app
+            .script_library
+            .entries()
+            .iter()
+            .position(|e| e.name == "vanishing.pine")
+            .expect("the file was scanned");
+        std::fs::remove_file(&path).expect("remove");
+
+        let before = app.indicators.all().len();
+        let slot = app
+            .add_script_indicator(index)
+            .expect("a click on a known entry claims a slot");
+        assert_eq!(app.indicators.all().len(), before + 1, "a slot appeared");
+        let view = app
+            .indicators
+            .all()
+            .iter()
+            .find(|v| v.slot == slot)
+            .expect("the slot has a view");
+        assert!(view.error.is_some(), "and it carries the read failure");
+        assert_eq!(view.label(), "vanishing.pine");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn test_app_with_notices() -> (
         QuantickApp,
         mpsc::Sender<FeedNotice>,

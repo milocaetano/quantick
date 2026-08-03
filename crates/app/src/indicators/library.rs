@@ -11,7 +11,7 @@
 //! as `QUANTICK_CONFIG`. Scanning is deliberately at-startup-only for now;
 //! the hot-reload mtime poll is the M4 milestone.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Environment override for the scripts folder.
 pub(crate) const INDICATORS_DIR_ENV: &str = "QUANTICK_INDICATORS_DIR";
@@ -58,14 +58,6 @@ impl ScriptLibrary {
     /// first run). File-system problems degrade to embedded-only — an
     /// unreadable folder must not take the feature down.
     pub(crate) fn scan() -> Self {
-        let mut entries: Vec<ScriptEntry> = EMBEDDED_SCRIPTS
-            .iter()
-            .map(|(name, source)| ScriptEntry {
-                name: (*name).to_owned(),
-                origin: ScriptOrigin::Embedded(source),
-            })
-            .collect();
-
         let dir = std::env::var(INDICATORS_DIR_ENV)
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_DIR));
@@ -79,16 +71,63 @@ impl ScriptLibrary {
                 action = "embedded_scripts_only",
                 "cannot create the indicators directory; using embedded scripts only"
             );
-            return Self { entries };
+            return Self {
+                entries: Self::embedded(),
+            };
         }
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .map(|read| {
-                read.filter_map(Result::ok)
-                    .map(|e| e.path())
-                    .filter(|p| p.extension().is_some_and(|ext| ext == "pine"))
-                    .collect()
+        Self::scan_dir(&dir)
+    }
+
+    /// The embedded scripts, which every library starts from.
+    fn embedded() -> Vec<ScriptEntry> {
+        EMBEDDED_SCRIPTS
+            .iter()
+            .map(|(name, source)| ScriptEntry {
+                name: (*name).to_owned(),
+                origin: ScriptOrigin::Embedded(source),
             })
-            .unwrap_or_default();
+            .collect()
+    }
+
+    /// Embedded scripts plus the `.pine` files in `dir`.
+    ///
+    /// Split from [`ScriptLibrary::scan`] so the file half is testable
+    /// without mutating process-global env — the same shape
+    /// `quantick_replay::library::scan(root)` already uses.
+    pub(crate) fn scan_dir(dir: &Path) -> Self {
+        let mut entries = Self::embedded();
+        let read = match std::fs::read_dir(dir) {
+            Ok(read) => read,
+            Err(error) => {
+                // Its sibling `create_dir_all` failure logs; this one used to
+                // swallow the error into an empty list.
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_DIR_UNREADABLE",
+                    dir = %dir.display(),
+                    error = %error,
+                    action = "embedded_scripts_only",
+                    "cannot read the indicators directory; using embedded scripts only"
+                );
+                return Self { entries };
+            }
+        };
+        let mut files: Vec<PathBuf> = read
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+            .map(|entry| entry.path())
+            .filter(|path| {
+                // Lowercased, like the replay scan: on the primary dev
+                // platform `EMA.PINE` is the same file to the OS and would
+                // otherwise never appear in the menu. And directories named
+                // `x.pine` are skipped above — a menu entry that can only
+                // fail to load is worse than no entry.
+                path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pine"))
+            })
+            .collect();
         // Deterministic menu order whatever the OS returns.
         files.sort();
         for path in files {
@@ -136,6 +175,124 @@ mod tests {
                 panic!("embedded {name} must compile:\n{}", rendered.join("\n"));
             }
         }
+    }
+
+    /// A private scratch folder, removed and recreated so two runs on one
+    /// machine cannot collide (the shape `drawings::presets` already uses).
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-script-library-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir is creatable");
+        dir
+    }
+
+    #[test]
+    fn a_pine_file_joins_the_menu_in_a_deterministic_order() {
+        let dir = scratch("order");
+        std::fs::write(
+            dir.join("zeta.pine"),
+            "//@version=5
+plot(close)
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("alpha.pine"),
+            "//@version=5
+plot(open)
+",
+        )
+        .unwrap();
+        // Not a script: neither belongs in the menu.
+        std::fs::write(dir.join("notes.txt"), "hello").unwrap();
+        std::fs::create_dir_all(dir.join("folder.pine")).unwrap();
+
+        let library = ScriptLibrary::scan_dir(&dir);
+        let names: Vec<&str> = library.entries().iter().map(|e| e.name.as_str()).collect();
+        let files: Vec<&&str> = names
+            .iter()
+            .filter(|n| **n == "alpha.pine" || **n == "zeta.pine")
+            .collect();
+        assert_eq!(
+            files,
+            vec![&"alpha.pine", &"zeta.pine"],
+            "sorted, {names:?}"
+        );
+        assert!(!names.contains(&"notes.txt"), "only .pine files: {names:?}");
+        assert!(
+            !names.contains(&"folder.pine"),
+            "a directory named like a script is not a script: {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_user_file_shadows_the_embedded_script_of_the_same_name() {
+        let dir = scratch("shadow");
+        let (embedded_name, _) = EMBEDDED_SCRIPTS[0];
+        std::fs::write(
+            dir.join(embedded_name),
+            "//@version=5
+plot(high)
+",
+        )
+        .unwrap();
+
+        let library = ScriptLibrary::scan_dir(&dir);
+        let matching: Vec<&ScriptEntry> = library
+            .entries()
+            .iter()
+            .filter(|e| e.name == embedded_name)
+            .collect();
+        assert_eq!(matching.len(), 1, "never two rows with the same label");
+        assert!(
+            matches!(matching[0].origin, ScriptOrigin::File(_)),
+            "the user's copy wins"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_directory_degrades_to_embedded_only() {
+        let missing = std::env::temp_dir().join(format!(
+            "quantick-script-library-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&missing);
+        let library = ScriptLibrary::scan_dir(&missing);
+        assert_eq!(
+            library.entries().len(),
+            EMBEDDED_SCRIPTS.len(),
+            "the feature survives a folder that is not there"
+        );
+    }
+
+    #[test]
+    fn a_file_that_disappears_reports_an_error_rather_than_nothing() {
+        let dir = scratch("vanish");
+        let path = dir.join("gone.pine");
+        std::fs::write(
+            &path,
+            "//@version=5
+plot(close)
+",
+        )
+        .unwrap();
+        let library = ScriptLibrary::scan_dir(&dir);
+        let index = library
+            .entries()
+            .iter()
+            .position(|e| e.name == "gone.pine")
+            .expect("the file was scanned");
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            matches!(library.read(index), Some(Err(_))),
+            "a file that no longer reads is an error, not a silent skip"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
