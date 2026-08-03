@@ -50,6 +50,10 @@ pub const MAX_CANDLES_PER_REQUEST: i64 = 5_000;
 /// that will never answer is the failure this exists to prevent.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// How long the polite close frame may take before the socket is simply
+/// dropped. The bars are already collected by then; nothing is riding on it.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Pages that may be fetched for one history request.
 ///
 /// Ninety days needs ~26. The bound is what stops a venue that keeps answering
@@ -361,9 +365,10 @@ pub async fn fetch_history(
         complete = false;
     }
 
-    // Best-effort: the answer is already in hand, and a venue that will not
-    // take a close frame must not cost the caller its history.
-    let _ = socket.close(None).await;
+    // Best-effort and bounded: the answer is already in hand, and a venue that
+    // will not take a close frame must cost the caller neither its history nor
+    // an unbounded wait. The connection is dropped either way.
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, socket.close(None)).await;
 
     info!(
         target: "quantick::feed",

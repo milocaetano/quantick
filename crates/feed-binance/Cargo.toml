@@ -18,5 +18,8 @@ futures-util = { version = "0.3", default-features = false }
 tracing = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros", "net"] }
+# `test-util` gives the tests a pausable clock: the page-budget test walks 512
+# pages, each paying the inter-page delay, which is thirteen real seconds of
+# waiting for a scripted source that does no I/O at all.
+tokio = { version = "1", features = ["rt", "macros", "net", "test-util"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }

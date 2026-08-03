@@ -63,6 +63,16 @@ const MAX_RETRY_WAIT: Duration = Duration::from_secs(10);
 /// Fallback wait when a rate-limit response carries no `Retry-After`.
 const DEFAULT_RETRY_WAIT: Duration = Duration::from_secs(1);
 
+/// Pages one history fetch may request.
+///
+/// The span the app asks for is ninety days, which at one-minute buckets and
+/// 1 000 rows a page is ~130 pages. This is four times that, so reaching it is
+/// never a sign that the request was ambitious — it means the venue is
+/// answering in a way that does not advance the cursor, and the loop stops
+/// rather than paging forever against it. The `complete` flag carries that out
+/// to the caller instead of a silently short series.
+const MAX_PAGES: u32 = 512;
+
 /// Positions inside one kline array. Binance documents this as a fixed-order
 /// array of mixed types; naming the slots keeps the mapping readable and makes
 /// an added trailing field a non-event.
@@ -350,7 +360,7 @@ pub async fn fetch_history<S: KlineSource>(
     let mut dropped = 0_u64;
     let mut complete = true;
 
-    while cursor <= to_ms {
+    while cursor <= to_ms && pages < MAX_PAGES {
         let page = match fetch_page_with_retries(source, symbol, interval, cursor, to_ms).await {
             Ok(page) => page,
             Err(error) => {
@@ -397,6 +407,23 @@ pub async fn fetch_history<S: KlineSource>(
         if cursor <= to_ms {
             tokio::time::sleep(PAGE_DELAY).await;
         }
+    }
+
+    if pages >= MAX_PAGES && cursor <= to_ms {
+        warn!(
+            target: "quantick::feed",
+            schema_version = 1_u8,
+            event_code = "BINANCE_OHLCV_PAGE_BUDGET_SPENT",
+            symbol,
+            interval,
+            max_pages = MAX_PAGES,
+            collected = bars.len(),
+            reached_ms = cursor,
+            requested_to_ms = to_ms,
+            action = "return_partial",
+            "the page budget ran out before the span did; the venue is not advancing"
+        );
+        complete = false;
     }
 
     info!(
@@ -722,6 +749,45 @@ mod tests {
             source.calls.borrow().len(),
             1,
             "a ban is not retried; it is reported"
+        );
+    }
+
+    // Paused clock: the budget is 512 pages and each pays PAGE_DELAY, which is
+    // thirteen real seconds of nothing. The scripted source does no I/O, so
+    // auto-advancing the timer changes what is measured not at all.
+    #[tokio::test(start_paused = true)]
+    async fn the_page_budget_bounds_a_venue_that_answers_one_candle_at_a_time() {
+        // A venue that advances by exactly one bucket per page would need
+        // 129 600 requests for ninety days. The budget is what turns that from
+        // an unbounded loop into a labelled partial.
+        struct Dribble;
+        impl KlineSource for Dribble {
+            async fn fetch(
+                &self,
+                _symbol: &str,
+                _interval: &str,
+                start_ms: i64,
+                _end_ms: i64,
+                _limit: u32,
+            ) -> Result<Vec<Kline>, FeedError> {
+                Ok(vec![kline(start_ms, "10.5")])
+            }
+        }
+        let history = fetch_history(
+            &Dribble,
+            "BTCUSDT",
+            KLINE_INTERVAL_1M,
+            ONE_MINUTE_MS,
+            0,
+            // A span far wider than the budget can walk one bucket at a time.
+            ONE_MINUTE_MS * 100_000,
+        )
+        .await;
+        assert!(!history.complete, "the shortfall is labelled, not hidden");
+        assert_eq!(
+            history.bars.len(),
+            MAX_PAGES as usize,
+            "one bar per page, and the budget is what stopped it"
         );
     }
 
