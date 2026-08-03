@@ -241,8 +241,13 @@ pub struct Node {
     pub span: Span,
 }
 
-/// The arena. Node 0 is always the [`NodeKind::Script`] root once parsing
-/// succeeds.
+/// The arena.
+///
+/// Nodes are stored in push order, which is children-before-parents: the
+/// parser pushes each statement as it finishes it and the
+/// [`NodeKind::Script`] root last, so node 0 is the *first literal parsed*,
+/// not the root. `parse` returns the root id explicitly — a pass that wants
+/// the top of the tree takes it from there rather than assuming an index.
 #[derive(Debug, Default)]
 pub struct Ast {
     nodes: Vec<Node>,
