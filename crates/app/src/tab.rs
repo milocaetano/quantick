@@ -1139,7 +1139,7 @@ impl Tab {
             let header_layout = crate::time_header::draw(ui, areas.header, &mut interval_ms);
             #[cfg(test)]
             {
-                self.time_header_chips = header_layout.chips;
+                self.time_header_chips = header_layout.chips();
             }
             if header_layout.changed {
                 let pane = self.pane_mut(PaneSide::Time);

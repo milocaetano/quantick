@@ -40,13 +40,22 @@ pub const DEFAULT_INTERVAL_MS: i64 = 60_000;
 pub struct HeaderLayout {
     /// Whether the interval changed — a chip click or a drag on the interval.
     pub changed: bool,
+    /// Where each preset's chip landed, in [`PRESETS`] order — see
+    /// [`Self::chips`].
+    #[cfg(test)]
+    chips: [egui::Rect; PRESETS.len()],
+}
+
+impl HeaderLayout {
     /// Where each preset's chip landed, in [`PRESETS`] order.
     ///
-    /// Test-only, and recorded rather than guessed: a test that clicks a
-    /// timeframe has to hit the pixels a user would, not a position derived
-    /// from font metrics it does not control.
+    /// Recorded rather than guessed: a test that clicks a timeframe has to
+    /// hit the pixels a user would, not a position derived from font metrics
+    /// it does not control.
     #[cfg(test)]
-    pub chips: [egui::Rect; PRESETS.len()],
+    pub(crate) fn chips(&self) -> [egui::Rect; PRESETS.len()] {
+        self.chips
+    }
 }
 
 /// Draw the header into `strip`.
