@@ -39,6 +39,7 @@ mod state;
 mod statusbar;
 mod style;
 mod theme;
+mod time_header;
 mod timezone;
 mod toolbar;
 mod toolrail;

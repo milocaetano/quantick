@@ -119,23 +119,19 @@ impl DrawingDrag {
     }
 }
 
-/// What a pane borrows from the window around it to read one frame's input.
+/// What a pane borrows from the window around it for one frame.
 ///
-/// The armed tool and the preset store are single-instance chrome: whichever
-/// pane the pointer is over, there is one toolbox and one set of user presets.
-pub struct PaneInput<'a> {
+/// All of it is single-instance chrome: there is one toolbox, one preset
+/// store, one appearance and one timezone however many panes are on screen.
+/// The input pass takes this by `&mut` because placing a drawing re-arms the
+/// tool; the draw pass takes it by `&`, which is what stops a paint from
+/// arming anything.
+pub struct PaneChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
-}
-
-/// What a pane borrows from the window around it to paint one frame: the
-/// appearance the user chose, the timezone its time axis is read in, the armed
-/// tool (the crosshair is a mode, not an always-on layer) and the symbol to
-/// name while the series is still empty.
-pub struct PaneRender<'a> {
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
-    pub tool: Tool,
+    /// The symbol to name while the series is still empty.
     pub symbol: &'a str,
 }
 
@@ -146,7 +142,13 @@ pub struct ChartPane {
     /// would share a drag.
     pub id: u64,
     pub state: ChartState,
-    pub orderflow: OrderflowView,
+    /// The tape, and everything read off it: the live lane, the heatmap, the
+    /// bubbles, the live strip.
+    ///
+    /// `None` is what makes a time pane a time pane. §11 keeps the flow layers
+    /// on the flow pane, and a pane that will never draw them has no business
+    /// running a book worker thread to feed them.
+    pub orderflow: Option<OrderflowView>,
     /// Background thread owning the `IndicatorHost`; the UI only sends
     /// commands and applies the delta events back.
     pub indicator_worker: IndicatorWorker,
@@ -201,10 +203,23 @@ pub struct ChartPane {
 }
 
 impl ChartPane {
-    /// A pane over `symbol`, opening on bar `spec`. `id` namespaces its egui
-    /// interaction ids and must be unique among the panes on screen.
+    /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
+    /// with the tape and every layer read off it.
     #[must_use]
-    pub fn new(id: u64, spec: BarSpec, symbol: String) -> Self {
+    pub fn flow(id: u64, spec: BarSpec, symbol: String) -> Self {
+        Self::new(id, spec, Some(OrderflowView::new(symbol)))
+    }
+
+    /// The time pane: the context view beside the flow pane (§11). Time bars
+    /// of `interval_ms`, no tape and no flow layers.
+    #[must_use]
+    pub fn time(id: u64, interval_ms: i64) -> Self {
+        Self::new(id, BarSpec::Time(interval_ms.max(1)), None)
+    }
+
+    /// `id` namespaces the pane's egui interaction ids and must be unique
+    /// among the panes on screen.
+    fn new(id: u64, spec: BarSpec, orderflow: Option<OrderflowView>) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
         let mut tick_n = 50;
         let mut volume_units = 5.0;
@@ -223,7 +238,7 @@ impl ChartPane {
             id,
             kind: spec.kind(),
             state: ChartState::new(spec),
-            orderflow: OrderflowView::new(symbol),
+            orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             live_strip_visible: false,
@@ -289,9 +304,10 @@ impl ChartPane {
     /// Width reserved for the live strip this frame. No capability gate any
     /// more: the aggression histogram runs on the trade stream, which every
     /// source provides (replay included), and without book data the strip
-    /// honestly degrades to that histogram alone.
+    /// honestly degrades to that histogram alone. A pane with no tape has no
+    /// strip at all (§11).
     pub fn live_strip_width(&self) -> f32 {
-        if self.live_strip_visible {
+        if self.live_strip_visible && self.orderflow.is_some() {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
@@ -360,9 +376,40 @@ impl ChartPane {
         added
     }
 
+    /// Throw away this pane's bars and everything anchored to them, keeping
+    /// the spec its own selectors ask for.
+    ///
+    /// Called when the market underneath changes — a feed switch, a source
+    /// reset — because a bar index means nothing across two streams. The
+    /// drawings are cleared by the window, which owns the notice saying so.
+    pub fn reset_series(&mut self) {
+        self.state = ChartState::new(self.current_spec());
+        self.viewport = Viewport::new();
+        self.price_view = PriceView::new();
+        self.last_auto_range = None;
+        self.hover_pos = None;
+    }
+
+    /// Fill a pane opened mid-session from the trades another pane of the same
+    /// market already holds, keeping the backfill/live boundary where it was:
+    /// a trade that was streamed live must not become "history" just because
+    /// this view was opened late.
+    pub fn seed_from(&mut self, trades: &[quantick_engine::Trade], backfill_count: usize) {
+        let split = backfill_count.min(trades.len());
+        self.state.ingest_backfill(&trades[..split]);
+        for trade in &trades[split..] {
+            self.state.ingest_live(trade);
+        }
+        // One rebuild rather than one command per trade: the worker is being
+        // handed a whole history, not watching it arrive.
+        self.send_indicator_rebuild();
+    }
+
     /// Take one live trade into the series, the tape and the indicators.
     pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
-        self.orderflow.record_trade(trade);
+        if let Some(orderflow) = self.orderflow.as_mut() {
+            orderflow.record_trade(trade);
+        }
         let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
         // At most one bar closes per trade (an atomic market event is never
@@ -413,9 +460,9 @@ impl ChartPane {
         &mut self,
         ui: &egui::Ui,
         area: egui::Rect,
-        input: &mut PaneInput<'_>,
+        chrome: &mut PaneChrome<'_>,
     ) -> bool {
-        let Some(tool) = input.toolrail.tool().drawing_tool() else {
+        let Some(tool) = chrome.toolrail.tool().drawing_tool() else {
             self.drawings.cancel_draft();
             self.drawing_hover = None;
             self.drawing_press_position = None;
@@ -453,7 +500,7 @@ impl ChartPane {
         {
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
             self.drawing_press_position = Some(position);
-            self.place_drawing_point(tool, point, input);
+            self.place_drawing_point(tool, point, chrome);
         }
 
         let released_position = ui.input(|input| {
@@ -471,7 +518,7 @@ impl ChartPane {
             && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
             && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
         {
-            self.place_drawing_point(tool, point, input);
+            self.place_drawing_point(tool, point, chrome);
         }
         if released_position.is_some() {
             self.drawing_press_position = None;
@@ -484,11 +531,11 @@ impl ChartPane {
         &mut self,
         tool: drawings::DrawingTool,
         point: ChartPoint,
-        input: &mut PaneInput<'_>,
+        chrome: &mut PaneChrome<'_>,
     ) {
         // A new object starts from the user's explicit default preset when
         // one is set; existing objects are never touched by that choice.
-        let presets = input.presets;
+        let presets = chrome.presets;
         let completed = self.drawings.place_with(tool, point, |tool| {
             let mut payload = tool.default_payload();
             if let Some(name) = presets.default_preset(tool.id())
@@ -501,8 +548,8 @@ impl ChartPane {
         if completed {
             // One-shot by default; the toolbox repeat pin keeps the tool
             // armed for the next object.
-            if !input.toolrail.repeat() {
-                input.toolrail.arm(Tool::Pointer);
+            if !chrome.toolrail.repeat() {
+                chrome.toolrail.arm(Tool::Pointer);
             }
             self.drawing_hover = None;
         }
@@ -654,12 +701,12 @@ impl ChartPane {
         &mut self,
         ui: &egui::Ui,
         area: egui::Rect,
-        input: &mut PaneInput<'_>,
+        chrome: &mut PaneChrome<'_>,
     ) {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_chart_area = Some(self.plot_areas(area).chart);
-        if self.handle_drawing_placement(ui, area, input) {
+        if self.handle_drawing_placement(ui, area, chrome) {
             return;
         }
         let areas = self.plot_areas(area);
@@ -696,7 +743,7 @@ impl ChartPane {
                 )
             });
         let mut drawing_drag_consumes_gesture = false;
-        if input.toolrail.tool() == Tool::Pointer {
+        if chrome.toolrail.tool() == Tool::Pointer {
             // Hover feedback: a resize cursor over a selected anchor, a move
             // cursor over any visible body, and not-allowed over locked
             // geometry (visible objects in the viewport only — bounded work).
@@ -855,8 +902,10 @@ impl ChartPane {
             if scroll.abs() > 0.0 {
                 // Scroll up (positive) zooms in. Over the tape that means less
                 // market time in the band; over the candles, wider candles.
-                if chart.hover_pos().is_some_and(in_lane) {
-                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                if let Some(orderflow) = self.orderflow.as_mut()
+                    && chart.hover_pos().is_some_and(in_lane)
+                {
+                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
                 } else {
                     self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
                 }
@@ -881,10 +930,11 @@ impl ChartPane {
             if divider.hovered() || divider.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             }
-            if divider.dragged() {
+            if divider.dragged()
+                && let Some(orderflow) = self.orderflow.as_mut()
+            {
                 // Drag left → a wider tape, at the expense of the candles.
-                self.orderflow
-                    .resize_live_lane(divider.drag_delta().x, areas.chart.width());
+                orderflow.resize_live_lane(divider.drag_delta().x, areas.chart.width());
             }
         }
 
@@ -909,22 +959,25 @@ impl ChartPane {
                 self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
             }
         }
-        if let Some(lane_strip) = lane_strip {
+        // A lane strip exists only where a lane does, so this is flow-pane
+        // only by construction — the tape is what draws the segment.
+        if let Some(lane_strip) = lane_strip
+            && let Some(orderflow) = self.orderflow.as_mut()
+        {
             let lane_time = ui.interact(
                 lane_strip,
-                self.interaction_id("lane_time_nav"),
+                egui::Id::new(("lane_time_nav", self.id)),
                 egui::Sense::click_and_drag(),
             );
             if lane_time.dragged() {
                 // Drag right → less market time in the band (zoom in), so
                 // prints run across it faster and further apart.
-                self.orderflow
-                    .zoom_live_lane((lane_time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
+                orderflow.zoom_live_lane((lane_time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
             }
             if lane_time.hovered() {
                 let scroll = ui.input(|i| i.raw_scroll_delta.y);
                 if scroll.abs() > 0.0 {
-                    self.orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
                 }
             }
         }
@@ -957,9 +1010,9 @@ impl ChartPane {
         &mut self,
         painter: &egui::Painter,
         area: egui::Rect,
-        render: &PaneRender<'_>,
+        chrome: &PaneChrome<'_>,
     ) {
-        let canvas_background = background_color(render.style);
+        let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
         let closed = self.state.bars();
@@ -974,11 +1027,13 @@ impl ChartPane {
             painter.text(
                 area.center(),
                 egui::Align2::CENTER_CENTER,
-                format!("connecting to {} …", render.symbol),
+                format!("connecting to {} …", chrome.symbol),
                 egui::FontId::proportional(16.0),
                 theme::TEXT_MUTED,
             );
-            self.orderflow.draw_status_badge(painter, chart_rect);
+            if let Some(orderflow) = self.orderflow.as_ref() {
+                orderflow.draw_status_badge(painter, chart_rect);
+            }
             return;
         }
 
@@ -996,7 +1051,8 @@ impl ChartPane {
         // recent prints are on screen whatever the rest of the chart is doing.
         let lane_width_px = self
             .orderflow
-            .live_lane_width_px(chart_rect.width())
+            .as_mut()
+            .and_then(|orderflow| orderflow.live_lane_width_px(chart_rect.width()))
             .unwrap_or(0.0);
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
@@ -1040,7 +1096,7 @@ impl ChartPane {
         let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
 
         let cw = self.viewport.candle_width();
-        let half = (cw * render.style.candles.clamped_width_frac() / 2.0).max(0.5);
+        let half = (cw * chrome.style.candles.clamped_width_frac() / 2.0).max(0.5);
         let right = history_rect.right();
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
@@ -1049,19 +1105,19 @@ impl ChartPane {
         // to `lane_width_px` rather than restated, because the two decide the
         // same thing: with them apart, the newest prints would be clustered and
         // sized as lane prints and then squeezed into a single candle slot.
-        let orderflow_frame = self.orderflow.project_visible(
-            VisibleBarTimeline::new(
-                self.state.timeline_revision(),
-                closed_start,
-                visible_closed,
-                partial_visible,
-            ),
-            lane_width_px > 0.0,
-            end == total,
-            scale.range(),
+        let timeline = VisibleBarTimeline::new(
+            self.state.timeline_revision(),
+            closed_start,
+            visible_closed,
+            partial_visible,
         );
-        if let Some(frame) = &orderflow_frame {
-            self.orderflow.draw_background(
+        let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
+            orderflow.project_visible(timeline, lane_width_px > 0.0, end == total, scale.range())
+        });
+        if let Some(orderflow) = self.orderflow.as_mut()
+            && let Some(frame) = &orderflow_frame
+        {
+            orderflow.draw_background(
                 painter,
                 chart_rect,
                 &self.viewport,
@@ -1075,7 +1131,7 @@ impl ChartPane {
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
         let axis_x = areas.price_gutter.left();
-        self.draw_price_axis(painter, chart_rect, axis_x, &scale, render);
+        self.draw_price_axis(painter, chart_rect, axis_x, &scale, chrome);
 
         // Candles, clipped to their own pane: panning far enough into history
         // sends the newest bars off the right of it, and they scroll out of
@@ -1085,7 +1141,12 @@ impl ChartPane {
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
         // in the gaps between candles and above/below each bar.
-        if orderflow_frame.is_some() && self.orderflow.depth_visible() {
+        if orderflow_frame.is_some()
+            && self
+                .orderflow
+                .as_ref()
+                .is_some_and(OrderflowView::depth_visible)
+        {
             let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
                 let top = scale.y(bar.high.to_f64().unwrap_or(0.0));
                 let bottom = scale.y(bar.low.to_f64().unwrap_or(0.0));
@@ -1111,7 +1172,7 @@ impl ChartPane {
         for (offset, bar) in visible_closed.iter().enumerate() {
             let index = closed_start + offset;
             let xc = self.viewport.x_center(index, right, total);
-            draw_candle(&clip, xc, half, &scale, bar, false, &render.style.candles);
+            draw_candle(&clip, xc, half, &scale, bar, false, &chrome.style.candles);
         }
         if let Some(partial) = partial_visible {
             let xc = self.viewport.x_center(closed.len(), right, total);
@@ -1122,7 +1183,7 @@ impl ChartPane {
                 &scale,
                 partial,
                 true,
-                &render.style.candles,
+                &chrome.style.candles,
             );
         }
         // Overlay indicator plots ride the candles' own clip, scale and
@@ -1187,8 +1248,10 @@ impl ChartPane {
                 canvas_background,
             );
         }
-        if let Some(frame) = &orderflow_frame {
-            self.orderflow.draw_aggressions(
+        if let Some(orderflow) = self.orderflow.as_mut()
+            && let Some(frame) = &orderflow_frame
+        {
+            orderflow.draw_aggressions(
                 painter,
                 chart_rect,
                 &self.viewport,
@@ -1204,8 +1267,10 @@ impl ChartPane {
         // Its own rect, so chart layers never bleed into it. The histogram
         // follows `partial` (not its visible filter): the strip reports the
         // bar forming now even while the user pans through history.
-        if let Some(strip) = areas.live_strip {
-            self.orderflow.draw_live_strip(
+        if let Some(orderflow) = self.orderflow.as_mut()
+            && let Some(strip) = areas.live_strip
+        {
+            orderflow.draw_live_strip(
                 painter,
                 strip,
                 &scale,
@@ -1221,16 +1286,18 @@ impl ChartPane {
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
         if let Some(bar) = partial.or_else(|| closed.last()) {
-            self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, render);
+            self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, chrome);
         }
         // The candles' own mark, so it is placed and clipped in their pane.
         self.draw_backfill_divider(painter, history_rect, total, cw);
-        self.draw_time_strip(painter, areas.time_strip, closed, start, end, total, render);
-        self.draw_lane_time_axis(
-            painter,
-            split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
-            self.orderflow.live_lane_window_ms(closed),
-        );
+        self.draw_time_strip(painter, areas.time_strip, closed, start, end, total, chrome);
+        if let Some(orderflow) = self.orderflow.as_ref() {
+            self.draw_lane_time_axis(
+                painter,
+                split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
+                orderflow.live_lane_window_ms(closed),
+            );
+        }
         // Panned off the data (or a rebuild re-cut the series under the
         // window): the chart is whole — axis, tape, badges — but there is
         // nothing in the candles' pane, so say so and say the way back.
@@ -1243,8 +1310,10 @@ impl ChartPane {
                 theme::TEXT_MUTED,
             );
         }
-        self.draw_crosshair(painter, chart_rect, axis_x, &scale, render);
-        self.orderflow.draw_status_badge(painter, chart_rect);
+        self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
+        if let Some(orderflow) = self.orderflow.as_ref() {
+            orderflow.draw_status_badge(painter, chart_rect);
+        }
 
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
@@ -1268,14 +1337,14 @@ impl ChartPane {
         start: usize,
         end: usize,
         total: usize,
-        render: &PaneRender<'_>,
+        chrome: &PaneChrome<'_>,
     ) {
         painter.line_segment(
             [
                 egui::pos2(strip.left(), strip.top()),
                 egui::pos2(strip.right(), strip.top()),
             ],
-            egui::Stroke::new(1.0_f32, grid_color(render.style)),
+            egui::Stroke::new(1.0_f32, grid_color(chrome.style)),
         );
         let font = egui::FontId::monospace(10.0);
         let y = strip.center().y;
@@ -1294,7 +1363,7 @@ impl ChartPane {
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
-                        fmt_time(bar.open_time, render.tz),
+                        fmt_time(bar.open_time, chrome.tz),
                         font.clone(),
                         theme::TEXT_MUTED,
                     );
@@ -1338,9 +1407,9 @@ impl ChartPane {
         chart_rect: egui::Rect,
         axis_x: f32,
         scale: &PriceScale,
-        render: &PaneRender<'_>,
+        chrome: &PaneChrome<'_>,
     ) {
-        let grid = grid_color(render.style);
+        let grid = grid_color(chrome.style);
         let (lo, hi) = scale.range();
         let font = egui::FontId::monospace(11.0);
         for tick in crate::chart::nice_ticks(lo, hi, 8) {
@@ -1386,7 +1455,7 @@ impl ChartPane {
         axis_x: f32,
         scale: &PriceScale,
         bar: &quantick_engine::Bar,
-        render: &PaneRender<'_>,
+        chrome: &PaneChrome<'_>,
     ) {
         let Some(price) = bar.close.to_f64() else {
             return;
@@ -1398,9 +1467,9 @@ impl ChartPane {
         // Same predicate and same two colours the candle wears, so the chip
         // and the bar it reports can never disagree about direction.
         let rgb = if crate::candle_view::is_bullish(bar) {
-            render.style.candles.bull_outline
+            chrome.style.candles.bull_outline
         } else {
-            render.style.candles.bear_outline
+            chrome.style.candles.bear_outline
         };
         let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
 
@@ -1515,9 +1584,9 @@ impl ChartPane {
         chart_rect: egui::Rect,
         axis_x: f32,
         scale: &PriceScale,
-        render: &PaneRender<'_>,
+        chrome: &PaneChrome<'_>,
     ) {
-        if render.tool != Tool::Crosshair {
+        if chrome.toolrail.tool() != Tool::Crosshair {
             return;
         }
         let Some(pos) = self.hover_pos else {

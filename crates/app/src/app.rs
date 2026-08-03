@@ -36,26 +36,39 @@ use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind}
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
-use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, DrawingDrag, PaneInput, PaneRender};
-use crate::price_view::PriceView;
+use crate::orderflow_view::OrderflowView;
+use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, DrawingDrag, PaneChrome};
 use crate::replay_view::{ReplayAction, ReplayView};
-use crate::state::{BarSpec, ChartState};
+use crate::state::{BarKind, BarSpec};
 use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
 use crate::theme;
+use crate::time_header;
 use crate::timezone::TzOffset;
 use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail};
-use crate::viewport::Viewport;
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
 const AXIS_GUTTER: f32 = 64.0;
 /// Height of the bottom time-axis strip, in pixels (§5 zone 6).
 const TIME_STRIP: f32 = 24.0;
-/// Id of the pane the chart opens with. The split view adds a second pane
-/// beside it and the tab strip more again; the ids are what keep their
-/// gestures apart (see [`crate::pane`]).
+/// Id of the pane the chart opens with. The ids are what keep two panes'
+/// gestures apart (see [`crate::pane`]); the tab strip will add more again.
 const FLOW_PANE_ID: u64 = 0;
+/// See [`FLOW_PANE_ID`].
+const TIME_PANE_ID: u64 = 1;
+/// Width of the draggable divider between the two panes, in pixels.
+const CANVAS_DIVIDER_PX: f32 = 4.0;
+/// Half-width of the divider's grab area, which reaches a little into both
+/// panes so the handle is catchable without widening the rule itself.
+const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
+/// Neither pane may be squeezed below this share of the canvas (§11).
+const MIN_PANE_FRACTION: f32 = 0.25;
+/// Where the divider sits when the split is first shown (§11).
+const DEFAULT_PANE_FRACTION: f32 = 0.5;
+/// Thickness of the rule marking the focused pane (§11: an accent under the
+/// pane's top edge, never a box drawn around market data).
+const FOCUS_RULE_PX: f32 = 1.0;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
@@ -177,6 +190,42 @@ pub fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) ->
     }
 }
 
+/// Split the canvas for the Time + Flow layout: **time pane left, flow pane
+/// right**, with the divider's own strip between them (§11).
+///
+/// `time_fraction` is the time pane's share of the width, clamped so neither
+/// pane can be squeezed below [`MIN_PANE_FRACTION`] — a pane too narrow to
+/// read is not a layout, it is a lost pane.
+pub fn split_canvas(area: egui::Rect, time_fraction: f32) -> (egui::Rect, egui::Rect, egui::Rect) {
+    let fraction = clamp_pane_fraction(time_fraction);
+    let divider_x = area.left() + area.width() * fraction;
+    let half = CANVAS_DIVIDER_PX / 2.0;
+    (
+        egui::Rect::from_min_max(area.min, egui::pos2(divider_x - half, area.bottom())),
+        egui::Rect::from_min_max(
+            egui::pos2(divider_x - half, area.top()),
+            egui::pos2(divider_x + half, area.bottom()),
+        ),
+        egui::Rect::from_min_max(egui::pos2(divider_x + half, area.top()), area.max),
+    )
+}
+
+/// Hold a canvas split inside the 25% minimum each pane is promised (§11).
+pub fn clamp_pane_fraction(fraction: f32) -> f32 {
+    fraction.clamp(MIN_PANE_FRACTION, 1.0 - MIN_PANE_FRACTION)
+}
+
+/// Carve the time pane's header strip off the top of its area (§11); the rest
+/// is the chart. The header is a strip rather than an overlay so the selector
+/// is never painted across market data.
+pub fn split_time_pane(area: egui::Rect) -> (egui::Rect, egui::Rect) {
+    let split_y = (area.top() + time_header::HEIGHT_PX).min(area.bottom());
+    (
+        egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
+        egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),
+    )
+}
+
 /// Whether a pointer at `x` is over the live lane rather than the candles.
 ///
 /// The divider itself counts as the lane, so the gesture that resizes it and
@@ -206,6 +255,38 @@ pub fn split_time_strip(
             strip.max,
         )),
     )
+}
+
+/// How many charts the canvas shows for one market (§11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CanvasLayout {
+    /// The flow pane alone — quantick's default and its identity.
+    #[default]
+    Single,
+    /// Time pane left, flow pane right, on a draggable divider.
+    TimeAndFlow,
+}
+
+/// Which of the canvas's panes something belongs to.
+///
+/// Named for where they sit in the split, because that is how the user picks
+/// one: the time pane is on the left, the flow pane on the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaneSide {
+    #[default]
+    Flow,
+    Time,
+}
+
+/// An indicator slot together with the pane that owns it.
+///
+/// Slot ids are allocated per pane, so the id alone stopped identifying an
+/// indicator the moment there were two panes: without the side, removing the
+/// time pane's slot 0 would drop the flow pane's bookkeeping for its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PaneSlot {
+    side: PaneSide,
+    slot: SlotId,
 }
 
 /// The interactive regions of the plot, plus the optional live strip.
@@ -261,9 +342,26 @@ pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
 
 /// The quantick chart window.
 pub struct QuantickApp {
-    /// The one chart on screen. A second pane (the time-frame view) and a tab
-    /// per market are what this shape is for; neither exists yet.
-    pane: ChartPane,
+    /// quantick's own chart, and the only one in the default layout.
+    flow_pane: ChartPane,
+    /// The context chart beside it (§11), built the first time the split is
+    /// shown and kept for the session afterwards — switching back to Single
+    /// hides it, and must not throw away its indicators and drawings.
+    ///
+    /// While it exists it is fed every trade the flow pane is fed, on screen
+    /// or not, which is what keeps the two in step. The cost is the market's
+    /// trades retained twice: one tape, two `ChartState`s, and still only one
+    /// bar-building path.
+    time_pane: Option<ChartPane>,
+    /// Which panes the canvas shows. In-session only for now: persisting
+    /// chrome state is the open question §14 leaves to the dock's decision.
+    layout: CanvasLayout,
+    /// The time pane's share of the canvas width while the split is shown.
+    split_fraction: f32,
+    /// The pane the chrome speaks for: status bar, indicator targeting and the
+    /// keyboard's drawing grammar (§11). Meaningless while the canvas is
+    /// Single — read it through [`Self::focused_side`], never directly.
+    focus: PaneSide,
     events: mpsc::Receiver<FeedEvent>,
     book_events: mpsc::Receiver<DepthEvent>,
     /// Connection trouble the feed wants the user to know about.
@@ -285,17 +383,20 @@ pub struct QuantickApp {
     script_library: ScriptLibrary,
     /// The open indicator-settings dialog, if any (one at a time).
     indicator_settings: Option<SettingsDialog>,
+    /// The pane the open dialog's slot lives on. Held apart from the dialog
+    /// so focus moving under it cannot retarget its Apply.
+    indicator_settings_side: PaneSide,
     /// File-backed script slots: (slot, library index, last seen mtime) —
     /// what the hot-reload poll walks.
-    script_files: Vec<(SlotId, usize, std::time::SystemTime)>,
+    script_files: Vec<(PaneSlot, usize, std::time::SystemTime)>,
     /// How each live slot restores (the persistence identity per slot).
     ///
     /// Stays beside the library and the state file rather than moving into the
-    /// pane with the slots themselves: one file records what the window had
-    /// open, and a per-pane copy would have to invent a key for each pane
-    /// before there is a second pane to key.
-    slot_kinds: Vec<(SlotId, SavedKind)>,
-    /// Slots restored as hidden, applied when their Rebuilt lands.
+    /// panes with the slots themselves: one file records what the window had
+    /// open, so one list records what is in it.
+    slot_kinds: Vec<(PaneSlot, SavedKind)>,
+    /// Slots restored as hidden, applied when their Rebuilt lands. Flow-pane
+    /// only, because restoring is (see [`Self::maintain_indicator_state`]).
     pending_hidden: Vec<SlotId>,
     /// Where the indicator set persists.
     indicator_state_path: std::path::PathBuf,
@@ -364,6 +465,10 @@ pub struct QuantickApp {
     #[cfg(test)]
     inspector_pin_rect: Option<egui::Rect>,
     #[cfg(test)]
+    time_header_chips: [egui::Rect; time_header::PRESETS.len()],
+    #[cfg(test)]
+    canvas_divider: Option<egui::Rect>,
+    #[cfg(test)]
     manager_action_rects: Vec<(usize, &'static str, egui::Rect)>,
 
     // Candle appearance + whether the style panel is open.
@@ -415,7 +520,11 @@ impl QuantickApp {
         loading.begin(LoadingTask::History);
 
         let mut app = Self {
-            pane: ChartPane::new(FLOW_PANE_ID, spec, symbol.clone()),
+            flow_pane: ChartPane::flow(FLOW_PANE_ID, spec, symbol.clone()),
+            time_pane: None,
+            layout: CanvasLayout::Single,
+            split_fraction: DEFAULT_PANE_FRACTION,
+            focus: PaneSide::Flow,
             events: feed.events,
             book_events: feed.book_events,
             notices: feed.notices,
@@ -425,6 +534,7 @@ impl QuantickApp {
             commands: feed.commands,
             script_library: ScriptLibrary::scan(),
             indicator_settings: None,
+            indicator_settings_side: PaneSide::Flow,
             script_files: Vec::new(),
             slot_kinds: Vec::new(),
             pending_hidden: Vec::new(),
@@ -459,6 +569,10 @@ impl QuantickApp {
             #[cfg(test)]
             inspector_pin_rect: None,
             #[cfg(test)]
+            time_header_chips: [egui::Rect::NOTHING; time_header::PRESETS.len()],
+            #[cfg(test)]
+            canvas_divider: None,
+            #[cfg(test)]
             manager_action_rects: Vec::new(),
             style: ChartStyle::default(),
             show_style: false,
@@ -484,28 +598,27 @@ impl QuantickApp {
         // The map itself stays hidden until asked for — a layer nobody
         // requested must cost no projection. Dev/ops can open it without a
         // click; capture is already running either way.
-        app.pane
-            .orderflow
+        app.tape_mut()
             .set_depth_visible(std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|v| v == "1"));
         // Same convenience for the live strip; its pixels stay
         // capability-gated either way (see live_strip_width).
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
-            app.pane.live_strip_visible = true;
+            app.flow_pane.live_strip_visible = true;
         }
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
-            app.pane.orderflow.set_bubbles_enabled(true);
+            app.tape_mut().set_bubbles_enabled(true);
         }
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
         // menu takes, so a scripted validation run needs no clicks.
         if std::env::var("QUANTICK_INDICATORS_AUTOSTART").is_ok_and(|value| value == "1") {
-            app.pane.add_indicator(IndicatorSource::NativeEma {
+            app.flow_pane.add_indicator(IndicatorSource::NativeEma {
                 len: DEFAULT_EMA_LEN,
                 source: quantick_indicators::SourceId::Close,
             });
-            app.pane.add_indicator(IndicatorSource::NativeCvd);
+            app.flow_pane.add_indicator(IndicatorSource::NativeCvd);
         }
         // Restore the persisted indicator set before any autostart hook:
         // the file is what the user actually had open.
@@ -565,6 +678,100 @@ impl QuantickApp {
             );
         }
         app
+    }
+
+    /// The pane the chrome speaks for. Only a split canvas has a choice to
+    /// make; a Single canvas is the flow pane by definition, whatever the last
+    /// split left `focus` set to.
+    fn focused_side(&self) -> PaneSide {
+        match (self.layout, self.time_pane.is_some()) {
+            (CanvasLayout::TimeAndFlow, true) => self.focus,
+            _ => PaneSide::Flow,
+        }
+    }
+
+    /// The pane on `side`, falling back to the flow pane when the time pane
+    /// has never been opened.
+    fn pane(&self, side: PaneSide) -> &ChartPane {
+        match side {
+            PaneSide::Time => self.time_pane.as_ref().unwrap_or(&self.flow_pane),
+            PaneSide::Flow => &self.flow_pane,
+        }
+    }
+
+    /// See [`Self::pane`].
+    fn pane_mut(&mut self, side: PaneSide) -> &mut ChartPane {
+        match side {
+            PaneSide::Time => self.time_pane.as_mut().unwrap_or(&mut self.flow_pane),
+            PaneSide::Flow => &mut self.flow_pane,
+        }
+    }
+
+    /// The pane every chrome surface reads from — see [`Self::focused_side`].
+    fn focused_pane(&self) -> &ChartPane {
+        self.pane(self.focused_side())
+    }
+
+    /// See [`Self::focused_pane`].
+    fn focused_pane_mut(&mut self) -> &mut ChartPane {
+        self.pane_mut(self.focused_side())
+    }
+
+    /// Every pane holding this market's bars, on screen or not. One tape, and
+    /// however many charts the layout has ever shown read off it.
+    fn panes_mut(&mut self) -> impl Iterator<Item = &mut ChartPane> {
+        std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut())
+    }
+
+    /// The flow pane's tape.
+    ///
+    /// The flow pane is built with one ([`ChartPane::flow`]) and never gives it
+    /// up; the `Option` on the pane exists so a *time* pane can go without a
+    /// book worker, not because this one can be missing.
+    fn tape(&self) -> &OrderflowView {
+        self.flow_pane
+            .orderflow
+            .as_ref()
+            .expect("the flow pane is built with a tape and never drops it")
+    }
+
+    /// See [`Self::tape`].
+    fn tape_mut(&mut self) -> &mut OrderflowView {
+        self.flow_pane
+            .orderflow
+            .as_mut()
+            .expect("the flow pane is built with a tape and never drops it")
+    }
+
+    /// Show or hide the context chart (§11).
+    ///
+    /// The first Time + Flow builds the pane and seeds it from the trades the
+    /// flow pane already holds, so it opens showing the same market rather
+    /// than an empty chart waiting for the next print. Going back to Single
+    /// only stops drawing it: its indicators, drawings and bars survive, and
+    /// it keeps being fed, so re-showing it never has to catch up.
+    fn set_layout(&mut self, layout: CanvasLayout) {
+        self.layout = layout;
+        if layout == CanvasLayout::TimeAndFlow && self.time_pane.is_none() {
+            let mut pane = ChartPane::time(TIME_PANE_ID, time_header::DEFAULT_INTERVAL_MS);
+            pane.seed_from(
+                self.flow_pane.state.trades(),
+                self.flow_pane.state.backfill_trade_count(),
+            );
+            self.time_pane = Some(pane);
+        }
+        if layout == CanvasLayout::Single {
+            self.focus = PaneSide::Flow;
+        }
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "CANVAS_LAYOUT",
+            layout = ?layout,
+            time_pane_bars = self.time_pane.as_ref().map(|pane| pane.state.bars().len()),
+            action = "relayout_canvas",
+            "canvas layout changed"
+        );
     }
 
     /// The display name of the currently selected feed, or its id as a fallback.
@@ -636,8 +843,23 @@ impl QuantickApp {
         });
         let capabilities = self.capabilities();
         let feed_display_name = self.feed_display_name();
-        let heatmap_on = self.pane.orderflow.depth_visible();
-        let bubbles_on = self.pane.orderflow.bubbles_enabled();
+        let heatmap_on = self.tape().depth_visible();
+        let bubbles_on = self.tape().bubbles_enabled();
+        // The focused pane's slots (§11): the menu lists what a command from
+        // it would act on, and never the pane beside it.
+        let indicators: Vec<toolbar::IndicatorMenuEntry> = self
+            .focused_pane()
+            .indicators
+            .all()
+            .iter()
+            .map(|view| toolbar::IndicatorMenuEntry {
+                slot: view.slot.0,
+                label: view.label().to_owned(),
+                hidden: view.hidden,
+                errored: view.error.is_some(),
+                stale: view.stale.is_some(),
+            })
+            .collect();
         let mut model = toolbar::ToolbarModel {
             feeds,
             feed_id: &mut self.feed_id,
@@ -645,33 +867,21 @@ impl QuantickApp {
             symbols,
             symbol: &mut self.symbol,
             replay,
-            kind: &mut self.pane.kind,
-            tick_n: &mut self.pane.tick_n,
-            volume_units: &mut self.pane.volume_units,
-            dollar_notional: &mut self.pane.dollar_notional,
-            time_interval_ms: &mut self.pane.time_interval_ms,
-            imbalance_target: &mut self.pane.imbalance_target,
+            kind: &mut self.flow_pane.kind,
+            tick_n: &mut self.flow_pane.tick_n,
+            volume_units: &mut self.flow_pane.volume_units,
+            dollar_notional: &mut self.flow_pane.dollar_notional,
+            time_interval_ms: &mut self.flow_pane.time_interval_ms,
+            imbalance_target: &mut self.flow_pane.imbalance_target,
             history_step: &mut self.history_step,
             history_trades: self.history_trades,
             capabilities,
             heatmap_on,
             bubbles_on,
-            live_strip_on: self.pane.live_strip_visible,
+            live_strip_on: self.flow_pane.live_strip_visible,
             dock_visible: self.dock.visible(),
             appearance_open: self.show_style,
-            indicators: self
-                .pane
-                .indicators
-                .all()
-                .iter()
-                .map(|view| toolbar::IndicatorMenuEntry {
-                    slot: view.slot.0,
-                    label: view.label().to_owned(),
-                    hidden: view.hidden,
-                    errored: view.error.is_some(),
-                    stale: view.stale.is_some(),
-                })
-                .collect(),
+            indicators,
             scripts: self
                 .script_library
                 .entries()
@@ -698,38 +908,39 @@ impl QuantickApp {
     fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => self.request_older_history(),
-            ToolbarAction::SetHeatmap(shown) => self.pane.orderflow.set_depth_visible(shown),
-            ToolbarAction::SetBubbles(enabled) => self.pane.orderflow.set_bubbles_enabled(enabled),
-            ToolbarAction::SetLiveStrip(shown) => self.pane.live_strip_visible = shown,
+            ToolbarAction::SetHeatmap(shown) => self.tape_mut().set_depth_visible(shown),
+            ToolbarAction::SetBubbles(enabled) => self.tape_mut().set_bubbles_enabled(enabled),
+            ToolbarAction::SetLiveStrip(shown) => self.flow_pane.live_strip_visible = shown,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+            // Every indicator command lands on the focused pane (§11), which
+            // is the flow pane whenever the canvas is not split.
             ToolbarAction::AddEmaIndicator => {
-                let slot = self.pane.add_indicator(IndicatorSource::NativeEma {
-                    len: DEFAULT_EMA_LEN,
-                    source: quantick_indicators::SourceId::Close,
-                });
-                self.slot_kinds.push((slot, SavedKind::NativeEma));
-                self.mark_indicator_state_dirty();
+                self.add_native_indicator(SavedKind::NativeEma);
             }
             ToolbarAction::AddCvdIndicator => {
-                let slot = self.pane.add_indicator(IndicatorSource::NativeCvd);
-                self.slot_kinds.push((slot, SavedKind::NativeCvd));
-                self.mark_indicator_state_dirty();
+                self.add_native_indicator(SavedKind::NativeCvd);
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
-                self.pane.indicators.toggle_hidden(SlotId(slot));
+                self.focused_pane_mut()
+                    .indicators
+                    .toggle_hidden(SlotId(slot));
                 self.mark_indicator_state_dirty();
             }
             ToolbarAction::RemoveIndicator(slot) => {
+                let target = PaneSlot {
+                    side: self.focused_side(),
+                    slot: SlotId(slot),
+                };
                 // UI first (the entry vanishes this frame), worker second;
                 // events already in flight for the slot are dropped on apply.
-                self.pane.indicators.remove(SlotId(slot));
-                self.pane
-                    .indicator_worker
-                    .send(IndicatorCommand::Remove(SlotId(slot)));
-                self.slot_kinds.retain(|(s, _)| *s != SlotId(slot));
-                self.script_files.retain(|(s, ..)| *s != SlotId(slot));
+                let pane = self.focused_pane_mut();
+                pane.indicators.remove(target.slot);
+                pane.indicator_worker
+                    .send(IndicatorCommand::Remove(target.slot));
+                self.slot_kinds.retain(|(owner, _)| *owner != target);
+                self.script_files.retain(|(owner, ..)| *owner != target);
                 self.mark_indicator_state_dirty();
             }
             ToolbarAction::AddScriptIndicator(index) => {
@@ -737,12 +948,20 @@ impl QuantickApp {
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
                 let slot = SlotId(slot);
-                if let Some(view) = self.pane.indicators.all().iter().find(|v| v.slot == slot) {
+                let side = self.focused_side();
+                if let Some(view) = self
+                    .pane(side)
+                    .indicators
+                    .all()
+                    .iter()
+                    .find(|v| v.slot == slot)
+                {
                     self.indicator_settings = Some(SettingsDialog {
                         slot,
                         title: view.label().to_owned(),
                         draft: view.input_values.clone(),
                     });
+                    self.indicator_settings_side = side;
                 }
             }
         }
@@ -752,26 +971,41 @@ impl QuantickApp {
     /// the worker (construct anew, replace, replay) — the same path every
     /// input change takes, UI or not.
     fn draw_indicator_settings(&mut self, ctx: &egui::Context) {
-        let Some(dialog) = self.indicator_settings.as_mut() else {
-            return;
+        let side = self.indicator_settings_side;
+        let outcome = {
+            let Self {
+                indicator_settings,
+                flow_pane,
+                time_pane,
+                ..
+            } = self;
+            let Some(dialog) = indicator_settings.as_mut() else {
+                return;
+            };
+            let pane = match side {
+                PaneSide::Time => time_pane.as_ref().unwrap_or(&*flow_pane),
+                PaneSide::Flow => &*flow_pane,
+            };
+            let Some(view) = pane
+                .indicators
+                .all()
+                .iter()
+                .find(|view| view.slot == dialog.slot)
+            else {
+                // The indicator was removed under the dialog.
+                *indicator_settings = None;
+                return;
+            };
+            indicator_panel::draw(ctx, dialog, &view.descriptor.inputs)
         };
-        let Some(view) = self
-            .pane
-            .indicators
-            .all()
-            .iter()
-            .find(|view| view.slot == dialog.slot)
-        else {
-            // The indicator was removed under the dialog.
-            self.indicator_settings = None;
-            return;
-        };
-        match indicator_panel::draw(ctx, dialog, &view.descriptor.inputs) {
+        match outcome {
             SettingsOutcome::Open => {}
             SettingsOutcome::Cancel => self.indicator_settings = None,
             SettingsOutcome::Apply => {
                 let dialog = self.indicator_settings.take().expect("dialog is open");
-                self.pane
+                // The pane the dialog was opened on, not whichever has focus
+                // now: clicking Apply must not retarget the edit.
+                self.pane_mut(side)
                     .indicator_worker
                     .send(IndicatorCommand::SetInputs {
                         slot: dialog.slot,
@@ -792,18 +1026,20 @@ impl QuantickApp {
     fn add_script_indicator(&mut self, index: usize) -> Option<SlotId> {
         let entry = self.script_library.entries().get(index)?;
         let name = entry.name.clone();
+        let side = self.focused_side();
         match self.script_library.read(index) {
             Some(Ok(text)) => {
-                let slot = self.pane.add_indicator(IndicatorSource::Script {
+                let slot = self.pane_mut(side).add_indicator(IndicatorSource::Script {
                     name: name.clone(),
                     text,
                 });
+                let owner = PaneSlot { side, slot };
                 // Watch the file so a save reloads it. Registered here, with
                 // the add, so the two cannot drift apart.
                 if let Some((_, mtime)) = self.script_library.file_info(index) {
-                    self.script_files.push((slot, index, mtime));
+                    self.script_files.push((owner, index, mtime));
                 }
-                self.slot_kinds.push((slot, SavedKind::Script { name }));
+                self.slot_kinds.push((owner, SavedKind::Script { name }));
                 self.mark_indicator_state_dirty();
                 Some(slot)
             }
@@ -822,8 +1058,8 @@ impl QuantickApp {
                 // that promise runs worker-side; the read half never leaves
                 // the UI thread, so the error slot is built here, from the
                 // same two events the worker would have sent.
-                let slot = self.pane.indicators.allocate_slot();
-                self.pane.indicators.apply(IndicatorEvent::Rebuilt {
+                let slot = self.flow_pane.indicators.allocate_slot();
+                self.flow_pane.indicators.apply(IndicatorEvent::Rebuilt {
                     slot,
                     descriptor: quantick_indicators::IndicatorDescriptor {
                         title: name,
@@ -837,7 +1073,7 @@ impl QuantickApp {
                     inputs: Vec::new(),
                     stale: None,
                 });
-                self.pane.indicators.apply(IndicatorEvent::Error {
+                self.flow_pane.indicators.apply(IndicatorEvent::Error {
                     slot,
                     error: quantick_indicators::EvalError {
                         bar_index: 0,
@@ -917,7 +1153,7 @@ impl QuantickApp {
     /// top of the lifecycle calls: already recording costs one bool read, and
     /// a replay costs one more `Option` check.
     fn ensure_book_capture(&mut self) {
-        if self.pane.orderflow.enabled() || !self.capabilities().book_capture {
+        if self.tape().enabled() || !self.capabilities().book_capture {
             return;
         }
         self.request_book_capture(true);
@@ -946,7 +1182,7 @@ impl QuantickApp {
             initial_generation: generation,
         };
         match self.commands.try_send(command) {
-            Ok(()) => self.pane.orderflow.set_enabled(enabled, generation),
+            Ok(()) => self.tape_mut().set_enabled(enabled, generation),
             Err(mpsc::error::TrySendError::Full(_)) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -974,20 +1210,16 @@ impl QuantickApp {
     /// price grouping. The view commits its staged reset only after this
     /// command is accepted, preserving current history on backpressure.
     fn restart_book_capture(&mut self) {
-        if !self.pane.orderflow.enabled() {
+        if !self.tape().enabled() {
             return;
         }
         let generation = self.next_book_generation();
         match self.commands.try_send(FeedCommand::RestartBookCapture {
             initial_generation: generation,
         }) {
-            Ok(()) => self
-                .pane
-                .orderflow
-                .accept_capture_grouping_restart(generation),
+            Ok(()) => self.tape_mut().accept_capture_grouping_restart(generation),
             Err(mpsc::error::TrySendError::Full(_)) => {
-                self.pane
-                    .orderflow
+                self.tape_mut()
                     .reject_capture_grouping_restart("command_channel_full");
                 tracing::warn!(
                     target: "quantick::app",
@@ -1000,8 +1232,7 @@ impl QuantickApp {
                 );
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.pane
-                    .orderflow
+                self.tape_mut()
                     .reject_capture_grouping_restart("command_channel_closed");
                 tracing::warn!(
                     target: "quantick::app",
@@ -1072,20 +1303,19 @@ impl QuantickApp {
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
 
-        // Rebuild the chart from scratch for the new stream, keeping the current
-        // bar spec. Retained trades from the old symbol must not leak in.
-        self.pane.state = ChartState::new(self.pane.current_spec());
-        self.pane.viewport = Viewport::new();
-        self.pane.price_view = PriceView::new();
-        self.pane.last_auto_range = None;
-        self.pane.hover_pos = None;
-        self.reset_drawing_overlay();
+        // Rebuild every pane from scratch for the new stream, each keeping its
+        // own bar spec. Retained trades from the old symbol must not leak in.
+        for pane in self.panes_mut() {
+            pane.reset_series();
+        }
+        self.reset_drawing_overlays();
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
         self.loading.restart(LoadingTask::History);
         self.latest_trade_latency_ms = None;
-        self.pane.orderflow.reset_for_symbol(self.symbol.clone());
+        let symbol = self.symbol.clone();
+        self.tape_mut().reset_for_symbol(symbol);
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.ensure_book_capture();
@@ -1116,7 +1346,7 @@ impl QuantickApp {
         else {
             return;
         };
-        let applied = self.pane.orderflow.apply_preset(&name);
+        let applied = self.tape_mut().apply_preset(&name);
         if applied {
             tracing::info!(
                 target: "quantick::app",
@@ -1140,7 +1370,23 @@ impl QuantickApp {
         }
     }
 
-    /// Apply a bar-type/parameter change one frame after the selectors settle.
+    /// Let every pane's selectors settle, then mirror the result onto the
+    /// rebuild indicator: it is up while *any* pane has a rebuild pending.
+    fn apply_spec_changes(&mut self) {
+        self.apply_spec_change(PaneSide::Flow);
+        if self.time_pane.is_some() {
+            self.apply_spec_change(PaneSide::Time);
+        }
+        let rebuilding = self.flow_pane.pending_spec.is_some()
+            || self
+                .time_pane
+                .as_ref()
+                .is_some_and(|pane| pane.pending_spec.is_some());
+        self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
+    }
+
+    /// Apply one pane's bar-type/parameter change, a frame after its selectors
+    /// settle.
     ///
     /// Switching the spec replays every retained trade synchronously, which
     /// can hold this thread long enough to notice on a deep history. Deferring
@@ -1149,24 +1395,24 @@ impl QuantickApp {
     /// rather than the app hanging. A selector still moving (a dragged
     /// parameter) keeps pushing the pending spec forward, which also debounces
     /// the rebuild to one per gesture.
-    fn apply_spec_change(&mut self) {
-        let desired = self.pane.current_spec();
-        if desired == *self.pane.state.spec() {
+    ///
+    /// The two panes run this independently: the toolbar's BARS group governs
+    /// the flow pane and the time pane's own header governs the time pane
+    /// (§11), so a timeframe change must not rebuild the chart beside it.
+    fn apply_spec_change(&mut self, side: PaneSide) {
+        let pane = self.pane_mut(side);
+        let desired = pane.current_spec();
+        if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
-            if self.pane.pending_spec.take().is_some() {
-                self.loading.set_active(LoadingTask::BarRebuild, false);
-            }
+            pane.pending_spec = None;
             return;
         }
-        match self.pane.pending_spec.take() {
+        match pane.pending_spec.take() {
             // The frame that changed the selector: arm the indicator, paint.
-            None => {
-                self.pane.pending_spec = Some(desired);
-                self.loading.set_active(LoadingTask::BarRebuild, true);
-            }
+            None => pane.pending_spec = Some(desired),
             // Still moving: wait for the selector to settle for a frame.
-            Some(pending) if pending != desired => self.pane.pending_spec = Some(desired),
+            Some(pending) if pending != desired => pane.pending_spec = Some(desired),
             // Settled since last frame: do the rebuild.
             Some(_) => {
                 // Where the user is looking, in market time — the one thing a
@@ -1174,15 +1420,13 @@ impl QuantickApp {
                 // a different number of bars, so the old right-edge *index*
                 // may not exist in it at all: keeping it would leave the
                 // window past the end of the data, drawing nothing.
-                let anchor = self.pane.right_edge_time();
-                self.pane.state.set_spec(desired);
-                self.pane.send_indicator_rebuild();
-                self.reset_drawing_overlay();
-                self.pane.viewport.reanchor(
-                    anchor.and_then(|ms| self.pane.state.slot_at_time(ms)),
-                    self.pane.slots(),
-                );
-                self.loading.set_active(LoadingTask::BarRebuild, false);
+                let anchor = pane.right_edge_time();
+                pane.state.set_spec(desired);
+                pane.send_indicator_rebuild();
+                let slot = anchor.and_then(|ms| pane.state.slot_at_time(ms));
+                let slots = pane.slots();
+                pane.viewport.reanchor(slot, slots);
+                self.reset_drawing_overlay(side);
             }
         }
     }
@@ -1245,14 +1489,22 @@ impl QuantickApp {
                 Ok(FeedEvent::Backfilled(trades)) => {
                     self.loading.end(LoadingTask::History);
                     self.history_trades += trades.len();
-                    self.pane.ingest_backfill(&trades);
+                    // One tape, every pane: the split multiplies views of the
+                    // market, never the stream behind them.
+                    for pane in self.panes_mut() {
+                        pane.ingest_backfill(&trades);
+                    }
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
                     // pending load; the indicator survives until the last one.
                     self.loading.end(LoadingTask::History);
                     self.history_trades += trades.len();
-                    self.pane.prepend_history(&trades);
+                    // Each pane cuts the older trades into its own bars, so
+                    // each shifts its own anchors by its own count.
+                    for pane in self.panes_mut() {
+                        pane.prepend_history(&trades);
+                    }
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
@@ -1305,7 +1557,9 @@ impl QuantickApp {
         self.latest_trade_ms = Some(trade.timestamp_ms);
         self.live_trades += 1;
         self.trades_since_summary += 1;
-        self.pane.ingest_live_trade(trade);
+        for pane in self.panes_mut() {
+            pane.ingest_live_trade(trade);
+        }
     }
 
     /// Hot reload: about once a second, compare each file-backed script's
@@ -1320,8 +1574,8 @@ impl QuantickApp {
             return;
         }
         self.last_script_poll = Instant::now();
-        let mut reloads: Vec<(SlotId, String, String)> = Vec::new();
-        for (slot, index, seen_mtime) in &mut self.script_files {
+        let mut reloads: Vec<(PaneSlot, String, String)> = Vec::new();
+        for (owner, index, seen_mtime) in &mut self.script_files {
             let Some((path, mtime)) = self.script_library.file_info(*index) else {
                 continue;
             };
@@ -1335,7 +1589,7 @@ impl QuantickApp {
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.display().to_string());
-                    reloads.push((*slot, name, text));
+                    reloads.push((*owner, name, text));
                 }
                 Err(error) => tracing::warn!(
                     target: "quantick::app",
@@ -1348,20 +1602,45 @@ impl QuantickApp {
                 ),
             }
         }
-        for (slot, name, text) in reloads {
+        for (owner, name, text) in reloads {
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "INDICATOR_SCRIPT_RELOAD",
                 script = %name,
+                pane = ?owner.side,
                 action = "recompile_and_replay",
                 "indicator script changed on disk"
             );
-            self.pane.indicator_worker.send(IndicatorCommand::Reload {
-                slot,
-                source: IndicatorSource::Script { name, text },
-            });
+            // To the worker that owns the slot: the same script loaded on both
+            // panes is two slots, and a Reload sent to the wrong one addresses
+            // whatever indicator happens to share its number there.
+            self.pane_mut(owner.side)
+                .indicator_worker
+                .send(IndicatorCommand::Reload {
+                    slot: owner.slot,
+                    source: IndicatorSource::Script { name, text },
+                });
         }
+    }
+
+    /// Add one of the built-in indicators to the focused pane and register how
+    /// it restores.
+    fn add_native_indicator(&mut self, kind: SavedKind) -> SlotId {
+        let side = self.focused_side();
+        let source = match kind {
+            SavedKind::NativeCvd => IndicatorSource::NativeCvd,
+            // Every other kind is a script, which comes through
+            // `add_script_indicator`; EMA is the remaining native.
+            _ => IndicatorSource::NativeEma {
+                len: DEFAULT_EMA_LEN,
+                source: quantick_indicators::SourceId::Close,
+            },
+        };
+        let slot = self.pane_mut(side).add_indicator(source);
+        self.slot_kinds.push((PaneSlot { side, slot }, kind));
+        self.mark_indicator_state_dirty();
+        slot
     }
 
     fn mark_indicator_state_dirty(&mut self) {
@@ -1382,23 +1661,15 @@ impl QuantickApp {
     /// menu sends (add, then bind saved inputs, then hide once the view
     /// lands). A script the library no longer has is skipped with a log
     /// line, never a phantom entry.
+    ///
+    /// The flow pane only, and the file holds only its slots — see
+    /// [`Self::maintain_indicator_state`] for why.
     fn restore_indicator_state(&mut self) {
         let saved = state_file::load(&self.indicator_state_path);
         for entry in saved {
             let slot = match &entry.kind {
-                SavedKind::NativeEma => {
-                    let slot = self.pane.add_indicator(IndicatorSource::NativeEma {
-                        len: DEFAULT_EMA_LEN,
-                        source: quantick_indicators::SourceId::Close,
-                    });
-                    self.slot_kinds.push((slot, SavedKind::NativeEma));
-                    Some(slot)
-                }
-                SavedKind::NativeCvd => {
-                    let slot = self.pane.add_indicator(IndicatorSource::NativeCvd);
-                    self.slot_kinds.push((slot, SavedKind::NativeCvd));
-                    Some(slot)
-                }
+                SavedKind::NativeEma => Some(self.add_native_indicator(SavedKind::NativeEma)),
+                SavedKind::NativeCvd => Some(self.add_native_indicator(SavedKind::NativeCvd)),
                 SavedKind::Script { name } => {
                     match self
                         .script_library
@@ -1433,7 +1704,7 @@ impl QuantickApp {
                 .filter_map(SavedInput::to_value)
                 .collect();
             if !values.is_empty() && values.len() == entry.inputs.len() {
-                self.pane
+                self.flow_pane
                     .indicator_worker
                     .send(IndicatorCommand::SetInputs { slot, values });
             } else if !entry.inputs.is_empty() {
@@ -1462,16 +1733,30 @@ impl QuantickApp {
 
     /// Apply restored-hidden flags once their views exist, then write the
     /// state file when a change has settled (debounced off the frame path).
+    ///
+    /// The file records the **flow pane's** slots only, and the format is
+    /// unchanged by the split. The time pane's indicators are in-session
+    /// because the split itself is (§14 leaves chrome-state persistence open):
+    /// with the canvas opening Single, a restored time-pane entry would have
+    /// no pane to land on, and would then be quietly dropped by the next save.
+    /// Persisting the layout is what unlocks persisting its indicators, and
+    /// the two land together or not at all.
     fn maintain_indicator_state(&mut self) {
         if !self.pending_hidden.is_empty() {
             let existing: Vec<SlotId> = self
                 .pending_hidden
                 .iter()
                 .copied()
-                .filter(|slot| self.pane.indicators.all().iter().any(|v| v.slot == *slot))
+                .filter(|slot| {
+                    self.flow_pane
+                        .indicators
+                        .all()
+                        .iter()
+                        .any(|v| v.slot == *slot)
+                })
                 .collect();
             for slot in &existing {
-                self.pane.indicators.toggle_hidden(*slot);
+                self.flow_pane.indicators.toggle_hidden(*slot);
             }
             self.pending_hidden.retain(|slot| !existing.contains(slot));
         }
@@ -1487,15 +1772,19 @@ impl QuantickApp {
             // overwrite its own saved parameters with an empty list.
             let previous = state_file::load(&self.indicator_state_path);
             let saved: Vec<SavedIndicator> = self
-                .pane
+                .flow_pane
                 .indicators
                 .all()
                 .iter()
                 .filter_map(|view| {
+                    let owner = PaneSlot {
+                        side: PaneSide::Flow,
+                        slot: view.slot,
+                    };
                     let kind_ref = self
                         .slot_kinds
                         .iter()
-                        .find(|(slot, _)| *slot == view.slot)
+                        .find(|(candidate, _)| *candidate == owner)
                         .map(|(_, kind)| kind)?;
                     let kind = kind_ref.clone();
                     // A slot whose build failed has an empty view: the
@@ -1531,38 +1820,51 @@ impl QuantickApp {
     /// chart is rebuilt from the history that follows rather than patched,
     /// because bars that already closed cannot be reopened.
     fn reset_market_state(&mut self) {
-        self.pane.state = ChartState::new(self.pane.current_spec());
-        // Indicators follow the chart into the empty state; the refill's
-        // Backfilled event replays them (replay seek funnels through here,
-        // so seeking inherits correct indicator behavior for free).
-        self.pane.send_indicator_rebuild();
-        self.pane.viewport = Viewport::new();
-        self.pane.price_view = PriceView::new();
-        self.pane.last_auto_range = None;
-        self.pane.hover_pos = None;
-        self.reset_drawing_overlay();
+        for pane in self.panes_mut() {
+            pane.reset_series();
+            // Indicators follow the chart into the empty state; the refill's
+            // Backfilled event replays them (replay seek funnels through here,
+            // so seeking inherits correct indicator behavior for free).
+            pane.send_indicator_rebuild();
+            pane.last_lane_divider_x = None;
+        }
+        self.reset_drawing_overlays();
         self.history_trades = 0;
         self.latest_trade_latency_ms = None;
         self.latest_trade_ms = None;
-        self.pane.last_lane_divider_x = None;
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
         self.loading.restart(LoadingTask::History);
-        self.pane.orderflow.reset_for_symbol(self.symbol.clone());
+        let symbol = self.symbol.clone();
+        self.tape_mut().reset_for_symbol(symbol);
+    }
+
+    /// Every pane's overlay at once, for a change that invalidates them all —
+    /// a feed switch or a source reset re-cuts both charts.
+    fn reset_drawing_overlays(&mut self) {
+        self.reset_drawing_overlay(PaneSide::Flow);
+        if self.time_pane.is_some() {
+            self.reset_drawing_overlay(PaneSide::Time);
+        }
     }
 
     /// Bar-index anchors are meaningful only for the market/spec that created
     /// them. Clear them on a source or aggregation rebuild rather than
     /// silently attaching a mark to different market data — and say so.
-    fn reset_drawing_overlay(&mut self) {
-        let had_drawings = !self.pane.drawings.items().is_empty();
-        self.pane.drawings.clear();
+    ///
+    /// Scoped to one pane: the panes cut the same trades into different bars,
+    /// so re-cutting one of them leaves the other's anchors exactly as valid
+    /// as they were.
+    fn reset_drawing_overlay(&mut self, side: PaneSide) {
+        let pane = self.pane_mut(side);
+        let had_drawings = !pane.drawings.items().is_empty();
+        pane.drawings.clear();
+        pane.drawing_hover = None;
+        pane.drawing_press_position = None;
+        pane.drawing_press_started_empty = false;
+        pane.drawing_drag = DrawingDrag::None;
         self.toolrail.arm(Tool::Pointer);
-        self.pane.drawing_hover = None;
-        self.pane.drawing_press_position = None;
-        self.pane.drawing_press_started_empty = false;
-        self.pane.drawing_drag = DrawingDrag::None;
         self.drawing_delete_confirm = false;
         self.inspector_edit_baseline = None;
         self.inspector_last_selection = None;
@@ -1591,13 +1893,11 @@ impl QuantickApp {
             match self.book_events.try_recv() {
                 Ok(event) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
-                    self.pane
-                        .orderflow
-                        .handle_depth_event_at(event, received_at_ms);
+                    self.tape_mut().handle_depth_event_at(event, received_at_ms);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    if self.pane.orderflow.enabled() && !self.book_channel_closed_reported {
+                    if self.tape().enabled() && !self.book_channel_closed_reported {
                         tracing::warn!(
                             target: "quantick::app",
                             schema_version = 1_u8,
@@ -1638,7 +1938,7 @@ impl QuantickApp {
         if self.replay.is_some() {
             return None;
         }
-        let newest = match (self.latest_trade_ms, self.pane.orderflow.last_event_ms()) {
+        let newest = match (self.latest_trade_ms, self.tape().last_event_ms()) {
             (Some(trade), Some(book)) => Some(trade.max(book)),
             (trade, book) => trade.or(book),
         }?;
@@ -1657,7 +1957,7 @@ impl QuantickApp {
         let cpu_avg = self.cpu_frames.avg_ms().unwrap_or(0.0);
         let worst = self.frames.worst_ms().unwrap_or(0.0);
         let fps = self.frames.fps().unwrap_or(0.0);
-        let book = self.pane.orderflow.health();
+        let book = self.tape_mut().health();
         let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
         let book_queue_len = self.book_events.len();
@@ -1675,7 +1975,9 @@ impl QuantickApp {
             feed_arrival_ms = lag,
             trades_per_s = rate,
             live_trades = self.live_trades,
-            bar_spec = self.pane.state.spec().summary(),
+            bar_spec = self.flow_pane.state.spec().summary(),
+            canvas_layout = ?self.layout,
+            time_pane_spec = self.time_pane.as_ref().map(|pane| pane.state.spec().summary()),
             book_enabled = book.enabled,
             book_status = book.status,
             book_generation = book.generation,
@@ -1790,7 +2092,7 @@ impl QuantickApp {
         }
 
         self.trades_since_summary = 0;
-        self.pane.orderflow.reset_summary_counters();
+        self.tape_mut().reset_summary_counters();
         self.last_summary = now;
     }
 
@@ -1833,9 +2135,15 @@ impl QuantickApp {
     }
 
     /// Everything the status bar reports this frame.
+    ///
+    /// Provenance (venue, symbol, transport, side honesty) is the market's and
+    /// reads from the window; the content section — spec, bar counts, forming
+    /// bar, whether the view follows live — is the *focused pane's* (§11), so
+    /// the bar always describes the chart the user is working in.
     fn status_model(&self) -> statusbar::StatusModel {
-        let bars = self.pane.state.bars();
-        let (backfilled, live) = match self.pane.state.backfill_boundary() {
+        let pane = self.focused_pane();
+        let bars = pane.state.bars();
+        let (backfilled, live) = match pane.state.backfill_boundary() {
             Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
             None => (0, bars.len()),
         };
@@ -1854,9 +2162,8 @@ impl QuantickApp {
             connection: self.feed_connection,
             feed_arrival_ms: self.trade_arrival_ms(),
             tape_age_ms: self.tape_age_at(metrics::wall_clock_ms()),
-            spec_summary: self.pane.state.spec().summary(),
-            bar_progress: self
-                .pane
+            spec_summary: pane.state.spec().summary(),
+            bar_progress: pane
                 .state
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
@@ -1864,8 +2171,8 @@ impl QuantickApp {
             live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
             side_detail: note.and_then(|(_, detail)| detail),
-            follows_live: self.pane.viewport.follows_live(),
-            price_auto: self.pane.price_view.is_auto(),
+            follows_live: pane.viewport.follows_live(),
+            price_auto: pane.price_view.is_auto(),
             live_trades: self.live_trades,
             fps: self.frames.fps(),
             frame_avg_ms: self.frames.avg_ms(),
@@ -1905,6 +2212,18 @@ impl QuantickApp {
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
+                        ui.menu_button("Layout", |ui| {
+                            for (layout, label) in [
+                                (CanvasLayout::Single, "Single"),
+                                (CanvasLayout::TimeAndFlow, "Time + Flow"),
+                            ] {
+                                if ui.selectable_label(self.layout == layout, label).clicked() {
+                                    self.set_layout(layout);
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        ui.separator();
                         if ui
                             .add(
                                 egui::Button::new("Market Replay…")
@@ -1997,7 +2316,7 @@ impl QuantickApp {
     /// manager). A locked object raises the confirmation next to the trigger
     /// instead of deleting; a landed delete raises the Undo toast.
     fn request_delete_selected(&mut self, now: Instant) {
-        match self.pane.drawings.delete_selected(false) {
+        match self.focused_pane_mut().drawings.delete_selected(false) {
             DeleteOutcome::Deleted => {
                 self.drawing_delete_confirm = false;
                 self.drawing_toast = Some(DrawingToast {
@@ -2058,67 +2377,75 @@ impl QuantickApp {
         if keys.escape {
             if self.drawing_delete_confirm {
                 self.drawing_delete_confirm = false;
-            } else if self.pane.drawings.draft().is_some() {
-                self.pane.drawings.cancel_draft();
+            } else if self.focused_pane().drawings.draft().is_some() {
+                self.focused_pane_mut().drawings.cancel_draft();
                 self.toolrail.arm(Tool::Pointer);
-            } else if self.pane.drawings.selected().is_some() {
-                self.pane.drawings.select(None);
+            } else if self.focused_pane().drawings.selected().is_some() {
+                self.focused_pane_mut().drawings.select(None);
             } else {
                 self.toolrail.arm(Tool::Pointer);
             }
         }
-        if self.pane.drawings.draft().is_some() {
+        if self.focused_pane().drawings.draft().is_some() {
             // During placement the delete keys belong to the draft workflow:
             // Backspace steps back one anchor.
             if keys.backspace {
-                self.pane.drawings.remove_last_draft_anchor();
+                self.focused_pane_mut().drawings.remove_last_draft_anchor();
             }
         } else if keys.delete || keys.backspace {
             self.request_delete_selected(now);
         }
         if keys.undo {
-            self.pane.drawings.undo();
+            self.focused_pane_mut().drawings.undo();
         }
         if keys.redo {
-            self.pane.drawings.redo();
+            self.focused_pane_mut().drawings.redo();
         }
         if keys.lock
-            && let Some(index) = self.pane.drawings.selected()
+            && let Some(index) = self.focused_pane().drawings.selected()
         {
-            let locked = self.pane.drawings.items()[index].locked;
-            self.pane.drawings.set_selected_locked(!locked);
+            let locked = self.focused_pane().drawings.items()[index].locked;
+            self.focused_pane_mut()
+                .drawings
+                .set_selected_locked(!locked);
         }
         if keys.hide
-            && let Some(index) = self.pane.drawings.selected()
+            && let Some(index) = self.focused_pane().drawings.selected()
         {
-            let hidden = self.pane.drawings.items()[index].hidden;
-            self.pane.drawings.set_selected_hidden(!hidden);
+            let hidden = self.focused_pane().drawings.items()[index].hidden;
+            self.focused_pane_mut()
+                .drawings
+                .set_selected_hidden(!hidden);
         }
         if keys.duplicate {
-            self.pane.drawings.duplicate_selected(DUPLICATE_OFFSET_BARS);
+            self.flow_pane
+                .drawings
+                .duplicate_selected(DUPLICATE_OFFSET_BARS);
         }
         if (keys.nudge_bars != 0.0 || keys.nudge_px != 0.0)
-            && self.pane.drawings.selected().is_some()
+            && self.focused_pane().drawings.selected().is_some()
         {
             // Arrows write the same honest chart coordinates a drag does:
             // one bar per horizontal step, one pixel's worth of price per
             // vertical step. Each press lands as one undo entry.
-            let price_per_px = self.pane.last_auto_range.map_or(0.0, |auto| {
-                let (lo, hi) = self.pane.price_view.resolve(auto);
-                (hi - lo) / f64::from(self.pane.last_chart_height.max(1.0))
+            let price_per_px = self.focused_pane().last_auto_range.map_or(0.0, |auto| {
+                let (lo, hi) = self.focused_pane().price_view.resolve(auto);
+                (hi - lo) / f64::from(self.focused_pane().last_chart_height.max(1.0))
             });
-            self.pane.drawings.begin_gesture();
-            self.pane
+            self.focused_pane_mut().drawings.begin_gesture();
+            self.flow_pane
                 .drawings
                 .translate_selected(keys.nudge_bars, f64::from(keys.nudge_px) * price_per_px);
-            self.pane.drawings.commit_gesture();
+            self.focused_pane_mut().drawings.commit_gesture();
         }
     }
 
     /// Commit a pending inspector edit gesture as one undo entry.
     fn commit_inspector_gesture(&mut self) {
         if let Some((index, before)) = self.inspector_edit_baseline.take() {
-            self.pane.drawings.record_edit_of(index, before);
+            self.focused_pane_mut()
+                .drawings
+                .record_edit_of(index, before);
         }
     }
 
@@ -2157,7 +2484,7 @@ impl QuantickApp {
                     });
             });
         if undo_clicked {
-            self.pane.drawings.undo();
+            self.focused_pane_mut().drawings.undo();
             self.drawing_toast = None;
         }
     }
@@ -2167,7 +2494,7 @@ impl QuantickApp {
     /// tool's capabilities — an unsupported property is absent, not disabled.
     fn drawing_inspector_body(&mut self, ui: &mut egui::Ui, index: usize) -> InspectorActions {
         let mut actions = InspectorActions::default();
-        let drawing = &self.pane.drawings.items()[index];
+        let drawing = &self.focused_pane().drawings.items()[index];
         let tool = drawing.tool;
         let locked = drawing.locked;
         let hidden = drawing.hidden;
@@ -2253,15 +2580,23 @@ impl QuantickApp {
         ui.separator();
 
         let tab = self.inspector_tab;
-        let price_speed = self.pane.last_auto_range.map_or(1.0, |(lo, hi)| {
+        let price_speed = self.focused_pane().last_auto_range.map_or(1.0, |(lo, hi)| {
             ((hi - lo) / PRICE_DRAG_STEPS).abs().max(1e-9)
         });
+        let side = self.focused_side();
         let Self {
-            pane,
+            flow_pane,
+            time_pane,
             drawing_presets,
             ..
         } = self;
-        let Some(drawing) = pane.drawings.selected_mut() else {
+        let drawings = match side {
+            PaneSide::Time => time_pane
+                .as_mut()
+                .map_or(&mut flow_pane.drawings, |pane| &mut pane.drawings),
+            PaneSide::Flow => &mut flow_pane.drawings,
+        };
+        let Some(drawing) = drawings.selected_mut() else {
             return actions;
         };
         match tab {
@@ -2346,12 +2681,16 @@ impl QuantickApp {
             self.commit_inspector_gesture();
         }
         if actions.toggle_hidden {
-            let hidden = self.pane.drawings.items()[index].hidden;
-            self.pane.drawings.set_selected_hidden(!hidden);
+            let hidden = self.focused_pane().drawings.items()[index].hidden;
+            self.focused_pane_mut()
+                .drawings
+                .set_selected_hidden(!hidden);
         }
         if actions.toggle_lock {
-            let locked = self.pane.drawings.items()[index].locked;
-            self.pane.drawings.set_selected_locked(!locked);
+            let locked = self.focused_pane().drawings.items()[index].locked;
+            self.focused_pane_mut()
+                .drawings
+                .set_selected_locked(!locked);
             self.drawing_delete_confirm = false;
         }
         if actions.toggle_pin {
@@ -2365,7 +2704,7 @@ impl QuantickApp {
         }
         if actions.force_delete {
             self.drawing_delete_confirm = false;
-            if self.pane.drawings.delete_selected(true) == DeleteOutcome::Deleted {
+            if self.focused_pane_mut().drawings.delete_selected(true) == DeleteOutcome::Deleted {
                 self.drawing_toast = Some(DrawingToast {
                     message: "Drawing deleted.",
                     shown_at: now,
@@ -2374,7 +2713,7 @@ impl QuantickApp {
             }
         }
         if actions.close {
-            self.pane.drawings.select(None);
+            self.focused_pane_mut().drawings.select(None);
             self.drawing_delete_confirm = false;
         }
     }
@@ -2384,20 +2723,23 @@ impl QuantickApp {
     /// always clamped into the chart pane — which already excludes the price
     /// and time axes, so the popup can never cover either or leave the view.
     fn inspector_target_position(&self, ctx: &egui::Context, index: usize) -> Option<egui::Pos2> {
-        let chart = self.pane.last_chart_area?;
-        let total = self.pane.slots();
-        let (auto_lo, auto_hi) = self.pane.last_auto_range?;
-        let (lo, hi) = self.pane.price_view.resolve((auto_lo, auto_hi));
+        let chart = self.focused_pane().last_chart_area?;
+        let total = self.focused_pane().slots();
+        let (auto_lo, auto_hi) = self.focused_pane().last_auto_range?;
+        let (lo, hi) = self.focused_pane().price_view.resolve((auto_lo, auto_hi));
         let scale = PriceScale::from_range(
             lo,
             hi,
-            self.pane.last_chart_top,
-            self.pane.last_chart_top + self.pane.last_chart_height,
+            self.focused_pane().last_chart_top,
+            self.focused_pane().last_chart_top + self.focused_pane().last_chart_height,
         );
-        let history_right = self.pane.last_lane_divider_x.unwrap_or(chart.right());
-        let drawing = self.pane.drawings.items().get(index)?;
+        let history_right = self
+            .focused_pane()
+            .last_lane_divider_x
+            .unwrap_or(chart.right());
+        let drawing = self.focused_pane().drawings.items().get(index)?;
         let points = self
-            .pane
+            .flow_pane
             .projected_drawing_points(drawing, history_right, total, &scale);
         let first = points.first()?;
         let mut bbox = egui::Rect::from_min_max(*first, *first);
@@ -2437,7 +2779,7 @@ impl QuantickApp {
     /// Shared prologue of both inspector hosts. Returns the selection and its
     /// pre-frame copy, or cleans up when nothing is selected.
     fn inspector_selection(&mut self) -> Option<(usize, drawings::Drawing)> {
-        let Some(index) = self.pane.drawings.selected() else {
+        let Some(index) = self.focused_pane().drawings.selected() else {
             self.drawing_delete_confirm = false;
             self.commit_inspector_gesture();
             self.inspector_last_selection = None;
@@ -2451,7 +2793,7 @@ impl QuantickApp {
         {
             self.commit_inspector_gesture();
         }
-        Some((index, self.pane.drawings.items()[index].clone()))
+        Some((index, self.focused_pane().drawings.items()[index].clone()))
     }
 
     /// The pinned inspector: a dock panel at the chart's side. Declared with
@@ -2492,7 +2834,7 @@ impl QuantickApp {
         self.inspector_last_selection = Some(index);
         let mut actions = InspectorActions::default();
         let mut open = true;
-        let inspector_interactable = !self.pane.drawing_drag.is_active();
+        let inspector_interactable = !self.focused_pane().drawing_drag.is_active();
         // The level editor earns the wider default the spec reserves for it.
         let default_width = if before.tool.extra_tab().is_some() {
             INSPECTOR_LEVELS_WIDTH_PX
@@ -2556,15 +2898,15 @@ impl QuantickApp {
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                let count = self.pane.drawings.items().len();
+                let count = self.focused_pane().drawings.items().len();
                 if count == 0 {
                     ui.label("No drawings yet.");
                 }
                 // Walked in reverse: the manager lists top-most first, the
                 // same order hit-testing resolves overlap.
                 for index in (0..count).rev() {
-                    let drawing = &self.pane.drawings.items()[index];
-                    let selected = self.pane.drawings.selected() == Some(index);
+                    let drawing = &self.focused_pane().drawings.items()[index];
+                    let selected = self.focused_pane().drawings.selected() == Some(index);
                     let locked = drawing.locked;
                     let hidden = drawing.hidden;
                     let name = drawing.tool.name();
@@ -2623,42 +2965,47 @@ impl QuantickApp {
             });
         self.drawing_manager_open = open;
         if let Some(index) = select_row {
-            self.pane.drawings.select(Some(index));
+            self.focused_pane_mut().drawings.select(Some(index));
             // Centre the viewport on the object's bar span.
-            if let Some(chart) = self.pane.last_chart_area {
-                let points = &self.pane.drawings.items()[index].points;
+            let slots = self.focused_pane().slots();
+            if let Some(chart) = self.focused_pane().last_chart_area {
+                let points = &self.focused_pane().drawings.items()[index].points;
                 if !points.is_empty() {
                     let mid =
                         points.iter().map(|point| point.bar).sum::<f32>() / points.len() as f32;
-                    self.pane
+                    self.focused_pane_mut()
                         .viewport
-                        .center_on_bar(mid, chart.width(), self.pane.slots());
+                        .center_on_bar(mid, chart.width(), slots);
                 }
             }
         }
         if let Some(index) = eye_row {
-            let hidden = self.pane.drawings.items()[index].hidden;
-            self.pane.drawings.set_hidden_at(index, !hidden);
+            let hidden = self.focused_pane().drawings.items()[index].hidden;
+            self.focused_pane_mut()
+                .drawings
+                .set_hidden_at(index, !hidden);
         }
         if let Some(index) = lock_row {
-            let locked = self.pane.drawings.items()[index].locked;
-            self.pane.drawings.set_locked_at(index, !locked);
+            let locked = self.focused_pane().drawings.items()[index].locked;
+            self.focused_pane_mut()
+                .drawings
+                .set_locked_at(index, !locked);
         }
         if let Some(index) = front_row {
-            self.pane.drawings.bring_to_front(index);
+            self.focused_pane_mut().drawings.bring_to_front(index);
         }
         if let Some(index) = delete_row {
             // The exact same command path as the inspector button and the
             // keyboard: select, then request. Locked rows raise the same
             // confirmation in the inspector.
-            self.pane.drawings.select(Some(index));
+            self.focused_pane_mut().drawings.select(Some(index));
             self.request_delete_selected(now);
         }
         if show_all {
-            self.pane.drawings.set_all_hidden(false);
+            self.focused_pane_mut().drawings.set_all_hidden(false);
         }
         if unlock_all {
-            self.pane.drawings.set_all_locked(false);
+            self.focused_pane_mut().drawings.set_all_locked(false);
         }
     }
 
@@ -2718,7 +3065,7 @@ impl QuantickApp {
         // Depth is not in a recording; the toggle is disabled by capability,
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
-        self.pane.orderflow.set_enabled(false, generation);
+        self.tape_mut().set_enabled(false, generation);
         self.reset_market_state();
     }
 
@@ -2811,6 +3158,141 @@ impl eframe::App for QuantickApp {
 }
 
 impl QuantickApp {
+    /// Lay the canvas out and run every visible pane through it (§11).
+    ///
+    /// Single is one pane over the whole area — the same code path the split
+    /// takes, with one pane in it, so the default layout can never drift from
+    /// the split one.
+    fn draw_canvas(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let split = self.layout == CanvasLayout::TimeAndFlow && self.time_pane.is_some();
+        // Unsplit, the flow pane is handed the whole canvas and the rest of
+        // this reduces to nothing: no divider, no header, no focus rule.
+        let (time_area, divider, flow_area) = if split {
+            let (time, divider, flow) = split_canvas(area, self.split_fraction);
+            (Some(time), Some(divider), flow)
+        } else {
+            (None, None, area)
+        };
+
+        let time_chart = time_area.map(|time_area| {
+            // Focus before input, so the click that focuses a pane is also the
+            // click that pane goes on to handle.
+            self.focus_from_pointer(ui, time_area, flow_area);
+            let (header, chart) = split_time_pane(time_area);
+            // The time pane's own timeframe selector (§11): its BARS group,
+            // beside the toolbar's, which keeps governing the flow pane.
+            let mut interval_ms = self.pane(PaneSide::Time).time_interval_ms;
+            let header_layout = time_header::draw(ui, header, &mut interval_ms);
+            #[cfg(test)]
+            {
+                self.time_header_chips = header_layout.chips;
+            }
+            if header_layout.changed {
+                let pane = self.pane_mut(PaneSide::Time);
+                pane.kind = BarKind::Time;
+                pane.time_interval_ms = interval_ms;
+            }
+            chart
+        });
+
+        {
+            let Self {
+                flow_pane,
+                time_pane,
+                toolrail,
+                drawing_presets,
+                style,
+                tz,
+                symbol,
+                ..
+            } = self;
+            let mut chrome = PaneChrome {
+                toolrail,
+                presets: drawing_presets,
+                style,
+                tz: *tz,
+                symbol,
+            };
+            // Time pane first, then flow. Both take the same two steps in the
+            // same order — which is what keeps the split honest: the second
+            // pane cannot drift from the first, and one pane is this same
+            // loop with one entry in it.
+            let time = time_chart.and_then(|chart| Some((time_pane.as_mut()?, chart)));
+            for (pane, rect) in time
+                .into_iter()
+                .chain(std::iter::once((&mut *flow_pane, flow_area)))
+            {
+                pane.handle_navigation(ui, rect, &mut chrome);
+                pane.draw_chart(ui.painter(), rect, &chrome);
+            }
+        }
+
+        let (Some(time_area), Some(divider)) = (time_area, divider) else {
+            return;
+        };
+        self.draw_canvas_divider(ui, divider, area.width());
+        // §11: a 1 px accent under the focused pane's top edge — no border
+        // boxes around market data.
+        let focused = match self.focused_side() {
+            PaneSide::Time => time_area,
+            PaneSide::Flow => flow_area,
+        };
+        ui.painter().line_segment(
+            [
+                egui::pos2(focused.left(), focused.top() + FOCUS_RULE_PX / 2.0),
+                egui::pos2(focused.right(), focused.top() + FOCUS_RULE_PX / 2.0),
+            ],
+            egui::Stroke::new(FOCUS_RULE_PX, theme::ACCENT),
+        );
+    }
+
+    /// Clicking a pane focuses it (§11). Read from the raw pointer press
+    /// rather than a widget response, so the press that starts a pan or picks
+    /// up a drawing focuses the pane it landed in on that same frame.
+    fn focus_from_pointer(&mut self, ui: &egui::Ui, time_area: egui::Rect, flow_area: egui::Rect) {
+        let pressed = ui.input(|input| {
+            input
+                .pointer
+                .primary_pressed()
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        });
+        let Some(position) = pressed else { return };
+        if time_area.contains(position) {
+            self.focus = PaneSide::Time;
+        } else if flow_area.contains(position) {
+            self.focus = PaneSide::Flow;
+        }
+    }
+
+    /// The divider between the panes, as a resize handle.
+    ///
+    /// Registered after both panes so it takes the drag that would otherwise
+    /// pan the chart behind its grab area, exactly as the live lane's own
+    /// divider does inside a pane.
+    fn draw_canvas_divider(&mut self, ui: &egui::Ui, divider: egui::Rect, canvas_width: f32) {
+        #[cfg(test)]
+        {
+            self.canvas_divider = Some(divider);
+        }
+        ui.painter()
+            .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+        let handle = ui.interact(
+            divider.expand2(egui::vec2(CANVAS_DIVIDER_HANDLE_PX, 0.0)),
+            egui::Id::new("canvas_divider"),
+            egui::Sense::drag(),
+        );
+        if handle.hovered() || handle.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if handle.dragged() && canvas_width > 0.0 {
+            let moved = self.split_fraction + handle.drag_delta().x / canvas_width;
+            self.split_fraction = clamp_pane_fraction(moved);
+        }
+    }
+}
+
+impl QuantickApp {
     /// One frame of the application: drain, lay out the chrome, draw the
     /// chart.
     ///
@@ -2825,8 +3307,10 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_feed();
-        // Apply the indicator worker's deltas before the draw reads columns.
-        self.pane.apply_indicator_events();
+        // Apply each pane's indicator deltas before its draw reads columns.
+        for pane in self.panes_mut() {
+            pane.apply_indicator_events();
+        }
         self.drain_book_feed();
         self.drain_notices();
         // Heartbeat for the recorder. The lifecycle calls below already start
@@ -2859,26 +3343,40 @@ impl QuantickApp {
             self.apply_replay_action(action);
         }
         {
+            // The focused pane's objects: the toolbox lists and manages what a
+            // click on the canvas would act on.
+            let side = self.focused_side();
             let Self {
                 toolrail,
-                pane,
+                flow_pane,
+                time_pane,
                 drawing_manager_open,
                 ..
             } = self;
-            toolrail.draw(ctx, &mut pane.drawings, drawing_manager_open);
+            let drawings = match side {
+                PaneSide::Time => time_pane
+                    .as_mut()
+                    .map_or(&mut flow_pane.drawings, |pane| &mut pane.drawings),
+                PaneSide::Flow => &mut flow_pane.drawings,
+            };
+            toolrail.draw(ctx, drawings, drawing_manager_open);
         }
         let dock_response = {
             let Self {
                 dock,
-                pane,
+                flow_pane,
                 replay_view,
                 replay,
                 ..
             } = self;
+            let orderflow = flow_pane
+                .orderflow
+                .as_mut()
+                .expect("the flow pane is built with a tape and never drops it");
             dock.draw(
                 ctx,
                 &mut DockEnv {
-                    orderflow: &mut pane.orderflow,
+                    orderflow,
                     replay_view,
                     replay: replay.as_ref(),
                 },
@@ -2896,49 +3394,23 @@ impl QuantickApp {
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         self.maybe_switch_feed();
-        self.apply_spec_change();
+        self.apply_spec_changes();
         self.draw_style_panel(ctx, now);
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         self.loading
             .set_active(LoadingTask::ReplaySession, self.replay_view.is_loading());
         self.loading
-            .set_active(LoadingTask::BookSync, self.pane.orderflow.is_syncing());
+            .set_active(LoadingTask::BookSync, self.tape().is_syncing());
 
         let mut notice_action = notice_card::NoticeAction::None;
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
                 let area = ui.available_rect_before_wrap();
-                let Self {
-                    pane,
-                    toolrail,
-                    drawing_presets,
-                    style,
-                    tz,
-                    symbol,
-                    ..
-                } = self;
-                pane.handle_navigation(
-                    ui,
-                    area,
-                    &mut PaneInput {
-                        toolrail,
-                        presets: drawing_presets,
-                    },
-                );
-                pane.draw_chart(
-                    ui.painter(),
-                    area,
-                    &PaneRender {
-                        style,
-                        tz: *tz,
-                        tool: toolrail.tool(),
-                        symbol,
-                    },
-                );
+                self.draw_canvas(ui, area);
                 loading::overlay(ui, area, &self.loading);
-                if notice_card::should_draw(&self.notice, self.pane.state.bars().len()) {
+                if notice_card::should_draw(&self.notice, self.flow_pane.state.bars().len()) {
                     notice_action = notice_card::draw(ui, area, &self.notice);
                 }
             });
@@ -2963,6 +3435,68 @@ mod tests {
 
     use crate::config::{FeedConfig, ProviderKind};
     use crate::drawings::{ChartPoint, PresetHost};
+
+    /// Time pane left, flow pane right, on a divider that costs both of them
+    /// nothing but its own width (§11).
+    #[test]
+    fn the_canvas_splits_time_left_flow_right_at_the_divider() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let (time, divider, flow) = split_canvas(area, 0.5);
+        assert!(time.right() <= flow.left(), "time is the left pane");
+        assert_eq!(time.right(), divider.left());
+        assert_eq!(divider.right(), flow.left());
+        assert_eq!(divider.width(), CANVAS_DIVIDER_PX);
+        assert_eq!(time.left(), area.left());
+        assert_eq!(flow.right(), area.right());
+        assert_eq!(
+            time.width() + divider.width() + flow.width(),
+            area.width(),
+            "the split spends the canvas exactly once"
+        );
+        // Both panes keep the full height: the split is vertical only.
+        assert_eq!(time.top(), area.top());
+        assert_eq!(flow.bottom(), area.bottom());
+    }
+
+    /// A pane too narrow to read is not a layout, it is a lost pane. §11
+    /// promises each of them a quarter of the canvas, whatever the drag says.
+    #[test]
+    fn neither_pane_can_be_dragged_below_a_quarter_of_the_canvas() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        for (asked, expected) in [
+            (-3.0, 0.25),
+            (0.0, 0.25),
+            (0.1, 0.25),
+            (0.9, 0.75),
+            (7.0, 0.75),
+        ] {
+            let (time, divider, flow) = split_canvas(area, asked);
+            // The divider sits *on* the split, so compare where the split is
+            // rather than a pane width that has half a divider taken out of it.
+            let split = (divider.center().x - area.left()) / area.width();
+            assert!(
+                (split - expected).abs() < 1e-3,
+                "asking for {asked} must clamp to {expected}, got {split}"
+            );
+            let floor = area.width() * MIN_PANE_FRACTION - CANVAS_DIVIDER_PX;
+            assert!(time.width() >= floor, "the time pane keeps its quarter");
+            assert!(flow.width() >= floor, "and so does the flow pane");
+        }
+    }
+
+    /// The header is a strip carved off the pane, not an overlay: the selector
+    /// must never be painted across market data.
+    #[test]
+    fn the_time_pane_header_costs_the_chart_its_own_height() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 600.0));
+        let (header, chart) = split_time_pane(area);
+        assert_eq!(header.height(), time_header::HEIGHT_PX);
+        assert_eq!(header.bottom(), chart.top(), "no gap, no overlap");
+        assert_eq!(chart.bottom(), area.bottom());
+        assert_eq!(header.width(), area.width());
+    }
 
     #[test]
     fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {
@@ -3180,17 +3714,17 @@ plot(close)
             .expect("the file was scanned");
         std::fs::remove_file(&path).expect("remove");
 
-        let before = app.pane.indicators.all().len();
+        let before = app.flow_pane.indicators.all().len();
         let slot = app
             .add_script_indicator(index)
             .expect("a click on a known entry claims a slot");
         assert_eq!(
-            app.pane.indicators.all().len(),
+            app.flow_pane.indicators.all().len(),
             before + 1,
             "a slot appeared"
         );
         let view = app
-            .pane
+            .flow_pane
             .indicators
             .all()
             .iter()
@@ -3258,18 +3792,21 @@ plot(close)
         app.mark_indicator_state_dirty();
         app.last_indicator_change =
             Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
-        for event in app.pane.indicator_worker.drain_events() {
-            app.pane.indicators.apply(event);
+        for event in app.flow_pane.indicator_worker.drain_events() {
+            app.flow_pane.indicators.apply(event);
         }
         app.maintain_indicator_state();
         let written = crate::indicators::state_file::load(&path);
         assert_eq!(
             written.len(),
-            app.pane
+            app.flow_pane
                 .indicators
                 .all()
                 .iter()
-                .filter(|view| app.slot_kinds.iter().any(|(slot, _)| *slot == view.slot))
+                .filter(|view| app
+                    .slot_kinds
+                    .iter()
+                    .any(|(owner, _)| owner.slot == view.slot))
                 .count(),
             "every slot with a known kind is written, and only those"
         );
@@ -3426,8 +3963,8 @@ plot(close)
         use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
 
         let generation = take_capture_start(commands);
-        app.pane.orderflow.set_depth_visible(true);
-        app.pane.orderflow.handle_depth_event(DepthEvent::Snapshot {
+        app.tape_mut().set_depth_visible(true);
+        app.tape_mut().handle_depth_event(DepthEvent::Snapshot {
             symbol: "TESTUSDT".to_owned(),
             generation,
             observed_at_ms: 1_100,
@@ -3442,8 +3979,8 @@ plot(close)
                 },
             ),
         });
-        app.pane.orderflow.flush_for_test();
-        assert_eq!(app.pane.orderflow.health().active_levels, 2);
+        app.tape_mut().flush_for_test();
+        assert_eq!(app.tape_mut().health().active_levels, 2);
     }
 
     #[test]
@@ -3513,7 +4050,7 @@ plot(close)
         app.request_older_history();
         app.request_older_history();
         assert_eq!(app.loading.count(LoadingTask::History), 3);
-        app.pane.drawings.place(
+        app.flow_pane.drawings.place(
             drawing_tool("horizontal-line"),
             ChartPoint {
                 bar: 1.0,
@@ -3525,7 +4062,7 @@ plot(close)
         app.drain_feed();
         assert_eq!(app.loading.count(LoadingTask::History), 1);
         assert!(
-            app.pane.drawings.items().is_empty(),
+            app.flow_pane.drawings.items().is_empty(),
             "bar-index drawings cannot survive a source reset honestly"
         );
     }
@@ -3533,8 +4070,8 @@ plot(close)
     #[test]
     fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
         let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-        app.pane.tick_n = 100;
-        app.pane.drawings.place(
+        app.flow_pane.tick_n = 100;
+        app.flow_pane.drawings.place(
             drawing_tool("horizontal-line"),
             ChartPoint {
                 bar: 1.0,
@@ -3542,18 +4079,18 @@ plot(close)
             },
         );
 
-        app.apply_spec_change();
+        app.apply_spec_changes();
         assert!(app.loading.is_active(LoadingTask::BarRebuild));
         assert_eq!(
-            app.pane.state.spec(),
+            app.flow_pane.state.spec(),
             &BarSpec::Tick(50),
             "the arming frame must paint the overlay before the rebuild runs"
         );
 
-        app.apply_spec_change();
-        assert_eq!(app.pane.state.spec(), &BarSpec::Tick(100));
+        app.apply_spec_changes();
+        assert_eq!(app.flow_pane.state.spec(), &BarSpec::Tick(100));
         assert!(
-            app.pane.drawings.items().is_empty(),
+            app.flow_pane.drawings.items().is_empty(),
             "a new bar partition must not inherit old bar-index anchors"
         );
         assert!(!app.loading.is_active(LoadingTask::BarRebuild));
@@ -3562,28 +4099,28 @@ plot(close)
     #[test]
     fn a_still_moving_selector_keeps_deferring_the_rebuild() {
         let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-        app.pane.tick_n = 100;
-        app.apply_spec_change();
-        app.pane.tick_n = 200; // the drag continues
-        app.apply_spec_change();
+        app.flow_pane.tick_n = 100;
+        app.apply_spec_changes();
+        app.flow_pane.tick_n = 200; // the drag continues
+        app.apply_spec_changes();
         assert_eq!(
-            app.pane.state.spec(),
+            app.flow_pane.state.spec(),
             &BarSpec::Tick(50),
             "no rebuild mid-gesture"
         );
         assert!(app.loading.is_active(LoadingTask::BarRebuild));
 
-        app.apply_spec_change();
-        assert_eq!(app.pane.state.spec(), &BarSpec::Tick(200));
+        app.apply_spec_changes();
+        assert_eq!(app.flow_pane.state.spec(), &BarSpec::Tick(200));
         assert!(!app.loading.is_active(LoadingTask::BarRebuild));
     }
 
     #[test]
     fn an_unchanged_spec_never_arms_the_rebuild_indicator() {
         let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-        app.apply_spec_change();
+        app.apply_spec_changes();
         assert!(!app.loading.is_active(LoadingTask::BarRebuild));
-        assert!(app.pane.pending_spec.is_none());
+        assert!(app.flow_pane.pending_spec.is_none());
     }
 
     /// A trade a tenth of a second after the last, one unit at a walking
@@ -3697,8 +4234,11 @@ plot(close)
         assert_eq!(app.live_trades, 3);
         assert_eq!(app.trades_since_summary, 3);
         assert_eq!(app.trade_arrival_ms(), Some(75));
-        assert_eq!(app.pane.state.timeline_revision(), 3);
-        assert_eq!(app.pane.state.partial().map(|bar| bar.trade_count), Some(3));
+        assert_eq!(app.flow_pane.state.timeline_revision(), 3);
+        assert_eq!(
+            app.flow_pane.state.partial().map(|bar| bar.trade_count),
+            Some(3)
+        );
     }
 
     #[test]
@@ -3729,13 +4269,13 @@ plot(close)
     /// bar per trade, the finest series a spec change can coarsen.
     fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
         let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
-        app.pane.tick_n = 1;
-        app.apply_spec_change();
-        app.apply_spec_change();
+        app.flow_pane.tick_n = 1;
+        app.apply_spec_changes();
+        app.apply_spec_changes();
         let trades: Vec<_> = (1..=count).map(trade).collect();
         evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
         app.drain_feed();
-        assert_eq!(app.pane.state.bars().len() as u64, count);
+        assert_eq!(app.flow_pane.state.bars().len() as u64, count);
         (app, cmd_rx)
     }
 
@@ -3747,24 +4287,30 @@ plot(close)
     fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         let (mut app, _cmd_rx) = app_with_history(400);
         // Pan back to bar 200 of 400 and remember what the edge was showing.
-        app.pane.viewport.pan_pixels(200.0 * 8.0, app.pane.slots());
-        assert!(!app.pane.viewport.follows_live());
-        let was_showing = app.pane.right_edge_time().expect("a bar under the edge");
+        app.flow_pane
+            .viewport
+            .pan_pixels(200.0 * 8.0, app.flow_pane.slots());
+        assert!(!app.flow_pane.viewport.follows_live());
+        let was_showing = app
+            .flow_pane
+            .right_edge_time()
+            .expect("a bar under the edge");
 
         // Coarsen: 400 trades become 10 bars, so index 200 no longer exists.
-        app.pane.tick_n = 40;
-        app.apply_spec_change();
-        app.apply_spec_change();
-        assert_eq!(app.pane.state.bars().len(), 10);
+        app.flow_pane.tick_n = 40;
+        app.apply_spec_changes();
+        app.apply_spec_changes();
+        assert_eq!(app.flow_pane.state.bars().len(), 10);
 
-        let slots = app.pane.slots();
-        let (start, end) = app.pane.viewport.visible_range(800.0, slots);
+        let slots = app.flow_pane.slots();
+        let (start, end) = app.flow_pane.viewport.visible_range(800.0, slots);
         assert!(
             start < end,
             "the window must still hold bars, got {start}..{end} of {slots}"
         );
-        let now_showing = app.pane.right_edge_time().expect("still on a bar");
-        let bar = &app.pane.state.bars()[app.pane.viewport.right_edge_bar(slots) as usize];
+        let now_showing = app.flow_pane.right_edge_time().expect("still on a bar");
+        let bar =
+            &app.flow_pane.state.bars()[app.flow_pane.viewport.right_edge_bar(slots) as usize];
         assert!(
             bar.open_time <= was_showing && was_showing <= bar.close_time,
             "the edge bar ({}..{}) must span the time it was showing ({was_showing})",
@@ -3779,22 +4325,27 @@ plot(close)
     #[test]
     fn a_finer_spec_follows_the_same_market_time_forward() {
         let (mut app, _cmd_rx) = app_with_history(400);
-        app.pane.tick_n = 40;
-        app.apply_spec_change();
-        app.apply_spec_change();
-        app.pane.viewport.pan_pixels(5.0 * 8.0, app.pane.slots()); // back to bar 4 of 10
-        let was_showing = app.pane.right_edge_time().expect("a bar under the edge");
+        app.flow_pane.tick_n = 40;
+        app.apply_spec_changes();
+        app.apply_spec_changes();
+        app.flow_pane
+            .viewport
+            .pan_pixels(5.0 * 8.0, app.flow_pane.slots()); // back to bar 4 of 10
+        let was_showing = app
+            .flow_pane
+            .right_edge_time()
+            .expect("a bar under the edge");
 
-        app.pane.tick_n = 1;
-        app.apply_spec_change();
-        app.apply_spec_change();
-        assert_eq!(app.pane.state.bars().len(), 400);
-        let edge = app.pane.viewport.right_edge_bar(app.pane.slots());
+        app.flow_pane.tick_n = 1;
+        app.apply_spec_changes();
+        app.apply_spec_changes();
+        assert_eq!(app.flow_pane.state.bars().len(), 400);
+        let edge = app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots());
         assert_eq!(
             edge, 160.0,
             "bar 4 of tick(40) opens on trade 161 — bar 160 of tick(1)"
         );
-        assert_eq!(app.pane.right_edge_time(), Some(was_showing));
+        assert_eq!(app.flow_pane.right_edge_time(), Some(was_showing));
     }
 
     /// A view following the live edge is already anchored to the newest bar,
@@ -3802,12 +4353,15 @@ plot(close)
     #[test]
     fn a_rebuild_leaves_a_live_view_at_the_live_edge() {
         let (mut app, _cmd_rx) = app_with_history(400);
-        assert!(app.pane.viewport.follows_live());
-        app.pane.tick_n = 40;
-        app.apply_spec_change();
-        app.apply_spec_change();
-        assert!(app.pane.viewport.follows_live());
-        assert_eq!(app.pane.viewport.right_edge_bar(app.pane.slots()), 9.0);
+        assert!(app.flow_pane.viewport.follows_live());
+        app.flow_pane.tick_n = 40;
+        app.apply_spec_changes();
+        app.apply_spec_changes();
+        assert!(app.flow_pane.viewport.follows_live());
+        assert_eq!(
+            app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots()),
+            9.0
+        );
     }
 
     /// Every string the frame painted, panels and chart alike.
@@ -3988,7 +4542,7 @@ plot(close)
         click_chart(&mut app, &ctx, egui::pos2(1_000.0, 350.0));
 
         let tools: Vec<_> = app
-            .pane
+            .flow_pane
             .drawings
             .items()
             .iter()
@@ -3996,7 +4550,7 @@ plot(close)
             .collect();
         assert_eq!(tools, drawings::DRAWING_TOOLS);
         assert!(
-            app.pane
+            app.flow_pane
                 .drawings
                 .items()
                 .iter()
@@ -4018,15 +4572,15 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
-        let before = app.pane.drawings.items()[0].points[0];
-        let viewport_before = app.pane.viewport.right_edge_bar(app.pane.slots());
+        let before = app.flow_pane.drawings.items()[0].points[0];
+        let viewport_before = app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots());
         drag_chart(
             &mut app,
             &ctx,
             egui::pos2(1_000.0, 300.0),
             egui::pos2(1_040.0, 340.0),
         );
-        let after = app.pane.drawings.items()[0].points[0];
+        let after = app.flow_pane.drawings.items()[0].points[0];
 
         assert!(
             after.bar > before.bar,
@@ -4037,12 +4591,12 @@ plot(close)
             "dragging down moves the anchor to a lower price"
         );
         assert_eq!(
-            app.pane.viewport.right_edge_bar(app.pane.slots()),
+            app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots()),
             viewport_before,
             "moving a drawing must not pan the market underneath it"
         );
         assert_eq!(
-            app.pane.drawing_drag,
+            app.flow_pane.drawing_drag,
             DrawingDrag::None,
             "release ends the move gesture"
         );
@@ -4071,12 +4625,12 @@ plot(close)
             inspector.contains(start),
             "the regression requires the floating inspector to cover this stroke pixel"
         );
-        let before = app.pane.drawings.items()[0].points[0];
+        let before = app.flow_pane.drawings.items()[0].points[0];
 
         drag_chart(&mut app, &ctx, start, egui::pos2(start.x, line_y + 100.0));
 
         assert_ne!(
-            app.pane.drawings.items()[0].points[0].price,
+            app.flow_pane.drawings.items()[0].points[0].price,
             before.price,
             "the open inspector must not trap the line underneath it"
         );
@@ -4127,7 +4681,7 @@ plot(close)
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("the inspector is open");
         let chart = app
-            .pane
+            .flow_pane
             .last_chart_area
             .expect("the chart pane was laid out");
         let bbox = egui::Rect::from_min_max(egui::pos2(300.0, 300.0), egui::pos2(400.0, 380.0))
@@ -4157,13 +4711,13 @@ plot(close)
         // Let the window settle its size and position before reading rects.
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
-        let chart_before = app.pane.last_chart_area.expect("chart laid out");
+        let chart_before = app.flow_pane.last_chart_area.expect("chart laid out");
 
         let pin = app.inspector_pin_rect.expect("pin button rendered");
         click_chart(&mut app, &ctx, pin.center());
         assert!(app.inspector_pinned, "clicking Pin docks the inspector");
         run_frame(&mut app, &ctx);
-        let chart_after = app.pane.last_chart_area.expect("chart laid out");
+        let chart_after = app.flow_pane.last_chart_area.expect("chart laid out");
         assert!(
             chart_after.width() < chart_before.width(),
             "the docked inspector must be paid for by the canvas, not float over it"
@@ -4196,7 +4750,7 @@ plot(close)
             .expect("the manager lists the drawing with a Delete action");
         click_chart(&mut app, &ctx, delete.center());
         assert!(
-            app.pane.drawings.items().is_empty(),
+            app.flow_pane.drawings.items().is_empty(),
             "the manager's Delete lands the same command"
         );
         assert!(
@@ -4210,7 +4764,7 @@ plot(close)
             egui::Modifiers::COMMAND,
         );
         assert_eq!(
-            app.pane.drawings.items().len(),
+            app.flow_pane.drawings.items().len(),
             1,
             "one undo rewinds the manager delete, exactly like the keyboard one"
         );
@@ -4248,7 +4802,7 @@ plot(close)
         let eye = rect_of(&app, 0, "Eye");
         click_chart(&mut app, &ctx, eye.center());
         assert!(
-            app.pane.drawings.items()[0].hidden,
+            app.flow_pane.drawings.items()[0].hidden,
             "the row's eye hides it"
         );
 
@@ -4256,16 +4810,16 @@ plot(close)
         let lock = rect_of(&app, 1, "Lock");
         click_chart(&mut app, &ctx, lock.center());
         assert!(
-            app.pane.drawings.items()[1].locked,
+            app.flow_pane.drawings.items()[1].locked,
             "the row's lock locks it"
         );
 
         run_frame(&mut app, &ctx);
         let front = rect_of(&app, 0, "Front");
-        let hidden_line_price = app.pane.drawings.items()[0].points[0].price;
+        let hidden_line_price = app.flow_pane.drawings.items()[0].points[0].price;
         click_chart(&mut app, &ctx, front.center());
         assert_eq!(
-            app.pane.drawings.items()[1].points[0].price,
+            app.flow_pane.drawings.items()[1].points[0].price,
             hidden_line_price,
             "Front moves the object to the top of the z-order"
         );
@@ -4283,11 +4837,11 @@ plot(close)
             egui::pos2(620.0, 300.0),
             egui::pos2(800.0, 450.0),
         );
-        assert_eq!(app.pane.drawings.items().len(), 1);
-        assert_eq!(app.pane.drawings.selected(), Some(0));
+        assert_eq!(app.flow_pane.drawings.items().len(), 1);
+        assert_eq!(app.flow_pane.drawings.selected(), Some(0));
 
         let output = run_frame(&mut app, &ctx);
-        assert_eq!(app.pane.drawings.selected(), Some(0));
+        assert_eq!(app.flow_pane.drawings.selected(), Some(0));
         let texts = painted_text(&output);
         for label in [
             "Rectangle settings",
@@ -4312,8 +4866,8 @@ plot(close)
         let first_anchor = egui::pos2(620.0, 300.0);
         let second_anchor = egui::pos2(800.0, 450.0);
         drag_chart(&mut app, &ctx, first_anchor, second_anchor);
-        let before = app.pane.drawings.items()[0].points.clone();
-        let viewport_before = app.pane.viewport.right_edge_bar(app.pane.slots());
+        let before = app.flow_pane.drawings.items()[0].points.clone();
+        let viewport_before = app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots());
 
         let inspector = painted_text(&run_frame(&mut app, &ctx));
         assert!(
@@ -4324,7 +4878,7 @@ plot(close)
         );
 
         drag_chart(&mut app, &ctx, first_anchor, egui::pos2(560.0, 240.0));
-        let after = &app.pane.drawings.items()[0].points;
+        let after = &app.flow_pane.drawings.items()[0].points;
 
         assert_ne!(after[0], before[0], "the dragged corner must move");
         assert_eq!(
@@ -4332,11 +4886,11 @@ plot(close)
             "resizing one corner must leave the opposite corner fixed"
         );
         assert_eq!(
-            app.pane.viewport.right_edge_bar(app.pane.slots()),
+            app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots()),
             viewport_before,
             "resizing a drawing must not pan the chart"
         );
-        assert_eq!(app.pane.drawing_drag, DrawingDrag::None);
+        assert_eq!(app.flow_pane.drawing_drag, DrawingDrag::None);
         assert!(
             painted_text(&run_frame(&mut app, &ctx))
                 .iter()
@@ -4378,10 +4932,10 @@ plot(close)
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        app.pane.drawings.set_selected_locked(true);
+        app.flow_pane.drawings.set_selected_locked(true);
 
-        let before = app.pane.drawings.items()[0].points[0];
-        let viewport_before = app.pane.viewport.right_edge_bar(app.pane.slots());
+        let before = app.flow_pane.drawings.items()[0].points[0];
+        let viewport_before = app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots());
         drag_chart(
             &mut app,
             &ctx,
@@ -4389,19 +4943,19 @@ plot(close)
             egui::pos2(1_040.0, 340.0),
         );
         assert_eq!(
-            app.pane.drawings.items()[0].points[0],
+            app.flow_pane.drawings.items()[0].points[0],
             before,
             "locked geometry must not move"
         );
         assert_eq!(
-            app.pane.viewport.right_edge_bar(app.pane.slots()),
+            app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots()),
             viewport_before,
             "the blocked gesture still belongs to the drawing - the chart must not pan"
         );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
         assert_eq!(
-            app.pane.drawings.items().len(),
+            app.flow_pane.drawings.items().len(),
             1,
             "keyboard delete must not remove a locked drawing"
         );
@@ -4423,12 +4977,12 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         assert_eq!(
-            app.pane.drawings.undo_depth(),
+            app.flow_pane.drawings.undo_depth(),
             1,
             "creating the drawing is the first undo entry"
         );
 
-        let before_drag = app.pane.drawings.items()[0].points[0];
+        let before_drag = app.flow_pane.drawings.items()[0].points[0];
         let start = egui::pos2(1_000.0, 300.0);
         run_frame_with_events(
             &mut app,
@@ -4448,24 +5002,24 @@ plot(close)
             vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
         );
         assert_ne!(
-            app.pane.drawings.items()[0].points[0],
+            app.flow_pane.drawings.items()[0].points[0],
             before_drag,
             "the drag really moved the line"
         );
 
         assert_eq!(
-            app.pane.drawings.undo_depth(),
+            app.flow_pane.drawings.undo_depth(),
             2,
             "a multi-frame drag coalesces into exactly one undo entry"
         );
-        assert!(app.pane.drawings.undo(), "undo the drag");
+        assert!(app.flow_pane.drawings.undo(), "undo the drag");
         assert_eq!(
-            app.pane.drawings.items()[0].points[0],
+            app.flow_pane.drawings.items()[0].points[0],
             before_drag,
             "one undo rewinds the whole drag"
         );
-        assert!(app.pane.drawings.undo(), "undo the creation");
-        assert!(app.pane.drawings.items().is_empty());
+        assert!(app.flow_pane.drawings.undo(), "undo the creation");
+        assert!(app.flow_pane.drawings.items().is_empty());
     }
 
     #[test]
@@ -4476,7 +5030,7 @@ plot(close)
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        assert_eq!(app.pane.drawings.items().len(), 1);
+        assert_eq!(app.flow_pane.drawings.items().len(), 1);
 
         ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("test-text-input")));
         run_frame_with_events(
@@ -4488,14 +5042,14 @@ plot(close)
             ],
         );
         assert_eq!(
-            app.pane.drawings.items().len(),
+            app.flow_pane.drawings.items().len(),
             1,
             "while an input owns the keyboard the delete keys stay in it"
         );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
         assert!(
-            app.pane.drawings.items().is_empty(),
+            app.flow_pane.drawings.items().is_empty(),
             "with focus released the same key deletes the selection"
         );
     }
@@ -4510,7 +5064,7 @@ plot(close)
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
-        assert!(app.pane.drawings.items().is_empty());
+        assert!(app.flow_pane.drawings.items().is_empty());
         let texts = painted_text(&run_frame(&mut app, &ctx));
         for label in ["Drawing deleted.", "Undo"] {
             assert!(
@@ -4526,7 +5080,7 @@ plot(close)
             egui::Modifiers::COMMAND,
         );
         assert_eq!(
-            app.pane.drawings.items().len(),
+            app.flow_pane.drawings.items().len(),
             1,
             "Ctrl+Z drives the same history as the toast's Undo"
         );
@@ -4538,7 +5092,7 @@ plot(close)
             egui::Modifiers::COMMAND,
         );
         assert!(
-            app.pane.drawings.items().is_empty(),
+            app.flow_pane.drawings.items().is_empty(),
             "Ctrl+Y redoes the undone delete"
         );
     }
@@ -4553,7 +5107,7 @@ plot(close)
         let stroke_position = egui::pos2(700.0, 300.0);
         click_chart(&mut app, &ctx, stroke_position);
         let marker = egui::Color32::from_rgb(1, 2, 3);
-        app.pane
+        app.flow_pane
             .drawings
             .selected_mut()
             .expect("placement selects the line")
@@ -4564,24 +5118,24 @@ plot(close)
             "the visible line paints its stroke"
         );
 
-        app.pane.drawings.set_selected_hidden(true);
+        app.flow_pane.drawings.set_selected_hidden(true);
         assert!(
             !painted_line_with_color(&run_frame(&mut app, &ctx), marker),
             "a hidden drawing must not paint"
         );
 
-        app.pane.drawings.select(None);
+        app.flow_pane.drawings.select(None);
         click_chart(&mut app, &ctx, stroke_position);
         assert_eq!(
-            app.pane.drawings.selected(),
+            app.flow_pane.drawings.selected(),
             None,
             "a hidden drawing must not hit-test"
         );
 
-        let viewport_before = app.pane.viewport.right_edge_bar(app.pane.slots());
+        let viewport_before = app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots());
         drag_chart(&mut app, &ctx, stroke_position, egui::pos2(640.0, 260.0));
         assert_ne!(
-            app.pane.viewport.right_edge_bar(app.pane.slots()),
+            app.flow_pane.viewport.right_edge_bar(app.flow_pane.slots()),
             viewport_before,
             "over a hidden drawing the gesture belongs to the chart again"
         );
@@ -4592,7 +5146,7 @@ plot(close)
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        app.pane.drawings.place(
+        app.flow_pane.drawings.place(
             drawing_tool("horizontal-line"),
             ChartPoint {
                 bar: 1.0,
@@ -4602,7 +5156,7 @@ plot(close)
 
         evt_tx.try_send(FeedEvent::Reset).unwrap();
         app.drain_feed();
-        assert!(app.pane.drawings.items().is_empty());
+        assert!(app.flow_pane.drawings.items().is_empty());
         assert!(
             app.drawing_toast.is_some(),
             "the clear must raise the notice toast"
@@ -4631,9 +5185,12 @@ plot(close)
         // Draft first: Esc cancels it and returns to Pointer.
         arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        assert_eq!(app.pane.drawings.draft_len(), 1);
+        assert_eq!(app.flow_pane.drawings.draft_len(), 1);
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-        assert!(app.pane.drawings.draft().is_none(), "Esc cancels the draft");
+        assert!(
+            app.flow_pane.drawings.draft().is_none(),
+            "Esc cancels the draft"
+        );
         assert_eq!(app.toolrail.tool(), Tool::Pointer);
 
         // A locked selection with a pending confirmation: Esc peels one
@@ -4641,20 +5198,28 @@ plot(close)
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        app.pane.drawings.set_selected_locked(true);
+        app.flow_pane.drawings.set_selected_locked(true);
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
         assert!(app.drawing_delete_confirm, "the confirmation is pending");
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
         assert!(!app.drawing_delete_confirm, "first Esc cancels the confirm");
         assert!(
-            app.pane.drawings.selected().is_some(),
+            app.flow_pane.drawings.selected().is_some(),
             "the selection survives"
         );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-        assert_eq!(app.pane.drawings.selected(), None, "second Esc deselects");
-        assert_eq!(app.pane.drawings.items().len(), 1, "nothing was deleted");
+        assert_eq!(
+            app.flow_pane.drawings.selected(),
+            None,
+            "second Esc deselects"
+        );
+        assert_eq!(
+            app.flow_pane.drawings.items().len(),
+            1,
+            "nothing was deleted"
+        );
     }
 
     #[test]
@@ -4665,16 +5230,16 @@ plot(close)
         arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
         click_chart(&mut app, &ctx, egui::pos2(650.0, 280.0));
         click_chart(&mut app, &ctx, egui::pos2(750.0, 300.0));
-        assert_eq!(app.pane.drawings.draft_len(), 2);
+        assert_eq!(app.flow_pane.drawings.draft_len(), 2);
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Backspace)]);
         assert_eq!(
-            app.pane.drawings.draft_len(),
+            app.flow_pane.drawings.draft_len(),
             1,
             "Backspace removes the last placed anchor"
         );
         assert!(
-            app.pane.drawings.items().is_empty(),
+            app.flow_pane.drawings.items().is_empty(),
             "the draft workflow never deletes finished objects"
         );
     }
@@ -4695,7 +5260,7 @@ plot(close)
             egui::Modifiers::ALT,
         );
         assert!(
-            app.pane.drawings.items()[0].locked,
+            app.flow_pane.drawings.items()[0].locked,
             "Alt+L locks the selection"
         );
 
@@ -4706,7 +5271,7 @@ plot(close)
             egui::Modifiers::ALT,
         );
         assert!(
-            app.pane.drawings.items()[0].hidden,
+            app.flow_pane.drawings.items()[0].hidden,
             "Alt+H hides the selection"
         );
         assert_eq!(
@@ -4724,7 +5289,7 @@ plot(close)
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        let original_bar = app.pane.drawings.items()[0].points[0].bar;
+        let original_bar = app.flow_pane.drawings.items()[0].points[0].bar;
 
         run_frame_with_modifiers(
             &mut app,
@@ -4732,10 +5297,10 @@ plot(close)
             vec![key_press_with(egui::Key::D, egui::Modifiers::COMMAND)],
             egui::Modifiers::COMMAND,
         );
-        assert_eq!(app.pane.drawings.items().len(), 2);
-        assert_eq!(app.pane.drawings.selected(), Some(1));
+        assert_eq!(app.flow_pane.drawings.items().len(), 2);
+        assert_eq!(app.flow_pane.drawings.selected(), Some(1));
         assert_eq!(
-            app.pane.drawings.items()[1].points[0].bar,
+            app.flow_pane.drawings.items()[1].points[0].bar,
             original_bar + DUPLICATE_OFFSET_BARS
         );
     }
@@ -4748,17 +5313,17 @@ plot(close)
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        let start = app.pane.drawings.items()[0].points[0];
-        let depth = app.pane.drawings.undo_depth();
+        let start = app.flow_pane.drawings.items()[0].points[0];
+        let depth = app.flow_pane.drawings.undo_depth();
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::ArrowRight)]);
         assert_eq!(
-            app.pane.drawings.items()[0].points[0].bar,
+            app.flow_pane.drawings.items()[0].points[0].bar,
             start.bar + 1.0,
             "one press is one bar"
         );
         assert_eq!(
-            app.pane.drawings.undo_depth(),
+            app.flow_pane.drawings.undo_depth(),
             depth + 1,
             "one press, one entry"
         );
@@ -4773,14 +5338,14 @@ plot(close)
             egui::Modifiers::SHIFT,
         );
         assert_eq!(
-            app.pane.drawings.items()[0].points[0].bar,
+            app.flow_pane.drawings.items()[0].points[0].bar,
             start.bar + 11.0,
             "Shift multiplies the nudge by ten"
         );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::ArrowUp)]);
         assert!(
-            app.pane.drawings.items()[0].points[0].price > start.price,
+            app.flow_pane.drawings.items()[0].points[0].price > start.price,
             "ArrowUp raises the price"
         );
     }
@@ -4807,7 +5372,7 @@ plot(close)
             Some("horizontal-line"),
             "the repeat pin keeps the tool armed"
         );
-        assert_eq!(app.pane.drawings.items().len(), 2);
+        assert_eq!(app.flow_pane.drawings.items().len(), 2);
     }
 
     #[test]
@@ -4822,7 +5387,7 @@ plot(close)
             egui::pos2(600.0, 250.0),
             egui::pos2(900.0, 400.0),
         );
-        assert_eq!(app.pane.drawings.items().len(), 1);
+        assert_eq!(app.flow_pane.drawings.items().len(), 1);
 
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
@@ -4879,7 +5444,7 @@ plot(close)
             egui::pos2(600.0, 250.0),
             egui::pos2(900.0, 400.0),
         );
-        let standard_levels = app.pane.drawings.items()[0]
+        let standard_levels = app.flow_pane.drawings.items()[0]
             .payload
             .as_any()
             .downcast_ref::<FibPayload>()
@@ -4908,7 +5473,7 @@ plot(close)
             egui::pos2(400.0, 250.0),
             egui::pos2(550.0, 400.0),
         );
-        let new_levels = app.pane.drawings.items()[1]
+        let new_levels = app.flow_pane.drawings.items()[1]
             .payload
             .as_any()
             .downcast_ref::<FibPayload>()
@@ -4918,7 +5483,7 @@ plot(close)
         assert_eq!(new_levels, 5, "a new fib starts from the default preset");
 
         // ...and the first one is untouched.
-        let old_levels = app.pane.drawings.items()[0]
+        let old_levels = app.flow_pane.drawings.items()[0]
             .payload
             .as_any()
             .downcast_ref::<FibPayload>()
@@ -4936,9 +5501,11 @@ plot(close)
         let (mut app, _cmd_rx) = app_with_history(400);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx); // one frame to settle the layout
-        app.pane.viewport.pan_pixels(200.0 * 8.0, app.pane.slots());
+        app.flow_pane
+            .viewport
+            .pan_pixels(200.0 * 8.0, app.flow_pane.slots());
 
-        app.pane.tick_n = 40;
+        app.flow_pane.tick_n = 40;
         let armed = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             armed.iter().any(|text| text.contains("rebuilding bars")),
@@ -4965,8 +5532,10 @@ plot(close)
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
 
-        app.pane.viewport.zoom(8.0); // 64 px candles: only a dozen fit
-        app.pane.viewport.pan_pixels(-10_000.0, app.pane.slots()); // into the empty future
+        app.flow_pane.viewport.zoom(8.0); // 64 px candles: only a dozen fit
+        app.flow_pane
+            .viewport
+            .pan_pixels(-10_000.0, app.flow_pane.slots()); // into the empty future
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             texts.iter().any(|text| text.contains("no bars in view")),
@@ -5059,9 +5628,9 @@ plot(close)
         let mut config = test_config();
         config.feeds[0].bubble_preset = Some("live lane pie".to_string());
         let app = app_on(config, "binance", "TESTUSDT");
-        assert_eq!(app.pane.orderflow.active_preset_for_test(), "live lane pie");
+        assert_eq!(app.tape().active_preset_for_test(), "live lane pie");
         assert!(
-            app.pane.orderflow.config_for_test().bubble_candle_summary,
+            app.tape().config_for_test().bubble_candle_summary,
             "the pie preset folds closed bars into per-price summaries"
         );
     }
@@ -5073,13 +5642,13 @@ plot(close)
         let with_unknown = app_on(config, "binance", "TESTUSDT");
         let untouched = app_on(test_config(), "binance", "TESTUSDT");
         assert_eq!(
-            with_unknown.pane.orderflow.active_preset_for_test(),
-            untouched.pane.orderflow.active_preset_for_test(),
+            with_unknown.tape().active_preset_for_test(),
+            untouched.tape().active_preset_for_test(),
             "a typo in the config must not restyle the chart"
         );
         assert_eq!(
-            with_unknown.pane.orderflow.config_for_test(),
-            untouched.pane.orderflow.config_for_test()
+            with_unknown.tape().config_for_test(),
+            untouched.tape().config_for_test()
         );
     }
 
@@ -5097,7 +5666,7 @@ plot(close)
             bubble_preset: Some("live lane pie".to_string()),
         });
         let mut app = app_on(config, "binance", "TESTUSDT");
-        let opened_with = app.pane.orderflow.active_preset_for_test().to_string();
+        let opened_with = app.tape().active_preset_for_test().to_string();
         assert_ne!(
             opened_with, "live lane pie",
             "nothing declared, nothing applied"
@@ -5106,7 +5675,7 @@ plot(close)
         // The switch path runs this after installing the new feed handle.
         app.feed_id = "mt".to_string();
         app.apply_feed_bubble_preset_after_switch("binance");
-        assert_eq!(app.pane.orderflow.active_preset_for_test(), "live lane pie");
+        assert_eq!(app.tape().active_preset_for_test(), "live lane pie");
     }
 
     #[test]
@@ -5114,18 +5683,18 @@ plot(close)
         let mut config = test_config();
         config.feeds[0].bubble_preset = Some("live lane pie".to_string());
         let mut app = app_on(config, "binance", "TESTUSDT");
-        assert_eq!(app.pane.orderflow.active_preset_for_test(), "live lane pie");
+        assert_eq!(app.tape().active_preset_for_test(), "live lane pie");
 
         // The user picks a different look by hand mid-session...
-        assert!(app.pane.orderflow.apply_preset("dense tape"));
+        assert!(app.tape_mut().apply_preset("dense tape"));
         // ...then hops symbols inside the same feed: the hand-picked look
         // survives — the declared preset belongs to the feed, not the symbol.
         app.apply_feed_bubble_preset_after_switch("binance");
-        assert_eq!(app.pane.orderflow.active_preset_for_test(), "dense tape");
+        assert_eq!(app.tape().active_preset_for_test(), "dense tape");
 
         // Arriving from another feed is what re-applies the declared look.
         app.apply_feed_bubble_preset_after_switch("other-feed");
-        assert_eq!(app.pane.orderflow.active_preset_for_test(), "live lane pie");
+        assert_eq!(app.tape().active_preset_for_test(), "live lane pie");
     }
 
     #[test]
@@ -5135,7 +5704,7 @@ plot(close)
         // Construction already asked the feed to record: capture follows the
         // market, not the toolbar.
         assert_eq!(take_capture_start(&mut cmd_rx), BOOK_GENERATION_STRIDE);
-        assert!(app.pane.orderflow.enabled());
+        assert!(app.tape().enabled());
         app.ensure_book_capture();
         assert!(
             cmd_rx.try_recv().is_err(),
@@ -5145,7 +5714,7 @@ plot(close)
         drop(cmd_rx);
         app.request_book_capture(false);
         assert!(
-            app.pane.orderflow.enabled(),
+            app.tape().enabled(),
             "closed command channel must preserve current capture state"
         );
     }
@@ -5157,24 +5726,24 @@ plot(close)
     fn hiding_the_heatmap_never_stops_the_recorder() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         take_capture_start(&mut cmd_rx);
-        let gaps_before = app.pane.orderflow.health().gaps;
+        let gaps_before = app.tape_mut().health().gaps;
 
         app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
-        assert!(app.pane.orderflow.depth_visible());
+        assert!(app.tape().depth_visible());
 
         app.apply_toolbar_action(ToolbarAction::SetHeatmap(false));
-        assert!(!app.pane.orderflow.depth_visible(), "the map is hidden");
-        assert!(app.pane.orderflow.enabled(), "the recorder is untouched");
+        assert!(!app.tape().depth_visible(), "the map is hidden");
+        assert!(app.tape().enabled(), "the recorder is untouched");
         assert!(
             cmd_rx.try_recv().is_err(),
             "showing or hiding the map sends no feed command"
         );
 
         app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
-        app.pane.orderflow.flush_for_test();
-        assert!(app.pane.orderflow.depth_visible());
+        app.tape_mut().flush_for_test();
+        assert!(app.tape().depth_visible());
         assert_eq!(
-            app.pane.orderflow.health().gaps,
+            app.tape_mut().health().gaps,
             gaps_before,
             "the toggle must not punch a coverage gap into the recording"
         );
@@ -5189,12 +5758,12 @@ plot(close)
         take_capture_start(&mut cmd_rx);
 
         let generation = app.next_book_generation();
-        app.pane.orderflow.set_enabled(false, generation);
+        app.tape_mut().set_enabled(false, generation);
         app.feed_id = "not-in-the-config".to_owned();
         assert!(!app.capabilities().book_capture);
 
         app.ensure_book_capture();
-        assert!(!app.pane.orderflow.enabled());
+        assert!(!app.tape().enabled());
         assert!(
             cmd_rx.try_recv().is_err(),
             "a source with no book is never asked to record"
@@ -5205,10 +5774,10 @@ plot(close)
     fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         take_capture_start(&mut cmd_rx);
-        assert!(!app.pane.orderflow.bubbles_enabled());
+        assert!(!app.tape().bubbles_enabled());
 
-        app.pane.orderflow.set_bubbles_enabled(true);
-        assert!(app.pane.orderflow.bubbles_enabled());
+        app.tape_mut().set_bubbles_enabled(true);
+        assert!(app.tape().bubbles_enabled());
         assert!(
             cmd_rx.try_recv().is_err(),
             "aggregate trades already flow; no feed command is needed"
@@ -5216,7 +5785,7 @@ plot(close)
 
         app.apply_toolbar_action(ToolbarAction::SetHeatmap(false));
         assert!(
-            app.pane.orderflow.bubbles_enabled(),
+            app.tape().bubbles_enabled(),
             "hiding the book must not stop the bubbles"
         );
     }
@@ -5227,48 +5796,41 @@ plot(close)
         enable_heatmap_with_snapshot(&mut app, &mut cmd_rx);
         let grouping = Decimal::new(5, 2);
 
-        assert!(app.pane.orderflow.stage_capture_grouping_for_test(grouping));
-        assert_eq!(app.pane.orderflow.health().active_levels, 2);
+        assert!(app.tape_mut().stage_capture_grouping_for_test(grouping));
+        assert_eq!(app.tape_mut().health().active_levels, 2);
         app.restart_book_capture();
 
         assert!(matches!(
             cmd_rx.try_recv(),
             Ok(FeedCommand::RestartBookCapture { .. })
         ));
-        assert_eq!(
-            app.pane.orderflow.base_capture_grouping_for_test(),
-            grouping
-        );
-        assert_eq!(app.pane.orderflow.health().active_levels, 0);
-        assert_eq!(app.pane.orderflow.health().status, "connecting");
+        assert_eq!(app.tape_mut().base_capture_grouping_for_test(), grouping);
+        assert_eq!(app.tape_mut().health().active_levels, 0);
+        assert_eq!(app.tape_mut().health().status, "connecting");
     }
 
     #[test]
     fn closed_restart_channel_rolls_back_grouping_without_losing_history() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         enable_heatmap_with_snapshot(&mut app, &mut cmd_rx);
-        let original = app.pane.orderflow.base_capture_grouping_for_test();
+        let original = app.tape_mut().base_capture_grouping_for_test();
 
         assert!(
-            app.pane
-                .orderflow
+            app.tape_mut()
                 .stage_capture_grouping_for_test(Decimal::new(5, 2))
         );
         drop(cmd_rx);
         app.restart_book_capture();
 
-        assert_eq!(
-            app.pane.orderflow.base_capture_grouping_for_test(),
-            original
-        );
-        assert_eq!(app.pane.orderflow.health().active_levels, 2);
+        assert_eq!(app.tape_mut().base_capture_grouping_for_test(), original);
+        assert_eq!(app.tape_mut().health().active_levels, 2);
     }
 
     #[test]
     fn full_restart_channel_rolls_back_grouping_without_losing_history() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         enable_heatmap_with_snapshot(&mut app, &mut cmd_rx);
-        let original = app.pane.orderflow.base_capture_grouping_for_test();
+        let original = app.tape_mut().base_capture_grouping_for_test();
         let (full_tx, mut full_rx) = mpsc::channel(1);
         app.commands = full_tx;
         app.commands
@@ -5276,8 +5838,7 @@ plot(close)
             .unwrap();
 
         assert!(
-            app.pane
-                .orderflow
+            app.tape_mut()
                 .stage_capture_grouping_for_test(Decimal::new(5, 2))
         );
         app.restart_book_capture();
@@ -5286,11 +5847,8 @@ plot(close)
             full_rx.try_recv(),
             Ok(FeedCommand::LoadOlder { count: 1 })
         ));
-        assert_eq!(
-            app.pane.orderflow.base_capture_grouping_for_test(),
-            original
-        );
-        assert_eq!(app.pane.orderflow.health().active_levels, 2);
+        assert_eq!(app.tape_mut().base_capture_grouping_for_test(), original);
+        assert_eq!(app.tape_mut().health().active_levels, 2);
     }
 
     #[test]
@@ -5299,7 +5857,7 @@ plot(close)
 
         let (mut app, _evt_tx, mut cmd_rx, book_tx) = test_app();
         let generation = take_capture_start(&mut cmd_rx);
-        let bars_before = app.pane.state.bars().len();
+        let bars_before = app.flow_pane.state.bars().len();
         book_tx
             .try_send(DepthEvent::Snapshot {
                 symbol: "TESTUSDT".to_owned(),
@@ -5319,11 +5877,11 @@ plot(close)
             .unwrap();
 
         app.drain_book_feed();
-        app.pane.orderflow.flush_for_test();
-        let book = app.pane.orderflow.health();
+        app.tape_mut().flush_for_test();
+        let book = app.tape_mut().health();
         assert_eq!(book.bid_levels, 1);
         assert_eq!(book.ask_levels, 1);
-        assert_eq!(app.pane.state.bars().len(), bars_before);
+        assert_eq!(app.flow_pane.state.bars().len(), bars_before);
     }
 
     #[test]
@@ -5331,14 +5889,14 @@ plot(close)
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         take_capture_start(&mut cmd_rx);
         let capture_epoch = app.book_capture_epoch;
-        let bar_spec = app.pane.state.spec().clone();
+        let bar_spec = app.flow_pane.state.spec().clone();
 
         app.style.candles = CandlePreset::OutlineOnly.style();
         app.style_revision = app.style_revision.saturating_add(1);
         app.emit_style_changed(Some(CandlePreset::OutlineOnly));
 
-        assert_eq!(app.pane.state.spec(), &bar_spec);
-        assert!(app.pane.orderflow.enabled());
+        assert_eq!(app.flow_pane.state.spec(), &bar_spec);
+        assert!(app.tape().enabled());
         assert_eq!(app.book_capture_epoch, capture_epoch);
         assert!(
             matches!(cmd_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
@@ -5409,6 +5967,502 @@ plot(close)
         // Epoch: 1970-01-01 00:00:00 UTC, then +1h 2m 3s.
         assert_eq!(fmt_time(0, TzOffset::new(0)), "00:00:00");
         assert_eq!(fmt_time(3_723_000, TzOffset::new(0)), "01:02:03");
+    }
+
+    /// An app with `count` trades of history, split, and laid out by two real
+    /// frames so both panes have reported their rects.
+    fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+        let (mut app, commands) = app_with_history(count);
+        run_frame(&mut app, ctx);
+        app.set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, ctx);
+        run_frame(&mut app, ctx);
+        (app, commands)
+    }
+
+    /// Let every pane's indicator worker finish what it was sent, then apply
+    /// its events — the two steps the frame loop takes, made deterministic.
+    fn settle_indicators(app: &mut QuantickApp) {
+        for pane in app.panes_mut() {
+            pane.indicator_worker.flush();
+            pane.apply_indicator_events();
+        }
+    }
+
+    /// A point inside the pane on `side`, for a click that focuses it.
+    fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
+        app.pane(side)
+            .last_chart_area
+            .expect("the pane reported its rect")
+            .center()
+    }
+
+    /// (a) The split really puts two charts on the canvas: two panes with
+    /// their own laid-out rects, side by side, and a divider between them.
+    #[test]
+    fn enabling_the_split_lays_out_two_panes_and_a_divider() {
+        let ctx = egui::Context::default();
+        let (app, _commands) = split_app(&ctx, 200);
+
+        let time = app
+            .time_pane
+            .as_ref()
+            .expect("Time + Flow builds the time pane")
+            .last_chart_area
+            .expect("the time pane was laid out");
+        let flow = app
+            .flow_pane
+            .last_chart_area
+            .expect("the flow pane was laid out");
+        assert!(
+            time.right() <= flow.left(),
+            "time pane left, flow pane right: {time:?} vs {flow:?}"
+        );
+        assert!(
+            flow.left() - time.right() >= CANVAS_DIVIDER_PX,
+            "the divider owns the pixels between them"
+        );
+        assert!(time.width() > 0.0 && flow.width() > 0.0);
+    }
+
+    /// Both panes paint: each keeps its own price axis, and the time pane
+    /// carries the timeframe selector §11 gives it.
+    #[test]
+    fn both_panes_paint_and_the_time_pane_carries_its_own_selector() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            has_price_axis(&texts),
+            "the split canvas still paints a chart: {texts:?}"
+        );
+        for (label, _) in time_header::PRESETS {
+            assert!(
+                texts.iter().any(|text| text == label),
+                "the time pane's header must offer {label:?}; painted: {texts:?}"
+            );
+        }
+    }
+
+    /// (b) One tape, two panes: the same trades reach both `ChartState`s, and
+    /// each cuts them by its own spec — which is the whole point of the split.
+    #[test]
+    fn one_tape_feeds_both_panes_and_each_cuts_it_its_own_way() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        let time = app.time_pane.as_ref().expect("time pane");
+        assert_eq!(
+            time.state.trades().len(),
+            app.flow_pane.state.trades().len(),
+            "both panes hold the same tape"
+        );
+        assert_ne!(
+            time.state.bars().len(),
+            app.flow_pane.state.bars().len(),
+            "tick(1) and M1 cannot agree on a bar count over the same trades"
+        );
+
+        // And a live trade after the split reaches both of them.
+        let flow_before = app.flow_pane.state.trades().len();
+        let time_before = app
+            .time_pane
+            .as_ref()
+            .expect("time pane")
+            .state
+            .trades()
+            .len();
+        let trade = trade(500);
+        app.ingest_live_trade_at(&trade, trade.timestamp_ms);
+        assert_eq!(app.flow_pane.state.trades().len(), flow_before + 1);
+        assert_eq!(
+            app.time_pane
+                .as_ref()
+                .expect("time pane")
+                .state
+                .trades()
+                .len(),
+            time_before + 1,
+            "a pane off the drain path would silently fall behind the market"
+        );
+    }
+
+    /// Seeding a pane opened mid-session must not relabel live prints as
+    /// history: the backfill divider is a data-honesty mark, not a decoration.
+    #[test]
+    fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(100);
+        // Everything so far is backfill; now three prints arrive live.
+        for id in 101..=103 {
+            let trade = trade(id);
+            app.ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        run_frame(&mut app, &ctx);
+        app.set_layout(CanvasLayout::TimeAndFlow);
+
+        let time = app.time_pane.as_ref().expect("time pane");
+        assert_eq!(
+            time.state.trades().len(),
+            103,
+            "the new pane opens showing the market, not an empty chart"
+        );
+        assert_eq!(
+            time.state.backfill_trade_count(),
+            app.flow_pane.state.backfill_trade_count(),
+            "the live prints must not become history in the second view"
+        );
+    }
+
+    /// (c) The time pane's header governs the time pane and nothing else; the
+    /// toolbar's BARS group keeps governing the flow pane (§11).
+    #[test]
+    fn a_timeframe_chip_moves_only_the_time_panes_spec() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let flow_spec = app.flow_pane.state.spec().clone();
+        assert_eq!(
+            app.pane(PaneSide::Time).state.spec(),
+            &BarSpec::Time(time_header::DEFAULT_INTERVAL_MS),
+            "the time pane opens on M1, not on the flow selector's interval"
+        );
+
+        // The 15m chip, clicked where it was actually drawn.
+        let (label, expected_ms) = time_header::PRESETS[2];
+        let chip = app.time_header_chips[2];
+        assert!(chip.is_positive(), "the {label} chip was laid out");
+        click_chart(&mut app, &ctx, chip.center());
+        // The spec change is deferred one frame, exactly as the toolbar's is.
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            app.pane(PaneSide::Time).state.spec(),
+            &BarSpec::Time(expected_ms),
+            "clicking {label} must re-cut the time pane"
+        );
+        assert_eq!(
+            app.flow_pane.state.spec(),
+            &flow_spec,
+            "and must leave the chart beside it alone"
+        );
+    }
+
+    /// (d) `Insert → Indicator` targets the focused pane (§11): the slot lands
+    /// on the pane the user is working in, and only there.
+    #[test]
+    fn an_indicator_lands_on_the_focused_pane_only() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let flow_before = app.flow_pane.indicators.all().len();
+
+        let point = pane_point(&app, PaneSide::Time);
+
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(
+            app.focused_side(),
+            PaneSide::Time,
+            "clicking a pane focuses it"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+
+        let time = app.time_pane.as_ref().expect("time pane");
+        assert_eq!(
+            time.indicators.all().len(),
+            1,
+            "the EMA belongs to the pane that had focus"
+        );
+        assert!(
+            time.indicators
+                .all()
+                .iter()
+                .any(|view| view.label().contains("EMA")),
+            "and it really built: {:?}",
+            time.indicators
+                .all()
+                .iter()
+                .map(|view| view.label().to_owned())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            app.flow_pane.indicators.all().len(),
+            flow_before,
+            "the pane beside it gains nothing"
+        );
+        // The persisted set is the flow pane's; a time-pane slot must not
+        // enter it (see maintain_indicator_state).
+        assert!(
+            app.slot_kinds
+                .iter()
+                .all(|(owner, _)| owner.side == PaneSide::Time),
+            "the only registered slot is the time pane's"
+        );
+    }
+
+    /// Slot ids are per pane, so the same number means different indicators on
+    /// the two of them. Removing one must not unregister the other.
+    #[test]
+    fn removing_a_slot_on_one_pane_leaves_the_same_number_on_the_other() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        let point = pane_point(&app, PaneSide::Flow);
+
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+        settle_indicators(&mut app);
+        assert_eq!(app.slot_kinds.len(), 2);
+        let time_slot = app.time_pane.as_ref().expect("time pane").indicators.all()[0].slot;
+
+        // Focused on the time pane: remove its slot.
+        app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_slot.0));
+
+        assert_eq!(
+            app.slot_kinds.len(),
+            1,
+            "exactly one registration went with it"
+        );
+        assert_eq!(
+            app.slot_kinds[0].0.side,
+            PaneSide::Flow,
+            "and the survivor is the flow pane's"
+        );
+        assert_eq!(app.flow_pane.indicators.all().len(), 1);
+    }
+
+    /// §11: flow layers stay on the flow pane. A time pane must not run a book
+    /// worker, draw a lane, or claim strip pixels.
+    #[test]
+    fn the_time_pane_has_no_tape_and_no_flow_layers() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        app.apply_toolbar_action(ToolbarAction::SetLiveStrip(true));
+        app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+        app.apply_toolbar_action(ToolbarAction::SetBubbles(true));
+        run_frame(&mut app, &ctx);
+
+        let time = app.time_pane.as_ref().expect("time pane");
+        assert!(
+            time.orderflow.is_none(),
+            "no tape means no book worker behind it"
+        );
+        assert_eq!(
+            time.live_strip_width(),
+            0.0,
+            "the strip is a flow layer and claims no pixels here"
+        );
+        assert!(
+            time.last_lane_divider_x.is_none(),
+            "and there is no live lane to divide"
+        );
+        // The toggles still reached the flow pane, which is what owns them.
+        assert!(app.tape().depth_visible());
+        assert!(app.tape().bubbles_enabled());
+        assert!(app.flow_pane.live_strip_visible);
+    }
+
+    /// (e) Dragging the divider moves it, and stops at the quarter §11
+    /// promises each pane.
+    #[test]
+    fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let flow_before = app.flow_pane.last_chart_area.expect("laid out").width();
+        let divider = app.canvas_divider.expect("the divider was registered");
+        let grab = divider.center();
+
+        drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 120.0, grab.y));
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.split_fraction > DEFAULT_PANE_FRACTION,
+            "dragging right widens the time pane, got {}",
+            app.split_fraction
+        );
+        assert!(
+            app.flow_pane.last_chart_area.expect("laid out").width() < flow_before,
+            "at the flow pane's expense"
+        );
+
+        // Now shove it far past the minimum: it stops, it does not collapse.
+        for _ in 0..6 {
+            let grab = app.canvas_divider.expect("registered").center();
+            drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
+            run_frame(&mut app, &ctx);
+        }
+        assert!(
+            (app.split_fraction - (1.0 - MIN_PANE_FRACTION)).abs() < 1e-3,
+            "the flow pane keeps its quarter, got {}",
+            app.split_fraction
+        );
+        assert!(app.flow_pane.last_chart_area.expect("laid out").width() > 0.0);
+    }
+
+    /// The keyboard's drawing grammar follows focus as well: Delete removes
+    /// the selection on the pane the user is in, never its opposite number on
+    /// the chart beside it.
+    #[test]
+    fn the_keyboard_deletes_from_the_focused_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        for side in [PaneSide::Flow, PaneSide::Time] {
+            app.toolrail
+                .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+            let point = pane_point(&app, side);
+            click_chart(&mut app, &ctx, point);
+        }
+        assert_eq!(app.flow_pane.drawings.items().len(), 1);
+        assert_eq!(app.pane(PaneSide::Time).drawings.items().len(), 1);
+        assert_eq!(
+            app.focused_side(),
+            PaneSide::Time,
+            "the last click was on the time pane"
+        );
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+
+        assert!(
+            app.pane(PaneSide::Time).drawings.items().is_empty(),
+            "Delete removes the focused pane's selection"
+        );
+        assert_eq!(
+            app.flow_pane.drawings.items().len(),
+            1,
+            "and leaves the pane beside it untouched"
+        );
+    }
+
+    /// The status bar's content section speaks for the focused pane (§11), so
+    /// it always describes the chart the user is working in.
+    #[test]
+    fn the_status_bar_follows_the_focused_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        let point = pane_point(&app, PaneSide::Flow);
+
+        click_chart(&mut app, &ctx, point);
+        let flow_status = app.status_model();
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        let time_status = app.status_model();
+
+        assert_eq!(
+            flow_status.spec_summary,
+            app.flow_pane.state.spec().summary()
+        );
+        assert_eq!(
+            time_status.spec_summary,
+            app.pane(PaneSide::Time).state.spec().summary()
+        );
+        assert_ne!(
+            flow_status.spec_summary, time_status.spec_summary,
+            "the two panes report different specs, so the bar has to change"
+        );
+        // Provenance is the market's and never moves with focus.
+        assert_eq!(flow_status.symbol, time_status.symbol);
+        assert_eq!(flow_status.venue, time_status.venue);
+    }
+
+    /// Drawings are per pane, and the tool rail is one: an object lands on the
+    /// pane under the cursor and stays out of the other's overlay.
+    #[test]
+    fn a_drawing_lands_on_the_pane_under_the_cursor() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+
+        assert_eq!(
+            app.pane(PaneSide::Time).drawings.items().len(),
+            1,
+            "the click landed on the time pane"
+        );
+        assert!(
+            app.flow_pane.drawings.items().is_empty(),
+            "and nowhere else"
+        );
+
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.flow_pane.drawings.items().len(), 1);
+        assert_eq!(
+            app.pane(PaneSide::Time).drawings.items().len(),
+            1,
+            "placing on one pane must not add to the other"
+        );
+    }
+
+    /// Going back to Single hides the context chart; it must not throw away
+    /// what the user built on it, and it must keep following the market.
+    #[test]
+    fn leaving_the_split_keeps_the_time_panes_work_and_its_bars() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.pane(PaneSide::Time).drawings.items().len(), 1);
+
+        app.set_layout(CanvasLayout::Single);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.focused_side(),
+            PaneSide::Flow,
+            "a single canvas is the flow pane, whatever had focus"
+        );
+
+        let before = app.pane(PaneSide::Time).state.trades().len();
+        let trade = trade(700);
+        app.ingest_live_trade_at(&trade, trade.timestamp_ms);
+        assert_eq!(
+            app.pane(PaneSide::Time).state.trades().len(),
+            before + 1,
+            "a hidden pane keeps draining, so showing it again never catches up"
+        );
+
+        app.set_layout(CanvasLayout::TimeAndFlow);
+        assert_eq!(
+            app.pane(PaneSide::Time).drawings.items().len(),
+            1,
+            "and its drawings survived the round trip"
+        );
+    }
+
+    /// The default layout is the one quantick opens on, and the split must not
+    /// have quietly changed it: one pane, the whole canvas, no second worker.
+    #[test]
+    fn the_single_layout_still_gives_the_flow_pane_the_whole_canvas() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(app.layout, CanvasLayout::Single);
+        assert!(
+            app.time_pane.is_none(),
+            "an unsplit canvas builds no second pane, and no worker behind it"
+        );
+        let chart = app.flow_pane.last_chart_area.expect("laid out");
+        // The canvas the pane was given, reconstructed from the rect it kept:
+        // wider than half the window, so nothing was carved off for a divider.
+        assert!(
+            chart.width() > 600.0,
+            "the flow pane still owns the canvas, got {chart:?}"
+        );
+        assert_eq!(app.focused_side(), PaneSide::Flow);
     }
 
     #[test]

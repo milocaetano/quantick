@@ -293,6 +293,21 @@ impl ChartState {
         self.backfill_boundary
     }
 
+    /// Every trade this chart still holds, oldest first — what a rebuild
+    /// replays, and what a second view of the same market is seeded from.
+    #[must_use]
+    pub fn trades(&self) -> &[Trade] {
+        &self.trades
+    }
+
+    /// How many of [`Self::trades`] arrived as backfilled history rather than
+    /// live. Seeding another chart needs this: a trade that was streamed live
+    /// must not become "history" just because the second view opened late.
+    #[must_use]
+    pub fn backfill_trade_count(&self) -> usize {
+        self.backfill_trade_count
+    }
+
     /// When the bar in chart slot `index` opened — a closed bar, or the forming
     /// bar in the slot right after them (the chart draws it as one more).
     ///
