@@ -132,9 +132,14 @@ pub(crate) enum Kernel {
 
 /// One implicit expression-history ring: committed values, newest last,
 /// bounded by the script's `max_bars_back`.
+///
+/// A `VecDeque` rather than a `Vec`: dropping the oldest value with
+/// `Vec::remove(0)` shifted the whole ring on every commit once it filled —
+/// up to 500 entries per history node per closed bar, and tick bars close
+/// many times a second under a dense tape.
 #[derive(Clone, Default)]
 pub(crate) struct HistRing {
-    values: Vec<Value>,
+    values: std::collections::VecDeque<Value>,
 }
 
 /// Everything that persists across bars — the state a preview snapshots.
@@ -146,6 +151,12 @@ pub(crate) struct ScriptState {
     pub var_done: Vec<bool>,
     /// Kernel instances by (call site, interned path).
     pub kernels: BTreeMap<(u32, u32), Kernel>,
+    /// The length each kernel was instantiated with, same key. A kernel is
+    /// built once and keeps its window forever, so a length that changes
+    /// between bars — `f(n) => ta.sma(close, n)` called with a moving `n` —
+    /// would silently keep bar zero's window while the plot title claimed
+    /// otherwise. Pine refuses a series length; so do we, honestly.
+    pub kernel_lengths: BTreeMap<(u32, u32), usize>,
     /// Expression histories by (history id, interned path).
     pub histories: BTreeMap<(u32, u32), HistRing>,
     /// Values staged for the forming bar's histories, flushed on commit.
@@ -156,11 +167,17 @@ pub(crate) struct ScriptState {
     pub path_children: BTreeMap<(u32, u32), u32>,
     /// Next fresh path id (0 = the root path).
     pub next_path: u32,
+    /// The reused local-frame stack. It lives here, not in `Eval`, so its
+    /// capacity survives across bars: a fresh `Vec` per bar meant any script
+    /// with a user function paid a malloc/free every bar, in a walk
+    /// documented as allocation-free after the first one.
+    pub locals: Vec<Value>,
 }
 
 impl ScriptState {
     pub(crate) fn new(global_slots: usize) -> Self {
         Self {
+            locals: Vec::new(),
             globals: vec![Value::Na; global_slots],
             var_done: vec![false; global_slots],
             next_path: 1,
@@ -196,7 +213,10 @@ impl ScriptState {
             }
         }
         self.kernels = kernels;
-        self.objects = objects;
+        // Not a plain assignment: `restore_from` keeps the object id counter
+        // moving forward, so a `varip` handle that survives this rollback
+        // cannot collide with an id the commit run is about to allocate.
+        self.objects.restore_from(objects);
         self.staged_histories.clear();
     }
 
@@ -204,9 +224,9 @@ impl ScriptState {
     pub(crate) fn commit_bar(&mut self, max_bars_back: usize) {
         for ((series, path), value) in std::mem::take(&mut self.staged_histories) {
             let ring = self.histories.entry((series, path)).or_default();
-            ring.values.push(value);
+            ring.values.push_back(value);
             if ring.values.len() > max_bars_back {
-                ring.values.remove(0);
+                ring.values.pop_front();
             }
         }
     }
@@ -236,8 +256,7 @@ pub(crate) struct Eval<'a> {
     pub row: &'a mut [f64],
     /// True on commit runs (`barstate.isconfirmed`).
     pub is_commit: bool,
-    /// Reused local-frame storage across calls.
-    pub locals: Vec<Value>,
+
     /// Current interned call path (0 = top level).
     pub path: u32,
     /// Current frame base in `locals`.
@@ -262,7 +281,6 @@ impl<'a> Eval<'a> {
             state,
             row,
             is_commit,
-            locals: Vec::new(),
             path: 0,
             frame_base: 0,
         }
@@ -273,13 +291,43 @@ impl<'a> Eval<'a> {
         let NodeKind::Script { statements } = &self.script.ast.node(self.script.root).kind else {
             return Ok(());
         };
-        for statement in statements.clone() {
+        for &statement in statements {
             self.statement(statement)?;
         }
         Ok(())
     }
 
-    fn kind(&self, id: NodeId) -> &NodeKind {
+    /// The node's kind, borrowed from the *script* rather than from `self`.
+    ///
+    /// That lifetime is what lets `match self.kind(id) { … }` call
+    /// `self.eval(..)` inside its arms. Cloning to dodge the borrow cost one
+    /// allocation per evaluated node per bar — `Name(String)`, `Call(Vec<Arg>)`
+    /// and friends are the common cases — against a module that promises the
+    /// per-bar walk allocates nothing after its first bar.
+    /// Pin a kernel's length on first use and refuse a later change.
+    fn pin_kernel_length(
+        &mut self,
+        key: (u32, u32),
+        len: usize,
+        id: NodeId,
+    ) -> Result<(), PineError> {
+        match self.state.kernel_lengths.get(&key) {
+            Some(&pinned) if pinned != len => Err(self.err(
+                id,
+                ErrorCode::PineSeriesLength,
+                format!(
+                    "this kernel was built with length {pinned} and cannot change to                      {len} mid-stream; a kernel's window is fixed when it is created"
+                ),
+            )),
+            Some(_) => Ok(()),
+            None => {
+                self.state.kernel_lengths.insert(key, len);
+                Ok(())
+            }
+        }
+    }
+
+    fn kind(&self, id: NodeId) -> &'a NodeKind {
         &self.script.ast.node(id).kind
     }
 
@@ -316,7 +364,7 @@ impl<'a> Eval<'a> {
     // ---- statements ------------------------------------------------------
 
     fn statement(&mut self, id: NodeId) -> Result<Value, PineError> {
-        match self.kind(id).clone() {
+        match self.kind(id) {
             NodeKind::Declare { mode, value, .. } => {
                 let resolution = self.script.resolutions[id.index()];
                 match resolution {
@@ -324,27 +372,27 @@ impl<'a> Eval<'a> {
                         let slot = slot as usize;
                         // var/varip initialisers run once; later bars keep
                         // the carried value (Pine's rule).
-                        if mode != VarMode::Plain && self.state.var_done[slot] {
+                        if *mode != VarMode::Plain && self.state.var_done[slot] {
                             return Ok(self.state.globals[slot].clone());
                         }
-                        let v = self.eval(value)?;
+                        let v = self.eval(*value)?;
                         self.state.globals[slot] = v.clone();
-                        if mode != VarMode::Plain {
+                        if *mode != VarMode::Plain {
                             self.state.var_done[slot] = true;
                         }
                         Ok(v)
                     }
                     Resolution::Local(slot) => {
-                        let v = self.eval(value)?;
+                        let v = self.eval(*value)?;
                         let index = self.frame_base + slot as usize;
-                        self.locals[index] = v.clone();
+                        self.state.locals[index] = v.clone();
                         Ok(v)
                     }
                     _ => Ok(Value::Na),
                 }
             }
             NodeKind::TupleDeclare { names, value } => {
-                let v = self.eval(value)?;
+                let v = self.eval(*value)?;
                 let Value::Tuple(items) = &v else {
                     return Err(self.type_err(id, "a tuple", &v));
                 };
@@ -364,7 +412,7 @@ impl<'a> Eval<'a> {
                     Resolution::Local(first) => {
                         for (offset, item) in items.iter().enumerate() {
                             let index = self.frame_base + first as usize + offset;
-                            self.locals[index] = item.clone();
+                            self.state.locals[index] = item.clone();
                         }
                     }
                     _ => {}
@@ -372,12 +420,12 @@ impl<'a> Eval<'a> {
                 Ok(v)
             }
             NodeKind::Reassign { value, .. } => {
-                let v = self.eval(value)?;
+                let v = self.eval(*value)?;
                 match self.script.resolutions[id.index()] {
                     Resolution::Global(slot) => self.state.globals[slot as usize] = v.clone(),
                     Resolution::Local(slot) => {
                         let index = self.frame_base + slot as usize;
-                        self.locals[index] = v.clone();
+                        self.state.locals[index] = v.clone();
                     }
                     _ => {}
                 }
@@ -385,7 +433,7 @@ impl<'a> Eval<'a> {
             }
             // Definitions execute nothing by themselves.
             NodeKind::FunctionDef { .. } => Ok(Value::Na),
-            NodeKind::ExprStmt { expr } => self.eval(expr),
+            NodeKind::ExprStmt { expr } => self.eval(*expr),
             _ => self.eval(id),
         }
     }
@@ -394,17 +442,17 @@ impl<'a> Eval<'a> {
 
     #[allow(clippy::too_many_lines)]
     fn eval(&mut self, id: NodeId) -> Result<Value, PineError> {
-        match self.kind(id).clone() {
-            NodeKind::Int(v) => Ok(Value::Num(v as f64)),
-            NodeKind::Float(v) => Ok(Value::Num(v)),
-            NodeKind::Str(v) => Ok(Value::Str(Rc::new(v))),
-            NodeKind::Bool(v) => Ok(Value::Bool(v)),
-            NodeKind::Color(v) => Ok(Value::Color(v)),
+        match self.kind(id) {
+            NodeKind::Int(v) => Ok(Value::Num(*v as f64)),
+            NodeKind::Float(v) => Ok(Value::Num(*v)),
+            NodeKind::Str(v) => Ok(Value::Str(Rc::new(v.clone()))),
+            NodeKind::Bool(v) => Ok(Value::Bool(*v)),
+            NodeKind::Color(v) => Ok(Value::Color(*v)),
             NodeKind::Na => Ok(Value::Na),
             NodeKind::Tuple { items } => {
                 let mut values = Vec::with_capacity(items.len());
                 for item in items {
-                    values.push(self.eval(item)?);
+                    values.push(self.eval(*item)?);
                 }
                 Ok(Value::Tuple(Rc::new(values)))
             }
@@ -421,18 +469,18 @@ impl<'a> Eval<'a> {
             },
             NodeKind::Unary { op, operand } => match op {
                 UnOp::Neg => {
-                    let v = self.num(operand)?;
+                    let v = self.num(*operand)?;
                     Ok(Value::Num(-v))
                 }
                 UnOp::Not => {
-                    let v = self.cond(operand)?;
+                    let v = self.cond(*operand)?;
                     Ok(Value::Bool(!v))
                 }
             },
-            NodeKind::Binary { op, lhs, rhs } => self.binary(op, lhs, rhs),
+            NodeKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs),
             NodeKind::Switch { subject, arms } => {
                 let subject = match subject {
-                    Some(node) => Some(self.eval(node)?),
+                    Some(node) => Some(self.eval(*node)?),
                     None => None,
                 };
                 for (condition, body) in arms {
@@ -440,16 +488,16 @@ impl<'a> Eval<'a> {
                         // Subject form: arm value compared by equality
                         // (same rules as `==`; na never matches).
                         (Some(subject), Some(condition)) => {
-                            let arm = self.eval(condition)?;
+                            let arm = self.eval(*condition)?;
                             values_equal(subject, &arm)
                         }
                         // Condition form: the arm is its own bool.
-                        (None, Some(condition)) => self.cond(condition)?,
+                        (None, Some(condition)) => self.cond(*condition)?,
                         // The bare `=>` default always matches.
                         (_, None) => true,
                     };
                     if matched {
-                        return self.eval(body);
+                        return self.eval(*body);
                     }
                 }
                 Ok(Value::Na)
@@ -459,10 +507,10 @@ impl<'a> Eval<'a> {
                 if_true,
                 if_false,
             } => {
-                if self.cond(condition)? {
-                    self.eval(if_true)
+                if self.cond(*condition)? {
+                    self.eval(*if_true)
                 } else {
-                    self.eval(if_false)
+                    self.eval(*if_false)
                 }
             }
             NodeKind::If {
@@ -470,10 +518,10 @@ impl<'a> Eval<'a> {
                 then_block,
                 otherwise,
             } => {
-                if self.cond(condition)? {
-                    self.eval(then_block)
+                if self.cond(*condition)? {
+                    self.eval(*then_block)
                 } else if let Some(otherwise) = otherwise {
-                    self.eval(otherwise)
+                    self.eval(*otherwise)
                 } else {
                     Ok(Value::Na)
                 }
@@ -481,17 +529,17 @@ impl<'a> Eval<'a> {
             NodeKind::Block { statements } => {
                 let mut last = Value::Na;
                 for statement in statements {
-                    last = self.statement(statement)?;
+                    last = self.statement(*statement)?;
                 }
                 Ok(last)
             }
             NodeKind::For {
                 from, to, by, body, ..
             } => {
-                let from = self.num(from)?;
-                let to = self.num(to)?;
+                let from = self.num(*from)?;
+                let to = self.num(*to)?;
                 let step = match by {
-                    Some(by) => self.num(by)?,
+                    Some(by) => self.num(*by)?,
                     None => 1.0,
                 };
                 if !from.is_finite() || !to.is_finite() || step == 0.0 || !step.is_finite() {
@@ -511,7 +559,7 @@ impl<'a> Eval<'a> {
                     }
                     budget -= 1;
                     self.write_resolved(id, Value::Num(i));
-                    last = self.eval(body)?;
+                    last = self.eval(*body)?;
                     i += step;
                 }
                 Ok(last)
@@ -519,7 +567,7 @@ impl<'a> Eval<'a> {
             NodeKind::While { condition, body } => {
                 let mut last = Value::Na;
                 let mut budget = LOOP_BUDGET;
-                while self.cond(condition)? {
+                while self.cond(*condition)? {
                     if budget == 0 {
                         return Err(self.err(
                             id,
@@ -528,31 +576,27 @@ impl<'a> Eval<'a> {
                         ));
                     }
                     budget -= 1;
-                    last = self.eval(body)?;
+                    last = self.eval(*body)?;
                 }
                 Ok(last)
             }
-            NodeKind::History { subject, offset } => self.history(id, subject, offset),
-            NodeKind::Call { callee, args: _ } => {
-                let args = match self.kind(id) {
-                    NodeKind::Call { args, .. } => args.clone(),
-                    _ => unreachable!("just matched a call"),
-                };
-                match self.script.resolutions[callee.index()] {
-                    Resolution::Builtin(builtin) => self.builtin_call(id, builtin, &args),
-                    Resolution::Function(index) => self.user_call(id, index, &args),
-                    _ => {
-                        if let NodeKind::Member { object, field } = self.kind(callee).clone() {
-                            let receiver = self.eval(object)?;
-                            let Value::Obj(kind, raw) = receiver else {
-                                return Err(self.type_err(callee, "an object handle", &receiver));
-                            };
-                            return self.method_call(id, kind, ObjectId(raw), &field, &args);
-                        }
-                        Err(self.err(id, ErrorCode::PineType, "only object handles have methods"))
+            NodeKind::History { subject, offset } => self.history(id, *subject, *offset),
+            NodeKind::Call { callee, args } => match self.script.resolutions[callee.index()] {
+                Resolution::Builtin(builtin) => self.builtin_call(id, builtin, args),
+                Resolution::Function(index) => self.user_call(id, index, args),
+                _ => {
+                    // A method call: the callee is a member expression whose
+                    // receiver evaluates to an object handle.
+                    if let NodeKind::Member { object, field } = self.kind(*callee) {
+                        let receiver = self.eval(*object)?;
+                        let Value::Obj(kind, raw) = receiver else {
+                            return Err(self.type_err(*callee, "an object handle", &receiver));
+                        };
+                        return self.method_call(id, kind, ObjectId(raw), field, args);
                     }
+                    Err(self.err(id, ErrorCode::PineType, "only object handles have methods"))
                 }
-            }
+            },
             // Statement kinds never reach eval directly.
             other => Err(self.err(
                 id,
@@ -568,7 +612,7 @@ impl<'a> Eval<'a> {
             Resolution::Global(slot) => self.state.globals[slot as usize] = value,
             Resolution::Local(slot) => {
                 let index = self.frame_base + slot as usize;
-                self.locals[index] = value;
+                self.state.locals[index] = value;
             }
             _ => {}
         }
@@ -577,7 +621,9 @@ impl<'a> Eval<'a> {
     fn name_value(&mut self, id: NodeId) -> Result<Value, PineError> {
         match self.script.resolutions[id.index()] {
             Resolution::Global(slot) => Ok(self.state.globals[slot as usize].clone()),
-            Resolution::Local(slot) => Ok(self.locals[self.frame_base + slot as usize].clone()),
+            Resolution::Local(slot) => {
+                Ok(self.state.locals[self.frame_base + slot as usize].clone())
+            }
             Resolution::Builtin(builtin) => self.builtin_variable(id, builtin),
             Resolution::Function(_) => Err(self.err(
                 id,
@@ -647,7 +693,7 @@ impl<'a> Eval<'a> {
                 r.values
                     .len()
                     .checked_sub(back)
-                    .map(|i| r.values[i].clone())
+                    .and_then(|i| r.values.get(i).cloned())
             })
             .unwrap_or(Value::Na);
         Ok(value)
@@ -723,17 +769,19 @@ impl<'a> Eval<'a> {
         index: u32,
         args: &[crate::ast::Arg],
     ) -> Result<Value, PineError> {
-        let function = self.script.functions[index as usize].clone();
-        if args.len() != function.param_count {
+        // Read the Copy fields; cloning the whole `FunctionInfo` — its `name`
+        // included, which its own doc calls diagnostics-only — happened on
+        // every user-function call on every bar. The name is taken by
+        // reference on the error path alone.
+        let function = &self.script.functions[index as usize];
+        let (param_count, local_slots, body) =
+            (function.param_count, function.local_slots, function.body);
+        if args.len() != param_count {
+            let name = self.script.functions[index as usize].name.clone();
             return Err(self.err(
                 id,
                 ErrorCode::PineArity,
-                format!(
-                    "`{}` takes {} arguments, got {}",
-                    function.name,
-                    function.param_count,
-                    args.len()
-                ),
+                format!("`{name}` takes {param_count} arguments, got {}", args.len()),
             ));
         }
         // Evaluate arguments in the caller's frame and path.
@@ -758,15 +806,16 @@ impl<'a> Eval<'a> {
         };
         let saved_base = self.frame_base;
         let saved_path = self.path;
-        self.frame_base = self.locals.len();
-        self.locals
-            .resize(self.frame_base + function.local_slots, Value::Na);
+        self.frame_base = self.state.locals.len();
+        self.state
+            .locals
+            .resize(self.frame_base + local_slots, Value::Na);
         for (slot, value) in argv.into_iter().enumerate() {
-            self.locals[self.frame_base + slot] = value;
+            self.state.locals[self.frame_base + slot] = value;
         }
         self.path = path;
-        let result = self.eval(function.body);
-        self.locals.truncate(self.frame_base);
+        let result = self.eval(body);
+        self.state.locals.truncate(self.frame_base);
         self.frame_base = saved_base;
         self.path = saved_path;
         result
@@ -943,14 +992,26 @@ impl<'a> Eval<'a> {
         // the kernel takes one (re-validated here because inputs bind per
         // instance).
         let length = |v: f64, id: NodeId, this: &Self| -> Result<usize, PineError> {
-            if v.is_finite() && v >= 1.0 && v.fract() == 0.0 {
+            // The upper bound matters as much as the lower one: a kernel
+            // allocates its ring up front, and a failed allocation aborts the
+            // process instead of unwinding into this indicator's error state.
+            // Inputs are bound per instance, so the load-time check in
+            // `compile` is not the last word — this is.
+            let in_range = v.is_finite()
+                && v >= 1.0
+                && v.fract() == 0.0
+                && v <= crate::compile::MAX_KERNEL_LENGTH as f64;
+            if in_range {
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 Ok(v as usize)
             } else {
                 Err(this.err(
                     id,
                     ErrorCode::PineSeriesLength,
-                    format!("kernel length must be a positive integer, got {v}"),
+                    format!(
+                        "kernel length must be a positive integer no greater than {}, got {v}",
+                        crate::compile::MAX_KERNEL_LENGTH
+                    ),
                 ))
             }
         };
@@ -973,6 +1034,7 @@ impl<'a> Eval<'a> {
             }
             Builtin::TaAtr => {
                 let len = length(self.arg_num(args, 0)?, id, self)?;
+                self.pin_kernel_length(key, len, id)?;
                 let (high, low, close) = (self.bar.high, self.bar.low, self.bar.close);
                 let kernel = self
                     .state
@@ -1002,6 +1064,7 @@ impl<'a> Eval<'a> {
                     Some(arg) => length(self.num(arg.value)?, id, self)?,
                     None => 1,
                 };
+                self.pin_kernel_length(key, n, id)?;
                 let kernel = self
                     .state
                     .kernels
@@ -1015,6 +1078,7 @@ impl<'a> Eval<'a> {
             Builtin::TaVwma => {
                 let src = self.arg_num(args, 0)?;
                 let len = length(self.arg_num(args, 1)?, id, self)?;
+                self.pin_kernel_length(key, len, id)?;
                 let volume = self.bar.volume();
                 let kernel = self
                     .state
@@ -1030,6 +1094,7 @@ impl<'a> Eval<'a> {
                 let src = self.arg_num(args, 0)?;
                 let left = length(self.arg_num(args, 1)?, id, self)?;
                 let right = length(self.arg_num(args, 2)?, id, self)?;
+                self.pin_kernel_length(key, left + right, id)?;
                 let is_high = builtin == Builtin::TaPivotHigh;
                 let kernel = self.state.kernels.entry(key).or_insert_with(|| {
                     if is_high {
@@ -1048,6 +1113,7 @@ impl<'a> Eval<'a> {
             _ => {
                 let src = self.arg_num(args, 0)?;
                 let len = length(self.arg_num(args, 1)?, id, self)?;
+                self.pin_kernel_length(key, len, id)?;
                 let kernel = self
                     .state
                     .kernels
@@ -1159,17 +1225,33 @@ impl<'a> Eval<'a> {
             }
             Builtin::MathSqrt => self.arg_num(args, 0)?.sqrt(),
             Builtin::MathMax | Builtin::MathMin | Builtin::MathAvg => {
-                let mut values = Vec::with_capacity(args.len());
+                // Streaming, so the per-bar path allocates nothing — these
+                // appear inside plotted expressions. The identities are the
+                // infinities, not `f64::MIN`/`MAX`: those are the extreme
+                // *finite* values, so `math.max(math.log(0))` answered
+                // -1.797e308 where -inf is the true maximum of its arguments.
+                let mut max = f64::NEG_INFINITY;
+                let mut min = f64::INFINITY;
+                let mut sum = 0.0;
+                let mut count = 0usize;
+                let mut saw_nan = false;
                 for arg in args {
-                    values.push(self.num(arg.value)?);
+                    let v = self.num(arg.value)?;
+                    if v.is_nan() {
+                        saw_nan = true;
+                    }
+                    max = max.max(v);
+                    min = min.min(v);
+                    sum += v;
+                    count += 1;
                 }
-                if values.is_empty() || values.iter().any(|v| v.is_nan()) {
+                if count == 0 || saw_nan {
                     f64::NAN
                 } else {
                     match builtin {
-                        Builtin::MathMax => values.iter().copied().fold(f64::MIN, f64::max),
-                        Builtin::MathMin => values.iter().copied().fold(f64::MAX, f64::min),
-                        _ => values.iter().sum::<f64>() / values.len() as f64,
+                        Builtin::MathMax => max,
+                        Builtin::MathMin => min,
+                        _ => sum / count as f64,
                     }
                 }
             }
@@ -1211,7 +1293,17 @@ impl<'a> Eval<'a> {
             Some(arg) => {
                 let v = self.num(arg.value)?;
                 #[allow(clippy::cast_possible_truncation)]
-                Ok(if v.is_finite() { v.round() as i64 } else { 0 })
+                Ok(if v.is_finite() {
+                    v.round() as i64
+                } else {
+                    // `label.new(na, price)` has no bar to sit on. Zero would
+                    // anchor it to the very first bar — a real label drawn
+                    // out of a missing value, while the price side of the
+                    // same call answers NaN and the renderer honestly skips
+                    // it. `OFF_CHART_BAR` is negative, which the renderer's
+                    // existing `x < 0` guards already drop.
+                    quantick_indicators::OFF_CHART_BAR
+                })
             }
             None => Ok(self.ctx.bar_index as i64),
         }

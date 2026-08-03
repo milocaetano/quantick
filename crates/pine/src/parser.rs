@@ -14,6 +14,16 @@ use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::error::{ErrorCode, PineError, Span};
 use crate::lexer::{Tok, Token};
 
+/// How deeply expressions may nest.
+///
+/// Descent costs about five stack frames per `(`, and a stack overflow
+/// aborts the process — no unwind, no `PineError`, nothing for the script
+/// library to render. A generated or truncated file of a hundred thousand
+/// open parens is the realistic way to hit it. The limit is far above any
+/// script a person writes and the check is one comparison on a path that
+/// runs once per load.
+const MAX_NEST_DEPTH: usize = 64;
+
 /// Parse a lexed token stream into an AST (root = `Script`).
 ///
 /// # Errors
@@ -21,11 +31,16 @@ use crate::lexer::{Tok, Token};
 /// Every syntax error found, each with its span; the AST is only returned
 /// when the whole script parsed.
 pub fn parse(tokens: &[Token]) -> Result<(Ast, NodeId), Vec<PineError>> {
+    debug_assert!(
+        !tokens.is_empty(),
+        "a lexed stream always ends in `Eof`; `peek` reads the last token"
+    );
     let mut parser = Parser {
         tokens,
         pos: 0,
         ast: Ast::new(),
         errors: Vec::new(),
+        depth: 0,
     };
     let root = parser.script();
     if parser.errors.is_empty() {
@@ -40,6 +55,8 @@ struct Parser<'a> {
     pos: usize,
     ast: Ast,
     errors: Vec<PineError>,
+    /// Current expression nesting, guarded by [`MAX_NEST_DEPTH`].
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -191,10 +208,14 @@ impl Parser<'_> {
                     self.advance();
                     VarMode::Varip
                 };
-                // `var float x = …`: the type annotation is accepted and
-                // recorded nowhere — the dialect is dynamically typed with
-                // compile-time checks on builtins (documented divergence).
-                if matches!(self.peek(), Tok::Ident(_)) && matches!(self.peek_at(1), Tok::Ident(_))
+                // `var float x = …` and `var series float x = …`: the type
+                // annotation is accepted and recorded nowhere — the dialect
+                // is dynamically typed with compile-time checks on builtins
+                // (documented divergence). Pine allows a qualifier before the
+                // type, so skip every leading word that is followed by
+                // another word; the last one is the variable's own name.
+                while matches!(self.peek(), Tok::Ident(_))
+                    && matches!(self.peek_at(1), Tok::Ident(_))
                 {
                     self.advance();
                 }
@@ -226,11 +247,22 @@ impl Parser<'_> {
                 }
             }
             Tok::Ident(name) => {
-                // `float x = …`: skip the type annotation (see the var arm).
-                if let (Tok::Ident(real_name), Tok::Eq) = (self.peek_at(1).clone(), self.peek_at(2))
+                // `float x = …`, `simple int len = 9`, `series float x = na`:
+                // skip the annotation words (see the var arm). The name is
+                // the last identifier of the run, the one before `=`.
+                let mut annotation_words = 0usize;
+                while matches!(self.peek_at(annotation_words), Tok::Ident(_))
+                    && matches!(self.peek_at(annotation_words + 1), Tok::Ident(_))
                 {
-                    self.advance(); // the type
-                    self.advance(); // the name
+                    annotation_words += 1;
+                }
+                if annotation_words > 0
+                    && matches!(self.peek_at(annotation_words + 1), Tok::Eq)
+                    && let Tok::Ident(real_name) = self.peek_at(annotation_words).clone()
+                {
+                    for _ in 0..=annotation_words {
+                        self.advance(); // the qualifier(s), the type, the name
+                    }
                     self.advance(); // `=`
                     let (value, block_form) = self.statement_value()?;
                     if !block_form {
@@ -572,6 +604,21 @@ impl Parser<'_> {
             ));
             return None;
         }
+        // A bare `=>` matches unconditionally, so anything after it is dead
+        // code — and the evaluator would never reach it. Real Pine requires
+        // the default arm last; saying so beats compiling a script whose
+        // final arms silently do nothing.
+        if arms[..arms.len() - 1]
+            .iter()
+            .any(|(condition, _)| condition.is_none())
+        {
+            self.errors.push(PineError::new(
+                ErrorCode::PineSyntax,
+                start,
+                "the default `=>` arm must be the last arm of a switch                  (arms after it can never match)",
+            ));
+            return None;
+        }
         let span = self.spanned_from(start);
         Some(self.ast.push(NodeKind::Switch { subject, arms }, span))
     }
@@ -589,7 +636,22 @@ impl Parser<'_> {
     // ---- expressions -----------------------------------------------------
 
     fn expression(&mut self) -> Option<NodeId> {
-        self.ternary()
+        // The descent happens on the way *down*, so the guard belongs here:
+        // by the time unbalanced input would be rejected, the stack is
+        // already gone.
+        if self.depth >= MAX_NEST_DEPTH {
+            let span = self.span();
+            self.errors.push(PineError::new(
+                ErrorCode::PineSyntax,
+                span,
+                format!("expression nests deeper than {MAX_NEST_DEPTH} levels"),
+            ));
+            return None;
+        }
+        self.depth += 1;
+        let node = self.ternary();
+        self.depth -= 1;
+        node
     }
 
     fn ternary(&mut self) -> Option<NodeId> {
@@ -807,19 +869,61 @@ fn binop_of(tok: &Tok) -> Option<(BinOp, u8)> {
 }
 
 /// A short description of a token for error messages.
+///
+/// Exhaustive on purpose: a catch-all printed Rust variant names — "expected
+/// an expression, found `RBracket`" — at the one moment the reader needs to
+/// see what they actually typed. It also stops a new token from regressing a
+/// message silently; the compiler asks for its spelling here.
 fn describe(tok: &Tok) -> String {
-    match tok {
-        Tok::Int(v) => format!("`{v}`"),
-        Tok::Float(v) => format!("`{v}`"),
-        Tok::Str(_) => "a string".to_owned(),
-        Tok::ColorLit(_) => "a color literal".to_owned(),
-        Tok::Ident(name) => format!("`{name}`"),
-        Tok::Newline => "end of line".to_owned(),
-        Tok::Indent => "an indent".to_owned(),
-        Tok::Dedent => "a dedent".to_owned(),
-        Tok::Eof => "end of file".to_owned(),
-        other => format!("`{other:?}`"),
-    }
+    let spelling = match tok {
+        Tok::Int(v) => return format!("`{v}`"),
+        Tok::Float(v) => return format!("`{v}`"),
+        Tok::Str(_) => return "a string".to_owned(),
+        Tok::ColorLit(_) => return "a color literal".to_owned(),
+        Tok::Ident(name) => return format!("`{name}`"),
+        Tok::Newline => return "end of line".to_owned(),
+        Tok::Indent => return "an indent".to_owned(),
+        Tok::Dedent => return "a dedent".to_owned(),
+        Tok::Eof => return "end of file".to_owned(),
+        Tok::KwVar => "var",
+        Tok::KwVarip => "varip",
+        Tok::KwIf => "if",
+        Tok::KwElse => "else",
+        Tok::KwFor => "for",
+        Tok::KwTo => "to",
+        Tok::KwBy => "by",
+        Tok::KwWhile => "while",
+        Tok::KwSwitch => "switch",
+        Tok::KwAnd => "and",
+        Tok::KwOr => "or",
+        Tok::KwNot => "not",
+        Tok::KwTrue => "true",
+        Tok::KwFalse => "false",
+        Tok::KwNa => "na",
+        Tok::Plus => "+",
+        Tok::Minus => "-",
+        Tok::Star => "*",
+        Tok::Slash => "/",
+        Tok::Percent => "%",
+        Tok::Eq => "=",
+        Tok::ColonEq => ":=",
+        Tok::EqEq => "==",
+        Tok::NotEq => "!=",
+        Tok::Lt => "<",
+        Tok::Le => "<=",
+        Tok::Gt => ">",
+        Tok::Ge => ">=",
+        Tok::Question => "?",
+        Tok::Colon => ":",
+        Tok::Comma => ",",
+        Tok::Dot => ".",
+        Tok::Arrow => "=>",
+        Tok::LParen => "(",
+        Tok::RParen => ")",
+        Tok::LBracket => "[",
+        Tok::RBracket => "]",
+    };
+    format!("`{spelling}`")
 }
 
 #[cfg(test)]
@@ -1082,5 +1186,59 @@ double(x) => x * 2\ntriple(x) =>\n    y = x * 3\n    y\n";
         let errors = parse_err(source);
         let (line, _) = errors[0].span.line_col(source);
         assert_eq!(line, 2);
+    }
+
+    #[test]
+    fn a_qualified_type_annotation_is_accepted_and_ignored() {
+        // Pine v5 lets a qualifier precede the type. Both forms declare the
+        // variable; the annotation itself is recorded nowhere.
+        for source in [
+            "//@version=5
+simple int len = 9
+",
+            "//@version=5
+var series float x = na
+",
+            "//@version=5
+float y = 1.5
+",
+            "//@version=5
+var float z = 0.0
+",
+        ] {
+            let out = lex(source).expect("fixture lexes");
+            assert!(
+                parse(&out.tokens).is_ok(),
+                "a type annotation must not be mistaken for a statement: {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nesting_beyond_the_limit_is_an_error_not_a_stack_overflow() {
+        let source = format!(
+            "//@version=5
+x = {}1{}
+",
+            "(".repeat(MAX_NEST_DEPTH + 5),
+            ")".repeat(MAX_NEST_DEPTH + 5)
+        );
+        let out = lex(&source).expect("parens lex");
+        let errors = parse(&out.tokens).expect_err("too deep to parse");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ErrorCode::PineSyntax && e.message.contains("nests deeper")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn punctuation_is_named_as_the_author_typed_it() {
+        // Never Rust variant names: the reader is looking for what they wrote.
+        assert_eq!(describe(&Tok::RBracket), "`]`");
+        assert_eq!(describe(&Tok::Comma), "`,`");
+        assert_eq!(describe(&Tok::ColonEq), "`:=`");
+        assert_eq!(describe(&Tok::KwVarip), "`varip`");
     }
 }

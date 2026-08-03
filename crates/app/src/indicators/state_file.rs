@@ -158,7 +158,14 @@ pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
     };
     match toml::to_string_pretty(&file) {
         Ok(text) => {
-            if let Err(error) = std::fs::write(path, text) {
+            // Temp sibling + rename: `fs::write` truncates first, so a crash
+            // or a power loss mid-write left a half file, and `load` then
+            // reports it unreadable and starts empty — the whole workspace
+            // gone rather than one stale entry.
+            let temp = path.with_extension("toml.tmp");
+            let written = std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path));
+            if let Err(error) = written {
+                let _ = std::fs::remove_file(&temp);
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,

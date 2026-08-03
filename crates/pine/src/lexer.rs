@@ -440,11 +440,26 @@ impl<'a> Lexer<'a> {
                 };
                 match tok {
                     Some(tok) => self.push(tok, Span::new(start, self.pos)),
-                    None => self.errors.push(PineError::new(
-                        ErrorCode::PineLex,
-                        Span::new(start, self.pos),
-                        format!("unexpected character `{}`", &self.source[start..self.pos]),
-                    )),
+                    None => {
+                        // The byte matched nothing, so it may be the first of
+                        // a multi-byte character — an accented letter, a dash
+                        // or the non-breaking space that rides along with any
+                        // copy-paste from a web page. Advance by the whole
+                        // scalar (the same idiom `string` uses) before
+                        // slicing: `&str` indexing inside a character panics,
+                        // and the one function whose job is to turn bad input
+                        // into an honest error must never do that.
+                        let ch = self.source[start..]
+                            .chars()
+                            .next()
+                            .expect("start is a char boundary and in bounds");
+                        self.pos = start + ch.len_utf8();
+                        self.errors.push(PineError::new(
+                            ErrorCode::PineLex,
+                            Span::new(start, self.pos),
+                            format!("unexpected character `{ch}`"),
+                        ));
+                    }
                 }
             }
         }
