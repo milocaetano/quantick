@@ -35,8 +35,8 @@
 //!
 //! - no wall clock, no randomness, no iteration-order-dependent output;
 //! - IEEE-754 `+ - * /`, `sqrt` and comparisons only; transcendentals go
-//!   through the crate's libm wrapper (`fmath`, arriving with the `ta`
-//!   kernels) — never `f64::powf` & co., which vary by platform;
+//!   through the crate's libm wrapper [`fmath`] — never `f64::powf` & co.,
+//!   which vary by platform (a test scans this crate's sources for them);
 //! - `na` is `f64::NAN`; kernels propagate it Pine-style;
 //! - guarded by [`golden`] tests that replay fixed fixtures twice and require
 //!   byte-identical plot output.
