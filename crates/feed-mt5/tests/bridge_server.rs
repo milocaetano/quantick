@@ -37,24 +37,30 @@ async fn next_event(rx: &mut mpsc::Receiver<Mt5Event>) -> Mt5Event {
 
 /// Start a server and return (its bound addr, the event receiver).
 async fn start_server(symbol: &str) -> (String, mpsc::Receiver<Mt5Event>) {
-    let (addr, rx, _) = start_server_with_capture(symbol).await;
-    (addr, rx)
+    start_server_from(test_config(symbol)).await
 }
 
 /// Same, keeping the depth switch so a test can turn capture on and off.
 async fn start_server_with_capture(
     symbol: &str,
 ) -> (String, mpsc::Receiver<Mt5Event>, BookCaptureSwitch) {
-    let (tx, mut rx) = mpsc::channel(1024);
     let config = test_config(symbol);
     let capture = config.book_capture.clone();
+    let (addr, rx) = start_server_from(config).await;
+    (addr, rx, capture)
+}
+
+/// Start a server from an explicit config — for tests whose timing needs
+/// differ from the tight defaults.
+async fn start_server_from(config: ServerConfig) -> (String, mpsc::Receiver<Mt5Event>) {
+    let (tx, mut rx) = mpsc::channel(1024);
     tokio::spawn(async move {
         let _ = run_bridge_server(config, tx).await;
     });
     let Mt5Event::Status(Mt5Status::Waiting { addr }) = next_event(&mut rx).await else {
         panic!("expected the initial waiting status");
     };
-    (addr, rx, capture)
+    (addr, rx)
 }
 
 fn hello(symbol: &str) -> String {
@@ -555,7 +561,18 @@ async fn an_intruder_that_says_nothing_is_refused_too() {
     // The window for the intruder to name itself is a courtesy to the log, not
     // a condition for refusing it: something that dials the port and stays mute
     // must still be closed, and quickly.
-    let (addr, mut rx) = start_server("WIN$N").await;
+    //
+    // The served session stays silent for the whole 250 ms refusal window, so
+    // this test needs a read timeout that is not racing it. Ten seconds gives
+    // the real-clock wait ~40x of margin; the default 1 s left only 4x, close
+    // enough for a loaded CI box to drop the session first and fail this on
+    // the wrong thing. A paused clock is not the alternative — it would
+    // auto-advance the session's read timeout along with the window.
+    let (addr, mut rx) = start_server_from(ServerConfig {
+        read_timeout: Duration::from_secs(10),
+        ..test_config("WIN$N")
+    })
+    .await;
 
     let mut first = TcpStream::connect(&addr).await.unwrap();
     first.write_all(hello("WIN$N").as_bytes()).await.unwrap();

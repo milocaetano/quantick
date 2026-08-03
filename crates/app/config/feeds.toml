@@ -120,9 +120,11 @@ bridge_command = ["python", "bridge/mt5/quantick_bridge.py"]
 # tab shows BRIDGE_DISCONNECTED as it retries.
 #
 # A symbol with no entry here uses `listen_addr` (9100). Several such symbols
-# are fine one at a time — WIN$N and WDO$N below share 9100 — but only one of
+# are fine one at a time — WIN$N and WDO$N above share 9100 — but only one of
 # them can stream at once; the second reports MT5_BIND_FAILED. Give it a port
-# here to run both together.
+# here to run both together. Every key here must be a symbol one of the
+# metatrader feeds above actually offers; quantick refuses a key that matches
+# none, since its only other symptom would be silently using 9100.
 #
 # NOTE for editors: this is a sub-table of [metatrader], so it must stay at the
 # end of that section. Any plain key written after it would land in here.

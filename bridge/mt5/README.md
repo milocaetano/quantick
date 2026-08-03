@@ -166,8 +166,12 @@ Both sides speak structured logs:
   `BRIDGE_SESSION_STARTED`, `BRIDGE_DISCONNECTED` (+ retry),
   `BRIDGE_BOOK_SUBSCRIBED` / `BRIDGE_BOOK_SUBSCRIBE_FAILED`, and
   `BRIDGE_BOOK_STATS` every heartbeat (images sent vs skipped as unchanged).
-- **quantick (stderr, `QUANTICK_LOG_FORMAT=json`)**: the full `MT5_*` event
-  table in `crates/feed-mt5/src/lib.rs`.
+- **quantick (stderr, `QUANTICK_LOG_FORMAT=json`)**: `MT5_*` events. The
+  feed's own — `MT5_LISTENING`, `MT5_SESSION_BUSY`, `MT5_HELLO_OK` and the
+  rest — are tabulated in `crates/feed-mt5/src/lib.rs`. The app layer emits a
+  few more around them, notably `MT5_ENDPOINT_RESOLVED` (which port this
+  symbol got, and whether it came from `[metatrader.ports]`); those live in
+  `crates/app/src/feed/metatrader.rs`.
 
 No terminal at hand? Replay the committed real recording against a running
 quantick instead:
