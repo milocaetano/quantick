@@ -37,6 +37,15 @@ use crate::parser;
 /// (constant offsets size storage exactly; the cap bounds the dynamic case).
 pub const MAX_BARS_BACK_CAP: usize = 500;
 
+/// The largest window a `ta.*` kernel may declare.
+///
+/// A kernel allocates its ring up front, so an unbounded length is an
+/// unbounded allocation: `ta.sma(close, 2000000000)` asks for 16 GB, and a
+/// failed allocation *aborts* the process — it does not unwind, so the
+/// promise that a runtime failure only disables its own indicator would be
+/// broken by a typo. Far above any window a chart uses.
+pub const MAX_KERNEL_LENGTH: usize = 100_000;
+
 /// Default plot stroke width when a `plot()` gives none.
 const DEFAULT_PLOT_WIDTH: f32 = 1.5;
 /// Default plot color when a `plot()` gives none (egui-agnostic amber).
@@ -191,6 +200,11 @@ impl Const {
             Const::Int(v) if *v >= 1 => usize::try_from(*v).ok(),
             _ => None,
         }
+    }
+
+    /// A positive length that a kernel may actually allocate.
+    fn as_kernel_len(&self) -> Option<usize> {
+        self.as_positive_len().filter(|v| *v <= MAX_KERNEL_LENGTH)
     }
 }
 
@@ -1109,6 +1123,9 @@ impl Compiler {
             | Builtin::MathSum => (1, "length"),
             Builtin::TaVwma => (2, "length"),
             Builtin::TaAtr => (0, "length"),
+            // Both sides of a pivot size the same window; checking the left
+            // one reaches the same allocation the right one feeds.
+            Builtin::TaPivotHigh | Builtin::TaPivotLow => (1, "leftbars"),
             _ => return None,
         })
     }
@@ -1128,14 +1145,17 @@ impl Compiler {
         };
         if self
             .fold(arg.value)
-            .and_then(|c| c.as_positive_len())
+            .and_then(|c| c.as_kernel_len())
             .is_none()
         {
             self.errors.push(PineError::new(
                 ErrorCode::PineSeriesLength,
                 arg.span,
-                "a kernel length must fold to a positive integer at load time \
-                 (a literal, an input, or arithmetic over them)",
+                format!(
+                    "a kernel length must fold to a positive integer no greater \
+                     than {MAX_KERNEL_LENGTH} at load time (a literal, an input, \
+                     or arithmetic over them)"
+                ),
             ));
         }
     }

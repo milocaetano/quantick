@@ -262,3 +262,56 @@ fn runtime_errors_render_with_line_and_column() {
     assert!(error.message.contains("4:"), "{}", error.message);
     assert!(error.message.contains("PINE_TYPE"), "{}", error.message);
 }
+
+#[test]
+fn a_kernel_length_that_changes_between_bars_is_refused() {
+    // The kernel is built once and keeps its window forever, so a length
+    // that moves used to be silently pinned to bar zero's value while the
+    // script read as if it changed.
+    let mut h = Harness::load(
+        "//@version=5
+indicator(\"t\")
+f(n) => ta.sma(close, n)
+plot(f(bar_index + 1))
+",
+    );
+    h.close(&bar(0, 3.0))
+        .expect("the first bar builds the kernel");
+    let err = h
+        .close(&bar(1, 6.0))
+        .expect_err("a changed length must be refused, not silently ignored");
+    assert!(err.message.contains("cannot change"), "{err}");
+}
+
+#[test]
+fn an_absurd_kernel_length_errors_instead_of_aborting() {
+    // `vec![0.0; 2e9]` is 16 GB, and a failed allocation aborts the process
+    // rather than unwinding into this indicator's error state.
+    let source = "//@version=5
+indicator(\"t\")
+plot(ta.sma(close, 2000000000))
+";
+    let Err(errors) = compile(source, "test.pine") else {
+        panic!("an absurd length must be refused at load time");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == quantick_pine::ErrorCode::PineSeriesLength),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn math_max_uses_infinite_identities() {
+    // `f64::MIN`/`MAX` are the extreme *finite* values, so the fold answered
+    // -1.797e308 where -inf is the true maximum of the arguments.
+    let mut h = Harness::load(
+        "//@version=5
+indicator(\"t\")
+plot(math.max(math.log(0), math.log(0)))
+",
+    );
+    h.close_all(&[3.0]);
+    assert_eq!(h.column(0), vec![f64::NEG_INFINITY]);
+}
