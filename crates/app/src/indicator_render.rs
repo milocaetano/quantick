@@ -160,6 +160,14 @@ pub(crate) fn draw_pane(
     }
 
     draw_view_plots(&clipped, view, x, |v| scale.y(v), start, end, partial_slot);
+    draw_objects(
+        &clipped,
+        view.render_objects(),
+        x,
+        |v| scale.y(v),
+        start,
+        end,
+    );
 
     painter.text(
         pane.left_top() + PANE_LABEL_INSET_PX,
@@ -450,6 +458,122 @@ fn draw_area(
     flush(&mut segment);
 }
 
+/// Label text size for draw objects, in points.
+const OBJECT_LABEL_FONT: f32 = 11.0;
+/// Padding around a label's text inside its background pill.
+const OBJECT_LABEL_PAD: f32 = 3.0;
+/// Gap between a label's anchor point and its pill, in pixels.
+const OBJECT_LABEL_GAP_PX: f32 = 2.0;
+/// Corner radius of a label's pill, in pixels.
+const OBJECT_LABEL_ROUNDING_PX: f32 = 3.0;
+/// Thinnest stroke a draw object may ask for, in pixels: below this a border
+/// disappears entirely on some scale factors.
+const MIN_OBJECT_STROKE_PX: f32 = 0.5;
+
+/// Draw one indicator's line/box/label objects. Bar-index coordinates ride
+/// the candles' own x-mapping, so objects pan and zoom with the bars; the
+/// caller picks the y mapping (price scale on the chart, value scale in a
+/// pane) and the clip.
+pub(crate) fn draw_objects(
+    painter: &egui::Painter,
+    objects: &quantick_indicators::ObjectSnapshot,
+    x: &PlotX<'_>,
+    y_of: impl Fn(f64) -> f32,
+    start: usize,
+    end: usize,
+) {
+    // Every sibling draw function slices to the visible range; this one used
+    // to walk all three retained kinds in full, and the label loop laid out
+    // its text *before* any visibility test — 500 `String` clones and 500
+    // galley builds per frame for labels that are mostly off-screen. The
+    // test is overlap, not containment: a line that starts left of the
+    // window and ends right of it crosses the whole screen.
+    let visible_span = |lo: i64, hi: i64| {
+        let (lo, hi) = (lo.min(hi), lo.max(hi));
+        hi >= 0 && (lo as usize) < end && (hi as usize) >= start
+    };
+    for object in &objects.boxes {
+        if object.left < 0 || object.right < 0 {
+            continue;
+        }
+        if !visible_span(object.left, object.right) {
+            continue;
+        }
+        if !object.top.is_finite() || !object.bottom.is_finite() {
+            continue;
+        }
+        let a = pos2(x.x(object.left as usize), y_of(object.top));
+        let b = pos2(x.x(object.right as usize), y_of(object.bottom));
+        let rect = Rect::from_two_pos(a, b);
+        painter.rect_filled(rect, egui::Rounding::ZERO, color32(object.bg_color));
+        painter.rect_stroke(
+            rect,
+            egui::Rounding::ZERO,
+            Stroke::new(
+                object.border_width.max(MIN_OBJECT_STROKE_PX),
+                color32(object.border_color),
+            ),
+        );
+    }
+    for line in &objects.lines {
+        if line.x1 < 0 || line.x2 < 0 || !line.y1.is_finite() || !line.y2.is_finite() {
+            continue;
+        }
+        if !visible_span(line.x1, line.x2) {
+            continue;
+        }
+        painter.line_segment(
+            [
+                pos2(x.x(line.x1 as usize), y_of(line.y1)),
+                pos2(x.x(line.x2 as usize), y_of(line.y2)),
+            ],
+            Stroke::new(line.width.max(0.5), color32(line.color)),
+        );
+    }
+    for label in &objects.labels {
+        if label.x < 0 || !label.y.is_finite() {
+            continue;
+        }
+        // Before the layout, not after: `layout_no_wrap` clones the text and
+        // builds a galley, which is the expensive part of drawing a label.
+        if !visible_span(label.x, label.x) {
+            continue;
+        }
+        let anchor = pos2(x.x(label.x as usize), y_of(label.y));
+        let galley = painter.layout_no_wrap(
+            label.text.clone(),
+            egui::FontId::proportional(OBJECT_LABEL_FONT),
+            color32(label.text_color),
+        );
+        let size = galley.size() + egui::vec2(OBJECT_LABEL_PAD * 2.0, OBJECT_LABEL_PAD * 2.0);
+        // Up = pill above its anchor? No: style_label_up points up FROM
+        // below — the pill hangs under the anchor at lows; label_down hangs
+        // above the anchor at highs.
+        let min = match label.style {
+            quantick_indicators::LabelStyle::Up => {
+                anchor + egui::vec2(-size.x / 2.0, OBJECT_LABEL_GAP_PX)
+            }
+            quantick_indicators::LabelStyle::Down => {
+                anchor + egui::vec2(-size.x / 2.0, -size.y - OBJECT_LABEL_GAP_PX)
+            }
+            quantick_indicators::LabelStyle::None => {
+                anchor + egui::vec2(-size.x / 2.0, -size.y / 2.0)
+            }
+        };
+        let rect = Rect::from_min_size(min, size);
+        painter.rect_filled(
+            rect,
+            egui::Rounding::same(OBJECT_LABEL_ROUNDING_PX),
+            color32(label.color),
+        );
+        painter.galley(
+            rect.min + egui::vec2(OBJECT_LABEL_PAD, OBJECT_LABEL_PAD),
+            galley,
+            color32(label.text_color),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,7 +600,8 @@ mod tests {
                 inputs: Vec::new(),
             },
             columns,
-            preview: preview.map(|values| PreviewFrame { values }),
+            preview: preview.map(PreviewFrame::new),
+            objects: quantick_indicators::ObjectSnapshot::default(),
             error: None,
             hidden: false,
         }

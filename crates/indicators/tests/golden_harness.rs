@@ -65,9 +65,7 @@ impl Indicator for CloseCvd {
         partial: &IndicatorBar,
         ctx: &mut Ctx<'_>,
     ) -> Result<PreviewFrame, EvalError> {
-        Ok(PreviewFrame {
-            values: vec![partial.close, ctx.cvd_now()],
-        })
+        Ok(PreviewFrame::new(vec![partial.close, ctx.cvd_now()]))
     }
 
     fn reset(&mut self) {

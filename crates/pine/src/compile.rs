@@ -254,6 +254,9 @@ fn member_constant(namespace: &str, field: &str) -> Option<Const> {
         ("shape", "labelup") => "labelup",
         ("shape", "labeldown") => "labeldown",
         ("shape", "cross") => "cross",
+        ("label", "style_label_up") => "style_label_up",
+        ("label", "style_label_down") => "style_label_down",
+        ("label", "style_none") => "style_none",
         ("location", "abovebar") => "abovebar",
         ("location", "belowbar") => "belowbar",
         ("location", "absolute") => "absolute",
@@ -983,7 +986,10 @@ impl Compiler {
                     // An unknown member of a known namespace is an unknown
                     // name; a member of a *variable* is an object method
                     // (resolved at eval against the handle's kind).
-                    if matches!(namespace.as_str(), "ta" | "math" | "color" | "input") {
+                    if matches!(
+                        namespace.as_str(),
+                        "ta" | "math" | "color" | "input" | "line" | "box" | "label"
+                    ) {
                         self.unknown_name(&dotted, self.span(id));
                         return;
                     }
@@ -993,6 +999,11 @@ impl Compiler {
             NodeKind::Call { callee, args } => {
                 for arg in &args {
                     self.walk_expr(arg.value, scope, ctx);
+                }
+                // `na(x)`: the callee lexes as the na keyword, not a name.
+                if matches!(self.kind(callee), NodeKind::Na) {
+                    self.resolutions[callee.index()] = Resolution::Builtin(Builtin::NaCall);
+                    return;
                 }
                 let name = self.callee_name(callee);
                 if let Some(name) = name {
@@ -1032,10 +1043,22 @@ impl Compiler {
                         ));
                         return;
                     }
+                    // `handle.set_xy(...)`: the dotted name is a method
+                    // call when its base resolves to a variable — dispatch
+                    // happens at eval against the handle's kind.
+                    if let Some((base, _)) = name.split_once('.')
+                        && matches!(
+                            self.lookup_name(base, scope, ctx),
+                            Some(Resolution::Global(_) | Resolution::Local(_))
+                        )
+                    {
+                        self.walk_expr(callee, scope, ctx);
+                        return;
+                    }
                     self.unknown_name(&name, self.span(id));
                     return;
                 }
-                // Method-style call on an expression (`myline.set_xy(...)`)
+                // Method-style call on an expression (`f(x).set_xy(...)`)
                 // resolves at eval; still walk the callee chain.
                 self.walk_expr(callee, scope, ctx);
             }

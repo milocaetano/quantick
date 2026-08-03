@@ -157,7 +157,7 @@ impl Indicator for FailingAt {
                 message: "deliberate preview failure".to_owned(),
             });
         }
-        Ok(PreviewFrame { values: Vec::new() })
+        Ok(PreviewFrame::new(Vec::new()))
     }
     fn reset(&mut self) {
         self.plots.clear();

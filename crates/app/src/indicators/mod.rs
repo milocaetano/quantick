@@ -10,7 +10,7 @@
 pub(crate) mod library;
 
 use eframe::egui;
-use quantick_indicators::{EvalError, IndicatorDescriptor, PreviewFrame};
+use quantick_indicators::{EvalError, IndicatorDescriptor, ObjectSnapshot, PreviewFrame};
 
 use crate::indicator_worker::{IndicatorEvent, SlotId};
 
@@ -37,6 +37,9 @@ pub(crate) struct IndicatorView {
     /// Eye toggle: hidden is render-side only — no recompute, state keeps
     /// flowing so unhiding is instant.
     pub hidden: bool,
+    /// Committed draw objects (a preview's transient set, when present,
+    /// replaces this at render time).
+    pub objects: ObjectSnapshot,
 }
 
 impl IndicatorView {
@@ -46,6 +49,16 @@ impl IndicatorView {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn rows(&self) -> usize {
         self.columns.first().map_or(0, Vec::len)
+    }
+
+    /// The draw objects to render right now: the forming bar's transient
+    /// set while a preview is live, else the committed set (latest-wins,
+    /// like plot previews).
+    pub(crate) fn render_objects(&self) -> &ObjectSnapshot {
+        self.preview
+            .as_ref()
+            .and_then(|frame| frame.objects.as_ref())
+            .unwrap_or(&self.objects)
     }
 
     /// The label the UI shows for this indicator.
@@ -99,6 +112,7 @@ impl IndicatorViews {
                         preview: None,
                         error: None,
                         hidden: false,
+                        objects: ObjectSnapshot::default(),
                     });
                 }
             }
@@ -122,6 +136,11 @@ impl IndicatorViews {
                 if let Some(view) = self.view_mut(slot) {
                     view.error = Some(error);
                     view.preview = None;
+                }
+            }
+            IndicatorEvent::Objects { slot, objects } => {
+                if let Some(view) = self.view_mut(slot) {
+                    view.objects = objects;
                 }
             }
         }
@@ -262,7 +281,7 @@ mod tests {
         });
         views.apply(IndicatorEvent::Preview {
             slot,
-            frame: Some(PreviewFrame { values: vec![5.0] }),
+            frame: Some(PreviewFrame::new(vec![5.0])),
         });
         assert!(views.all()[0].preview.is_some());
         views.apply(IndicatorEvent::Appended {

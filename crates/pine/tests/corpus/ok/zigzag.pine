@@ -1,0 +1,33 @@
+//@version=5
+indicator("ZigZag", overlay=true)
+len = input.int(3, "Pivot strength", minval=1)
+ph = ta.pivothigh(high, len, len)
+pl = ta.pivotlow(low, len, len)
+var float last_y = na
+var int last_x = 0
+var float prev_high = na
+var float prev_low = na
+if not na(ph)
+    x = bar_index - len
+    if not na(last_y)
+        line.new(last_x, last_y, x, ph, color=color.orange, width=2)
+    hh = if na(prev_high)
+        true
+    else
+        ph > prev_high
+    label.new(x, ph, text=hh ? "HH" : "LH", style=label.style_label_down, color=color.new(color.orange, 20))
+    prev_high := ph
+    last_y := ph
+    last_x := x
+if not na(pl)
+    x = bar_index - len
+    if not na(last_y)
+        line.new(last_x, last_y, x, pl, color=color.orange, width=2)
+    hl = if na(prev_low)
+        true
+    else
+        pl > prev_low
+    label.new(x, pl, text=hl ? "HL" : "LL", style=label.style_label_up, color=color.new(color.teal, 20))
+    prev_low := pl
+    last_y := pl
+    last_x := x

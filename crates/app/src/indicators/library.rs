@@ -27,6 +27,11 @@ pub(crate) const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
         "delta_histogram.pine",
         include_str!("../../scripts/delta_histogram.pine"),
     ),
+    ("zigzag.pine", include_str!("../../scripts/zigzag.pine")),
+    (
+        "range_box.pine",
+        include_str!("../../scripts/range_box.pine"),
+    ),
 ];
 
 /// One loadable script.

@@ -264,6 +264,52 @@ fn runtime_errors_render_with_line_and_column() {
 }
 
 #[test]
+fn draw_objects_commit_mutate_and_respect_previews() {
+    // A swing script shape: one label per bar, and a var line stretched to
+    // the newest bar each run.
+    let source = "//@version=5\nindicator(\"objs\", overlay=true)\nvar line trail = na\nif bar_index == 0\n    trail := line.new(0, close, 0, close)\nlabel.new(bar_index, high, text=\"HH\", style=label.style_label_down)\ntrail.set_xy2(bar_index, close)\nplot(close)\n";
+    let mut h = Harness::load(source);
+    h.close(&bar(0, 10.0)).unwrap();
+    h.close(&bar(1, 20.0)).unwrap();
+
+    let store = h.indicator.objects().expect("script draws objects");
+    let snapshot = store.snapshot();
+    assert_eq!(snapshot.labels.len(), 2, "one committed label per bar");
+    assert_eq!(
+        snapshot.lines.len(),
+        1,
+        "the var line is reused, not re-made"
+    );
+    assert_eq!(snapshot.lines[0].x2, 1, "stretched to the newest bar");
+    assert_eq!(snapshot.labels[0].text, "HH");
+
+    // A preview creates a transient label and stretches the line further;
+    // the frame carries it, the committed store must not.
+    let frame = h.preview(&bar(2, 30.0)).unwrap();
+    let transient = frame.objects.expect("preview carries the object set");
+    assert_eq!(transient.labels.len(), 3, "committed 2 + the forming bar's");
+    assert_eq!(transient.lines[0].x2, 2, "preview sees the stretch");
+    let committed = h.indicator.objects().unwrap().snapshot();
+    assert_eq!(committed.labels.len(), 2, "preview objects vanished");
+    assert_eq!(committed.lines[0].x2, 1, "preview mutation rolled back");
+}
+
+#[test]
+fn the_object_cap_is_enforced_through_scripts() {
+    // One label per bar for 510 bars: the store must hold exactly 500 and
+    // the oldest ten must be gone.
+    let source =
+        "//@version=5\nindicator(\"cap\")\nlabel.new(bar_index, close, text=\"x\")\nplot(close)\n";
+    let mut h = Harness::load(source);
+    for i in 0..510 {
+        h.close(&bar(i, 10.0)).unwrap();
+    }
+    let snapshot = h.indicator.objects().unwrap().snapshot();
+    assert_eq!(snapshot.labels.len(), 500);
+    assert_eq!(snapshot.labels[0].x, 10, "the ten oldest were collected");
+}
+
+#[test]
 fn a_kernel_length_that_changes_between_bars_is_refused() {
     // The kernel is built once and keeps its window forever, so a length
     // that moves used to be silently pinned to bar zero's value while the
@@ -314,4 +360,34 @@ plot(math.max(math.log(0), math.log(0)))
     );
     h.close_all(&[3.0]);
     assert_eq!(h.column(0), vec![f64::NEG_INFINITY]);
+}
+
+#[test]
+fn a_varip_handle_that_survives_a_preview_never_aliases_a_committed_object() {
+    // `varip` deliberately survives a rollback, so a handle allocated inside
+    // a preview outlives the preview's store. If the id counter rewound with
+    // the store, the commit run would hand that same id to a different
+    // object and the stale handle would silently mutate a stranger — the one
+    // thing the object ids exist to prevent.
+    let source = "//@version=5
+indicator(\"aliasing\", overlay=true)
+varip line pinned = na
+if na(pinned)
+    pinned := line.new(0, close, 0, close)
+fresh = line.new(bar_index, low, bar_index, high)
+pinned.set_y1(999)
+plot(close)
+";
+    let mut h = Harness::load(source);
+    // The preview allocates the varip line; the commit run does not, because
+    // `pinned` is no longer `na`.
+    let _ = h.preview(&bar(0, 10.0)).expect("preview runs");
+    h.close(&bar(0, 10.0)).expect("commit runs");
+
+    let snapshot = h.indicator.objects().expect("the script draws").snapshot();
+    let stranger = snapshot.lines.iter().find(|l| l.y2 > 900.0 || l.y1 > 900.0);
+    assert!(
+        stranger.is_none(),
+        "the varip handle wrote into a committed line: {snapshot:?}"
+    );
 }

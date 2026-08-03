@@ -166,6 +166,14 @@ pub enum Builtin {
     /// `alertcondition(...)` — parsed, inert, load warning.
     AlertCondition,
 
+    // ---- draw objects ----
+    /// `line.new(x1, y1, x2, y2, …)`
+    LineNew,
+    /// `box.new(left, top, right, bottom, …)`
+    BoxNew,
+    /// `label.new(x, y, text, …)`
+    LabelNew,
+
     // ---- input.* ----
     /// `input.int`
     InputInt,
@@ -187,7 +195,7 @@ pub enum Builtin {
 /// One table rather than a match plus a parallel array: the two used to be
 /// maintained by hand, and a name present in one but not the other silently
 /// lost its did-you-mean entry and escaped the doc-drift guard, with no test
-/// failing. A linear scan over 77 entries happens once per script load.
+/// failing. A linear scan over 80 entries happens once per script load.
 const BUILTINS: &[(&str, Builtin)] = &[
     ("open", Builtin::Open),
     ("high", Builtin::High),
@@ -260,6 +268,9 @@ const BUILTINS: &[(&str, Builtin)] = &[
     ("bgcolor", Builtin::Bgcolor),
     ("barcolor", Builtin::Barcolor),
     ("alertcondition", Builtin::AlertCondition),
+    ("line.new", Builtin::LineNew),
+    ("box.new", Builtin::BoxNew),
+    ("label.new", Builtin::LabelNew),
     ("input.int", Builtin::InputInt),
     ("input.float", Builtin::InputFloat),
     ("input.bool", Builtin::InputBool),
