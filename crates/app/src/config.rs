@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::symbols_file::AddedSymbols;
+
 /// The built-in default configuration, compiled into the binary so the app runs
 /// with no external file present.
 const EMBEDDED_DEFAULT: &str = include_str!("../config/feeds.toml");
@@ -389,6 +391,71 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
+    /// Fold the user's added symbols into the catalog, in place.
+    ///
+    /// Config order first, additions after it, no duplicates: what the file
+    /// ships stays where it is and what the user added lands at the end of
+    /// the feed's list, which is the order the picker and the SOURCE combo
+    /// then show.
+    ///
+    /// Run *before* [`Self::validate`], so a user-added symbol is checked like
+    /// any other — the MetaTrader port cross-check in particular has to see
+    /// the catalog the app will actually run on, not the one on disk.
+    ///
+    /// An entry for a feed the config no longer has is dropped with a log
+    /// line: a renamed feed should cost its additions, not the launch.
+    pub fn merge_added_symbols(&mut self, added: &AddedSymbols) {
+        for (feed_id, symbols) in added.entries() {
+            let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) else {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "SYMBOL_CATALOG_UNKNOWN_FEED",
+                    feed = %feed_id,
+                    symbols = symbols.len(),
+                    action = "entries_skipped",
+                    "the added-symbols file names a feed the config does not have"
+                );
+                continue;
+            };
+            for symbol in symbols {
+                if !feed.symbols.iter().any(|existing| existing == symbol) {
+                    feed.symbols.push(symbol.clone());
+                }
+            }
+        }
+    }
+
+    /// Add `symbol` to feed `id`'s catalog. `false` when the feed is unknown
+    /// or already offers it.
+    pub fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
+        let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) else {
+            return false;
+        };
+        if feed.symbols.iter().any(|existing| existing == symbol) {
+            return false;
+        }
+        feed.symbols.push(symbol.to_owned());
+        true
+    }
+
+    /// Drop `symbol` from feed `id`'s catalog. `false` when the feed is
+    /// unknown or does not offer it.
+    ///
+    /// Refuses to empty a feed: `validate` rejects a feed with no symbols, so
+    /// a catalog that could reach that state is one the app could not reload.
+    pub fn remove_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
+        let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) else {
+            return false;
+        };
+        if feed.symbols.len() <= 1 {
+            return false;
+        }
+        let before = feed.symbols.len();
+        feed.symbols.retain(|existing| existing != symbol);
+        feed.symbols.len() != before
+    }
+
     /// The display name of feed `id`, or its id when the config has no such
     /// feed — a borrow, because the chrome reads it every frame.
     #[must_use]
@@ -700,12 +767,18 @@ pub fn apply_startup_selection_from_env(
     apply_startup_selection(config, feed.as_deref(), symbol.as_deref())
 }
 
-/// Parse and validate a config from a TOML string tagged with its `source`.
-fn parse(text: &str, source: ConfigSource) -> Result<AppConfig, ConfigError> {
-    let config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse {
+/// Parse a config from a TOML string tagged with its `source`, fold in the
+/// user's added symbols, and validate the result.
+///
+/// The merge happens before validation on purpose: a symbol added from the UI
+/// is part of the catalog the app runs on, so it has to pass the same checks —
+/// the MetaTrader port cross-check most of all.
+fn parse(text: &str, source: ConfigSource, added: &AddedSymbols) -> Result<AppConfig, ConfigError> {
+    let mut config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse {
         source: source.clone(),
         message: e.to_string(),
     })?;
+    config.merge_added_symbols(added);
     config.validate().map_err(|message| ConfigError::Invalid {
         source: source.clone(),
         message,
@@ -725,6 +798,7 @@ fn parse(text: &str, source: ConfigSource) -> Result<AppConfig, ConfigError> {
 /// Returns [`ConfigError`] when a present external file cannot be read, parsed,
 /// or validated. The embedded default is validated in tests, so it never errors.
 pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
+    let added = crate::symbols_file::load(&crate::symbols_file::default_path());
     if let Some(path) = std::env::var_os(CONFIG_ENV) {
         let path = PathBuf::from(path);
         let source = ConfigSource::EnvPath(path.clone());
@@ -732,7 +806,7 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
             path,
             message: e.to_string(),
         })?;
-        return Ok((parse(&text, source.clone())?, source));
+        return Ok((parse(&text, source.clone(), &added)?, source));
     }
 
     let cwd_path = Path::new(CONFIG_FILENAME);
@@ -742,10 +816,10 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
             path: cwd_path.to_path_buf(),
             message: e.to_string(),
         })?;
-        return Ok((parse(&text, source.clone())?, source));
+        return Ok((parse(&text, source.clone(), &added)?, source));
     }
 
-    let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded)?;
+    let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded, &added)?;
     Ok((config, ConfigSource::Embedded))
 }
 
@@ -753,9 +827,132 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
 mod tests {
     use super::*;
 
+    /// The catalog the app runs on is the file's list plus the user's, in
+    /// that order and without repeats.
+    #[test]
+    fn added_symbols_land_after_the_config_list_without_repeating_it() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let feed = config.feeds[0].id.clone();
+        let shipped = config.feeds[0].symbols.clone();
+        let mut added = AddedSymbols::default();
+        // One brand new, and one the config already ships.
+        added.add(&feed, "WINQ26");
+        added.add(&feed, &shipped[0]);
+
+        config.merge_added_symbols(&added);
+
+        let merged = &config.feeds[0].symbols;
+        assert_eq!(
+            &merged[..shipped.len()],
+            &shipped[..],
+            "what the file ships stays where it is"
+        );
+        assert_eq!(
+            merged.last().map(String::as_str),
+            Some("WINQ26"),
+            "and the addition lands after it"
+        );
+        assert_eq!(
+            merged.iter().filter(|s| *s == &shipped[0]).count(),
+            1,
+            "adding one the config already has changes nothing"
+        );
+    }
+
+    /// A feed that was renamed or dropped should cost its additions, never the
+    /// launch.
+    #[test]
+    fn added_symbols_for_an_unknown_feed_are_ignored() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let before = config.feeds.clone();
+        let mut added = AddedSymbols::default();
+        added.add("a-feed-that-was-renamed", "WINQ26");
+
+        config.merge_added_symbols(&added);
+
+        assert_eq!(config.feeds, before, "nothing was invented for a dead id");
+        assert!(config.validate().is_ok(), "and the config still loads");
+    }
+
+    /// The merge runs before validation, so an addition is checked like any
+    /// other symbol — which is what lets a mapped MetaTrader port find it.
+    #[test]
+    fn an_added_metatrader_symbol_reaches_the_port_cross_check() {
+        let text = "\
+            default_feed = \"mt\"\n\
+            default_symbol = \"WIN$N\"\n\
+            [[feeds]]\n\
+            id = \"mt\"\n\
+            name = \"MetaTrader 5\"\n\
+            provider = \"metatrader\"\n\
+            symbols = [\"WIN$N\"]\n\
+            [metatrader]\n\
+            listen_addr = \"127.0.0.1:9100\"\n\
+            [metatrader.ports]\n\
+            WINQ26 = 9101\n";
+
+        // Without the addition the map names a symbol no feed offers, which is
+        // exactly the mistake the cross-check exists to catch.
+        let bare = parse(text, ConfigSource::Embedded, &AddedSymbols::default());
+        assert!(
+            bare.is_err(),
+            "a port mapping a symbol nothing offers is a config error"
+        );
+
+        let mut added = AddedSymbols::default();
+        added.add("mt", "WINQ26");
+        let config = parse(text, ConfigSource::Embedded, &added)
+            .expect("the addition makes the mapping legitimate");
+        assert!(config.feeds[0].symbols.iter().any(|s| s == "WINQ26"));
+        assert_eq!(
+            config.metatrader.endpoint_for("WINQ26").listen_addr,
+            "127.0.0.1:9101",
+            "and the added contract listens on its own port"
+        );
+        assert_eq!(
+            config.metatrader.endpoint_for("WIN$N").listen_addr,
+            "127.0.0.1:9100",
+            "while an unmapped symbol keeps the shared one"
+        );
+    }
+
+    /// A feed must keep at least one symbol: `validate` rejects an empty list,
+    /// so a catalog edit that could empty one is an edit the app could not
+    /// reload.
+    #[test]
+    fn the_last_symbol_of_a_feed_cannot_be_removed() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let feed = config.feeds[0].id.clone();
+        config.feeds[0].symbols.truncate(1);
+        let only = config.feeds[0].symbols[0].clone();
+
+        assert!(!config.remove_symbol(&feed, &only));
+        assert_eq!(config.feeds[0].symbols, [only]);
+    }
+
     #[test]
     fn resolving_a_symbol_keeps_a_valid_one_and_falls_back_otherwise() {
-        let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("the shipped config");
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
         let feed = config.feeds.first().expect("the shipped config has feeds");
         let (id, first) = (feed.id.clone(), feed.symbols[0].clone());
 
@@ -779,7 +976,12 @@ mod tests {
 
     #[test]
     fn embedded_default_parses_and_validates() {
-        let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         assert_eq!(config.default_feed, "binance");
         assert_eq!(
             config
@@ -852,7 +1054,12 @@ mod tests {
 
     #[test]
     fn startup_selection_override_preserves_the_whole_catalog() {
-        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         let feeds_before = config.feeds.clone();
         let metatrader_before = config.metatrader.clone();
 
@@ -880,7 +1087,12 @@ mod tests {
 
     #[test]
     fn startup_selection_rejects_an_unknown_feed_without_mutating_config() {
-        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         let before = config.clone();
 
         let error = apply_startup_selection(&mut config, Some("ghost"), Some("BTC"))
@@ -896,7 +1108,12 @@ mod tests {
 
     #[test]
     fn startup_selection_rejects_a_symbol_outside_the_selected_feed() {
-        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         let before = config.clone();
 
         let error = apply_startup_selection(&mut config, Some("hyperliquid"), Some("BTCUSDT"))
@@ -921,7 +1138,8 @@ mod tests {
             symbols = ["AAA"]
             bubble_preset = "  "
         "#;
-        let err = parse(text, ConfigSource::Embedded).expect_err("blank name");
+        let err =
+            parse(text, ConfigSource::Embedded, &AddedSymbols::default()).expect_err("blank name");
         assert!(
             err.to_string().contains("bubble_preset"),
             "the message names the field: {err}"
@@ -951,7 +1169,7 @@ mod tests {
             provider = "metatrader"
             symbols = ["WINQ26"]
         "#;
-        let mut config = parse(text, ConfigSource::Embedded).unwrap();
+        let mut config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(
             config.side_note("mt"),
             Some("side: inferred (tick rule)"),
@@ -972,7 +1190,7 @@ mod tests {
             provider = "metatrader"
             symbols = ["EURUSD"]
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(config.provider_of("mt"), Some(ProviderKind::MetaTrader));
         assert!(ProviderKind::MetaTrader.is_implemented());
         assert!(ProviderKind::Binance.is_implemented());
@@ -995,7 +1213,7 @@ mod tests {
             listen_addr = "127.0.0.1:9200"
             side_source = "flags"
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(config.metatrader.listen_addr, "127.0.0.1:9200");
         assert_eq!(config.metatrader.side_source, Mt5SideSource::Flags);
     }
@@ -1085,7 +1303,7 @@ mod tests {
             XAUUSD = 9101
             US500 = 9102
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(
             config.metatrader.ports,
             BTreeMap::from([("XAUUSD".to_string(), 9101), ("US500".to_string(), 9102)])
@@ -1110,7 +1328,7 @@ mod tests {
             {section}
         "#
         );
-        parse(&text, ConfigSource::Embedded)
+        parse(&text, ConfigSource::Embedded, &AddedSymbols::default())
     }
 
     #[test]
@@ -1238,7 +1456,8 @@ mod tests {
             [metatrader.ports]
             US500 = 9102
         "#;
-        let err = parse(text, ConfigSource::Embedded).expect_err("two feeds claim US500");
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default())
+            .expect_err("two feeds claim US500");
         let message = err.to_string();
         assert!(message.contains("US500"), "{message}");
         assert!(
@@ -1249,7 +1468,7 @@ mod tests {
         // The same two feeds are fine as long as the shared symbol is not
         // mapped — they simply cannot stream at the same time.
         let unmapped = text.replace("[metatrader.ports]\n            US500 = 9102", "");
-        assert!(parse(&unmapped, ConfigSource::Embedded).is_ok());
+        assert!(parse(&unmapped, ConfigSource::Embedded, &AddedSymbols::default()).is_ok());
     }
 
     #[test]
@@ -1289,7 +1508,7 @@ mod tests {
             bridge_autostart = false
             bridge_command = ["py", "-3", "bridge/mt5/quantick_bridge.py"]
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert!(!config.metatrader.bridge_autostart);
         assert_eq!(
             config.metatrader.bridge_command,
@@ -1310,7 +1529,7 @@ mod tests {
             provider = "binance"
             symbols = ["BTCUSDT"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -1325,7 +1544,7 @@ mod tests {
             provider = "binance"
             symbols = ["BTCUSDT", "ETHUSDT"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -1345,7 +1564,7 @@ mod tests {
             provider = "binance"
             symbols = ["ETHUSDT"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -1356,7 +1575,7 @@ mod tests {
             default_symbol = "BTCUSDT"
             feeds = []
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -1371,7 +1590,7 @@ mod tests {
             provider = "kraken"
             symbols = ["Y"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
     }
 
@@ -1387,7 +1606,7 @@ mod tests {
             symbols = ["BTCUSDT", "ETHUSDT"]
         "#;
         (
-            parse(text, ConfigSource::Embedded).unwrap(),
+            parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap(),
             ConfigSource::Embedded,
         )
     }

@@ -36,6 +36,7 @@ use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
 use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
+use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::{CanvasChrome, CanvasLayout, Tab};
 use crate::tabstrip::{self, PickerOutcome, SourcePicker, TabAction};
 use crate::theme;
@@ -283,6 +284,13 @@ pub struct QuantickApp {
     persisted_tab: Option<u64>,
     /// The `+` dialog, while it is open.
     source_picker: Option<SourcePicker>,
+    /// The instruments the user added from the picker, already folded into
+    /// `config`'s catalog. Kept apart from it so the picker can tell an
+    /// addition — which it may take back out — from a shipped entry, which is
+    /// the config file's and not the app's to touch.
+    added_symbols: AddedSymbols,
+    /// Where those additions persist. See [`crate::symbols_file`].
+    symbols_path: std::path::PathBuf,
 
     config: AppConfig,
 
@@ -425,6 +433,8 @@ impl QuantickApp {
             next_tab_id: FIRST_TAB_ID + 1,
             persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
+            added_symbols: symbols_file::load(&symbols_file::default_path()),
+            symbols_path: symbols_file::default_path(),
             config,
             script_library: ScriptLibrary::scan(),
             indicator_settings: None,
@@ -2758,17 +2768,91 @@ impl QuantickApp {
 
     /// The `+` dialog, while it is open.
     fn draw_source_picker(&mut self, ctx: &egui::Context) {
-        let Some(picker) = self.source_picker.as_mut() else {
+        if self.source_picker.is_none() {
             return;
+        }
+        // The markets tabs are showing: the picker greys out removing one of
+        // those, because a tab left on a symbol the catalog no longer offers
+        // gets silently retargeted by the next SOURCE correction.
+        let open_symbols: Vec<(String, String)> = self
+            .tabs
+            .iter()
+            .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
+            .collect();
+        let outcome = {
+            let Self {
+                source_picker,
+                config,
+                added_symbols,
+                ..
+            } = self;
+            let picker = source_picker.as_mut().expect("checked above");
+            picker.draw(ctx, config, added_symbols, &open_symbols)
         };
-        match picker.draw(ctx, &self.config) {
+        match outcome {
             PickerOutcome::Open => {}
             PickerOutcome::Cancel => self.source_picker = None,
             PickerOutcome::Chosen(feed_id, symbol) => {
                 self.source_picker = None;
                 self.open_tab(feed_id, symbol);
             }
+            PickerOutcome::Added { feed_id, symbol } => {
+                if self.add_symbol(&feed_id, &symbol) {
+                    self.source_picker = None;
+                    self.open_tab(feed_id, symbol);
+                }
+            }
+            PickerOutcome::Removed { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
         }
+    }
+
+    /// Put `symbol` in feed `feed_id`'s catalog and remember it across
+    /// restarts. Reports whether the catalog took it.
+    ///
+    /// The config file itself is never written: it is hand-written, comments
+    /// and all, and a program that rewrote it would eat them. The addition
+    /// lives in its own sidecar, which the next launch folds back in before
+    /// the config is validated (see [`crate::symbols_file`]).
+    fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
+        if !self.config.add_symbol(feed_id, symbol) {
+            return false;
+        }
+        self.added_symbols.add(feed_id, symbol);
+        symbols_file::save(&self.symbols_path, &self.added_symbols);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "SYMBOL_ADDED",
+            feed = %feed_id,
+            symbol = %symbol,
+            path = %self.symbols_path.display(),
+            action = "open_in_new_tab",
+            "a symbol was added from the source picker"
+        );
+        true
+    }
+
+    /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
+    ///
+    /// Only ever a catalog edit: a tab already showing that market keeps
+    /// streaming it. The picker will not offer this for a market a tab is on,
+    /// which is what stops the selection correction from retargeting it.
+    fn remove_symbol(&mut self, feed_id: &str, symbol: &str) {
+        if !self.config.remove_symbol(feed_id, symbol) {
+            return;
+        }
+        self.added_symbols.remove(feed_id, symbol);
+        symbols_file::save(&self.symbols_path, &self.added_symbols);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "SYMBOL_REMOVED",
+            feed = %feed_id,
+            symbol = %symbol,
+            path = %self.symbols_path.display(),
+            action = "leave_open_tabs_alone",
+            "a user-added symbol left the catalog"
+        );
     }
 
     /// Carry out what the tab strip asked for.
@@ -6125,6 +6209,29 @@ plot(close)
 
     // ---- workspace tabs (§11) ----
 
+    /// A feed handle wired to channels nothing sends on, for a tab a test
+    /// opens but does not drive.
+    fn stub_feed() -> (FeedHandle, TabEnds) {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        (
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+            TabEnds {
+                events: evt_tx,
+                book: book_tx,
+                commands: cmd_rx,
+            },
+        )
+    }
+
     /// The ends of a tab's feed, kept alive by the test so its channels stay
     /// open exactly as a running feed thread would keep them.
     struct TabEnds {
@@ -6284,6 +6391,193 @@ plot(close)
             app.active_tab().flow_pane.drawings.items().is_empty(),
             "and touches nothing on the pane the button happens to float over"
         );
+    }
+
+    // ---- adding a symbol from the picker (§11) ----
+
+    /// A scratch sidecar path, so a test never touches the real one.
+    fn symbols_scratch(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "quantick-symbols-app-{}-{}.toml",
+            name,
+            std::process::id()
+        ))
+    }
+
+    /// (a) Typing a contract the catalog does not have opens it and records
+    /// it. The real driver: B3 rotates the mini index every two months, and
+    /// the broker serves WINQ26 rather than the WIN$N alias.
+    #[test]
+    fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let path = symbols_scratch("added");
+        let _ = std::fs::remove_file(&path);
+        app.symbols_path = path.clone();
+        let tabs_before = app.tabs.len();
+
+        // The real dialog: open it, type the contract, press Add.
+        app.apply_tab_action(TabAction::New);
+        run_frame(&mut app, &ctx);
+        app.source_picker
+            .as_mut()
+            .expect("the + opened the picker")
+            .set_draft_symbol("  WINQ26 ");
+        run_frame(&mut app, &ctx);
+        let add = app
+            .source_picker
+            .as_ref()
+            .expect("still open")
+            .add_button_rect()
+            .expect("the Add button was laid out");
+        click_chart(&mut app, &ctx, add.center());
+        run_frame(&mut app, &ctx);
+
+        assert!(
+            app.source_picker.is_none(),
+            "adding closes the dialog, because it opened the market"
+        );
+        assert_eq!(app.tabs.len(), tabs_before + 1);
+        assert_eq!(app.active_tab().symbol, "WINQ26", "and it is what opened");
+        // Both surfaces that list symbols see it, because both read the
+        // catalog the app is running on.
+        assert!(
+            app.config
+                .feed("binance")
+                .expect("the feed")
+                .symbols
+                .iter()
+                .any(|symbol| symbol == "WINQ26")
+        );
+        assert!(app.added_symbols.contains("binance", "WINQ26"));
+
+        let written = std::fs::read_to_string(&path).expect("the sidecar was written");
+        assert!(
+            written.contains("WINQ26"),
+            "it records the symbol: {written}"
+        );
+        assert!(
+            written.contains("quantick.toml is never modified"),
+            "and says the config file is left alone: {written}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (b) The point of writing it: the next launch has it. Proven without
+    /// restarting, by loading a config through the same path `load` uses.
+    #[test]
+    fn a_recorded_symbol_is_in_the_catalog_on_the_next_load() {
+        let path = symbols_scratch("reload");
+        let _ = std::fs::remove_file(&path);
+        let mut added = crate::symbols_file::AddedSymbols::default();
+        added.add("binance", "WINQ26");
+        crate::symbols_file::save(&path, &added);
+
+        let reloaded = crate::symbols_file::load(&path);
+        let mut config = test_config();
+        config.merge_added_symbols(&reloaded);
+
+        assert!(
+            config
+                .feed("binance")
+                .expect("the feed")
+                .symbols
+                .iter()
+                .any(|symbol| symbol == "WINQ26"),
+            "a restart finds the contract the user added"
+        );
+        assert!(config.validate().is_ok(), "and the merged catalog is valid");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (c) Removing is a catalog edit and only that: the file and the picker
+    /// lose the symbol, a tab showing that market does not.
+    #[test]
+    fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let path = symbols_scratch("removed");
+        let _ = std::fs::remove_file(&path);
+        app.symbols_path = path.clone();
+        app.add_symbol("binance", "WINQ26");
+        app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
+        run_frame(&mut app, &ctx);
+        let open_tabs = app.tabs.len();
+
+        app.remove_symbol("binance", "WINQ26");
+
+        assert!(
+            !app.config
+                .feed("binance")
+                .expect("the feed")
+                .symbols
+                .iter()
+                .any(|symbol| symbol == "WINQ26"),
+            "the catalog lost it"
+        );
+        assert!(!app.added_symbols.contains("binance", "WINQ26"));
+        assert!(
+            !crate::symbols_file::load(&path).contains("binance", "WINQ26"),
+            "and so did the file"
+        );
+        assert_eq!(app.tabs.len(), open_tabs, "no tab was closed");
+        assert_eq!(
+            app.active_tab().symbol,
+            "WINQ26",
+            "and the one showing that market still is"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// (e) A sidecar naming a feed the config no longer has says so and is
+    /// ignored — a renamed feed costs its additions, not the launch.
+    #[test]
+    fn a_sidecar_entry_for_a_dead_feed_is_ignored() {
+        let mut added = crate::symbols_file::AddedSymbols::default();
+        added.add("a-feed-that-was-renamed", "WINQ26");
+        let mut config = test_config();
+        let before = config.feeds.clone();
+
+        config.merge_added_symbols(&added);
+
+        assert_eq!(config.feeds, before, "nothing was invented for a dead id");
+        assert!(config.validate().is_ok());
+    }
+
+    /// The remove affordance is refused for a market a tab is on: the picker
+    /// greys it out, and the reason is that the next SOURCE correction would
+    /// otherwise retarget that tab to another instrument.
+    #[test]
+    fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_history(50);
+        app.symbols_path = symbols_scratch("guard");
+        let _ = std::fs::remove_file(&app.symbols_path);
+        app.add_symbol("binance", "WINQ26");
+        app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
+        run_frame(&mut app, &ctx);
+
+        // What the picker is handed, and what it does with it.
+        let open: Vec<(String, String)> = app
+            .tabs
+            .iter()
+            .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
+            .collect();
+        assert!(
+            open.iter()
+                .any(|(feed, symbol)| feed == "binance" && symbol == "WINQ26"),
+            "the tab is on the market the picker must protect"
+        );
+        // The app-side rule holds even if the affordance were clicked: the
+        // catalog edit is refused for the last symbol and allowed otherwise,
+        // and the tab is never touched either way.
+        app.remove_symbol("binance", "WINQ26");
+        assert_eq!(
+            app.active_tab().symbol,
+            "WINQ26",
+            "removing a symbol never moves a tab off its market"
+        );
+        let _ = std::fs::remove_file(&app.symbols_path);
     }
 
     /// §11's amber dot: a background tab says something is wrong with its

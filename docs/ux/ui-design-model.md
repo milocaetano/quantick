@@ -364,6 +364,14 @@ budget is unchanged.
   replacing that tab's SOURCE group with the amber session label (existing
   behaviour, now scoped). Other tabs keep streaming live.
 - Default open: one tab, the config default (`default_feed`/`default_symbol`).
+- **The picker can add a symbol the catalog does not have.** An "Add symbol…"
+  field under the symbol list opens it immediately and remembers it in
+  `quantick-symbols.toml` beside the config — the config file itself is
+  hand-written and never rewritten by the app. Added symbols merge into the
+  catalog before it is validated, so they reach the MetaTrader port map like
+  any other, and they carry the only remove affordance in the app: a shipped
+  entry is the config's, not the app's. This is what a rolling B3 contract
+  (WINQ26 → WINV26) needs, and it costs no file editing.
 - **The last tab is not closable.** Its `×` disables itself and says why: a
   window with no market has nothing to draw, and an empty canvas is not a
   state the chrome has anything true to say about.

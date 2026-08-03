@@ -10,6 +10,7 @@
 use eframe::egui;
 
 use crate::config::AppConfig;
+use crate::symbols_file::AddedSymbols;
 use crate::theme;
 
 /// Radius of the amber dot marking a background tab whose feed is in trouble.
@@ -19,6 +20,9 @@ const CHIP_GAP_PX: f32 = 6.0;
 /// How far below a chip's top edge the attention dot sits, so it clears the
 /// selection outline instead of riding it.
 const ATTENTION_DOT_INSET_PX: f32 = 1.0;
+/// Width of the add-symbol field: wide enough for the longest contract code a
+/// venue uses, narrow enough that the dialog stays a dialog.
+const SYMBOL_FIELD_WIDTH_PX: f32 = 120.0;
 
 /// What one tab looks like on the strip this frame.
 pub struct TabChip<'a> {
@@ -97,13 +101,19 @@ pub fn draw(ui: &mut egui::Ui, chips: &[TabChip<'_>], active: usize) -> Option<T
     action
 }
 
-/// The `+` dialog: pick a feed and a symbol from the config catalog.
+/// The `+` dialog: pick a feed and a symbol from the catalog, or add one the
+/// catalog does not have yet.
 ///
-/// Held open across frames because the two combos are a two-step choice; the
-/// draft selection lives here so a half-made pick never touches a tab.
+/// Held open across frames because the choice is a two-step one; the draft
+/// selection and the add field live here so a half-made pick never touches a
+/// tab or the catalog.
 pub struct SourcePicker {
     pub feed_id: String,
     pub symbol: String,
+    /// What the "Add symbol…" field currently holds.
+    draft_symbol: String,
+    #[cfg(test)]
+    add_button: Option<egui::Rect>,
 }
 
 /// What the picker asked for.
@@ -114,6 +124,17 @@ pub enum PickerOutcome {
     Cancel,
     /// Open this market in a new tab.
     Chosen(String, String),
+    /// Add this symbol to the feed's catalog, remember it, and open it.
+    Added {
+        feed_id: String,
+        symbol: String,
+    },
+    /// Drop this user-added symbol from the catalog. Never closes a tab —
+    /// leaving the catalog is not leaving the market.
+    Removed {
+        feed_id: String,
+        symbol: String,
+    },
 }
 
 impl SourcePicker {
@@ -129,7 +150,25 @@ impl SourcePicker {
             .feed(&feed_id)
             .and_then(|feed| feed.symbols.first().cloned())
             .unwrap_or_else(|| config.default_symbol.clone());
-        Self { feed_id, symbol }
+        Self {
+            feed_id,
+            symbol,
+            draft_symbol: String::new(),
+            #[cfg(test)]
+            add_button: None,
+        }
+    }
+
+    /// Where the Add button landed, so a test can press the one a user would.
+    #[cfg(test)]
+    pub(crate) fn add_button_rect(&self) -> Option<egui::Rect> {
+        self.add_button
+    }
+
+    /// Put text in the add field, as typing does.
+    #[cfg(test)]
+    pub(crate) fn set_draft_symbol(&mut self, symbol: &str) {
+        self.draft_symbol = symbol.to_owned();
     }
 
     /// Keep `symbol` valid for the picked feed, by the same rule the toolbar's
@@ -141,8 +180,45 @@ impl SourcePicker {
         }
     }
 
+    /// What submitting the add field means.
+    ///
+    /// Whitespace is trimmed and an empty field submits nothing; anything else
+    /// is taken verbatim, because a venue's own name for an instrument is not
+    /// ours to normalise (`WDO$` is a real symbol). A symbol the feed already
+    /// offers adds nothing — it just becomes the selection, which is the
+    /// honest answer to "add this": it is already here.
+    fn take_draft_symbol(&mut self, symbols: &[String]) -> Option<PickerOutcome> {
+        let symbol = self.draft_symbol.trim().to_owned();
+        if symbol.is_empty() {
+            return None;
+        }
+        self.draft_symbol.clear();
+        if symbols.iter().any(|existing| existing == &symbol) {
+            self.symbol = symbol;
+            return None;
+        }
+        self.symbol = symbol.clone();
+        Some(PickerOutcome::Added {
+            feed_id: self.feed_id.clone(),
+            symbol,
+        })
+    }
+
     /// Draw the dialog and report what it asked for.
-    pub fn draw(&mut self, ctx: &egui::Context, config: &AppConfig) -> PickerOutcome {
+    ///
+    /// `added` says which symbols the user put in the catalog: those are the
+    /// ones this dialog may take back out, and the only ones. `open_symbols`
+    /// are the markets tabs are currently showing — removing one of those
+    /// would leave a tab streaming an instrument the catalog no longer offers,
+    /// and the next SOURCE correction would silently retarget it, so the
+    /// affordance says so instead of doing it.
+    pub fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        config: &AppConfig,
+        added: &AddedSymbols,
+        open_symbols: &[(String, String)],
+    ) -> PickerOutcome {
         let mut outcome = PickerOutcome::Open;
         let mut open = true;
         egui::Window::new("Open market")
@@ -170,17 +246,83 @@ impl SourcePicker {
                         }
                     });
                 self.ensure_symbol_valid(config);
+                let symbols = config
+                    .feed(&self.feed_id)
+                    .map(|feed| feed.symbols.clone())
+                    .unwrap_or_default();
                 egui::ComboBox::from_label("Symbol")
                     .selected_text(self.symbol.clone())
                     .show_ui(ui, |ui| {
-                        for symbol in config
-                            .feed(&self.feed_id)
-                            .map(|feed| feed.symbols.clone())
-                            .unwrap_or_default()
-                        {
+                        for symbol in &symbols {
                             ui.selectable_value(&mut self.symbol, symbol.clone(), symbol);
                         }
                     });
+
+                // The symbols this session added, with the only remove
+                // affordance in the app. A shipped catalog entry is the
+                // config's, not the app's, and stays put.
+                let removable: Vec<&String> = symbols
+                    .iter()
+                    .filter(|symbol| added.contains(&self.feed_id, symbol))
+                    .collect();
+                if !removable.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("added here")
+                            .small()
+                            .color(theme::TEXT_FAINT),
+                    );
+                    for symbol in removable {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(symbol).monospace());
+                            let open = open_symbols
+                                .iter()
+                                .any(|(feed, open)| feed == &self.feed_id && open == symbol);
+                            let remove = ui.add_enabled(!open, egui::Button::new("×").frame(false));
+                            let remove = if open {
+                                remove.on_disabled_hover_text(
+                                    "A tab is showing this market — close it first",
+                                )
+                            } else {
+                                remove.on_hover_text("Remove from this feed's symbol list")
+                            };
+                            if remove.clicked() {
+                                outcome = PickerOutcome::Removed {
+                                    feed_id: self.feed_id.clone(),
+                                    symbol: symbol.clone(),
+                                };
+                            }
+                        });
+                    }
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Add symbol…");
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.draft_symbol)
+                            .desired_width(SYMBOL_FIELD_WIDTH_PX)
+                            .hint_text("WINQ26"),
+                    );
+                    let submitted =
+                        field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    let add = ui.button("Add");
+                    #[cfg(test)]
+                    {
+                        self.add_button = Some(add.rect);
+                    }
+                    if (submitted || add.clicked())
+                        && let Some(added) = self.take_draft_symbol(&symbols)
+                    {
+                        outcome = added;
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Venues rename contracts — a dated B3 future, say. Added symbols \
+                     persist in quantick-symbols.toml.",
+                );
+
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Open").clicked() {
@@ -236,6 +378,60 @@ mod tests {
         let picker = SourcePicker::new(&empty);
         assert_eq!(picker.feed_id, empty.default_feed);
         assert_eq!(picker.symbol, empty.default_symbol);
+    }
+
+    /// Submitting the add field: trimmed, empty rejected, verbatim otherwise,
+    /// and a symbol the feed already has adds nothing but the selection.
+    #[test]
+    fn the_add_field_trims_rejects_empty_and_takes_the_rest_verbatim() {
+        let config = config();
+        let symbols = config.feeds[0].symbols.clone();
+        let mut picker = SourcePicker::new(&config);
+
+        picker.draft_symbol = "   ".to_string();
+        assert_eq!(
+            picker.take_draft_symbol(&symbols),
+            None,
+            "empty submits nothing"
+        );
+
+        picker.draft_symbol = "  WINQ26 ".to_string();
+        assert_eq!(
+            picker.take_draft_symbol(&symbols),
+            Some(PickerOutcome::Added {
+                feed_id: "binance".to_string(),
+                symbol: "WINQ26".to_string(),
+            }),
+            "surrounding whitespace is not part of a symbol"
+        );
+        assert!(picker.draft_symbol.is_empty(), "the field clears on submit");
+        assert_eq!(picker.symbol, "WINQ26", "and the new symbol is selected");
+
+        // A venue's own name is not ours to normalise.
+        picker.draft_symbol = "WDO$".to_string();
+        assert_eq!(
+            picker.take_draft_symbol(&symbols),
+            Some(PickerOutcome::Added {
+                feed_id: "binance".to_string(),
+                symbol: "WDO$".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn adding_a_symbol_the_feed_already_has_only_selects_it() {
+        let config = config();
+        let symbols = config.feeds[0].symbols.clone();
+        let mut picker = SourcePicker::new(&config);
+        picker.symbol = "BTCUSDT".to_string();
+
+        picker.draft_symbol = " ETHUSDT ".to_string();
+        assert_eq!(
+            picker.take_draft_symbol(&symbols),
+            None,
+            "nothing is added, because nothing is missing"
+        );
+        assert_eq!(picker.symbol, "ETHUSDT", "it just becomes the selection");
     }
 
     /// Changing the feed under a symbol it does not offer corrects the symbol,

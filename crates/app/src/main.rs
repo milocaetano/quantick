@@ -38,6 +38,7 @@ mod replay_view;
 mod state;
 mod statusbar;
 mod style;
+mod symbols_file;
 mod tab;
 mod tabstrip;
 mod theme;

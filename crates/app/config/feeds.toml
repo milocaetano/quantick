@@ -67,6 +67,12 @@ bubble_preset = "live lane pie"
 
 # B3 (Brazilian exchange) continuous contracts: WIN$N (mini índice), WDO$N
 # (mini dólar). Real exchange instruments — a real tape and a real DOM.
+#
+# Brokers usually serve the *dated* contract rather than these aliases, and B3
+# rolls it every two months (WINQ26, then WINV26). You do not need to edit this
+# file for that: add the current contract from the chart's source picker (the
+# tab strip's `+`, or Ctrl+T). It is remembered in `quantick-symbols.toml`
+# beside this config, and shows up in the symbol selectors from then on.
 [[feeds]]
 id = "metatrader-b3"
 name = "MetaTrader 5 — B3"
