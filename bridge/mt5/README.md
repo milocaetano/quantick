@@ -81,8 +81,9 @@ event-accurate book updates.
 ## Run the EA
 
 1. Start quantick with a MetaTrader feed selected — it listens on
-   `127.0.0.1:9100` (configurable, `[metatrader]` in `quantick.toml`) and
-   logs `MT5_LISTENING`.
+   `127.0.0.1:9100`, or on this symbol's own port if it has one (`[metatrader]`
+   in `quantick.toml`; see *Multiple symbols* below). It logs the address it
+   resolved as `MT5_ENDPOINT_RESOLVED`, then `MT5_LISTENING`.
 2. Open a chart of the symbol quantick expects (e.g. **WIN$N**) and drag
    `QuantickBridge` onto it. Inputs: host/port, backfill minutes (default 30),
    heartbeat seconds, plus the depth pair below.
@@ -110,6 +111,47 @@ Two limits are real and are labelled rather than hidden:
 
 Symbol must match: the EA streams the chart it is attached to, and the feed
 refuses a hello for a different symbol (`MT5_SYMBOL_MISMATCH`).
+
+## Multiple symbols
+
+MQL5 sockets are client-only, so a "connection" is an EA on a chart dialing
+quantick, and one port carries one symbol's stream. Charting XAUUSD and US500
+from the same terminal at once is therefore not a setting — it is two of
+everything: two ports, two charts, two EAs.
+
+**The port is the only thing pairing a chart to a feed.** Per symbol:
+
+1. Give it a port in your configuration, under `[metatrader.ports]`:
+
+   ```toml
+   [metatrader.ports]
+   XAUUSD = 9101
+   US500  = 9102
+   US30   = 9103
+   ```
+
+   Two symbols may not share a port, and none may reuse the `listen_addr` port
+   (9100) that every unmapped symbol falls back to. quantick refuses a config
+   that breaks either rule, naming both claimants — the alternative is a chart
+   that is simply empty and does not say why.
+2. Open that symbol's chart and drag `QuantickBridge` onto it.
+3. Set that chart's **`InpPort` to the same number**. Nothing else has to
+   match; the symbol comes from the chart the EA sits on.
+
+One EA per chart, one chart per port. Symbols with no entry share 9100, which
+is fine as long as only one of them streams at a time.
+
+**When the ports collide**, both sides say so rather than going quiet:
+
+- *Two EAs on one port.* The first is served. The second is accepted, given a
+  moment to identify itself, then closed: quantick logs `MT5_SESSION_BUSY` with
+  the peer address and the symbol its hello declared, and the EA's Experts tab
+  shows `BRIDGE_DISCONNECTED` as it retries. The established session keeps
+  streaming throughout — the intruder never interrupts it.
+- *Two quantick feeds on one port.* Whoever bound it first keeps it; the second
+  logs `MT5_BIND_FAILED` and puts a notice on that chart naming the address and
+  pointing at `[metatrader.ports]`. Charting the same symbol twice hits this,
+  and so does forgetting to map a second symbol.
 
 ## Diagnose
 
