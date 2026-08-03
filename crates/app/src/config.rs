@@ -219,7 +219,7 @@ pub struct Mt5Endpoint {
     /// the shared default. Logged at spawn, because "this symbol was given a
     /// port" and "this symbol fell through to the shared one" are different
     /// answers to why two charts are fighting over one listener.
-    pub from_map: bool,
+    pub from_ports_map: bool,
 }
 
 /// Split `host:port`, rejecting anything that is not both. The bracketed IPv6
@@ -256,7 +256,7 @@ impl MetaTraderSettings {
             (Some(&port), Some((host, _))) => Mt5Endpoint {
                 listen_addr: format!("{host}:{port}"),
                 dial: Some((dial_host(host).to_string(), port)),
-                from_map: true,
+                from_ports_map: true,
             },
             // Mapped, but the default address names no host to inherit.
             // `validate` rejects that config; a hand-built one still gets the
@@ -264,17 +264,17 @@ impl MetaTraderSettings {
             (Some(&port), None) => Mt5Endpoint {
                 listen_addr: format!("{LOOPBACK}:{port}"),
                 dial: Some((LOOPBACK.to_string(), port)),
-                from_map: true,
+                from_ports_map: true,
             },
             (None, Some((host, port))) => Mt5Endpoint {
                 listen_addr: self.listen_addr.clone(),
                 dial: Some((dial_host(host).to_string(), port)),
-                from_map: false,
+                from_ports_map: false,
             },
             (None, None) => Mt5Endpoint {
                 listen_addr: self.listen_addr.clone(),
                 dial: None,
-                from_map: false,
+                from_ports_map: false,
             },
         }
     }
@@ -919,7 +919,7 @@ mod tests {
         let gold = settings.endpoint_for("XAUUSD");
         assert_eq!(gold.listen_addr, "127.0.0.1:9101");
         assert_eq!(gold.dial, Some(("127.0.0.1".into(), 9101)));
-        assert!(gold.from_map);
+        assert!(gold.from_ports_map);
 
         // Both sides of the agreement come from one call: the port quantick
         // binds is the port the autostarted bridge is told to dial.
@@ -929,7 +929,10 @@ mod tests {
 
         let unmapped = settings.endpoint_for("WIN$N");
         assert_eq!(unmapped.listen_addr, "127.0.0.1:9100");
-        assert!(!unmapped.from_map, "it fell through to the shared default");
+        assert!(
+            !unmapped.from_ports_map,
+            "it fell through to the shared default"
+        );
     }
 
     #[test]
