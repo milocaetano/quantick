@@ -44,28 +44,42 @@ symbols = ["BTC", "ETH", "HYPE", "SOL", "ZEC"]
 
 # MetaTrader 5, via the QuantickBridge EA (see bridge/mt5/README.md for the
 # one-time setup). The EA streams the chart it is attached to; the symbol
-# selected here must match that chart. B3 continuous contracts: WIN$N (mini
-# índice), WDO$N (mini dólar). The EA also streams Depth of Market, so the
-# book heatmap works here; note MT5 exposes only the top levels, and the chart
-# labels that coverage rather than implying a full book.
+# selected here must match that chart. The EA also streams Depth of Market, so
+# the book heatmap works here; note MT5 exposes only the top levels, and the
+# chart labels that coverage rather than implying a full book.
 #
-# One terminal serves one account at a time, so which of these symbols exist
-# depends on who is logged in. US500 is a broker-quoted index CFD (Tickmill):
-# it has no tape and no book — the bridge declares that, quotes chart as one
-# synthetic print per tick, and everything needing a traded size switches
-# itself off. See bridge/mt5/PROTOCOL.md, field `tape`.
+# **One terminal serves one account at a time.** That is why there are two
+# MetaTrader entries rather than one list: which symbols exist depends on who
+# is logged in, and mixing a Tickmill instrument with a B3 one in a single feed
+# would offer symbols that cannot resolve. Log into the account you want, then
+# pick the matching feed.
+#
+# Tickmill, a retail broker: XAUUSD is spot gold, US500/US30 are index CFDs.
+# A CFD is broker-quoted — it has no tape and no book. The bridge declares
+# that, quotes chart as one synthetic print per tick, and everything needing a
+# traded size switches itself off. See bridge/mt5/PROTOCOL.md, field `tape`.
 [[feeds]]
-id = "metatrader"
-name = "MetaTrader 5"
+id = "metatrader-tickmill"
+name = "MetaTrader 5 — Tickmill"
 provider = "metatrader"
-symbols = ["WIN$N", "WDO$N", "US500"]
+symbols = ["XAUUSD", "US500", "US30"]
+bubble_preset = "live lane pie"
+
+# B3 (Brazilian exchange) continuous contracts: WIN$N (mini índice), WDO$N
+# (mini dólar). Real exchange instruments — a real tape and a real DOM.
+[[feeds]]
+id = "metatrader-b3"
+name = "MetaTrader 5 — B3"
+provider = "metatrader"
+symbols = ["WIN$N", "WDO$N"]
 # The B3 mini index reads best as per-bar pie summaries: bars close in seconds
 # and the candle summary keeps the last bars carrying marks instead of leaving
 # the lane window bare.
 bubble_preset = "live lane pie"
 
 # MetaTrader bridge settings (defaults shown; the section is optional).
-#   listen_addr — where quantick listens; the EA dials this address.
+#   listen_addr — where quantick listens for any symbol `ports` does not name;
+#                 an EA dials this address.
 #   side_source — "tick_rule" (safe default) or "flags". MT5 aggressor flags
 #                 are broker-dependent: the B3 broker probed on 2026-07-23
 #                 stamped BUY on every tick, so flags there would chart 100%
@@ -84,3 +98,35 @@ side_source = "tick_rule"
 #                      quantick's working directory.
 bridge_autostart = true
 bridge_command = ["python", "bridge/mt5/quantick_bridge.py"]
+
+# ---------------------------------------------------------------------------
+# Per-symbol ports — how quantick charts more than one MT5 symbol at a time.
+#
+# MQL5 sockets are client-only: quantick listens and the EA dials out, one
+# connection per port, one symbol per connection. So streaming XAUUSD and US500
+# together means two listeners, two EAs, two ports.
+#
+# Setting up a second symbol, start to finish:
+#   1. Give it a port below (any free one; keep them adjacent so they are easy
+#      to remember). Two symbols may not share a port, and none may reuse the
+#      `listen_addr` port above — quantick refuses the config if they do.
+#   2. Open that symbol's chart in MetaTrader and drag QuantickBridge onto it.
+#   3. Set that chart's `InpPort` input to the same number. This is the whole
+#      pairing: the port is the only thing connecting a chart to a feed.
+#   4. Repeat per symbol. One EA per chart — never two EAs on one port.
+#
+# Get step 3 wrong and both sides say so rather than sitting quiet: quantick
+# logs MT5_SESSION_BUSY and closes the second connection, and the EA's Experts
+# tab shows BRIDGE_DISCONNECTED as it retries.
+#
+# A symbol with no entry here uses `listen_addr` (9100). Several such symbols
+# are fine one at a time — WIN$N and WDO$N below share 9100 — but only one of
+# them can stream at once; the second reports MT5_BIND_FAILED. Give it a port
+# here to run both together.
+#
+# NOTE for editors: this is a sub-table of [metatrader], so it must stay at the
+# end of that section. Any plain key written after it would land in here.
+[metatrader.ports]
+XAUUSD = 9101
+US500 = 9102
+US30 = 9103

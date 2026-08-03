@@ -10,6 +10,7 @@
 //! at compile time. An external file that is present but malformed is a hard
 //! error — a bad config is surfaced, never silently ignored (data-honesty rule).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -149,8 +150,19 @@ pub enum Mt5SideSource {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct MetaTraderSettings {
-    /// Address the feed listens on; a bridge dials it.
+    /// Address the feed listens on; a bridge dials it. The endpoint for every
+    /// symbol [`ports`](Self::ports) does not name.
     pub listen_addr: String,
+    /// Per-symbol listen ports (`[metatrader.ports]` in the TOML).
+    ///
+    /// MQL5 sockets are client-only, so a MetaTrader "connection" is really an
+    /// EA on a chart dialing us, and one port carries one symbol's stream. To
+    /// chart XAUUSD and US500 from the same terminal at once, each gets its own
+    /// port here and its own EA with the matching `InpPort`.
+    ///
+    /// A [`BTreeMap`] rather than a hash map so iteration order — and therefore
+    /// the order validation reports problems in — is the same on every run.
+    pub ports: BTreeMap<String, u16>,
     /// How the aggressor side of each trade is decided.
     pub side_source: Mt5SideSource,
     /// Whether quantick starts a bridge itself when none dials in.
@@ -173,6 +185,7 @@ impl Default for MetaTraderSettings {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1:9100".to_string(),
+            ports: BTreeMap::new(),
             side_source: Mt5SideSource::TickRule,
             bridge_autostart: true,
             bridge_command: vec![
@@ -183,25 +196,128 @@ impl Default for MetaTraderSettings {
     }
 }
 
+/// The host a local bridge can always reach, used when the bind address names
+/// none it could dial.
+const LOOPBACK: &str = "127.0.0.1";
+
+/// Where one symbol's bridge listener lives.
+///
+/// The two sides of a per-symbol port have to agree: quantick binds it and the
+/// EA dials it. Deriving both from one [`MetaTraderSettings::endpoint_for`]
+/// call is what keeps the listener and the autostarted bridge's `--port` from
+/// drifting apart — a drift whose only symptom is a chart that never fills.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mt5Endpoint {
+    /// Address the feed binds for this symbol.
+    pub listen_addr: String,
+    /// Host and port a bridge dials to reach it, or `None` when
+    /// [`listen_addr`](MetaTraderSettings::listen_addr) has no `host:port`
+    /// shape — the autostart then stays off rather than launching a bridge
+    /// that cannot reach us.
+    pub dial: Option<(String, u16)>,
+    /// Whether the port came from [`MetaTraderSettings::ports`] rather than
+    /// the shared default. Logged at spawn, because "this symbol was given a
+    /// port" and "this symbol fell through to the shared one" are different
+    /// answers to why two charts are fighting over one listener.
+    pub from_ports_map: bool,
+}
+
+/// Split `host:port`, rejecting anything that is not both. The bracketed IPv6
+/// form (`[::1]:9100`) splits correctly: only the last colon is a separator.
+fn split_host_port(addr: &str) -> Option<(&str, u16)> {
+    let (host, port) = addr.rsplit_once(':')?;
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, port.parse().ok()?))
+}
+
+/// The address a bridge dials to reach a listener bound to `host`. A wildcard
+/// bind is not an address to dial; loopback is what a local bridge reaches.
+fn dial_host(host: &str) -> &str {
+    if host == "0.0.0.0" || host == "[::]" {
+        LOOPBACK
+    } else {
+        host
+    }
+}
+
 impl MetaTraderSettings {
-    /// Host and port a bridge should dial, parsed from [`listen_addr`](Self::listen_addr).
+    /// Where the bridge for `symbol` listens: its own port when
+    /// [`ports`](Self::ports) names one, the [`listen_addr`](Self::listen_addr)
+    /// default otherwise.
     ///
-    /// Returns `None` when the address has no `host:port` shape — the autostart
-    /// then stays off rather than launching a bridge that cannot reach us.
+    /// A mapped symbol keeps the default address's host and swaps only the
+    /// port, so a deployment that binds a specific interface does not have to
+    /// repeat it per symbol.
     #[must_use]
-    pub fn bridge_endpoint(&self) -> Option<(&str, &str)> {
-        let (host, port) = self.listen_addr.rsplit_once(':')?;
-        if host.is_empty() || port.parse::<u16>().is_err() {
-            return None;
+    pub fn endpoint_for(&self, symbol: &str) -> Mt5Endpoint {
+        match (self.ports.get(symbol), split_host_port(&self.listen_addr)) {
+            (Some(&port), Some((host, _))) => Mt5Endpoint {
+                listen_addr: format!("{host}:{port}"),
+                dial: Some((dial_host(host).to_string(), port)),
+                from_ports_map: true,
+            },
+            // Mapped, but the default address names no host to inherit.
+            // `validate` rejects that config; a hand-built one still gets the
+            // port it asked for rather than silently sharing the default's.
+            (Some(&port), None) => Mt5Endpoint {
+                listen_addr: format!("{LOOPBACK}:{port}"),
+                dial: Some((LOOPBACK.to_string(), port)),
+                from_ports_map: true,
+            },
+            (None, Some((host, port))) => Mt5Endpoint {
+                listen_addr: self.listen_addr.clone(),
+                dial: Some((dial_host(host).to_string(), port)),
+                from_ports_map: false,
+            },
+            (None, None) => Mt5Endpoint {
+                listen_addr: self.listen_addr.clone(),
+                dial: None,
+                from_ports_map: false,
+            },
         }
-        // A wildcard bind is not an address to dial; loopback is what a local
-        // bridge actually reaches.
-        let host = if host == "0.0.0.0" || host == "[::]" {
-            "127.0.0.1"
-        } else {
-            host
+    }
+
+    /// Check the listener settings on their own: a bind address that resolves,
+    /// and a port map in which no two symbols could collide.
+    ///
+    /// Every rule here describes a config whose only symptom at runtime is a
+    /// chart that stays empty, which is exactly the kind of thing to refuse at
+    /// load instead.
+    fn validate(&self) -> Result<(), String> {
+        let Some((_, default_port)) = split_host_port(&self.listen_addr) else {
+            return Err(format!(
+                "metatrader listen_addr '{}' is not a host:port address",
+                self.listen_addr
+            ));
         };
-        Some((host, port))
+        let mut taken: BTreeMap<u16, &str> = BTreeMap::new();
+        for (symbol, &port) in &self.ports {
+            if symbol.trim().is_empty() {
+                return Err("[metatrader.ports] has an entry with an empty symbol".to_string());
+            }
+            if port == 0 {
+                return Err(format!(
+                    "[metatrader.ports] gives '{symbol}' port 0; that binds whatever the OS \
+                     hands out, and an EA has no way to dial it"
+                ));
+            }
+            if port == default_port {
+                return Err(format!(
+                    "[metatrader.ports] gives '{symbol}' port {port}, which is already the \
+                     listen_addr default '{}' every unmapped symbol uses",
+                    self.listen_addr
+                ));
+            }
+            if let Some(other) = taken.insert(port, symbol) {
+                return Err(format!(
+                    "[metatrader.ports] gives port {port} to both '{other}' and '{symbol}'; \
+                     one port carries one symbol"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -272,12 +388,14 @@ impl AppConfig {
     }
 
     /// Validate internal consistency: at least one feed, unique ids, non-empty
-    /// symbol lists, and a default selection that actually resolves.
+    /// symbol lists, a default selection that actually resolves, and a
+    /// MetaTrader port map no two symbols can collide in.
     ///
     /// # Errors
     ///
     /// Returns a human-readable message describing the first problem found.
     pub fn validate(&self) -> Result<(), String> {
+        self.metatrader.validate()?;
         if self.feeds.is_empty() {
             return Err("no feeds configured; add at least one [[feeds]] entry".to_string());
         }
@@ -548,7 +666,12 @@ mod tests {
                 .iter()
                 .map(|feed| feed.id.as_str())
                 .collect::<Vec<_>>(),
-            ["binance", "hyperliquid", "metatrader"]
+            [
+                "binance",
+                "hyperliquid",
+                "metatrader-tickmill",
+                "metatrader-b3"
+            ]
         );
         let binance = config.feed("binance").expect("binance feed");
         assert_eq!(binance.provider, ProviderKind::Binance);
@@ -568,20 +691,46 @@ mod tests {
         );
         assert_eq!(config.side_note("hyperliquid"), None);
 
-        let mt5 = config.feed("metatrader").expect("metatrader feed");
-        assert_eq!(mt5.provider, ProviderKind::MetaTrader);
-        assert!(mt5.symbols.contains(&"WIN$N".to_string()));
+        // One terminal serves one account, so the two brokers are two feeds
+        // rather than one list that half-resolves whoever is logged in.
+        let b3 = config.feed("metatrader-b3").expect("B3 feed");
+        assert_eq!(b3.provider, ProviderKind::MetaTrader);
+        assert_eq!(b3.symbols, ["WIN$N", "WDO$N"]);
+        let tickmill = config.feed("metatrader-tickmill").expect("Tickmill feed");
+        assert_eq!(tickmill.provider, ProviderKind::MetaTrader);
+        assert_eq!(tickmill.symbols, ["XAUUSD", "US500", "US30"]);
         assert_eq!(config.metatrader.side_source, Mt5SideSource::TickRule);
-        assert!(!config.metatrader.listen_addr.is_empty());
+        assert_eq!(config.metatrader.listen_addr, "127.0.0.1:9100");
 
-        // The mini index opens on the pie summary; Binance declares nothing
-        // and keeps whatever the presets file says.
-        assert_eq!(mt5.bubble_preset.as_deref(), Some("live lane pie"));
+        // The Tickmill symbols each own a port, so they stream together.
+        assert_eq!(
+            config.metatrader.endpoint_for("XAUUSD").listen_addr,
+            "127.0.0.1:9101"
+        );
+        assert_eq!(
+            config.metatrader.endpoint_for("US500").listen_addr,
+            "127.0.0.1:9102"
+        );
+        assert_eq!(
+            config.metatrader.endpoint_for("US30").listen_addr,
+            "127.0.0.1:9103"
+        );
+        // The B3 pair shares the default, which is the honest shape of "one
+        // terminal, one account, one at a time".
+        assert_eq!(
+            config.metatrader.endpoint_for("WIN$N").listen_addr,
+            "127.0.0.1:9100"
+        );
+
+        // Both MetaTrader feeds open on the pie summary; Binance declares
+        // nothing and keeps whatever the presets file says.
+        assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
+        assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(binance.bubble_preset, None);
     }
 
     #[test]
-    fn startup_selection_override_preserves_all_three_feeds() {
+    fn startup_selection_override_preserves_the_whole_catalog() {
         let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
         let feeds_before = config.feeds.clone();
         let metatrader_before = config.metatrader.clone();
@@ -599,7 +748,12 @@ mod tests {
                 .iter()
                 .map(|feed| feed.id.as_str())
                 .collect::<Vec<_>>(),
-            ["binance", "hyperliquid", "metatrader"]
+            [
+                "binance",
+                "hyperliquid",
+                "metatrader-tickmill",
+                "metatrader-b3"
+            ]
         );
     }
 
@@ -614,7 +768,8 @@ mod tests {
         assert_eq!(config, before, "failed selection is atomic");
         assert_eq!(
             error.to_string(),
-            "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: binance, hyperliquid, metatrader"
+            "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: \
+             binance, hyperliquid, metatrader-tickmill, metatrader-b3"
         );
     }
 
@@ -724,27 +879,187 @@ mod tests {
         assert_eq!(config.metatrader.side_source, Mt5SideSource::Flags);
     }
 
+    /// Settings listening on `addr`, mapping `ports`.
+    fn listening(addr: &str, ports: &[(&str, u16)]) -> MetaTraderSettings {
+        MetaTraderSettings {
+            listen_addr: addr.to_string(),
+            ports: ports
+                .iter()
+                .map(|(symbol, port)| ((*symbol).to_string(), *port))
+                .collect(),
+            ..MetaTraderSettings::default()
+        }
+    }
+
     #[test]
     fn the_bridge_dial_address_comes_from_the_listen_address() {
-        let at = |addr: &str| MetaTraderSettings {
-            listen_addr: addr.to_string(),
-            ..MetaTraderSettings::default()
-        };
-        assert_eq!(
-            at("127.0.0.1:9100").bridge_endpoint(),
-            Some(("127.0.0.1", "9100"))
-        );
+        let at = |addr: &str| listening(addr, &[]).endpoint_for("WIN$N");
+        let dialing = |addr: &str| at(addr).dial;
+
+        assert_eq!(dialing("127.0.0.1:9100"), Some(("127.0.0.1".into(), 9100)));
         // A wildcard bind is not something a bridge can dial.
-        assert_eq!(
-            at("0.0.0.0:9100").bridge_endpoint(),
-            Some(("127.0.0.1", "9100"))
-        );
+        assert_eq!(dialing("0.0.0.0:9100"), Some(("127.0.0.1".into(), 9100)));
+        assert_eq!(dialing("[::]:9100"), Some(("127.0.0.1".into(), 9100)));
+        // A bracketed IPv6 literal splits on the last colon, not the first.
+        assert_eq!(dialing("[::1]:9100"), Some(("[::1]".into(), 9100)));
+
         // Nothing dial-able: the caller must not launch a bridge that cannot
-        // reach us, so there is no address to hand it.
-        assert_eq!(at("9100").bridge_endpoint(), None);
-        assert_eq!(at("127.0.0.1:").bridge_endpoint(), None);
-        assert_eq!(at(":9100").bridge_endpoint(), None);
-        assert_eq!(at("127.0.0.1:not-a-port").bridge_endpoint(), None);
+        // reach us, so there is no address to hand it. The bind address is
+        // still passed through verbatim, and reported by `validate`.
+        for broken in ["9100", "127.0.0.1:", ":9100", "127.0.0.1:not-a-port"] {
+            assert_eq!(dialing(broken), None, "{broken}");
+            assert_eq!(at(broken).listen_addr, broken);
+        }
+    }
+
+    #[test]
+    fn a_mapped_symbol_gets_its_own_port_and_everyone_else_the_default() {
+        let settings = listening("127.0.0.1:9100", &[("XAUUSD", 9101), ("US500", 9102)]);
+
+        let gold = settings.endpoint_for("XAUUSD");
+        assert_eq!(gold.listen_addr, "127.0.0.1:9101");
+        assert_eq!(gold.dial, Some(("127.0.0.1".into(), 9101)));
+        assert!(gold.from_ports_map);
+
+        // Both sides of the agreement come from one call: the port quantick
+        // binds is the port the autostarted bridge is told to dial.
+        let index = settings.endpoint_for("US500");
+        assert_eq!(index.listen_addr, "127.0.0.1:9102");
+        assert_eq!(index.dial.map(|(_, port)| port), Some(9102));
+
+        let unmapped = settings.endpoint_for("WIN$N");
+        assert_eq!(unmapped.listen_addr, "127.0.0.1:9100");
+        assert!(
+            !unmapped.from_ports_map,
+            "it fell through to the shared default"
+        );
+    }
+
+    #[test]
+    fn a_mapped_symbol_inherits_the_default_addresss_host() {
+        // A deployment that binds a specific interface says so once.
+        let settings = listening("0.0.0.0:9100", &[("XAUUSD", 9101)]);
+        let gold = settings.endpoint_for("XAUUSD");
+        assert_eq!(gold.listen_addr, "0.0.0.0:9101", "the host carries over");
+        assert_eq!(
+            gold.dial,
+            Some(("127.0.0.1".into(), 9101)),
+            "and a wildcard is still not something a bridge can dial"
+        );
+    }
+
+    #[test]
+    fn ports_are_read_from_their_sub_table() {
+        let text = r#"
+            default_feed = "mt"
+            default_symbol = "XAUUSD"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["XAUUSD", "US500"]
+            [metatrader]
+            listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSD = 9101
+            US500 = 9102
+        "#;
+        let config = parse(text, ConfigSource::Embedded).unwrap();
+        assert_eq!(
+            config.metatrader.ports,
+            BTreeMap::from([("XAUUSD".to_string(), 9101), ("US500".to_string(), 9102)])
+        );
+        // Absent, the map is simply empty: every symbol shares listen_addr,
+        // exactly as before the field existed.
+        assert!(MetaTraderSettings::default().ports.is_empty());
+    }
+
+    /// Parse a config whose `[metatrader]` section is `section`.
+    fn with_metatrader(section: &str) -> Result<AppConfig, ConfigError> {
+        let text = format!(
+            r#"
+            default_feed = "mt"
+            default_symbol = "XAUUSD"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["XAUUSD", "US500"]
+            [metatrader]
+            {section}
+        "#
+        );
+        parse(&text, ConfigSource::Embedded)
+    }
+
+    #[test]
+    fn two_symbols_may_not_share_a_port() {
+        // The collision that would otherwise surface as one chart streaming
+        // and the other silently refusing every connection.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            US500 = 9101
+            XAUUSD = 9101"#,
+        )
+        .expect_err("duplicate port");
+        let message = err.to_string();
+        assert!(message.contains("[metatrader.ports]"), "{message}");
+        assert!(message.contains("9101"), "{message}");
+        assert!(
+            message.contains("US500") && message.contains("XAUUSD"),
+            "both claimants are named: {message}"
+        );
+    }
+
+    #[test]
+    fn a_mapped_port_may_not_be_the_default_one() {
+        // Subtler than a duplicate: it collides with whichever *unmapped*
+        // symbol is streaming, which the map does not list at all.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSD = 9100"#,
+        )
+        .expect_err("collides with the default");
+        let message = err.to_string();
+        assert!(message.contains("listen_addr"), "{message}");
+        assert!(message.contains("XAUUSD"), "{message}");
+    }
+
+    #[test]
+    fn a_mapped_port_must_be_one_an_ea_can_dial() {
+        // Port 0 binds whatever the OS hands out. Fine for a test harness that
+        // reads the bound address back; useless in a file an EA is configured
+        // against by hand.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSD = 0"#,
+        )
+        .expect_err("port 0");
+        assert!(err.to_string().contains("XAUUSD"), "{err}");
+
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            "  " = 9101"#,
+        )
+        .expect_err("empty symbol");
+        assert!(err.to_string().contains("[metatrader.ports]"), "{err}");
+    }
+
+    #[test]
+    fn a_listen_addr_that_cannot_bind_is_reported_at_load() {
+        // It would otherwise only show up as MT5_BIND_FAILED, minutes later,
+        // in a log nobody has open.
+        let err = with_metatrader(r#"listen_addr = "9100""#).expect_err("no host");
+        let message = err.to_string();
+        assert!(message.contains("listen_addr"), "{message}");
+        assert!(message.contains("host:port"), "{message}");
+
+        // And the ordinary one still loads.
+        assert!(with_metatrader(r#"listen_addr = "127.0.0.1:9100""#).is_ok());
     }
 
     #[test]
