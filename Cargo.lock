@@ -2473,6 +2473,7 @@ dependencies = [
  "quantick-feed-mt5",
  "quantick-indicators",
  "quantick-orderbook",
+ "quantick-pine",
  "quantick-replay",
  "rfd",
  "rust_decimal",

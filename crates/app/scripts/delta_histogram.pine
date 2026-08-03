@@ -1,0 +1,4 @@
+//@version=5
+indicator("Delta histogram")
+plot(delta, title="delta", style=plot.style_histogram, color=color.aqua)
+plot(ta.sma(delta, 20), title="delta avg", color=color.orange)

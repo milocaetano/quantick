@@ -98,6 +98,33 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Every code, so a guard can iterate them instead of restating the list.
+    ///
+    /// The doc-drift test used to hand-list all of these; a variant added and
+    /// forgotten there was simply not checked, which is the habit that test
+    /// exists to replace. Adding a variant now fails `as_str`'s exhaustive
+    /// match, and this array sits beside it.
+    pub const ALL: &'static [ErrorCode] = &[
+        ErrorCode::PineLex,
+        ErrorCode::PineSyntax,
+        ErrorCode::PineIndent,
+        ErrorCode::PineNoSecurity,
+        ErrorCode::PineNoTimeframe,
+        ErrorCode::PineNoStrategy,
+        ErrorCode::PineNoCollections,
+        ErrorCode::PineNoCalendar,
+        ErrorCode::PineUnsupported,
+        ErrorCode::PineUnknownName,
+        ErrorCode::PineArity,
+        ErrorCode::PineInputNotConst,
+        ErrorCode::PineSeriesLength,
+        ErrorCode::PineStatefulInLoop,
+        ErrorCode::PineRecursion,
+        ErrorCode::PineVersion,
+        ErrorCode::PineType,
+        ErrorCode::PineLoopBudget,
+    ];
+
     /// The stable string form (logs, tests, the dialect reference).
     #[must_use]
     pub fn as_str(self) -> &'static str {
