@@ -264,6 +264,34 @@ fn ignored_header_args_and_alertcondition_warn() {
 }
 
 #[test]
+fn shape_plots_register_markers_and_fills_resolve() {
+    use quantick_indicators::{MarkerLocation, MarkerShape};
+    let script = compile_ok(
+        "//@version=5\nindicator(\"t\")\na = plot(close, title=\"a\")\nb = plot(open, title=\"b\")\nfill(a, b, color=color.new(color.aqua, 80))\nplotshape(close > open, style=shape.triangledown, location=location.abovebar, text=\"S\")\n",
+    );
+    assert_eq!(script.plots.len(), 3);
+    let marker = script.plots[2].marker.as_ref().expect("marker plot");
+    assert_eq!(marker.shape, MarkerShape::TriangleDown);
+    assert_eq!(marker.location, MarkerLocation::AboveBar);
+    assert_eq!(marker.text.as_deref(), Some("S"));
+    assert_eq!(script.fills.len(), 1);
+    assert_eq!(script.fills[0].a.index(), 0);
+    assert_eq!(script.fills[0].b.index(), 1);
+}
+
+#[test]
+fn a_fill_between_non_plots_is_refused_honestly() {
+    let errors = compile_err(
+        "//@version=5\nindicator(\"t\")\nx = close\ny = open\nfill(x, y)\nplot(close)\n",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.code == ErrorCode::PineUnsupported && e.message.contains("plot() results")),
+        "{errors:?}"
+    );
+}
+#[test]
 fn a_plot_outside_the_top_level_is_refused() {
     // `plot()` inside an `if` had neither a frame nor a loop, so the
     // top-level rule missed it — and pass 1 only scans top-level statements,

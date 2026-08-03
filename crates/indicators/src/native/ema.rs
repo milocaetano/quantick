@@ -45,7 +45,9 @@ impl Ema {
                     base_color: EMA_COLOR,
                     width: PLOT_WIDTH_PT,
                     offset: 0,
+                    marker: None,
                 }],
+                fills: Vec::new(),
                 inputs: vec![
                     InputSpec::Int {
                         name: "len".to_owned(),

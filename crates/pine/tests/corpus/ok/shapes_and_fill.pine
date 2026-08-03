@@ -1,0 +1,8 @@
+//@version=5
+indicator("shapes and fill", overlay=true)
+fast = plot(ta.ema(close, 9), title="fast", color=color.aqua)
+slow = plot(ta.ema(close, 21), title="slow", color=color.orange)
+fill(fast, slow, color=color.new(color.aqua, 85))
+up = ta.crossover(close, ta.ema(close, 9))
+plotshape(up, style=shape.triangleup, location=location.belowbar, color=color.green)
+plotchar(ta.crossunder(close, ta.ema(close, 9)), char="x", location=location.abovebar, color=color.red)

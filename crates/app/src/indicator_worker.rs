@@ -266,6 +266,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 overlay: false,
                                 plots: Vec::new(),
                                 inputs: Vec::new(),
+                                fills: Vec::new(),
                             },
                             columns: Vec::new(),
                         });

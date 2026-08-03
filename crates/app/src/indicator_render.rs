@@ -46,6 +46,20 @@ const LARGE_VALUE_THRESHOLD: f64 = 1000.0;
 const LARGE_VALUE_DECIMALS: usize = 1;
 /// Decimals shown below [`LARGE_VALUE_THRESHOLD`].
 const SMALL_VALUE_DECIMALS: usize = 4;
+/// Marker size (triangle half-height / circle radius), in pixels.
+const MARKER_SIZE_PX: f32 = 4.0;
+/// Gap between a bar's extreme and its above/below marker, in pixels.
+const MARKER_GAP_PX: f32 = 6.0;
+/// Stroke width of a cross marker's arms, in pixels.
+const MARKER_CROSS_STROKE_PX: f32 = 1.5;
+/// Gap between a marker and the text drawn beside it, in pixels.
+const MARKER_TEXT_GAP_PX: f32 = 2.0;
+/// Inset of a pane's above/below markers from its own edges, in pixels.
+///
+/// A pane has no candles, so markers that would anchor to a bar's extreme
+/// anchor to the pane's edges instead; this is the substitution, named so it
+/// no longer reads as an unexplained multiple of the bar gap.
+const PANE_MARKER_INSET_PX: f32 = MARKER_GAP_PX * 2.0;
 
 fn color32(c: Rgba8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -103,9 +117,19 @@ pub(crate) fn draw_overlays<'a>(
     start: usize,
     end: usize,
     partial_slot: Option<usize>,
+    bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
     for view in overlays {
-        draw_view_plots(painter, view, x, |v| scale.y(v), start, end, partial_slot);
+        draw_view_plots(
+            painter,
+            view,
+            x,
+            |v| scale.y(v),
+            start,
+            end,
+            partial_slot,
+            bar_extents,
+        );
     }
 }
 
@@ -159,7 +183,22 @@ pub(crate) fn draw_pane(
         );
     }
 
-    draw_view_plots(&clipped, view, x, |v| scale.y(v), start, end, partial_slot);
+    let pane_extents = |_slot: usize| {
+        Some((
+            pane.top() + PANE_MARKER_INSET_PX,
+            pane.bottom() - PANE_MARKER_INSET_PX,
+        ))
+    };
+    draw_view_plots(
+        &clipped,
+        view,
+        x,
+        |v| scale.y(v),
+        start,
+        end,
+        partial_slot,
+        &pane_extents,
+    );
     draw_objects(
         &clipped,
         view.render_objects(),
@@ -208,6 +247,18 @@ fn value_range(view: &IndicatorView, start: usize, end: usize) -> Option<(f64, f
     let mut lo = f64::INFINITY;
     let mut hi = f64::NEG_INFINITY;
     for (index, column) in view.columns.iter().enumerate() {
+        // A non-absolute marker column stages 1.0 as a flag, not as a value:
+        // it anchors to the pane's own edges and is never read as a y. Folding
+        // it into the fit collapses a real plot into a sliver — a CVD pane
+        // spanning 1e6..1.1e6 becomes 1.0..1.1e6.
+        let is_flag_column = view.descriptor.plots.get(index).is_some_and(|spec| {
+            spec.marker.as_ref().is_some_and(|marker| {
+                marker.location != quantick_indicators::MarkerLocation::Absolute
+            })
+        });
+        if is_flag_column {
+            continue;
+        }
         let preview = view
             .preview
             .as_ref()
@@ -236,6 +287,7 @@ fn format_value(v: f64) -> String {
 }
 
 /// Draw all plots of one view with a shared y mapping.
+#[allow(clippy::too_many_arguments)]
 fn draw_view_plots(
     painter: &egui::Painter,
     view: &IndicatorView,
@@ -244,7 +296,12 @@ fn draw_view_plots(
     start: usize,
     end: usize,
     partial_slot: Option<usize>,
+    bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
 ) {
+    // Fills first: bands read as background, never covering their plots.
+    for fill in &view.descriptor.fills {
+        draw_fill(painter, view, fill, x, &y_of, start, end, partial_slot);
+    }
     for (index, spec) in view.descriptor.plots.iter().enumerate() {
         let Some(column) = view.columns.get(index) else {
             continue;
@@ -268,6 +325,10 @@ fn draw_view_plots(
         };
         let color = color32(spec.base_color);
         let stroke = Stroke::new(spec.width, color);
+        if let Some(marker) = &spec.marker {
+            draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
+            continue;
+        }
         match spec.style {
             PlotStyle::Line => draw_line(painter, &visible, x, &y_of, stroke, false),
             PlotStyle::StepLine => draw_line(painter, &visible, x, &y_of, stroke, true),
@@ -574,11 +635,170 @@ pub(crate) fn draw_objects(
     }
 }
 
+/// A band between two plot columns: one convex quad per adjacent pair where
+/// all four cells are finite. A pair whose sides cross inside one slot
+/// renders as a pinched quad — acceptable at candle widths; splitting at
+/// the crossing is a later nicety.
+#[allow(clippy::too_many_arguments)]
+fn draw_fill(
+    painter: &egui::Painter,
+    view: &IndicatorView,
+    fill: &quantick_indicators::FillSpec,
+    x: &PlotX<'_>,
+    y_of: &impl Fn(f64) -> f32,
+    start: usize,
+    end: usize,
+    partial_slot: Option<usize>,
+) {
+    let (Some(col_a), Some(col_b)) = (
+        view.columns.get(fill.a.index()),
+        view.columns.get(fill.b.index()),
+    ) else {
+        return;
+    };
+    let preview_pair = partial_slot.and_then(|slot| {
+        let frame = view.preview.as_ref()?;
+        let a = frame.values.get(fill.a.index()).copied()?;
+        let b = frame.values.get(fill.b.index()).copied()?;
+        Some((slot, a, b))
+    });
+    let color = color32(fill.color);
+    let cell = |row: usize| -> Option<(f32, f32, f32)> {
+        let (a, b) = if row < col_a.len().min(col_b.len()) {
+            (col_a[row], col_b[row])
+        } else if let Some((slot, a, b)) = preview_pair
+            && row == slot
+        {
+            (a, b)
+        } else {
+            return None;
+        };
+        (a.is_finite() && b.is_finite()).then(|| (x.x(row), y_of(a), y_of(b)))
+    };
+    let last = preview_pair.map_or(end.saturating_sub(1), |(slot, ..)| slot);
+    let mut previous: Option<(f32, f32, f32)> = None;
+    for row in start..=last {
+        let current = cell(row);
+        if let (Some((x0, a0, b0)), Some((x1, a1, b1))) = (previous, current) {
+            painter.add(Shape::convex_polygon(
+                vec![pos2(x0, a0), pos2(x1, a1), pos2(x1, b1), pos2(x0, b0)],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        previous = current;
+    }
+}
+
+/// Markers for a `plotshape`/`plotchar` column: na cells draw nothing;
+/// above/below cells anchor to the bar's extremes, absolute cells to their
+/// own value.
+fn draw_shape_markers(
+    painter: &egui::Painter,
+    plot: &VisiblePlot<'_>,
+    x: &PlotX<'_>,
+    y_of: &impl Fn(f64) -> f32,
+    color: Color32,
+    marker: &quantick_indicators::MarkerSpec,
+    bar_extents: &dyn Fn(usize) -> Option<(f32, f32)>,
+) {
+    use quantick_indicators::{MarkerLocation, MarkerShape};
+    for (row, value) in plot.cells() {
+        if value.is_nan() {
+            continue;
+        }
+        let cx = x.x(row);
+        let cy = match marker.location {
+            MarkerLocation::Absolute => y_of(value),
+            MarkerLocation::AboveBar => match bar_extents(row) {
+                Some((high_y, _)) => high_y - MARKER_GAP_PX,
+                None => continue,
+            },
+            MarkerLocation::BelowBar => match bar_extents(row) {
+                Some((_, low_y)) => low_y + MARKER_GAP_PX,
+                None => continue,
+            },
+        };
+        if !cy.is_finite() {
+            continue;
+        }
+        let center = pos2(cx, cy);
+        let r = MARKER_SIZE_PX;
+        match marker.shape {
+            MarkerShape::TriangleUp | MarkerShape::LabelUp => {
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        center + egui::vec2(0.0, -r),
+                        center + egui::vec2(r, r),
+                        center + egui::vec2(-r, r),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+            MarkerShape::TriangleDown | MarkerShape::LabelDown => {
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        center + egui::vec2(0.0, r),
+                        center + egui::vec2(-r, -r),
+                        center + egui::vec2(r, -r),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+            MarkerShape::Circle => {
+                painter.circle_filled(center, r, color);
+            }
+            MarkerShape::Cross => {
+                let stroke = Stroke::new(MARKER_CROSS_STROKE_PX, color);
+                painter.line_segment(
+                    [center + egui::vec2(-r, -r), center + egui::vec2(r, r)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [center + egui::vec2(-r, r), center + egui::vec2(r, -r)],
+                    stroke,
+                );
+            }
+        }
+        if let Some(text) = &marker.text {
+            // A marker below the bar puts its text below itself; the flag
+            // used to be called `above` and meant the opposite.
+            let text_below = matches!(marker.location, MarkerLocation::BelowBar);
+            let anchor = if text_below {
+                egui::Align2::CENTER_TOP
+            } else {
+                egui::Align2::CENTER_BOTTOM
+            };
+            let gap = r + MARKER_TEXT_GAP_PX;
+            let offset = if text_below { gap } else { -gap };
+            painter.text(
+                center + egui::vec2(0.0, offset),
+                anchor,
+                text,
+                egui::FontId::proportional(OBJECT_LABEL_FONT),
+                color,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::indicator_worker::SlotId;
     use quantick_indicators::{IndicatorDescriptor, PlotId, PlotSpec, PreviewFrame, Rgba8};
+
+    fn marker_view(columns: Vec<Vec<f64>>, marker_at: usize) -> IndicatorView {
+        let mut v = view(columns, None);
+        v.descriptor.plots[marker_at].marker = Some(quantick_indicators::MarkerSpec {
+            shape: quantick_indicators::MarkerShape::Circle,
+            location: quantick_indicators::MarkerLocation::AboveBar,
+            text: None,
+        });
+        v
+    }
 
     fn view(columns: Vec<Vec<f64>>, preview: Option<Vec<f64>>) -> IndicatorView {
         IndicatorView {
@@ -595,8 +815,10 @@ mod tests {
                         base_color: Rgba8::opaque(255, 255, 255),
                         width: 1.0,
                         offset: 0,
+                        marker: None,
                     })
                     .collect(),
+                fills: Vec::new(),
                 inputs: Vec::new(),
             },
             columns,
@@ -622,6 +844,18 @@ mod tests {
         // clip it away.
         let with_preview = view(vec![vec![1.0, 2.0]], Some(vec![9.0]));
         assert_eq!(value_range(&with_preview, 0, 2), Some((1.0, 9.0)));
+    }
+
+    #[test]
+    fn a_marker_column_is_a_flag_and_never_scales_the_pane() {
+        // The staged 1.0 marks "the condition fired here"; it is never used
+        // as a y, because a non-absolute marker anchors to the pane edges.
+        let mixed = marker_view(vec![vec![1.0, 1.0], vec![1.0e6, 1.1e6]], 0);
+        assert_eq!(
+            value_range(&mixed, 0, 2),
+            Some((1.0e6, 1.1e6)),
+            "the real plot keeps the pane"
+        );
     }
 
     #[test]

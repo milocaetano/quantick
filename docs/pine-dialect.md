@@ -135,9 +135,17 @@ carries the last non-na value).
   with the drawing milestone.
 - `hline(value, …)` — a horizontal line, rendered through the same plot
   path.
-- `plotshape(...)`, `plotchar(...)`, `fill(...)`, `bgcolor(...)`,
-  `barcolor(...)` — accepted but inert until the shape-plot milestone (each
-  warns at load). `alertcondition(...)` is accepted and inert (no alerts).
+- `plotshape(series, title?, style?, location?, color?, text?)` — marker
+  columns: shapes `shape.triangleup`, `shape.triangledown`, `shape.circle`,
+  `shape.labelup`, `shape.labeldown`, `shape.cross`; locations
+  `location.abovebar`, `location.belowbar`, `location.absolute` (the series
+  value is the y). `plotchar(series, title?, char?, …)` renders its
+  character as marker text.
+- `fill(p1, p2, color?)` — a band between two `plot()` results; both
+  arguments must be plot handles resolvable at load time.
+- `bgcolor(...)`, `barcolor(...)` — accepted but inert until per-bar color
+  columns land (each warns at load). `alertcondition(...)` is accepted and
+  inert (no alerts).
 - **Draw objects** — `line.new(x1, y1, x2, y2, color?, width?)`,
   `box.new(left, top, right, bottom, border_color?, bgcolor?)`,
   `label.new(x, y, text?, color?, textcolor?, style?)` with styles

@@ -89,6 +89,60 @@ impl Rgba8 {
     }
 }
 
+/// A marker shape for `plotshape`/`plotchar` columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerShape {
+    /// `shape.triangleup`
+    TriangleUp,
+    /// `shape.triangledown`
+    TriangleDown,
+    /// `shape.circle`
+    Circle,
+    /// `shape.labelup` (a small up-pointing tag)
+    LabelUp,
+    /// `shape.labeldown`
+    LabelDown,
+    /// `shape.cross`
+    Cross,
+}
+
+/// Where a marker anchors vertically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerLocation {
+    /// Just above the bar's high.
+    AboveBar,
+    /// Just below the bar's low.
+    BelowBar,
+    /// At the plotted value itself.
+    Absolute,
+}
+
+/// Marker rendering for a `plotshape`/`plotchar` column: the column's cells
+/// are na (draw nothing) or a value (draw the marker; for
+/// [`MarkerLocation::Absolute`] the value is the y).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarkerSpec {
+    /// What to draw.
+    pub shape: MarkerShape,
+    /// Where to anchor it.
+    pub location: MarkerLocation,
+    /// Optional text under/over the marker (`plotshape(text=…)`, or the
+    /// single character of `plotchar`).
+    pub text: Option<String>,
+}
+
+/// A fill between two plot columns (`fill(p1, p2, color)`): drawn behind
+/// both plots wherever the two cells are non-na.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FillSpec {
+    /// One side of the band.
+    pub a: PlotId,
+    /// The other side.
+    pub b: PlotId,
+    /// The band color (usually translucent).
+    pub color: Rgba8,
+}
+
 /// One declared plot: identity, label and rendering hints.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlotSpec {
@@ -104,6 +158,9 @@ pub struct PlotSpec {
     pub width: f32,
     /// Horizontal shift in bars (positive = rightward), Pine's `offset=`.
     pub offset: i32,
+    /// `Some`: this column renders as markers (`plotshape`/`plotchar`)
+    /// instead of through its [`PlotStyle`].
+    pub marker: Option<MarkerSpec>,
 }
 
 /// The committed plot values of one indicator: one f64 column per declared
@@ -307,6 +364,7 @@ mod tests {
             base_color: Rgba8::opaque(255, 255, 255),
             width: 1.0,
             offset: 0,
+            marker: None,
         }
     }
 

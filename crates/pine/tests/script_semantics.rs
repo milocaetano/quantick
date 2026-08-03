@@ -310,6 +310,19 @@ fn the_object_cap_is_enforced_through_scripts() {
 }
 
 #[test]
+fn shape_plots_stage_condition_cells() {
+    // Marker column: 1.0 where the condition fired, na elsewhere; absolute
+    // markers carry the series value itself.
+    let source = "//@version=5\nindicator(\"t\")\nplotshape(close > 15, style=shape.circle, location=location.abovebar)\nplotshape(close, style=shape.cross, location=location.absolute)\nplot(close)\n";
+    let mut h = Harness::load(source);
+    h.close_all(&[10.0, 20.0]);
+    let cond_col = h.column(0);
+    assert!(cond_col[0].is_nan());
+    assert_eq!(cond_col[1], 1.0);
+    assert_eq!(h.column(1), vec![10.0, 20.0], "absolute markers keep the y");
+}
+
+#[test]
 fn a_kernel_length_that_changes_between_bars_is_refused() {
     // The kernel is built once and keeps its window forever, so a length
     // that moves used to be silently pinned to bar zero's value while the

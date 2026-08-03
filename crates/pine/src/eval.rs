@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use quantick_indicators::{
-    BoxObj, Ctx, IndicatorBar, InputValue, LabelObj, LabelStyle, LineObj, ObjectId, ObjectStore,
-    Rgba8, SourceId, fmath, ta,
+    BoxObj, Ctx, IndicatorBar, InputValue, LabelObj, LabelStyle, LineObj, MarkerLocation, ObjectId,
+    ObjectStore, Rgba8, SourceId, fmath, ta,
 };
 
 use crate::ast::{BinOp, NodeId, NodeKind, UnOp, VarMode};
@@ -822,11 +822,35 @@ impl<'a> Eval<'a> {
                 }
                 return Ok(Value::Na);
             }
+            Builtin::PlotShape | Builtin::PlotChar => {
+                let Some(index) = self.script.plot_of_call[id.index()] else {
+                    return Ok(Value::Na);
+                };
+                let marker_value = match args.first() {
+                    Some(arg) => {
+                        let is_absolute = self.script.plots[index]
+                            .marker
+                            .as_ref()
+                            .is_some_and(|m| m.location == MarkerLocation::Absolute);
+                        if is_absolute {
+                            // The series value is the marker's y.
+                            self.num(arg.value)?
+                        } else {
+                            let v = self.eval(arg.value)?;
+                            let fires = v.as_cond().unwrap_or(false)
+                                || matches!(&v, Value::Num(n) if !n.is_nan() && *n != 0.0);
+                            if fires { 1.0 } else { f64::NAN }
+                        }
+                    }
+                    None => f64::NAN,
+                };
+                self.row[index] = marker_value;
+                return Ok(Value::Na);
+            }
+            // fill() is fully resolved at load time; at eval it is a no-op.
             // Accepted-but-inert output calls still evaluate their first
             // argument (consistency: kernels inside advance every bar).
-            Builtin::PlotShape
-            | Builtin::PlotChar
-            | Builtin::Fill
+            Builtin::Fill
             | Builtin::Bgcolor
             | Builtin::Barcolor
             | Builtin::AlertCondition

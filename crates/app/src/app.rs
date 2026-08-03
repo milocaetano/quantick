@@ -857,6 +857,7 @@ impl QuantickApp {
                         short_title: None,
                         overlay: false,
                         plots: Vec::new(),
+                        fills: Vec::new(),
                         inputs: Vec::new(),
                     },
                     columns: Vec::new(),
@@ -2368,6 +2369,20 @@ impl QuantickApp {
             right,
             total,
         };
+        // Slot -> (high_y, low_y) in pixels, for above/below-bar markers.
+        let bar_extents = |slot: usize| -> Option<(f32, f32)> {
+            let bar = if slot < closed.len() {
+                Some(&closed[slot])
+            } else if slot == closed.len() {
+                partial
+            } else {
+                None
+            }?;
+            Some((
+                scale.y(chart::to_f64(bar.high)),
+                scale.y(chart::to_f64(bar.low)),
+            ))
+        };
         indicator_render::draw_overlays(
             &clip,
             self.indicators.visible_overlays(),
@@ -2376,6 +2391,7 @@ impl QuantickApp {
             start,
             end,
             partial_visible.map(|_| closed.len()),
+            &bar_extents,
         );
         // Draw objects (lines/boxes/labels) share the overlays' paint slot:
         // after candles, before aggression bubbles.

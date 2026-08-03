@@ -31,6 +31,7 @@ impl CloseCvd {
             base_color: Rgba8::opaque(255, 255, 255),
             width: 1.0,
             offset: 0,
+            marker: None,
         };
         let descriptor = IndicatorDescriptor {
             title: "Close + CVD (test)".to_owned(),
@@ -38,6 +39,7 @@ impl CloseCvd {
             overlay: false,
             plots: vec![plot(0, "close"), plot(1, "cvd")],
             inputs: Vec::new(),
+            fills: Vec::new(),
         };
         Self {
             plots: PlotBuffer::for_plots(&descriptor.plots),
