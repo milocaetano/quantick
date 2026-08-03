@@ -67,7 +67,7 @@ impl ScriptIndicator {
             inputs: compiled.inputs.clone(),
             fills: compiled.fills.clone(),
         };
-        let plots = PlotBuffer::new(compiled.plots.len());
+        let plots = PlotBuffer::for_plots(&compiled.plots);
         let state = ScriptState::new(compiled.global_slots);
         let row = vec![f64::NAN; compiled.plots.len()];
         Self {
@@ -159,6 +159,24 @@ impl Indicator for ScriptIndicator {
         let mut frame = PreviewFrame::new(self.row.clone());
         frame.objects = objects;
         Ok(frame)
+    }
+
+    fn input_values(&self) -> Vec<InputValue> {
+        self.inputs.clone()
+    }
+
+    fn rebind(&self, values: &[InputValue]) -> Option<Box<dyn Indicator>> {
+        // The compile is fixed; only the bound values change. A value set
+        // that does not match this compile is refused rather than quietly
+        // replaced by the defaults — the caller can then say so.
+        if values.len() != self.compiled.inputs.len() {
+            return None;
+        }
+        Some(Box::new(Self::with_inputs(
+            self.compiled.clone(),
+            self.source.clone(),
+            values.to_vec(),
+        )))
     }
 
     fn reset(&mut self) {
