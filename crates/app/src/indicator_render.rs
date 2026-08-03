@@ -29,8 +29,23 @@ const COLUMNS_WIDTH_FRAC: f32 = 0.8;
 const AREA_FILL_ALPHA: u8 = 48;
 /// Vertical padding inside a pane, as a fraction of the value range.
 const PANE_PAD_FRAC: f64 = 0.08;
-/// Pane label font size.
-const PANE_LABEL_FONT: f32 = 11.0;
+/// Pane label font size, in pixels.
+const PANE_LABEL_FONT_PX: f32 = 11.0;
+/// Opacity of the hairline that separates a pane from what sits above it.
+const PANE_FRAME_ALPHA: f32 = 0.4;
+/// Opacity of the zero line that anchors a flow pane.
+const ZERO_LINE_ALPHA: f32 = 0.3;
+/// Stroke width of the pane frame and zero line, in pixels.
+const PANE_RULE_WIDTH_PX: f32 = 1.0;
+/// Inset of a pane's corner labels from its own edges, in pixels.
+const PANE_LABEL_INSET_PX: egui::Vec2 = egui::vec2(6.0, 3.0);
+/// Above this magnitude a headline value is shown with fewer decimals: a
+/// five-figure price needs no ten-thousandths, a ratio near 1 does.
+const LARGE_VALUE_THRESHOLD: f64 = 1000.0;
+/// Decimals shown at or above [`LARGE_VALUE_THRESHOLD`].
+const LARGE_VALUE_DECIMALS: usize = 1;
+/// Decimals shown below [`LARGE_VALUE_THRESHOLD`].
+const SMALL_VALUE_DECIMALS: usize = 4;
 
 fn color32(c: Rgba8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -111,7 +126,10 @@ pub(crate) fn draw_pane(
     painter.rect_filled(pane, egui::Rounding::ZERO, background);
     painter.line_segment(
         [pane.left_top(), pane.right_top()],
-        Stroke::new(1.0_f32, theme::TEXT_MUTED.gamma_multiply(0.4)),
+        Stroke::new(
+            PANE_RULE_WIDTH_PX,
+            theme::TEXT_MUTED.gamma_multiply(PANE_FRAME_ALPHA),
+        ),
     );
 
     let Some((lo, hi)) = value_range(view, start, end) else {
@@ -119,7 +137,7 @@ pub(crate) fn draw_pane(
             pane.center(),
             egui::Align2::CENTER_CENTER,
             format!("{} — warming up", view.label()),
-            egui::FontId::proportional(PANE_LABEL_FONT),
+            egui::FontId::proportional(PANE_LABEL_FONT_PX),
             theme::TEXT_MUTED,
         );
         return;
@@ -134,7 +152,10 @@ pub(crate) fn draw_pane(
         let y = scale.y(0.0);
         clipped.line_segment(
             [pos2(pane.left(), y), pos2(pane.right(), y)],
-            Stroke::new(1.0_f32, theme::TEXT_MUTED.gamma_multiply(0.3)),
+            Stroke::new(
+                PANE_RULE_WIDTH_PX,
+                theme::TEXT_MUTED.gamma_multiply(ZERO_LINE_ALPHA),
+            ),
         );
     }
 
@@ -142,18 +163,18 @@ pub(crate) fn draw_pane(
     draw_objects(&clipped, view.render_objects(), x, |v| scale.y(v));
 
     painter.text(
-        pane.left_top() + egui::vec2(6.0, 3.0),
+        pane.left_top() + PANE_LABEL_INSET_PX,
         egui::Align2::LEFT_TOP,
         view.label(),
-        egui::FontId::proportional(PANE_LABEL_FONT),
+        egui::FontId::proportional(PANE_LABEL_FONT_PX),
         theme::TEXT_MUTED,
     );
     if let Some(last) = last_value(view) {
         painter.text(
-            pane.right_top() + egui::vec2(-6.0, 3.0),
+            pane.right_top() + egui::vec2(-PANE_LABEL_INSET_PX.x, PANE_LABEL_INSET_PX.y),
             egui::Align2::RIGHT_TOP,
             format_value(last),
-            egui::FontId::monospace(PANE_LABEL_FONT),
+            egui::FontId::monospace(PANE_LABEL_FONT_PX),
             theme::TEXT_MUTED,
         );
     }
@@ -200,10 +221,10 @@ fn value_range(view: &IndicatorView, start: usize, end: usize) -> Option<(f64, f
 }
 
 fn format_value(v: f64) -> String {
-    if v.abs() >= 1000.0 {
-        format!("{v:.1}")
+    if v.abs() >= LARGE_VALUE_THRESHOLD {
+        format!("{v:.*}", LARGE_VALUE_DECIMALS)
     } else {
-        format!("{v:.4}")
+        format!("{v:.*}", SMALL_VALUE_DECIMALS)
     }
 }
 
@@ -222,6 +243,13 @@ fn draw_view_plots(
             continue;
         };
         let preview = partial_slot.and_then(|slot| {
+            // Only when the forming bar is the slot right after the last
+            // committed cell. The columns are a worker round-trip behind the
+            // bars, so on the frame after a close `slot` is one past the end
+            // — joining the last committed point to the preview there would
+            // interpolate a segment across a bar that has no value, the very
+            // lie the NaN gaps exist to prevent.
+            (slot == column.len()).then_some(())?;
             let value = view.preview.as_ref()?.values.get(index).copied()?;
             (!value.is_nan()).then_some((slot, value))
         });
@@ -288,6 +316,29 @@ fn flush_segment(painter: &egui::Painter, segment: &mut Vec<Pos2>, stroke: Strok
     segment.clear();
 }
 
+/// Append one axis-aligned quad to `mesh`.
+///
+/// Per-element `Shape`s cost a tessellation pass each and, for the area fill,
+/// a heap allocation per visible bar; the repo's answer for hundreds of
+/// same-coloured pieces per frame is one mesh (see `orderflow_render`'s
+/// fronts and caps). Two triangles, four vertices, no allocation.
+fn push_quad(mesh: &mut egui::Mesh, rect: Rect, color: Color32) {
+    if !rect.is_finite() {
+        return;
+    }
+    let base = mesh.vertices.len() as u32;
+    for corner in [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+    ] {
+        mesh.colored_vertex(corner, color);
+    }
+    mesh.add_triangle(base, base + 1, base + 2);
+    mesh.add_triangle(base, base + 2, base + 3);
+}
+
 /// Vertical bars from the zero line (histogram/columns).
 fn draw_bars(
     painter: &egui::Painter,
@@ -299,17 +350,24 @@ fn draw_bars(
 ) {
     let half = (x.slot_width() * width_frac / 2.0).max(0.5);
     let zero_y = y_of(0.0);
+    let mut mesh = egui::Mesh::default();
     for (row, value) in plot.cells() {
         if value.is_nan() {
             continue;
         }
         let xc = x.x(row);
         let y = y_of(value);
-        let rect = Rect::from_min_max(
-            pos2(xc - half, y.min(zero_y)),
-            pos2(xc + half, y.max(zero_y)),
+        push_quad(
+            &mut mesh,
+            Rect::from_min_max(
+                pos2(xc - half, y.min(zero_y)),
+                pos2(xc + half, y.max(zero_y)),
+            ),
+            color,
         );
-        painter.rect_filled(rect, egui::Rounding::ZERO, color);
+    }
+    if !mesh.is_empty() {
+        painter.add(Shape::mesh(mesh));
     }
 }
 
@@ -357,19 +415,25 @@ fn draw_area(
     let zero_y = y_of(0.0);
     let mut segment: Vec<Pos2> = Vec::new();
     let flush = |segment: &mut Vec<Pos2>| {
-        // The region under a wiggly line is not convex; fill it as one
-        // convex quad per point pair so tessellation stays correct.
+        // The region under a wiggly line is not convex, so it is filled one
+        // quad per point pair; they all go into a single mesh, because at
+        // full zoom-out that is over a thousand pieces per frame.
+        let mut mesh = egui::Mesh::default();
         for pair in segment.windows(2) {
-            painter.add(Shape::convex_polygon(
-                vec![
-                    pair[0],
-                    pair[1],
-                    pos2(pair[1].x, zero_y),
-                    pos2(pair[0].x, zero_y),
-                ],
-                fill,
-                Stroke::NONE,
-            ));
+            let base = mesh.vertices.len() as u32;
+            for corner in [
+                pair[0],
+                pair[1],
+                pos2(pair[1].x, zero_y),
+                pos2(pair[0].x, zero_y),
+            ] {
+                mesh.colored_vertex(corner, fill);
+            }
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+        }
+        if !mesh.is_empty() {
+            painter.add(Shape::mesh(mesh));
         }
         if segment.len() >= 2 {
             painter.add(Shape::line(std::mem::take(segment), stroke));
@@ -461,5 +525,108 @@ pub(crate) fn draw_objects(
             galley,
             color32(label.text_color),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indicator_worker::SlotId;
+    use quantick_indicators::{IndicatorDescriptor, PlotId, PlotSpec, PreviewFrame, Rgba8};
+
+    fn view(columns: Vec<Vec<f64>>, preview: Option<Vec<f64>>) -> IndicatorView {
+        IndicatorView {
+            slot: SlotId(0),
+            descriptor: IndicatorDescriptor {
+                title: "test".to_owned(),
+                short_title: None,
+                overlay: false,
+                plots: (0..columns.len())
+                    .map(|i| PlotSpec {
+                        id: PlotId::new(i),
+                        title: format!("p{i}"),
+                        style: PlotStyle::Line,
+                        base_color: Rgba8::opaque(255, 255, 255),
+                        width: 1.0,
+                        offset: 0,
+                    })
+                    .collect(),
+                inputs: Vec::new(),
+            },
+            columns,
+            preview: preview.map(PreviewFrame::new),
+            objects: quantick_indicators::ObjectSnapshot::default(),
+            error: None,
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn value_range_ignores_warmup_and_reports_none_when_all_of_it_is() {
+        let all_nan = view(vec![vec![f64::NAN, f64::NAN]], None);
+        assert!(
+            value_range(&all_nan, 0, 2).is_none(),
+            "a pane with nothing computed yet has no range to fit"
+        );
+
+        let mixed = view(vec![vec![f64::NAN, 3.0, -1.0, f64::NAN]], None);
+        assert_eq!(value_range(&mixed, 0, 4), Some((-1.0, 3.0)));
+
+        // The forming bar's value belongs to the fit; the window does not
+        // clip it away.
+        let with_preview = view(vec![vec![1.0, 2.0]], Some(vec![9.0]));
+        assert_eq!(value_range(&with_preview, 0, 2), Some((1.0, 9.0)));
+    }
+
+    #[test]
+    fn last_value_prefers_the_preview_and_skips_trailing_warmup() {
+        let previewed = view(vec![vec![1.0, 2.0]], Some(vec![7.5]));
+        assert_eq!(last_value(&previewed), Some(7.5));
+
+        // A NaN preview cell is "nothing to draw", not a value.
+        let nan_preview = view(vec![vec![1.0, 2.0]], Some(vec![f64::NAN]));
+        assert_eq!(last_value(&nan_preview), Some(2.0));
+
+        let trailing_nan = view(vec![vec![1.0, 2.0, f64::NAN]], None);
+        assert_eq!(last_value(&trailing_nan), Some(2.0));
+
+        assert_eq!(last_value(&view(vec![vec![f64::NAN]], None)), None);
+    }
+
+    #[test]
+    fn a_gap_breaks_the_polyline_instead_of_interpolating_across_it() {
+        let cells = |column: &[f64]| {
+            let plot = VisiblePlot {
+                column,
+                start: 0,
+                end: column.len(),
+                preview: None,
+            };
+            plot.cells().filter(|(_, v)| !v.is_nan()).count()
+        };
+        // The honesty claim in this module's header: warmup and conditional
+        // plots render as gaps. A NaN in the middle yields two runs of real
+        // points, never one line drawn straight over the missing bar.
+        let column = [1.0, 2.0, f64::NAN, 4.0, 5.0];
+        assert_eq!(cells(&column), 4);
+
+        let mut runs = 0usize;
+        let mut in_run = false;
+        for value in column {
+            if value.is_nan() {
+                in_run = false;
+            } else if !in_run {
+                in_run = true;
+                runs += 1;
+            }
+        }
+        assert_eq!(runs, 2, "two segments, one gap");
+    }
+
+    #[test]
+    fn format_value_drops_decimals_only_at_price_scale() {
+        assert_eq!(format_value(1234.5678), "1234.6");
+        assert_eq!(format_value(0.12345), "0.1235");
+        assert_eq!(format_value(-9999.99), "-10000.0");
     }
 }

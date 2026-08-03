@@ -27,6 +27,17 @@ fn plot0(host: &IndicatorHost, id: quantick_indicators::InstanceId) -> Vec<f64> 
         .to_vec()
 }
 
+/// Bit-identical comparison of two plot columns. `NaN != NaN` under IEEE, so
+/// a plain `assert_eq!` on a column containing warmup cells can never hold;
+/// the golden tests compare `{:?}` output for the same reason.
+fn same_column(left: &[f64], right: &[f64]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(a, b)| format!("{a:?}") == format!("{b:?}"))
+}
+
 #[test]
 fn previews_never_advance_committed_state() {
     let (bars, _) = bars_and_partial(1);
@@ -84,10 +95,13 @@ fn preview_stages_cvd_without_committing_it() {
 }
 
 /// Fails its commit run at a chosen bar — the neighbour-isolation probe.
+/// With `fail_preview` it fails the preview run instead, which is the other
+/// half of the same contract.
 struct FailingAt {
     descriptor: IndicatorDescriptor,
     plots: PlotBuffer,
     fail_at: usize,
+    fail_preview: bool,
 }
 
 impl FailingAt {
@@ -102,6 +116,15 @@ impl FailingAt {
             },
             plots: PlotBuffer::new(0),
             fail_at,
+            fail_preview: false,
+        }
+    }
+
+    /// Commits happily, fails every preview.
+    fn failing_preview() -> Self {
+        Self {
+            fail_preview: true,
+            ..Self::new(usize::MAX)
         }
     }
 }
@@ -126,8 +149,14 @@ impl Indicator for FailingAt {
     fn preview(
         &mut self,
         _partial: &IndicatorBar,
-        _ctx: &mut Ctx<'_>,
+        ctx: &mut Ctx<'_>,
     ) -> Result<PreviewFrame, EvalError> {
+        if self.fail_preview {
+            return Err(EvalError {
+                bar_index: ctx.bar_index,
+                message: "deliberate preview failure".to_owned(),
+            });
+        }
         Ok(PreviewFrame::new(Vec::new()))
     }
     fn reset(&mut self) {
@@ -265,14 +294,131 @@ fn rebuild_replays_identically_and_clears_errors() {
 
 #[test]
 fn remove_forgets_the_instance() {
+    let (bars, partial) = bars_and_partial(5);
     let mut host = IndicatorHost::new();
+    let survivor = host.add(Box::new(Ema::new(3, SourceId::Close)));
     let id = host.add(Box::new(Cvd::new()));
-    assert_eq!(host.indicator_count(), 1);
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    host.set_partial(partial.as_ref());
+    let before = plot0(&host, survivor);
+    let cvd_before = host.cvd().to_vec();
+
+    assert_eq!(host.indicator_count(), 2);
     assert!(host.remove(id));
-    assert_eq!(host.indicator_count(), 0);
+    assert_eq!(host.indicator_count(), 1);
     assert!(host.plots(id).is_none());
+    // Removing mid-stream is the case that would actually hurt: the
+    // neighbour keeps its columns and the shared cvd does not shift.
+    assert!(
+        same_column(&plot0(&host, survivor), &before),
+        "neighbour untouched"
+    );
+    assert_eq!(host.cvd(), cvd_before.as_slice(), "shared cvd untouched");
     assert!(
         !host.remove(id),
         "an id is never reused, a stale one just misses"
+    );
+}
+
+#[test]
+fn an_instance_added_mid_bar_previews_immediately() {
+    let (bars, partial) = bars_and_partial(5);
+    let partial = partial.expect("the fixture leaves a forming bar");
+
+    let mut host = IndicatorHost::new();
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    host.set_partial(Some(&partial));
+
+    // Added while a bar is forming: the newcomer must be as current as a
+    // neighbour that was there all along, not one bar short until the next
+    // partial update arrives (which, on a paused replay, never does).
+    let late = host.add(Box::new(Ema::new(3, SourceId::Close)));
+    let late_preview = host
+        .preview(late)
+        .expect("a newcomer previews against the retained forming bar");
+
+    let mut reference = IndicatorHost::new();
+    let early = reference.add(Box::new(Ema::new(3, SourceId::Close)));
+    for bar in &bars {
+        reference.push_closed_bar(bar);
+    }
+    reference.set_partial(Some(&partial));
+    let early_preview = reference.preview(early).expect("reference previews");
+    assert!(same_column(&late_preview.values, &early_preview.values));
+
+    // Same for a replacement, and the retained partial dies with the close.
+    let replaced = host.replace(late, Box::new(Ema::new(3, SourceId::Close)));
+    assert!(replaced);
+    assert!(host.preview(late).is_some(), "a replacement previews too");
+    host.push_closed_bar(&partial);
+    let fresh = host.add(Box::new(Ema::new(3, SourceId::Close)));
+    assert!(
+        host.preview(fresh).is_none(),
+        "the forming bar is gone once it closes"
+    );
+}
+
+#[test]
+fn a_failing_preview_disables_only_its_own_instance() {
+    let (bars, partial) = bars_and_partial(5);
+    let partial = partial.expect("the fixture leaves a forming bar");
+    let mut host = IndicatorHost::new();
+    let broken = host.add(Box::new(FailingAt::failing_preview()));
+    let healthy = host.add(Box::new(Ema::new(3, SourceId::Close)));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    host.set_partial(Some(&partial));
+    let error = host.error(broken).expect("the preview failure is recorded");
+    assert_eq!(error.bar_index, bars.len());
+    assert!(host.preview(broken).is_none(), "no frame from a failed run");
+    assert!(
+        host.preview(healthy).is_some(),
+        "the neighbour previews normally"
+    );
+
+    // A preview failure disables the instance until it is replaced or the
+    // host rebuilds — closing a bar does not quietly re-enable it.
+    let rows_before = host.plots(broken).expect("instance exists").len();
+    host.push_closed_bar(&partial);
+    assert!(host.error(broken).is_some(), "still disabled after a close");
+    assert_eq!(
+        host.plots(broken).expect("instance exists").len(),
+        rows_before,
+        "a disabled instance commits nothing"
+    );
+}
+
+#[test]
+fn a_catch_up_failure_lands_in_the_newcomers_error_state() {
+    let (bars, _) = bars_and_partial(1);
+    assert!(bars.len() > 2, "the fixture has history to replay");
+    let mut host = IndicatorHost::new();
+    let healthy = host.add(Box::new(Ema::new(3, SourceId::Close)));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    let healthy_rows = plot0(&host, healthy);
+
+    // `add` replays retained history into the newcomer; a failure there is
+    // reported exactly like a live one, and the neighbour is untouched.
+    let late = host.add(Box::new(FailingAt::new(1)));
+    let error = host.error(late).expect("the replay failure is recorded");
+    assert_eq!(error.bar_index, 1);
+    assert!(host.error(healthy).is_none(), "neighbour unaffected");
+    assert!(same_column(&plot0(&host, healthy), &healthy_rows));
+
+    // Same contract for `replace`.
+    assert!(host.replace(healthy, Box::new(FailingAt::new(2))));
+    assert_eq!(
+        host.error(healthy)
+            .expect("a failing replacement reports too")
+            .bar_index,
+        2
     );
 }

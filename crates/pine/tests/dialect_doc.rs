@@ -21,27 +21,7 @@ fn every_registered_builtin_is_documented() {
 
 #[test]
 fn every_error_code_is_documented() {
-    use quantick_pine::ErrorCode::*;
-    let codes = [
-        PineLex,
-        PineSyntax,
-        PineIndent,
-        PineNoSecurity,
-        PineNoTimeframe,
-        PineNoStrategy,
-        PineNoCollections,
-        PineNoCalendar,
-        PineUnsupported,
-        PineUnknownName,
-        PineArity,
-        PineInputNotConst,
-        PineSeriesLength,
-        PineStatefulInLoop,
-        PineRecursion,
-        PineVersion,
-        PineType,
-        PineLoopBudget,
-    ];
+    let codes = quantick_pine::ErrorCode::ALL;
     let missing: Vec<&str> = codes
         .iter()
         .map(|c| c.as_str())
