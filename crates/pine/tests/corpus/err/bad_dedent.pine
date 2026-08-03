@@ -1,0 +1,5 @@
+// expect: PINE_INDENT@5
+//@version=5
+if close > open
+        x = 1
+    y = 2

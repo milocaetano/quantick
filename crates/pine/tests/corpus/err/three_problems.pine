@@ -1,0 +1,5 @@
+// expect: PINE_SYNTAX@3, PINE_SYNTAX@4, PINE_SYNTAX@5
+//@version=5
+a = )
+b = ]
+c = ,

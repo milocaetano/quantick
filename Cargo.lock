@@ -2539,6 +2539,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-pine"
+version = "0.1.0"
+
+[[package]]
 name = "quantick-replay"
 version = "0.1.0"
 dependencies = [
