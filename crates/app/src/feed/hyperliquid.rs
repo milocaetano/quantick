@@ -87,6 +87,10 @@ async fn feed_task(
         .await;
     });
     let mut book_capture: Option<BookCaptureTask> = None;
+    // Candle history runs off this loop: see `spawn_ohlcv` for what awaiting it
+    // in a command arm used to cost the live trade stream.
+    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<Vec<quantick_engine::Bar>>(1);
+    let mut ohlcv_task: Option<JoinHandle<()>> = None;
     let mut ever_connected = false;
     let mut recovery_pending = true;
     let recovery_timeout = tokio::time::sleep(STARTUP_RECOVERY_TIMEOUT);
@@ -94,6 +98,19 @@ async fn feed_task(
 
     loop {
         tokio::select! {
+            Some(bars) = ohlcv_rx.recv() => {
+                ohlcv_task = None;
+                if tx
+                    .send(FeedEvent::OhlcvHistory {
+                        interval_ms: ONE_MINUTE_MS,
+                        bars,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break; // UI gone
+                }
+            }
             maybe_batch = live_rx.recv() => {
                 match maybe_batch {
                     Some(trades) => {
@@ -146,12 +163,23 @@ async fn feed_task(
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
                     Some(FeedCommand::FetchOhlcv { span_ms }) => {
-                        // Inline, one at a time: the fetch opens its own short
-                        // socket, so it never competes with the trade stream,
-                        // and serialising keeps one pane's request from racing
-                        // another's.
-                        if !send_ohlcv(&symbol, span_ms, &tx).await {
-                            break; // UI gone
+                        if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
+                            // One fetch at a time; the in-flight one answers.
+                            warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "HYPERLIQUID_OHLCV_ALREADY_RUNNING",
+                                symbol,
+                                requested_span_ms = span_ms,
+                                action = "ignore_duplicate",
+                                "a candle fetch is already in flight; the running one will answer"
+                            );
+                        } else {
+                            ohlcv_task = Some(spawn_ohlcv(
+                                symbol.clone(),
+                                span_ms,
+                                ohlcv_tx.clone(),
+                            ));
                         }
                     }
                     Some(FeedCommand::LoadOlder { .. }) => {
@@ -218,6 +246,11 @@ async fn feed_task(
     }
     reconnect.abort();
     let _ = reconnect.await;
+    // The candle socket is its own connection; close it with the feed rather
+    // than leaving it to time out against a consumer that is gone.
+    if let Some(task) = ohlcv_task {
+        task.abort();
+    }
     stop_book_capture(&mut book_capture, &symbol, "feed_dropped").await;
 }
 
@@ -270,61 +303,71 @@ fn start_book_capture(
     }
 }
 
-/// Fetch `span_ms` of one-minute candles and answer the UI with exactly one
-/// [`FeedEvent::OhlcvHistory`]. Returns false when the UI is gone.
+/// Fetch `span_ms` of one-minute candles on a task of its own, delivering the
+/// bars back to the feed loop through `reply`.
+///
+/// Off the loop deliberately. The fetch already opens its own socket, so it
+/// never competed with the trade stream for bandwidth — but awaiting it in a
+/// command arm stopped the loop from polling `live_rx`, which against a stalled
+/// venue meant minutes of unread trades, a full channel, and a websocket read
+/// loop stalled behind it.
 ///
 /// Every outcome answers, including the ones that failed: the pane's loading
 /// indicator keys on the reply, and a venue that refused is a reason to show an
 /// empty pane, not a reason to leave one spinning. What went wrong is in the
 /// log, where it can carry the detail a chart cannot.
-async fn send_ohlcv(symbol: &str, span_ms: i64, tx: &mpsc::Sender<FeedEvent>) -> bool {
-    let to_ms = super::now_ms();
-    let from_ms = to_ms.saturating_sub(span_ms.max(0));
-    let bars = match fetch_candle_history(
-        HYPERLIQUID_WS_URL,
-        symbol,
-        CANDLE_INTERVAL_1M,
-        ONE_MINUTE_MS,
-        from_ms,
-        to_ms,
-    )
-    .await
-    {
-        Ok(history) => {
-            if !history.complete {
+fn spawn_ohlcv(
+    symbol: String,
+    span_ms: i64,
+    reply: mpsc::Sender<Vec<quantick_engine::Bar>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let symbol = symbol.as_str();
+        let to_ms = crate::metrics::wall_clock_ms();
+        let from_ms = to_ms.saturating_sub(span_ms.max(0));
+        let bars = match fetch_candle_history(
+            HYPERLIQUID_WS_URL,
+            symbol,
+            CANDLE_INTERVAL_1M,
+            ONE_MINUTE_MS,
+            from_ms,
+            to_ms,
+        )
+        .await
+        {
+            Ok(history) => {
+                if !history.complete {
+                    warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "HYPERLIQUID_OHLCV_PARTIAL",
+                        symbol,
+                        requested_span_ms = span_ms,
+                        bars = history.bars.len(),
+                        action = "answer_partial",
+                        "candle history is short of the requested span"
+                    );
+                }
+                history.bars
+            }
+            Err(error) => {
                 warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
-                    event_code = "HYPERLIQUID_OHLCV_PARTIAL",
+                    event_code = "HYPERLIQUID_OHLCV_FAILED",
                     symbol,
                     requested_span_ms = span_ms,
-                    bars = history.bars.len(),
-                    action = "answer_partial",
-                    "candle history is short of the requested span"
+                    %error,
+                    action = "answer_empty",
+                    "could not fetch candle history"
                 );
+                Vec::new()
             }
-            history.bars
-        }
-        Err(error) => {
-            warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HYPERLIQUID_OHLCV_FAILED",
-                symbol,
-                requested_span_ms = span_ms,
-                %error,
-                action = "answer_empty",
-                "could not fetch candle history"
-            );
-            Vec::new()
-        }
-    };
-    tx.send(FeedEvent::OhlcvHistory {
-        interval_ms: ONE_MINUTE_MS,
-        bars,
+        };
+        // A closed channel means the feed loop is gone, which is not this task's
+        // problem to report: it is already being reported there.
+        let _ = reply.send(bars).await;
     })
-    .await
-    .is_ok()
 }
 
 async fn stop_book_capture(task: &mut Option<BookCaptureTask>, symbol: &str, reason: &'static str) {

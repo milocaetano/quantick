@@ -45,22 +45,6 @@ pub const DEFAULT_BACKFILL_TARGET: usize = 1000;
 ///
 pub const TIME_HISTORY_SPAN_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 
-/// Wall-clock epoch milliseconds, for the one thing a feed legitimately needs
-/// a clock for: deciding what "the last ninety days" means.
-///
-/// The determinism rule lives in the engine, which is *told* what time it is by
-/// the trades it receives. A feed is the boundary where real time enters, and a
-/// candle request has to name a span in it. Nothing derived from this reaches a
-/// bar builder.
-#[must_use]
-pub fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
 /// The one interval every provider delivers candle history in: one minute.
 ///
 /// A single base series, resampled locally to whatever the pane shows, is what

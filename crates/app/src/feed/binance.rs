@@ -112,9 +112,30 @@ async fn feed_task(
     let snapshot_limit = initial_book_depth();
     let mut book_capture: Option<BookCaptureTask> = None;
     let mut ever_connected = false;
+    // Candle history runs off this loop, not inside it. Ninety days is ~130
+    // sequential pages — five seconds on a good day, far longer against a venue
+    // that is throttling — and awaiting that in a command arm stops `live_rx`
+    // from being polled for the duration: the trade channel fills, the
+    // websocket read loop behind it stalls, and pongs stop going out. The task
+    // sends its result back here and the loop keeps turning meanwhile.
+    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<Vec<quantick_engine::Bar>>(1);
+    let mut ohlcv_task: Option<JoinHandle<()>> = None;
 
     loop {
         tokio::select! {
+            Some(bars) = ohlcv_rx.recv() => {
+                ohlcv_task = None;
+                if tx
+                    .send(FeedEvent::OhlcvHistory {
+                        interval_ms: ONE_MINUTE_MS,
+                        bars,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break; // UI gone
+                }
+            }
             maybe_trade = live_rx.recv() => {
                 match maybe_trade {
                     Some(trade) => {
@@ -147,13 +168,25 @@ async fn feed_task(
                         }
                     }
                     Some(FeedCommand::FetchOhlcv { span_ms }) => {
-                        // Inline, like LoadOlder: one request at a time, in
-                        // arrival order. A candle fetch is long (~130 pages) but
-                        // it happens when a pane opens, not while one scrolls,
-                        // and serialising it keeps the venue's rate budget
-                        // spent by one caller at a time.
-                        if !send_ohlcv(&klines, &symbol, span_ms, &tx).await {
-                            break; // UI gone
+                        if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
+                            // One fetch at a time: the venue's rate budget is
+                            // shared, and the in-flight one already answers.
+                            warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "BINANCE_OHLCV_ALREADY_RUNNING",
+                                symbol,
+                                requested_span_ms = span_ms,
+                                action = "ignore_duplicate",
+                                "a candle fetch is already in flight; the running one will answer"
+                            );
+                        } else {
+                            ohlcv_task = Some(spawn_ohlcv(
+                                klines.clone(),
+                                symbol.clone(),
+                                span_ms,
+                                ohlcv_tx.clone(),
+                            ));
                         }
                     }
                     Some(FeedCommand::SetBookCapture {
@@ -217,6 +250,11 @@ async fn feed_task(
     }
     reconnect.abort();
     let _ = reconnect.await;
+    // A candle fetch can be 130 requests deep when the feed goes away; nobody
+    // is left to read its answer.
+    if let Some(task) = ohlcv_task {
+        task.abort();
+    }
     stop_book_capture(&mut book_capture, &symbol, "feed_dropped").await;
 }
 
@@ -329,49 +367,53 @@ fn parse_book_depth(raw: Option<&str>) -> u16 {
         .unwrap_or(DEFAULT_BOOK_DEPTH)
 }
 
-/// Fetch `span_ms` of one-minute candles and answer the UI with exactly one
-/// [`FeedEvent::OhlcvHistory`]. Returns false when the UI is gone.
+/// Fetch `span_ms` of one-minute candles on a task of its own, delivering the
+/// bars back to the feed loop through `reply`.
+///
+/// Off the loop deliberately: this is the one command whose work is measured in
+/// seconds rather than milliseconds, and the loop it was called from is the one
+/// draining live trades. See where it is spawned for what awaiting it inline
+/// used to cost.
 ///
 /// A short answer is still an answer: the pane's loading indicator keys on the
 /// reply, so a fetch that ran out of rate budget resolves it with what it
 /// collected rather than leaving the pane waiting on a venue that has stopped
 /// talking. How much arrived, and whether it covers the whole span, is in the
 /// `BINANCE_OHLCV_*` log events.
-async fn send_ohlcv(
-    klines: &BinanceKlineHttp,
-    symbol: &str,
+fn spawn_ohlcv(
+    klines: BinanceKlineHttp,
+    symbol: String,
     span_ms: i64,
-    tx: &mpsc::Sender<FeedEvent>,
-) -> bool {
-    let to_ms = super::now_ms();
-    let from_ms = to_ms.saturating_sub(span_ms.max(0));
-    let history = fetch_history(
-        klines,
-        symbol,
-        KLINE_INTERVAL_1M,
-        ONE_MINUTE_MS,
-        from_ms,
-        to_ms,
-    )
-    .await;
-    if !history.complete {
-        warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "BINANCE_OHLCV_PARTIAL",
-            symbol,
-            requested_span_ms = span_ms,
-            bars = history.bars.len(),
-            action = "answer_partial",
-            "candle history is short of the requested span"
-        );
-    }
-    tx.send(FeedEvent::OhlcvHistory {
-        interval_ms: ONE_MINUTE_MS,
-        bars: history.bars,
+    reply: mpsc::Sender<Vec<quantick_engine::Bar>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let to_ms = crate::metrics::wall_clock_ms();
+        let from_ms = to_ms.saturating_sub(span_ms.max(0));
+        let history = fetch_history(
+            &klines,
+            &symbol,
+            KLINE_INTERVAL_1M,
+            ONE_MINUTE_MS,
+            from_ms,
+            to_ms,
+        )
+        .await;
+        if !history.complete {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "BINANCE_OHLCV_PARTIAL",
+                symbol,
+                requested_span_ms = span_ms,
+                bars = history.bars.len(),
+                action = "answer_partial",
+                "candle history is short of the requested span"
+            );
+        }
+        // A closed channel means the feed loop is gone, which is not this
+        // task's problem to report: it is already being reported there.
+        let _ = reply.send(history.bars).await;
     })
-    .await
-    .is_ok()
 }
 
 /// Fetch `count` trades older than `earliest`, send them to the UI, and return

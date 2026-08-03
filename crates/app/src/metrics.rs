@@ -79,12 +79,22 @@ impl FrameStats {
 }
 
 /// Current wall-clock time in epoch milliseconds (app-only; never the engine).
+///
+/// The one place real time enters quantick. The engine is *told* what time it
+/// is by the trades it receives and never asks a clock, which is what keeps one
+/// fixture producing one set of bars; everything that genuinely needs "now" — a
+/// latency observation, the span a candle request covers — comes through here.
+///
+/// Saturates rather than wrapping. `as i64` on a `u128` past the i64 range
+/// would quietly produce a *negative* timestamp, and a clock that wrong should
+/// read as the end of time, not as 1969.
 #[must_use]
 pub fn wall_clock_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .map_or(0, |since| {
+            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 /// Source-to-consumer delay observed when an event arrives.
