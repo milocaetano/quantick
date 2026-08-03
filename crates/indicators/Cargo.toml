@@ -11,3 +11,7 @@ rust_decimal = "1"
 # Bit-exact cross-platform transcendentals; the ONLY permitted call path for
 # pow/exp/ln/log10 (see src/fmath.rs and the grep-guard test).
 libm = "0.2"
+
+[[bench]]
+name = "eval"
+harness = false
