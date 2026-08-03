@@ -99,6 +99,12 @@ struct SlotMirror {
     host_id: InstanceId,
     /// Committed rows the UI has (via Rebuilt/Appended events).
     known_rows: usize,
+    /// Whether the UI has been sent a `Rebuilt` for this slot's current
+    /// shape. `known_rows == 0` cannot stand in for it: before the first bar
+    /// closes — the whole first bar on a slow tape, and again after every
+    /// reset or replay seek — that would re-send a full descriptor + column
+    /// clone on every drained batch.
+    synced: bool,
     /// Whether the UI has been told about the current error state.
     error_reported: bool,
 }
@@ -201,6 +207,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                         SlotMirror {
                             host_id,
                             known_rows: 0,
+                            synced: false,
                             error_reported: false,
                         },
                     );
@@ -243,7 +250,7 @@ fn publish_deltas(
             .expect("instance with plots has a descriptor");
         let rows = plots.len();
 
-        if rebuilt || mirror.known_rows == 0 {
+        if rebuilt || !mirror.synced {
             let columns: Vec<Vec<f64>> = descriptor
                 .plots
                 .iter()
@@ -255,6 +262,7 @@ fn publish_deltas(
                 columns,
             });
             mirror.known_rows = rows;
+            mirror.synced = true;
             mirror.error_reported = false;
         } else {
             for row_index in mirror.known_rows..rows {

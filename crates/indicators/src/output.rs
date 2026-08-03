@@ -122,12 +122,43 @@ pub struct PlotBuffer {
 
 impl PlotBuffer {
     /// A buffer with `plot_count` empty columns.
+    ///
+    /// Prefer [`PlotBuffer::for_plots`] when the declared specs are in hand:
+    /// it takes the column count from them instead of asking the caller to
+    /// keep two numbers in step.
     #[must_use]
     pub fn new(plot_count: usize) -> Self {
         Self {
             columns: vec![Vec::new(); plot_count],
             rows: 0,
         }
+    }
+
+    /// A buffer sized from the plots an indicator declares.
+    ///
+    /// [`PlotSpec::id`] is defined as the spec's own position in
+    /// [`IndicatorDescriptor::plots`](crate::IndicatorDescriptor), and readers
+    /// rely on the two agreeing: the golden writer takes column headers from
+    /// iteration order and values from `spec.id`. Building the buffer from the
+    /// specs is what keeps that true.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any spec's id differs from its position — the descriptor is
+    /// built once at load time, so a mismatch is a bug in the indicator, and
+    /// letting it through would mislabel every column downstream.
+    #[must_use]
+    pub fn for_plots(plots: &[PlotSpec]) -> Self {
+        for (index, spec) in plots.iter().enumerate() {
+            assert_eq!(
+                spec.id,
+                PlotId::new(index),
+                "plot {:?} declares id {:?} but sits at position {index}",
+                spec.title,
+                spec.id
+            );
+        }
+        Self::new(plots.len())
     }
 
     /// Number of plot columns.
@@ -251,6 +282,33 @@ mod tests {
         buffer.clear();
         assert!(buffer.is_empty());
         assert_eq!(buffer.plot_count(), 1);
+    }
+
+    fn spec(index: usize, title: &str) -> PlotSpec {
+        PlotSpec {
+            id: PlotId::new(index),
+            title: title.to_owned(),
+            style: PlotStyle::Line,
+            base_color: Rgba8::opaque(255, 255, 255),
+            width: 1.0,
+            offset: 0,
+        }
+    }
+
+    #[test]
+    fn for_plots_sizes_the_buffer_from_the_declared_specs() {
+        let plots = vec![spec(0, "upper"), spec(1, "lower")];
+        let buffer = PlotBuffer::for_plots(&plots);
+        assert_eq!(buffer.plot_count(), plots.len());
+    }
+
+    #[test]
+    #[should_panic(expected = "sits at position")]
+    fn for_plots_rejects_an_id_that_disagrees_with_its_position() {
+        // The golden writer takes headers from iteration order and values from
+        // `spec.id`; a disagreement would label a column with another's title.
+        let plots = vec![spec(0, "upper"), spec(0, "lower")];
+        let _ = PlotBuffer::for_plots(&plots);
     }
 
     #[test]
