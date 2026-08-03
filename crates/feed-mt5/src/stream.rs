@@ -16,6 +16,7 @@
 //! `event_code` (see the diagnosis table in the crate docs, `lib.rs`): an AI
 //! or operator can reconstruct a session from logs alone.
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,12 +28,13 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-use quantick_engine::Trade;
+use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
 
 use crate::depth::BookMapper;
 use crate::map::{MapOutcome, SideMode, TickMapper};
 use crate::protocol::{self, BridgeMsg, SCHEMA_VERSION, TapeKind};
+use crate::rates::RateMapper;
 use crate::session::SeqTracker;
 
 /// Default address the feed listens on for the bridge.
@@ -169,6 +171,12 @@ pub enum Mt5Status {
         /// Levels per side this session can publish, or `None` when it sends no
         /// depth at all (the terminal refused the DOM, or the symbol has none).
         book_levels: Option<u32>,
+        /// Whether this session sends a historical candle block.
+        ///
+        /// Per-session like the two above: the Expert Advisor sends none, and
+        /// so does any bridge older than the feature. A consumer waiting on
+        /// candles needs to hear that now rather than after a timeout.
+        rates: bool,
     },
     /// The bridge went away; the server is looping back to waiting.
     Lost {
@@ -192,6 +200,18 @@ pub enum Mt5Event {
     /// Only produced while [`BookCaptureSwitch`] is enabled and the bridge
     /// declares depth support.
     Depth(DepthEvent),
+    /// The session's historical candle block, complete and already mapped.
+    ///
+    /// Sent exactly once per `rates_start`/`rates_end` pair, ascending by
+    /// `open_time` and deduplicated. A block that never finished is discarded
+    /// rather than half-delivered — a candle series with a hole in the middle
+    /// reads as a market that stopped trading.
+    Rates {
+        /// Milliseconds each bar covers, as the block declared.
+        interval_ms: i64,
+        /// The candles, ascending by `open_time`.
+        bars: Vec<Bar>,
+    },
 }
 
 /// A fatal server error (the non-fatal ones are events/logs).
@@ -645,6 +665,7 @@ async fn serve_connection(
             broker_symbol: hello.broker_symbol.clone(),
             tape: hello.tape,
             book_levels: hello.book_levels,
+            rates: hello.rates.unwrap_or(false),
         }))
         .await
         .is_err()
@@ -661,6 +682,7 @@ async fn serve_connection(
         TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
     let mut backfill: Option<Vec<Trade>> = None;
+    let mut candles: Option<RatesBlock> = None;
     let mut undecodable: u64 = 0;
     let mut depth = DepthSession::new(&hello, config.symbol.clone());
     depth.log_capability();
@@ -806,6 +828,52 @@ async fn serve_connection(
                     break ConnEnd::UiGone;
                 }
             }
+            Ok(BridgeMsg::RatesStart {
+                interval_ms,
+                count_hint,
+            }) => {
+                info!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_RATES_START",
+                    interval_ms,
+                    count_hint = ?count_hint,
+                    "bridge is sending historical candles"
+                );
+                candles = Some(RatesBlock::new(interval_ms, hello.server_utc_offset_s));
+            }
+            Ok(BridgeMsg::Rate(chunk)) => match candles.as_mut() {
+                Some(block) => block.absorb(&chunk),
+                // A batch outside a block has no interval to be measured in,
+                // and guessing one would misdate every bar in it.
+                None => warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_PROTOCOL_VIOLATION",
+                    bars = chunk.bars.len(),
+                    action = "drop_chunk",
+                    "candles arrived outside a rates block; dropping them"
+                ),
+            },
+            Ok(BridgeMsg::RatesEnd {}) => match candles.take() {
+                Some(block) => {
+                    let (interval_ms, bars) = block.finish(&config.symbol);
+                    if tx
+                        .send(Mt5Event::Rates { interval_ms, bars })
+                        .await
+                        .is_err()
+                    {
+                        break ConnEnd::UiGone;
+                    }
+                }
+                None => warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_PROTOCOL_VIOLATION",
+                    action = "ignore",
+                    "rates_end without a rates_start; ignoring it"
+                ),
+            },
             Ok(BridgeMsg::Bye { reason }) => {
                 info!(
                     target: "quantick::feed",
@@ -835,11 +903,64 @@ async fn serve_connection(
             "session ended mid-backfill; discarding the incomplete block"
         );
     }
+    if let Some(block) = candles {
+        warn!(
+            target: "quantick::feed",
+            schema_version = 1_u8,
+            event_code = "MT5_PARTIAL_RATES_DISCARDED",
+            bars = block.len(),
+            "session ended mid-candle-block; discarding it (the next session re-sends)"
+        );
+    }
     mapper.stats.log_summary(&config.symbol);
     // A consumer that was capturing depth must hear that this generation ended,
     // so it renders the discontinuity instead of connecting liquidity across it.
     depth.close(tx).await;
     end
+}
+
+/// The historical candle block being received, between `rates_start` and
+/// `rates_end`.
+///
+/// Bars land in a [`BTreeMap`] keyed by `open_time` rather than a `Vec`: the
+/// terminal can repeat a bucket across chunk boundaries, and a map both settles
+/// that (last write wins — a repeat is a correction) and hands back one
+/// ascending series without a sort whose tie-breaking would be an unstated
+/// rule. Same block in, same series out, whatever order the chunks arrived in.
+struct RatesBlock {
+    interval_ms: i64,
+    mapper: RateMapper,
+    bars: BTreeMap<i64, Bar>,
+}
+
+impl RatesBlock {
+    fn new(interval_ms: i64, server_utc_offset_s: i64) -> Self {
+        Self {
+            interval_ms,
+            mapper: RateMapper::new(interval_ms, server_utc_offset_s),
+            bars: BTreeMap::new(),
+        }
+    }
+
+    /// Map and absorb one chunk. Unreadable rows are counted, not fatal: one
+    /// corrupt candle in ninety days is a gap, not a reason to lose the block.
+    fn absorb(&mut self, chunk: &protocol::RateChunk) {
+        for row in &chunk.bars {
+            if let Some(bar) = self.mapper.map(row) {
+                self.bars.insert(bar.open_time, bar);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.bars.len()
+    }
+
+    /// Close the block: log what it cost, and hand back the ascending series.
+    fn finish(self, symbol: &str) -> (i64, Vec<Bar>) {
+        self.mapper.stats.log_summary(symbol, self.interval_ms);
+        (self.interval_ms, self.bars.into_values().collect())
+    }
 }
 
 /// Depth capture state for one bridge connection.

@@ -89,6 +89,30 @@ pub enum BridgeMsg {
     },
     /// End of the historical block; everything after is live.
     BackfillEnd {},
+    /// A block of historical candles follows, one interval per bar.
+    ///
+    /// Sent after [`BackfillEnd`](Self::BackfillEnd) by a bridge whose hello
+    /// declared [`rates`](Hello::rates). MetaTrader's transport is push-only —
+    /// there is no back-channel to request anything — so the block arrives
+    /// unasked and the feed holds it for whoever asks later.
+    RatesStart {
+        /// Milliseconds each candle covers (60 000 for the M1 series).
+        interval_ms: i64,
+        /// How many candles the bridge intends to send, if it knows.
+        #[serde(default)]
+        count_hint: Option<u64>,
+    },
+    /// One **batch** of candles, not one candle.
+    ///
+    /// Ninety days of M1 is tens of thousands of bars, and one line each would
+    /// spend the whole block in newline framing. One line each is also not an
+    /// option in the other direction: the whole block on a single line would
+    /// blow the 64 KiB line cap and take the session down with it. So a `rate`
+    /// message carries a bounded batch — see `bridge/mt5/PROTOCOL.md` for the
+    /// size arithmetic behind the bound.
+    Rate(RateChunk),
+    /// End of the candle block.
+    RatesEnd {},
     /// The bridge is going away on purpose (EA removed, terminal closing).
     Bye {
         /// Why, e.g. `"deinit"`.
@@ -160,6 +184,16 @@ pub struct Hello {
     /// exchange-fed session has always had, unchanged.
     #[serde(default)]
     pub tape: TapeKind,
+    /// Whether this session sends a block of historical candles after its tick
+    /// backfill (see [`BridgeMsg::RatesStart`]).
+    ///
+    /// `None` or `Some(false)` means no candles at all — an older bridge, the
+    /// Expert Advisor (which does not implement them), or one told not to send
+    /// them. Like [`book_levels`](Self::book_levels) this is the honest signal
+    /// for "the time pane has no history here"; the feed reports the absence
+    /// instead of waiting for a block that is never coming.
+    #[serde(default)]
+    pub rates: Option<bool>,
 }
 
 /// One tick. `time_ms` is **server-time** epoch milliseconds (see [`Hello`]).
@@ -220,6 +254,52 @@ pub struct Book {
     pub asks: Vec<WireLevel>,
 }
 
+/// Most candles one [`BridgeMsg::Rate`] line may carry.
+///
+/// Chosen against the 64 KiB line cap ([`crate::stream::MAX_LINE_BYTES`]),
+/// which a longer line does not merely truncate — it ends the session. A row is
+/// `[time,"o","h","l","c","v"]`: a 20-character timestamp plus five quoted
+/// decimals of at most 22 characters each, with separators, is under 150 bytes
+/// even for an instrument quoting eight integer and eight fractional digits.
+/// Three hundred of those is ~44 KiB, leaving a third of the cap as headroom
+/// for anything this arithmetic did not foresee. `rates_line_stays_under_the_
+/// cap` in this module pins it.
+pub const MAX_BARS_PER_RATE_LINE: usize = 300;
+
+/// One batch of historical candles.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RateChunk {
+    /// The candles in this batch, ascending by time.
+    pub bars: Vec<RateRow>,
+}
+
+/// One candle on the wire: `[time_ms, open, high, low, close, volume]`.
+///
+/// A positional array rather than an object because this is the one message
+/// that repeats tens of thousands of times in a session — field names would be
+/// most of the bytes. Prices and volume travel as decimal **strings**, like
+/// every other price in this protocol, so nothing round-trips through a float
+/// between the terminal and the engine.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RateRow(
+    /// Bucket start, in **server time** epoch milliseconds (see [`Hello`]).
+    pub i64,
+    /// Open price.
+    pub String,
+    /// High price.
+    pub String,
+    /// Low price.
+    pub String,
+    /// Close price.
+    pub String,
+    /// Volume over the candle. What that counts depends on the venue: an
+    /// exchange tape reports traded size, and a broker-quoted symbol — which
+    /// prints nothing at all — reports its tick count, matching the one
+    /// synthetic unit per tick the live mapper charts for the same instrument
+    /// (see [`TapeKind`]).
+    pub String,
+);
+
 /// Liveness + offset refresh. A silent bridge (no ticks, no heartbeats) is
 /// treated as lost after a timeout.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -266,6 +346,93 @@ pub fn parse_line(line: &str) -> Result<BridgeMsg, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rates_line_stays_under_the_cap() {
+        // The bound that keeps a candle block from killing the session it
+        // arrives on: a line over MAX_LINE_BYTES is not truncated, it ends the
+        // connection. Built here at a width no real instrument reaches — eight
+        // integer digits, eight fractional, on all five decimal fields, with a
+        // timestamp far past any date a terminal will report.
+        let wide = format!("\"{}\"", "9".repeat(8) + "." + &"9".repeat(8));
+        let row = format!("[{},{wide},{wide},{wide},{wide},{wide}]", i64::MAX);
+        let line = format!(
+            "{{\"type\":\"rate\",\"bars\":[{}]}}\n",
+            std::iter::repeat_n(row.as_str(), MAX_BARS_PER_RATE_LINE)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert!(
+            line.len() < crate::stream::MAX_LINE_BYTES,
+            "a full batch must fit the line cap with room to spare: {} bytes of {}",
+            line.len(),
+            crate::stream::MAX_LINE_BYTES
+        );
+        // And it really is one line: a newline anywhere inside would reframe
+        // the batch into fragments that parse as nothing.
+        assert_eq!(line.matches('\n').count(), 1);
+
+        // The shape the size was computed for is the shape that parses.
+        let BridgeMsg::Rate(chunk) = parse_line(line.trim_end()).expect("a full batch parses")
+        else {
+            panic!("expected a rate batch");
+        };
+        assert_eq!(chunk.bars.len(), MAX_BARS_PER_RATE_LINE);
+    }
+
+    #[test]
+    fn a_rates_block_parses_from_its_three_message_types() {
+        let BridgeMsg::RatesStart {
+            interval_ms,
+            count_hint,
+        } = parse_line(r#"{"type":"rates_start","interval_ms":60000,"count_hint":43200}"#).unwrap()
+        else {
+            panic!("expected rates_start");
+        };
+        assert_eq!(interval_ms, 60_000);
+        assert_eq!(count_hint, Some(43_200));
+
+        let BridgeMsg::Rate(chunk) = parse_line(
+            r#"{"type":"rate","bars":[[1784824260000,"177790","177850","177780","177800","1234"]]}"#,
+        )
+        .unwrap() else {
+            panic!("expected a rate batch");
+        };
+        assert_eq!(chunk.bars.len(), 1);
+        assert_eq!(chunk.bars[0].0, 1_784_824_260_000);
+        assert_eq!(chunk.bars[0].5, "1234");
+
+        assert!(matches!(
+            parse_line(r#"{"type":"rates_end"}"#).unwrap(),
+            BridgeMsg::RatesEnd {}
+        ));
+
+        // A count hint is optional, like the backfill's.
+        let BridgeMsg::RatesStart { count_hint, .. } =
+            parse_line(r#"{"type":"rates_start","interval_ms":60000}"#).unwrap()
+        else {
+            panic!("expected rates_start");
+        };
+        assert_eq!(count_hint, None);
+    }
+
+    #[test]
+    fn a_hello_without_rates_declares_none() {
+        // Every bridge that predates candles, and the Expert Advisor, which
+        // does not implement them. Absence must read as absence, not as a
+        // block that is still coming.
+        let line = r#"{"type":"hello","schema":1,"bridge":"b","bridge_version":"0","symbol":"WIN$N","broker_symbol":"WINQ26","digits":0,"server_utc_offset_s":-10800}"#;
+        let BridgeMsg::Hello(h) = parse_line(line).unwrap() else {
+            panic!("expected hello");
+        };
+        assert_eq!(h.rates, None);
+
+        let with = line.replace("\"digits\":0", "\"rates\":true,\"digits\":0");
+        let BridgeMsg::Hello(h) = parse_line(&with).unwrap() else {
+            panic!("expected hello");
+        };
+        assert_eq!(h.rates, Some(true));
+    }
 
     #[test]
     fn parses_a_real_recorded_hello() {

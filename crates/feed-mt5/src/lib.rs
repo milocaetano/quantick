@@ -83,13 +83,18 @@ pub mod bridge_log;
 pub mod depth;
 pub mod map;
 pub mod protocol;
+pub mod rates;
 pub mod session;
 pub mod stream;
 
 pub use bridge_log::{BridgeReport, BridgeSeverity, report_for_line};
 pub use depth::{BookMapper, BookStats};
 pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper};
-pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, TapeKind, Tick, parse_line};
+pub use protocol::{
+    BridgeMsg, Hello, MAX_BARS_PER_RATE_LINE, ParseError, RateChunk, RateRow, SCHEMA_VERSION,
+    TapeKind, Tick, parse_line,
+};
+pub use rates::{RateMapper, RateStats};
 pub use session::{SeqAnomaly, SeqTracker};
 pub use stream::{
     BookCaptureSwitch, BoundedLine, BoundedLineReader, DEFAULT_LISTEN_ADDR, MAX_LINE_BYTES,

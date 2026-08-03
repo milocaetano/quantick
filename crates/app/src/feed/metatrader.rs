@@ -102,16 +102,19 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
 
 /// What a session that just said hello can really offer.
 ///
-/// The two facts the chart cannot observe for itself: whether this symbol has
-/// a book, and whether it has a tape. Both come from the bridge, and both are
-/// per-symbol — the same terminal serves a B3 contract with real depth and real
-/// prints, and a broker CFD with neither.
-fn session_capabilities(tape: TapeKind, book_levels: Option<u32>) -> FeedCapabilities {
+/// The facts the chart cannot observe for itself: whether this symbol has a
+/// book, whether it has a tape, and whether this bridge sends candle history.
+/// All three come from the bridge, and all three are per-symbol or
+/// per-session — the same terminal serves a B3 contract with real depth and
+/// real prints, and a broker CFD with neither, and the Expert Advisor sends no
+/// candles at all where the Python bridge does.
+fn session_capabilities(tape: TapeKind, book_levels: Option<u32>, rates: bool) -> FeedCapabilities {
     FeedCapabilities {
         book_capture: book_levels.is_some_and(|levels| levels > 0),
         // MT5 has no fetch-on-demand history: the bridge decides what it sends.
         history_paging: false,
         traded_volume: tape == TapeKind::Trades,
+        ohlcv_history: rates,
     }
 }
 
@@ -192,6 +195,14 @@ async fn feed_task(
     // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
     // what was already streamed live; only strictly-newer trades pass.
     let mut last_forwarded_ms = i64::MIN;
+    // The candle block the bridge pushed, kept for whoever asks later.
+    //
+    // Every other provider fetches history when the pane requests it. MetaTrader
+    // cannot be asked anything — MQL5 sockets are one-way, so the bridge decides
+    // when to send and simply does. Holding the block here is what lets this
+    // provider answer the same `FetchOhlcv` as the others: the request does not
+    // reach a venue, it reads what already arrived.
+    let mut candles: Option<OhlcvBlock> = None;
 
     loop {
         tokio::select! {
@@ -202,12 +213,12 @@ async fn feed_task(
                         // looking. A connected bridge clears whatever the
                         // startup reported; a lost one replaces it.
                         let notice = match &status {
-                            Mt5Status::Connected { tape, book_levels, .. } => {
+                            Mt5Status::Connected { tape, book_levels, rates, .. } => {
                                 bridge_connected.store(true, Ordering::Relaxed);
                                 // What this symbol really offers is known only
                                 // now. Publishing it withdraws the affordances
                                 // it cannot back — before the user clicks one.
-                                let _ = caps_tx.send(session_capabilities(*tape, *book_levels));
+                                let _ = caps_tx.send(session_capabilities(*tape, *book_levels, *rates));
                                 FeedNotice::Connected
                             }
                             Mt5Status::Waiting { .. } => FeedNotice::working(
@@ -286,6 +297,21 @@ async fn feed_task(
                             break; // UI gone
                         }
                     }
+                    Some(Mt5Event::Rates { interval_ms, bars }) => {
+                        // Not forwarded on arrival: nobody may have asked yet,
+                        // and an unrequested reply would resolve a load the
+                        // pane never started. Held until it does ask.
+                        info!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "MT5_RATES_READY",
+                            symbol = %symbol,
+                            interval_ms,
+                            bars = bars.len(),
+                            "bridge pushed candle history; holding it for the next request"
+                        );
+                        candles = Some(OhlcvBlock { interval_ms, bars });
+                    }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;
                         last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
@@ -325,7 +351,7 @@ async fn feed_task(
                                 "MT5 bridge listener crashed"
                             ),
                         }
-                        idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture).await;
+                        idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture, candles.as_ref()).await;
                         return;
                     }
                 }
@@ -336,7 +362,7 @@ async fn feed_task(
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
                     Some(cmd) => {
-                        if !answer_command(&symbol, cmd, &tx, &book_capture).await {
+                        if !answer_command(&symbol, cmd, &tx, &book_capture, candles.as_ref()).await {
                             break; // UI gone
                         }
                     }
@@ -387,12 +413,19 @@ async fn idle_serve_commands(
     tx: &mpsc::Sender<FeedEvent>,
     cmd_rx: &mut mpsc::Receiver<FeedCommand>,
     book_capture: &BookCaptureSwitch,
+    candles: Option<&OhlcvBlock>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
-        if !answer_command(symbol, cmd, tx, book_capture).await {
+        if !answer_command(symbol, cmd, tx, book_capture, candles).await {
             return;
         }
     }
+}
+
+/// The candle block a bridge session pushed, waiting to be asked for.
+struct OhlcvBlock {
+    interval_ms: i64,
+    bars: Vec<quantick_engine::Bar>,
 }
 
 /// Answer one UI command. Returns false when the UI is gone.
@@ -401,6 +434,7 @@ async fn answer_command(
     cmd: FeedCommand,
     tx: &mpsc::Sender<FeedEvent>,
     book_capture: &BookCaptureSwitch,
+    candles: Option<&OhlcvBlock>,
 ) -> bool {
     match cmd {
         FeedCommand::LoadOlder { count } => {
@@ -453,6 +487,34 @@ async fn answer_command(
             );
             true
         }
+        FeedCommand::FetchOhlcv { span_ms } => {
+            // Answered from what the bridge already pushed. `span_ms` is not a
+            // request that can be made here — the bridge chose its own reach
+            // before this feed could say anything (its `--rates-months`) — so
+            // it is logged against what actually arrived rather than silently
+            // ignored.
+            let (interval_ms, bars) = match candles {
+                Some(block) => (block.interval_ms, block.bars.clone()),
+                None => (super::OHLCV_BASE_INTERVAL_MS, Vec::new()),
+            };
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_OHLCV_ANSWERED",
+                symbol,
+                requested_span_ms = span_ms,
+                interval_ms,
+                bars = bars.len(),
+                // The empty answer has two very different causes, and the log
+                // has to separate them: a session that sends no candles at all,
+                // and one whose block simply has not arrived yet.
+                source = if candles.is_some() { "bridge_block" } else { "nothing_held" },
+                "answered a candle-history request"
+            );
+            tx.send(FeedEvent::OhlcvHistory { interval_ms, bars })
+                .await
+                .is_ok()
+        }
         // Transport commands belong to a recorded session; a live bridge has
         // no playhead to move. Ignored rather than refused — the UI only shows
         // the transport while a replay is the source.
@@ -476,6 +538,7 @@ fn log_status(symbol: &str, status: &Mt5Status) {
             broker_symbol,
             tape,
             book_levels,
+            rates,
         } => info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -487,6 +550,7 @@ fn log_status(symbol: &str, status: &Mt5Status) {
             // "why is the volume-bar option greyed out?" gets answered.
             tape = ?tape,
             book_levels = book_levels.unwrap_or(0),
+            rates,
             "bridge connected and streaming"
         ),
         Mt5Status::Lost { reason } => warn!(
@@ -849,20 +913,28 @@ mod tests {
 
     #[test]
     fn a_session_reports_exactly_what_its_symbol_offers() {
-        // An exchange contract: prints trades, publishes a book.
-        let exchange = session_capabilities(TapeKind::Trades, Some(10));
+        // An exchange contract on the Python bridge: prints trades, publishes
+        // a book, sends candles.
+        let exchange = session_capabilities(TapeKind::Trades, Some(10), true);
         assert!(exchange.traded_volume);
         assert!(exchange.book_capture);
+        assert!(exchange.ohlcv_history);
 
-        // A broker-quoted CFD: neither. Both facts come from the same hello,
-        // and neither is inferable from the provider being MetaTrader.
-        let cfd = session_capabilities(TapeKind::Quotes, None);
+        // A broker-quoted CFD behind the Expert Advisor: none of the three.
+        // Every fact comes from the same hello, and none is inferable from the
+        // provider being MetaTrader.
+        let cfd = session_capabilities(TapeKind::Quotes, None, false);
         assert!(!cfd.traded_volume);
         assert!(!cfd.book_capture);
+        assert!(!cfd.ohlcv_history);
 
         // A bridge that subscribed to a DOM with no levels in it has no book
         // either — "declared" is not "has".
-        assert!(!session_capabilities(TapeKind::Trades, Some(0)).book_capture);
+        assert!(!session_capabilities(TapeKind::Trades, Some(0), true).book_capture);
+
+        // The three are independent: a CFD the Python bridge serves still has
+        // candles, because the terminal keeps rates for quoted symbols too.
+        assert!(session_capabilities(TapeKind::Quotes, None, true).ohlcv_history);
 
         // Paging is never available on MT5, whatever the symbol is.
         assert!(!exchange.history_paging && !cfd.history_paging);
@@ -1042,5 +1114,158 @@ mod tests {
         })
         .await;
         assert_eq!(connected_again, FeedNotice::Connected);
+    }
+
+    #[tokio::test]
+    async fn a_pushed_candle_block_answers_the_request_that_comes_later() {
+        // MetaTrader is the provider that cannot be asked anything: MQL5
+        // sockets are one-way, so the bridge pushes its candles when it feels
+        // like it and the request arrives whenever a pane opens. Holding the
+        // block is what lets this provider honour the same exactly-once
+        // contract as the venues that fetch on demand.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19181".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        let mut sock = None;
+        for _ in 0..50 {
+            match tokio::net::TcpStream::connect("127.0.0.1:19181").await {
+                Ok(s) => {
+                    sock = Some(s);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+        let mut sock = sock.expect("could not reach the feed listener");
+
+        let script = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"WIN$N\",\"broker_symbol\":\"WINQ26\",\"digits\":0,",
+            "\"rates\":true,\"server_utc_offset_s\":-10800}
+",
+            "{\"type\":\"rates_start\",\"interval_ms\":60000,\"count_hint\":2}
+",
+            "{\"type\":\"rate\",\"bars\":[",
+            "[1784824260000,\"177790\",\"177850\",\"177780\",\"177800\",\"10\"],",
+            "[1784824320000,\"177800\",\"177860\",\"177790\",\"177850\",\"20\"]]}
+",
+            "{\"type\":\"rates_end\"}
+",
+            // Two live ticks after the block. The feed drains one channel in
+            // order, so a trade arriving proves the candles ahead of it were
+            // already absorbed — no sleep, no guess about timing.
+            "{\"type\":\"tick\",\"seq\":1,\"time_ms\":1784824400000,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"177800\",\"volume\":1,\"flags\":1080}
+",
+            "{\"type\":\"tick\",\"seq\":2,\"time_ms\":1784824400001,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"177805\",\"volume\":1,\"flags\":1080}
+",
+        );
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        // Wait for the trade that follows the block: it is the ordering proof
+        // that the candles have been absorbed and held.
+        let live = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match feed.events.recv().await {
+                    Some(FeedEvent::Live(trade)) => return trade,
+                    Some(_) => {}
+                    None => panic!("feed closed"),
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for the trade after the candle block");
+        assert_eq!(live.agg_id, 2);
+
+        // The session declares candles, so the capability is open too — a pane
+        // can show its loader rather than a dash.
+        assert!(
+            feed.capabilities.borrow().ohlcv_history,
+            "the hello declared rates"
+        );
+
+        // Ask only now, after the block has already been pushed and held.
+        feed.commands
+            .send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            })
+            .await
+            .expect("the feed is listening");
+
+        let reply = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match feed.events.recv().await {
+                    Some(FeedEvent::OhlcvHistory { interval_ms, bars }) => {
+                        return (interval_ms, bars);
+                    }
+                    Some(_) => {}
+                    None => panic!("feed closed"),
+                }
+            }
+        })
+        .await
+        .expect("no reply: a pane would hang here");
+
+        let (interval_ms, bars) = reply;
+        assert_eq!(interval_ms, 60_000);
+        assert_eq!(bars.len(), 2);
+        // Converted out of the terminal's server clock, like every other MT5
+        // timestamp.
+        assert_eq!(bars[0].open_time, 1_784_824_260_000 + 10_800_000);
+        assert_eq!(bars[0].close_time, bars[0].open_time + 59_999);
+        assert_eq!(bars[1].open_time, bars[0].open_time + 60_000);
+        assert_eq!(bars[0].volume(), rust_decimal::Decimal::from(10));
+        assert_eq!(
+            bars[0].delta(),
+            rust_decimal::Decimal::ZERO,
+            "no aggressor split exists in a MetaTrader candle"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_without_candles_still_answers_the_request() {
+        // The Expert Advisor's case. Nothing is coming, and the request must
+        // still resolve — an unanswered one is a pane that spins forever.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19182".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        feed.commands
+            .send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            })
+            .await
+            .expect("the feed is listening");
+
+        let reply = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match feed.events.recv().await {
+                    Some(FeedEvent::OhlcvHistory { bars, .. }) => return bars,
+                    Some(_) => {}
+                    None => panic!("feed closed"),
+                }
+            }
+        })
+        .await
+        .expect("no reply even with no bridge: a pane would hang here");
+        assert!(
+            reply.is_empty(),
+            "nothing was pushed, so nothing is claimed"
+        );
     }
 }

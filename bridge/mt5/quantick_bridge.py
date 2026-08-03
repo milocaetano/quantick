@@ -68,6 +68,19 @@ CACHE_PATH = Path(__file__).with_name(".quantick_bridge_cache.json")
 #: tape-less. See `BridgeSession.detect_tape` for why this errs long.
 TAPE_PROBE_DAYS = 30
 
+# Milliseconds in the M1 bucket the candle block is sent in.
+M1_INTERVAL_MS = 60_000
+
+# Days charged per "month" of requested candle history. Calendar months vary and
+# nothing here needs them to be exact — this only decides how far back to ask.
+DAYS_PER_MONTH = 31
+
+# Candles per `rate` line. quantick drops a session whose line exceeds 64 KiB,
+# so the whole block on one line would take the connection down with it; this
+# bound is sized against that cap, and mirrors MAX_BARS_PER_RATE_LINE in
+# crates/feed-mt5/src/protocol.rs. See PROTOCOL.md for the arithmetic.
+MAX_BARS_PER_RATE_LINE = 300
+
 
 def log(event_code: str, **fields: object) -> None:
     """Emit one structured line, matching what the EA prints to Experts."""
@@ -209,6 +222,9 @@ class Session:
         self.offset_s = 0
         self.digits = 0
         self.book_subscribed = False
+        # What this venue prints, decided once at hello and reused by the
+        # candle block to choose an honest volume source.
+        self.tape = "trades"
         # Cursor: MT5 ticks share milliseconds, so it takes both the newest
         # millisecond sent and how many ticks at that millisecond already went.
         self.cursor_msc = 0
@@ -269,6 +285,7 @@ class Session:
             raise BridgeExit
         self.offset_s = offset_s
         self.digits = int(info.digits)
+        self.tape = self.detect_tape()
 
         hello = {
             "type": "hello",
@@ -279,8 +296,13 @@ class Session:
             "broker_symbol": info.basis or self.symbol,
             "digits": self.digits,
             "server_utc_offset_s": offset_s,
-            "tape": self.detect_tape(),
+            "tape": self.tape,
         }
+        # Candle history is announced only when this session will really send
+        # it, so a feed knows immediately whether a time pane has anything
+        # coming rather than waiting on a block that never arrives.
+        if self.args.rates_months > 0:
+            hello["rates"] = True
         # Depth fields are announced only when this session can really deliver
         # depth. Omitting them is the honest "no book here" quantick relies on
         # to explain an empty heatmap instead of drawing one.
@@ -300,6 +322,8 @@ class Session:
         self.send(hello)
 
         self.backfill()
+        if self.args.rates_months > 0:
+            self.send_rates()
         log(
             "BRIDGE_SESSION_STARTED",
             symbol=self.symbol,
@@ -353,6 +377,94 @@ class Session:
         else:
             self.cursor_msc = now_s * 1000
             self.sent_at_cursor = 0
+
+    def send_rates(self) -> None:
+        """Historical M1 candles, so the time pane opens with real context.
+
+        Ticks answer "what just happened"; this answers "what has been
+        happening", and the two have very different shapes. Three months of
+        ticks is tens of millions of lines and is not on offer at any price —
+        three months of one-minute candles is about 130 000, which the terminal
+        returns in one call and which fits on the socket in a few hundred
+        batched lines.
+
+        Batched, and bounded: quantick drops a session whose line exceeds 64
+        KiB, so a whole block on one line would take the connection down with
+        it. MAX_BARS_PER_RATE_LINE is sized against that cap — see
+        bridge/mt5/PROTOCOL.md for the arithmetic.
+
+        Volume follows what the venue actually prints, matching how live ticks
+        are treated for the same instrument: an exchange tape reports traded
+        size, and a quote-only CFD — which prints nothing — reports its tick
+        count, the same one synthetic unit per tick the live path charts.
+        """
+        now_s = int(time.time() + self.offset_s)
+        from_s = now_s - self.args.rates_months * DAYS_PER_MONTH * 86400
+        rates = mt5.copy_rates_range(self.symbol, mt5.TIMEFRAME_M1, from_s, now_s)
+        if rates is None:
+            log(
+                "BRIDGE_RATES_FAILED",
+                symbol=self.symbol,
+                mt5_error=str(mt5.last_error()),
+                hint="the terminal returned no M1 history for this symbol",
+            )
+            return
+
+        available = len(rates)
+        if available > self.args.rates_max_bars:
+            rates = rates[-self.args.rates_max_bars :]
+            log(
+                "BRIDGE_RATES_TRUNCATED",
+                symbol=self.symbol,
+                available=available,
+                sending=len(rates),
+                dropped_oldest=available - len(rates),
+                action="keep_newest",
+            )
+
+        quotes_only = self.tape == "quotes"
+        self.send(
+            {
+                "type": "rates_start",
+                "interval_ms": M1_INTERVAL_MS,
+                "count_hint": len(rates),
+            }
+        )
+        batch = []
+        sent = 0
+        for rate in rates:
+            volume = int(rate["tick_volume"] if quotes_only else rate["real_volume"])
+            # A terminal that reports no real volume on a tape instrument
+            # leaves the bar unmeasurable; the tick count is the honest
+            # fallback and matches what the live path charts for it.
+            if volume <= 0:
+                volume = int(rate["tick_volume"])
+            batch.append(
+                [
+                    int(rate["time"]) * 1000,
+                    self.price(rate["open"]),
+                    self.price(rate["high"]),
+                    self.price(rate["low"]),
+                    self.price(rate["close"]),
+                    str(volume),
+                ]
+            )
+            if len(batch) >= MAX_BARS_PER_RATE_LINE:
+                self.send({"type": "rate", "bars": batch})
+                sent += len(batch)
+                batch = []
+        if batch:
+            self.send({"type": "rate", "bars": batch})
+            sent += len(batch)
+        self.send({"type": "rates_end"})
+        log(
+            "BRIDGE_RATES_SENT",
+            symbol=self.symbol,
+            interval_ms=M1_INTERVAL_MS,
+            bars=sent,
+            months=self.args.rates_months,
+            volume_source="tick_volume" if quotes_only else "real_volume",
+        )
 
     def send_tick(self, tick) -> None:
         self.seq += 1
@@ -539,6 +651,21 @@ def main() -> int:
         type=int,
         default=200_000,
         help="hard cap on backfilled ticks; the newest ones win",
+    )
+    parser.add_argument(
+        "--rates-months",
+        type=int,
+        default=3,
+        help=(
+            "months of M1 candle history to send after the tick backfill "
+            "(0 disables the block, and the session declares no candles)"
+        ),
+    )
+    parser.add_argument(
+        "--rates-max-bars",
+        type=int,
+        default=200_000,
+        help="cap on candles sent; the newest win and the log says how many were left behind",
     )
     parser.add_argument("--heartbeat-seconds", type=float, default=5.0)
     parser.add_argument("--retry-seconds", type=float, default=5.0)
