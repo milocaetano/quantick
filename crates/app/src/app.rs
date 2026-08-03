@@ -28,6 +28,14 @@ use crate::drawings::{
 use crate::feed::{
     self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
 };
+use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
+use crate::indicator_render::{self, PlotX};
+use crate::indicator_worker::{
+    IndicatorCommand, IndicatorEvent, IndicatorSource, IndicatorWorker, SlotId,
+};
+use crate::indicators::IndicatorViews;
+use crate::indicators::library::ScriptLibrary;
+use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind};
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -60,6 +68,13 @@ const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
+/// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
+/// generated from `InputSpec` replaces this in M4).
+const DEFAULT_EMA_LEN: usize = 9;
+/// How often the hot-reload poll checks script files for changes.
+const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
+/// How long after the last indicator change the state file is written.
+const INDICATOR_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(1_000);
 /// Inspector width bounds (UX spec: resizable between 300 and 440 px).
 const INSPECTOR_MIN_WIDTH_PX: f32 = 300.0;
 /// See [`INSPECTOR_MIN_WIDTH_PX`].
@@ -190,19 +205,26 @@ const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 /// though they are zooming different things.
 const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
-/// Split the padded plot area into the candle chart, the optional live strip,
-/// the right price gutter and the bottom time strip, so the input handler and
-/// the renderer agree on the boundaries. `live_strip_width` of zero means the
-/// strip is off and the chart runs straight into the gutter, exactly as it
-/// did before the strip existed.
-fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
+/// Split the padded plot area into the candle chart, the indicator panes, the
+/// optional live strip, the right price gutter and the bottom time strip, so
+/// the input handler and the renderer agree on the boundaries.
+/// `live_strip_width` of zero means the strip is off and the chart runs
+/// straight into the gutter, exactly as it did before the strip existed.
+///
+/// `pane_count` is the number of *visible* pane indicators: the band they
+/// claim is carved here, once, rather than by each caller — a chart rect that
+/// two call sites disagree about is two price scales for the same pixels.
+fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) -> PlotAreas {
     let plot = area.shrink(16.0);
     let strip_width = live_strip_width.max(0.0);
     let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
+    let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
+    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_count);
     PlotAreas {
-        chart: egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y)),
+        chart,
+        indicator_panes,
         live_strip: (strip_width > 0.0).then(|| {
             egui::Rect::from_min_max(
                 egui::pos2(split_x, plot.top()),
@@ -250,7 +272,14 @@ fn split_time_strip(strip: egui::Rect, divider_x: Option<f32>) -> (egui::Rect, O
 
 /// The interactive regions of the plot, plus the optional live strip.
 struct PlotAreas {
+    /// The candle body, with the indicator pane band already taken out of it.
+    /// Every consumer — renderer and input handler alike — reads the chart
+    /// rect from here, which is what keeps the price scale a drawing is
+    /// placed against identical to the one it is hit-tested against.
     chart: egui::Rect,
+    /// Stacked indicator panes below the candles, top to bottom. Empty when
+    /// no pane indicator is visible.
+    indicator_panes: Vec<egui::Rect>,
     /// Present only while the strip is shown; sits between `chart` and
     /// `price_gutter` and is not an input region.
     live_strip: Option<egui::Rect>,
@@ -311,6 +340,35 @@ pub struct QuantickApp {
     feed_capabilities: watch::Receiver<FeedCapabilities>,
     commands: mpsc::Sender<FeedCommand>,
     orderflow: OrderflowView,
+    /// Background thread owning the `IndicatorHost`; the UI only sends
+    /// commands and applies the delta events back.
+    indicator_worker: IndicatorWorker,
+    /// The UI's copy of every indicator's plot columns (see
+    /// [`crate::indicators`]).
+    indicators: IndicatorViews,
+    /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
+    /// startup. A file-backed script then follows its file: `poll_script_files`
+    /// checks mtimes on a debounce and reloads on a save.
+    script_library: ScriptLibrary,
+    /// The open indicator-settings dialog, if any (one at a time).
+    indicator_settings: Option<SettingsDialog>,
+    /// File-backed script slots: (slot, library index, last seen mtime) —
+    /// what the hot-reload poll walks.
+    script_files: Vec<(SlotId, usize, std::time::SystemTime)>,
+    /// How each live slot restores (the persistence identity per slot).
+    slot_kinds: Vec<(SlotId, SavedKind)>,
+    /// Slots restored as hidden, applied when their Rebuilt lands.
+    pending_hidden: Vec<SlotId>,
+    /// Where the indicator set persists.
+    indicator_state_path: std::path::PathBuf,
+    /// Set by any add/remove/hide/inputs change; drained by the debounced
+    /// save.
+    indicator_state_dirty: bool,
+    /// When the last indicator change happened (the debounce clock).
+    last_indicator_change: Option<Instant>,
+    /// Last hot-reload poll instant (the poll runs about once a second;
+    /// file metadata every frame would be waste).
+    last_script_poll: Instant,
     book_capture_epoch: u64,
     book_channel_closed_reported: bool,
     /// Whether the user wants the live strip shown. The pixels it actually
@@ -485,6 +543,17 @@ impl QuantickApp {
             feed_connection: FeedConnectionState::Connecting,
             commands: feed.commands,
             orderflow: OrderflowView::new(symbol.clone()),
+            indicator_worker: IndicatorWorker::spawn(),
+            indicators: IndicatorViews::new(),
+            script_library: ScriptLibrary::scan(),
+            indicator_settings: None,
+            script_files: Vec::new(),
+            slot_kinds: Vec::new(),
+            pending_hidden: Vec::new(),
+            indicator_state_path: state_file::default_path(),
+            indicator_state_dirty: false,
+            last_indicator_change: None,
+            last_script_poll: Instant::now(),
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
             live_strip_visible: false,
@@ -568,6 +637,51 @@ impl QuantickApp {
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.orderflow.set_bubbles_enabled(true);
+        }
+        // Same convenience for indicators: open with the two M1 natives on
+        // (EMA overlay + CVD pane), through the same code path the toolbar
+        // menu takes, so a scripted validation run needs no clicks.
+        if std::env::var("QUANTICK_INDICATORS_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.add_indicator(IndicatorSource::NativeEma {
+                len: DEFAULT_EMA_LEN,
+                source: quantick_indicators::SourceId::Close,
+            });
+            app.add_indicator(IndicatorSource::NativeCvd);
+        }
+        // Restore the persisted indicator set before any autostart hook:
+        // the file is what the user actually had open.
+        app.restore_indicator_state();
+        // Scripted validation runs can open with library scripts loaded:
+        // a comma-separated list of script names, each through the same
+        // code path the INDICATORS menu takes.
+        if let Ok(names) = std::env::var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
+            for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                match app
+                    .script_library
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.name == name)
+                {
+                    Some(index) => {
+                        app.add_script_indicator(index);
+                        // An env var is not a user edit. Without this, a
+                        // scripted validation run appended its own scripts to
+                        // the saved set and they opened by themselves on the
+                        // next plain launch — config presence activating
+                        // something, which the rules forbid. The natives hook
+                        // above never registers a kind, so it is already inert.
+                        app.forget_last_indicator_state_change();
+                    }
+                    None => tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "INDICATOR_SCRIPT_UNKNOWN",
+                        script = %name,
+                        action = "autostart_entry_skipped",
+                        "autostart names a script the library does not have"
+                    ),
+                }
+            }
         }
         // Same convenience for Market Replay: open the folder named by
         // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
@@ -697,6 +811,24 @@ impl QuantickApp {
             live_strip_on: self.live_strip_visible,
             dock_visible: self.dock.visible(),
             appearance_open: self.show_style,
+            indicators: self
+                .indicators
+                .all()
+                .iter()
+                .map(|view| toolbar::IndicatorMenuEntry {
+                    slot: view.slot.0,
+                    label: view.label().to_owned(),
+                    hidden: view.hidden,
+                    errored: view.error.is_some(),
+                    stale: view.stale.is_some(),
+                })
+                .collect(),
+            scripts: self
+                .script_library
+                .entries()
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect(),
         };
         let actions = toolbar::draw(ctx, &mut model);
         // A newly picked feed may not offer the current symbol. Never during
@@ -723,6 +855,145 @@ impl QuantickApp {
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+            ToolbarAction::AddEmaIndicator => {
+                let slot = self.add_indicator(IndicatorSource::NativeEma {
+                    len: DEFAULT_EMA_LEN,
+                    source: quantick_indicators::SourceId::Close,
+                });
+                self.slot_kinds.push((slot, SavedKind::NativeEma));
+                self.mark_indicator_state_dirty();
+            }
+            ToolbarAction::AddCvdIndicator => {
+                let slot = self.add_indicator(IndicatorSource::NativeCvd);
+                self.slot_kinds.push((slot, SavedKind::NativeCvd));
+                self.mark_indicator_state_dirty();
+            }
+            ToolbarAction::ToggleIndicatorHidden(slot) => {
+                self.indicators.toggle_hidden(SlotId(slot));
+                self.mark_indicator_state_dirty();
+            }
+            ToolbarAction::RemoveIndicator(slot) => {
+                // UI first (the entry vanishes this frame), worker second;
+                // events already in flight for the slot are dropped on apply.
+                self.indicators.remove(SlotId(slot));
+                self.indicator_worker
+                    .send(IndicatorCommand::Remove(SlotId(slot)));
+                self.slot_kinds.retain(|(s, _)| *s != SlotId(slot));
+                self.script_files.retain(|(s, ..)| *s != SlotId(slot));
+                self.mark_indicator_state_dirty();
+            }
+            ToolbarAction::AddScriptIndicator(index) => {
+                self.add_script_indicator(index);
+            }
+            ToolbarAction::OpenIndicatorSettings(slot) => {
+                let slot = SlotId(slot);
+                if let Some(view) = self.indicators.all().iter().find(|v| v.slot == slot) {
+                    self.indicator_settings = Some(SettingsDialog {
+                        slot,
+                        title: view.label().to_owned(),
+                        draft: view.input_values.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Draw the settings dialog and execute its outcome. Apply goes through
+    /// the worker (construct anew, replace, replay) — the same path every
+    /// input change takes, UI or not.
+    fn draw_indicator_settings(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.indicator_settings.as_mut() else {
+            return;
+        };
+        let Some(view) = self
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == dialog.slot)
+        else {
+            // The indicator was removed under the dialog.
+            self.indicator_settings = None;
+            return;
+        };
+        match indicator_panel::draw(ctx, dialog, &view.descriptor.inputs) {
+            SettingsOutcome::Open => {}
+            SettingsOutcome::Cancel => self.indicator_settings = None,
+            SettingsOutcome::Apply => {
+                let dialog = self.indicator_settings.take().expect("dialog is open");
+                self.indicator_worker.send(IndicatorCommand::SetInputs {
+                    slot: dialog.slot,
+                    values: dialog.draft,
+                });
+                self.mark_indicator_state_dirty();
+            }
+        }
+    }
+
+    /// Load a library script behind a fresh slot. A file that no longer
+    /// reads or a script that no longer compiles becomes the slot's error —
+    /// shown with lines and codes, never silently dropped.
+    ///
+    /// Returns the slot it claimed, so a caller that needs to address the new
+    /// indicator (restoring saved inputs, say) does not have to guess which
+    /// one it is.
+    fn add_script_indicator(&mut self, index: usize) -> Option<SlotId> {
+        let entry = self.script_library.entries().get(index)?;
+        let name = entry.name.clone();
+        match self.script_library.read(index) {
+            Some(Ok(text)) => {
+                let slot = self.add_indicator(IndicatorSource::Script {
+                    name: name.clone(),
+                    text,
+                });
+                // Watch the file so a save reloads it. Registered here, with
+                // the add, so the two cannot drift apart.
+                if let Some((_, mtime)) = self.script_library.file_info(index) {
+                    self.script_files.push((slot, index, mtime));
+                }
+                self.slot_kinds.push((slot, SavedKind::Script { name }));
+                self.mark_indicator_state_dirty();
+                Some(slot)
+            }
+            Some(Err(message)) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                    script = %name,
+                    error = %message,
+                    action = "error_slot_shown",
+                    "cannot read an indicator script"
+                );
+                // A click that produces nothing at all is the failure this
+                // function's own doc comment rules out. The compile half of
+                // that promise runs worker-side; the read half never leaves
+                // the UI thread, so the error slot is built here, from the
+                // same two events the worker would have sent.
+                let slot = self.indicators.allocate_slot();
+                self.indicators.apply(IndicatorEvent::Rebuilt {
+                    slot,
+                    descriptor: quantick_indicators::IndicatorDescriptor {
+                        title: name,
+                        short_title: None,
+                        overlay: false,
+                        plots: Vec::new(),
+                        fills: Vec::new(),
+                        inputs: Vec::new(),
+                    },
+                    columns: Vec::new(),
+                    inputs: Vec::new(),
+                    stale: None,
+                });
+                self.indicators.apply(IndicatorEvent::Error {
+                    slot,
+                    error: quantick_indicators::EvalError {
+                        bar_index: 0,
+                        message,
+                    },
+                });
+                Some(slot)
+            }
+            None => None,
         }
     }
 
@@ -1059,6 +1330,7 @@ impl QuantickApp {
                 // window past the end of the data, drawing nothing.
                 let anchor = self.right_edge_time();
                 self.state.set_spec(desired);
+                self.send_indicator_rebuild();
                 self.reset_drawing_overlay();
                 self.viewport.reanchor(
                     anchor.and_then(|ms| self.state.slot_at_time(ms)),
@@ -1163,6 +1435,11 @@ impl QuantickApp {
                     self.loading.end(LoadingTask::History);
                     self.history_trades += trades.len();
                     self.state.ingest_backfill(&trades);
+                    self.indicator_worker
+                        .send(IndicatorCommand::Backfilled(self.state.bars().to_vec()));
+                    self.indicator_worker.send(IndicatorCommand::PartialUpdated(
+                        self.state.partial().cloned(),
+                    ));
                 }
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
@@ -1173,6 +1450,12 @@ impl QuantickApp {
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
                     self.drawings.shift_bars(added);
+                    // Indicator columns shift with them: the rebuild below is
+                    // a round-trip away, and until it lands every value would
+                    // otherwise be drawn `added` slots off its own candle.
+                    self.indicators.shift_rows(added);
+                    // Older trades re-cut every bar; replay from scratch.
+                    self.send_indicator_rebuild();
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
@@ -1223,7 +1506,252 @@ impl QuantickApp {
         self.live_trades += 1;
         self.trades_since_summary += 1;
         self.orderflow.record_trade(trade);
+        let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
+        // At most one bar closes per trade (an atomic market event is never
+        // split), so "grew" identifies exactly the bar that closed.
+        if self.state.bars().len() > bars_before
+            && let Some(closed) = self.state.bars().last()
+        {
+            self.indicator_worker
+                .send(IndicatorCommand::BarClosed(closed.clone()));
+        }
+        self.indicator_worker.send(IndicatorCommand::PartialUpdated(
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Ask the worker to replay the chart's bars from scratch — the one
+    /// command behind spec switches, prepended history and source resets, so
+    /// indicators inherit correct behavior for every rebuild path.
+    fn send_indicator_rebuild(&mut self) {
+        self.indicator_worker.send(IndicatorCommand::Rebuild(
+            self.state.bars().to_vec(),
+            self.state.partial().cloned(),
+        ));
+    }
+
+    /// Hot reload: about once a second, compare each file-backed script's
+    /// mtime; a changed file is re-read and sent as a Reload — recompiled
+    /// and replayed on success, or flagged stale (the last good version
+    /// keeps running) on errors. The mtime updates even when the compile
+    /// fails, so a broken save does not re-fire every second.
+    fn poll_script_files(&mut self) {
+        if self.script_files.is_empty()
+            || self.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
+        {
+            return;
+        }
+        self.last_script_poll = Instant::now();
+        let mut reloads: Vec<(SlotId, String, String)> = Vec::new();
+        for (slot, index, seen_mtime) in &mut self.script_files {
+            let Some((path, mtime)) = self.script_library.file_info(*index) else {
+                continue;
+            };
+            if mtime == *seen_mtime {
+                continue;
+            }
+            *seen_mtime = mtime;
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    reloads.push((*slot, name, text));
+                }
+                Err(error) => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                    script = %path.display(),
+                    error = %error,
+                    action = "reload_skipped",
+                    "cannot re-read a changed indicator script"
+                ),
+            }
+        }
+        for (slot, name, text) in reloads {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "INDICATOR_SCRIPT_RELOAD",
+                script = %name,
+                action = "recompile_and_replay",
+                "indicator script changed on disk"
+            );
+            self.indicator_worker.send(IndicatorCommand::Reload {
+                slot,
+                source: IndicatorSource::Script { name, text },
+            });
+        }
+    }
+
+    /// Reserve a slot and ask the worker to instantiate `source` behind it.
+    fn add_indicator(&mut self, source: IndicatorSource) -> SlotId {
+        let slot = self.indicators.allocate_slot();
+        self.indicator_worker
+            .send(IndicatorCommand::Add { slot, source });
+        slot
+    }
+
+    fn mark_indicator_state_dirty(&mut self) {
+        self.indicator_state_dirty = true;
+        self.last_indicator_change = Some(Instant::now());
+    }
+
+    /// Undo the dirty mark an add just set — for indicators an env var asked
+    /// for rather than the user. The slot still exists and still works; it
+    /// simply does not enter the persisted set.
+    fn forget_last_indicator_state_change(&mut self) {
+        self.slot_kinds.pop();
+        self.indicator_state_dirty = false;
+        self.last_indicator_change = None;
+    }
+
+    /// Rebuild the persisted set at startup, through the same commands the
+    /// menu sends (add, then bind saved inputs, then hide once the view
+    /// lands). A script the library no longer has is skipped with a log
+    /// line, never a phantom entry.
+    fn restore_indicator_state(&mut self) {
+        let saved = state_file::load(&self.indicator_state_path);
+        for entry in saved {
+            let slot = match &entry.kind {
+                SavedKind::NativeEma => {
+                    let slot = self.add_indicator(IndicatorSource::NativeEma {
+                        len: DEFAULT_EMA_LEN,
+                        source: quantick_indicators::SourceId::Close,
+                    });
+                    self.slot_kinds.push((slot, SavedKind::NativeEma));
+                    Some(slot)
+                }
+                SavedKind::NativeCvd => {
+                    let slot = self.add_indicator(IndicatorSource::NativeCvd);
+                    self.slot_kinds.push((slot, SavedKind::NativeCvd));
+                    Some(slot)
+                }
+                SavedKind::Script { name } => {
+                    match self
+                        .script_library
+                        .entries()
+                        .iter()
+                        .position(|candidate| candidate.name == *name)
+                    {
+                        // The returned slot, not `slot_kinds.last()`: that
+                        // assumed the add always pushes an entry as its last
+                        // act, and it does not when the file no longer reads
+                        // — the saved inputs would then bind to whatever
+                        // indicator happened to be added before this one.
+                        Some(index) => self.add_script_indicator(index),
+                        None => {
+                            tracing::warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "INDICATOR_STATE_SCRIPT_MISSING",
+                                script = %name,
+                                action = "entry_skipped",
+                                "the saved state references a script the library no longer has"
+                            );
+                            None
+                        }
+                    }
+                }
+            };
+            let Some(slot) = slot else { continue };
+            let values: Vec<_> = entry
+                .inputs
+                .iter()
+                .filter_map(SavedInput::to_value)
+                .collect();
+            if !values.is_empty() && values.len() == entry.inputs.len() {
+                self.indicator_worker
+                    .send(IndicatorCommand::SetInputs { slot, values });
+            } else if !entry.inputs.is_empty() {
+                // One unreadable cell dropped every input of the entry, in
+                // silence — a hand-edited or stale file lost the whole
+                // parameter set without a word.
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "INDICATOR_STATE_INPUTS_DROPPED",
+                    kind = ?entry.kind,
+                    saved = entry.inputs.len(),
+                    readable = values.len(),
+                    action = "declared_defaults_used",
+                    "saved indicator inputs could not be read; using the declared defaults"
+                );
+            }
+            if entry.hidden {
+                self.pending_hidden.push(slot);
+            }
+        }
+        // Restoring is not a change; only user edits dirty the file.
+        self.indicator_state_dirty = false;
+        self.last_indicator_change = None;
+    }
+
+    /// Apply restored-hidden flags once their views exist, then write the
+    /// state file when a change has settled (debounced off the frame path).
+    fn maintain_indicator_state(&mut self) {
+        if !self.pending_hidden.is_empty() {
+            let existing: Vec<SlotId> = self
+                .pending_hidden
+                .iter()
+                .copied()
+                .filter(|slot| self.indicators.all().iter().any(|v| v.slot == *slot))
+                .collect();
+            for slot in &existing {
+                self.indicators.toggle_hidden(*slot);
+            }
+            self.pending_hidden.retain(|slot| !existing.contains(slot));
+        }
+        let settled = self
+            .last_indicator_change
+            .is_some_and(|changed| changed.elapsed() >= INDICATOR_STATE_SAVE_DEBOUNCE);
+        if self.indicator_state_dirty && settled {
+            self.indicator_state_dirty = false;
+            // The change has been written; the clock starts again with the
+            // next edit rather than ticking on every frame from here on.
+            self.last_indicator_change = None;
+            // What is on disk today, so a slot that failed to build does not
+            // overwrite its own saved parameters with an empty list.
+            let previous = state_file::load(&self.indicator_state_path);
+            let saved: Vec<SavedIndicator> = self
+                .indicators
+                .all()
+                .iter()
+                .filter_map(|view| {
+                    let kind_ref = self
+                        .slot_kinds
+                        .iter()
+                        .find(|(slot, _)| *slot == view.slot)
+                        .map(|(_, kind)| kind)?;
+                    let kind = kind_ref.clone();
+                    // A slot whose build failed has an empty view: the
+                    // worker's error path sends `Rebuilt { inputs: [] }`.
+                    // Rewriting its entry from that would erase the user's
+                    // saved parameters before they had a chance to fix the
+                    // script, so a broken slot keeps what is already on disk.
+                    let inputs = if view.error.is_some() {
+                        previous
+                            .iter()
+                            .find(|entry| entry.kind == *kind_ref)
+                            .map_or_else(Vec::new, |entry| entry.inputs.clone())
+                    } else {
+                        view.input_values
+                            .iter()
+                            .map(SavedInput::from_value)
+                            .collect()
+                    };
+                    Some(SavedIndicator {
+                        kind,
+                        hidden: view.hidden,
+                        inputs,
+                    })
+                })
+                .collect();
+            state_file::save(&self.indicator_state_path, &saved);
+        }
     }
 
     /// Throw away everything loaded and wait for the source to refill it.
@@ -1233,6 +1761,10 @@ impl QuantickApp {
     /// because bars that already closed cannot be reopened.
     fn reset_market_state(&mut self) {
         self.state = ChartState::new(self.current_spec());
+        // Indicators follow the chart into the empty state; the refill's
+        // Backfilled event replays them (replay seek funnels through here,
+        // so seeking inherits correct indicator behavior for free).
+        self.send_indicator_rebuild();
         self.viewport = Viewport::new();
         self.price_view = PriceView::new();
         self.last_auto_range = None;
@@ -1528,7 +2060,11 @@ impl QuantickApp {
             self.drawing_press_started_empty = false;
             return false;
         };
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
         let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
         let history = egui::Rect::from_min_max(
             areas.chart.min,
@@ -1754,11 +2290,22 @@ impl QuantickApp {
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.last_chart_area = Some(plot_split(area, self.live_strip_width()).chart);
+        self.last_chart_area = Some(
+            plot_split(
+                area,
+                self.live_strip_width(),
+                self.indicators.visible_panes().count(),
+            )
+            .chart,
+        );
         if self.handle_drawing_placement(ui, area) {
             return;
         }
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
         let total = self.slots();
@@ -2055,8 +2602,15 @@ impl QuantickApp {
         let closed = self.state.bars();
         let partial = self.state.partial();
         let total = closed.len() + usize::from(partial.is_some());
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
+        // Indicator panes claimed the bottom band inside `plot_split`, so the
+        // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
+        let pane_rects = areas.indicator_panes.clone();
         if total == 0 {
             painter.text(
                 area.center(),
@@ -2204,6 +2758,68 @@ impl QuantickApp {
         if let Some(partial) = partial_visible {
             let xc = self.viewport.x_center(closed.len(), right, total);
             draw_candle(&clip, xc, half, &scale, partial, true, &self.style.candles);
+        }
+        // Overlay indicator plots ride the candles' own clip, scale and
+        // x-mapping — after candles, before aggression bubbles (the same
+        // paint-order slot draw objects take).
+        let plot_x = PlotX {
+            viewport: &self.viewport,
+            right,
+            total,
+        };
+        // Slot -> (high_y, low_y) in pixels, for above/below-bar markers.
+        let bar_extents = |slot: usize| -> Option<(f32, f32)> {
+            let bar = if slot < closed.len() {
+                Some(&closed[slot])
+            } else if slot == closed.len() {
+                partial
+            } else {
+                None
+            }?;
+            Some((
+                scale.y(chart::to_f64(bar.high)),
+                scale.y(chart::to_f64(bar.low)),
+            ))
+        };
+        indicator_render::draw_overlays(
+            &clip,
+            self.indicators.visible_overlays(),
+            &plot_x,
+            &scale,
+            start,
+            end,
+            partial_visible.map(|_| closed.len()),
+            &bar_extents,
+        );
+        // Draw objects (lines/boxes/labels) share the overlays' paint slot:
+        // after candles, before aggression bubbles.
+        for view in self.indicators.visible_overlays() {
+            indicator_render::draw_objects(
+                &clip,
+                view.render_objects(),
+                &plot_x,
+                |v| scale.y(v),
+                start,
+                end,
+            );
+        }
+        // Pane indicators stack in the band carved off above, sharing the
+        // candles' x-mapping so bars and their flow read as one chart.
+        for (view, pane) in self.indicators.visible_panes().zip(&pane_rects) {
+            let pane = egui::Rect::from_min_max(
+                egui::pos2(history_rect.left(), pane.top()),
+                egui::pos2(history_rect.right(), pane.bottom()),
+            );
+            indicator_render::draw_pane(
+                painter,
+                pane,
+                view,
+                &plot_x,
+                start,
+                end,
+                partial_visible.map(|_| closed.len()),
+                canvas_background,
+            );
         }
         if let Some(frame) = &orderflow_frame {
             self.orderflow.draw_aggressions(
@@ -3640,6 +4256,10 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_feed();
+        // Apply the indicator worker's deltas before the draw reads columns.
+        for event in self.indicator_worker.drain_events() {
+            self.indicators.apply(event);
+        }
         self.drain_book_feed();
         self.drain_notices();
         // Heartbeat for the recorder. The lifecycle calls below already start
@@ -3662,6 +4282,9 @@ impl QuantickApp {
         // The chart keeps whatever remains.
         self.draw_menu_bar(ctx);
         self.draw_toolbar(ctx);
+        self.draw_indicator_settings(ctx);
+        self.poll_script_files();
+        self.maintain_indicator_state();
         let status = self.status_model();
         statusbar::draw(ctx, &status, &mut self.tz);
         // The browser window and, while a session plays, the transport bar.
@@ -3750,11 +4373,11 @@ mod tests {
     fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
 
-        let off = plot_split(area, 0.0);
+        let off = plot_split(area, 0.0, 0);
         assert!(off.live_strip.is_none());
         assert_eq!(off.chart.right(), off.price_gutter.left());
 
-        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX);
+        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 0);
         let strip = on.live_strip.expect("strip rect");
         assert_eq!(on.chart.right(), strip.left());
         assert_eq!(strip.right(), on.price_gutter.left());
@@ -3767,6 +4390,39 @@ mod tests {
             off.chart.width() - crate::live_strip::LIVE_STRIP_WIDTH_PX
         );
         assert_eq!(on.time_strip.right(), on.chart.right());
+    }
+
+    /// The pane band is carved once, inside `plot_split`, so the rect the
+    /// renderer scales prices to is the rect the input handler hit-tests
+    /// against. When the two disagreed, a drawing was placed where you
+    /// clicked and then selected somewhere else — by 20% of the chart height
+    /// per visible pane.
+    #[test]
+    fn the_pane_band_comes_out_of_every_callers_chart_rect() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let none = plot_split(area, 0.0, 0);
+        assert!(none.indicator_panes.is_empty());
+
+        let one = plot_split(area, 0.0, 1);
+        let pane = *one
+            .indicator_panes
+            .first()
+            .expect("one visible pane claims one rect");
+        assert!(
+            one.chart.height() < none.chart.height(),
+            "the band is paid for out of the candles' pixels"
+        );
+        assert_eq!(one.chart.bottom(), pane.top(), "no gap, no overlap");
+        assert_eq!(pane.bottom(), none.chart.bottom());
+        assert_eq!(one.chart.width(), none.chart.width());
+        // The axes stay where they were: only the candle body shrinks.
+        assert_eq!(one.price_gutter, none.price_gutter);
+        assert_eq!(one.time_strip, none.time_strip);
+
+        let three = plot_split(area, 0.0, 3);
+        assert_eq!(three.indicator_panes.len(), 3);
+        assert!(three.chart.height() < one.chart.height());
     }
 
     /// Each pane zooms from the strip under it, and the split is exactly the
@@ -3902,6 +4558,127 @@ mod tests {
     /// ends come back so the caller keeps the channels open, exactly as a live
     /// feed thread would.
     #[allow(clippy::type_complexity)]
+    /// A library entry whose file is gone must still produce something the
+    /// user can see: the click used to log a warning and leave the chart
+    /// unchanged, while this function's doc promised an error slot.
+    #[test]
+    fn a_script_that_no_longer_reads_becomes_a_visible_error_slot() {
+        let (mut app, _events, _commands, _book) = test_app();
+        let dir = std::env::temp_dir().join(format!("quantick-app-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("vanishing.pine");
+        std::fs::write(
+            &path,
+            "//@version=5
+plot(close)
+",
+        )
+        .expect("write");
+
+        app.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
+        let index = app
+            .script_library
+            .entries()
+            .iter()
+            .position(|e| e.name == "vanishing.pine")
+            .expect("the file was scanned");
+        std::fs::remove_file(&path).expect("remove");
+
+        let before = app.indicators.all().len();
+        let slot = app
+            .add_script_indicator(index)
+            .expect("a click on a known entry claims a slot");
+        assert_eq!(app.indicators.all().len(), before + 1, "a slot appeared");
+        let view = app
+            .indicators
+            .all()
+            .iter()
+            .find(|v| v.slot == slot)
+            .expect("the slot has a view");
+        assert!(view.error.is_some(), "and it carries the read failure");
+        assert_eq!(view.label(), "vanishing.pine");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The PR's headline behaviour had no test: everything sat on the serde
+    /// layer, and the wiring is where the defects were.
+    #[test]
+    fn the_indicator_set_restores_from_disk_and_saves_back() {
+        use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind};
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let path = std::env::temp_dir().join(format!(
+            "quantick-indicator-state-app-{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        app.indicator_state_path = path.clone();
+
+        // A saved set: one native with bound inputs, one hidden native, and
+        // a script the library does not have.
+        crate::indicators::state_file::save(
+            &path,
+            &[
+                SavedIndicator {
+                    kind: SavedKind::NativeEma,
+                    hidden: false,
+                    inputs: vec![SavedInput::Int(21), SavedInput::Source("close".to_owned())],
+                },
+                SavedIndicator {
+                    kind: SavedKind::NativeCvd,
+                    hidden: true,
+                    inputs: Vec::new(),
+                },
+                SavedIndicator {
+                    kind: SavedKind::Script {
+                        name: "not-in-the-library.pine".to_owned(),
+                    },
+                    hidden: false,
+                    inputs: Vec::new(),
+                },
+            ],
+        );
+
+        app.restore_indicator_state();
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "a script the library lacks adds nothing, not a phantom slot"
+        );
+        assert_eq!(app.slot_kinds[0].1, SavedKind::NativeEma);
+        assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
+        assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
+        assert!(
+            !app.indicator_state_dirty,
+            "restoring is not a user edit and must not rewrite the file"
+        );
+
+        // A user edit, settled: the file must match the live set.
+        app.mark_indicator_state_dirty();
+        app.last_indicator_change =
+            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
+        for event in app.indicator_worker.drain_events() {
+            app.indicators.apply(event);
+        }
+        app.maintain_indicator_state();
+        let written = crate::indicators::state_file::load(&path);
+        assert_eq!(
+            written.len(),
+            app.indicators
+                .all()
+                .iter()
+                .filter(|view| app.slot_kinds.iter().any(|(slot, _)| *slot == view.slot))
+                .count(),
+            "every slot with a known kind is written, and only those"
+        );
+        assert!(
+            !app.indicator_state_dirty,
+            "the debounce fired, so the change is written"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn test_app_with_notices() -> (
         QuantickApp,
         mpsc::Sender<FeedNotice>,

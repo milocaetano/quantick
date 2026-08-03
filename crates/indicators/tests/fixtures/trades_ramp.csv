@@ -1,0 +1,18 @@
+# Twelve trades, one per tick(1) bar, closing prices 3,6,9,12,15,18 then
+# back down 15,12,9,6,3 and up to 6. Prices are multiples of 3 and the ramp
+# is linear so sma(3) is integral and ema(3) (alpha = 0.5) stays dyadic —
+# every expected plot value in ta_smooth_plots.csv is exact in f64 and
+# checkable by hand.
+agg_id,timestamp_ms,price,quantity,side
+1,1700000000000,3.0,1.0,buy
+2,1700000000100,6.0,1.0,sell
+3,1700000000200,9.0,1.0,buy
+4,1700000000300,12.0,1.0,sell
+5,1700000000400,15.0,1.0,buy
+6,1700000000500,18.0,1.0,sell
+7,1700000000600,15.0,1.0,buy
+8,1700000000700,12.0,1.0,sell
+9,1700000000800,9.0,1.0,buy
+10,1700000000900,6.0,1.0,sell
+11,1700000001000,3.0,1.0,buy
+12,1700000001100,6.0,1.0,sell

@@ -1,0 +1,4 @@
+//@version=5
+indicator("Delta histogram")
+plot(delta, style=plot.style_histogram, color=delta >= 0 ? color.green : color.red)
+barcolor(delta >= 0 ? color.new(color.green, 70) : color.new(color.red, 70))

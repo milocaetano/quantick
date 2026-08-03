@@ -1,6 +1,7 @@
 # Indicator System — Implementation Plan
 
-Status: **approved plan, not started**
+Status: **implemented** (M1–M5, PRs #96–#110) — kept as the design record;
+the code is the authority where the two disagree.
 Scope: scriptable indicators (Pine-dialect) plotted on quantick's alternative-bar charts.
 Audience: the implementing agent. This document locks the architecture and the
 decisions; do not relitigate a "Locked decision" without flagging it to the user first.

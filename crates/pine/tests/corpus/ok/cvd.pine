@@ -1,0 +1,3 @@
+//@version=5
+indicator("CVD")
+plot(cvd, color=color.aqua, title="cvd")

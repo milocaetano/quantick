@@ -1,0 +1,10 @@
+//@version=5
+indicator("Range box", overlay=true)
+len = input.int(20, "Range length", minval=2)
+hi = ta.highest(high, len)
+lo = ta.lowest(low, len)
+var box zone = na
+if bar_index == 0
+    zone := box.new(0, high, 0, low, border_color=color.aqua, bgcolor=color.new(color.aqua, 88))
+zone.set_lefttop(bar_index - len + 1, hi)
+zone.set_rightbottom(bar_index, lo)

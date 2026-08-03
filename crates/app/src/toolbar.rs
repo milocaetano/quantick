@@ -41,8 +41,8 @@ const W_BARS: f32 = 160.0;
 const W_BAR_PARAM: f32 = 150.0;
 /// The `+ older ▾` split button.
 const W_HISTORY: f32 = 100.0;
-/// The LAYERS icon trio (bubbles, heatmap, live strip).
-const W_LAYERS: f32 = 96.0;
+/// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
+const W_LAYERS: f32 = 128.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
 
@@ -179,6 +179,27 @@ pub struct ToolbarModel<'a> {
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
     pub appearance_open: bool,
+    /// Active indicators, for the INDICATORS menu (add order).
+    pub indicators: Vec<IndicatorMenuEntry>,
+    /// Loadable script names, embedded first (the INDICATORS menu's "add"
+    /// section; indices map straight to [`ToolbarAction::AddScriptIndicator`]).
+    pub scripts: Vec<String>,
+}
+
+/// One active indicator as the INDICATORS menu shows it. Raw slot numbers
+/// keep the toolbar decoupled from the worker's types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndicatorMenuEntry {
+    /// The app-side slot id this entry answers to.
+    pub slot: u64,
+    /// Display label (the indicator's short title).
+    pub label: String,
+    /// Whether the eye toggle currently hides it.
+    pub hidden: bool,
+    /// Whether the indicator is disabled by a runtime error.
+    pub errored: bool,
+    /// Whether the running version is stale (the file on disk has errors).
+    pub stale: bool,
 }
 
 /// A side effect the toolbar asks the app to perform.
@@ -200,6 +221,19 @@ pub enum ToolbarAction {
     ToggleDock,
     /// Open or close the appearance dialog.
     ToggleAppearance,
+    /// Add the native EMA overlay (M1's hardcoded entry; the script library
+    /// browser replaces this menu in M2).
+    AddEmaIndicator,
+    /// Add the native CVD pane.
+    AddCvdIndicator,
+    /// Flip an indicator's render-side eye toggle (no recompute).
+    ToggleIndicatorHidden(u64),
+    /// Remove an indicator.
+    RemoveIndicator(u64),
+    /// Load a script from the library, by index into `ToolbarModel::scripts`.
+    AddScriptIndicator(usize),
+    /// Open the settings dialog of an indicator.
+    OpenIndicatorSettings(u64),
 }
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
@@ -417,6 +451,8 @@ fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
 /// right-click opens its dock tab — looking is not enabling. Drawn inside the
 /// right-to-left layout, so the call order is the reverse of what is seen.
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
+    draw_indicators_menu(ui, model, actions);
+
     let bubbles = IconButton::new(icons::CIRCLES_THREE, TOOLBAR_ICON)
         .active(model.bubbles_on)
         .accent(theme::BUY)
@@ -471,6 +507,94 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     if strip.secondary_clicked() {
         actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
     }
+}
+
+/// INDICATORS: add the M1 native indicators and manage the active ones —
+/// status dot, eye toggle, remove. M2 swaps the two hardcoded add entries
+/// for the script library browser; the entry list stays.
+fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
+    let any_active = !model.indicators.is_empty();
+    let icon = egui::RichText::new(icons::CHART_LINE)
+        .size(16.0)
+        .color(if any_active {
+            theme::ACCENT
+        } else {
+            theme::TEXT_MUTED
+        });
+    ui.menu_button(icon, |ui| {
+        if ui
+            .button(format!("{} Add EMA(9) on close", icons::PLUS))
+            .clicked()
+        {
+            actions.push(ToolbarAction::AddEmaIndicator);
+            ui.close_menu();
+        }
+        if ui.button(format!("{} Add CVD pane", icons::PLUS)).clicked() {
+            actions.push(ToolbarAction::AddCvdIndicator);
+            ui.close_menu();
+        }
+        if !model.scripts.is_empty() {
+            ui.separator();
+            ui.label(
+                egui::RichText::new("scripts")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            for (index, name) in model.scripts.iter().enumerate() {
+                if ui.button(format!("{} {name}", icons::FILE_CODE)).clicked() {
+                    actions.push(ToolbarAction::AddScriptIndicator(index));
+                    ui.close_menu();
+                }
+            }
+        }
+        if any_active {
+            ui.separator();
+        }
+        for entry in &model.indicators {
+            ui.horizontal(|ui| {
+                // Status dot: honest state at a glance — errored beats hidden.
+                let (dot, color) = if entry.errored {
+                    (icons::WARNING_CIRCLE, theme::SELL)
+                } else if entry.stale {
+                    // Running, but the file on disk has errors.
+                    (icons::WARNING, theme::ACCENT)
+                } else if entry.hidden {
+                    (icons::EYE_SLASH, theme::TEXT_MUTED)
+                } else {
+                    (icons::CIRCLE, theme::BUY)
+                };
+                ui.label(egui::RichText::new(dot).color(color));
+                ui.label(&entry.label);
+                if ui
+                    .small_button(if entry.hidden {
+                        icons::EYE
+                    } else {
+                        icons::EYE_SLASH
+                    })
+                    .on_hover_text("hide/show without removing (no recompute)")
+                    .clicked()
+                {
+                    actions.push(ToolbarAction::ToggleIndicatorHidden(entry.slot));
+                }
+                if ui
+                    .small_button(icons::GEAR)
+                    .on_hover_text("settings (applying recomputes from scratch)")
+                    .clicked()
+                {
+                    actions.push(ToolbarAction::OpenIndicatorSettings(entry.slot));
+                }
+                if ui
+                    .small_button(icons::TRASH)
+                    .on_hover_text("remove this indicator")
+                    .clicked()
+                {
+                    actions.push(ToolbarAction::RemoveIndicator(entry.slot));
+                }
+            });
+        }
+    })
+    .response
+    .on_hover_text("indicators: add or manage overlay and pane indicators");
 }
 
 /// The `⋯` menu holding every folded group, in a fixed order so muscle
@@ -649,6 +773,27 @@ mod tests {
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
+                        // Non-empty on purpose: the entry rows (status dot,
+                        // eye, trash) are only drawn when the menu has
+                        // something in it, and an empty vec never exercises
+                        // them.
+                        indicators: vec![
+                            IndicatorMenuEntry {
+                                slot: 0,
+                                label: "EMA(9, close)".to_owned(),
+                                hidden: false,
+                                errored: false,
+                                stale: false,
+                            },
+                            IndicatorMenuEntry {
+                                slot: 1,
+                                label: "CVD".to_owned(),
+                                hidden: true,
+                                errored: true,
+                                stale: true,
+                            },
+                        ],
+                        scripts: vec!["ema.pine".to_owned(), "zigzag.pine".to_owned()],
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");
@@ -702,6 +847,8 @@ mod tests {
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
+                        indicators: Vec::new(),
+                        scripts: Vec::new(),
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");

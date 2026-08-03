@@ -1,0 +1,3 @@
+// expect: PINE_LEX@3
+//@version=5
+plot(close × 2)
