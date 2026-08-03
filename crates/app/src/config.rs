@@ -80,23 +80,32 @@ impl ProviderKind {
                 book_capture: true,
                 history_paging: true,
                 traded_volume: true,
+                ohlcv_history: true,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
             // older history is withheld rather than synthesized from candles.
+            //
+            // Candles are a different matter: served as candles they are the
+            // venue's own record, and `candleSnapshot` reaches back months.
+            // What stays forbidden is the inverse — inventing trades out of
+            // them to fill the tape.
             ProviderKind::Hyperliquid => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
+                ohlcv_history: true,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
             // runtime information the feed reports honestly; it is not
-            // something to assume either way from here.
+            // something to assume either way from here. The same is true of
+            // candle history: only a hello says whether this bridge sends it.
             ProviderKind::MetaTrader => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
+                ohlcv_history: true,
             },
         }
     }
@@ -119,6 +128,15 @@ pub struct FeedCapabilities {
     /// a tick bar with a misleading name, and a bubble layer would draw one
     /// identical circle per print.
     pub traded_volume: bool,
+    /// Can serve venue-native candle history for the time pane.
+    ///
+    /// Deliberately not folded into
+    /// [`history_paging`](Self::history_paging): that one is about reaching
+    /// further back in the *tape*, on demand and repeatedly, and the two do not
+    /// travel together. Hyperliquid publishes months of candles and no pageable
+    /// trade history at all; a recording is the mirror image, holding every
+    /// tick it captured and no candles whatsoever.
+    pub ohlcv_history: bool,
 }
 
 impl FeedCapabilities {
@@ -130,6 +148,7 @@ impl FeedCapabilities {
             book_capture: false,
             history_paging: false,
             traded_volume: false,
+            ohlcv_history: false,
         }
     }
 }
@@ -1010,6 +1029,7 @@ mod tests {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
+                ohlcv_history: true,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

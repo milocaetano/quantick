@@ -3024,6 +3024,7 @@ mod tests {
                     book_capture: false,
                     history_paging: false,
                     traded_volume: false,
+                    ohlcv_history: false,
                 }),
                 commands: cmd_tx,
                 replay: None,

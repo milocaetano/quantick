@@ -835,6 +835,10 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::Reset) => cleared |= self.reset_market_state(),
+                // The time pane is not wired to candle history yet; the feeds
+                // that serve it are. Dropped here so the reply still resolves
+                // the request rather than backing up the channel.
+                Ok(FeedEvent::OhlcvHistory { .. }) => {}
                 Err(_) => break,
             }
         }
