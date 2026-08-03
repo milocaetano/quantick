@@ -31,6 +31,14 @@ pub enum FeedError {
     Decode(String),
     /// A decoded aggTrade could not be mapped to a `Trade`.
     Map(MapError),
+    /// The venue asked us to back off: HTTP 429, or 418 once it has stopped
+    /// asking. Kept apart from [`Http`](Self::Http) because it is the one
+    /// status worth waiting on rather than reporting — see
+    /// [`crate::klines::fetch_history`], which honours it.
+    RateLimited {
+        /// The `Retry-After` the venue named, when it named one.
+        retry_after: Option<std::time::Duration>,
+    },
 }
 
 impl std::fmt::Display for FeedError {
@@ -39,6 +47,10 @@ impl std::fmt::Display for FeedError {
             FeedError::Http(m) => write!(f, "http error: {m}"),
             FeedError::Decode(m) => write!(f, "decode error: {m}"),
             FeedError::Map(e) => write!(f, "mapping error: {e}"),
+            FeedError::RateLimited { retry_after } => match retry_after {
+                Some(wait) => write!(f, "rate limited (retry after {}s)", wait.as_secs()),
+                None => write!(f, "rate limited (no retry-after given)"),
+            },
         }
     }
 }

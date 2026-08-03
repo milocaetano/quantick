@@ -12,11 +12,16 @@
 pub mod backfill;
 pub mod continuity;
 pub mod depth;
+pub mod klines;
 pub mod reconnect;
 pub mod stream;
 pub mod wire;
 
 pub use backfill::{AggTradeSource, BinanceHttp, FeedError, backfill, backfill_before};
 pub use continuity::{Anomaly, ContinuityTracker};
+pub use klines::{
+    BinanceKlineHttp, KLINE_INTERVAL_1M, Kline, KlineHistory, KlineSource, ONE_MINUTE_MS,
+    fetch_history,
+};
 pub use reconnect::{Backoff, run_with_reconnect};
 pub use stream::{BINANCE_WS_BASE, agg_trade_url, run_agg_trade_stream};

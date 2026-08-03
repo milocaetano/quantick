@@ -13,11 +13,12 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    BINANCE_WS_BASE, Backoff, BinanceHttp, agg_trade_url, backfill, backfill_before,
+    BINANCE_WS_BASE, Backoff, BinanceHttp, BinanceKlineHttp, KLINE_INTERVAL_1M, ONE_MINUTE_MS,
+    agg_trade_url, backfill, backfill_before,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
-    run_with_reconnect,
+    fetch_history, run_with_reconnect,
 };
 
 use super::{
@@ -71,6 +72,9 @@ async fn feed_task(
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     let http = BinanceHttp::new();
+    // Candles come off a different endpoint with a different paging rule, so
+    // they get their own client rather than overloading the aggTrade one.
+    let klines = BinanceKlineHttp::new();
     let target = initial_backfill_target();
 
     // 1. Backfill recent history so the chart opens populated. Remember the
@@ -139,6 +143,16 @@ async fn feed_task(
                     Some(FeedCommand::LoadOlder { count }) => {
                         earliest_id = load_older(&http, &symbol, earliest_id, count, &tx).await;
                         if tx.is_closed() {
+                            break; // UI gone
+                        }
+                    }
+                    Some(FeedCommand::FetchOhlcv { span_ms }) => {
+                        // Inline, like LoadOlder: one request at a time, in
+                        // arrival order. A candle fetch is long (~130 pages) but
+                        // it happens when a pane opens, not while one scrolls,
+                        // and serialising it keeps the venue's rate budget
+                        // spent by one caller at a time.
+                        if !send_ohlcv(&klines, &symbol, span_ms, &tx).await {
                             break; // UI gone
                         }
                     }
@@ -313,6 +327,51 @@ fn parse_book_depth(raw: Option<&str>) -> u16 {
     raw.and_then(|value| value.trim().parse::<usize>().ok())
         .map(|value| value.clamp(1, usize::from(MAX_DEPTH_LIMIT)) as u16)
         .unwrap_or(DEFAULT_BOOK_DEPTH)
+}
+
+/// Fetch `span_ms` of one-minute candles and answer the UI with exactly one
+/// [`FeedEvent::OhlcvHistory`]. Returns false when the UI is gone.
+///
+/// A short answer is still an answer: the pane's loading indicator keys on the
+/// reply, so a fetch that ran out of rate budget resolves it with what it
+/// collected rather than leaving the pane waiting on a venue that has stopped
+/// talking. How much arrived, and whether it covers the whole span, is in the
+/// `BINANCE_OHLCV_*` log events.
+async fn send_ohlcv(
+    klines: &BinanceKlineHttp,
+    symbol: &str,
+    span_ms: i64,
+    tx: &mpsc::Sender<FeedEvent>,
+) -> bool {
+    let to_ms = super::now_ms();
+    let from_ms = to_ms.saturating_sub(span_ms.max(0));
+    let history = fetch_history(
+        klines,
+        symbol,
+        KLINE_INTERVAL_1M,
+        ONE_MINUTE_MS,
+        from_ms,
+        to_ms,
+    )
+    .await;
+    if !history.complete {
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "BINANCE_OHLCV_PARTIAL",
+            symbol,
+            requested_span_ms = span_ms,
+            bars = history.bars.len(),
+            action = "answer_partial",
+            "candle history is short of the requested span"
+        );
+    }
+    tx.send(FeedEvent::OhlcvHistory {
+        interval_ms: ONE_MINUTE_MS,
+        bars: history.bars,
+    })
+    .await
+    .is_ok()
 }
 
 /// Fetch `count` trades older than `earliest`, send them to the UI, and return
