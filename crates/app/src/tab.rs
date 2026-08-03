@@ -124,6 +124,9 @@ pub struct Tab {
     pub time_pane: Option<ChartPane>,
     /// The id the time pane takes when this tab first shows the split.
     time_pane_id: u64,
+    /// Set when the split is asked for and the time pane does not exist yet;
+    /// drained by [`Self::apply_pending_layout`] on the following frame.
+    pending_time_pane: bool,
     /// Which panes this tab's canvas shows. In-session only for now: per-tab
     /// chrome persistence is the open question §14 leaves to `ui-state.toml`,
     /// and this field with `split_fraction` and `focus` is what it would
@@ -186,6 +189,7 @@ impl Tab {
             flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
             time_pane: None,
             time_pane_id: pane_ids.1,
+            pending_time_pane: false,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
             focus: PaneSide::Flow,
@@ -241,6 +245,12 @@ impl Tab {
         let flow = self.clear_overlay(PaneSide::Flow);
         let time = self.time_pane.is_some() && self.clear_overlay(PaneSide::Time);
         flow || time
+    }
+
+    /// Swap in a feed the test drives, through the same path a respawn takes.
+    #[cfg(test)]
+    pub fn attach_for_test(&mut self, handle: FeedHandle) {
+        self.attach(handle);
     }
 
     /// Whether this tab has trouble worth showing on its chip while it sits in
@@ -329,12 +339,14 @@ impl Tab {
     pub fn set_layout(&mut self, layout: CanvasLayout) {
         self.layout = layout;
         if layout == CanvasLayout::TimeAndFlow && self.time_pane.is_none() {
-            let mut pane = ChartPane::time(self.time_pane_id, time_header::DEFAULT_INTERVAL_MS);
-            pane.seed_from(
-                self.flow_pane.state.trades(),
-                self.flow_pane.state.backfill_trade_count(),
-            );
-            self.time_pane = Some(pane);
+            // Seeding replays every retained trade, which on a deep history
+            // holds the render thread long enough to notice. Armed here and
+            // done on the next frame, exactly as a bar-spec change is: the
+            // frame carrying the menu click paints the loading overlay first,
+            // so the wait reads as the chart working rather than the app
+            // hanging.
+            self.pending_time_pane = true;
+            self.loading.begin(LoadingTask::BarRebuild);
         }
         if layout == CanvasLayout::Single {
             self.focus = PaneSide::Flow;
@@ -345,9 +357,31 @@ impl Tab {
             event_code = "CANVAS_LAYOUT",
             layout = ?layout,
             time_pane_bars = self.time_pane.as_ref().map(|pane| pane.state.bars().len()),
-            action = "relayout_canvas",
+            action = if self.pending_time_pane {
+                "build_time_pane_next_frame"
+            } else {
+                "relayout_canvas"
+            },
             "canvas layout changed"
         );
+    }
+
+    /// Build the time pane the last layout change asked for, if one is due.
+    ///
+    /// Runs at the top of the frame after the click, so the overlay armed by
+    /// [`Self::set_layout`] has already been painted once.
+    pub fn apply_pending_layout(&mut self) {
+        if !self.pending_time_pane {
+            return;
+        }
+        self.pending_time_pane = false;
+        let mut pane = ChartPane::time(self.time_pane_id, time_header::DEFAULT_INTERVAL_MS);
+        pane.seed_from(
+            self.flow_pane.state.trades(),
+            self.flow_pane.state.backfill_trade_count(),
+        );
+        self.time_pane = Some(pane);
+        self.loading.end(LoadingTask::BarRebuild);
     }
 
     /// The display name of the currently selected feed, or its id as a fallback.
@@ -728,6 +762,7 @@ impl Tab {
     /// Clock-injected drain used to prove that one UI cycle is one observation.
     pub fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
         let mut cleared = false;
+        let mut live = false;
         let mut received_at_ms = None;
         loop {
             match self.events.try_recv() {
@@ -754,6 +789,7 @@ impl Tab {
                 Ok(FeedEvent::Live(trade)) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
                     self.ingest_live_trade_at(&trade, received_at_ms);
+                    live = true;
                 }
                 Ok(FeedEvent::LiveBatch(trades)) => {
                     if !trades.is_empty() {
@@ -761,10 +797,18 @@ impl Tab {
                         for trade in &trades {
                             self.ingest_live_trade_at(trade, received_at_ms);
                         }
+                        live = true;
                     }
                 }
                 Ok(FeedEvent::Reset) => cleared |= self.reset_market_state(),
                 Err(_) => break,
+            }
+        }
+        // One forming-bar update per pane for the whole drain, however many
+        // prints arrived: only its latest value is ever read.
+        if live {
+            for pane in self.panes_mut() {
+                pane.publish_partial();
             }
         }
         cleared

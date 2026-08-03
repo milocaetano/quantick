@@ -2671,6 +2671,11 @@ impl QuantickApp {
         // chart), then apply any bar-type change (no-op if unchanged).
         let (tab, config) = self.active_with_config();
         let mut cleared = tab.maybe_switch_feed(config);
+        // Both deferrals settle here, a frame after the click that armed
+        // them, so the frame carrying the change paints its overlay first.
+        for tab in self.tabs.iter_mut() {
+            tab.apply_pending_layout();
+        }
         cleared |= self.active_tab_mut().apply_spec_changes();
         if cleared {
             self.note_overlay_cleared(true);
@@ -5660,6 +5665,89 @@ plot(close)
         }
     }
 
+    /// Seeding replays every retained trade, so it is armed on the frame that
+    /// asks for the split and done on the next — the overlay gets painted
+    /// before the work, exactly as a bar-spec change does.
+    #[test]
+    fn enabling_the_split_paints_before_it_seeds() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        assert!(
+            app.active_tab().time_pane.is_none(),
+            "the frame carrying the change does no work"
+        );
+        assert!(
+            app.active_tab().loading.is_active(LoadingTask::BarRebuild),
+            "and arms the overlay that says what is coming — the same one
+             `a_rebuilt_chart_still_paints_itself` proves reaches the screen"
+        );
+
+        run_frame(&mut app, &ctx);
+        let time = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the next frame builds it");
+        assert!(
+            !time.state.trades().is_empty(),
+            "seeded from the market the flow pane already holds"
+        );
+        assert!(
+            !app.active_tab().loading.is_active(LoadingTask::BarRebuild),
+            "and the overlay comes down with the work"
+        );
+    }
+
+    /// The forming bar changes with every print and only its latest value is
+    /// ever read, so a batch of prints is one update per pane — not one per
+    /// print per pane, which the worker then had to collapse again.
+    #[test]
+    fn a_batch_of_prints_publishes_one_forming_bar_per_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        settle_indicators(&mut app);
+
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        app.active_tab_mut().attach_for_test(FeedHandle {
+            events: evt_rx,
+            book_events: mpsc::channel(8).1,
+            notices: feed::silent_notices(),
+            capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            commands: cmd_tx,
+            replay: None,
+        });
+        let batch: Vec<_> = (700..710).map(trade).collect();
+        let before: Vec<usize> = [PaneSide::Flow, PaneSide::Time]
+            .into_iter()
+            .map(|side| {
+                app.active_tab()
+                    .pane(side)
+                    .indicator_worker
+                    .partial_updates_for_test()
+            })
+            .collect();
+        evt_tx.try_send(FeedEvent::LiveBatch(batch)).unwrap();
+
+        app.active_tab_mut().drain_feed();
+
+        for (side, before) in [PaneSide::Flow, PaneSide::Time].into_iter().zip(before) {
+            let sent = app
+                .active_tab()
+                .pane(side)
+                .indicator_worker
+                .partial_updates_for_test()
+                - before;
+            assert_eq!(
+                sent, 1,
+                "ten prints are one forming-bar update on the {side:?} pane"
+            );
+        }
+    }
+
     /// (b) One tape, two panes: the same trades reach both `ChartState`s, and
     /// each cuts them by its own spec — which is the whole point of the split.
     #[test]
@@ -5723,6 +5811,9 @@ plot(close)
         }
         run_frame(&mut app, &ctx);
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        // The seed runs on the frame after the click; see
+        // `enabling_the_split_paints_before_it_seeds`.
+        run_frame(&mut app, &ctx);
 
         let time = app.active_tab().time_pane.as_ref().expect("time pane");
         assert_eq!(

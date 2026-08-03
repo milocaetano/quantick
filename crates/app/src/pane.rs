@@ -406,6 +406,13 @@ impl ChartPane {
     }
 
     /// Take one live trade into the series, the tape and the indicators.
+    ///
+    /// The forming bar is *not* published here: it changes with every print
+    /// and only its latest value is ever used, so the caller sends one
+    /// [`Self::publish_partial`] at the end of the drain instead. A 500-print
+    /// batch was 500 bar clones down the channel for the worker to collapse
+    /// back into one. Closed bars stay per trade — each is a distinct event
+    /// the indicators have to see.
     pub fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
         if let Some(orderflow) = self.orderflow.as_mut() {
             orderflow.record_trade(trade);
@@ -420,6 +427,13 @@ impl ChartPane {
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed.clone()));
         }
+    }
+
+    /// Hand the indicators the forming bar as it stands now.
+    ///
+    /// Sent once per drain that took in live trades — see
+    /// [`Self::ingest_live_trade`] for why it is not sent per trade.
+    pub fn publish_partial(&mut self) {
         self.indicator_worker.send(IndicatorCommand::PartialUpdated(
             self.state.partial().cloned(),
         ));
