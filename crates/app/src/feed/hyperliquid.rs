@@ -14,9 +14,9 @@ use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, HYPERLIQUID_WS_URL, TradeMapper,
+    Backoff, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS, TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
-    run_trades_with_reconnect,
+    fetch_candle_history, run_trades_with_reconnect,
 };
 
 use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
@@ -145,6 +145,15 @@ async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
+                    Some(FeedCommand::FetchOhlcv { span_ms }) => {
+                        // Inline, one at a time: the fetch opens its own short
+                        // socket, so it never competes with the trade stream,
+                        // and serialising keeps one pane's request from racing
+                        // another's.
+                        if !send_ohlcv(&symbol, span_ms, &tx).await {
+                            break; // UI gone
+                        }
+                    }
                     Some(FeedCommand::LoadOlder { .. }) => {
                         // `recentTrades` is not pageable. Always acknowledge the
                         // request so a stale UI command cannot leave a spinner.
@@ -259,6 +268,63 @@ fn start_book_capture(
         initial_generation,
         handle,
     }
+}
+
+/// Fetch `span_ms` of one-minute candles and answer the UI with exactly one
+/// [`FeedEvent::OhlcvHistory`]. Returns false when the UI is gone.
+///
+/// Every outcome answers, including the ones that failed: the pane's loading
+/// indicator keys on the reply, and a venue that refused is a reason to show an
+/// empty pane, not a reason to leave one spinning. What went wrong is in the
+/// log, where it can carry the detail a chart cannot.
+async fn send_ohlcv(symbol: &str, span_ms: i64, tx: &mpsc::Sender<FeedEvent>) -> bool {
+    let to_ms = super::now_ms();
+    let from_ms = to_ms.saturating_sub(span_ms.max(0));
+    let bars = match fetch_candle_history(
+        HYPERLIQUID_WS_URL,
+        symbol,
+        CANDLE_INTERVAL_1M,
+        ONE_MINUTE_MS,
+        from_ms,
+        to_ms,
+    )
+    .await
+    {
+        Ok(history) => {
+            if !history.complete {
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HYPERLIQUID_OHLCV_PARTIAL",
+                    symbol,
+                    requested_span_ms = span_ms,
+                    bars = history.bars.len(),
+                    action = "answer_partial",
+                    "candle history is short of the requested span"
+                );
+            }
+            history.bars
+        }
+        Err(error) => {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HYPERLIQUID_OHLCV_FAILED",
+                symbol,
+                requested_span_ms = span_ms,
+                %error,
+                action = "answer_empty",
+                "could not fetch candle history"
+            );
+            Vec::new()
+        }
+    };
+    tx.send(FeedEvent::OhlcvHistory {
+        interval_ms: ONE_MINUTE_MS,
+        bars,
+    })
+    .await
+    .is_ok()
 }
 
 async fn stop_book_capture(task: &mut Option<BookCaptureTask>, symbol: &str, reason: &'static str) {
