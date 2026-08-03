@@ -740,7 +740,24 @@ mod tests {
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
-                        indicators: Vec::new(),
+                        // Non-empty on purpose: the entry rows (status dot,
+                        // eye, trash) are only drawn when the menu has
+                        // something in it, and an empty vec never exercises
+                        // them.
+                        indicators: vec![
+                            IndicatorMenuEntry {
+                                slot: 0,
+                                label: "EMA(9, close)".to_owned(),
+                                hidden: false,
+                                errored: false,
+                            },
+                            IndicatorMenuEntry {
+                                slot: 1,
+                                label: "CVD".to_owned(),
+                                hidden: true,
+                                errored: true,
+                            },
+                        ],
                     };
                     let actions = draw(ctx, &mut model);
                     assert!(actions.is_empty(), "no clicks, no actions");

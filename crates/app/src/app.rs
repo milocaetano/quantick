@@ -194,19 +194,26 @@ const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 /// though they are zooming different things.
 const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
-/// Split the padded plot area into the candle chart, the optional live strip,
-/// the right price gutter and the bottom time strip, so the input handler and
-/// the renderer agree on the boundaries. `live_strip_width` of zero means the
-/// strip is off and the chart runs straight into the gutter, exactly as it
-/// did before the strip existed.
-fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
+/// Split the padded plot area into the candle chart, the indicator panes, the
+/// optional live strip, the right price gutter and the bottom time strip, so
+/// the input handler and the renderer agree on the boundaries.
+/// `live_strip_width` of zero means the strip is off and the chart runs
+/// straight into the gutter, exactly as it did before the strip existed.
+///
+/// `pane_count` is the number of *visible* pane indicators: the band they
+/// claim is carved here, once, rather than by each caller — a chart rect that
+/// two call sites disagree about is two price scales for the same pixels.
+fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) -> PlotAreas {
     let plot = area.shrink(16.0);
     let strip_width = live_strip_width.max(0.0);
     let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
+    let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
+    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_count);
     PlotAreas {
-        chart: egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y)),
+        chart,
+        indicator_panes,
         live_strip: (strip_width > 0.0).then(|| {
             egui::Rect::from_min_max(
                 egui::pos2(split_x, plot.top()),
@@ -254,7 +261,14 @@ fn split_time_strip(strip: egui::Rect, divider_x: Option<f32>) -> (egui::Rect, O
 
 /// The interactive regions of the plot, plus the optional live strip.
 struct PlotAreas {
+    /// The candle body, with the indicator pane band already taken out of it.
+    /// Every consumer — renderer and input handler alike — reads the chart
+    /// rect from here, which is what keeps the price scale a drawing is
+    /// placed against identical to the one it is hit-tested against.
     chart: egui::Rect,
+    /// Stacked indicator panes below the candles, top to bottom. Empty when
+    /// no pane indicator is visible.
+    indicator_panes: Vec<egui::Rect>,
     /// Present only while the strip is shown; sits between `chart` and
     /// `price_gutter` and is not an input region.
     live_strip: Option<egui::Rect>,
@@ -1212,6 +1226,10 @@ impl QuantickApp {
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
                     self.drawings.shift_bars(added);
+                    // Indicator columns shift with them: the rebuild below is
+                    // a round-trip away, and until it lands every value would
+                    // otherwise be drawn `added` slots off its own candle.
+                    self.indicators.shift_rows(added);
                     // Older trades re-cut every bar; replay from scratch.
                     self.send_indicator_rebuild();
                 }
@@ -1548,7 +1566,11 @@ impl QuantickApp {
             self.drawing_press_started_empty = false;
             return false;
         };
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
         let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
         let history = egui::Rect::from_min_max(
             areas.chart.min,
@@ -1774,11 +1796,22 @@ impl QuantickApp {
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.last_chart_area = Some(plot_split(area, self.live_strip_width()).chart);
+        self.last_chart_area = Some(
+            plot_split(
+                area,
+                self.live_strip_width(),
+                self.indicators.visible_panes().count(),
+            )
+            .chart,
+        );
         if self.handle_drawing_placement(ui, area) {
             return;
         }
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
         let total = self.slots();
@@ -2075,11 +2108,15 @@ impl QuantickApp {
         let closed = self.state.bars();
         let partial = self.state.partial();
         let total = closed.len() + usize::from(partial.is_some());
-        let areas = plot_split(area, self.live_strip_width());
-        // Indicator panes claim the bottom band before anything scales to the
-        // chart rect; the candles keep the rest (plan §4.3, fixed fraction v1).
-        let (chart_rect, pane_rects) =
-            crate::indicators::split_panes(areas.chart, self.indicators.visible_panes().count());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
+        // Indicator panes claimed the bottom band inside `plot_split`, so the
+        // rect the candles scale to is the same one the input handler uses.
+        let chart_rect = areas.chart;
+        let pane_rects = areas.indicator_panes.clone();
         if total == 0 {
             painter.text(
                 area.center(),
@@ -3804,11 +3841,11 @@ mod tests {
     fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
 
-        let off = plot_split(area, 0.0);
+        let off = plot_split(area, 0.0, 0);
         assert!(off.live_strip.is_none());
         assert_eq!(off.chart.right(), off.price_gutter.left());
 
-        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX);
+        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 0);
         let strip = on.live_strip.expect("strip rect");
         assert_eq!(on.chart.right(), strip.left());
         assert_eq!(strip.right(), on.price_gutter.left());
@@ -3821,6 +3858,39 @@ mod tests {
             off.chart.width() - crate::live_strip::LIVE_STRIP_WIDTH_PX
         );
         assert_eq!(on.time_strip.right(), on.chart.right());
+    }
+
+    /// The pane band is carved once, inside `plot_split`, so the rect the
+    /// renderer scales prices to is the rect the input handler hit-tests
+    /// against. When the two disagreed, a drawing was placed where you
+    /// clicked and then selected somewhere else — by 20% of the chart height
+    /// per visible pane.
+    #[test]
+    fn the_pane_band_comes_out_of_every_callers_chart_rect() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let none = plot_split(area, 0.0, 0);
+        assert!(none.indicator_panes.is_empty());
+
+        let one = plot_split(area, 0.0, 1);
+        let pane = *one
+            .indicator_panes
+            .first()
+            .expect("one visible pane claims one rect");
+        assert!(
+            one.chart.height() < none.chart.height(),
+            "the band is paid for out of the candles' pixels"
+        );
+        assert_eq!(one.chart.bottom(), pane.top(), "no gap, no overlap");
+        assert_eq!(pane.bottom(), none.chart.bottom());
+        assert_eq!(one.chart.width(), none.chart.width());
+        // The axes stay where they were: only the candle body shrinks.
+        assert_eq!(one.price_gutter, none.price_gutter);
+        assert_eq!(one.time_strip, none.time_strip);
+
+        let three = plot_split(area, 0.0, 3);
+        assert_eq!(three.indicator_panes.len(), 3);
+        assert!(three.chart.height() < one.chart.height());
     }
 
     /// Each pane zooms from the strip under it, and the split is exactly the
