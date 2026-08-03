@@ -130,20 +130,12 @@ impl SourcePicker {
         Self { feed_id, symbol }
     }
 
-    /// Keep `symbol` valid for the picked feed, exactly as the toolbar's
-    /// SOURCE group does: a feed that does not offer it falls back to its
-    /// first symbol rather than opening a market that is not there.
+    /// Keep `symbol` valid for the picked feed, by the same rule the toolbar's
+    /// SOURCE group follows ([`AppConfig::resolve_symbol`]) — the Open button
+    /// must not offer a market the feed does not have.
     fn ensure_symbol_valid(&mut self, config: &AppConfig) {
-        let valid = config
-            .feed(&self.feed_id)
-            .is_some_and(|feed| feed.symbols.contains(&self.symbol));
-        if !valid
-            && let Some(first) = config
-                .feed(&self.feed_id)
-                .and_then(|feed| feed.symbols.first())
-                .cloned()
-        {
-            self.symbol = first;
+        if let Some(symbol) = config.resolve_symbol(&self.feed_id, &self.symbol) {
+            self.symbol = symbol;
         }
     }
 

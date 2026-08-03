@@ -389,6 +389,26 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
+    /// The symbol feed `id` should show given a `wanted` selection.
+    ///
+    /// `Some(wanted)` when the feed offers it, otherwise the feed's first
+    /// symbol — picking a feed should not leave the chart pointed at an
+    /// instrument that feed does not have. `None` when the feed is unknown or
+    /// lists nothing, which is the caller's cue to leave the selection alone
+    /// rather than invent one.
+    ///
+    /// One rule, because there are two places that need it: the toolbar's
+    /// SOURCE group correcting a live selection, and the new-tab picker
+    /// deciding what its Open button would actually open.
+    #[must_use]
+    pub fn resolve_symbol(&self, feed_id: &str, wanted: &str) -> Option<String> {
+        let feed = self.feed(feed_id)?;
+        if feed.symbols.iter().any(|symbol| symbol == wanted) {
+            return Some(wanted.to_owned());
+        }
+        feed.symbols.first().cloned()
+    }
+
     /// The provider backing feed `id`, if the feed exists.
     #[must_use]
     pub fn provider_of(&self, id: &str) -> Option<ProviderKind> {
@@ -725,6 +745,30 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolving_a_symbol_keeps_a_valid_one_and_falls_back_otherwise() {
+        let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("the shipped config");
+        let feed = config.feeds.first().expect("the shipped config has feeds");
+        let (id, first) = (feed.id.clone(), feed.symbols[0].clone());
+
+        assert_eq!(
+            config.resolve_symbol(&id, &first),
+            Some(first.clone()),
+            "a symbol the feed offers is kept"
+        );
+        assert_eq!(
+            config.resolve_symbol(&id, "NOT-A-SYMBOL"),
+            Some(first),
+            "one it does not falls back to the feed's first"
+        );
+        assert_eq!(
+            config.resolve_symbol("not-a-feed", "ANY"),
+            None,
+            "an unknown feed resolves nothing, so the caller leaves the
+             selection where it is rather than inventing one"
+        );
+    }
 
     #[test]
     fn embedded_default_parses_and_validates() {

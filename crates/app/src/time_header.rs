@@ -6,8 +6,10 @@
 //! painted across market data.
 //!
 //! The presets are the four timeframes a context chart is actually read at;
-//! the drag beside them is the same custom interval the BARS group offers, so
-//! a timeframe this row does not name is still one gesture away.
+//! the drag beside them accepts the same interval domain the BARS group does
+//! ([`crate::state::MIN_TIME_INTERVAL_MS`]..=[`crate::state::MAX_TIME_INTERVAL_MS`]),
+//! so a timeframe this row does not name is still one gesture away — and every
+//! preset it does name is a value the other control accepts.
 
 use eframe::egui;
 
@@ -28,15 +30,6 @@ pub const PRESETS: [(&str, i64); 4] = [
 /// The interval a time pane opens on when the split is first shown: M1, the
 /// timeframe a flow trader glances at for context.
 pub const DEFAULT_INTERVAL_MS: i64 = 60_000;
-
-/// Bounds of the custom interval drag. One second is the finest a *context*
-/// chart is worth reading at; a day is the coarsest that still fits a session.
-const MIN_INTERVAL_MS: f64 = 1_000.0;
-/// See [`MIN_INTERVAL_MS`].
-const MAX_INTERVAL_MS: f64 = 86_400_000.0;
-/// Milliseconds per drag point — a minute per two points, so a whole preset
-/// range is reachable without the value running away.
-const INTERVAL_DRAG_SPEED: f64 = 500.0;
 
 /// What the header laid out this frame.
 pub struct HeaderLayout {
@@ -90,8 +83,11 @@ pub fn draw(ui: &mut egui::Ui, strip: egui::Rect, interval_ms: &mut i64) -> Head
     changed |= content
         .add(
             egui::DragValue::new(interval_ms)
-                .range(MIN_INTERVAL_MS..=MAX_INTERVAL_MS)
-                .speed(INTERVAL_DRAG_SPEED)
+                .range(
+                    crate::state::MIN_TIME_INTERVAL_MS as f64
+                        ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                )
+                .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
                 .suffix(" ms"),
         )
         .on_hover_text("custom interval for this pane")
@@ -114,15 +110,16 @@ mod tests {
         assert!(PRESETS.iter().any(|(_, ms)| *ms == DEFAULT_INTERVAL_MS));
     }
 
-    /// Every preset has to be reachable by the drag too, otherwise clicking a
-    /// chip would set a value the custom control then refuses to show.
+    /// Every preset has to be reachable by *both* time-bar controls: the two
+    /// set the same `BarSpec::Time`, and 1h used to sit outside what the
+    /// toolbar's BARS group would accept.
     #[test]
-    fn every_preset_lies_inside_the_custom_drag_range() {
+    fn every_preset_lies_inside_the_shared_interval_domain() {
         for (label, ms) in PRESETS {
-            let ms = ms as f64;
             assert!(
-                (MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&ms),
-                "{label} is outside the custom interval range"
+                (crate::state::MIN_TIME_INTERVAL_MS..=crate::state::MAX_TIME_INTERVAL_MS)
+                    .contains(&ms),
+                "{label} is outside the interval domain both controls share"
             );
         }
     }

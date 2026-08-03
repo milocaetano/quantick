@@ -1647,8 +1647,7 @@ const CLOSE_TAB_SHORTCUT: egui::KeyboardShortcut =
 /// Cycles forward through the strip (§10).
 const NEXT_TAB_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Tab);
-/// See [`NEXT_TAB_SHORTCUT`]. Registered first so the plain Ctrl+Tab cannot
-/// swallow the shifted one.
+/// See [`NEXT_TAB_SHORTCUT`].
 const PREVIOUS_TAB_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
     egui::Key::Tab,
@@ -1678,6 +1677,32 @@ impl QuantickApp {
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new("New Tab…")
+                                    .shortcut_text(ui.ctx().format_shortcut(&NEW_TAB_SHORTCUT)),
+                            )
+                            .clicked()
+                        {
+                            tab_action = Some(TabAction::New);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.tabs.len() > 1,
+                                egui::Button::new("Close Tab").shortcut_text(
+                                    ui.ctx().format_shortcut(&CLOSE_TAB_SHORTCUT),
+                                ),
+                            )
+                            .on_disabled_hover_text(
+                                "The last tab stays open — a window with no market has nothing to show",
+                            )
+                            .clicked()
+                        {
+                            tab_action = Some(TabAction::Close(self.active_tab));
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         ui.menu_button("Layout", |ui| {
                             for (layout, label) in [
                                 (CanvasLayout::Single, "Single"),

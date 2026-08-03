@@ -394,16 +394,8 @@ impl Tab {
     /// Keep `symbol` valid for the selected feed: if the feed changed and no
     /// longer offers the current symbol, fall back to its first symbol.
     pub fn ensure_symbol_valid(&mut self, config: &AppConfig) {
-        let valid = config
-            .feed(&self.feed_id)
-            .is_some_and(|f| f.symbols.contains(&self.symbol));
-        if !valid
-            && let Some(first) = config
-                .feed(&self.feed_id)
-                .and_then(|f| f.symbols.first())
-                .cloned()
-        {
-            self.symbol = first;
+        if let Some(symbol) = config.resolve_symbol(&self.feed_id, &self.symbol) {
+            self.symbol = symbol;
         }
     }
 

@@ -392,8 +392,11 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             ui.label("interval ms");
             ui.add(
                 egui::DragValue::new(model.time_interval_ms)
-                    .range(100.0..=600_000.0)
-                    .speed(100.0),
+                    .range(
+                        crate::state::MIN_TIME_INTERVAL_MS as f64
+                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                    )
+                    .speed(crate::state::TIME_INTERVAL_DRAG_SPEED),
             );
         }
         BarKind::Imbalance => {
