@@ -136,6 +136,27 @@ impl IndicatorViews {
         self.views.retain(|v| v.slot != slot);
     }
 
+    /// Prepend `added` unknown rows to every column, keeping the views
+    /// aligned with bars that just grew at the front.
+    ///
+    /// Older trades re-cut every bar, so the worker rebuilds from scratch —
+    /// but that answer arrives a round-trip later, and until it does the
+    /// renderer would draw every value `added` slots to the left of the
+    /// candle it belongs to. `NaN` is the honest filler: it renders as a gap,
+    /// which is exactly what "not computed yet" means here.
+    pub(crate) fn shift_rows(&mut self, added: usize) {
+        if added == 0 {
+            return;
+        }
+        for view in &mut self.views {
+            for column in &mut view.columns {
+                column.splice(0..0, std::iter::repeat_n(f64::NAN, added));
+            }
+            // The forming bar moved with the candles; its frame is stale.
+            view.preview = None;
+        }
+    }
+
     /// Flip the render-side eye toggle.
     pub(crate) fn toggle_hidden(&mut self, slot: SlotId) {
         if let Some(view) = self.view_mut(slot) {

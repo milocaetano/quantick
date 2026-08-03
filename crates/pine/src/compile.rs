@@ -23,6 +23,8 @@
 //! is what "slot resolution" means here — the interpreter never touches a
 //! map or a string on the per-bar path.
 
+use std::collections::BTreeSet;
+
 use quantick_indicators::{InputSpec, PlotId, PlotSpec, PlotStyle, Rgba8, SourceId};
 
 use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
@@ -34,6 +36,15 @@ use crate::parser;
 /// Reads deeper than this many bars yield `na` when the offset is dynamic
 /// (constant offsets size storage exactly; the cap bounds the dynamic case).
 pub const MAX_BARS_BACK_CAP: usize = 500;
+
+/// The largest window a `ta.*` kernel may declare.
+///
+/// A kernel allocates its ring up front, so an unbounded length is an
+/// unbounded allocation: `ta.sma(close, 2000000000)` asks for 16 GB, and a
+/// failed allocation *aborts* the process — it does not unwind, so the
+/// promise that a runtime failure only disables its own indicator would be
+/// broken by a typo. Far above any window a chart uses.
+pub const MAX_KERNEL_LENGTH: usize = 100_000;
 
 /// Default plot stroke width when a `plot()` gives none.
 const DEFAULT_PLOT_WIDTH: f32 = 1.5;
@@ -151,8 +162,10 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
         ));
     }
 
+    compiler.collect_reassigned_names();
     compiler.collect_declarations();
     compiler.resolve_and_scan();
+    compiler.register_pending_plots();
     if compiler.errors.is_empty() {
         Ok(compiler.finish())
     } else {
@@ -187,6 +200,11 @@ impl Const {
             Const::Int(v) if *v >= 1 => usize::try_from(*v).ok(),
             _ => None,
         }
+    }
+
+    /// A positive length that a kernel may actually allocate.
+    fn as_kernel_len(&self) -> Option<usize> {
+        self.as_positive_len().filter(|v| *v <= MAX_KERNEL_LENGTH)
     }
 }
 
@@ -310,6 +328,14 @@ struct Compiler {
     global_init: Vec<Option<NodeId>>,
     /// Slots reassigned anywhere (`:=`): never const-foldable.
     reassigned: Vec<bool>,
+    /// Every name that appears on the left of a `:=`, collected from the
+    /// whole arena before the walk. Filling `reassigned` during the walk made
+    /// the answer depend on textual order: a `:=` *after* the use folded the
+    /// value anyway, so `var len = 9` / `ta.sma(close, len)` / `len := len+1`
+    /// compiled clean and pinned bar 0's window forever.
+    reassigned_names: BTreeSet<String>,
+    /// Plot calls found in pass 1, registered after name resolution.
+    pending_plots: Vec<(NodeId, Vec<Arg>, bool)>,
 }
 
 impl Compiler {
@@ -325,6 +351,7 @@ impl Compiler {
             overlay: false,
             inputs: Vec::new(),
             plots: Vec::new(),
+            pending_plots: Vec::new(),
             resolutions: vec![Resolution::None; n],
             call_sites: vec![None; n],
             plot_of_call: vec![None; n],
@@ -339,6 +366,7 @@ impl Compiler {
             max_bars_back: 1,
             global_init: Vec::new(),
             reassigned: Vec::new(),
+            reassigned_names: BTreeSet::new(),
         }
     }
 
@@ -397,6 +425,18 @@ impl Compiler {
 
     // ---- pass 1: declaration collection ----------------------------------
 
+    /// Scan the whole arena for `:=` targets before anything folds.
+    fn collect_reassigned_names(&mut self) {
+        self.reassigned_names = self
+            .ast
+            .all()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Reassign { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+    }
+
     fn collect_declarations(&mut self) {
         let statements = match self.kind(self.root) {
             NodeKind::Script { statements } => statements.clone(),
@@ -417,8 +457,13 @@ impl Compiler {
             };
             match Builtin::lookup(&name) {
                 Some(Builtin::Indicator) => self.indicator_header(expr, &args),
-                Some(Builtin::Plot) => self.plot_call(expr, &args, false),
-                Some(Builtin::Hline) => self.plot_call(expr, &args, true),
+                // Registered after resolution: `plot(close, color=c)` can
+                // only fold `c` once names resolve, and folding it here
+                // silently substituted the default for every argument that
+                // came from a variable. Queued in textual order, which is
+                // the plot order the whole system indexes by.
+                Some(Builtin::Plot) => self.pending_plots.push((expr, args.clone(), false)),
+                Some(Builtin::Hline) => self.pending_plots.push((expr, args.clone(), true)),
                 Some(
                     kind @ (Builtin::PlotShape
                     | Builtin::PlotChar
@@ -431,7 +476,7 @@ impl Compiler {
                         ErrorCode::PineUnsupported,
                         span,
                         format!(
-                            "{kind:?} is accepted but not drawn yet (shape plots and bar                              colors land with the drawing milestone)"
+                            "{kind:?} is accepted but not drawn yet (shape plots                              and bar colors land with the drawing milestone)"
                         ),
                     ));
                 }
@@ -487,8 +532,44 @@ impl Compiler {
         let _ = call;
     }
 
+    /// Register every queued plot, now that names resolve.
+    fn register_pending_plots(&mut self) {
+        for (call, args, is_hline) in std::mem::take(&mut self.pending_plots) {
+            self.plot_call(call, &args, is_hline);
+        }
+    }
+
+    /// Say so when an argument the author supplied could not be folded.
+    ///
+    /// A plot carries one constant look, so `color = up ? green : red` (or
+    /// any value that is only known per bar) cannot be honoured. Substituting
+    /// the default in silence is the failure mode this warning exists to
+    /// prevent — the chart would simply not be what the script says.
+    fn warn_unfoldable_plot_arg(&mut self, args: &[Arg], position: usize, name: &str) {
+        let Some(arg) = self.arg(args, position, name) else {
+            return;
+        };
+        if self.fold(arg.value).is_some() {
+            return;
+        }
+        let span = self.span(arg.value);
+        self.warnings.push(PineError::new(
+            ErrorCode::PineUnsupported,
+            span,
+            format!(
+                "`{name}` must be constant at load time; this one is not, so                  the default is used (per-bar colors and widths land with the                  dynamic-color milestone)"
+            ),
+        ));
+    }
+
     fn plot_call(&mut self, call: NodeId, args: &[Arg], is_hline: bool) {
         let index = self.plots.len();
+        for (position, name) in [(1, "title"), (2, "color"), (3, "linewidth"), (4, "style")] {
+            if is_hline && position == 4 {
+                continue; // hline has no style argument at that position
+            }
+            self.warn_unfoldable_plot_arg(args, position, name);
+        }
         let title = self
             .arg(args, 1, "title")
             .and_then(|a| match self.fold(a.value) {
@@ -571,6 +652,11 @@ impl Compiler {
                     BinOp::Add => Const::Float(a + b),
                     BinOp::Sub => Const::Float(a - b),
                     BinOp::Mul => Const::Float(a * b),
+                    // The interpreter maps division by zero to `na` as a
+                    // documented divergence from IEEE; a folded expression
+                    // that answered `inf` would evaluate differently from the
+                    // same expression left unfolded.
+                    BinOp::Div if b == 0.0 => Const::Na,
                     BinOp::Div => Const::Float(a / b),
                     _ => return None,
                 })
@@ -662,7 +748,7 @@ impl Compiler {
         self.global_slots += 1;
         self.slot_modes.push(mode);
         self.global_init.push(init);
-        self.reassigned.push(false);
+        self.reassigned.push(self.reassigned_names.contains(name));
         scope
             .names
             .push((name.to_owned(), Resolution::Global(slot)));
@@ -753,6 +839,7 @@ impl Compiler {
                 let mut inner = WalkCtx {
                     frame: Some(frame),
                     in_loop: false,
+                    top_level: false,
                     function_stack: {
                         let mut stack = ctx.function_stack.clone();
                         stack.push(index);
@@ -787,10 +874,12 @@ impl Compiler {
                 otherwise,
             } => {
                 self.walk_expr(condition, scope, ctx);
-                self.walk_expr(then_block, scope, ctx);
-                if let Some(otherwise) = otherwise {
-                    self.walk_expr(otherwise, scope, ctx);
-                }
+                ctx.nested(|ctx| {
+                    self.walk_expr(then_block, scope, ctx);
+                    if let Some(otherwise) = otherwise {
+                        self.walk_expr(otherwise, scope, ctx);
+                    }
+                });
             }
             NodeKind::For {
                 var,
@@ -818,7 +907,7 @@ impl Compiler {
                 self.resolutions[id.index()] = resolution;
                 let was_in_loop = ctx.in_loop;
                 ctx.in_loop = true;
-                self.walk_expr(body, scope, ctx);
+                ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
                 ctx.in_loop = was_in_loop;
                 let mark = scope.block_marks.pop().expect("pushed above");
                 scope.names.truncate(mark);
@@ -827,7 +916,7 @@ impl Compiler {
                 self.walk_expr(condition, scope, ctx);
                 let was_in_loop = ctx.in_loop;
                 ctx.in_loop = true;
-                self.walk_expr(body, scope, ctx);
+                ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
                 ctx.in_loop = was_in_loop;
             }
             NodeKind::Ternary {
@@ -861,7 +950,11 @@ impl Compiler {
                     // genuinely dynamic offsets.
                     None => {
                         if !matches!(self.fold(offset), Some(Const::Int(0))) {
-                            self.max_bars_back = MAX_BARS_BACK_CAP;
+                            // Raise the floor, never assign: a script with
+                            // both `close[700]` and `close[i]` still needs
+                            // 701 rows, and assigning made the answer depend
+                            // on which read came first.
+                            self.max_bars_back = self.max_bars_back.max(MAX_BARS_BACK_CAP);
                         }
                     }
                 }
@@ -993,7 +1086,7 @@ impl Compiler {
                 self.check_kernel_length(call, builtin, args);
             }
         }
-        if builtin.is_top_level_only() && (ctx.frame.is_some() || ctx.in_loop) {
+        if builtin.is_top_level_only() && !ctx.top_level {
             let span = self.span(call);
             self.errors.push(PineError::new(
                 ErrorCode::PineSyntax,
@@ -1030,6 +1123,9 @@ impl Compiler {
             | Builtin::MathSum => (1, "length"),
             Builtin::TaVwma => (2, "length"),
             Builtin::TaAtr => (0, "length"),
+            // Both sides of a pivot size the same window; checking the left
+            // one reaches the same allocation the right one feeds.
+            Builtin::TaPivotHigh | Builtin::TaPivotLow => (1, "leftbars"),
             _ => return None,
         })
     }
@@ -1049,14 +1145,17 @@ impl Compiler {
         };
         if self
             .fold(arg.value)
-            .and_then(|c| c.as_positive_len())
+            .and_then(|c| c.as_kernel_len())
             .is_none()
         {
             self.errors.push(PineError::new(
                 ErrorCode::PineSeriesLength,
                 arg.span,
-                "a kernel length must fold to a positive integer at load time \
-                 (a literal, an input, or arithmetic over them)",
+                format!(
+                    "a kernel length must fold to a positive integer no greater \
+                     than {MAX_KERNEL_LENGTH} at load time (a literal, an input, \
+                     or arithmetic over them)"
+                ),
             ));
         }
     }
@@ -1177,6 +1276,15 @@ impl Compiler {
     }
 
     fn unknown_name(&mut self, name: &str, span: Span) {
+        // A rejected *variable* — `dayofweek`, `max_bars_back` — reaches here
+        // rather than the call or member arms, and "unknown name" is the
+        // wrong reason: the name is known, the family is refused. Answer with
+        // the family's own explanation, which is what the dialect reference
+        // promises for every code in the reject list.
+        if let Some((code, reason)) = rejection_of(name) {
+            self.errors.push(PineError::new(code, span, reason));
+            return;
+        }
         let mut error = PineError::new(
             ErrorCode::PineUnknownName,
             span,
@@ -1196,6 +1304,12 @@ struct Frame {
 struct WalkCtx {
     frame: Option<Frame>,
     in_loop: bool,
+    /// False as soon as the walk enters any nested body — an `if`/`else`
+    /// arm, a loop body, a function. `frame.is_some() || in_loop` cannot
+    /// stand in for it: a `plot()` inside a top-level `if` has neither, and
+    /// was accepted by the check *and* skipped by the registry pass, so the
+    /// script silently drew nothing.
+    top_level: bool,
     function_stack: Vec<u32>,
 }
 
@@ -1204,7 +1318,16 @@ impl WalkCtx {
         Self {
             frame: None,
             in_loop: false,
+            top_level: true,
             function_stack: Vec::new(),
         }
+    }
+
+    /// Walk `body` as nested code, restoring the flag afterwards.
+    fn nested<T>(&mut self, walk: impl FnOnce(&mut Self) -> T) -> T {
+        let was_top_level = std::mem::replace(&mut self.top_level, false);
+        let out = walk(self);
+        self.top_level = was_top_level;
+        out
     }
 }
