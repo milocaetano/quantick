@@ -8,11 +8,13 @@
 //! Which backend runs is chosen at [`spawn`] time from a [`FeedSource`], so the
 //! UI is provider-agnostic: it drains the same [`FeedHandle`] regardless of
 //! where the trades come from. [`binance`] streams public aggTrades directly;
+//! [`hyperliquid`] streams public perpetual trades and complete L2 images;
 //! [`metatrader`] listens for the local QuantickBridge EA (see `bridge/mt5/`);
 //! [`replay`] plays a recorded session back through the very same channel, which
 //! is what lets market replay reuse the whole chart untouched.
 
 pub mod binance;
+pub mod hyperliquid;
 pub mod metatrader;
 pub mod mt5_bridge;
 pub mod replay;
@@ -20,7 +22,10 @@ pub mod replay;
 use tokio::sync::{mpsc, watch};
 
 use quantick_engine::Trade;
-pub use quantick_feed_binance::depth::DepthEvent;
+// The provider-neutral depth type, from the crate that defines it. Three
+// feeds publish on this channel now; routing the shared type through one
+// venue's re-export is the name the next feed author would copy.
+pub use quantick_orderbook::DepthEvent;
 
 use crate::config::{FeedCapabilities, ProviderKind};
 
@@ -42,12 +47,11 @@ pub enum FeedEvent {
     HistoryPrepended(Vec<Trade>),
     /// One live trade.
     Live(Trade),
-    /// Several live trades that fell due together.
+    /// Several live trades received or released together.
     ///
     /// A replay at 50× can release hundreds of prints between two frames, and a
-    /// per-trade channel message for each is pure overhead on both ends. Live
-    /// feeds keep sending [`FeedEvent::Live`]; the UI treats a batch exactly as
-    /// the trades in it, in order.
+    /// per-trade channel message for each is pure overhead on both ends. The UI
+    /// treats a batch exactly as the trades in it, in order.
     LiveBatch(Vec<Trade>),
     /// Discard everything loaded and start over from an empty chart.
     ///
@@ -91,6 +95,21 @@ pub enum FeedSource {
     Replay(Box<replay::ReplayRequest>),
 }
 
+/// Provider-neutral state of the live trade transport.
+///
+/// This is deliberately independent from trade arrival latency: a quiet market
+/// says nothing about whether a socket is connected, and a latency observation
+/// made before a disconnect must not keep the status bar green.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedConnectionState {
+    /// The selected feed has not established its first session yet.
+    Connecting,
+    /// A previously established session ended and its reconnect loop is active.
+    Reconnecting,
+    /// The provider confirmed that the live trade transport is established.
+    Connected,
+}
+
 /// What a feed wants the person watching the chart to know.
 ///
 /// A feed that cannot deliver trades knows *why* — the terminal is closed, a
@@ -98,13 +117,29 @@ pub enum FeedSource {
 /// reason only ever reached a log file, and the chart stayed blank with a
 /// faint "connecting" dot: honest, but useless to anyone not reading stderr.
 ///
-/// The distinction the UI acts on is **who has to do something next**.
+/// [`Connected`](Self::Connected) and [`Reconnecting`](Self::Reconnecting) are
+/// explicit transport transitions. The other variants are presentation only:
 /// [`Working`](Self::Working) is the feed's own business, still in progress;
 /// [`Attention`](Self::Attention) needs a human, and always carries the one
-/// next step in plain words. Feeds that never get stuck simply never send
-/// anything.
+/// next step in plain words. Keeping those roles separate prevents unrelated
+/// supervisor output from changing a healthy connection's state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FeedNotice {
+    /// The live trade transport is established.
+    ///
+    /// This is a control signal rather than a card: the app clears any
+    /// connection-progress notice and marks the provider-neutral transport
+    /// connected without waiting for a trade to infer it.
+    Connected,
+    /// A previously established live transport ended and is reconnecting.
+    ///
+    /// Like [`Connected`](Self::Connected), this explicitly drives the
+    /// provider-neutral connection state. The headline can also explain an
+    /// empty chart while the reconnect loop is working.
+    Reconnecting {
+        /// One line, e.g. `Hyperliquid disconnected — reconnecting`.
+        headline: String,
+    },
     /// Whatever was being reported is over; the chart speaks for itself now.
     Clear,
     /// A step is under way and needs nobody: connecting, waiting, retrying.
@@ -139,6 +174,14 @@ pub fn fixed_capabilities(capabilities: FeedCapabilities) -> watch::Receiver<Fee
 }
 
 impl FeedNotice {
+    /// Shorthand for an explicit reconnecting transport transition.
+    #[must_use]
+    pub fn reconnecting(headline: impl Into<String>) -> Self {
+        Self::Reconnecting {
+            headline: headline.into(),
+        }
+    }
+
     /// Shorthand for a step in progress.
     #[must_use]
     pub fn working(headline: impl Into<String>) -> Self {
@@ -154,6 +197,24 @@ impl FeedNotice {
             headline: headline.into(),
             next_step: next_step.into(),
         }
+    }
+}
+
+/// Translate the boolean lifecycle emitted by a provider reconnect loop into
+/// the app's notice protocol. `ever_connected` distinguishes first-connect
+/// retries from a real reconnect without consulting trade arrival.
+pub(super) fn connection_notice(
+    connected: bool,
+    ever_connected: &mut bool,
+    provider: &str,
+) -> FeedNotice {
+    if connected {
+        *ever_connected = true;
+        FeedNotice::Connected
+    } else if *ever_connected {
+        FeedNotice::reconnecting(format!("{provider} disconnected — reconnecting"))
+    } else {
+        FeedNotice::working(format!("connecting to {provider}"))
     }
 }
 
@@ -210,6 +271,7 @@ pub fn spawn(source: FeedSource, config: &crate::config::AppConfig) -> FeedHandl
     match source {
         FeedSource::Live { provider, symbol } => match provider {
             ProviderKind::Binance => binance::spawn(&symbol),
+            ProviderKind::Hyperliquid => hyperliquid::spawn(&symbol),
             ProviderKind::MetaTrader => metatrader::spawn(&symbol, &config.metatrader),
         },
         FeedSource::Replay(request) => replay::spawn(*request),
@@ -230,4 +292,28 @@ pub fn spawn_live(
         },
         config,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_loop_lifecycle_uses_explicit_transport_notices() {
+        let mut ever_connected = false;
+
+        assert!(matches!(
+            connection_notice(false, &mut ever_connected, "Binance"),
+            FeedNotice::Working { headline } if headline == "connecting to Binance"
+        ));
+        assert_eq!(
+            connection_notice(true, &mut ever_connected, "Binance"),
+            FeedNotice::Connected
+        );
+        assert!(matches!(
+            connection_notice(false, &mut ever_connected, "Binance"),
+            FeedNotice::Reconnecting { headline }
+                if headline == "Binance disconnected — reconnecting"
+        ));
+    }
 }

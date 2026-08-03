@@ -1,8 +1,8 @@
 //! quantick-app — desktop chart rendering alternative bars from live trades.
 //!
 //! A consumer of `quantick-engine`, never the other way around. On startup it
-//! reads the feed/asset configuration (see [`config`]), backfills recent history
-//! over REST so the chart opens populated, then streams live trades on top,
+//! reads the feed/asset configuration (see [`config`]), recovers the factual
+//! recent trades available from that source, then streams live trades on top,
 //! forming bars in real time. The feed and symbol can be switched live from the
 //! chart. Frame time and feed lag are surfaced on screen and in structured logs.
 
@@ -85,7 +85,7 @@ fn main() -> eframe::Result {
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
-    let (config, source) = match config::load() {
+    let (mut config, source) = match config::load() {
         Ok(loaded) => loaded,
         Err(e) => {
             tracing::error!(
@@ -97,6 +97,15 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     };
+    if let Err(e) = config::apply_startup_selection_from_env(&mut config) {
+        tracing::error!(
+            target: "quantick::app",
+            event_code = "STARTUP_SELECTION_ERROR",
+            %e,
+            "cannot apply startup feed/symbol selection; fix or unset QUANTICK_DEFAULT_FEED and QUANTICK_DEFAULT_SYMBOL"
+        );
+        std::process::exit(1);
+    }
 
     let feed_id = config.default_feed.clone();
     let symbol = config.default_symbol.clone();

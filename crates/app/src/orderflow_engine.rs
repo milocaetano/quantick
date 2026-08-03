@@ -19,11 +19,12 @@ use crate::orderflow::{
     PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
 };
 
-/// How often the finished half of the chart is rebuilt.
+/// Minimum interval between dirty rebuilds of the finished half of the chart.
 ///
-/// It is the depth feed's own cadence, near enough: the map behind the candles
-/// cannot say anything new until the book does. The live half ignores this
-/// interval entirely — see [`BookEngine::project`].
+/// History or bar-boundary changes mark the projection dirty. This cadence
+/// coalesces a burst of updates, while a clean projection remains cached
+/// indefinitely. The live half ignores this interval entirely — see
+/// [`BookEngine::project`].
 pub(crate) const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
 
 /// Maximum raw book levels per side copied into a published [`BookLadder`].
@@ -115,7 +116,8 @@ pub struct VisibleOrderflow {
     pub(crate) slot_count: usize,
 }
 
-/// Identity of one projection request; two equal layouts may share a frame.
+/// Visual identity of one projection request; cache revisions separately prove
+/// that equal layouts still describe the same market history and bar timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectionLayout {
     first_bar_index: usize,
@@ -157,6 +159,8 @@ impl ProjectionLayout {
 /// the worker channel.
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectionRequest {
+    /// O(1) identity of the chart's current temporal bar partition.
+    pub timeline_revision: u64,
     pub first_bar_index: usize,
     pub closed: Vec<Bar>,
     pub partial: Option<Bar>,
@@ -185,8 +189,12 @@ impl ProjectionRequest {
 struct ProjectionCache {
     built_at: Instant,
     layout: ProjectionLayout,
-    /// The finished half of the chart, reused frame after frame until the
-    /// layout moves or the cadence comes round again.
+    /// Bar-boundary revision represented by this projection.
+    timeline_revision: u64,
+    /// Settled-history version represented by this projection.
+    settled_revision: u64,
+    /// The finished half of the chart, reused until the layout moves or a dirty
+    /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
 }
 
@@ -198,6 +206,8 @@ pub struct OrderflowHealth {
     pub generation: Option<u64>,
     pub last_update_id: Option<u64>,
     pub last_event_ms: Option<i64>,
+    /// Source-to-UI delay observed for the newest accepted timestamped event.
+    pub arrival_latency_ms: Option<i64>,
     pub bid_levels: usize,
     pub ask_levels: usize,
     pub active_levels: usize,
@@ -233,6 +243,7 @@ impl OrderflowHealth {
             generation: None,
             last_update_id: None,
             last_event_ms: None,
+            arrival_latency_ms: None,
             bid_levels: 0,
             ask_levels: 0,
             active_levels: 0,
@@ -384,6 +395,8 @@ pub struct BookEngine {
     generation_floor: u64,
     latest_generation: Option<u64>,
     last_snapshot_observed_ms: Option<i64>,
+    /// Updated only after symbol/generation validation and history acceptance.
+    latest_arrival_latency_ms: Option<i64>,
     depth_updates: u64,
     depth_updates_since_summary: u64,
     config_revision: u64,
@@ -401,6 +414,10 @@ pub struct BookEngine {
     last_live_ms: f32,
     projection_builds: u64,
     projection_cache_hits: u64,
+    /// Advances when retained book/trade history can change the settled half.
+    /// Unlike cache invalidation, a revision change respects the cadence so a
+    /// burst is still coalesced into one rebuild.
+    settled_revision: u64,
     projection_cache: Option<ProjectionCache>,
     /// Last successfully built frame. Survives soft cache invalidation so the
     /// UI never flashes to an empty heatmap between rebuilds; cleared by hard
@@ -426,6 +443,7 @@ impl BookEngine {
             generation_floor: 0,
             latest_generation: None,
             last_snapshot_observed_ms: None,
+            latest_arrival_latency_ms: None,
             depth_updates: 0,
             depth_updates_since_summary: 0,
             config_revision: 0,
@@ -441,6 +459,7 @@ impl BookEngine {
             last_live_ms: 0.0,
             projection_builds: 0,
             projection_cache_hits: 0,
+            settled_revision: 0,
             projection_cache: None,
             last_frame: None,
             visible_price_window: None,
@@ -482,6 +501,7 @@ impl BookEngine {
         self.generation_floor = 0;
         self.latest_generation = None;
         self.last_snapshot_observed_ms = None;
+        self.latest_arrival_latency_ms = None;
         self.depth_updates = 0;
         self.depth_updates_since_summary = 0;
         self.last_projection_cells = 0;
@@ -496,6 +516,7 @@ impl BookEngine {
         self.last_live_ms = 0.0;
         self.projection_builds = 0;
         self.projection_cache_hits = 0;
+        self.settled_revision = 0;
         self.projection_cache = None;
         self.last_frame = None;
         // A new market has a new price scale; the old view window would clip
@@ -513,6 +534,7 @@ impl BookEngine {
         }
         self.config.enabled = enabled;
         self.generation_floor = generation_floor;
+        self.latest_arrival_latency_ms = None;
         self.invalidate_projection();
         if !enabled {
             self.last_frame = None;
@@ -541,6 +563,7 @@ impl BookEngine {
     pub fn prepare_restart(&mut self, generation_floor: u64, reason: &'static str) {
         self.mark_gap_at_latest(reason);
         self.generation_floor = generation_floor;
+        self.latest_arrival_latency_ms = None;
         self.status = CaptureStatus::Connecting;
         self.invalidate_projection();
     }
@@ -649,11 +672,26 @@ impl BookEngine {
     pub fn record_trade(&mut self, trade: &Trade) {
         if self.config.any_layer_enabled() {
             self.history.record_aggression(trade);
+            // The live half draws this print immediately. The revision only
+            // schedules the settled half's next cadence rebuild, which also
+            // applies retention pruning caused by the new market timestamp.
+            self.mark_settled_dirty();
         }
     }
 
-    /// Apply one already-synchronized feed event.
+    /// Deterministic shorthand for tests that do not inspect arrival latency.
+    #[cfg(test)]
     pub fn handle_depth_event(&mut self, event: DepthEvent) {
+        let received_at_ms = match &event {
+            DepthEvent::Snapshot { observed_at_ms, .. } => *observed_at_ms,
+            DepthEvent::Update { event_time_ms, .. } => *event_time_ms,
+            DepthEvent::Status { .. } => 0,
+        };
+        self.handle_depth_event_at(event, received_at_ms);
+    }
+
+    /// Apply one synchronized feed event observed by the UI at `received_at_ms`.
+    pub fn handle_depth_event_at(&mut self, event: DepthEvent, received_at_ms: i64) {
         let (symbol, generation) = match &event {
             DepthEvent::Status {
                 symbol, generation, ..
@@ -733,6 +771,9 @@ impl BookEngine {
                     self.mark_gap_at_latest("snapshot_rejected");
                     self.status = CaptureStatus::Error;
                 } else {
+                    self.latest_arrival_latency_ms =
+                        crate::metrics::feed_lag_ms(received_at_ms, Some(observed_at_ms));
+                    self.mark_settled_dirty();
                     tracing::info!(
                         target: "quantick::app",
                         schema_version = 1_u8,
@@ -753,18 +794,27 @@ impl BookEngine {
                 event_time_ms,
                 delta,
                 ..
-            } => match self.history.apply_delta(event_time_ms, &delta) {
-                Ok(_) => {
-                    self.depth_updates = self.depth_updates.saturating_add(1);
-                    self.depth_updates_since_summary =
-                        self.depth_updates_since_summary.saturating_add(1);
+            } => {
+                match self.history.apply_delta(event_time_ms, &delta) {
+                    Ok(_) => {
+                        self.latest_arrival_latency_ms =
+                            crate::metrics::feed_lag_ms(received_at_ms, Some(event_time_ms));
+                        self.depth_updates = self.depth_updates.saturating_add(1);
+                        self.depth_updates_since_summary =
+                            self.depth_updates_since_summary.saturating_add(1);
+                        self.mark_settled_dirty();
+                    }
+                    Err(error) => {
+                        self.log_history_error("delta", generation, &error);
+                        self.mark_gap_at_latest("delta_rejected");
+                        // `apply_delta` may have opened the gap before returning
+                        // its error, so force the discontinuity visible even if
+                        // `mark_gap_at_latest` found it already open.
+                        self.invalidate_projection();
+                        self.status = CaptureStatus::Error;
+                    }
                 }
-                Err(error) => {
-                    self.log_history_error("delta", generation, &error);
-                    self.mark_gap_at_latest("delta_rejected");
-                    self.status = CaptureStatus::Error;
-                }
-            },
+            }
         }
     }
 
@@ -800,6 +850,7 @@ impl BookEngine {
         if let Err(error) = self.history.mark_gap(timestamp_ms, reason) {
             self.log_history_error("gap", self.latest_generation.unwrap_or(0), &error);
         } else {
+            self.mark_settled_dirty();
             self.invalidate_projection();
         }
     }
@@ -891,17 +942,24 @@ impl BookEngine {
 
     /// Build the frame for `request`.
     ///
-    /// The finished half of the chart is rebuilt on the cadence above, because
-    /// it costs tens of milliseconds and says nothing new in between. The half
-    /// that is still moving is rebuilt here every single time, because it is
-    /// cheap and because a print the engine has already accepted has no business
-    /// waiting for a cadence to be seen.
+    /// The finished half rebuilds only after its history or bar timeline changes,
+    /// with the cadence above coalescing a burst. The half that is still moving
+    /// is rebuilt here every single time, because it is cheap and because a print
+    /// the engine has already accepted has no business waiting for a cadence.
     pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
+        self.project_at(request, Instant::now())
+    }
+
+    /// Clock-injected projection entry point for deterministic cache tests.
+    fn project_at(
+        &mut self,
+        request: &ProjectionRequest,
+        cache_now: Instant,
+    ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
         }
         let layout = request.layout();
-        let now = Instant::now();
         let low = Decimal::from_f64(request.price_range.0)?;
         let high = Decimal::from_f64(request.price_range.1)?;
         let prices = PriceWindow::new(low, high)?;
@@ -918,22 +976,28 @@ impl BookEngine {
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
-                    && now.saturating_duration_since(cache.built_at) < PROJECTION_INTERVAL =>
+                    && ((cache.settled_revision == self.settled_revision
+                        && cache.timeline_revision == request.timeline_revision)
+                        || cache_now.saturating_duration_since(cache.built_at)
+                            < PROJECTION_INTERVAL) =>
             {
                 self.projection_cache_hits = self.projection_cache_hits.saturating_add(1);
                 Arc::clone(&cache.settled)
             }
             _ => {
+                let projection_started = Instant::now();
                 let settled = Arc::new(project_settled(&self.history, &timeline, prices));
-                self.last_projection_ms = now.elapsed().as_secs_f32() * 1000.0;
+                self.last_projection_ms = projection_started.elapsed().as_secs_f32() * 1000.0;
                 self.last_projection_cells = settled.cells.len();
                 self.last_dropped_cells = settled.dropped_cells;
                 self.last_effective_grouping = settled.effective_grouping.bucket_width;
                 self.last_effective_grouping_multiple = settled.effective_grouping.multiple;
                 self.projection_builds = self.projection_builds.saturating_add(1);
                 self.projection_cache = Some(ProjectionCache {
-                    built_at: now,
+                    built_at: cache_now,
                     layout,
+                    timeline_revision: request.timeline_revision,
+                    settled_revision: self.settled_revision,
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -959,6 +1023,13 @@ impl BookEngine {
 
     fn invalidate_projection(&mut self) {
         self.projection_cache = None;
+    }
+
+    /// Mark retained history newer without throwing away the last good frame.
+    /// The cache may serve that frame until the cadence elapses, coalescing all
+    /// intervening updates into one settled projection.
+    fn mark_settled_dirty(&mut self) {
+        self.settled_revision = self.settled_revision.saturating_add(1);
     }
 
     fn apply_non_grouping_config(&mut self) {
@@ -1021,6 +1092,7 @@ impl BookEngine {
             generation,
             last_update_id,
             last_event_ms,
+            arrival_latency_ms: self.latest_arrival_latency_ms,
             bid_levels: self.history.book().bid_count(),
             ask_levels: self.history.book().ask_count(),
             active_levels: self.history.active_level_count(),
@@ -1277,6 +1349,7 @@ mod tests {
 
     fn request(bars: &[Bar], price_range: (f64, f64)) -> ProjectionRequest {
         ProjectionRequest {
+            timeline_revision: 0,
             first_bar_index: 0,
             closed: bars.to_vec(),
             partial: None,
@@ -1447,6 +1520,48 @@ mod tests {
         assert_eq!(engine.last_snapshot_observed_ms, Some(1_100));
     }
 
+    #[test]
+    fn arrival_latency_only_tracks_depth_data_the_engine_accepts() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event_at(snapshot_event(10), 1_125);
+        assert_eq!(engine.health().arrival_latency_ms, Some(25));
+
+        engine.handle_depth_event_at(
+            DepthEvent::Update {
+                symbol: "BTCUSDT".to_owned(),
+                generation: 10,
+                event_time_ms: 1_200,
+                delta: BookDelta::new(11, 11, Vec::new(), Vec::new()),
+            },
+            1_233,
+        );
+        assert_eq!(engine.health().arrival_latency_ms, Some(33));
+
+        let mut wrong_symbol = snapshot_event(11);
+        if let DepthEvent::Snapshot { symbol, .. } = &mut wrong_symbol {
+            *symbol = "ETHUSDT".to_owned();
+        }
+        engine.handle_depth_event_at(wrong_symbol, 20_000);
+        engine.handle_depth_event_at(snapshot_event(9), 20_000);
+        engine.handle_depth_event_at(
+            DepthEvent::Update {
+                symbol: "BTCUSDT".to_owned(),
+                generation: 10,
+                event_time_ms: 1_300,
+                // #12 is missing, so history rejects this image.
+                delta: BookDelta::new(13, 13, Vec::new(), Vec::new()),
+            },
+            20_000,
+        );
+
+        assert_eq!(
+            engine.health().arrival_latency_ms,
+            Some(33),
+            "mismatched, stale and rejected data cannot repopulate health"
+        );
+    }
+
     /// A print the engine has accepted is drawable on the next projection, with
     /// no cadence in between — which is the whole point of splitting the frame.
     /// The map behind it still moves on the projection interval, so this asserts
@@ -1524,6 +1639,100 @@ mod tests {
         });
         let _ = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
         assert_eq!(engine.projection_builds, 3);
+    }
+
+    #[test]
+    fn clean_projection_cache_survives_cadence_and_dirty_updates_coalesce() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let bars = [bar(900, 1_100)];
+        let request = request(&bars, (98.0, 102.0));
+        let started = Instant::now();
+
+        engine.project_at(&request, started).unwrap();
+        engine
+            .project_at(&request, started + PROJECTION_INTERVAL * 2)
+            .unwrap();
+        assert_eq!(
+            engine.projection_builds, 1,
+            "elapsed cadence alone must not rescan unchanged history"
+        );
+
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_000,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        let rebuilt_at = started + PROJECTION_INTERVAL * 2;
+        engine.project_at(&request, rebuilt_at).unwrap();
+        assert_eq!(
+            engine.projection_builds, 2,
+            "the first update after an idle period rebuilds immediately"
+        );
+
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_001,
+            delta: BookDelta::new(
+                12,
+                12,
+                Vec::new(),
+                vec![BookLevel::new(Decimal::from(101), Decimal::from(8)).unwrap()],
+            ),
+        });
+        engine
+            .project_at(&request, rebuilt_at + Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(
+            engine.projection_builds, 2,
+            "a second update inside the cadence is coalesced"
+        );
+
+        let after_cadence = rebuilt_at + PROJECTION_INTERVAL + Duration::from_millis(1);
+        engine.project_at(&request, after_cadence).unwrap();
+        assert_eq!(engine.projection_builds, 3);
+        engine
+            .project_at(&request, after_cadence + PROJECTION_INTERVAL * 2)
+            .unwrap();
+        assert_eq!(
+            engine.projection_builds, 3,
+            "the rebuilt clean revision stays cached across later cadences"
+        );
+    }
+
+    #[test]
+    fn a_new_bar_timeline_rebuilds_an_otherwise_identical_layout() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let mut first = request(&[bar(900, 1_100)], (98.0, 102.0));
+        first.timeline_revision = 7;
+        let mut recut = request(&[bar(800, 1_000)], (98.0, 102.0));
+        recut.timeline_revision = 8;
+        assert_eq!(
+            first.layout(),
+            recut.layout(),
+            "the regression requires the same superficial viewport identity"
+        );
+        let started = Instant::now();
+
+        engine.project_at(&first, started).unwrap();
+        engine
+            .project_at(&recut, started + PROJECTION_INTERVAL * 2)
+            .unwrap();
+
+        assert_eq!(
+            engine.projection_builds, 2,
+            "changed bar boundaries cannot reuse a clean projection forever"
+        );
     }
 
     #[test]

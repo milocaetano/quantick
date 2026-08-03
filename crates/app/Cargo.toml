@@ -10,6 +10,7 @@ quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
 quantick-feed-binance = { path = "../feed-binance" }
+quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }

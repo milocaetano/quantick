@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc::Sender, watch};
 use tracing::{info, warn};
 
 use quantick_engine::Trade;
@@ -86,10 +86,15 @@ impl Backoff {
 /// connection (one that forwarded at least one trade) resets the backoff, so
 /// only sustained failure escalates the delay. Returns when the consumer drops
 /// the receiver.
-pub async fn run_with_reconnect(url: &str, tx: &Sender<Trade>, mut backoff: Backoff) {
+pub async fn run_with_reconnect(
+    url: &str,
+    tx: &Sender<Trade>,
+    connected: &watch::Sender<bool>,
+    mut backoff: Backoff,
+) {
     let mut tracker = ContinuityTracker::new();
     loop {
-        match run_agg_trade_stream(url, tx, &mut tracker).await {
+        match run_agg_trade_stream(url, tx, &mut tracker, connected).await {
             Ok(forwarded) => {
                 if forwarded > 0 {
                     backoff.reset();
@@ -107,6 +112,9 @@ pub async fn run_with_reconnect(url: &str, tx: &Sender<Trade>, mut backoff: Back
         if tx.is_closed() {
             return;
         }
+        // The websocket ended; publish that fact before waiting or attempting
+        // another connection. Trade silence is never used as a proxy.
+        let _ = connected.send(false);
         let delay = backoff.next_delay();
         info!(
             target: "quantick::feed",
@@ -121,6 +129,23 @@ pub async fn run_with_reconnect(url: &str, tx: &Sender<Trade>, mut backoff: Back
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::agg_trade_url;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use tokio::sync::{Notify, watch};
+
+    async fn wait_for_status(status: &mut watch::Receiver<bool>, expected: bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                status.changed().await.expect("connection status closed");
+                if *status.borrow_and_update() == expected {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for connection status");
+    }
 
     #[test]
     fn backoff_grows_and_is_capped() {
@@ -166,5 +191,61 @@ mod tests {
             (0..5).map(|_| b.next_delay()).collect::<Vec<_>>()
         };
         assert_eq!(seq(42), seq(42), "same seed => same delays");
+    }
+
+    #[tokio::test]
+    async fn connection_status_tracks_disconnect_and_reconnect() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let close_first = Arc::new(Notify::new());
+        let allow_second_handshake = Arc::new(Notify::new());
+        let close_second = Arc::new(Notify::new());
+        let server = {
+            let close_first = Arc::clone(&close_first);
+            let allow_second_handshake = Arc::clone(&allow_second_handshake);
+            let close_second = Arc::clone(&close_second);
+            tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                close_first.notified().await;
+                socket.close(None).await.unwrap();
+
+                let (stream, _) = listener.accept().await.unwrap();
+                allow_second_handshake.notified().await;
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                close_second.notified().await;
+                socket.close(None).await.unwrap();
+            })
+        };
+
+        let (trades_tx, trades_rx) = tokio::sync::mpsc::channel(8);
+        let (connected_tx, mut connected_rx) = watch::channel(false);
+        let url = agg_trade_url(&format!("ws://{address}"), "BTCUSDT");
+        let feed = tokio::spawn(async move {
+            run_with_reconnect(
+                &url,
+                &trades_tx,
+                &connected_tx,
+                Backoff::new(Duration::from_millis(2), Duration::from_millis(2), 7),
+            )
+            .await;
+        });
+
+        wait_for_status(&mut connected_rx, true).await;
+        close_first.notify_one();
+        wait_for_status(&mut connected_rx, false).await;
+        allow_second_handshake.notify_one();
+        wait_for_status(&mut connected_rx, true).await;
+
+        drop(trades_rx);
+        close_second.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), feed)
+            .await
+            .expect("feed did not stop")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("server did not stop")
+            .unwrap();
     }
 }

@@ -21,6 +21,18 @@ const EMBEDDED_DEFAULT: &str = include_str!("../config/feeds.toml");
 /// Environment variable naming an explicit config file path.
 pub const CONFIG_ENV: &str = "QUANTICK_CONFIG";
 
+/// Optional startup-only override for [`AppConfig::default_feed`].
+///
+/// Unlike [`CONFIG_ENV`], this changes only the initial selection; it never
+/// replaces the configured feed catalog.
+pub const DEFAULT_FEED_ENV: &str = "QUANTICK_DEFAULT_FEED";
+
+/// Optional startup-only override for [`AppConfig::default_symbol`].
+///
+/// The value is validated against the selected feed before either default is
+/// changed, so a bad pair cannot leave the config half-mutated.
+pub const DEFAULT_SYMBOL_ENV: &str = "QUANTICK_DEFAULT_SYMBOL";
+
 /// Conventional config file name looked up in the working directory.
 pub const CONFIG_FILENAME: &str = "quantick.toml";
 
@@ -32,6 +44,8 @@ pub const CONFIG_FILENAME: &str = "quantick.toml";
 pub enum ProviderKind {
     /// Binance public aggTrades (REST backfill + live WebSocket).
     Binance,
+    /// Hyperliquid public perpetual trades and complete L2 images.
+    Hyperliquid,
     /// MetaTrader 5 via the local QuantickBridge EA (see `bridge/mt5/`).
     MetaTrader,
 }
@@ -41,7 +55,10 @@ impl ProviderKind {
     /// land as config-visible placeholders first, labelled "(soon)" in the UI.
     #[must_use]
     pub fn is_implemented(self) -> bool {
-        matches!(self, ProviderKind::Binance | ProviderKind::MetaTrader)
+        matches!(
+            self,
+            ProviderKind::Binance | ProviderKind::Hyperliquid | ProviderKind::MetaTrader
+        )
     }
 
     /// What this provider's backend can do before a session says otherwise.
@@ -59,6 +76,14 @@ impl ProviderKind {
             ProviderKind::Binance => FeedCapabilities {
                 book_capture: true,
                 history_paging: true,
+                traded_volume: true,
+            },
+            // `recentTrades` is a short recovery window, not a pageable
+            // historical API. Trades and the visible 20-level book are factual;
+            // older history is withheld rather than synthesized from candles.
+            ProviderKind::Hyperliquid => FeedCapabilities {
+                book_capture: true,
+                history_paging: false,
                 traded_volume: true,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
@@ -238,7 +263,7 @@ impl AppConfig {
     #[must_use]
     pub fn side_note(&self, id: &str) -> Option<&'static str> {
         match self.provider_of(id)? {
-            ProviderKind::Binance => None,
+            ProviderKind::Binance | ProviderKind::Hyperliquid => None,
             ProviderKind::MetaTrader => Some(match self.metatrader.side_source {
                 Mt5SideSource::TickRule => "side: inferred (tick rule)",
                 Mt5SideSource::Flags => "side: broker flags",
@@ -348,6 +373,118 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// A startup-only feed/symbol override does not resolve against the loaded
+/// catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupSelectionError {
+    /// An environment variable could not be represented as UTF-8.
+    NonUnicode { variable: &'static str },
+    /// The requested feed id is absent from the loaded catalog.
+    FeedNotConfigured {
+        feed: String,
+        available: Vec<String>,
+    },
+    /// The requested symbol does not belong to the requested feed.
+    SymbolNotOffered {
+        feed: String,
+        symbol: String,
+        available: Vec<String>,
+    },
+}
+
+impl std::fmt::Display for StartupSelectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StartupSelectionError::NonUnicode { variable } => {
+                write!(f, "{variable} is not valid Unicode")
+            }
+            StartupSelectionError::FeedNotConfigured { feed, available } => write!(
+                f,
+                "{DEFAULT_FEED_ENV}='{feed}' is not a configured feed; available feeds: {}",
+                available.join(", ")
+            ),
+            StartupSelectionError::SymbolNotOffered {
+                feed,
+                symbol,
+                available,
+            } => write!(
+                f,
+                "{DEFAULT_SYMBOL_ENV}='{symbol}' is not offered by feed '{feed}'; available symbols: {}",
+                available.join(", ")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StartupSelectionError {}
+
+/// Change only the startup feed/symbol selection, preserving the loaded feed
+/// catalog and every provider setting.
+///
+/// Validation is atomic: neither default is changed unless the requested pair
+/// resolves. A feed override without a symbol override retains the configured
+/// default symbol, which can therefore produce a clear incompatibility error
+/// when the two feeds use different symbol names.
+///
+/// # Errors
+///
+/// Returns [`StartupSelectionError`] when the feed is absent or the symbol is
+/// not offered by that feed.
+pub fn apply_startup_selection(
+    config: &mut AppConfig,
+    feed_override: Option<&str>,
+    symbol_override: Option<&str>,
+) -> Result<(), StartupSelectionError> {
+    let feed = feed_override.map_or_else(|| config.default_feed.clone(), str::to_owned);
+    let symbol = symbol_override.map_or_else(|| config.default_symbol.clone(), str::to_owned);
+
+    let Some(feed_config) = config.feed(&feed) else {
+        return Err(StartupSelectionError::FeedNotConfigured {
+            feed,
+            available: config.feeds.iter().map(|item| item.id.clone()).collect(),
+        });
+    };
+    if !feed_config.symbols.contains(&symbol) {
+        return Err(StartupSelectionError::SymbolNotOffered {
+            feed,
+            symbol,
+            available: feed_config.symbols.clone(),
+        });
+    }
+
+    config.default_feed = feed;
+    config.default_symbol = symbol;
+    Ok(())
+}
+
+fn optional_env(variable: &'static str) -> Result<Option<String>, StartupSelectionError> {
+    match std::env::var(variable) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(StartupSelectionError::NonUnicode { variable })
+        }
+    }
+}
+
+/// Apply [`DEFAULT_FEED_ENV`] and [`DEFAULT_SYMBOL_ENV`] to a loaded config.
+///
+/// This thin environment adapter delegates all selection behavior to
+/// [`apply_startup_selection`], which stays deterministic and can be tested
+/// without mutating process-global environment variables.
+///
+/// # Errors
+///
+/// Returns [`StartupSelectionError`] for non-Unicode environment values or a
+/// feed/symbol pair that does not resolve against `config`.
+pub fn apply_startup_selection_from_env(
+    config: &mut AppConfig,
+) -> Result<(), StartupSelectionError> {
+    let feed = optional_env(DEFAULT_FEED_ENV)?;
+    let symbol = optional_env(DEFAULT_SYMBOL_ENV)?;
+    apply_startup_selection(config, feed.as_deref(), symbol.as_deref())
+}
+
 /// Parse and validate a config from a TOML string tagged with its `source`.
 fn parse(text: &str, source: ConfigSource) -> Result<AppConfig, ConfigError> {
     let config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse {
@@ -405,10 +542,31 @@ mod tests {
     fn embedded_default_parses_and_validates() {
         let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
         assert_eq!(config.default_feed, "binance");
+        assert_eq!(
+            config
+                .feeds
+                .iter()
+                .map(|feed| feed.id.as_str())
+                .collect::<Vec<_>>(),
+            ["binance", "hyperliquid", "metatrader"]
+        );
         let binance = config.feed("binance").expect("binance feed");
         assert_eq!(binance.provider, ProviderKind::Binance);
         assert!(binance.symbols.contains(&"BTCUSDT".to_string()));
         assert!(binance.symbols.contains(&"ETHUSDT".to_string()));
+
+        let hyperliquid = config.feed("hyperliquid").expect("Hyperliquid feed");
+        assert_eq!(hyperliquid.provider, ProviderKind::Hyperliquid);
+        assert_eq!(hyperliquid.symbols, ["BTC", "ETH", "HYPE", "SOL", "ZEC"]);
+        assert_eq!(
+            hyperliquid.provider.capabilities(),
+            FeedCapabilities {
+                book_capture: true,
+                history_paging: false,
+                traded_volume: true,
+            }
+        );
+        assert_eq!(config.side_note("hyperliquid"), None);
 
         let mt5 = config.feed("metatrader").expect("metatrader feed");
         assert_eq!(mt5.provider, ProviderKind::MetaTrader);
@@ -420,6 +578,59 @@ mod tests {
         // and keeps whatever the presets file says.
         assert_eq!(mt5.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(binance.bubble_preset, None);
+    }
+
+    #[test]
+    fn startup_selection_override_preserves_all_three_feeds() {
+        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let feeds_before = config.feeds.clone();
+        let metatrader_before = config.metatrader.clone();
+
+        apply_startup_selection(&mut config, Some("hyperliquid"), Some("BTC"))
+            .expect("valid startup selection");
+
+        assert_eq!(config.default_feed, "hyperliquid");
+        assert_eq!(config.default_symbol, "BTC");
+        assert_eq!(config.feeds, feeds_before, "the catalog is not an override");
+        assert_eq!(config.metatrader, metatrader_before);
+        assert_eq!(
+            config
+                .feeds
+                .iter()
+                .map(|feed| feed.id.as_str())
+                .collect::<Vec<_>>(),
+            ["binance", "hyperliquid", "metatrader"]
+        );
+    }
+
+    #[test]
+    fn startup_selection_rejects_an_unknown_feed_without_mutating_config() {
+        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let before = config.clone();
+
+        let error = apply_startup_selection(&mut config, Some("ghost"), Some("BTC"))
+            .expect_err("unknown feed");
+
+        assert_eq!(config, before, "failed selection is atomic");
+        assert_eq!(
+            error.to_string(),
+            "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: binance, hyperliquid, metatrader"
+        );
+    }
+
+    #[test]
+    fn startup_selection_rejects_a_symbol_outside_the_selected_feed() {
+        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let before = config.clone();
+
+        let error = apply_startup_selection(&mut config, Some("hyperliquid"), Some("BTCUSDT"))
+            .expect_err("symbol belongs to Binance, not Hyperliquid");
+
+        assert_eq!(config, before, "failed selection is atomic");
+        assert_eq!(
+            error.to_string(),
+            "QUANTICK_DEFAULT_SYMBOL='BTCUSDT' is not offered by feed 'hyperliquid'; available symbols: BTC, ETH, HYPE, SOL, ZEC"
+        );
     }
 
     #[test]
@@ -489,6 +700,7 @@ mod tests {
         assert_eq!(config.provider_of("mt"), Some(ProviderKind::MetaTrader));
         assert!(ProviderKind::MetaTrader.is_implemented());
         assert!(ProviderKind::Binance.is_implemented());
+        assert!(ProviderKind::Hyperliquid.is_implemented());
         // No [metatrader] section: defaults apply.
         assert_eq!(config.metatrader, MetaTraderSettings::default());
     }

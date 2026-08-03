@@ -5,7 +5,10 @@
 //! flow to the UI as [`FeedEvent`]s; the UI's [`FeedCommand`]s (e.g. "load older
 //! history") are serviced between live trades.
 
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
@@ -17,7 +20,9 @@ use quantick_feed_binance::{
     run_with_reconnect,
 };
 
-use super::{FeedCommand, FeedEvent, FeedHandle, initial_backfill_target};
+use super::{
+    FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice, initial_backfill_target,
+};
 use crate::config::ProviderKind;
 
 /// Default number of REST depth levels requested per side.
@@ -25,12 +30,14 @@ const DEFAULT_BOOK_DEPTH: u16 = 1_000;
 
 /// Depth events are independent from the established trade channel.
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
+const NOTICE_CHANNEL_CAPACITY: usize = 32;
 
 /// Start the Binance feed for `symbol` on a background thread.
 #[must_use]
 pub fn spawn(symbol: &str) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
+    let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let symbol = symbol.to_string();
     std::thread::Builder::new()
@@ -41,16 +48,13 @@ pub fn spawn(symbol: &str) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, cmd_rx));
+            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx));
         })
         .expect("spawn feed thread");
     FeedHandle {
         events: rx,
         book_events: book_rx,
-        // A public venue needs no local setup, so it has nothing to walk the
-        // user through: its trouble is network trouble, and that already shows
-        // as a stalled feed on the status bar.
-        notices: super::silent_notices(),
+        notices: notice_rx,
         // Every aggTrade is an execution carrying its real size, and the venue
         // answers the same for every symbol it lists — nothing to narrow later.
         capabilities: super::fixed_capabilities(ProviderKind::Binance.capabilities()),
@@ -63,6 +67,7 @@ async fn feed_task(
     symbol: String,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     let http = BinanceHttp::new();
@@ -96,9 +101,13 @@ async fn feed_task(
     // Fixed seed: a single desktop client, so jitter needs no cross-client
     // decorrelation, and a fixed seed keeps behaviour reproducible.
     let backoff = Backoff::for_feed(0x9E37_79B9_7F4A_7C15);
-    let reconnect = tokio::spawn(async move { run_with_reconnect(&url, &live_tx, backoff).await });
+    let (connected_tx, mut connected_rx) = watch::channel(false);
+    let reconnect = tokio::spawn(async move {
+        run_with_reconnect(&url, &live_tx, &connected_tx, backoff).await;
+    });
     let snapshot_limit = initial_book_depth();
     let mut book_capture: Option<BookCaptureTask> = None;
+    let mut ever_connected = false;
 
     loop {
         tokio::select! {
@@ -110,6 +119,19 @@ async fn feed_task(
                         }
                     }
                     None => break, // stream ended
+                }
+            }
+            changed = connected_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let notice = connection_notice(
+                    *connected_rx.borrow_and_update(),
+                    &mut ever_connected,
+                    "Binance",
+                );
+                if notice_tx.send(notice).await.is_err() {
+                    break;
                 }
             }
             maybe_cmd = cmd_rx.recv() => {

@@ -15,6 +15,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::feed::FeedConnectionState;
 use crate::metrics;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -29,24 +30,24 @@ const CELL_SPACING_PX: f32 = 8.0;
 /// What the provenance dot reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedState {
-    /// No trade has arrived yet.
+    /// The first live transport is not established yet.
     Connecting,
-    /// Live and within the lag threshold.
+    /// A previously established live transport is reconnecting.
+    Reconnecting,
+    /// The provider reports an established live transport.
     Live,
-    /// Live but the newest trade is older than [`metrics::HIGH_LAG_MS`].
-    Stalled,
     /// A recorded session is the source.
     Replay,
 }
 
 impl FeedState {
-    /// Dot colour: green live, amber replay, red stalled, faint connecting.
+    /// Dot colour: green live, amber replay/reconnect, faint connecting.
     #[must_use]
     pub fn color(self) -> egui::Color32 {
         match self {
             Self::Connecting => theme::TEXT_FAINT,
+            Self::Reconnecting => theme::WARN,
             Self::Live => theme::BUY,
-            Self::Stalled => theme::WARN,
             Self::Replay => theme::AMBER,
         }
     }
@@ -56,8 +57,8 @@ impl FeedState {
     pub fn label(self) -> &'static str {
         match self {
             Self::Connecting => "connecting",
+            Self::Reconnecting => "reconnecting",
             Self::Live => "live",
-            Self::Stalled => "stalled",
             Self::Replay => "replay",
         }
     }
@@ -65,14 +66,14 @@ impl FeedState {
 
 /// Classify the feed for the provenance dot.
 #[must_use]
-pub fn feed_state(replaying: bool, lag_ms: Option<i64>) -> FeedState {
+pub fn feed_state(replaying: bool, connection: FeedConnectionState) -> FeedState {
     if replaying {
         return FeedState::Replay;
     }
-    match lag_ms {
-        None => FeedState::Connecting,
-        Some(lag) if lag > metrics::HIGH_LAG_MS => FeedState::Stalled,
-        Some(_) => FeedState::Live,
+    match connection {
+        FeedConnectionState::Connecting => FeedState::Connecting,
+        FeedConnectionState::Reconnecting => FeedState::Reconnecting,
+        FeedConnectionState::Connected => FeedState::Live,
     }
 }
 
@@ -93,9 +94,18 @@ pub struct StatusModel {
     pub symbol: String,
     /// Replay speed/progress while a recording plays, `None` when live.
     pub replay: Option<ReplayFigures>,
-    /// Exchange-to-screen lag of the newest trade; `None` before the first
-    /// trade or while replaying (a recording has no lag to report).
-    pub feed_lag_ms: Option<i64>,
+    /// Provider-neutral live transport state, reported by the reconnect loop.
+    pub connection: FeedConnectionState,
+    /// Exchange-to-screen delay observed when the newest trade arrived; `None`
+    /// before the first live trade or while replaying (a recording has no lag
+    /// to report).
+    /// How late the newest print was when it reached the UI, as observed
+    /// when it arrived. Frozen between prints — see [`tape_text`].
+    pub feed_arrival_ms: Option<i64>,
+    /// Wall clock minus the newest event's own timestamp, recomputed every
+    /// frame. This is what catches a transport that stays open and stops
+    /// delivering, which no error and no connection state reports.
+    pub tape_age_ms: Option<i64>,
     /// The bar spec, e.g. `tick(50)`.
     pub spec_summary: String,
     /// How far the forming bar is from closing, e.g. `37/50 ticks`, when its
@@ -136,18 +146,34 @@ pub struct StatusModel {
     pub show_perf: bool,
 }
 
-/// The lag/progress cell: `lag 123 ms` live, `10× 45%` while replaying,
-/// `lag —` before the first trade.
+/// The tape cell: `arrival 123 ms` live, `stale 12 s` when the tape has gone
+/// quiet, `10× 45%` while replaying, `arrival —` before the first trade.
+///
+/// Two different measurements, and the distinction is the point. *Arrival* is
+/// how late the newest print was when it reached the UI — an observation
+/// stored when that print arrived, which stops ageing the moment prints stop.
+/// *Staleness* is wall clock minus the newest event's own timestamp, computed
+/// every frame. A socket that stays open and delivers nothing keeps a healthy
+/// arrival figure forever, so the honest readout is the age of the tape.
 #[must_use]
-pub fn lag_text(replay: Option<ReplayFigures>, lag_ms: Option<i64>) -> String {
-    match (replay, lag_ms) {
-        (Some(figures), _) => format!(
+pub fn tape_text(
+    replay: Option<ReplayFigures>,
+    arrival_ms: Option<i64>,
+    tape_age_ms: Option<i64>,
+) -> String {
+    if let Some(figures) = replay {
+        return format!(
             "{:.0}× {:>3.0}%",
             figures.speed,
             figures.progress.clamp(0.0, 1.0) * 100.0
-        ),
-        (None, Some(lag)) => format!("lag {lag} ms"),
-        (None, None) => "lag —".to_owned(),
+        );
+    }
+    match (tape_age_ms, arrival_ms) {
+        (Some(age), _) if age > metrics::STALE_TAPE_MS => {
+            format!("stale {} s", age / 1_000)
+        }
+        (_, Some(arrival)) => format!("arrival {arrival} ms"),
+        (_, None) => "arrival —".to_owned(),
     }
 }
 
@@ -182,7 +208,7 @@ pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) {
 
 /// Left section: state dot, venue, symbol, lag.
 fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
-    let state = feed_state(model.replay.is_some(), model.feed_lag_ms);
+    let state = feed_state(model.replay.is_some(), model.connection);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(STATE_DOT_DIAMETER_PX, STATE_DOT_DIAMETER_PX),
         egui::Sense::hover(),
@@ -200,15 +226,25 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
             .monospace()
             .color(theme::TEXT_PRIMARY),
     );
-    let lag_color = match state {
-        FeedState::Stalled => theme::WARN,
-        FeedState::Replay => theme::AMBER,
-        FeedState::Live | FeedState::Connecting => theme::TEXT_MUTED,
+    let stale = model
+        .tape_age_ms
+        .is_some_and(|age| age > metrics::STALE_TAPE_MS);
+    let tape_color = match (state, model.feed_arrival_ms) {
+        (FeedState::Replay, _) => theme::AMBER,
+        // A quiet tape and a late print are both worth a warning, and a
+        // wedged socket only shows up as the first.
+        _ if stale => theme::WARN,
+        (_, Some(arrival)) if arrival > metrics::HIGH_LAG_MS => theme::WARN,
+        (FeedState::Connecting | FeedState::Reconnecting | FeedState::Live, _) => theme::TEXT_MUTED,
     };
     ui.label(
-        egui::RichText::new(lag_text(model.replay, model.feed_lag_ms))
-            .monospace()
-            .color(lag_color),
+        egui::RichText::new(tape_text(
+            model.replay,
+            model.feed_arrival_ms,
+            model.tape_age_ms,
+        ))
+        .monospace()
+        .color(tape_color),
     );
 }
 
@@ -301,22 +337,34 @@ mod tests {
 
     #[test]
     fn the_dot_reads_the_feed_honestly() {
-        assert_eq!(feed_state(false, None), FeedState::Connecting);
-        assert_eq!(feed_state(false, Some(120)), FeedState::Live);
         assert_eq!(
-            feed_state(false, Some(metrics::HIGH_LAG_MS + 1)),
-            FeedState::Stalled
+            feed_state(false, FeedConnectionState::Connecting),
+            FeedState::Connecting
         );
-        // A recording is replay, whatever its (meaningless) lag would be.
-        assert_eq!(feed_state(true, None), FeedState::Replay);
-        assert_eq!(feed_state(true, Some(999_999)), FeedState::Replay);
+        assert_eq!(
+            feed_state(false, FeedConnectionState::Reconnecting),
+            FeedState::Reconnecting
+        );
+        assert_eq!(
+            feed_state(false, FeedConnectionState::Connected),
+            FeedState::Live
+        );
+        // A recording is replay, whatever the displaced live transport says.
+        assert_eq!(
+            feed_state(true, FeedConnectionState::Connecting),
+            FeedState::Replay
+        );
+        assert_eq!(
+            feed_state(true, FeedConnectionState::Connected),
+            FeedState::Replay
+        );
     }
 
     #[test]
     fn dot_colours_follow_the_tokens() {
         assert_eq!(FeedState::Live.color(), theme::BUY);
         assert_eq!(FeedState::Replay.color(), theme::AMBER);
-        assert_eq!(FeedState::Stalled.color(), theme::WARN);
+        assert_eq!(FeedState::Reconnecting.color(), theme::WARN);
         assert_eq!(FeedState::Connecting.color(), theme::TEXT_FAINT);
     }
 
@@ -326,9 +374,15 @@ mod tests {
             speed: 10.0,
             progress: 0.45,
         });
-        assert_eq!(lag_text(replay, None), "10×  45%");
-        assert_eq!(lag_text(None, Some(230)), "lag 230 ms");
-        assert_eq!(lag_text(None, None), "lag —");
+        assert_eq!(tape_text(replay, None, None), "10×  45%");
+        assert_eq!(tape_text(None, Some(230), Some(300)), "arrival 230 ms");
+        // The tape has gone quiet: the stored arrival figure is stale itself.
+        assert_eq!(
+            tape_text(None, Some(42), Some(12_000)),
+            "stale 12 s",
+            "a wedged socket keeps a healthy-looking arrival forever"
+        );
+        assert_eq!(tape_text(None, None, None), "arrival —");
     }
 
     #[test]
@@ -337,7 +391,7 @@ mod tests {
             speed: 1.0,
             progress: 1.7,
         });
-        assert_eq!(lag_text(over, None), "1× 100%");
+        assert_eq!(tape_text(over, None, None), "1× 100%");
     }
 
     #[test]
@@ -360,7 +414,9 @@ mod tests {
                     speed: 10.0,
                     progress: 0.4,
                 }),
-                feed_lag_ms: (!replaying).then_some(120),
+                connection: FeedConnectionState::Connected,
+                feed_arrival_ms: (!replaying).then_some(120),
+                tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
                 backfilled_bars: 240,
@@ -397,7 +453,9 @@ mod tests {
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,
-            feed_lag_ms: Some(106),
+            connection: FeedConnectionState::Connected,
+            feed_arrival_ms: Some(106),
+            tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),
             backfilled_bars: 3_999,

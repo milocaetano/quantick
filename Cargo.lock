@@ -2470,6 +2470,7 @@ dependencies = [
  "egui-phosphor",
  "quantick-engine",
  "quantick-feed-binance",
+ "quantick-feed-hyperliquid",
  "quantick-feed-mt5",
  "quantick-indicators",
  "quantick-orderbook",
@@ -2508,6 +2509,21 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "quantick-feed-hyperliquid"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "quantick-engine",
+ "quantick-orderbook",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
 ]
 
 [[package]]

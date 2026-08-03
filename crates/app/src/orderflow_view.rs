@@ -50,6 +50,35 @@ fn status_color(status: &CaptureStatus) -> egui::Color32 {
     }
 }
 
+/// Borrowed chart timeline handed to one order-flow projection request.
+///
+/// Keeping the boundary revision beside the exact bar slice prevents callers
+/// from accidentally pairing a new timeline with an old cache identity.
+#[derive(Clone, Copy)]
+pub(crate) struct VisibleBarTimeline<'a> {
+    revision: u64,
+    first_bar_index: usize,
+    closed: &'a [Bar],
+    partial: Option<&'a Bar>,
+}
+
+impl<'a> VisibleBarTimeline<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        revision: u64,
+        first_bar_index: usize,
+        closed: &'a [Bar],
+        partial: Option<&'a Bar>,
+    ) -> Self {
+        Self {
+            revision,
+            first_bar_index,
+            closed,
+            partial,
+        }
+    }
+}
+
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
     symbol: String,
@@ -359,10 +388,25 @@ impl OrderflowView {
         }
     }
 
-    /// Forward one feed event to the book thread. Generation and symbol
-    /// filtering happen engine-side.
+    /// Forward one feed event and its UI observation time to the book thread.
+    /// Generation and symbol filtering happen engine-side; only an accepted
+    /// timestamped event becomes a latency observation.
+    pub fn handle_depth_event_at(&mut self, event: DepthEvent, received_at_ms: i64) {
+        self.worker.send(BookCommand::Depth {
+            event,
+            received_at_ms,
+        });
+    }
+
+    /// Deterministic shorthand for tests that do not inspect arrival latency.
+    #[cfg(test)]
     pub fn handle_depth_event(&mut self, event: DepthEvent) {
-        self.worker.send(BookCommand::Depth(event));
+        let received_at_ms = match &event {
+            DepthEvent::Snapshot { observed_at_ms, .. } => *observed_at_ms,
+            DepthEvent::Update { event_time_ms, .. } => *event_time_ms,
+            DepthEvent::Status { .. } => 0,
+        };
+        self.handle_depth_event_at(event, received_at_ms);
     }
 
     /// Request projection of the visible bar slice and return the newest
@@ -370,9 +414,7 @@ impl OrderflowView {
     /// next frame swap, not the UI.
     pub fn project_visible(
         &mut self,
-        first_bar_index: usize,
-        closed: &[Bar],
-        partial: Option<&Bar>,
+        timeline: VisibleBarTimeline<'_>,
         lane: bool,
         on_newest_bar: bool,
         price_range: (f64, f64),
@@ -382,9 +424,10 @@ impl OrderflowView {
         }
         self.sync_published();
         let request = ProjectionRequest {
-            first_bar_index,
-            closed: closed.to_vec(),
-            partial: partial.cloned(),
+            timeline_revision: timeline.revision,
+            first_bar_index: timeline.first_bar_index,
+            closed: timeline.closed.to_vec(),
+            partial: timeline.partial.cloned(),
             lane,
             on_newest_bar,
             price_range,
@@ -603,6 +646,16 @@ impl OrderflowView {
     pub fn health(&mut self) -> OrderflowHealth {
         self.sync_published();
         self.published.health.clone()
+    }
+
+    /// Timestamp of the newest accepted book event, from the frame's mirror.
+    ///
+    /// Read-only twin of [`Self::health`] for callers that only need this one
+    /// figure and hold `&self` — the status bar's tape-age readout, which
+    /// runs while the frame is already borrowing the app immutably.
+    #[must_use]
+    pub fn last_event_ms(&self) -> Option<i64> {
+        self.published.health.last_event_ms
     }
 
     /// Whether the map is open but not yet (or no longer) backed by a live
@@ -1753,6 +1806,10 @@ mod tests {
         }
     }
 
+    fn visible_timeline(bars: &[Bar]) -> VisibleBarTimeline<'_> {
+        VisibleBarTimeline::new(0, 0, bars, None)
+    }
+
     #[test]
     fn capture_reads_as_syncing_only_while_enabled_and_settling() {
         let mut view = OrderflowView::new("BTCUSDT");
@@ -1790,11 +1847,11 @@ mod tests {
 
         let bars = [bar(900, 1_100)];
         // First call queues the projection; the frame appears after a flush.
-        let first = view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
+        let first = view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
         assert!(first.is_none());
         view.flush_for_test();
         let frame = view
-            .project_visible(0, &bars, None, true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
@@ -1860,7 +1917,7 @@ mod tests {
         // One 99 bid and one 101 ask (see `snapshot_event`).
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, true, (100.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, (100.0, 102.0));
         view.flush_for_test();
 
         let ladder = view.published.ladder.as_ref().expect("published ladder");
@@ -1938,10 +1995,10 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1);
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(0, &bars, None, true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
             .expect("published frame");
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
@@ -1949,7 +2006,7 @@ mod tests {
         // Turning the bubbles off closes the pipeline again.
         view.set_bubbles_enabled(false);
         assert!(
-            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()
         );
     }
@@ -1960,16 +2017,16 @@ mod tests {
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(0, &bars, None, true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
         view.flush_for_test();
         assert!(
-            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_some()
         );
 
         view.set_enabled(false, 11);
         assert!(
-            view.project_visible(0, &bars, None, true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()
         );
         view.flush_for_test();

@@ -25,7 +25,9 @@ use crate::drawings::{
     self, ChartPoint, DeleteOutcome, DrawContext, Drawings, MAX_DRAWING_FILL_ALPHA,
     MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, PresetHost,
 };
-use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
+use crate::feed::{
+    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
+};
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
@@ -37,7 +39,7 @@ use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind}
 use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
-use crate::orderflow_view::OrderflowView;
+use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::price_view::PriceView;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::{BarKind, BarSpec, ChartState};
@@ -330,6 +332,9 @@ pub struct QuantickApp {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     notice: FeedNotice,
+    /// State reported by the live trade transport, independent from how often
+    /// that market prints and from the last observed arrival latency.
+    feed_connection: FeedConnectionState,
     /// What the running feed can really do, read fresh every frame. The feed
     /// narrows it once a session tells it what the symbol actually offers.
     feed_capabilities: watch::Receiver<FeedCapabilities>,
@@ -483,6 +488,12 @@ pub struct QuantickApp {
     /// eframe. Separates "we are slow" from "we are waiting for the display".
     cpu_frames: FrameStats,
     last_frame: Option<Instant>,
+    /// Exchange-to-UI delay measured when the newest live trade arrived.
+    /// Stable while the tape is quiet: market inactivity is not transport lag.
+    latest_trade_latency_ms: Option<i64>,
+    /// Timestamp of the newest live trade (epoch ms), for the tape-age
+    /// readout. The latency above is an observation frozen at arrival; this
+    /// is what wall clock is compared against every frame.
     latest_trade_ms: Option<i64>,
     live_trades: u64,
     trades_since_summary: u64,
@@ -529,6 +540,7 @@ impl QuantickApp {
             notices: feed.notices,
             feed_capabilities: feed.capabilities,
             notice: FeedNotice::Clear,
+            feed_connection: FeedConnectionState::Connecting,
             commands: feed.commands,
             orderflow: OrderflowView::new(symbol.clone()),
             indicator_worker: IndicatorWorker::spawn(),
@@ -600,6 +612,7 @@ impl QuantickApp {
             frames: FrameStats::new(120),
             cpu_frames: FrameStats::new(120),
             last_frame: None,
+            latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
             trades_since_summary: 0,
@@ -1208,6 +1221,7 @@ impl QuantickApp {
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -1224,7 +1238,7 @@ impl QuantickApp {
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
         self.loading.restart(LoadingTask::History);
-        self.latest_trade_ms = None;
+        self.latest_trade_latency_ms = None;
         self.orderflow.reset_for_symbol(self.symbol.clone());
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
@@ -1407,15 +1421,18 @@ impl QuantickApp {
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
-    /// latest trade timestamp and live-trade counts for the metrics.
+    /// observed arrival latency and live-trade counts for the metrics.
     fn drain_feed(&mut self) {
+        self.drain_feed_with_clock(metrics::wall_clock_ms);
+    }
+
+    /// Clock-injected drain used to prove that one UI cycle is one observation.
+    fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
+        let mut received_at_ms = None;
         loop {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
                     self.loading.end(LoadingTask::History);
-                    if let Some(last) = trades.last() {
-                        self.latest_trade_ms = Some(last.timestamp_ms);
-                    }
                     self.history_trades += trades.len();
                     self.state.ingest_backfill(&trades);
                     self.indicator_worker
@@ -1440,10 +1457,16 @@ impl QuantickApp {
                     // Older trades re-cut every bar; replay from scratch.
                     self.send_indicator_rebuild();
                 }
-                Ok(FeedEvent::Live(trade)) => self.ingest_live_trade(&trade),
+                Ok(FeedEvent::Live(trade)) => {
+                    let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                    self.ingest_live_trade_at(&trade, received_at_ms);
+                }
                 Ok(FeedEvent::LiveBatch(trades)) => {
-                    for trade in &trades {
-                        self.ingest_live_trade(trade);
+                    if !trades.is_empty() {
+                        let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                        for trade in &trades {
+                            self.ingest_live_trade_at(trade, received_at_ms);
+                        }
                     }
                 }
                 Ok(FeedEvent::Reset) => self.reset_market_state(),
@@ -1459,12 +1482,26 @@ impl QuantickApp {
     /// A closed channel (a feed with nothing to report) simply yields nothing.
     fn drain_notices(&mut self) {
         while let Ok(notice) = self.notices.try_recv() {
-            self.notice = notice;
+            match notice {
+                FeedNotice::Connected => {
+                    self.feed_connection = FeedConnectionState::Connected;
+                    self.notice = FeedNotice::Clear;
+                }
+                FeedNotice::Reconnecting { .. } => {
+                    self.feed_connection = FeedConnectionState::Reconnecting;
+                    self.notice = notice;
+                }
+                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => self.notice = notice,
+                FeedNotice::Clear => self.notice = FeedNotice::Clear,
+            }
         }
     }
 
-    /// Ingest one live trade: bars, order flow and the metrics that follow it.
-    fn ingest_live_trade(&mut self, trade: &quantick_engine::Trade) {
+    /// Deterministic half of live ingestion: `received_at_ms` is the UI's epoch
+    /// observation time, supplied explicitly so tests never wait on a clock.
+    fn ingest_live_trade_at(&mut self, trade: &quantick_engine::Trade, received_at_ms: i64) {
+        self.latest_trade_latency_ms =
+            metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
         self.latest_trade_ms = Some(trade.timestamp_ms);
         self.live_trades += 1;
         self.trades_since_summary += 1;
@@ -1734,6 +1771,7 @@ impl QuantickApp {
         self.hover_pos = None;
         self.reset_drawing_overlay();
         self.history_trades = 0;
+        self.latest_trade_latency_ms = None;
         self.latest_trade_ms = None;
         self.last_lane_divider_x = None;
         // The refill arrives as one backfill batch; keep the loading indicator
@@ -1770,9 +1808,20 @@ impl QuantickApp {
     /// Drain a bounded number of synchronized depth events. The separate
     /// channel and budget ensure heatmap work cannot block candle ingestion.
     fn drain_book_feed(&mut self) {
+        self.drain_book_feed_with_clock(metrics::wall_clock_ms);
+    }
+
+    /// Clock-injected depth drain; a burst handled by one UI frame has one
+    /// observation time, matching the trade-side metric and avoiding O(n)
+    /// system-clock reads.
+    fn drain_book_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
+        let mut received_at_ms = None;
         for _ in 0..BOOK_DRAIN_BUDGET {
             match self.book_events.try_recv() {
-                Ok(event) => self.orderflow.handle_depth_event(event),
+                Ok(event) => {
+                    let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
+                    self.orderflow.handle_depth_event_at(event, received_at_ms);
+                }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     if self.orderflow.enabled() && !self.book_channel_closed_reported {
@@ -1792,17 +1841,35 @@ impl QuantickApp {
         }
     }
 
-    /// How far behind the wall clock the newest trade is — the health signal
-    /// for a live feed.
+    /// Delay observed when the newest live trade reached the UI.
     ///
     /// `None` while a session is replaying: those prints are as old as the day
-    /// they were recorded, so measuring them against today's clock reports a
-    /// four-month lag and warns about a connection that is working perfectly.
-    fn trade_lag_ms(&self) -> Option<i64> {
+    /// they were recorded, so their original arrival latency is unavailable.
+    ///
+    /// This figure freezes between prints — it is an observation, not a
+    /// measurement of now. [`Self::tape_age_ms`] is the one that ages.
+    fn trade_arrival_ms(&self) -> Option<i64> {
         if self.replay.is_some() {
             return None;
         }
-        metrics::feed_lag_ms(metrics::wall_clock_ms(), self.latest_trade_ms)
+        self.latest_trade_latency_ms
+    }
+
+    /// How old the newest event on the tape is, right now.
+    ///
+    /// Deterministic half: the caller supplies wall clock. Takes the newer of
+    /// the trade stream and the book, so a symbol with depth but a thin tape
+    /// is not called stale while its book is live. `None` while replaying, and
+    /// before anything has arrived — nothing to be stale about yet.
+    fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
+        if self.replay.is_some() {
+            return None;
+        }
+        let newest = match (self.latest_trade_ms, self.orderflow.last_event_ms()) {
+            (Some(trade), Some(book)) => Some(trade.max(book)),
+            (trade, book) => trade.or(book),
+        }?;
+        Some(now_ms.saturating_sub(newest).max(0))
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
@@ -1812,13 +1879,13 @@ impl QuantickApp {
             return;
         }
         let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
-        let lag = self.trade_lag_ms();
+        let lag = self.trade_arrival_ms();
         let avg = self.frames.avg_ms().unwrap_or(0.0);
         let cpu_avg = self.cpu_frames.avg_ms().unwrap_or(0.0);
         let worst = self.frames.worst_ms().unwrap_or(0.0);
         let fps = self.frames.fps().unwrap_or(0.0);
         let book = self.orderflow.health();
-        let book_lag = metrics::feed_lag_ms(metrics::wall_clock_ms(), book.last_event_ms);
+        let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
         let book_queue_len = self.book_events.len();
         let candle_preset =
@@ -1832,7 +1899,7 @@ impl QuantickApp {
             frame_avg_ms = avg,
             frame_cpu_ms = cpu_avg,
             frame_worst_ms = worst,
-            feed_lag_ms = lag,
+            feed_arrival_ms = lag,
             trades_per_s = rate,
             live_trades = self.live_trades,
             bar_spec = self.state.spec().summary(),
@@ -1842,7 +1909,7 @@ impl QuantickApp {
             book_last_update_id = book.last_update_id,
             book_last_event_ms = book.last_event_ms,
             book_snapshot_observed_ms = book.last_snapshot_observed_ms,
-            book_lag_ms = book_lag,
+            book_arrival_ms = book_lag,
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
             book_queue_len,
@@ -1919,13 +1986,17 @@ impl QuantickApp {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
-                event_code = "HEATMAP_HIGH_LAG",
+                event_code = "HEATMAP_HIGH_ARRIVAL",
                 symbol = self.symbol.as_str(),
-                book_lag_ms = l,
+                book_arrival_ms = l,
                 threshold_ms = metrics::HIGH_LAG_MS,
                 book_status = book.status,
                 action = "inspect_depth_connection",
-                "order-book events are behind wall clock"
+                // Arrival, not age: this is how late the newest accepted
+                // depth event was when it reached us, an observation frozen
+                // at that moment. A book that stops updating keeps its last
+                // figure — the tape-age readout is what catches that.
+                "order-book events are arriving late"
             );
         }
         if book.dropped_cells > 0
@@ -2620,9 +2691,12 @@ impl QuantickApp {
         // same thing: with them apart, the newest prints would be clustered and
         // sized as lane prints and then squeezed into a single candle slot.
         let orderflow_frame = self.orderflow.project_visible(
-            closed_start,
-            visible_closed,
-            partial_visible,
+            VisibleBarTimeline::new(
+                self.state.timeline_revision(),
+                closed_start,
+                visible_closed,
+                partial_visible,
+            ),
             lane_width_px > 0.0,
             end == total,
             scale.range(),
@@ -3215,7 +3289,9 @@ impl QuantickApp {
                 speed: link.status.speed(),
                 progress: link.status.progress(),
             }),
-            feed_lag_ms: self.trade_lag_ms(),
+            connection: self.feed_connection,
+            feed_arrival_ms: self.trade_arrival_ms(),
+            tape_age_ms: self.tape_age_at(metrics::wall_clock_ms()),
             spec_summary: self.state.spec().summary(),
             bar_progress: self
                 .state
@@ -4062,6 +4138,7 @@ impl QuantickApp {
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -4108,6 +4185,7 @@ impl QuantickApp {
         // The old feed's trouble is not the new feed's: switching away from a
         // blocked source must not leave its instruction on screen.
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -4143,6 +4221,7 @@ impl QuantickApp {
         self.notices = handle.notices;
         self.feed_capabilities = handle.capabilities;
         self.notice = FeedNotice::Clear;
+        self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
         self.book_channel_closed_reported = false;
@@ -4656,6 +4735,65 @@ plot(close)
     }
 
     #[test]
+    fn only_explicit_connection_notices_drive_transport_state() {
+        let (mut app, notices, _feed_ends) = test_app_with_notices();
+        app.latest_trade_latency_ms = Some(42);
+        assert_eq!(app.feed_connection, FeedConnectionState::Connecting);
+
+        notices.blocking_send(FeedNotice::Connected).unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(app.notice, FeedNotice::Clear);
+
+        // The MetaTrader bridge supervisor and bridge server share this
+        // channel. Progress or attention from either can arrive after the
+        // server has reported Connected, so neither is a transport transition.
+        notices
+            .blocking_send(FeedNotice::working("late supervisor progress"))
+            .unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+
+        notices
+            .blocking_send(FeedNotice::attention(
+                "late supervisor warning",
+                "No transport action.",
+            ))
+            .unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+
+        notices
+            .blocking_send(FeedNotice::reconnecting(
+                "Hyperliquid disconnected — reconnecting",
+            ))
+            .unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Reconnecting);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Reconnecting,
+            "a previous latency observation must not keep a disconnected socket green"
+        );
+
+        notices.blocking_send(FeedNotice::Connected).unwrap();
+        app.drain_notices();
+        assert_eq!(app.feed_connection, FeedConnectionState::Connected);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+    }
+
+    #[test]
     fn a_feed_with_nothing_to_report_leaves_the_chart_alone() {
         // Binance and replay hand over a closed channel; draining it must be a
         // no-op rather than an error the app has to special-case.
@@ -4861,6 +4999,129 @@ plot(close)
                 quantick_engine::Side::Sell
             },
         }
+    }
+
+    #[test]
+    fn quiet_market_keeps_the_observed_arrival_latency_live() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.feed_connection = FeedConnectionState::Connected;
+        let trade = trade(1);
+        let received_at_ms = trade.timestamp_ms + 42;
+
+        app.ingest_live_trade_at(&trade, received_at_ms);
+
+        assert_eq!(app.trade_arrival_ms(), Some(42));
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Live
+        );
+        assert_eq!(
+            app.trade_arrival_ms(),
+            Some(42),
+            "reading the status again without another print must not age latency"
+        );
+    }
+
+    /// The gap the removed `Stalled` state used to cover: a transport that
+    /// stays open and stops delivering. No error, no disconnect, and the
+    /// stored arrival figure never ages — only the tape's own age does.
+    #[test]
+    fn a_quiet_tape_reads_as_stale_while_arrival_stays_frozen() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.feed_connection = FeedConnectionState::Connected;
+        let trade = trade(1);
+        app.ingest_live_trade_at(&trade, trade.timestamp_ms + 42);
+
+        // A moment later: fresh.
+        let age = app
+            .tape_age_at(trade.timestamp_ms + 500)
+            .expect("a live tape has an age");
+        assert!(age < metrics::STALE_TAPE_MS);
+        assert_eq!(
+            statusbar::tape_text(None, app.trade_arrival_ms(), Some(age)),
+            "arrival 42 ms"
+        );
+
+        // A minute of silence on the same open socket.
+        let age = app
+            .tape_age_at(trade.timestamp_ms + 60_000)
+            .expect("still a tape, just an old one");
+        assert!(age > metrics::STALE_TAPE_MS, "{age} ms");
+        assert_eq!(
+            app.trade_arrival_ms(),
+            Some(42),
+            "the arrival observation is frozen, which is why it cannot report this"
+        );
+        assert_eq!(
+            statusbar::tape_text(None, app.trade_arrival_ms(), Some(age)),
+            "stale 60 s"
+        );
+    }
+
+    #[test]
+    fn backfill_does_not_claim_a_live_transport_latency() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(1)]))
+            .unwrap();
+
+        app.drain_feed();
+
+        assert_eq!(app.trade_arrival_ms(), None);
+        assert_eq!(
+            statusbar::feed_state(false, app.feed_connection),
+            statusbar::FeedState::Connecting
+        );
+    }
+
+    #[test]
+    fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
+        use std::cell::Cell;
+
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let last_trade = trade(3);
+        let received_at_ms = last_trade.timestamp_ms + 75;
+        evt_tx.try_send(FeedEvent::Live(trade(1))).unwrap();
+        evt_tx
+            .try_send(FeedEvent::LiveBatch(vec![trade(2), last_trade]))
+            .unwrap();
+        let clock_calls = Cell::new(0_u32);
+
+        app.drain_feed_with_clock(|| {
+            clock_calls.set(clock_calls.get() + 1);
+            received_at_ms
+        });
+
+        assert_eq!(clock_calls.get(), 1, "one wall-clock read per UI drain");
+        assert_eq!(app.live_trades, 3);
+        assert_eq!(app.trades_since_summary, 3);
+        assert_eq!(app.trade_arrival_ms(), Some(75));
+        assert_eq!(app.state.timeline_revision(), 3);
+        assert_eq!(app.state.partial().map(|bar| bar.trade_count), Some(3));
+    }
+
+    #[test]
+    fn one_book_drain_uses_one_clock_observation() {
+        use std::cell::Cell;
+
+        let (mut app, _evt_tx, _cmd_rx, book_tx) = test_app();
+        for _ in 0..2 {
+            book_tx
+                .try_send(DepthEvent::Status {
+                    symbol: "TESTUSDT".to_owned(),
+                    generation: 1,
+                    status: quantick_orderbook::DepthStatus::Connecting,
+                })
+                .unwrap();
+        }
+        let clock_calls = Cell::new(0_u32);
+
+        app.drain_book_feed_with_clock(|| {
+            clock_calls.set(clock_calls.get() + 1);
+            10_000
+        });
+
+        assert_eq!(clock_calls.get(), 1, "one wall-clock read per UI drain");
     }
 
     /// An app holding `count` backfilled trades, built into tick(1) bars — one

@@ -1,6 +1,6 @@
 [package]
-name = "quantick-feed-binance"
-description = "Live aggTrades feed from Binance public endpoints"
+name = "quantick-feed-hyperliquid"
+description = "Live perpetual trades and L2 book snapshots from Hyperliquid public endpoints"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,11 +12,9 @@ rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false }
 tracing = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros", "net"] }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "net"] }
