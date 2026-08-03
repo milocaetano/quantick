@@ -1,0 +1,10 @@
+[package]
+name = "quantick-indicators"
+description = "Deterministic indicator runtime: engine bars in, plot series out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+rust_decimal = "1"

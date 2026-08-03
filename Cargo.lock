@@ -2516,6 +2516,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-indicators"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quantick-orderbook"
 version = "0.1.0"
 dependencies = [

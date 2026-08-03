@@ -1,0 +1,7 @@
+# Expected plots of the CloseCvd test indicator over trades_small.csv with
+# tick(2) bars. close = last trade price of each bar; cvd = running sum of
+# (buy_volume - sell_volume). Values are {:?}-formatted f64 (bit-exact).
+bar_index,close,cvd
+0,101.0,-1.0
+1,103.0,1.0
+2,102.0,-1.0
