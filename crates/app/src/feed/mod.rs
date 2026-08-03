@@ -22,7 +22,10 @@ pub mod replay;
 use tokio::sync::{mpsc, watch};
 
 use quantick_engine::Trade;
-pub use quantick_feed_binance::depth::DepthEvent;
+// The provider-neutral depth type, from the crate that defines it. Three
+// feeds publish on this channel now; routing the shared type through one
+// venue's re-export is the name the next feed author would copy.
+pub use quantick_orderbook::DepthEvent;
 
 use crate::config::{FeedCapabilities, ProviderKind};
 

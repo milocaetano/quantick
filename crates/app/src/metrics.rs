@@ -15,6 +15,17 @@ pub const SLOW_FRAME_MS: f32 = 20.0;
 /// Feed lag beyond this many milliseconds is flagged (exchange → screen).
 pub const HIGH_LAG_MS: i64 = 5_000;
 
+/// A tape whose newest event is older than this reads as stale.
+///
+/// Not the same measurement as [`HIGH_LAG_MS`]: that one is how late a print
+/// was when it arrived, an observation that stops ageing once prints stop.
+/// This one is wall clock minus the newest event's timestamp, so it is what
+/// catches a socket that stays open and delivers nothing — no error, no
+/// disconnect, and a healthy-looking arrival figure frozen on screen. Ten
+/// seconds is long enough that a quiet minute on a thin instrument does not
+/// cry wolf, short enough that a wedged connection is visible.
+pub const STALE_TAPE_MS: i64 = 10_000;
+
 /// A rolling window of recent frame durations (milliseconds).
 #[derive(Debug)]
 pub struct FrameStats {
@@ -83,7 +94,7 @@ pub fn wall_clock_ms() -> i64 {
 /// clamped.
 #[must_use]
 pub fn feed_lag_ms(received_at_ms: i64, event_time_ms: Option<i64>) -> Option<i64> {
-    event_time_ms.map(|timestamp_ms| received_at_ms - timestamp_ms)
+    event_time_ms.map(|timestamp_ms| received_at_ms.saturating_sub(timestamp_ms))
 }
 
 #[cfg(test)]

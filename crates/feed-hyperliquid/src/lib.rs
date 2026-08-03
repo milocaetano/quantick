@@ -21,16 +21,11 @@
 //! moves behind the last published event rejects the complete image and ends
 //! that connection generation; it is never clamped to an invented time.
 
-pub mod backfill;
 pub mod depth;
 pub mod reconnect;
 pub mod stream;
 pub mod wire;
 
-pub use backfill::{
-    HYPERLIQUID_INFO_URL, HyperliquidHttp, RecentTradesError, RecentTradesSource,
-    fetch_recent_trades,
-};
 pub use reconnect::Backoff;
 pub use stream::{
     HYPERLIQUID_WS_URL, TradeSessionError, run_trade_session, run_trades_with_reconnect,

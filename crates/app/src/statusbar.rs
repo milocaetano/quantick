@@ -99,7 +99,13 @@ pub struct StatusModel {
     /// Exchange-to-screen delay observed when the newest trade arrived; `None`
     /// before the first live trade or while replaying (a recording has no lag
     /// to report).
-    pub feed_lag_ms: Option<i64>,
+    /// How late the newest print was when it reached the UI, as observed
+    /// when it arrived. Frozen between prints — see [`tape_text`].
+    pub feed_arrival_ms: Option<i64>,
+    /// Wall clock minus the newest event's own timestamp, recomputed every
+    /// frame. This is what catches a transport that stays open and stops
+    /// delivering, which no error and no connection state reports.
+    pub tape_age_ms: Option<i64>,
     /// The bar spec, e.g. `tick(50)`.
     pub spec_summary: String,
     /// How far the forming bar is from closing, e.g. `37/50 ticks`, when its
@@ -140,18 +146,34 @@ pub struct StatusModel {
     pub show_perf: bool,
 }
 
-/// The lag/progress cell: `lag 123 ms` live, `10× 45%` while replaying,
-/// `lag —` before the first trade.
+/// The tape cell: `arrival 123 ms` live, `stale 12 s` when the tape has gone
+/// quiet, `10× 45%` while replaying, `arrival —` before the first trade.
+///
+/// Two different measurements, and the distinction is the point. *Arrival* is
+/// how late the newest print was when it reached the UI — an observation
+/// stored when that print arrived, which stops ageing the moment prints stop.
+/// *Staleness* is wall clock minus the newest event's own timestamp, computed
+/// every frame. A socket that stays open and delivers nothing keeps a healthy
+/// arrival figure forever, so the honest readout is the age of the tape.
 #[must_use]
-pub fn lag_text(replay: Option<ReplayFigures>, lag_ms: Option<i64>) -> String {
-    match (replay, lag_ms) {
-        (Some(figures), _) => format!(
+pub fn tape_text(
+    replay: Option<ReplayFigures>,
+    arrival_ms: Option<i64>,
+    tape_age_ms: Option<i64>,
+) -> String {
+    if let Some(figures) = replay {
+        return format!(
             "{:.0}× {:>3.0}%",
             figures.speed,
             figures.progress.clamp(0.0, 1.0) * 100.0
-        ),
-        (None, Some(lag)) => format!("lag {lag} ms"),
-        (None, None) => "lag —".to_owned(),
+        );
+    }
+    match (tape_age_ms, arrival_ms) {
+        (Some(age), _) if age > metrics::STALE_TAPE_MS => {
+            format!("stale {} s", age / 1_000)
+        }
+        (_, Some(arrival)) => format!("arrival {arrival} ms"),
+        (_, None) => "arrival —".to_owned(),
     }
 }
 
@@ -204,15 +226,25 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
             .monospace()
             .color(theme::TEXT_PRIMARY),
     );
-    let lag_color = match (state, model.feed_lag_ms) {
+    let stale = model
+        .tape_age_ms
+        .is_some_and(|age| age > metrics::STALE_TAPE_MS);
+    let tape_color = match (state, model.feed_arrival_ms) {
         (FeedState::Replay, _) => theme::AMBER,
-        (_, Some(lag)) if lag > metrics::HIGH_LAG_MS => theme::WARN,
+        // A quiet tape and a late print are both worth a warning, and a
+        // wedged socket only shows up as the first.
+        _ if stale => theme::WARN,
+        (_, Some(arrival)) if arrival > metrics::HIGH_LAG_MS => theme::WARN,
         (FeedState::Connecting | FeedState::Reconnecting | FeedState::Live, _) => theme::TEXT_MUTED,
     };
     ui.label(
-        egui::RichText::new(lag_text(model.replay, model.feed_lag_ms))
-            .monospace()
-            .color(lag_color),
+        egui::RichText::new(tape_text(
+            model.replay,
+            model.feed_arrival_ms,
+            model.tape_age_ms,
+        ))
+        .monospace()
+        .color(tape_color),
     );
 }
 
@@ -342,9 +374,15 @@ mod tests {
             speed: 10.0,
             progress: 0.45,
         });
-        assert_eq!(lag_text(replay, None), "10×  45%");
-        assert_eq!(lag_text(None, Some(230)), "lag 230 ms");
-        assert_eq!(lag_text(None, None), "lag —");
+        assert_eq!(tape_text(replay, None, None), "10×  45%");
+        assert_eq!(tape_text(None, Some(230), Some(300)), "arrival 230 ms");
+        // The tape has gone quiet: the stored arrival figure is stale itself.
+        assert_eq!(
+            tape_text(None, Some(42), Some(12_000)),
+            "stale 12 s",
+            "a wedged socket keeps a healthy-looking arrival forever"
+        );
+        assert_eq!(tape_text(None, None, None), "arrival —");
     }
 
     #[test]
@@ -353,7 +391,7 @@ mod tests {
             speed: 1.0,
             progress: 1.7,
         });
-        assert_eq!(lag_text(over, None), "1× 100%");
+        assert_eq!(tape_text(over, None, None), "1× 100%");
     }
 
     #[test]
@@ -377,7 +415,8 @@ mod tests {
                     progress: 0.4,
                 }),
                 connection: FeedConnectionState::Connected,
-                feed_lag_ms: (!replaying).then_some(120),
+                feed_arrival_ms: (!replaying).then_some(120),
+                tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
                 backfilled_bars: 240,
@@ -415,7 +454,8 @@ mod tests {
             symbol: "US500".to_owned(),
             replay: None,
             connection: FeedConnectionState::Connected,
-            feed_lag_ms: Some(106),
+            feed_arrival_ms: Some(106),
+            tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),
             backfilled_bars: 3_999,

@@ -648,6 +648,16 @@ impl OrderflowView {
         self.published.health.clone()
     }
 
+    /// Timestamp of the newest accepted book event, from the frame's mirror.
+    ///
+    /// Read-only twin of [`Self::health`] for callers that only need this one
+    /// figure and hold `&self` — the status bar's tape-age readout, which
+    /// runs while the frame is already borrowing the app immutably.
+    #[must_use]
+    pub fn last_event_ms(&self) -> Option<i64> {
+        self.published.health.last_event_ms
+    }
+
     /// Whether the map is open but not yet (or no longer) backed by a live
     /// book. What the app's loading overlay mirrors. Reads the frame's mirror,
     /// refreshed by the panel/projection calls the frame already made; which

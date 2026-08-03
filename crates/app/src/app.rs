@@ -433,6 +433,10 @@ pub struct QuantickApp {
     /// Exchange-to-UI delay measured when the newest live trade arrived.
     /// Stable while the tape is quiet: market inactivity is not transport lag.
     latest_trade_latency_ms: Option<i64>,
+    /// Timestamp of the newest live trade (epoch ms), for the tape-age
+    /// readout. The latency above is an observation frozen at arrival; this
+    /// is what wall clock is compared against every frame.
+    latest_trade_ms: Option<i64>,
     live_trades: u64,
     trades_since_summary: u64,
     last_summary: Instant,
@@ -540,6 +544,7 @@ impl QuantickApp {
             cpu_frames: FrameStats::new(120),
             last_frame: None,
             latest_trade_latency_ms: None,
+            latest_trade_ms: None,
             live_trades: 0,
             trades_since_summary: 0,
             last_summary: Instant::now(),
@@ -1214,6 +1219,7 @@ impl QuantickApp {
     fn ingest_live_trade_at(&mut self, trade: &quantick_engine::Trade, received_at_ms: i64) {
         self.latest_trade_latency_ms =
             metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
+        self.latest_trade_ms = Some(trade.timestamp_ms);
         self.live_trades += 1;
         self.trades_since_summary += 1;
         self.orderflow.record_trade(trade);
@@ -1234,6 +1240,7 @@ impl QuantickApp {
         self.reset_drawing_overlay();
         self.history_trades = 0;
         self.latest_trade_latency_ms = None;
+        self.latest_trade_ms = None;
         self.last_lane_divider_x = None;
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
@@ -1306,11 +1313,31 @@ impl QuantickApp {
     ///
     /// `None` while a session is replaying: those prints are as old as the day
     /// they were recorded, so their original arrival latency is unavailable.
-    fn trade_lag_ms(&self) -> Option<i64> {
+    ///
+    /// This figure freezes between prints — it is an observation, not a
+    /// measurement of now. [`Self::tape_age_ms`] is the one that ages.
+    fn trade_arrival_ms(&self) -> Option<i64> {
         if self.replay.is_some() {
             return None;
         }
         self.latest_trade_latency_ms
+    }
+
+    /// How old the newest event on the tape is, right now.
+    ///
+    /// Deterministic half: the caller supplies wall clock. Takes the newer of
+    /// the trade stream and the book, so a symbol with depth but a thin tape
+    /// is not called stale while its book is live. `None` while replaying, and
+    /// before anything has arrived — nothing to be stale about yet.
+    fn tape_age_at(&self, now_ms: i64) -> Option<i64> {
+        if self.replay.is_some() {
+            return None;
+        }
+        let newest = match (self.latest_trade_ms, self.orderflow.last_event_ms()) {
+            (Some(trade), Some(book)) => Some(trade.max(book)),
+            (trade, book) => trade.or(book),
+        }?;
+        Some(now_ms.saturating_sub(newest).max(0))
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
@@ -1320,7 +1347,7 @@ impl QuantickApp {
             return;
         }
         let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
-        let lag = self.trade_lag_ms();
+        let lag = self.trade_arrival_ms();
         let avg = self.frames.avg_ms().unwrap_or(0.0);
         let cpu_avg = self.cpu_frames.avg_ms().unwrap_or(0.0);
         let worst = self.frames.worst_ms().unwrap_or(0.0);
@@ -1340,7 +1367,7 @@ impl QuantickApp {
             frame_avg_ms = avg,
             frame_cpu_ms = cpu_avg,
             frame_worst_ms = worst,
-            feed_lag_ms = lag,
+            feed_arrival_ms = lag,
             trades_per_s = rate,
             live_trades = self.live_trades,
             bar_spec = self.state.spec().summary(),
@@ -1350,7 +1377,7 @@ impl QuantickApp {
             book_last_update_id = book.last_update_id,
             book_last_event_ms = book.last_event_ms,
             book_snapshot_observed_ms = book.last_snapshot_observed_ms,
-            book_lag_ms = book_lag,
+            book_arrival_ms = book_lag,
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
             book_queue_len,
@@ -1427,13 +1454,17 @@ impl QuantickApp {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
-                event_code = "HEATMAP_HIGH_LAG",
+                event_code = "HEATMAP_HIGH_ARRIVAL",
                 symbol = self.symbol.as_str(),
-                book_lag_ms = l,
+                book_arrival_ms = l,
                 threshold_ms = metrics::HIGH_LAG_MS,
                 book_status = book.status,
                 action = "inspect_depth_connection",
-                "order-book events are behind wall clock"
+                // Arrival, not age: this is how late the newest accepted
+                // depth event was when it reached us, an observation frozen
+                // at that moment. A book that stops updating keeps its last
+                // figure — the tape-age readout is what catches that.
+                "order-book events are arriving late"
             );
         }
         if book.dropped_cells > 0
@@ -2643,7 +2674,8 @@ impl QuantickApp {
                 progress: link.status.progress(),
             }),
             connection: self.feed_connection,
-            feed_lag_ms: self.trade_lag_ms(),
+            feed_arrival_ms: self.trade_arrival_ms(),
+            tape_age_ms: self.tape_age_at(metrics::wall_clock_ms()),
             spec_summary: self.state.spec().summary(),
             bar_progress: self
                 .state
@@ -4201,15 +4233,51 @@ mod tests {
 
         app.ingest_live_trade_at(&trade, received_at_ms);
 
-        assert_eq!(app.trade_lag_ms(), Some(42));
+        assert_eq!(app.trade_arrival_ms(), Some(42));
         assert_eq!(
             statusbar::feed_state(false, app.feed_connection),
             statusbar::FeedState::Live
         );
         assert_eq!(
-            app.trade_lag_ms(),
+            app.trade_arrival_ms(),
             Some(42),
             "reading the status again without another print must not age latency"
+        );
+    }
+
+    /// The gap the removed `Stalled` state used to cover: a transport that
+    /// stays open and stops delivering. No error, no disconnect, and the
+    /// stored arrival figure never ages — only the tape's own age does.
+    #[test]
+    fn a_quiet_tape_reads_as_stale_while_arrival_stays_frozen() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.feed_connection = FeedConnectionState::Connected;
+        let trade = trade(1);
+        app.ingest_live_trade_at(&trade, trade.timestamp_ms + 42);
+
+        // A moment later: fresh.
+        let age = app
+            .tape_age_at(trade.timestamp_ms + 500)
+            .expect("a live tape has an age");
+        assert!(age < metrics::STALE_TAPE_MS);
+        assert_eq!(
+            statusbar::tape_text(None, app.trade_arrival_ms(), Some(age)),
+            "arrival 42 ms"
+        );
+
+        // A minute of silence on the same open socket.
+        let age = app
+            .tape_age_at(trade.timestamp_ms + 60_000)
+            .expect("still a tape, just an old one");
+        assert!(age > metrics::STALE_TAPE_MS, "{age} ms");
+        assert_eq!(
+            app.trade_arrival_ms(),
+            Some(42),
+            "the arrival observation is frozen, which is why it cannot report this"
+        );
+        assert_eq!(
+            statusbar::tape_text(None, app.trade_arrival_ms(), Some(age)),
+            "stale 60 s"
         );
     }
 
@@ -4222,7 +4290,7 @@ mod tests {
 
         app.drain_feed();
 
-        assert_eq!(app.trade_lag_ms(), None);
+        assert_eq!(app.trade_arrival_ms(), None);
         assert_eq!(
             statusbar::feed_state(false, app.feed_connection),
             statusbar::FeedState::Connecting
@@ -4250,7 +4318,7 @@ mod tests {
         assert_eq!(clock_calls.get(), 1, "one wall-clock read per UI drain");
         assert_eq!(app.live_trades, 3);
         assert_eq!(app.trades_since_summary, 3);
-        assert_eq!(app.trade_lag_ms(), Some(75));
+        assert_eq!(app.trade_arrival_ms(), Some(75));
         assert_eq!(app.state.timeline_revision(), 3);
         assert_eq!(app.state.partial().map(|bar| bar.trade_count), Some(3));
     }
