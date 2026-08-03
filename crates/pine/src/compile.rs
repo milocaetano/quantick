@@ -23,6 +23,8 @@
 //! is what "slot resolution" means here — the interpreter never touches a
 //! map or a string on the per-bar path.
 
+use std::collections::BTreeSet;
+
 use quantick_indicators::{InputSpec, PlotId, PlotSpec, PlotStyle, Rgba8, SourceId};
 
 use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp};
@@ -149,8 +151,10 @@ pub fn compile(source: &str, fallback_title: &str) -> Result<CompiledScript, Vec
         ));
     }
 
+    compiler.collect_reassigned_names();
     compiler.collect_declarations();
     compiler.resolve_and_scan();
+    compiler.register_pending_plots();
     if compiler.errors.is_empty() {
         Ok(compiler.finish())
     } else {
@@ -307,6 +311,14 @@ struct Compiler {
     global_init: Vec<Option<NodeId>>,
     /// Slots reassigned anywhere (`:=`): never const-foldable.
     reassigned: Vec<bool>,
+    /// Every name that appears on the left of a `:=`, collected from the
+    /// whole arena before the walk. Filling `reassigned` during the walk made
+    /// the answer depend on textual order: a `:=` *after* the use folded the
+    /// value anyway, so `var len = 9` / `ta.sma(close, len)` / `len := len+1`
+    /// compiled clean and pinned bar 0's window forever.
+    reassigned_names: BTreeSet<String>,
+    /// Plot calls found in pass 1, registered after name resolution.
+    pending_plots: Vec<(NodeId, Vec<Arg>, Option<&'static str>)>,
 }
 
 impl Compiler {
@@ -322,6 +334,7 @@ impl Compiler {
             overlay: false,
             inputs: Vec::new(),
             plots: Vec::new(),
+            pending_plots: Vec::new(),
             resolutions: vec![Resolution::None; n],
             call_sites: vec![None; n],
             plot_of_call: vec![None; n],
@@ -335,6 +348,7 @@ impl Compiler {
             max_bars_back: 1,
             global_init: Vec::new(),
             reassigned: Vec::new(),
+            reassigned_names: BTreeSet::new(),
         }
     }
 
@@ -392,6 +406,18 @@ impl Compiler {
 
     // ---- pass 1: declaration collection ----------------------------------
 
+    /// Scan the whole arena for `:=` targets before anything folds.
+    fn collect_reassigned_names(&mut self) {
+        self.reassigned_names = self
+            .ast
+            .all()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Reassign { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+    }
+
     fn collect_declarations(&mut self) {
         let statements = match self.kind(self.root) {
             NodeKind::Script { statements } => statements.clone(),
@@ -412,9 +438,18 @@ impl Compiler {
             };
             match Builtin::lookup(&name) {
                 Some(Builtin::Indicator) => self.indicator_header(expr, &args),
-                Some(Builtin::Plot) => self.plot_call(expr, &args, None),
-                Some(Builtin::PlotShape) => self.plot_call(expr, &args, Some("shape")),
-                Some(Builtin::PlotChar) => self.plot_call(expr, &args, Some("char")),
+                // Registered after resolution: `plot(close, color=c)` can
+                // only fold `c` once names resolve, and folding it here
+                // silently substituted the default for every argument that
+                // came from a variable. Queued in textual order, which is
+                // the plot order the whole system indexes by.
+                Some(Builtin::Plot) => self.pending_plots.push((expr, args.clone(), None)),
+                Some(Builtin::PlotShape) => {
+                    self.pending_plots.push((expr, args.clone(), Some("shape")));
+                }
+                Some(Builtin::PlotChar) => {
+                    self.pending_plots.push((expr, args.clone(), Some("char")));
+                }
                 Some(Builtin::AlertCondition) => {
                     let span = self.span(expr);
                     self.warnings.push(PineError::new(
@@ -467,8 +502,44 @@ impl Compiler {
         let _ = call;
     }
 
+    /// Register every queued plot, now that names resolve.
+    fn register_pending_plots(&mut self) {
+        for (call, args, marker) in std::mem::take(&mut self.pending_plots) {
+            self.plot_call(call, &args, marker);
+        }
+    }
+
+    /// Say so when an argument the author supplied could not be folded.
+    ///
+    /// A plot carries one constant look, so `color = up ? green : red` (or
+    /// any value that is only known per bar) cannot be honoured. Substituting
+    /// the default in silence is the failure mode this warning exists to
+    /// prevent — the chart would simply not be what the script says.
+    fn warn_unfoldable_plot_arg(&mut self, args: &[Arg], position: usize, name: &str) {
+        let Some(arg) = self.arg(args, position, name) else {
+            return;
+        };
+        if self.fold(arg.value).is_some() {
+            return;
+        }
+        let span = self.span(arg.value);
+        self.warnings.push(PineError::new(
+            ErrorCode::PineUnsupported,
+            span,
+            format!(
+                "`{name}` must be constant at load time; this one is not, so the                  default is used (per-bar colors and widths land with the                  dynamic-color milestone)"
+            ),
+        ));
+    }
+
     fn plot_call(&mut self, call: NodeId, args: &[Arg], marker: Option<&str>) {
         let index = self.plots.len();
+        for (position, name) in [(1, "title"), (2, "color"), (3, "linewidth"), (4, "style")] {
+            if marker.is_some() && position == 4 {
+                continue; // markers ignore `style`; nothing to warn about
+            }
+            self.warn_unfoldable_plot_arg(args, position, name);
+        }
         let title = self
             .arg(args, 1, "title")
             .and_then(|a| match self.fold(a.value) {
@@ -551,6 +622,11 @@ impl Compiler {
                     BinOp::Add => Const::Float(a + b),
                     BinOp::Sub => Const::Float(a - b),
                     BinOp::Mul => Const::Float(a * b),
+                    // The interpreter maps division by zero to `na` as a
+                    // documented divergence from IEEE; a folded expression
+                    // that answered `inf` would evaluate differently from the
+                    // same expression left unfolded.
+                    BinOp::Div if b == 0.0 => Const::Na,
                     BinOp::Div => Const::Float(a / b),
                     _ => return None,
                 })
@@ -635,7 +711,7 @@ impl Compiler {
         let slot = self.global_slots;
         self.global_slots += 1;
         self.global_init.push(init);
-        self.reassigned.push(false);
+        self.reassigned.push(self.reassigned_names.contains(name));
         scope
             .names
             .push((name.to_owned(), Resolution::Global(slot)));
@@ -726,6 +802,7 @@ impl Compiler {
                 let mut inner = WalkCtx {
                     frame: Some(frame),
                     in_loop: false,
+                    top_level: false,
                     function_stack: {
                         let mut stack = ctx.function_stack.clone();
                         stack.push(index);
@@ -760,10 +837,12 @@ impl Compiler {
                 otherwise,
             } => {
                 self.walk_expr(condition, scope, ctx);
-                self.walk_expr(then_block, scope, ctx);
-                if let Some(otherwise) = otherwise {
-                    self.walk_expr(otherwise, scope, ctx);
-                }
+                ctx.nested(|ctx| {
+                    self.walk_expr(then_block, scope, ctx);
+                    if let Some(otherwise) = otherwise {
+                        self.walk_expr(otherwise, scope, ctx);
+                    }
+                });
             }
             NodeKind::For {
                 var,
@@ -791,7 +870,7 @@ impl Compiler {
                 self.resolutions[id.index()] = resolution;
                 let was_in_loop = ctx.in_loop;
                 ctx.in_loop = true;
-                self.walk_expr(body, scope, ctx);
+                ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
                 ctx.in_loop = was_in_loop;
                 let mark = scope.block_marks.pop().expect("pushed above");
                 scope.names.truncate(mark);
@@ -800,7 +879,7 @@ impl Compiler {
                 self.walk_expr(condition, scope, ctx);
                 let was_in_loop = ctx.in_loop;
                 ctx.in_loop = true;
-                self.walk_expr(body, scope, ctx);
+                ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
                 ctx.in_loop = was_in_loop;
             }
             NodeKind::Ternary {
@@ -834,7 +913,11 @@ impl Compiler {
                     // genuinely dynamic offsets.
                     None => {
                         if !matches!(self.fold(offset), Some(Const::Int(0))) {
-                            self.max_bars_back = MAX_BARS_BACK_CAP;
+                            // Raise the floor, never assign: a script with
+                            // both `close[700]` and `close[i]` still needs
+                            // 701 rows, and assigning made the answer depend
+                            // on which read came first.
+                            self.max_bars_back = self.max_bars_back.max(MAX_BARS_BACK_CAP);
                         }
                     }
                 }
@@ -961,7 +1044,7 @@ impl Compiler {
             self.call_sites[call.index()] = Some(site);
             self.check_kernel_length(call, builtin, args);
         }
-        if builtin.is_top_level_only() && (ctx.frame.is_some() || ctx.in_loop) {
+        if builtin.is_top_level_only() && !ctx.top_level {
             let span = self.span(call);
             self.errors.push(PineError::new(
                 ErrorCode::PineSyntax,
@@ -1145,6 +1228,15 @@ impl Compiler {
     }
 
     fn unknown_name(&mut self, name: &str, span: Span) {
+        // A rejected *variable* — `dayofweek`, `max_bars_back` — reaches here
+        // rather than the call or member arms, and "unknown name" is the
+        // wrong reason: the name is known, the family is refused. Answer with
+        // the family's own explanation, which is what the dialect reference
+        // promises for every code in the reject list.
+        if let Some((code, reason)) = rejection_of(name) {
+            self.errors.push(PineError::new(code, span, reason));
+            return;
+        }
         let mut error = PineError::new(
             ErrorCode::PineUnknownName,
             span,
@@ -1164,6 +1256,12 @@ struct Frame {
 struct WalkCtx {
     frame: Option<Frame>,
     in_loop: bool,
+    /// False as soon as the walk enters any nested body — an `if`/`else`
+    /// arm, a loop body, a function. `frame.is_some() || in_loop` cannot
+    /// stand in for it: a `plot()` inside a top-level `if` has neither, and
+    /// was accepted by the check *and* skipped by the registry pass, so the
+    /// script silently drew nothing.
+    top_level: bool,
     function_stack: Vec<u32>,
 }
 
@@ -1172,7 +1270,16 @@ impl WalkCtx {
         Self {
             frame: None,
             in_loop: false,
+            top_level: true,
             function_stack: Vec::new(),
         }
+    }
+
+    /// Walk `body` as nested code, restoring the flag afterwards.
+    fn nested<T>(&mut self, walk: impl FnOnce(&mut Self) -> T) -> T {
+        let was_top_level = std::mem::replace(&mut self.top_level, false);
+        let out = walk(self);
+        self.top_level = was_top_level;
+        out
     }
 }

@@ -260,6 +260,12 @@ impl Ast {
         Self::default()
     }
 
+    /// Every node in push order — for passes that need to see the whole
+    /// tree before walking it (collecting `:=` targets, for instance).
+    pub fn all(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.iter()
+    }
+
     /// Append a node, returning its id.
     pub fn push(&mut self, kind: NodeKind, span: Span) -> NodeId {
         let id = NodeId(u32::try_from(self.nodes.len()).expect("scripts fit in u32 nodes"));
