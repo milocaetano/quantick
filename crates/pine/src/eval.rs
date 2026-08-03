@@ -213,7 +213,10 @@ impl ScriptState {
             }
         }
         self.kernels = kernels;
-        self.objects = objects;
+        // Not a plain assignment: `restore_from` keeps the object id counter
+        // moving forward, so a `varip` handle that survives this rollback
+        // cannot collide with an id the commit run is about to allocate.
+        self.objects.restore_from(objects);
         self.staged_histories.clear();
     }
 
@@ -1248,7 +1251,17 @@ impl<'a> Eval<'a> {
             Some(arg) => {
                 let v = self.num(arg.value)?;
                 #[allow(clippy::cast_possible_truncation)]
-                Ok(if v.is_finite() { v.round() as i64 } else { 0 })
+                Ok(if v.is_finite() {
+                    v.round() as i64
+                } else {
+                    // `label.new(na, price)` has no bar to sit on. Zero would
+                    // anchor it to the very first bar — a real label drawn
+                    // out of a missing value, while the price side of the
+                    // same call answers NaN and the renderer honestly skips
+                    // it. `OFF_CHART_BAR` is negative, which the renderer's
+                    // existing `x < 0` guards already drop.
+                    quantick_indicators::OFF_CHART_BAR
+                })
             }
             None => Ok(self.ctx.bar_index as i64),
         }

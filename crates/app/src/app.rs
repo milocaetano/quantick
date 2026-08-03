@@ -2380,7 +2380,14 @@ impl QuantickApp {
         // Draw objects (lines/boxes/labels) share the overlays' paint slot:
         // after candles, before aggression bubbles.
         for view in self.indicators.visible_overlays() {
-            indicator_render::draw_objects(&clip, view.render_objects(), &plot_x, |v| scale.y(v));
+            indicator_render::draw_objects(
+                &clip,
+                view.render_objects(),
+                &plot_x,
+                |v| scale.y(v),
+                start,
+                end,
+            );
         }
         // Pane indicators stack in the band carved off above, sharing the
         // candles' x-mapping so bars and their flow read as one chart.

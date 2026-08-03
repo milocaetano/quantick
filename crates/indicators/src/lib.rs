@@ -58,7 +58,7 @@ pub use host::{IndicatorHost, InstanceId};
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 pub use input::{InputSpec, InputValue, SourceId};
 pub use objects::{
-    BoxObj, LabelObj, LabelStyle, LineObj, MAX_OBJECTS_PER_KIND, ObjectId, ObjectSnapshot,
-    ObjectStore,
+    BoxObj, LabelObj, LabelStyle, LineObj, MAX_OBJECTS_PER_KIND, OFF_CHART_BAR, ObjectId,
+    ObjectSnapshot, ObjectStore,
 };
 pub use output::{PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8};

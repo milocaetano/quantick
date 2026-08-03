@@ -361,3 +361,33 @@ plot(math.max(math.log(0), math.log(0)))
     h.close_all(&[3.0]);
     assert_eq!(h.column(0), vec![f64::NEG_INFINITY]);
 }
+
+#[test]
+fn a_varip_handle_that_survives_a_preview_never_aliases_a_committed_object() {
+    // `varip` deliberately survives a rollback, so a handle allocated inside
+    // a preview outlives the preview's store. If the id counter rewound with
+    // the store, the commit run would hand that same id to a different
+    // object and the stale handle would silently mutate a stranger — the one
+    // thing the object ids exist to prevent.
+    let source = "//@version=5
+indicator(\"aliasing\", overlay=true)
+varip line pinned = na
+if na(pinned)
+    pinned := line.new(0, close, 0, close)
+fresh = line.new(bar_index, low, bar_index, high)
+pinned.set_y1(999)
+plot(close)
+";
+    let mut h = Harness::load(source);
+    // The preview allocates the varip line; the commit run does not, because
+    // `pinned` is no longer `na`.
+    let _ = h.preview(&bar(0, 10.0)).expect("preview runs");
+    h.close(&bar(0, 10.0)).expect("commit runs");
+
+    let snapshot = h.indicator.objects().expect("the script draws").snapshot();
+    let stranger = snapshot.lines.iter().find(|l| l.y2 > 900.0 || l.y1 > 900.0);
+    assert!(
+        stranger.is_none(),
+        "the varip handle wrote into a committed line: {snapshot:?}"
+    );
+}
