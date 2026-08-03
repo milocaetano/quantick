@@ -4,9 +4,30 @@
 //! `push(x) -> f64`, amortized O(1) per bar. **No kernel re-scans its window
 //! on push** — windowed kernels keep running sums plus a ring of the last
 //! `len` inputs; `highest`/`lowest` use a monotonic deque. This is what makes
-//! the per-bar commit budget (§5 of the plan) achievable, and `Clone` is what
-//! makes preview snapshots cheap (a kernel state is a few f64s or a short
-//! deque).
+//! the per-bar commit budget (§5 of the plan) achievable.
+//!
+//! One documented exception: `pivothigh`/`pivotlow` compare the candidate
+//! against its whole `left + 1 + right` window on every push, because a
+//! pivot asks "is this bar the strict extreme of its neighbourhood", which a
+//! running extreme cannot answer as bars leave on both sides. The cost is
+//! O(left + right) per bar and the lengths are user-supplied, so it is
+//! bounded by the kernel-length cap the script compiler enforces.
+//!
+//! Two consequences of that choice, stated because they are easy to assume
+//! away:
+//!
+//! - **`Clone` is cheap, not free.** A windowed kernel owns a `Vec<f64>` of
+//!   `len`, so a preview snapshot of `ta.sma(close, 200)` copies 1.6 KB; the
+//!   extremes additionally carry a deque. Recursive kernels (`ema`, `rma`)
+//!   really are a few `f64`s. Size a preview budget from the windows in play,
+//!   not from "a kernel is small".
+//! - **A running sum carries its whole history.** The value at bar N is a
+//!   function of every input pushed, not only of the `len` still in the
+//!   window, so a kernel replayed from a different starting bar — history
+//!   paging, a trimmed backlog, a replay seek — can differ in the last ulps
+//!   from one fed the full stream. That is the price of not re-scanning;
+//!   determinism holds for a *given* sequence of pushes, which is what the
+//!   golden tests replay.
 //!
 //! # Semantics (ours, documented — TradingView parity is a non-goal)
 //!
@@ -48,6 +69,11 @@ pub(crate) struct Window {
     head: usize,
     filled: usize,
     nan_in_window: usize,
+    /// How many non-zero values sit in the window. A running sum cannot
+    /// answer "is every input zero?": eviction leaves a rounding residue, so
+    /// `sum == 0.0` reads false for a window of zeros whose neighbours were
+    /// added and subtracted in floating point. Counting is exact.
+    nonzero_in_window: usize,
 }
 
 impl Window {
@@ -62,6 +88,7 @@ impl Window {
             head: 0,
             filled: 0,
             nan_in_window: 0,
+            nonzero_in_window: 0,
         }
     }
 
@@ -73,13 +100,17 @@ impl Window {
             self.filled += 1;
             None
         };
-        if let Some(e) = evicted
-            && e.is_nan()
-        {
-            self.nan_in_window -= 1;
+        if let Some(e) = evicted {
+            if e.is_nan() {
+                self.nan_in_window -= 1;
+            } else if e != 0.0 {
+                self.nonzero_in_window -= 1;
+            }
         }
         if x.is_nan() {
             self.nan_in_window += 1;
+        } else if x != 0.0 {
+            self.nonzero_in_window += 1;
         }
         self.buf[self.head] = x;
         self.head = (self.head + 1) % self.buf.len();
@@ -102,6 +133,11 @@ impl Window {
 
     pub(crate) fn has_nan(&self) -> bool {
         self.nan_in_window > 0
+    }
+
+    /// True while at least one non-zero number sits in the window.
+    pub(crate) fn has_nonzero(&self) -> bool {
+        self.nonzero_in_window > 0
     }
 
     pub(crate) fn capacity(&self) -> usize {

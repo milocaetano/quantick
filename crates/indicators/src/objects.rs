@@ -20,6 +20,13 @@ use crate::output::Rgba8;
 pub const MAX_OBJECTS_PER_KIND: usize = 500;
 
 /// A straight segment between two (bar index, price) anchors.
+/// The bar index of an object whose x coordinate is missing (`na`).
+///
+/// Negative on purpose: every renderer already drops objects at a negative
+/// bar, so "no bar" draws nothing instead of being silently patched to bar
+/// zero. The y side of the same call answers NaN for the same reason.
+pub const OFF_CHART_BAR: i64 = -1;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LineObj {
     /// First anchor's bar index.
@@ -156,7 +163,17 @@ impl ObjectStore {
 
     /// Mutable access for a `set_*` call. Newest-first search: scripts
     /// overwhelmingly mutate the object they just created.
+    ///
+    /// The revision moves only on a hit. A handle the cap already collected —
+    /// the documented outcome once a script passes the per-kind limit — used
+    /// to bump it on every bar, and the worker reads that as "the set
+    /// changed": a full snapshot of up to 1500 objects republished every bar,
+    /// forever, for no visible difference.
     pub fn line_mut(&mut self, id: ObjectId) -> Option<&mut LineObj> {
+        let hit = self.lines.iter().rev().any(|(i, _)| *i == id.0);
+        if !hit {
+            return None;
+        }
         self.revision += 1;
         self.lines
             .iter_mut()
@@ -167,6 +184,10 @@ impl ObjectStore {
 
     /// See [`line_mut`](Self::line_mut).
     pub fn box_mut(&mut self, id: ObjectId) -> Option<&mut BoxObj> {
+        let hit = self.boxes.iter().rev().any(|(i, _)| *i == id.0);
+        if !hit {
+            return None;
+        }
         self.revision += 1;
         self.boxes
             .iter_mut()
@@ -177,6 +198,10 @@ impl ObjectStore {
 
     /// See [`line_mut`](Self::line_mut).
     pub fn label_mut(&mut self, id: ObjectId) -> Option<&mut LabelObj> {
+        let hit = self.labels.iter().rev().any(|(i, _)| *i == id.0);
+        if !hit {
+            return None;
+        }
         self.revision += 1;
         self.labels
             .iter_mut()
@@ -187,20 +212,29 @@ impl ObjectStore {
 
     /// Delete a line (a stale id is a no-op, never a panic).
     pub fn delete_line(&mut self, id: ObjectId) {
-        self.revision += 1;
+        let before = self.lines.len();
         self.lines.retain(|(i, _)| *i != id.0);
+        if self.lines.len() != before {
+            self.revision += 1;
+        }
     }
 
     /// Delete a box.
     pub fn delete_box(&mut self, id: ObjectId) {
-        self.revision += 1;
+        let before = self.boxes.len();
         self.boxes.retain(|(i, _)| *i != id.0);
+        if self.boxes.len() != before {
+            self.revision += 1;
+        }
     }
 
     /// Delete a label.
     pub fn delete_label(&mut self, id: ObjectId) {
-        self.revision += 1;
+        let before = self.labels.len();
         self.labels.retain(|(i, _)| *i != id.0);
+        if self.labels.len() != before {
+            self.revision += 1;
+        }
     }
 
     /// Drop everything (indicator reset).
@@ -209,6 +243,19 @@ impl ObjectStore {
         self.boxes.clear();
         self.labels.clear();
         self.revision += 1;
+    }
+
+    /// Roll the store back to `previous` without rewinding the id counter.
+    ///
+    /// A preview run is discarded wholesale, but ids handed out during it
+    /// must not be handed out again: a `varip` handle survives the rollback
+    /// (that is what `varip` means), and if `next_id` rewound with the rest
+    /// it would later point at a different object — the exact "mutating a
+    /// stranger" this store's ids exist to prevent.
+    pub fn restore_from(&mut self, previous: Self) {
+        let next_id = self.next_id.max(previous.next_id);
+        *self = previous;
+        self.next_id = next_id;
     }
 
     /// The renderable view of the store, creation order per kind.

@@ -4,6 +4,8 @@
 *.ex5
 # Local feed/asset override (see README: ./quantick.toml or QUANTICK_CONFIG)
 /quantick.toml
+# User indicator scripts, created beside the app on first run
+/indicators
 # Python bytecode from the design lab
 __pycache__/
 

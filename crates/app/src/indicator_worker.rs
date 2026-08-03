@@ -175,6 +175,12 @@ struct SlotMirror {
     values: Vec<InputValue>,
     /// Committed rows the UI has (via Rebuilt/Appended events).
     known_rows: usize,
+    /// Whether the UI has been sent a `Rebuilt` for this slot's current
+    /// shape. `known_rows == 0` cannot stand in for it: before the first bar
+    /// closes — the whole first bar on a slow tape, and again after every
+    /// reset or replay seek — that would re-send a full descriptor + column
+    /// clone on every drained batch.
+    synced: bool,
     /// Whether the UI has been told about the current error state.
     error_reported: bool,
     /// Store revision last published to the UI (0 = nothing yet).
@@ -288,6 +294,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 source,
                                 values,
                                 known_rows: 0,
+                                synced: false,
                                 error_reported: false,
                                 objects_revision: 0,
                             },
@@ -324,6 +331,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 source,
                                 values: Vec::new(),
                                 known_rows: 0,
+                                synced: true,
                                 error_reported: true,
                                 objects_revision: 0,
                             },
@@ -399,7 +407,7 @@ fn publish_deltas(
             .expect("instance with plots has a descriptor");
         let rows = plots.len();
 
-        if rebuilt || mirror.known_rows == 0 {
+        if rebuilt || !mirror.synced {
             let columns: Vec<Vec<f64>> = descriptor
                 .plots
                 .iter()
@@ -412,6 +420,7 @@ fn publish_deltas(
                 inputs: mirror.values.clone(),
             });
             mirror.known_rows = rows;
+            mirror.synced = true;
             mirror.error_reported = false;
         } else {
             for row_index in mirror.known_rows..rows {
