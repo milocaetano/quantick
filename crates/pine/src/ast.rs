@@ -163,6 +163,14 @@ pub enum NodeKind {
         /// The body block.
         body: NodeId,
     },
+    /// `switch [subject]` with `value => body` arms; a bare `=>` arm is
+    /// the default. Value = the first matching arm's body.
+    Switch {
+        /// The compared expression; `None` = condition-form arms.
+        subject: Option<NodeId>,
+        /// `(match value / condition, body)`; `None` = the default arm.
+        arms: Vec<(Option<NodeId>, NodeId)>,
+    },
     /// `cond ? a : b`.
     Ternary {
         /// The condition.

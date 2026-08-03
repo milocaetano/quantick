@@ -1,4 +1,4 @@
-//! Conformance corpus: every `tests/corpus/ok/*.pine` must lex and parse;
+//! Conformance corpus: every `tests/corpus/ok/*.pine` must fully compile;
 //! every `tests/corpus/err/*.pine` must fail with exactly the codes and
 //! lines its first-line directive declares:
 //!
@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use quantick_pine::{PineError, lexer, parser};
+use quantick_pine::PineError;
 
 fn corpus_dir(kind: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -21,9 +21,9 @@ fn corpus_dir(kind: &str) -> PathBuf {
 }
 
 fn compile(source: &str) -> Result<(), Vec<PineError>> {
-    let lexed = lexer::lex(source)?;
-    parser::parse(&lexed.tokens)?;
-    Ok(())
+    // The full pipeline — lex, parse and every compile pass — so ok/
+    // fixtures prove whole-script loadability, not just syntax.
+    quantick_pine::compile(source, "corpus.pine").map(|_| ())
 }
 
 #[test]

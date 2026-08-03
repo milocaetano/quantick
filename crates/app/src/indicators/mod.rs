@@ -45,6 +45,9 @@ pub(crate) struct IndicatorView {
     /// The values currently bound to the declared inputs (what the
     /// settings dialog opens with).
     pub input_values: Vec<InputValue>,
+    /// A failed hot reload's errors: the running version is stale relative
+    /// to the file on disk, and the panel says so.
+    pub stale: Option<String>,
 }
 
 impl IndicatorView {
@@ -104,6 +107,7 @@ impl IndicatorViews {
                 descriptor,
                 columns,
                 inputs,
+                stale,
             } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.descriptor = descriptor;
@@ -111,6 +115,11 @@ impl IndicatorViews {
                     view.input_values = inputs;
                     view.preview = None;
                     view.error = None;
+                    // Mirrored from the worker, not cleared: `hidden` and
+                    // `errored` both survive a rebuild, and this used to be
+                    // the one status a routine chart interaction could erase
+                    // while the pre-edit code was still what ran.
+                    view.stale = stale;
                 } else {
                     self.views.push(IndicatorView {
                         slot,
@@ -121,6 +130,7 @@ impl IndicatorViews {
                         hidden: false,
                         objects: ObjectSnapshot::default(),
                         input_values: inputs,
+                        stale,
                     });
                 }
             }
@@ -149,6 +159,11 @@ impl IndicatorViews {
             IndicatorEvent::Objects { slot, objects } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.objects = objects;
+                }
+            }
+            IndicatorEvent::ReloadFailed { slot, message } => {
+                if let Some(view) = self.view_mut(slot) {
+                    view.stale = Some(message);
                 }
             }
         }
@@ -270,6 +285,7 @@ mod tests {
             descriptor: descriptor(true, 2),
             columns: vec![vec![1.0], vec![10.0]],
             inputs: Vec::new(),
+            stale: None,
         });
         views.apply(IndicatorEvent::Appended {
             slot,
@@ -290,6 +306,7 @@ mod tests {
             descriptor: descriptor(true, 1),
             columns: vec![vec![]],
             inputs: Vec::new(),
+            stale: None,
         });
         views.apply(IndicatorEvent::Preview {
             slot,
@@ -315,6 +332,7 @@ mod tests {
             descriptor: descriptor(true, 1),
             columns: vec![vec![]],
             inputs: Vec::new(),
+            stale: None,
         });
         views.remove(slot);
         views.apply(IndicatorEvent::Appended {
@@ -339,6 +357,7 @@ mod tests {
                 descriptor: descriptor(overlay, 1),
                 columns: vec![vec![]],
                 inputs: Vec::new(),
+                stale: None,
             });
             if hidden {
                 views.toggle_hidden(slot);

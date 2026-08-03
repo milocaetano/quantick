@@ -1092,6 +1092,17 @@ impl Compiler {
                 ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
                 ctx.in_loop = was_in_loop;
             }
+            NodeKind::Switch { subject, arms } => {
+                if let Some(subject) = subject {
+                    self.walk_expr(subject, scope, ctx);
+                }
+                for (condition, body) in arms {
+                    if let Some(condition) = condition {
+                        self.walk_expr(condition, scope, ctx);
+                    }
+                    self.walk_expr(body, scope, ctx);
+                }
+            }
             NodeKind::Ternary {
                 condition,
                 if_true,

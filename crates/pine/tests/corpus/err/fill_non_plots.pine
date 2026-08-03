@@ -1,0 +1,5 @@
+// expect: PINE_UNSUPPORTED@5
+//@version=5
+x = close
+y = open
+fill(x, y)

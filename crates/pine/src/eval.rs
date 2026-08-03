@@ -478,6 +478,30 @@ impl<'a> Eval<'a> {
                 }
             },
             NodeKind::Binary { op, lhs, rhs } => self.binary(*op, *lhs, *rhs),
+            NodeKind::Switch { subject, arms } => {
+                let subject = match subject {
+                    Some(node) => Some(self.eval(*node)?),
+                    None => None,
+                };
+                for (condition, body) in arms {
+                    let matched = match (&subject, condition) {
+                        // Subject form: arm value compared by equality
+                        // (same rules as `==`; na never matches).
+                        (Some(subject), Some(condition)) => {
+                            let arm = self.eval(*condition)?;
+                            values_equal(subject, &arm)
+                        }
+                        // Condition form: the arm is its own bool.
+                        (None, Some(condition)) => self.cond(*condition)?,
+                        // The bare `=>` default always matches.
+                        (_, None) => true,
+                    };
+                    if matched {
+                        return self.eval(*body);
+                    }
+                }
+                Ok(Value::Na)
+            }
             NodeKind::Ternary {
                 condition,
                 if_true,
@@ -693,15 +717,9 @@ impl<'a> Eval<'a> {
             BinOp::Eq | BinOp::Ne => {
                 let l = self.eval(lhs)?;
                 let r = self.eval(rhs)?;
-                let equal = match (&l, &r) {
-                    // NaN == anything is false (IEEE), and na == na is
-                    // therefore false too — Pine agrees.
-                    (Value::Num(a), Value::Num(b)) => a == b,
-                    (Value::Bool(a), Value::Bool(b)) => a == b,
-                    (Value::Color(a), Value::Color(b)) => a == b,
-                    (Value::Str(a), Value::Str(b)) => a == b,
-                    _ => false,
-                };
+                // NaN == anything is false (IEEE), and na == na is
+                // therefore false too — Pine agrees.
+                let equal = values_equal(&l, &r);
                 Ok(Value::Bool(if op == BinOp::Eq { equal } else { !equal }))
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -1591,6 +1609,19 @@ fn source_value(source: SourceId, bar: &IndicatorBar, ctx: &Ctx<'_>) -> f64 {
     match source {
         SourceId::Cvd => ctx.cvd_now(),
         other => other.value(bar, f64::NAN),
+    }
+}
+
+/// `==` semantics shared by the operator and switch matching: numbers by
+/// value (NaN never equals), same-kind primitives by value, everything
+/// else false.
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Num(a), Value::Num(b)) => a == b,
+        (Value::Bool(a), Value::Bool(b)) => a == b,
+        (Value::Color(a), Value::Color(b)) => a == b,
+        (Value::Str(a), Value::Str(b)) => a == b,
+        _ => false,
     }
 }
 

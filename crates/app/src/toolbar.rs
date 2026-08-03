@@ -198,6 +198,8 @@ pub struct IndicatorMenuEntry {
     pub hidden: bool,
     /// Whether the indicator is disabled by a runtime error.
     pub errored: bool,
+    /// Whether the running version is stale (the file on disk has errors).
+    pub stale: bool,
 }
 
 /// A side effect the toolbar asks the app to perform.
@@ -553,6 +555,9 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
                 // Status dot: honest state at a glance — errored beats hidden.
                 let (dot, color) = if entry.errored {
                     (icons::WARNING_CIRCLE, theme::SELL)
+                } else if entry.stale {
+                    // Running, but the file on disk has errors.
+                    (icons::WARNING, theme::ACCENT)
                 } else if entry.hidden {
                     (icons::EYE_SLASH, theme::TEXT_MUTED)
                 } else {
@@ -778,12 +783,14 @@ mod tests {
                                 label: "EMA(9, close)".to_owned(),
                                 hidden: false,
                                 errored: false,
+                                stale: false,
                             },
                             IndicatorMenuEntry {
                                 slot: 1,
                                 label: "CVD".to_owned(),
                                 hidden: true,
                                 errored: true,
+                                stale: true,
                             },
                         ],
                         scripts: vec!["ema.pine".to_owned(), "zigzag.pine".to_owned()],
