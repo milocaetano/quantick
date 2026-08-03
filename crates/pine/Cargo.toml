@@ -5,8 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Hand-rolled lexer/parser — zero dependencies (supply-chain minimalism;
-# full control over spans and errors; the language is small). The one
-# permitted dependency, quantick-indicators, arrives with the interpreter
-# (M2 PR 7), which is the first code to need its types.
+# Hand-rolled lexer/parser/compiler — the one permitted dependency is the
+# indicator runtime, whose InputSpec/PlotSpec the compile passes produce
+# (supply-chain minimalism; full control over spans and errors).
 [dependencies]
+quantick-indicators = { path = "../indicators" }
