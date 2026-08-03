@@ -27,7 +27,7 @@ use std::collections::BTreeSet;
 
 use quantick_indicators::{InputSpec, PlotId, PlotSpec, PlotStyle, Rgba8, SourceId};
 
-use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp};
+use crate::ast::{Arg, Ast, BinOp, NodeId, NodeKind, UnOp, VarMode};
 use crate::builtins::{Builtin, did_you_mean, rejection_of};
 use crate::error::{ErrorCode, PineError, Span};
 use crate::lexer;
@@ -36,6 +36,15 @@ use crate::parser;
 /// Reads deeper than this many bars yield `na` when the offset is dynamic
 /// (constant offsets size storage exactly; the cap bounds the dynamic case).
 pub const MAX_BARS_BACK_CAP: usize = 500;
+
+/// The largest window a `ta.*` kernel may declare.
+///
+/// A kernel allocates its ring up front, so an unbounded length is an
+/// unbounded allocation: `ta.sma(close, 2000000000)` asks for 16 GB, and a
+/// failed allocation *aborts* the process — it does not unwind, so the
+/// promise that a runtime failure only disables its own indicator would be
+/// broken by a typo. Far above any window a chart uses.
+pub const MAX_KERNEL_LENGTH: usize = 100_000;
 
 /// Default plot stroke width when a `plot()` gives none.
 const DEFAULT_PLOT_WIDTH: f32 = 1.5;
@@ -115,6 +124,8 @@ pub struct CompiledScript {
     pub functions: Vec<FunctionInfo>,
     /// Number of global slots.
     pub global_slots: usize,
+    /// Declaration mode per global slot (preview rollback exempts `varip`).
+    pub slot_modes: Vec<VarMode>,
     /// Total stateful call sites.
     pub call_site_count: usize,
     /// Total implicit history series.
@@ -189,6 +200,11 @@ impl Const {
             Const::Int(v) if *v >= 1 => usize::try_from(*v).ok(),
             _ => None,
         }
+    }
+
+    /// A positive length that a kernel may actually allocate.
+    fn as_kernel_len(&self) -> Option<usize> {
+        self.as_positive_len().filter(|v| *v <= MAX_KERNEL_LENGTH)
     }
 }
 
@@ -304,6 +320,7 @@ struct Compiler {
     functions: Vec<FunctionInfo>,
     function_names: Vec<String>,
     global_slots: u32,
+    slot_modes: Vec<VarMode>,
     call_site_count: u32,
     history_series_count: u32,
     max_bars_back: usize,
@@ -318,7 +335,7 @@ struct Compiler {
     /// compiled clean and pinned bar 0's window forever.
     reassigned_names: BTreeSet<String>,
     /// Plot calls found in pass 1, registered after name resolution.
-    pending_plots: Vec<(NodeId, Vec<Arg>, Option<&'static str>)>,
+    pending_plots: Vec<(NodeId, Vec<Arg>, bool)>,
 }
 
 impl Compiler {
@@ -343,6 +360,7 @@ impl Compiler {
             functions: Vec::new(),
             function_names: Vec::new(),
             global_slots: 0,
+            slot_modes: Vec::new(),
             call_site_count: 0,
             history_series_count: 0,
             max_bars_back: 1,
@@ -369,6 +387,7 @@ impl Compiler {
             history_series: self.history_series,
             functions: self.functions,
             global_slots: self.global_slots as usize,
+            slot_modes: self.slot_modes,
             call_site_count: self.call_site_count as usize,
             history_series_count: self.history_series_count as usize,
             max_bars_back: self.max_bars_back,
@@ -443,12 +462,23 @@ impl Compiler {
                 // silently substituted the default for every argument that
                 // came from a variable. Queued in textual order, which is
                 // the plot order the whole system indexes by.
-                Some(Builtin::Plot) => self.pending_plots.push((expr, args.clone(), None)),
-                Some(Builtin::PlotShape) => {
-                    self.pending_plots.push((expr, args.clone(), Some("shape")));
-                }
-                Some(Builtin::PlotChar) => {
-                    self.pending_plots.push((expr, args.clone(), Some("char")));
+                Some(Builtin::Plot) => self.pending_plots.push((expr, args.clone(), false)),
+                Some(Builtin::Hline) => self.pending_plots.push((expr, args.clone(), true)),
+                Some(
+                    kind @ (Builtin::PlotShape
+                    | Builtin::PlotChar
+                    | Builtin::Fill
+                    | Builtin::Bgcolor
+                    | Builtin::Barcolor),
+                ) => {
+                    let span = self.span(expr);
+                    self.warnings.push(PineError::new(
+                        ErrorCode::PineUnsupported,
+                        span,
+                        format!(
+                            "{kind:?} is accepted but not drawn yet (shape plots                              and bar colors land with the drawing milestone)"
+                        ),
+                    ));
                 }
                 Some(Builtin::AlertCondition) => {
                     let span = self.span(expr);
@@ -504,8 +534,8 @@ impl Compiler {
 
     /// Register every queued plot, now that names resolve.
     fn register_pending_plots(&mut self) {
-        for (call, args, marker) in std::mem::take(&mut self.pending_plots) {
-            self.plot_call(call, &args, marker);
+        for (call, args, is_hline) in std::mem::take(&mut self.pending_plots) {
+            self.plot_call(call, &args, is_hline);
         }
     }
 
@@ -527,16 +557,16 @@ impl Compiler {
             ErrorCode::PineUnsupported,
             span,
             format!(
-                "`{name}` must be constant at load time; this one is not, so the                  default is used (per-bar colors and widths land with the                  dynamic-color milestone)"
+                "`{name}` must be constant at load time; this one is not, so                  the default is used (per-bar colors and widths land with the                  dynamic-color milestone)"
             ),
         ));
     }
 
-    fn plot_call(&mut self, call: NodeId, args: &[Arg], marker: Option<&str>) {
+    fn plot_call(&mut self, call: NodeId, args: &[Arg], is_hline: bool) {
         let index = self.plots.len();
         for (position, name) in [(1, "title"), (2, "color"), (3, "linewidth"), (4, "style")] {
-            if marker.is_some() && position == 4 {
-                continue; // markers ignore `style`; nothing to warn about
+            if is_hline && position == 4 {
+                continue; // hline has no style argument at that position
             }
             self.warn_unfoldable_plot_arg(args, position, name);
         }
@@ -547,17 +577,17 @@ impl Compiler {
                 _ => None,
             })
             .unwrap_or_else(|| format!("plot {index}"));
-        let style = match marker {
-            // plotshape/plotchar render as markers; the style tag rides the
-            // spec so M3 can refine shapes without changing the registry.
-            Some(_) => PlotStyle::Circles,
-            None => self
-                .arg(args, 4, "style")
+        let style = if is_hline {
+            // hline is a plot column of a constant value; a Line spec keeps
+            // one render path for both.
+            PlotStyle::Line
+        } else {
+            self.arg(args, 4, "style")
                 .and_then(|a| match self.fold(a.value) {
                     Some(Const::Enum(tag)) => Some(style_of_tag(tag)),
                     _ => None,
                 })
-                .unwrap_or(PlotStyle::Line),
+                .unwrap_or(PlotStyle::Line)
         };
         let base_color = self
             .arg(args, 2, "color")
@@ -707,9 +737,16 @@ impl Compiler {
         }
     }
 
-    fn declare_global(&mut self, name: &str, init: Option<NodeId>, scope: &mut Scope) -> u32 {
+    fn declare_global(
+        &mut self,
+        name: &str,
+        init: Option<NodeId>,
+        mode: VarMode,
+        scope: &mut Scope,
+    ) -> u32 {
         let slot = self.global_slots;
         self.global_slots += 1;
+        self.slot_modes.push(mode);
         self.global_init.push(init);
         self.reassigned.push(self.reassigned_names.contains(name));
         scope
@@ -720,7 +757,7 @@ impl Compiler {
 
     fn walk_statement(&mut self, id: NodeId, scope: &mut Scope, ctx: &mut WalkCtx) {
         match self.kind(id).clone() {
-            NodeKind::Declare { name, value, .. } => {
+            NodeKind::Declare { mode, name, value } => {
                 self.walk_expr(value, scope, ctx);
                 if let Some(frame) = ctx.frame.as_mut() {
                     let slot = frame.next_slot;
@@ -729,7 +766,7 @@ impl Compiler {
                     self.resolutions[id.index()] = Resolution::Local(slot);
                     return;
                 }
-                let slot = self.declare_global(&name, Some(value), scope);
+                let slot = self.declare_global(&name, Some(value), mode, scope);
                 self.resolutions[id.index()] = Resolution::Global(slot);
             }
             NodeKind::TupleDeclare { names, value } => {
@@ -749,7 +786,7 @@ impl Compiler {
                 }
                 let first = self.global_slots;
                 for name in &names {
-                    self.declare_global(name, None, scope);
+                    self.declare_global(name, None, VarMode::Plain, scope);
                 }
                 self.resolutions[id.index()] = Resolution::Global(first);
             }
@@ -864,7 +901,7 @@ impl Compiler {
                     scope.names.push((var, Resolution::Local(slot)));
                     Resolution::Local(slot)
                 } else {
-                    let slot = self.declare_global(&var, None, scope);
+                    let slot = self.declare_global(&var, None, VarMode::Plain, scope);
                     Resolution::Global(slot)
                 };
                 self.resolutions[id.index()] = resolution;
@@ -1042,7 +1079,12 @@ impl Compiler {
             let site = CallSiteId(self.call_site_count);
             self.call_site_count += 1;
             self.call_sites[call.index()] = Some(site);
-            self.check_kernel_length(call, builtin, args);
+            // Inside a function body a length may be a parameter, which no
+            // load-time folder can see through; the interpreter re-validates
+            // every kernel length with the same error code at bar time.
+            if ctx.frame.is_none() {
+                self.check_kernel_length(call, builtin, args);
+            }
         }
         if builtin.is_top_level_only() && !ctx.top_level {
             let span = self.span(call);
@@ -1081,6 +1123,9 @@ impl Compiler {
             | Builtin::MathSum => (1, "length"),
             Builtin::TaVwma => (2, "length"),
             Builtin::TaAtr => (0, "length"),
+            // Both sides of a pivot size the same window; checking the left
+            // one reaches the same allocation the right one feeds.
+            Builtin::TaPivotHigh | Builtin::TaPivotLow => (1, "leftbars"),
             _ => return None,
         })
     }
@@ -1100,14 +1145,17 @@ impl Compiler {
         };
         if self
             .fold(arg.value)
-            .and_then(|c| c.as_positive_len())
+            .and_then(|c| c.as_kernel_len())
             .is_none()
         {
             self.errors.push(PineError::new(
                 ErrorCode::PineSeriesLength,
                 arg.span,
-                "a kernel length must fold to a positive integer at load time \
-                 (a literal, an input, or arithmetic over them)",
+                format!(
+                    "a kernel length must fold to a positive integer no greater \
+                     than {MAX_KERNEL_LENGTH} at load time (a literal, an input, \
+                     or arithmetic over them)"
+                ),
             ));
         }
     }

@@ -6,6 +6,13 @@
 //! `len` inputs; `highest`/`lowest` use a monotonic deque. This is what makes
 //! the per-bar commit budget (§5 of the plan) achievable.
 //!
+//! One documented exception: `pivothigh`/`pivotlow` compare the candidate
+//! against its whole `left + 1 + right` window on every push, because a
+//! pivot asks "is this bar the strict extreme of its neighbourhood", which a
+//! running extreme cannot answer as bars leave on both sides. The cost is
+//! O(left + right) per bar and the lengths are user-supplied, so it is
+//! bounded by the kernel-length cap the script compiler enforces.
+//!
 //! Two consequences of that choice, stated because they are easy to assume
 //! away:
 //!
@@ -40,10 +47,12 @@
 //!   for `crossover`/`crossunder`.
 
 mod flow;
+mod pivot;
 mod smooth;
 mod window;
 
 pub use flow::{Atr, Change, Cross, CrossOver, CrossUnder, Cum, Mom, Rsi, Tr};
+pub use pivot::{PivotHigh, PivotLow};
 pub use smooth::{Ema, Rma, Sma, Vwma, Wma};
 pub use window::{
     BarsSince, Highest, HighestBars, Lowest, LowestBars, Stdev, ValueWhen, WindowSum,
