@@ -279,8 +279,14 @@ impl MetaTraderSettings {
         }
     }
 
-    /// Check the listener settings on their own: a bind address that resolves,
-    /// and a port map in which no two symbols could collide.
+    /// Check the listener settings on their own: a `listen_addr` that splits
+    /// into a non-empty host and a `u16` port, and a port map in which no two
+    /// symbols could collide.
+    ///
+    /// This checks the shape of an address, not whether it can be reached — a
+    /// host that does not resolve, or a port another process already holds, is
+    /// a runtime fact (reported as `MT5_BIND_FAILED`) that no amount of
+    /// parsing here would predict.
     ///
     /// Every rule here describes a config whose only symptom at runtime is a
     /// chart that stays empty, which is exactly the kind of thing to refuse at
@@ -292,10 +298,27 @@ impl MetaTraderSettings {
                 self.listen_addr
             ));
         };
+        // Same reasoning as a mapped port of 0: an ephemeral bind is an address
+        // nobody can be configured against, and every unmapped symbol lands here.
+        if default_port == 0 {
+            return Err(format!(
+                "metatrader listen_addr '{}' asks for port 0; that binds whatever the OS \
+                 hands out, and an EA has no way to dial it",
+                self.listen_addr
+            ));
+        }
         let mut taken: BTreeMap<u16, &str> = BTreeMap::new();
         for (symbol, &port) in &self.ports {
             if symbol.trim().is_empty() {
                 return Err("[metatrader.ports] has an entry with an empty symbol".to_string());
+            }
+            // A padded key silently maps nothing: lookups come from a feed's
+            // symbol list, which carries no such padding.
+            if symbol != symbol.trim() {
+                return Err(format!(
+                    "[metatrader.ports] key '{symbol}' has leading or trailing whitespace; \
+                     it would never match the symbol a feed offers"
+                ));
             }
             if port == 0 {
                 return Err(format!(
@@ -387,9 +410,54 @@ impl AppConfig {
         }
     }
 
+    /// Every MetaTrader feed offering `symbol`, by id.
+    fn metatrader_feeds_offering(&self, symbol: &str) -> Vec<&str> {
+        self.feeds
+            .iter()
+            .filter(|feed| {
+                feed.provider == ProviderKind::MetaTrader
+                    && feed.symbols.iter().any(|offered| offered == symbol)
+            })
+            .map(|feed| feed.id.as_str())
+            .collect()
+    }
+
+    /// Check the MetaTrader port map against the feed catalog it exists to
+    /// serve. Both failures here are silent at runtime, which is what makes
+    /// them worth a load-time refusal:
+    ///
+    /// - a key no MetaTrader feed offers is a typo or a leftover, and its only
+    ///   symptom is the symbol quietly using the shared port instead;
+    /// - a symbol two MetaTrader feeds both claim resolves to one port for
+    ///   both, so two brokers quoting `US500` would fight over one listener
+    ///   while the map looks perfectly well-formed.
+    fn validate_ports_against_catalog(&self) -> Result<(), String> {
+        for symbol in self.metatrader.ports.keys() {
+            match self.metatrader_feeds_offering(symbol).as_slice() {
+                [] => {
+                    return Err(format!(
+                        "[metatrader.ports] maps '{symbol}', which no metatrader feed offers; \
+                         it would silently fall back to the shared listen_addr port"
+                    ));
+                }
+                [_] => {}
+                [first, rest @ ..] => {
+                    return Err(format!(
+                        "[metatrader.ports] maps '{symbol}', which is offered by {} metatrader \
+                         feeds ('{first}' and '{}'); one port cannot carry both",
+                        rest.len() + 1,
+                        rest.join("', '")
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate internal consistency: at least one feed, unique ids, non-empty
     /// symbol lists, a default selection that actually resolves, and a
-    /// MetaTrader port map no two symbols can collide in.
+    /// MetaTrader port map no two symbols can collide in — checked both on its
+    /// own and against the feeds it names.
     ///
     /// # Errors
     ///
@@ -419,6 +487,8 @@ impl AppConfig {
                 return Err(format!("feed '{}' names an empty bubble_preset", feed.id));
             }
         }
+        // Needs the catalog, so it waits until the catalog is known good.
+        self.validate_ports_against_catalog()?;
         let Some(default) = self.feed(&self.default_feed) else {
             return Err(format!(
                 "default_feed '{}' is not among the configured feeds",
@@ -1058,8 +1128,96 @@ mod tests {
         assert!(message.contains("listen_addr"), "{message}");
         assert!(message.contains("host:port"), "{message}");
 
+        // Port 0 is rejected here for the same reason it is in the map: every
+        // unmapped symbol lands on this address, and an ephemeral port is not
+        // something an EA can be configured against.
+        let err = with_metatrader(r#"listen_addr = "127.0.0.1:0""#).expect_err("ephemeral port");
+        let message = err.to_string();
+        assert!(message.contains("listen_addr"), "{message}");
+        assert!(message.contains("port 0"), "{message}");
+
         // And the ordinary one still loads.
         assert!(with_metatrader(r#"listen_addr = "127.0.0.1:9100""#).is_ok());
+    }
+
+    #[test]
+    fn a_mapped_symbol_must_be_one_a_metatrader_feed_offers() {
+        // A typo here has no symptom at all: the symbol silently falls back to
+        // the shared port and fights whatever is already on it.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSDD = 9101"#,
+        )
+        .expect_err("typo'd symbol");
+        let message = err.to_string();
+        assert!(message.contains("XAUUSDD"), "{message}");
+        assert!(message.contains("no metatrader feed offers"), "{message}");
+
+        // Padding is the same failure wearing a disguise — a feed's symbol
+        // list carries none, so the key would never match.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            "XAUUSD " = 9101"#,
+        )
+        .expect_err("padded key");
+        assert!(err.to_string().contains("whitespace"), "{err}");
+    }
+
+    #[test]
+    fn a_symbol_two_metatrader_feeds_offer_cannot_be_mapped() {
+        // Two brokers both quoting US500 is ordinary. Mapping it gives both one
+        // port, and the map looks perfectly well-formed while they fight.
+        let text = r#"
+            default_feed = "tickmill"
+            default_symbol = "US500"
+            [[feeds]]
+            id = "tickmill"
+            name = "Tickmill"
+            provider = "metatrader"
+            symbols = ["US500"]
+            [[feeds]]
+            id = "other-broker"
+            name = "Other"
+            provider = "metatrader"
+            symbols = ["US500"]
+            [metatrader]
+            listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            US500 = 9102
+        "#;
+        let err = parse(text, ConfigSource::Embedded).expect_err("two feeds claim US500");
+        let message = err.to_string();
+        assert!(message.contains("US500"), "{message}");
+        assert!(
+            message.contains("tickmill") && message.contains("other-broker"),
+            "both claimants are named: {message}"
+        );
+
+        // The same two feeds are fine as long as the shared symbol is not
+        // mapped — they simply cannot stream at the same time.
+        let unmapped = text.replace("[metatrader.ports]\n            US500 = 9102", "");
+        assert!(parse(&unmapped, ConfigSource::Embedded).is_ok());
+    }
+
+    #[test]
+    fn a_mapped_port_survives_a_default_address_with_no_host() {
+        // Only reachable by building the settings in code — `validate` refuses
+        // this file. It is pinned because dropping the mapped port here would
+        // discard the one thing the caller stated explicitly, in favour of an
+        // address that cannot bind at all.
+        let settings = listening("garbage", &[("XAUUSD", 9101)]);
+        let gold = settings.endpoint_for("XAUUSD");
+        assert_eq!(gold.listen_addr, "127.0.0.1:9101");
+        assert_eq!(gold.dial, Some(("127.0.0.1".into(), 9101)));
+        assert!(gold.from_ports_map);
+
+        // An unmapped symbol has nothing to salvage: the bad address passes
+        // through and the bind reports it.
+        let other = settings.endpoint_for("WIN$N");
+        assert_eq!(other.listen_addr, "garbage");
+        assert_eq!(other.dial, None);
     }
 
     #[test]

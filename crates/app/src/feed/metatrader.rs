@@ -356,18 +356,26 @@ async fn feed_task(
 
 /// What to tell the user when this symbol's port could not be opened.
 ///
-/// The cause worth naming is the one that arrived with multi-symbol charting:
-/// two feeds asking for the same port. Whoever bound it first keeps streaming,
-/// and the second chart would otherwise just sit there empty.
+/// Three different things produce this, and only one of them is fixed in the
+/// config file. The likeliest by far — now that tabs make opening the same
+/// market twice a single click — is a second tab already charting this symbol,
+/// which no `[metatrader.ports]` edit can help: one port carries one symbol,
+/// so the map has nowhere left to put it. Prescribing the config edit for that
+/// case would send someone to the wrong file, so all three are named and the
+/// actionable one leads.
+///
+/// Which one it actually is cannot be decided from here — this feed knows only
+/// that the bind failed, not what else the app has open. Naming the causes in
+/// likelihood order is the honest version of that.
 fn bind_failure_notice(symbol: &str, error: &Mt5Error) -> FeedNotice {
     let Mt5Error::Bind { addr, .. } = error;
     FeedNotice::attention(
         format!("quantick could not open the MetaTrader port for {symbol}"),
         format!(
-            "Nothing can listen on {addr} — another quantick has it, or another symbol in \
-             this one does. One port carries one symbol: give {symbol} its own under \
-             [metatrader.ports] in your configuration, and set the matching InpPort on its \
-             EA chart."
+            "Nothing can listen on {addr}. Most likely another tab in this window already \
+             charts {symbol} — one port carries one symbol, so close it and this tab takes \
+             over. Otherwise: another quantick instance is holding {addr}, or a different \
+             symbol is mapped to that port under [metatrader.ports]."
         ),
     )
 }
@@ -823,9 +831,19 @@ mod tests {
         };
         assert!(headline.contains("US500"), "headline: {headline}");
         assert!(next_step.contains("127.0.0.1:9102"), "step: {next_step}");
+        // All three causes are named, because this feed cannot tell which one
+        // it is — and the one a config edit fixes is the least likely.
         assert!(
-            next_step.contains("[metatrader.ports]") && next_step.contains("InpPort"),
-            "the step names both halves of the pairing: {next_step}"
+            next_step.contains("another tab") && next_step.contains("US500"),
+            "the likeliest cause leads, and it names the symbol: {next_step}"
+        );
+        assert!(
+            next_step.contains("another quantick"),
+            "a second instance is a cause too: {next_step}"
+        );
+        assert!(
+            next_step.contains("[metatrader.ports]"),
+            "and so is a mapped collision: {next_step}"
         );
     }
 

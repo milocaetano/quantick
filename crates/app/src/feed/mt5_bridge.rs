@@ -182,7 +182,10 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
         );
         return;
     };
-    let (host, port) = (host.as_str(), port.to_string());
+    // Named apart from the `port` above rather than shadowing it: this is the
+    // command-line argument, and a reader (or a log field) silently changing
+    // from u16 to String is exactly the kind of thing shadowing hides.
+    let (host, port_arg) = (host.as_str(), port.to_string());
     let Some((program, extra)) = settings.bridge_command.split_first() else {
         warn!(
             target: "quantick::app",
@@ -303,7 +306,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
                 .arg("--host")
                 .arg(host)
                 .arg("--port")
-                .arg(&port)
+                .arg(&port_arg)
                 .stdin(Stdio::null())
                 // Read rather than inherit: the same lines still reach the log
                 // (one story, one place), and they also become something the
@@ -321,7 +324,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
                         pid = spawned.id(),
                         attempt,
                         host,
-                        port = %port,
+                        port,
                         "started a bridge for this feed"
                     );
                     chosen = Some(program);
