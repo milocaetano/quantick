@@ -694,6 +694,115 @@ mod tests {
         );
     }
 
+    /// Two MetaTrader tabs, two symbols, two listeners — the shape §11 asks
+    /// for and the reason `[metatrader.ports]` exists.
+    ///
+    /// The window opens one feed per tab, so this is what two MT5 tabs
+    /// actually do: each `spawn` resolves its own symbol through
+    /// `endpoint_for` and binds only that port. A bridge dialling either one
+    /// reaches the tab that asked for it, and neither can steal the other's.
+    #[tokio::test]
+    async fn two_symbols_listen_on_two_ports_at_once() {
+        let mut ports = std::collections::BTreeMap::new();
+        ports.insert("XAUUSD".to_string(), 19186_u16);
+        ports.insert("US500".to_string(), 19187_u16);
+        let settings = MetaTraderSettings {
+            // Deliberately elsewhere: nothing here may pass by falling through
+            // to the shared address.
+            listen_addr: "127.0.0.1:19188".to_string(),
+            ports,
+            side_source: Mt5SideSource::TickRule,
+            // These tests are the bridges; a real one racing them would make
+            // the assertions depend on whether python happens to be installed.
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+
+        // Two tabs' worth of feeds, alive at the same time.
+        let mut gold = spawn("XAUUSD", &settings);
+        let mut index = spawn("US500", &settings);
+        for feed in [&mut gold, &mut index] {
+            let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+                panic!("expected the immediate empty backfill");
+            };
+        }
+
+        async fn dial(port: u16) -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                if let Ok(sock) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                    return sock;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            panic!("nothing is listening on port {port}");
+        }
+
+        let mut gold_sock = dial(19186).await;
+        let mut index_sock = dial(19187).await;
+
+        fn script(symbol: &str, first: &str, second: &str) -> String {
+            format!(
+                "{{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",\
+                 \"symbol\":\"{symbol}\",\"broker_symbol\":\"{symbol}\",\"digits\":2,\
+                 \"server_utc_offset_s\":10800}}\n\
+                 {{\"type\":\"tick\",\"seq\":1,\"time_ms\":1000,\"bid\":\"0\",\"ask\":\"0\",\
+                 \"last\":\"{first}\",\"volume\":1,\"flags\":1080}}\n\
+                 {{\"type\":\"tick\",\"seq\":2,\"time_ms\":1001,\"bid\":\"0\",\"ask\":\"0\",\
+                 \"last\":\"{second}\",\"volume\":1,\"flags\":1080}}\n"
+            )
+        }
+        // Distinct prices, so a trade arriving on the wrong feed is visible
+        // rather than plausible.
+        gold_sock
+            .write_all(script("XAUUSD", "4000.00", "4001.00").as_bytes())
+            .await
+            .unwrap();
+        gold_sock.flush().await.unwrap();
+        index_sock
+            .write_all(script("US500", "5000.00", "4999.00").as_bytes())
+            .await
+            .unwrap();
+        index_sock.flush().await.unwrap();
+
+        async fn next_trade(feed: &mut FeedHandle) -> quantick_engine::Trade {
+            let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the trade")
+                .expect("feed closed");
+            let FeedEvent::Live(trade) = event else {
+                panic!("expected a live trade");
+            };
+            trade
+        }
+
+        let gold_trade = next_trade(&mut gold).await;
+        let index_trade = next_trade(&mut index).await;
+        assert_eq!(
+            gold_trade.price,
+            rust_decimal::Decimal::new(400_100, 2),
+            "the gold tab's port carries the gold bridge's prints"
+        );
+        assert_eq!(gold_trade.side, quantick_engine::Side::Buy, "an uptick");
+        assert_eq!(
+            index_trade.price,
+            rust_decimal::Decimal::new(499_900, 2),
+            "and the index tab's port its own"
+        );
+        assert_eq!(
+            index_trade.side,
+            quantick_engine::Side::Sell,
+            "a downtick, so the two streams cannot have been crossed"
+        );
+
+        // Neither took the shared address on the way.
+        assert!(
+            tokio::net::TcpStream::connect("127.0.0.1:19188")
+                .await
+                .is_err(),
+            "mapped symbols must leave the shared listen_addr free"
+        );
+    }
+
     #[test]
     fn a_port_that_will_not_open_names_the_port_and_the_way_out() {
         // The failure multi-symbol charting made ordinary: two feeds asking

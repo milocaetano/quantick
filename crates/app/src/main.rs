@@ -38,6 +38,8 @@ mod replay_view;
 mod state;
 mod statusbar;
 mod style;
+mod tab;
+mod tabstrip;
 mod theme;
 mod time_header;
 mod timezone;
