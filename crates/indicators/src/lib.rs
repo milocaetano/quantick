@@ -1,9 +1,16 @@
 //! quantick-indicators — engine bars in, plot series out.
 //!
-//! The indicator runtime: series storage, the commit/preview execution
-//! contract, plot & input models, and (in later milestones) the incremental
-//! `ta` kernels and the multi-indicator host. A **pure domain crate** like
-//! the engine: no UI, no network, no async, no threads, no wall clock.
+//! The indicator runtime: the commit/preview execution contract, plot & input
+//! models, and (in later milestones) the incremental `ta` kernels and the
+//! multi-indicator host. A **pure domain crate** like the engine: no UI, no
+//! network, no async, no threads, no wall clock.
+//!
+//! There is one place committed values live — the [`PlotBuffer`] a consumer
+//! reads columns from. A second, general-purpose series store is deliberately
+//! absent: an indicator that needs its own history (a script's `[n]` reads, a
+//! kernel's window) keeps it in its own state and stages it with the same
+//! commit/preview discipline. Per-bar color columns, when they land, extend
+//! `PlotBuffer` rather than opening a second store beside it.
 //!
 //! # The contract
 //!
@@ -40,10 +47,8 @@ mod bar;
 mod indicator;
 mod input;
 mod output;
-mod series;
 
 pub use bar::IndicatorBar;
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 pub use input::{InputSpec, InputValue, SourceId};
 pub use output::{PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFrame, Rgba8};
-pub use series::{NA_COLOR, SeriesId, SeriesStore};
