@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(
             interval_ms,
             crate::feed::OHLCV_BASE_INTERVAL_MS,
-            "the interval is tagged even on an empty answer, so a consumer              never has to guess what it would have been resampling"
+            "the interval is tagged even on an empty answer, so a consumer never              has to guess what it would have been resampling"
         );
     }
 }

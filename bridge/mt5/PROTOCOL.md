@@ -156,7 +156,10 @@ unasked and the feed holds it until something requests it.
   (`real_volume`); a broker-quoted CFD prints nothing at all and reports its
   tick count instead — the same one-synthetic-unit-per-tick the live path
   charts for that instrument (see `tape`). The `BRIDGE_RATES_SENT` log line
-  names which was used.
+  names which was used, and counts the per-bar substitutions in
+  `fell_back_to_tick_volume`: a tape instrument whose terminal reported no real
+  volume on some bars is a different chart from one that reported it on all of
+  them, and once the bars are drawn the two look identical.
 - No aggressor split exists in a MetaTrader candle. The feed puts half the
   volume on each side, so total volume stays exact and delta is identically
   zero — read as *not measured*, never as a balanced market.

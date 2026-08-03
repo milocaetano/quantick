@@ -408,6 +408,13 @@ class Session:
                 mt5_error=str(mt5.last_error()),
                 hint="the terminal returned no M1 history for this symbol",
             )
+            # The hello already promised candles, so silence here would leave the
+            # feed holding nothing while advertising nothing — indistinguishable
+            # from a block still on its way. An empty pair delivers the absence.
+            self.send(
+                {"type": "rates_start", "interval_ms": M1_INTERVAL_MS, "count_hint": 0}
+            )
+            self.send({"type": "rates_end"})
             return
 
         available = len(rates)
@@ -423,6 +430,11 @@ class Session:
             )
 
         quotes_only = self.tape == "quotes"
+        # How often a tape instrument reported no real volume and the tick count
+        # stood in. Counted rather than silent: a WIN$N block that fell back on
+        # every bar is a different chart from one that never did, and the two
+        # are indistinguishable once the bars are drawn.
+        fell_back = 0
         self.send(
             {
                 "type": "rates_start",
@@ -439,6 +451,8 @@ class Session:
             # fallback and matches what the live path charts for it.
             if volume <= 0:
                 volume = int(rate["tick_volume"])
+                if not quotes_only:
+                    fell_back += 1
             batch.append(
                 [
                     int(rate["time"]) * 1000,
@@ -464,6 +478,7 @@ class Session:
             bars=sent,
             months=self.args.rates_months,
             volume_source="tick_volume" if quotes_only else "real_volume",
+            fell_back_to_tick_volume=fell_back,
         )
 
     def send_tick(self, tick) -> None:

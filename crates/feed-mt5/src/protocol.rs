@@ -348,6 +348,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_batch_bound_matches_the_python_bridge() {
+        // The bound exists on both sides of the wire: Rust drops a session whose
+        // line exceeds the cap, and the bridge is what decides how long a line
+        // gets. A bridge that drifted upward would take down every session it
+        // opened, and the failure would look like a network problem. So the two
+        // constants are asserted equal, not assumed — the same treatment the
+        // tracked-vs-embedded presets file gets in `bubble_presets.rs`.
+        let bridge = include_str!("../../../bridge/mt5/quantick_bridge.py");
+        let declared = bridge
+            .lines()
+            .find_map(|line| line.strip_prefix("MAX_BARS_PER_RATE_LINE = "))
+            .expect("the bridge declares the bound at module level")
+            .trim()
+            .parse::<usize>()
+            .expect("the bound is a plain integer");
+        assert_eq!(
+            declared, MAX_BARS_PER_RATE_LINE,
+            "the bridge batches {declared} candles per line; this decoder is sized for              {MAX_BARS_PER_RATE_LINE}. A line over the cap ends the session it arrives on."
+        );
+    }
+
+    #[test]
     fn rates_line_stays_under_the_cap() {
         // The bound that keeps a candle block from killing the session it
         // arrives on: a line over MAX_LINE_BYTES is not truncated, it ends the

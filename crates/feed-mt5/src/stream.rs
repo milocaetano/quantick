@@ -840,6 +840,19 @@ async fn serve_connection(
                     count_hint = ?count_hint,
                     "bridge is sending historical candles"
                 );
+                if let Some(open) = candles.take() {
+                    // A block already running: the bridge restarted mid-send,
+                    // or two are interleaved. Either way what was collected
+                    // belongs to a window this new header does not describe.
+                    warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_PROTOCOL_VIOLATION",
+                        bars = open.len(),
+                        action = "discard_open_block",
+                        "a second rates_start arrived inside an open block; discarding the first"
+                    );
+                }
                 candles = Some(RatesBlock::new(interval_ms, hello.server_utc_offset_s));
             }
             Ok(BridgeMsg::Rate(chunk)) => match candles.as_mut() {
@@ -919,6 +932,15 @@ async fn serve_connection(
     end
 }
 
+/// Most candles one block may deliver.
+///
+/// The bridge caps what it sends (`--rates-max-bars`) and logs the shortfall,
+/// but the bridge is the side this one cannot vouch for: a misconfigured or
+/// hostile one could stream candles until the feed runs out of memory. Ninety
+/// days of one-minute buckets is ~130 000, so this is comfortably above any
+/// legitimate block while still being a bound.
+const MAX_BARS_PER_BLOCK: usize = 1_000_000;
+
 /// The historical candle block being received, between `rates_start` and
 /// `rates_end`.
 ///
@@ -931,6 +953,8 @@ struct RatesBlock {
     interval_ms: i64,
     mapper: RateMapper,
     bars: BTreeMap<i64, Bar>,
+    /// Whether the cap has been hit, so it is reported once rather than per row.
+    truncated: bool,
 }
 
 impl RatesBlock {
@@ -939,6 +963,7 @@ impl RatesBlock {
             interval_ms,
             mapper: RateMapper::new(interval_ms, server_utc_offset_s),
             bars: BTreeMap::new(),
+            truncated: false,
         }
     }
 
@@ -946,6 +971,20 @@ impl RatesBlock {
     /// corrupt candle in ninety days is a gap, not a reason to lose the block.
     fn absorb(&mut self, chunk: &protocol::RateChunk) {
         for row in &chunk.bars {
+            if self.bars.len() >= MAX_BARS_PER_BLOCK {
+                if !self.truncated {
+                    self.truncated = true;
+                    warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_RATES_TRUNCATED",
+                        max_bars = MAX_BARS_PER_BLOCK as u64,
+                        action = "keep_oldest_stop_absorbing",
+                        "the candle block exceeded the cap; ignoring the rest of it"
+                    );
+                }
+                return;
+            }
             if let Some(bar) = self.mapper.map(row) {
                 self.bars.insert(bar.open_time, bar);
             }
