@@ -178,6 +178,20 @@ hundred of those is ~44 KiB, about two thirds of the cap.
 `rates_line_stays_under_the_cap` in `crates/feed-mt5/src/protocol.rs` pins it,
 and `MAX_BARS_PER_RATE_LINE` appears on both sides of the wire.
 
+**Why the bridge pages, and why the block can be shorter than asked.** The
+terminal validates a `CopyRates` request's *potential* bar count against its
+"Max bars in chart" setting and returns a hard error rather than truncating to
+what it will serve. Probed 2026-08-03 against a terminal capped at 100 000: a
+90-day M1 range is 129 600 potential slots and came back
+`(-2, 'Terminal: Invalid params')`, while the same call over a single day
+returned its 563 bars. The bridge therefore walks backwards in counted pages
+well under any sane cap, merging by bar time. Two consequences are visible on
+the wire: the block is assembled from several terminal calls, so a page failing
+partway delivers the newer part rather than nothing; and a young contract simply
+has less history than was asked for. `BRIDGE_RATES_SENT` reports
+`requested_span_days` against `covered_span_days` so the second case reads as a
+fact about the instrument rather than as a bug.
+
 A block that never reaches `rates_end` is discarded whole rather than delivered
 short: a candle series with a hole in it reads as a market that stopped trading.
 The next session re-sends it.
