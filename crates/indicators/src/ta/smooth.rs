@@ -36,6 +36,15 @@ impl Sma {
             f64::NAN
         }
     }
+
+    /// True while at least one input in the window is a non-zero number.
+    ///
+    /// Exists for [`Vwma`], whose denominator is this kernel: "did any volume
+    /// arrive?" must be answered by counting inputs, not by comparing the
+    /// running sum to zero, which retains a rounding residue after eviction.
+    pub(crate) fn window_has_nonzero(&self) -> bool {
+        self.window.has_nonzero()
+    }
 }
 
 /// Shared engine of `ema`/`rma`: exponential smoothing seeded with the SMA of
@@ -216,7 +225,14 @@ impl Vwma {
     pub fn push(&mut self, src: f64, volume: f64) -> f64 {
         let num = self.weighted.push(src * volume);
         let den = self.volume.push(volume);
-        if den == 0.0 { f64::NAN } else { num / den }
+        // Gate on the input count, not on `den == 0.0`: a window of zero
+        // volumes leaves a rounding residue in the running sum, and the ratio
+        // of two residues is a plausible-looking price made out of nothing.
+        if self.volume.window_has_nonzero() {
+            num / den
+        } else {
+            f64::NAN
+        }
     }
 }
 
@@ -317,5 +333,21 @@ mod tests {
         let mut vwma = Vwma::new(2);
         vwma.push(10.0, 0.0);
         assert!(vwma.push(20.0, 0.0).is_nan());
+    }
+
+    #[test]
+    fn vwma_zero_volume_after_real_volume_is_na_not_a_residue() {
+        // The volumes are deliberately non-dyadic: adding then evicting them
+        // leaves the running sum at ~2.8e-17 rather than exactly 0.0, so a
+        // guard written `den == 0.0` divides one residue by another and
+        // returns a number in the thousands instead of `na`.
+        let mut vwma = Vwma::new(2);
+        vwma.push(10.0, 0.1);
+        vwma.push(20.0, 0.2);
+        vwma.push(30.0, 0.0);
+        assert!(
+            vwma.push(40.0, 0.0).is_nan(),
+            "a window with no volume has no volume-weighted price"
+        );
     }
 }

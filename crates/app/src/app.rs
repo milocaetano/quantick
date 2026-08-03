@@ -27,7 +27,9 @@ use crate::drawings::{
 };
 use crate::feed::{self, FeedCommand, FeedEvent, FeedHandle, FeedNotice, ReplayLink};
 use crate::indicator_render::{self, PlotX};
-use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
+use crate::indicator_worker::{
+    IndicatorCommand, IndicatorEvent, IndicatorSource, IndicatorWorker, SlotId,
+};
 use crate::indicators::IndicatorViews;
 use crate::indicators::library::ScriptLibrary;
 use crate::loading::{self, LoadingTask, LoadingTracker};
@@ -195,19 +197,26 @@ const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 /// though they are zooming different things.
 const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
-/// Split the padded plot area into the candle chart, the optional live strip,
-/// the right price gutter and the bottom time strip, so the input handler and
-/// the renderer agree on the boundaries. `live_strip_width` of zero means the
-/// strip is off and the chart runs straight into the gutter, exactly as it
-/// did before the strip existed.
-fn plot_split(area: egui::Rect, live_strip_width: f32) -> PlotAreas {
+/// Split the padded plot area into the candle chart, the indicator panes, the
+/// optional live strip, the right price gutter and the bottom time strip, so
+/// the input handler and the renderer agree on the boundaries.
+/// `live_strip_width` of zero means the strip is off and the chart runs
+/// straight into the gutter, exactly as it did before the strip existed.
+///
+/// `pane_count` is the number of *visible* pane indicators: the band they
+/// claim is carved here, once, rather than by each caller — a chart rect that
+/// two call sites disagree about is two price scales for the same pixels.
+fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) -> PlotAreas {
     let plot = area.shrink(16.0);
     let strip_width = live_strip_width.max(0.0);
     let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
+    let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
+    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_count);
     PlotAreas {
-        chart: egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y)),
+        chart,
+        indicator_panes,
         live_strip: (strip_width > 0.0).then(|| {
             egui::Rect::from_min_max(
                 egui::pos2(split_x, plot.top()),
@@ -255,7 +264,14 @@ fn split_time_strip(strip: egui::Rect, divider_x: Option<f32>) -> (egui::Rect, O
 
 /// The interactive regions of the plot, plus the optional live strip.
 struct PlotAreas {
+    /// The candle body, with the indicator pane band already taken out of it.
+    /// Every consumer — renderer and input handler alike — reads the chart
+    /// rect from here, which is what keeps the price scale a drawing is
+    /// placed against identical to the one it is hit-tested against.
     chart: egui::Rect,
+    /// Stacked indicator panes below the candles, top to bottom. Empty when
+    /// no pane indicator is visible.
+    indicator_panes: Vec<egui::Rect>,
     /// Present only while the strip is shown; sits between `chart` and
     /// `price_gutter` and is not an input region.
     live_strip: Option<egui::Rect>,
@@ -596,7 +612,9 @@ impl QuantickApp {
                     .iter()
                     .position(|entry| entry.name == name)
                 {
-                    Some(index) => app.add_script_indicator(index),
+                    Some(index) => {
+                        app.add_script_indicator(index);
+                    }
                     None => tracing::warn!(
                         target: "quantick::app",
                         schema_version = 1_u8,
@@ -779,11 +797,15 @@ impl QuantickApp {
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
-            ToolbarAction::AddEmaIndicator => self.add_indicator(IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
-            }),
-            ToolbarAction::AddCvdIndicator => self.add_indicator(IndicatorSource::NativeCvd),
+            ToolbarAction::AddEmaIndicator => {
+                self.add_indicator(IndicatorSource::NativeEma {
+                    len: DEFAULT_EMA_LEN,
+                    source: quantick_indicators::SourceId::Close,
+                });
+            }
+            ToolbarAction::AddCvdIndicator => {
+                self.add_indicator(IndicatorSource::NativeCvd);
+            }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
                 self.indicators.toggle_hidden(SlotId(slot));
             }
@@ -794,22 +816,24 @@ impl QuantickApp {
                 self.indicator_worker
                     .send(IndicatorCommand::Remove(SlotId(slot)));
             }
-            ToolbarAction::AddScriptIndicator(index) => self.add_script_indicator(index),
+            ToolbarAction::AddScriptIndicator(index) => {
+                self.add_script_indicator(index);
+            }
         }
     }
 
     /// Load a library script behind a fresh slot. A file that no longer
     /// reads or a script that no longer compiles becomes the slot's error —
     /// shown with lines and codes, never silently dropped.
-    fn add_script_indicator(&mut self, index: usize) {
-        let Some(entry) = self.script_library.entries().get(index) else {
-            return;
-        };
+    ///
+    /// Returns the slot it claimed, so a caller that needs to address the new
+    /// indicator (restoring saved inputs, say) does not have to guess which
+    /// one it is.
+    fn add_script_indicator(&mut self, index: usize) -> Option<SlotId> {
+        let entry = self.script_library.entries().get(index)?;
         let name = entry.name.clone();
         match self.script_library.read(index) {
-            Some(Ok(text)) => {
-                self.add_indicator(IndicatorSource::Script { name, text });
-            }
+            Some(Ok(text)) => Some(self.add_indicator(IndicatorSource::Script { name, text })),
             Some(Err(message)) => {
                 tracing::warn!(
                     target: "quantick::app",
@@ -817,11 +841,37 @@ impl QuantickApp {
                     event_code = "INDICATOR_SCRIPT_UNREADABLE",
                     script = %name,
                     error = %message,
-                    action = "script_not_loaded",
+                    action = "error_slot_shown",
                     "cannot read an indicator script"
                 );
+                // A click that produces nothing at all is the failure this
+                // function's own doc comment rules out. The compile half of
+                // that promise runs worker-side; the read half never leaves
+                // the UI thread, so the error slot is built here, from the
+                // same two events the worker would have sent.
+                let slot = self.indicators.allocate_slot();
+                self.indicators.apply(IndicatorEvent::Rebuilt {
+                    slot,
+                    descriptor: quantick_indicators::IndicatorDescriptor {
+                        title: name,
+                        short_title: None,
+                        overlay: false,
+                        plots: Vec::new(),
+                        fills: Vec::new(),
+                        inputs: Vec::new(),
+                    },
+                    columns: Vec::new(),
+                });
+                self.indicators.apply(IndicatorEvent::Error {
+                    slot,
+                    error: quantick_indicators::EvalError {
+                        bar_index: 0,
+                        message,
+                    },
+                });
+                Some(slot)
             }
-            None => {}
+            None => None,
         }
     }
 
@@ -1274,6 +1324,10 @@ impl QuantickApp {
                     let added = self.state.prepend_history(&trades);
                     self.viewport.shift_right_edge(added);
                     self.drawings.shift_bars(added);
+                    // Indicator columns shift with them: the rebuild below is
+                    // a round-trip away, and until it lands every value would
+                    // otherwise be drawn `added` slots off its own candle.
+                    self.indicators.shift_rows(added);
                     // Older trades re-cut every bar; replay from scratch.
                     self.send_indicator_rebuild();
                 }
@@ -1332,10 +1386,11 @@ impl QuantickApp {
     }
 
     /// Reserve a slot and ask the worker to instantiate `source` behind it.
-    fn add_indicator(&mut self, source: IndicatorSource) {
+    fn add_indicator(&mut self, source: IndicatorSource) -> SlotId {
         let slot = self.indicators.allocate_slot();
         self.indicator_worker
             .send(IndicatorCommand::Add { slot, source });
+        slot
     }
 
     /// Throw away everything loaded and wait for the source to refill it.
@@ -1610,7 +1665,11 @@ impl QuantickApp {
             self.drawing_press_started_empty = false;
             return false;
         };
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
         let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
         let history = egui::Rect::from_min_max(
             areas.chart.min,
@@ -1836,11 +1895,22 @@ impl QuantickApp {
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.last_chart_area = Some(plot_split(area, self.live_strip_width()).chart);
+        self.last_chart_area = Some(
+            plot_split(
+                area,
+                self.live_strip_width(),
+                self.indicators.visible_panes().count(),
+            )
+            .chart,
+        );
         if self.handle_drawing_placement(ui, area) {
             return;
         }
-        let areas = plot_split(area, self.live_strip_width());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
         let auto = self.last_auto_range;
         let height = self.last_chart_height;
         let total = self.slots();
@@ -2137,11 +2207,15 @@ impl QuantickApp {
         let closed = self.state.bars();
         let partial = self.state.partial();
         let total = closed.len() + usize::from(partial.is_some());
-        let areas = plot_split(area, self.live_strip_width());
-        // Indicator panes claim the bottom band before anything scales to the
-        // chart rect; the candles keep the rest (plan §4.3, fixed fraction v1).
-        let (chart_rect, pane_rects) =
-            crate::indicators::split_panes(areas.chart, self.indicators.visible_panes().count());
+        let areas = plot_split(
+            area,
+            self.live_strip_width(),
+            self.indicators.visible_panes().count(),
+        );
+        // Indicator panes claimed the bottom band inside `plot_split`, so the
+        // rect the candles scale to is the same one the input handler uses.
+        let chart_rect = areas.chart;
+        let pane_rects = areas.indicator_panes.clone();
         if total == 0 {
             painter.text(
                 area.center(),
@@ -2322,7 +2396,14 @@ impl QuantickApp {
         // Draw objects (lines/boxes/labels) share the overlays' paint slot:
         // after candles, before aggression bubbles.
         for view in self.indicators.visible_overlays() {
-            indicator_render::draw_objects(&clip, view.render_objects(), &plot_x, |v| scale.y(v));
+            indicator_render::draw_objects(
+                &clip,
+                view.render_objects(),
+                &plot_x,
+                |v| scale.y(v),
+                start,
+                end,
+            );
         }
         // Pane indicators stack in the band carved off above, sharing the
         // candles' x-mapping so bars and their flow read as one chart.
@@ -3886,11 +3967,11 @@ mod tests {
     fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
 
-        let off = plot_split(area, 0.0);
+        let off = plot_split(area, 0.0, 0);
         assert!(off.live_strip.is_none());
         assert_eq!(off.chart.right(), off.price_gutter.left());
 
-        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX);
+        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 0);
         let strip = on.live_strip.expect("strip rect");
         assert_eq!(on.chart.right(), strip.left());
         assert_eq!(strip.right(), on.price_gutter.left());
@@ -3903,6 +3984,39 @@ mod tests {
             off.chart.width() - crate::live_strip::LIVE_STRIP_WIDTH_PX
         );
         assert_eq!(on.time_strip.right(), on.chart.right());
+    }
+
+    /// The pane band is carved once, inside `plot_split`, so the rect the
+    /// renderer scales prices to is the rect the input handler hit-tests
+    /// against. When the two disagreed, a drawing was placed where you
+    /// clicked and then selected somewhere else — by 20% of the chart height
+    /// per visible pane.
+    #[test]
+    fn the_pane_band_comes_out_of_every_callers_chart_rect() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let none = plot_split(area, 0.0, 0);
+        assert!(none.indicator_panes.is_empty());
+
+        let one = plot_split(area, 0.0, 1);
+        let pane = *one
+            .indicator_panes
+            .first()
+            .expect("one visible pane claims one rect");
+        assert!(
+            one.chart.height() < none.chart.height(),
+            "the band is paid for out of the candles' pixels"
+        );
+        assert_eq!(one.chart.bottom(), pane.top(), "no gap, no overlap");
+        assert_eq!(pane.bottom(), none.chart.bottom());
+        assert_eq!(one.chart.width(), none.chart.width());
+        // The axes stay where they were: only the candle body shrinks.
+        assert_eq!(one.price_gutter, none.price_gutter);
+        assert_eq!(one.time_strip, none.time_strip);
+
+        let three = plot_split(area, 0.0, 3);
+        assert_eq!(three.indicator_panes.len(), 3);
+        assert!(three.chart.height() < one.chart.height());
     }
 
     /// Each pane zooms from the strip under it, and the split is exactly the
@@ -4038,6 +4152,49 @@ mod tests {
     /// ends come back so the caller keeps the channels open, exactly as a live
     /// feed thread would.
     #[allow(clippy::type_complexity)]
+    /// A library entry whose file is gone must still produce something the
+    /// user can see: the click used to log a warning and leave the chart
+    /// unchanged, while this function's doc promised an error slot.
+    #[test]
+    fn a_script_that_no_longer_reads_becomes_a_visible_error_slot() {
+        let (mut app, _events, _commands, _book) = test_app();
+        let dir = std::env::temp_dir().join(format!("quantick-app-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("vanishing.pine");
+        std::fs::write(
+            &path,
+            "//@version=5
+plot(close)
+",
+        )
+        .expect("write");
+
+        app.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
+        let index = app
+            .script_library
+            .entries()
+            .iter()
+            .position(|e| e.name == "vanishing.pine")
+            .expect("the file was scanned");
+        std::fs::remove_file(&path).expect("remove");
+
+        let before = app.indicators.all().len();
+        let slot = app
+            .add_script_indicator(index)
+            .expect("a click on a known entry claims a slot");
+        assert_eq!(app.indicators.all().len(), before + 1, "a slot appeared");
+        let view = app
+            .indicators
+            .all()
+            .iter()
+            .find(|v| v.slot == slot)
+            .expect("the slot has a view");
+        assert!(view.error.is_some(), "and it carries the read failure");
+        assert_eq!(view.label(), "vanishing.pine");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn test_app_with_notices() -> (
         QuantickApp,
         mpsc::Sender<FeedNotice>,

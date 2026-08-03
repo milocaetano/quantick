@@ -9,11 +9,45 @@
 use std::fs;
 use std::path::Path;
 
-/// Call patterns of the std transcendentals `crate::fmath` wraps. `sqrt` is
-/// deliberately absent: IEEE-754 requires correctly-rounded sqrt, so it is
-/// bit-exact everywhere and allowed.
+/// Call patterns of the std transcendentals whose results may vary by
+/// platform. The ones `crate::fmath` wraps come first; the rest are listed so
+/// that reaching for a *new* transcendental fails the build here instead of
+/// shipping a platform-dependent plot. `sqrt` is deliberately absent:
+/// IEEE-754 requires correctly-rounded sqrt, so it is bit-exact everywhere.
 const FORBIDDEN: &[&str] = &[
-    ".powf(", ".powi(", ".exp(", ".ln(", ".log10(", ".log(", ".log2(",
+    ".powf(",
+    ".powi(",
+    ".exp(",
+    ".ln(",
+    ".log10(",
+    ".log(",
+    ".log2(",
+    ".exp2(",
+    ".exp_m1(",
+    ".ln_1p(",
+    ".cbrt(",
+    ".hypot(",
+    ".sin(",
+    ".cos(",
+    ".tan(",
+    ".asin(",
+    ".acos(",
+    ".atan(",
+    ".atan2(",
+    ".sinh(",
+    ".cosh(",
+    ".tanh(",
+    ".asinh(",
+    ".acosh(",
+    ".atanh(",
+    // Fully-qualified forms of the same calls.
+    "f64::powf(",
+    "f64::powi(",
+    "f64::exp(",
+    "f64::ln(",
+    "f64::log10(",
+    "f64::log(",
+    "f64::log2(",
 ];
 
 fn scan(dir: &Path, violations: &mut Vec<String>) {
