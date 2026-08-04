@@ -1016,13 +1016,22 @@ impl ChartPane {
                     input.pointer.delta(),
                 )
             });
+        // Floating chrome (inspector, manager, toast, flyouts) is opaque to
+        // the pointer: while it sits under the cursor the chart neither sets
+        // a cursor nor selects nor starts a drag. The gate applies at press
+        // time only — a drag that started on the canvas keeps running while
+        // the pointer travels across a panel (continuity, not priority).
+        let over_chrome = pointer_position
+            .and_then(|position| ui.ctx().layer_id_at(position))
+            .is_some_and(|layer| layer != ui.layer_id());
         let mut drawing_drag_consumes_gesture = false;
         if chrome.toolrail.tool() == Tool::Pointer {
             // Hover feedback: a resize cursor over a selected anchor, a move
             // cursor over any visible body, and not-allowed over locked
             // geometry (visible objects in the viewport only — bounded work).
-            if let Some(position) =
-                pointer_position.filter(|position| drawing_area.contains(*position))
+            if !over_chrome
+                && let Some(position) =
+                    pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
             {
                 if let Some(selected) = self.drawings.selected()
@@ -1066,13 +1075,13 @@ impl ChartPane {
                 };
                 self.drawings.select(selected);
             }
-            // Floating inspectors normally own pointer input over their whole
-            // rectangle. Read the raw press so an already-selected drawing
-            // remains draggable even when its stroke or handle is underneath
-            // that inspector. Only an actual drawing hit takes precedence;
-            // every other inspector click remains a style interaction.
+            // Drag initiation reads the raw press (an `interact` per object
+            // would be unbounded work), so it must honour the chrome gate
+            // itself: a press on the inspector never grabs the stroke or the
+            // handle underneath — the panel is opaque by contract.
             let mut drawing_drag_started = false;
             if primary_pressed
+                && !over_chrome
                 && let Some(position) =
                     pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
