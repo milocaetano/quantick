@@ -44,7 +44,8 @@ use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
-    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind, run_bridge_server,
+    BookCaptureSwitch, Mt5Error, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind,
+    run_bridge_server,
 };
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
@@ -130,8 +131,22 @@ async fn feed_task(
         return; // UI gone
     }
 
+    // One port carries one symbol, so where this feed listens is a question
+    // about *this* symbol. Resolved once here and handed to both the listener
+    // and the autostarted bridge, which is what keeps the two agreeing.
+    let endpoint = settings.endpoint_for(&symbol);
+    info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "MT5_ENDPOINT_RESOLVED",
+        symbol = %symbol,
+        listen_addr = %endpoint.listen_addr,
+        from_ports_map = endpoint.from_ports_map,
+        "resolved this symbol's bridge port"
+    );
+
     let mut server_cfg = ServerConfig::new(symbol.clone());
-    server_cfg.listen_addr = settings.listen_addr.clone();
+    server_cfg.listen_addr = endpoint.listen_addr.clone();
     server_cfg.side_mode = match settings.side_source {
         Mt5SideSource::TickRule => SideMode::TickRule,
         Mt5SideSource::Flags => SideMode::Flags,
@@ -146,6 +161,7 @@ async fn feed_task(
             settings.clone(),
             Supervision {
                 symbol: symbol.clone(),
+                endpoint: endpoint.clone(),
                 connected: Arc::clone(&bridge_connected),
                 notices: notice_tx.clone(),
             },
@@ -157,7 +173,7 @@ async fn feed_task(
         let _ = notice_tx
             .send(FeedNotice::working(format!(
                 "waiting for a MetaTrader bridge on {}",
-                settings.listen_addr
+                endpoint.listen_addr
             )))
             .await;
     }
@@ -282,14 +298,23 @@ async fn feed_task(
                         // we are shutting down. Keep serving UI commands so
                         // the loader can never hang on a dead feed.
                         match server.await {
-                            Ok(Err(e)) => error!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_BIND_FAILED",
-                                symbol = %symbol,
-                                %e,
-                                "MT5 bridge listener failed; feed is idle (is another quantick running?)"
-                            ),
+                            Ok(Err(e)) => {
+                                error!(
+                                    target: "quantick::app",
+                                    schema_version = 1_u8,
+                                    event_code = "MT5_BIND_FAILED",
+                                    symbol = %symbol,
+                                    listen_addr = %endpoint.listen_addr,
+                                    from_ports_map = endpoint.from_ports_map,
+                                    %e,
+                                    "MT5 bridge listener failed; feed is idle (another quantick, \
+                                     or another symbol already listening on this port?)"
+                                );
+                                // A port already taken is the ordinary failure
+                                // once several symbols stream at once, and a
+                                // log line is not where the user is looking.
+                                let _ = notice_tx.send(bind_failure_notice(&symbol, &e)).await;
+                            }
                             Ok(Ok(())) => {}
                             Err(e) => error!(
                                 target: "quantick::app",
@@ -327,6 +352,32 @@ async fn feed_task(
     if let Some(autostart) = autostart {
         autostart.abort();
     }
+}
+
+/// What to tell the user when this symbol's port could not be opened.
+///
+/// Three different things produce this, and only one of them is fixed in the
+/// config file. The likeliest by far — now that tabs make opening the same
+/// market twice a single click — is a second tab already charting this symbol,
+/// which no `[metatrader.ports]` edit can help: one port carries one symbol,
+/// so the map has nowhere left to put it. Prescribing the config edit for that
+/// case would send someone to the wrong file, so all three are named and the
+/// actionable one leads.
+///
+/// Which one it actually is cannot be decided from here — this feed knows only
+/// that the bind failed, not what else the app has open. Naming the causes in
+/// likelihood order is the honest version of that.
+fn bind_failure_notice(symbol: &str, error: &Mt5Error) -> FeedNotice {
+    let Mt5Error::Bind { addr, .. } = error;
+    FeedNotice::attention(
+        format!("quantick could not open the MetaTrader port for {symbol}"),
+        format!(
+            "Nothing can listen on {addr}. Most likely another tab in this window already \
+             charts {symbol} — one port carries one symbol, so close it and this tab takes \
+             over. Otherwise: another quantick instance is holding {addr}, or a different \
+             symbol is mapped to that port under [metatrader.ports]."
+        ),
+    )
 }
 
 /// After a fatal listener error, keep answering UI commands honestly (empty
@@ -586,6 +637,214 @@ mod tests {
         };
         assert_eq!(trade.agg_id, 3);
         assert_eq!(trade.side, quantick_engine::Side::Sell);
+    }
+
+    #[tokio::test]
+    async fn a_mapped_symbol_listens_on_its_own_port_not_the_shared_one() {
+        // The whole multi-symbol feature in one assertion: the port the map
+        // names is the port a bridge finds. `listen_addr` deliberately points
+        // somewhere else, so nothing here can pass by falling through to it.
+        let mut ports = std::collections::BTreeMap::new();
+        ports.insert("XAUUSD".to_string(), 19176_u16);
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19177".to_string(),
+            ports,
+            side_source: Mt5SideSource::TickRule,
+            // This test is the bridge; a second one racing it would make the
+            // assertions depend on whether python happens to be installed.
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("XAUUSD", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        let mut sock = None;
+        for _ in 0..50 {
+            match tokio::net::TcpStream::connect("127.0.0.1:19176").await {
+                Ok(s) => {
+                    sock = Some(s);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+        let mut sock = sock.expect("nothing is listening on this symbol's mapped port");
+
+        let script = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"XAUUSD\",\"broker_symbol\":\"XAUUSD\",\"digits\":2,",
+            "\"server_utc_offset_s\":10800}\n",
+            "{\"type\":\"tick\",\"seq\":1,\"time_ms\":1000,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"4000.00\",\"volume\":1,\"flags\":1080}\n",
+            "{\"type\":\"tick\",\"seq\":2,\"time_ms\":1001,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"4001.00\",\"volume\":1,\"flags\":1080}\n",
+        );
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        // seq 1 has no tick-rule context; seq 2 is an uptick.
+        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            .await
+            .expect("timed out waiting for the trade")
+            .expect("feed closed");
+        let FeedEvent::Live(trade) = event else {
+            panic!("expected a live trade off the mapped port");
+        };
+        assert_eq!(trade.agg_id, 2);
+        assert_eq!(trade.side, quantick_engine::Side::Buy);
+
+        // And the shared default was never bound for this symbol.
+        assert!(
+            tokio::net::TcpStream::connect("127.0.0.1:19177")
+                .await
+                .is_err(),
+            "a mapped symbol must not also occupy the shared listen_addr"
+        );
+    }
+
+    /// Two MetaTrader tabs, two symbols, two listeners — the shape §11 asks
+    /// for and the reason `[metatrader.ports]` exists.
+    ///
+    /// The window opens one feed per tab, so this is what two MT5 tabs
+    /// actually do: each `spawn` resolves its own symbol through
+    /// `endpoint_for` and binds only that port. A bridge dialling either one
+    /// reaches the tab that asked for it, and neither can steal the other's.
+    #[tokio::test]
+    async fn two_symbols_listen_on_two_ports_at_once() {
+        let mut ports = std::collections::BTreeMap::new();
+        ports.insert("XAUUSD".to_string(), 19186_u16);
+        ports.insert("US500".to_string(), 19187_u16);
+        let settings = MetaTraderSettings {
+            // Deliberately elsewhere: nothing here may pass by falling through
+            // to the shared address.
+            listen_addr: "127.0.0.1:19188".to_string(),
+            ports,
+            side_source: Mt5SideSource::TickRule,
+            // These tests are the bridges; a real one racing them would make
+            // the assertions depend on whether python happens to be installed.
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+
+        // Two tabs' worth of feeds, alive at the same time.
+        let mut gold = spawn("XAUUSD", &settings);
+        let mut index = spawn("US500", &settings);
+        for feed in [&mut gold, &mut index] {
+            let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+                panic!("expected the immediate empty backfill");
+            };
+        }
+
+        async fn dial(port: u16) -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                if let Ok(sock) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                    return sock;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            panic!("nothing is listening on port {port}");
+        }
+
+        let mut gold_sock = dial(19186).await;
+        let mut index_sock = dial(19187).await;
+
+        fn script(symbol: &str, first: &str, second: &str) -> String {
+            format!(
+                "{{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",\
+                 \"symbol\":\"{symbol}\",\"broker_symbol\":\"{symbol}\",\"digits\":2,\
+                 \"server_utc_offset_s\":10800}}\n\
+                 {{\"type\":\"tick\",\"seq\":1,\"time_ms\":1000,\"bid\":\"0\",\"ask\":\"0\",\
+                 \"last\":\"{first}\",\"volume\":1,\"flags\":1080}}\n\
+                 {{\"type\":\"tick\",\"seq\":2,\"time_ms\":1001,\"bid\":\"0\",\"ask\":\"0\",\
+                 \"last\":\"{second}\",\"volume\":1,\"flags\":1080}}\n"
+            )
+        }
+        // Distinct prices, so a trade arriving on the wrong feed is visible
+        // rather than plausible.
+        gold_sock
+            .write_all(script("XAUUSD", "4000.00", "4001.00").as_bytes())
+            .await
+            .unwrap();
+        gold_sock.flush().await.unwrap();
+        index_sock
+            .write_all(script("US500", "5000.00", "4999.00").as_bytes())
+            .await
+            .unwrap();
+        index_sock.flush().await.unwrap();
+
+        async fn next_trade(feed: &mut FeedHandle) -> quantick_engine::Trade {
+            let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the trade")
+                .expect("feed closed");
+            let FeedEvent::Live(trade) = event else {
+                panic!("expected a live trade");
+            };
+            trade
+        }
+
+        let gold_trade = next_trade(&mut gold).await;
+        let index_trade = next_trade(&mut index).await;
+        assert_eq!(
+            gold_trade.price,
+            rust_decimal::Decimal::new(400_100, 2),
+            "the gold tab's port carries the gold bridge's prints"
+        );
+        assert_eq!(gold_trade.side, quantick_engine::Side::Buy, "an uptick");
+        assert_eq!(
+            index_trade.price,
+            rust_decimal::Decimal::new(499_900, 2),
+            "and the index tab's port its own"
+        );
+        assert_eq!(
+            index_trade.side,
+            quantick_engine::Side::Sell,
+            "a downtick, so the two streams cannot have been crossed"
+        );
+
+        // Neither took the shared address on the way.
+        assert!(
+            tokio::net::TcpStream::connect("127.0.0.1:19188")
+                .await
+                .is_err(),
+            "mapped symbols must leave the shared listen_addr free"
+        );
+    }
+
+    #[test]
+    fn a_port_that_will_not_open_names_the_port_and_the_way_out() {
+        // The failure multi-symbol charting made ordinary: two feeds asking
+        // for one port. It used to reach a log line only, leaving the second
+        // chart blank with nothing on screen to act on.
+        let FeedNotice::Attention {
+            headline,
+            next_step,
+        } = bind_failure_notice(
+            "US500",
+            &Mt5Error::Bind {
+                addr: "127.0.0.1:9102".to_string(),
+                message: "address already in use".to_string(),
+            },
+        )
+        else {
+            panic!("a dead listener must ask for attention");
+        };
+        assert!(headline.contains("US500"), "headline: {headline}");
+        assert!(next_step.contains("127.0.0.1:9102"), "step: {next_step}");
+        // All three causes are named, because this feed cannot tell which one
+        // it is — and the one a config edit fixes is the least likely.
+        assert!(
+            next_step.contains("another tab") && next_step.contains("US500"),
+            "the likeliest cause leads, and it names the symbol: {next_step}"
+        );
+        assert!(
+            next_step.contains("another quantick"),
+            "a second instance is a cause too: {next_step}"
+        );
+        assert!(
+            next_step.contains("[metatrader.ports]"),
+            "and so is a mapped collision: {next_step}"
+        );
     }
 
     #[test]

@@ -10,9 +10,12 @@
 //! at compile time. An external file that is present but malformed is a hard
 //! error — a bad config is surfaced, never silently ignored (data-honesty rule).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use crate::symbols_file::AddedSymbols;
 
 /// The built-in default configuration, compiled into the binary so the app runs
 /// with no external file present.
@@ -149,8 +152,19 @@ pub enum Mt5SideSource {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct MetaTraderSettings {
-    /// Address the feed listens on; a bridge dials it.
+    /// Address the feed listens on; a bridge dials it. The endpoint for every
+    /// symbol [`ports`](Self::ports) does not name.
     pub listen_addr: String,
+    /// Per-symbol listen ports (`[metatrader.ports]` in the TOML).
+    ///
+    /// MQL5 sockets are client-only, so a MetaTrader "connection" is really an
+    /// EA on a chart dialing us, and one port carries one symbol's stream. To
+    /// chart XAUUSD and US500 from the same terminal at once, each gets its own
+    /// port here and its own EA with the matching `InpPort`.
+    ///
+    /// A [`BTreeMap`] rather than a hash map so iteration order — and therefore
+    /// the order validation reports problems in — is the same on every run.
+    pub ports: BTreeMap<String, u16>,
     /// How the aggressor side of each trade is decided.
     pub side_source: Mt5SideSource,
     /// Whether quantick starts a bridge itself when none dials in.
@@ -173,6 +187,7 @@ impl Default for MetaTraderSettings {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1:9100".to_string(),
+            ports: BTreeMap::new(),
             side_source: Mt5SideSource::TickRule,
             bridge_autostart: true,
             bridge_command: vec![
@@ -183,25 +198,151 @@ impl Default for MetaTraderSettings {
     }
 }
 
+/// The host a local bridge can always reach, used when the bind address names
+/// none it could dial.
+const LOOPBACK: &str = "127.0.0.1";
+
+/// Where one symbol's bridge listener lives.
+///
+/// The two sides of a per-symbol port have to agree: quantick binds it and the
+/// EA dials it. Deriving both from one [`MetaTraderSettings::endpoint_for`]
+/// call is what keeps the listener and the autostarted bridge's `--port` from
+/// drifting apart — a drift whose only symptom is a chart that never fills.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mt5Endpoint {
+    /// Address the feed binds for this symbol.
+    pub listen_addr: String,
+    /// Host and port a bridge dials to reach it, or `None` when
+    /// [`listen_addr`](MetaTraderSettings::listen_addr) has no `host:port`
+    /// shape — the autostart then stays off rather than launching a bridge
+    /// that cannot reach us.
+    pub dial: Option<(String, u16)>,
+    /// Whether the port came from [`MetaTraderSettings::ports`] rather than
+    /// the shared default. Logged at spawn, because "this symbol was given a
+    /// port" and "this symbol fell through to the shared one" are different
+    /// answers to why two charts are fighting over one listener.
+    pub from_ports_map: bool,
+}
+
+/// Split `host:port`, rejecting anything that is not both. The bracketed IPv6
+/// form (`[::1]:9100`) splits correctly: only the last colon is a separator.
+fn split_host_port(addr: &str) -> Option<(&str, u16)> {
+    let (host, port) = addr.rsplit_once(':')?;
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, port.parse().ok()?))
+}
+
+/// The address a bridge dials to reach a listener bound to `host`. A wildcard
+/// bind is not an address to dial; loopback is what a local bridge reaches.
+fn dial_host(host: &str) -> &str {
+    if host == "0.0.0.0" || host == "[::]" {
+        LOOPBACK
+    } else {
+        host
+    }
+}
+
 impl MetaTraderSettings {
-    /// Host and port a bridge should dial, parsed from [`listen_addr`](Self::listen_addr).
+    /// Where the bridge for `symbol` listens: its own port when
+    /// [`ports`](Self::ports) names one, the [`listen_addr`](Self::listen_addr)
+    /// default otherwise.
     ///
-    /// Returns `None` when the address has no `host:port` shape — the autostart
-    /// then stays off rather than launching a bridge that cannot reach us.
+    /// A mapped symbol keeps the default address's host and swaps only the
+    /// port, so a deployment that binds a specific interface does not have to
+    /// repeat it per symbol.
     #[must_use]
-    pub fn bridge_endpoint(&self) -> Option<(&str, &str)> {
-        let (host, port) = self.listen_addr.rsplit_once(':')?;
-        if host.is_empty() || port.parse::<u16>().is_err() {
-            return None;
+    pub fn endpoint_for(&self, symbol: &str) -> Mt5Endpoint {
+        match (self.ports.get(symbol), split_host_port(&self.listen_addr)) {
+            (Some(&port), Some((host, _))) => Mt5Endpoint {
+                listen_addr: format!("{host}:{port}"),
+                dial: Some((dial_host(host).to_string(), port)),
+                from_ports_map: true,
+            },
+            // Mapped, but the default address names no host to inherit.
+            // `validate` rejects that config; a hand-built one still gets the
+            // port it asked for rather than silently sharing the default's.
+            (Some(&port), None) => Mt5Endpoint {
+                listen_addr: format!("{LOOPBACK}:{port}"),
+                dial: Some((LOOPBACK.to_string(), port)),
+                from_ports_map: true,
+            },
+            (None, Some((host, port))) => Mt5Endpoint {
+                listen_addr: self.listen_addr.clone(),
+                dial: Some((dial_host(host).to_string(), port)),
+                from_ports_map: false,
+            },
+            (None, None) => Mt5Endpoint {
+                listen_addr: self.listen_addr.clone(),
+                dial: None,
+                from_ports_map: false,
+            },
         }
-        // A wildcard bind is not an address to dial; loopback is what a local
-        // bridge actually reaches.
-        let host = if host == "0.0.0.0" || host == "[::]" {
-            "127.0.0.1"
-        } else {
-            host
+    }
+
+    /// Check the listener settings on their own: a `listen_addr` that splits
+    /// into a non-empty host and a `u16` port, and a port map in which no two
+    /// symbols could collide.
+    ///
+    /// This checks the shape of an address, not whether it can be reached — a
+    /// host that does not resolve, or a port another process already holds, is
+    /// a runtime fact (reported as `MT5_BIND_FAILED`) that no amount of
+    /// parsing here would predict.
+    ///
+    /// Every rule here describes a config whose only symptom at runtime is a
+    /// chart that stays empty, which is exactly the kind of thing to refuse at
+    /// load instead.
+    fn validate(&self) -> Result<(), String> {
+        let Some((_, default_port)) = split_host_port(&self.listen_addr) else {
+            return Err(format!(
+                "metatrader listen_addr '{}' is not a host:port address",
+                self.listen_addr
+            ));
         };
-        Some((host, port))
+        // Same reasoning as a mapped port of 0: an ephemeral bind is an address
+        // nobody can be configured against, and every unmapped symbol lands here.
+        if default_port == 0 {
+            return Err(format!(
+                "metatrader listen_addr '{}' asks for port 0; that binds whatever the OS \
+                 hands out, and an EA has no way to dial it",
+                self.listen_addr
+            ));
+        }
+        let mut taken: BTreeMap<u16, &str> = BTreeMap::new();
+        for (symbol, &port) in &self.ports {
+            if symbol.trim().is_empty() {
+                return Err("[metatrader.ports] has an entry with an empty symbol".to_string());
+            }
+            // A padded key silently maps nothing: lookups come from a feed's
+            // symbol list, which carries no such padding.
+            if symbol != symbol.trim() {
+                return Err(format!(
+                    "[metatrader.ports] key '{symbol}' has leading or trailing whitespace; \
+                     it would never match the symbol a feed offers"
+                ));
+            }
+            if port == 0 {
+                return Err(format!(
+                    "[metatrader.ports] gives '{symbol}' port 0; that binds whatever the OS \
+                     hands out, and an EA has no way to dial it"
+                ));
+            }
+            if port == default_port {
+                return Err(format!(
+                    "[metatrader.ports] gives '{symbol}' port {port}, which is already the \
+                     listen_addr default '{}' every unmapped symbol uses",
+                    self.listen_addr
+                ));
+            }
+            if let Some(other) = taken.insert(port, symbol) {
+                return Err(format!(
+                    "[metatrader.ports] gives port {port} to both '{other}' and '{symbol}'; \
+                     one port carries one symbol"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -250,6 +391,98 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
+    /// Fold the user's added symbols into the catalog, in place.
+    ///
+    /// Config order first, additions after it, no duplicates: what the file
+    /// ships stays where it is and what the user added lands at the end of
+    /// the feed's list, which is the order the picker and the SOURCE combo
+    /// then show.
+    ///
+    /// Run *before* [`Self::validate`], so a user-added symbol is checked like
+    /// any other — the MetaTrader port cross-check in particular has to see
+    /// the catalog the app will actually run on, not the one on disk.
+    ///
+    /// An entry for a feed the config no longer has is dropped with a log
+    /// line: a renamed feed should cost its additions, not the launch.
+    pub fn merge_added_symbols(&mut self, added: &AddedSymbols) {
+        for (feed_id, symbols) in added.entries() {
+            let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) else {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "SYMBOL_CATALOG_UNKNOWN_FEED",
+                    feed = %feed_id,
+                    symbols = symbols.len(),
+                    action = "entries_skipped",
+                    "the added-symbols file names a feed the config does not have"
+                );
+                continue;
+            };
+            for symbol in symbols {
+                if !feed.symbols.iter().any(|existing| existing == symbol) {
+                    feed.symbols.push(symbol.clone());
+                }
+            }
+        }
+    }
+
+    /// Add `symbol` to feed `id`'s catalog. `false` when the feed is unknown
+    /// or already offers it.
+    pub fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
+        let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) else {
+            return false;
+        };
+        if feed.symbols.iter().any(|existing| existing == symbol) {
+            return false;
+        }
+        feed.symbols.push(symbol.to_owned());
+        true
+    }
+
+    /// Drop `symbol` from feed `id`'s catalog. `false` when the feed is
+    /// unknown or does not offer it.
+    ///
+    /// Refuses to empty a feed: `validate` rejects a feed with no symbols, so
+    /// a catalog that could reach that state is one the app could not reload.
+    pub fn remove_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
+        let Some(feed) = self.feeds.iter_mut().find(|feed| feed.id == feed_id) else {
+            return false;
+        };
+        if feed.symbols.len() <= 1 {
+            return false;
+        }
+        let before = feed.symbols.len();
+        feed.symbols.retain(|existing| existing != symbol);
+        feed.symbols.len() != before
+    }
+
+    /// The display name of feed `id`, or its id when the config has no such
+    /// feed — a borrow, because the chrome reads it every frame.
+    #[must_use]
+    pub fn feed_name<'a>(&'a self, id: &'a str) -> &'a str {
+        self.feed(id).map_or(id, |feed| feed.name.as_str())
+    }
+
+    /// The symbol feed `id` should show given a `wanted` selection.
+    ///
+    /// `Some(wanted)` when the feed offers it, otherwise the feed's first
+    /// symbol — picking a feed should not leave the chart pointed at an
+    /// instrument that feed does not have. `None` when the feed is unknown or
+    /// lists nothing, which is the caller's cue to leave the selection alone
+    /// rather than invent one.
+    ///
+    /// One rule, because there are two places that need it: the toolbar's
+    /// SOURCE group correcting a live selection, and the new-tab picker
+    /// deciding what its Open button would actually open.
+    #[must_use]
+    pub fn resolve_symbol(&self, feed_id: &str, wanted: &str) -> Option<String> {
+        let feed = self.feed(feed_id)?;
+        if feed.symbols.iter().any(|symbol| symbol == wanted) {
+            return Some(wanted.to_owned());
+        }
+        feed.symbols.first().cloned()
+    }
+
     /// The provider backing feed `id`, if the feed exists.
     #[must_use]
     pub fn provider_of(&self, id: &str) -> Option<ProviderKind> {
@@ -271,13 +504,60 @@ impl AppConfig {
         }
     }
 
+    /// Every MetaTrader feed offering `symbol`, by id.
+    fn metatrader_feeds_offering(&self, symbol: &str) -> Vec<&str> {
+        self.feeds
+            .iter()
+            .filter(|feed| {
+                feed.provider == ProviderKind::MetaTrader
+                    && feed.symbols.iter().any(|offered| offered == symbol)
+            })
+            .map(|feed| feed.id.as_str())
+            .collect()
+    }
+
+    /// Check the MetaTrader port map against the feed catalog it exists to
+    /// serve. Both failures here are silent at runtime, which is what makes
+    /// them worth a load-time refusal:
+    ///
+    /// - a key no MetaTrader feed offers is a typo or a leftover, and its only
+    ///   symptom is the symbol quietly using the shared port instead;
+    /// - a symbol two MetaTrader feeds both claim resolves to one port for
+    ///   both, so two brokers quoting `US500` would fight over one listener
+    ///   while the map looks perfectly well-formed.
+    fn validate_ports_against_catalog(&self) -> Result<(), String> {
+        for symbol in self.metatrader.ports.keys() {
+            match self.metatrader_feeds_offering(symbol).as_slice() {
+                [] => {
+                    return Err(format!(
+                        "[metatrader.ports] maps '{symbol}', which no metatrader feed offers; \
+                         it would silently fall back to the shared listen_addr port"
+                    ));
+                }
+                [_] => {}
+                [first, rest @ ..] => {
+                    return Err(format!(
+                        "[metatrader.ports] maps '{symbol}', which is offered by {} metatrader \
+                         feeds ('{first}' and '{}'); one port cannot carry both",
+                        rest.len() + 1,
+                        rest.join("', '")
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate internal consistency: at least one feed, unique ids, non-empty
-    /// symbol lists, and a default selection that actually resolves.
+    /// symbol lists, a default selection that actually resolves, and a
+    /// MetaTrader port map no two symbols can collide in — checked both on its
+    /// own and against the feeds it names.
     ///
     /// # Errors
     ///
     /// Returns a human-readable message describing the first problem found.
     pub fn validate(&self) -> Result<(), String> {
+        self.metatrader.validate()?;
         if self.feeds.is_empty() {
             return Err("no feeds configured; add at least one [[feeds]] entry".to_string());
         }
@@ -301,6 +581,8 @@ impl AppConfig {
                 return Err(format!("feed '{}' names an empty bubble_preset", feed.id));
             }
         }
+        // Needs the catalog, so it waits until the catalog is known good.
+        self.validate_ports_against_catalog()?;
         let Some(default) = self.feed(&self.default_feed) else {
             return Err(format!(
                 "default_feed '{}' is not among the configured feeds",
@@ -485,12 +767,18 @@ pub fn apply_startup_selection_from_env(
     apply_startup_selection(config, feed.as_deref(), symbol.as_deref())
 }
 
-/// Parse and validate a config from a TOML string tagged with its `source`.
-fn parse(text: &str, source: ConfigSource) -> Result<AppConfig, ConfigError> {
-    let config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse {
+/// Parse a config from a TOML string tagged with its `source`, fold in the
+/// user's added symbols, and validate the result.
+///
+/// The merge happens before validation on purpose: a symbol added from the UI
+/// is part of the catalog the app runs on, so it has to pass the same checks —
+/// the MetaTrader port cross-check most of all.
+fn parse(text: &str, source: ConfigSource, added: &AddedSymbols) -> Result<AppConfig, ConfigError> {
+    let mut config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse {
         source: source.clone(),
         message: e.to_string(),
     })?;
+    config.merge_added_symbols(added);
     config.validate().map_err(|message| ConfigError::Invalid {
         source: source.clone(),
         message,
@@ -510,6 +798,7 @@ fn parse(text: &str, source: ConfigSource) -> Result<AppConfig, ConfigError> {
 /// Returns [`ConfigError`] when a present external file cannot be read, parsed,
 /// or validated. The embedded default is validated in tests, so it never errors.
 pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
+    let added = crate::symbols_file::load(&crate::symbols_file::default_path());
     if let Some(path) = std::env::var_os(CONFIG_ENV) {
         let path = PathBuf::from(path);
         let source = ConfigSource::EnvPath(path.clone());
@@ -517,7 +806,7 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
             path,
             message: e.to_string(),
         })?;
-        return Ok((parse(&text, source.clone())?, source));
+        return Ok((parse(&text, source.clone(), &added)?, source));
     }
 
     let cwd_path = Path::new(CONFIG_FILENAME);
@@ -527,10 +816,10 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
             path: cwd_path.to_path_buf(),
             message: e.to_string(),
         })?;
-        return Ok((parse(&text, source.clone())?, source));
+        return Ok((parse(&text, source.clone(), &added)?, source));
     }
 
-    let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded)?;
+    let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded, &added)?;
     Ok((config, ConfigSource::Embedded))
 }
 
@@ -538,9 +827,161 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
 mod tests {
     use super::*;
 
+    /// The catalog the app runs on is the file's list plus the user's, in
+    /// that order and without repeats.
+    #[test]
+    fn added_symbols_land_after_the_config_list_without_repeating_it() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let feed = config.feeds[0].id.clone();
+        let shipped = config.feeds[0].symbols.clone();
+        let mut added = AddedSymbols::default();
+        // One brand new, and one the config already ships.
+        added.add(&feed, "WINQ26");
+        added.add(&feed, &shipped[0]);
+
+        config.merge_added_symbols(&added);
+
+        let merged = &config.feeds[0].symbols;
+        assert_eq!(
+            &merged[..shipped.len()],
+            &shipped[..],
+            "what the file ships stays where it is"
+        );
+        assert_eq!(
+            merged.last().map(String::as_str),
+            Some("WINQ26"),
+            "and the addition lands after it"
+        );
+        assert_eq!(
+            merged.iter().filter(|s| *s == &shipped[0]).count(),
+            1,
+            "adding one the config already has changes nothing"
+        );
+    }
+
+    /// A feed that was renamed or dropped should cost its additions, never the
+    /// launch.
+    #[test]
+    fn added_symbols_for_an_unknown_feed_are_ignored() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let before = config.feeds.clone();
+        let mut added = AddedSymbols::default();
+        added.add("a-feed-that-was-renamed", "WINQ26");
+
+        config.merge_added_symbols(&added);
+
+        assert_eq!(config.feeds, before, "nothing was invented for a dead id");
+        assert!(config.validate().is_ok(), "and the config still loads");
+    }
+
+    /// The merge runs before validation, so an addition is checked like any
+    /// other symbol — which is what lets a mapped MetaTrader port find it.
+    #[test]
+    fn an_added_metatrader_symbol_reaches_the_port_cross_check() {
+        let text = "\
+            default_feed = \"mt\"\n\
+            default_symbol = \"WIN$N\"\n\
+            [[feeds]]\n\
+            id = \"mt\"\n\
+            name = \"MetaTrader 5\"\n\
+            provider = \"metatrader\"\n\
+            symbols = [\"WIN$N\"]\n\
+            [metatrader]\n\
+            listen_addr = \"127.0.0.1:9100\"\n\
+            [metatrader.ports]\n\
+            WINQ26 = 9101\n";
+
+        // Without the addition the map names a symbol no feed offers, which is
+        // exactly the mistake the cross-check exists to catch.
+        let bare = parse(text, ConfigSource::Embedded, &AddedSymbols::default());
+        assert!(
+            bare.is_err(),
+            "a port mapping a symbol nothing offers is a config error"
+        );
+
+        let mut added = AddedSymbols::default();
+        added.add("mt", "WINQ26");
+        let config = parse(text, ConfigSource::Embedded, &added)
+            .expect("the addition makes the mapping legitimate");
+        assert!(config.feeds[0].symbols.iter().any(|s| s == "WINQ26"));
+        assert_eq!(
+            config.metatrader.endpoint_for("WINQ26").listen_addr,
+            "127.0.0.1:9101",
+            "and the added contract listens on its own port"
+        );
+        assert_eq!(
+            config.metatrader.endpoint_for("WIN$N").listen_addr,
+            "127.0.0.1:9100",
+            "while an unmapped symbol keeps the shared one"
+        );
+    }
+
+    /// A feed must keep at least one symbol: `validate` rejects an empty list,
+    /// so a catalog edit that could empty one is an edit the app could not
+    /// reload.
+    #[test]
+    fn the_last_symbol_of_a_feed_cannot_be_removed() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let feed = config.feeds[0].id.clone();
+        config.feeds[0].symbols.truncate(1);
+        let only = config.feeds[0].symbols[0].clone();
+
+        assert!(!config.remove_symbol(&feed, &only));
+        assert_eq!(config.feeds[0].symbols, [only]);
+    }
+
+    #[test]
+    fn resolving_a_symbol_keeps_a_valid_one_and_falls_back_otherwise() {
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let feed = config.feeds.first().expect("the shipped config has feeds");
+        let (id, first) = (feed.id.clone(), feed.symbols[0].clone());
+
+        assert_eq!(
+            config.resolve_symbol(&id, &first),
+            Some(first.clone()),
+            "a symbol the feed offers is kept"
+        );
+        assert_eq!(
+            config.resolve_symbol(&id, "NOT-A-SYMBOL"),
+            Some(first),
+            "one it does not falls back to the feed's first"
+        );
+        assert_eq!(
+            config.resolve_symbol("not-a-feed", "ANY"),
+            None,
+            "an unknown feed resolves nothing, so the caller leaves the
+             selection where it is rather than inventing one"
+        );
+    }
+
     #[test]
     fn embedded_default_parses_and_validates() {
-        let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         assert_eq!(config.default_feed, "binance");
         assert_eq!(
             config
@@ -548,7 +989,12 @@ mod tests {
                 .iter()
                 .map(|feed| feed.id.as_str())
                 .collect::<Vec<_>>(),
-            ["binance", "hyperliquid", "metatrader"]
+            [
+                "binance",
+                "hyperliquid",
+                "metatrader-tickmill",
+                "metatrader-b3"
+            ]
         );
         let binance = config.feed("binance").expect("binance feed");
         assert_eq!(binance.provider, ProviderKind::Binance);
@@ -568,21 +1014,52 @@ mod tests {
         );
         assert_eq!(config.side_note("hyperliquid"), None);
 
-        let mt5 = config.feed("metatrader").expect("metatrader feed");
-        assert_eq!(mt5.provider, ProviderKind::MetaTrader);
-        assert!(mt5.symbols.contains(&"WIN$N".to_string()));
+        // One terminal serves one account, so the two brokers are two feeds
+        // rather than one list that half-resolves whoever is logged in.
+        let b3 = config.feed("metatrader-b3").expect("B3 feed");
+        assert_eq!(b3.provider, ProviderKind::MetaTrader);
+        assert_eq!(b3.symbols, ["WIN$N", "WDO$N"]);
+        let tickmill = config.feed("metatrader-tickmill").expect("Tickmill feed");
+        assert_eq!(tickmill.provider, ProviderKind::MetaTrader);
+        assert_eq!(tickmill.symbols, ["XAUUSD", "US500", "US30"]);
         assert_eq!(config.metatrader.side_source, Mt5SideSource::TickRule);
-        assert!(!config.metatrader.listen_addr.is_empty());
+        assert_eq!(config.metatrader.listen_addr, "127.0.0.1:9100");
 
-        // The mini index opens on the pie summary; Binance declares nothing
-        // and keeps whatever the presets file says.
-        assert_eq!(mt5.bubble_preset.as_deref(), Some("live lane pie"));
+        // The Tickmill symbols each own a port, so they stream together.
+        assert_eq!(
+            config.metatrader.endpoint_for("XAUUSD").listen_addr,
+            "127.0.0.1:9101"
+        );
+        assert_eq!(
+            config.metatrader.endpoint_for("US500").listen_addr,
+            "127.0.0.1:9102"
+        );
+        assert_eq!(
+            config.metatrader.endpoint_for("US30").listen_addr,
+            "127.0.0.1:9103"
+        );
+        // The B3 pair shares the default, which is the honest shape of "one
+        // terminal, one account, one at a time".
+        assert_eq!(
+            config.metatrader.endpoint_for("WIN$N").listen_addr,
+            "127.0.0.1:9100"
+        );
+
+        // Both MetaTrader feeds open on the pie summary; Binance declares
+        // nothing and keeps whatever the presets file says.
+        assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
+        assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(binance.bubble_preset, None);
     }
 
     #[test]
-    fn startup_selection_override_preserves_all_three_feeds() {
-        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+    fn startup_selection_override_preserves_the_whole_catalog() {
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         let feeds_before = config.feeds.clone();
         let metatrader_before = config.metatrader.clone();
 
@@ -599,13 +1076,23 @@ mod tests {
                 .iter()
                 .map(|feed| feed.id.as_str())
                 .collect::<Vec<_>>(),
-            ["binance", "hyperliquid", "metatrader"]
+            [
+                "binance",
+                "hyperliquid",
+                "metatrader-tickmill",
+                "metatrader-b3"
+            ]
         );
     }
 
     #[test]
     fn startup_selection_rejects_an_unknown_feed_without_mutating_config() {
-        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         let before = config.clone();
 
         let error = apply_startup_selection(&mut config, Some("ghost"), Some("BTC"))
@@ -614,13 +1101,19 @@ mod tests {
         assert_eq!(config, before, "failed selection is atomic");
         assert_eq!(
             error.to_string(),
-            "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: binance, hyperliquid, metatrader"
+            "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: \
+             binance, hyperliquid, metatrader-tickmill, metatrader-b3"
         );
     }
 
     #[test]
     fn startup_selection_rejects_a_symbol_outside_the_selected_feed() {
-        let mut config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded).expect("embedded default");
+        let mut config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
         let before = config.clone();
 
         let error = apply_startup_selection(&mut config, Some("hyperliquid"), Some("BTCUSDT"))
@@ -645,7 +1138,8 @@ mod tests {
             symbols = ["AAA"]
             bubble_preset = "  "
         "#;
-        let err = parse(text, ConfigSource::Embedded).expect_err("blank name");
+        let err =
+            parse(text, ConfigSource::Embedded, &AddedSymbols::default()).expect_err("blank name");
         assert!(
             err.to_string().contains("bubble_preset"),
             "the message names the field: {err}"
@@ -675,7 +1169,7 @@ mod tests {
             provider = "metatrader"
             symbols = ["WINQ26"]
         "#;
-        let mut config = parse(text, ConfigSource::Embedded).unwrap();
+        let mut config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(
             config.side_note("mt"),
             Some("side: inferred (tick rule)"),
@@ -696,7 +1190,7 @@ mod tests {
             provider = "metatrader"
             symbols = ["EURUSD"]
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(config.provider_of("mt"), Some(ProviderKind::MetaTrader));
         assert!(ProviderKind::MetaTrader.is_implemented());
         assert!(ProviderKind::Binance.is_implemented());
@@ -719,32 +1213,281 @@ mod tests {
             listen_addr = "127.0.0.1:9200"
             side_source = "flags"
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert_eq!(config.metatrader.listen_addr, "127.0.0.1:9200");
         assert_eq!(config.metatrader.side_source, Mt5SideSource::Flags);
     }
 
+    /// Settings listening on `addr`, mapping `ports`.
+    fn listening(addr: &str, ports: &[(&str, u16)]) -> MetaTraderSettings {
+        MetaTraderSettings {
+            listen_addr: addr.to_string(),
+            ports: ports
+                .iter()
+                .map(|(symbol, port)| ((*symbol).to_string(), *port))
+                .collect(),
+            ..MetaTraderSettings::default()
+        }
+    }
+
     #[test]
     fn the_bridge_dial_address_comes_from_the_listen_address() {
-        let at = |addr: &str| MetaTraderSettings {
-            listen_addr: addr.to_string(),
-            ..MetaTraderSettings::default()
-        };
-        assert_eq!(
-            at("127.0.0.1:9100").bridge_endpoint(),
-            Some(("127.0.0.1", "9100"))
-        );
+        let at = |addr: &str| listening(addr, &[]).endpoint_for("WIN$N");
+        let dialing = |addr: &str| at(addr).dial;
+
+        assert_eq!(dialing("127.0.0.1:9100"), Some(("127.0.0.1".into(), 9100)));
         // A wildcard bind is not something a bridge can dial.
-        assert_eq!(
-            at("0.0.0.0:9100").bridge_endpoint(),
-            Some(("127.0.0.1", "9100"))
-        );
+        assert_eq!(dialing("0.0.0.0:9100"), Some(("127.0.0.1".into(), 9100)));
+        assert_eq!(dialing("[::]:9100"), Some(("127.0.0.1".into(), 9100)));
+        // A bracketed IPv6 literal splits on the last colon, not the first.
+        assert_eq!(dialing("[::1]:9100"), Some(("[::1]".into(), 9100)));
+
         // Nothing dial-able: the caller must not launch a bridge that cannot
-        // reach us, so there is no address to hand it.
-        assert_eq!(at("9100").bridge_endpoint(), None);
-        assert_eq!(at("127.0.0.1:").bridge_endpoint(), None);
-        assert_eq!(at(":9100").bridge_endpoint(), None);
-        assert_eq!(at("127.0.0.1:not-a-port").bridge_endpoint(), None);
+        // reach us, so there is no address to hand it. The bind address is
+        // still passed through verbatim, and reported by `validate`.
+        for broken in ["9100", "127.0.0.1:", ":9100", "127.0.0.1:not-a-port"] {
+            assert_eq!(dialing(broken), None, "{broken}");
+            assert_eq!(at(broken).listen_addr, broken);
+        }
+    }
+
+    #[test]
+    fn a_mapped_symbol_gets_its_own_port_and_everyone_else_the_default() {
+        let settings = listening("127.0.0.1:9100", &[("XAUUSD", 9101), ("US500", 9102)]);
+
+        let gold = settings.endpoint_for("XAUUSD");
+        assert_eq!(gold.listen_addr, "127.0.0.1:9101");
+        assert_eq!(gold.dial, Some(("127.0.0.1".into(), 9101)));
+        assert!(gold.from_ports_map);
+
+        // Both sides of the agreement come from one call: the port quantick
+        // binds is the port the autostarted bridge is told to dial.
+        let index = settings.endpoint_for("US500");
+        assert_eq!(index.listen_addr, "127.0.0.1:9102");
+        assert_eq!(index.dial.map(|(_, port)| port), Some(9102));
+
+        let unmapped = settings.endpoint_for("WIN$N");
+        assert_eq!(unmapped.listen_addr, "127.0.0.1:9100");
+        assert!(
+            !unmapped.from_ports_map,
+            "it fell through to the shared default"
+        );
+    }
+
+    #[test]
+    fn a_mapped_symbol_inherits_the_default_addresss_host() {
+        // A deployment that binds a specific interface says so once.
+        let settings = listening("0.0.0.0:9100", &[("XAUUSD", 9101)]);
+        let gold = settings.endpoint_for("XAUUSD");
+        assert_eq!(gold.listen_addr, "0.0.0.0:9101", "the host carries over");
+        assert_eq!(
+            gold.dial,
+            Some(("127.0.0.1".into(), 9101)),
+            "and a wildcard is still not something a bridge can dial"
+        );
+    }
+
+    #[test]
+    fn ports_are_read_from_their_sub_table() {
+        let text = r#"
+            default_feed = "mt"
+            default_symbol = "XAUUSD"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["XAUUSD", "US500"]
+            [metatrader]
+            listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSD = 9101
+            US500 = 9102
+        "#;
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
+        assert_eq!(
+            config.metatrader.ports,
+            BTreeMap::from([("XAUUSD".to_string(), 9101), ("US500".to_string(), 9102)])
+        );
+        // Absent, the map is simply empty: every symbol shares listen_addr,
+        // exactly as before the field existed.
+        assert!(MetaTraderSettings::default().ports.is_empty());
+    }
+
+    /// Parse a config whose `[metatrader]` section is `section`.
+    fn with_metatrader(section: &str) -> Result<AppConfig, ConfigError> {
+        let text = format!(
+            r#"
+            default_feed = "mt"
+            default_symbol = "XAUUSD"
+            [[feeds]]
+            id = "mt"
+            name = "MetaTrader 5"
+            provider = "metatrader"
+            symbols = ["XAUUSD", "US500"]
+            [metatrader]
+            {section}
+        "#
+        );
+        parse(&text, ConfigSource::Embedded, &AddedSymbols::default())
+    }
+
+    #[test]
+    fn two_symbols_may_not_share_a_port() {
+        // The collision that would otherwise surface as one chart streaming
+        // and the other silently refusing every connection.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            US500 = 9101
+            XAUUSD = 9101"#,
+        )
+        .expect_err("duplicate port");
+        let message = err.to_string();
+        assert!(message.contains("[metatrader.ports]"), "{message}");
+        assert!(message.contains("9101"), "{message}");
+        assert!(
+            message.contains("US500") && message.contains("XAUUSD"),
+            "both claimants are named: {message}"
+        );
+    }
+
+    #[test]
+    fn a_mapped_port_may_not_be_the_default_one() {
+        // Subtler than a duplicate: it collides with whichever *unmapped*
+        // symbol is streaming, which the map does not list at all.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSD = 9100"#,
+        )
+        .expect_err("collides with the default");
+        let message = err.to_string();
+        assert!(message.contains("listen_addr"), "{message}");
+        assert!(message.contains("XAUUSD"), "{message}");
+    }
+
+    #[test]
+    fn a_mapped_port_must_be_one_an_ea_can_dial() {
+        // Port 0 binds whatever the OS hands out. Fine for a test harness that
+        // reads the bound address back; useless in a file an EA is configured
+        // against by hand.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSD = 0"#,
+        )
+        .expect_err("port 0");
+        assert!(err.to_string().contains("XAUUSD"), "{err}");
+
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            "  " = 9101"#,
+        )
+        .expect_err("empty symbol");
+        assert!(err.to_string().contains("[metatrader.ports]"), "{err}");
+    }
+
+    #[test]
+    fn a_listen_addr_that_cannot_bind_is_reported_at_load() {
+        // It would otherwise only show up as MT5_BIND_FAILED, minutes later,
+        // in a log nobody has open.
+        let err = with_metatrader(r#"listen_addr = "9100""#).expect_err("no host");
+        let message = err.to_string();
+        assert!(message.contains("listen_addr"), "{message}");
+        assert!(message.contains("host:port"), "{message}");
+
+        // Port 0 is rejected here for the same reason it is in the map: every
+        // unmapped symbol lands on this address, and an ephemeral port is not
+        // something an EA can be configured against.
+        let err = with_metatrader(r#"listen_addr = "127.0.0.1:0""#).expect_err("ephemeral port");
+        let message = err.to_string();
+        assert!(message.contains("listen_addr"), "{message}");
+        assert!(message.contains("port 0"), "{message}");
+
+        // And the ordinary one still loads.
+        assert!(with_metatrader(r#"listen_addr = "127.0.0.1:9100""#).is_ok());
+    }
+
+    #[test]
+    fn a_mapped_symbol_must_be_one_a_metatrader_feed_offers() {
+        // A typo here has no symptom at all: the symbol silently falls back to
+        // the shared port and fights whatever is already on it.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            XAUUSDD = 9101"#,
+        )
+        .expect_err("typo'd symbol");
+        let message = err.to_string();
+        assert!(message.contains("XAUUSDD"), "{message}");
+        assert!(message.contains("no metatrader feed offers"), "{message}");
+
+        // Padding is the same failure wearing a disguise — a feed's symbol
+        // list carries none, so the key would never match.
+        let err = with_metatrader(
+            r#"listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            "XAUUSD " = 9101"#,
+        )
+        .expect_err("padded key");
+        assert!(err.to_string().contains("whitespace"), "{err}");
+    }
+
+    #[test]
+    fn a_symbol_two_metatrader_feeds_offer_cannot_be_mapped() {
+        // Two brokers both quoting US500 is ordinary. Mapping it gives both one
+        // port, and the map looks perfectly well-formed while they fight.
+        let text = r#"
+            default_feed = "tickmill"
+            default_symbol = "US500"
+            [[feeds]]
+            id = "tickmill"
+            name = "Tickmill"
+            provider = "metatrader"
+            symbols = ["US500"]
+            [[feeds]]
+            id = "other-broker"
+            name = "Other"
+            provider = "metatrader"
+            symbols = ["US500"]
+            [metatrader]
+            listen_addr = "127.0.0.1:9100"
+            [metatrader.ports]
+            US500 = 9102
+        "#;
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default())
+            .expect_err("two feeds claim US500");
+        let message = err.to_string();
+        assert!(message.contains("US500"), "{message}");
+        assert!(
+            message.contains("tickmill") && message.contains("other-broker"),
+            "both claimants are named: {message}"
+        );
+
+        // The same two feeds are fine as long as the shared symbol is not
+        // mapped — they simply cannot stream at the same time.
+        let unmapped = text.replace("[metatrader.ports]\n            US500 = 9102", "");
+        assert!(parse(&unmapped, ConfigSource::Embedded, &AddedSymbols::default()).is_ok());
+    }
+
+    #[test]
+    fn a_mapped_port_survives_a_default_address_with_no_host() {
+        // Only reachable by building the settings in code — `validate` refuses
+        // this file. It is pinned because dropping the mapped port here would
+        // discard the one thing the caller stated explicitly, in favour of an
+        // address that cannot bind at all.
+        let settings = listening("garbage", &[("XAUUSD", 9101)]);
+        let gold = settings.endpoint_for("XAUUSD");
+        assert_eq!(gold.listen_addr, "127.0.0.1:9101");
+        assert_eq!(gold.dial, Some(("127.0.0.1".into(), 9101)));
+        assert!(gold.from_ports_map);
+
+        // An unmapped symbol has nothing to salvage: the bad address passes
+        // through and the bind reports it.
+        let other = settings.endpoint_for("WIN$N");
+        assert_eq!(other.listen_addr, "garbage");
+        assert_eq!(other.dial, None);
     }
 
     #[test]
@@ -765,7 +1508,7 @@ mod tests {
             bridge_autostart = false
             bridge_command = ["py", "-3", "bridge/mt5/quantick_bridge.py"]
         "#;
-        let config = parse(text, ConfigSource::Embedded).unwrap();
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         assert!(!config.metatrader.bridge_autostart);
         assert_eq!(
             config.metatrader.bridge_command,
@@ -786,7 +1529,7 @@ mod tests {
             provider = "binance"
             symbols = ["BTCUSDT"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -801,7 +1544,7 @@ mod tests {
             provider = "binance"
             symbols = ["BTCUSDT", "ETHUSDT"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -821,7 +1564,7 @@ mod tests {
             provider = "binance"
             symbols = ["ETHUSDT"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -832,7 +1575,7 @@ mod tests {
             default_symbol = "BTCUSDT"
             feeds = []
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
     }
 
@@ -847,7 +1590,7 @@ mod tests {
             provider = "kraken"
             symbols = ["Y"]
         "#;
-        let err = parse(text, ConfigSource::Embedded).unwrap_err();
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
     }
 
@@ -863,7 +1606,7 @@ mod tests {
             symbols = ["BTCUSDT", "ETHUSDT"]
         "#;
         (
-            parse(text, ConfigSource::Embedded).unwrap(),
+            parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap(),
             ConfigSource::Embedded,
         )
     }

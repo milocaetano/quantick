@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -37,24 +37,30 @@ async fn next_event(rx: &mut mpsc::Receiver<Mt5Event>) -> Mt5Event {
 
 /// Start a server and return (its bound addr, the event receiver).
 async fn start_server(symbol: &str) -> (String, mpsc::Receiver<Mt5Event>) {
-    let (addr, rx, _) = start_server_with_capture(symbol).await;
-    (addr, rx)
+    start_server_from(test_config(symbol)).await
 }
 
 /// Same, keeping the depth switch so a test can turn capture on and off.
 async fn start_server_with_capture(
     symbol: &str,
 ) -> (String, mpsc::Receiver<Mt5Event>, BookCaptureSwitch) {
-    let (tx, mut rx) = mpsc::channel(1024);
     let config = test_config(symbol);
     let capture = config.book_capture.clone();
+    let (addr, rx) = start_server_from(config).await;
+    (addr, rx, capture)
+}
+
+/// Start a server from an explicit config — for tests whose timing needs
+/// differ from the tight defaults.
+async fn start_server_from(config: ServerConfig) -> (String, mpsc::Receiver<Mt5Event>) {
+    let (tx, mut rx) = mpsc::channel(1024);
     tokio::spawn(async move {
         let _ = run_bridge_server(config, tx).await;
     });
     let Mt5Event::Status(Mt5Status::Waiting { addr }) = next_event(&mut rx).await else {
         panic!("expected the initial waiting status");
     };
-    (addr, rx, capture)
+    (addr, rx)
 }
 
 fn hello(symbol: &str) -> String {
@@ -423,4 +429,176 @@ async fn a_bridge_without_depth_says_so_instead_of_staying_silent() {
     };
     // At the consumer's own generation floor, so it is not discarded as stale.
     assert_eq!(generation, 2_000_000);
+}
+
+#[tokio::test]
+async fn two_ports_stream_two_symbols_at_once() {
+    // How quantick charts more than one MetaTrader symbol: one listener per
+    // symbol, each a fully independent stack. Two EAs, two ports, two charts —
+    // and neither stream can reach the other's consumer.
+    let (gold_addr, mut gold_rx) = start_server("XAUUSD").await;
+    let (index_addr, mut index_rx) = start_server("US500").await;
+    assert_ne!(gold_addr, index_addr, "each symbol owns its own port");
+
+    let mut gold = TcpStream::connect(&gold_addr).await.unwrap();
+    let mut script = String::new();
+    script.push_str(&hello("XAUUSD"));
+    script.push_str(&tick(1, "4000", 1)); // no context → dropped
+    script.push_str(&tick(2, "4001", 2)); // uptick → buy
+    gold.write_all(script.as_bytes()).await.unwrap();
+    gold.flush().await.unwrap();
+
+    let mut index = TcpStream::connect(&index_addr).await.unwrap();
+    let mut script = String::new();
+    script.push_str(&hello("US500"));
+    script.push_str(&tick(1, "7000", 1)); // no context → dropped
+    script.push_str(&tick(2, "6999", 5)); // downtick → sell
+    index.write_all(script.as_bytes()).await.unwrap();
+    index.flush().await.unwrap();
+
+    let Mt5Event::Status(Mt5Status::Connected { symbol, .. }) = next_event(&mut gold_rx).await
+    else {
+        panic!("expected the gold session to connect");
+    };
+    assert_eq!(symbol, "XAUUSD");
+    let Mt5Event::Status(Mt5Status::Connected { symbol, .. }) = next_event(&mut index_rx).await
+    else {
+        panic!("expected the index session to connect");
+    };
+    assert_eq!(symbol, "US500");
+
+    let Mt5Event::Live(trade) = next_event(&mut gold_rx).await else {
+        panic!("expected a live trade on the gold port");
+    };
+    assert_eq!(trade.agg_id, 2);
+    assert_eq!(trade.side, Side::Buy);
+    assert_eq!(trade.quantity, rust_decimal::Decimal::from(2));
+
+    let Mt5Event::Live(trade) = next_event(&mut index_rx).await else {
+        panic!("expected a live trade on the index port");
+    };
+    assert_eq!(trade.agg_id, 2);
+    assert_eq!(trade.side, Side::Sell);
+    assert_eq!(trade.quantity, rust_decimal::Decimal::from(5));
+
+    // Neither consumer saw anything that was not its own.
+    assert!(
+        gold_rx.try_recv().is_err(),
+        "the gold feed got a stray event"
+    );
+    assert!(
+        index_rx.try_recv().is_err(),
+        "the index feed got a stray event"
+    );
+}
+
+/// Read until the peer closes, or panic after `patience`. Returns how many
+/// bytes arrived first (the protocol is one-way, so the answer should be 0).
+async fn expect_closed(sock: &mut TcpStream, patience: Duration) -> usize {
+    let mut received = 0;
+    let mut buf = [0_u8; 256];
+    tokio::time::timeout(patience, async {
+        loop {
+            match sock.read(&mut buf).await {
+                Ok(0) => return,
+                Ok(n) => received += n,
+                // A reset counts as closed: the peer is done with us either way.
+                Err(_) => return,
+            }
+        }
+    })
+    .await
+    .expect("the connection was left hanging instead of being refused");
+    received
+}
+
+#[tokio::test]
+async fn a_second_bridge_on_a_busy_port_is_refused_promptly() {
+    // Two EAs pointed at one port is the setup mistake this makes loud. The
+    // intruder used to sit in the accept backlog until its own send timeout —
+    // invisible here, and a hang over there.
+    let (addr, mut rx) = start_server("WIN$N").await;
+
+    let mut first = TcpStream::connect(&addr).await.unwrap();
+    let mut script = String::new();
+    script.push_str(&hello("WIN$N"));
+    script.push_str(&tick(1, "177795", 3)); // no context → dropped
+    script.push_str(&tick(2, "177800", 1)); // uptick → buy
+    first.write_all(script.as_bytes()).await.unwrap();
+    first.flush().await.unwrap();
+
+    let Mt5Event::Status(Mt5Status::Connected { .. }) = next_event(&mut rx).await else {
+        panic!("expected the first session to connect");
+    };
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("expected the first session's trade");
+    };
+    assert_eq!(trade.agg_id, 2);
+
+    let mut second = TcpStream::connect(&addr).await.unwrap();
+    second.write_all(hello("WIN$N").as_bytes()).await.unwrap();
+    second.flush().await.unwrap();
+    assert_eq!(
+        expect_closed(&mut second, Duration::from_secs(2)).await,
+        0,
+        "the protocol is one-way; a refusal is a close, not a reply"
+    );
+
+    // And the established session never noticed: same connection, still live.
+    first
+        .write_all(tick(3, "177810", 1).as_bytes())
+        .await
+        .unwrap();
+    first.flush().await.unwrap();
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("the served session must stream straight through a refusal");
+    };
+    assert_eq!(trade.agg_id, 3);
+}
+
+#[tokio::test]
+async fn an_intruder_that_says_nothing_is_refused_too() {
+    // The window for the intruder to name itself is a courtesy to the log, not
+    // a condition for refusing it: something that dials the port and stays mute
+    // must still be closed, and quickly.
+    //
+    // The served session stays silent for the whole 250 ms refusal window, so
+    // this test needs a read timeout that is not racing it. Ten seconds gives
+    // the real-clock wait ~40x of margin; the default 1 s left only 4x, close
+    // enough for a loaded CI box to drop the session first and fail this on
+    // the wrong thing. A paused clock is not the alternative — it would
+    // auto-advance the session's read timeout along with the window.
+    let (addr, mut rx) = start_server_from(ServerConfig {
+        read_timeout: Duration::from_secs(10),
+        ..test_config("WIN$N")
+    })
+    .await;
+
+    let mut first = TcpStream::connect(&addr).await.unwrap();
+    first.write_all(hello("WIN$N").as_bytes()).await.unwrap();
+    first.flush().await.unwrap();
+    let Mt5Event::Status(Mt5Status::Connected { .. }) = next_event(&mut rx).await else {
+        panic!("expected the first session to connect");
+    };
+
+    let mut second = TcpStream::connect(&addr).await.unwrap();
+    assert_eq!(
+        expect_closed(&mut second, Duration::from_secs(2)).await,
+        0,
+        "a silent intruder is closed when its window runs out"
+    );
+
+    first
+        .write_all(tick(1, "177795", 3).as_bytes())
+        .await
+        .unwrap();
+    first
+        .write_all(tick(2, "177800", 1).as_bytes())
+        .await
+        .unwrap();
+    first.flush().await.unwrap();
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("the served session must survive a silent intruder");
+    };
+    assert_eq!(trade.agg_id, 2);
 }
