@@ -545,14 +545,31 @@ async fn a_second_bridge_on_a_busy_port_is_refused_promptly() {
     );
 
     // And the established session never noticed: same connection, still live.
+    // The refusal itself now reaches the chart as an event, emitted from the
+    // refusal task — so it and the tick race across tasks. Demand exactly one
+    // of each, in whichever order they land.
     first
         .write_all(tick(3, "177810", 1).as_bytes())
         .await
         .unwrap();
     first.flush().await.unwrap();
-    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
-        panic!("the served session must stream straight through a refusal");
-    };
+    let mut busy = None;
+    let mut live = None;
+    for _ in 0..2 {
+        match next_event(&mut rx).await {
+            Mt5Event::SessionBusy {
+                peer_symbol,
+                diagnosis,
+                ..
+            } => busy = Some((peer_symbol, diagnosis)),
+            Mt5Event::Live(trade) => live = Some(trade),
+            other => panic!("unexpected event around the refusal: {other:?}"),
+        }
+    }
+    let (peer_symbol, diagnosis) = busy.expect("the refusal must reach the event channel");
+    assert_eq!(peer_symbol.as_deref(), Some("WIN$N"));
+    assert_eq!(diagnosis, "same_symbol");
+    let trade = live.expect("the served session must stream straight through a refusal");
     assert_eq!(trade.agg_id, 3);
 }
 
@@ -597,9 +614,25 @@ async fn an_intruder_that_says_nothing_is_refused_too() {
         .await
         .unwrap();
     first.flush().await.unwrap();
-    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
-        panic!("the served session must survive a silent intruder");
-    };
+    // The silent intruder's refusal is an event too, racing the tick across
+    // tasks — accept both orders, demand both facts.
+    let mut busy = None;
+    let mut live = None;
+    for _ in 0..2 {
+        match next_event(&mut rx).await {
+            Mt5Event::SessionBusy {
+                peer_symbol,
+                diagnosis,
+                ..
+            } => busy = Some((peer_symbol, diagnosis)),
+            Mt5Event::Live(trade) => live = Some(trade),
+            other => panic!("unexpected event around the refusal: {other:?}"),
+        }
+    }
+    let (peer_symbol, diagnosis) = busy.expect("the refusal must reach the event channel");
+    assert_eq!(peer_symbol, None);
+    assert_eq!(diagnosis, "unidentified");
+    let trade = live.expect("the served session must survive a silent intruder");
     assert_eq!(trade.agg_id, 2);
 }
 
