@@ -4704,7 +4704,9 @@ plot(close)
             (ChartLayer::DepthGaps, true),
             (ChartLayer::Grid, true),
             (ChartLayer::LastPrice, true),
-            (ChartLayer::BackfillDivider, true),
+            // A full-height rule across the candles for a boundary read once:
+            // opt-in, like the market layers above it.
+            (ChartLayer::BackfillDivider, false),
             (ChartLayer::SeamDivider, true),
             (ChartLayer::Crosshair, true),
             (ChartLayer::PaperTrading, true),
@@ -5032,16 +5034,22 @@ plot(close)
             })
         };
 
+        // Every layer under test on, whatever it opens as: the count below is
+        // the "all on" chart, so an opt-in layer has to be switched on first.
+        let under_test = [
+            ChartLayer::LastPrice,
+            ChartLayer::BackfillDivider,
+            ChartLayer::Crosshair,
+        ];
+        for layer in under_test {
+            switch_layer(&mut app, layer, true);
+        }
         // One frame to settle: the live lane's divider and the price range are
         // computed by a draw and read by the next one, so the first frame is
         // not yet the chart this test is counting.
         let _ = shapes(&mut app);
         let all_on = shapes(&mut app);
-        for layer in [
-            ChartLayer::LastPrice,
-            ChartLayer::BackfillDivider,
-            ChartLayer::Crosshair,
-        ] {
+        for layer in under_test {
             switch_layer(&mut app, layer, false);
             let off = shapes(&mut app);
             assert!(
@@ -9046,9 +9054,20 @@ plot(close)
             backfill + seam > seam,
             "the backfill mark sits inside the trade-derived half, past the seam"
         );
-        // Both marks paint. The view follows the live edge, and three months
-        // of venue history is far behind it, so bring the seam on screen the
-        // way a user scrolling back would.
+        // Both marks paint. The backfill divider is opt-in (see
+        // `ChartPane::new`) and this test is about where it lands, so switch
+        // it on first — on both panes, since either one's mark answers the
+        // assertion below.
+        for side in [PaneSide::Time, PaneSide::Flow] {
+            app.active_tab_mut().pane_mut(side).set_layer_visible(
+                ChartLayer::BackfillDivider,
+                true,
+                &mut chart_layers::LayerActions::default(),
+            );
+        }
+        // The view follows the live edge, and three months of venue history is
+        // far behind it, so bring the seam on screen the way a user scrolling
+        // back would.
         let slots = app.active_tab().pane(PaneSide::Time).slots();
         let width = app
             .active_tab()

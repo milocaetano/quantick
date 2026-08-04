@@ -24,8 +24,9 @@
 //! disagree over, so the preset stays their home.
 //!
 //! The file records each layer's *state*, not a list of hidden ones, because
-//! the layers do not share one default — the heatmap, the bubbles and the live
-//! strip open off, everything else opens on. An absent entry therefore means
+//! the layers do not share one default — the heatmap, the bubbles, the live
+//! strip and the backfill divider open off, everything else opens on. An
+//! absent entry therefore means
 //! "whatever the app decided", which is what keeps a fresh install, a feed's
 //! preset and the autostart env vars behaving exactly as they did before this
 //! file existed.
@@ -165,7 +166,10 @@ impl ChartLayer {
             }
             Self::Grid => "price and time gridlines behind the candles",
             Self::LastPrice => "the dashed line at the last traded price, and its chip on the axis",
-            Self::BackfillDivider => "where backfilled history ends and bars built live begin",
+            Self::BackfillDivider => {
+                "where backfilled history ends and bars built live begin. Off by default: a rule \
+                 across every candle for a boundary that is worth reading once"
+            }
             Self::SeamDivider => "where venue candles give way to bars built from prints",
             Self::Crosshair => "the hover cross and its price/time tags",
             // Same honesty rule as the gap boundaries: what is hidden here is a

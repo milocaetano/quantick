@@ -487,7 +487,12 @@ impl ChartPane {
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             live_strip_visible: false,
-            hidden_layers: BTreeSet::new(),
+            // The backfill divider opens off: it is a full-height rule across
+            // the candles for a boundary that matters once, when reading how
+            // far the live tape goes back. Nothing is hidden about the data —
+            // the mark is one click away in the layer menu, and the bars
+            // either side of it are exactly what they were.
+            hidden_layers: BTreeSet::from([ChartLayer::BackfillDivider]),
             #[cfg(test)]
             layer_menu_rects: Vec::new(),
             pending_spec: None,
