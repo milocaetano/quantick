@@ -15,6 +15,7 @@ mod app;
 mod bubble_presets;
 mod candle_view;
 mod chart;
+mod chart_layers;
 mod config;
 mod dock;
 mod drawings;

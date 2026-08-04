@@ -215,6 +215,42 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
+    /// Whether the live lane's boundary and live-edge lines are drawn.
+    #[must_use]
+    pub fn lane_marks_visible(&self) -> bool {
+        self.config.live_lane.show_marks
+    }
+
+    /// Show or hide those marks. The very field the dock's checkbox writes, so
+    /// the two entry points can never disagree — and, like every other lane
+    /// setting, it is saved with the order-flow preset rather than on its own.
+    pub fn set_lane_marks_visible(&mut self, visible: bool) {
+        if self.config.live_lane.show_marks == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.show_marks = visible;
+        self.commit_config_changes(before);
+    }
+
+    /// Whether intervals with no depth coverage are marked out.
+    #[must_use]
+    pub fn gaps_visible(&self) -> bool {
+        self.config.show_gaps
+    }
+
+    /// Show or hide the gap boundaries — the same field as the dock's "L2 gap"
+    /// checkbox. Hiding them hides a *statement about missing data*, so it is
+    /// the one layer whose menu entry says what silence then means.
+    pub fn set_gaps_visible(&mut self, visible: bool) {
+        if self.config.show_gaps == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_gaps = visible;
+        self.commit_config_changes(before);
+    }
+
     /// Latest exchange timestamp for which live book state is known, while the
     /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
