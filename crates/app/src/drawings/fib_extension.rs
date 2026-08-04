@@ -33,6 +33,9 @@ impl DrawingToolImpl for FibExtension {
             shift: true,
         })
     }
+    fn family(&self) -> Option<super::ToolFamily> {
+        Some(fib::FIB_FAMILY)
+    }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(FibPayload::new(FibKind::Extension))
     }

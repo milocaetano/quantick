@@ -10,6 +10,7 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use tokio::sync::{mpsc, watch};
@@ -49,8 +50,9 @@ use crate::style::{CandlePreset, ChartStyle};
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolbar::{self, ToolbarAction};
-use crate::toolrail::{Tool, ToolRail};
+use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::viewport::Viewport;
+use crate::widgets::{IconButton, TOOLBAR_ICON};
 
 /// Convert an explicit unmultiplied RGBA style colour to egui.
 fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
@@ -89,6 +91,20 @@ const INSPECTOR_LEVELS_WIDTH_PX: f32 = 360.0;
 const INSPECTOR_OBJECT_GAP_PX: f32 = 12.0;
 /// Assumed inspector height for placement before its first frame reports one.
 const INSPECTOR_FALLBACK_HEIGHT_PX: f32 = 280.0;
+/// Below this chart width a fresh selection opens the inspector pinned —
+/// there is no floating position that would not crowd the geometry. Stops
+/// applying once the user touches the pin either way.
+const INSPECTOR_AUTO_PIN_CHART_WIDTH_PX: f32 = 1180.0;
+/// Height of the floating inspector's custom title bar.
+const INSPECTOR_TITLE_HEIGHT_PX: f32 = 28.0;
+/// Title-bar paint metrics: leading padding, the title column when the grip
+/// glyph precedes it, and the two font sizes.
+const INSPECTOR_TITLE_PAD_X_PX: f32 = 2.0;
+const INSPECTOR_TITLE_TEXT_X_PX: f32 = 18.0;
+const INSPECTOR_TITLE_GRIP_GLYPH_PX: f32 = 14.0;
+const INSPECTOR_TITLE_TEXT_PX: f32 = 13.0;
+/// Gap between the object manager and the rail edge it opens beside.
+const DRAWING_MANAGER_GAP_PX: f32 = 12.0;
 /// Dragging the price field across the whole visible range takes this many
 /// steps, whatever the symbol's price magnitude.
 const PRICE_DRAG_STEPS: f64 = 200.0;
@@ -159,6 +175,21 @@ struct InspectorActions {
     force_delete: bool,
     close: bool,
     edited: bool,
+}
+
+impl InspectorActions {
+    /// Fold another frame section's requests into this one — the title bar
+    /// and the body each report intent, the host applies the union.
+    fn merge(&mut self, other: Self) {
+        self.toggle_hidden |= other.toggle_hidden;
+        self.toggle_lock |= other.toggle_lock;
+        self.toggle_pin |= other.toggle_pin;
+        self.delete |= other.delete;
+        self.cancel_delete |= other.cancel_delete;
+        self.force_delete |= other.force_delete;
+        self.close |= other.close;
+        self.edited |= other.edited;
+    }
 }
 
 /// Alpha of the last-price line: legible at a glance without competing with a
@@ -250,6 +281,65 @@ fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) -> Plo
 /// Without a lane every pixel belongs to the candles, exactly as before.
 fn gesture_hits_lane(divider_x: Option<f32>, x: f32) -> bool {
     divider_x.is_some_and(|divider| x >= divider)
+}
+
+/// Clamp a window of `size` at `position` into `chart`, top-left biased when
+/// the window is larger than the pane.
+fn clamp_into_chart(position: egui::Pos2, size: egui::Vec2, chart: egui::Rect) -> egui::Pos2 {
+    let max_x = (chart.right() - size.x).max(chart.left());
+    let max_y = (chart.bottom() - size.y).max(chart.top());
+    egui::pos2(
+        position.x.clamp(chart.left(), max_x),
+        position.y.clamp(chart.top(), max_y),
+    )
+}
+
+/// The inspector placement rule (`docs/drawing-toolbar-ux.md` §4.2): eight
+/// candidates — beside the object, then the chart corners — each clamped
+/// into the chart *before* scoring, then least `bbox` overlap wins. Ties
+/// break toward the greater centre distance, then candidate order, so the
+/// result is deterministic and, at zero overlap, keeps the classic
+/// right / left / below / above preference.
+fn inspector_placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
+    let gap = INSPECTOR_OBJECT_GAP_PX;
+    let candidates = [
+        egui::pos2(bbox.right() + gap, bbox.top()),
+        egui::pos2(bbox.left() - gap - size.x, bbox.top()),
+        egui::pos2(bbox.left(), bbox.bottom() + gap),
+        egui::pos2(bbox.left(), bbox.top() - gap - size.y),
+        egui::pos2(chart.left() + gap, chart.top() + gap),
+        egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
+        egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
+        egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
+    ];
+    let mut best: Option<(egui::Pos2, f32, f32)> = None;
+    for candidate in candidates {
+        let position = clamp_into_chart(candidate, size, chart);
+        let rect = egui::Rect::from_min_size(position, size);
+        let overlap = rect.intersect(bbox);
+        let overlap_area = if overlap.is_positive() {
+            overlap.area()
+        } else {
+            0.0
+        };
+        let distance = rect.center().distance(bbox.center());
+        // A clear (zero-overlap) candidate wins on order alone, keeping the
+        // beside-the-object preference over the corners; among genuinely
+        // overlapping candidates the farther-away one crowds least.
+        let wins = match &best {
+            None => true,
+            Some((_, best_area, best_distance)) => {
+                overlap_area < *best_area
+                    || (overlap_area == *best_area
+                        && overlap_area > 0.0
+                        && distance > *best_distance)
+            }
+        };
+        if wins {
+            best = Some((position, overlap_area, distance));
+        }
+    }
+    best.map_or_else(|| chart.left_top(), |(position, _, _)| position)
 }
 
 /// Split the bottom time strip at the lane's divider: the candles' own time
@@ -464,10 +554,23 @@ pub struct QuantickApp {
     inspector_pinned: bool,
     inspector_moved: bool,
     inspector_last_selection: Option<usize>,
+    // The floating inspector's position: automatic placement until the user
+    // drags the title bar, manual from then on (only ever re-clamped).
+    inspector_pos: Option<egui::Pos2>,
+    // Whether the user ever toggled the pin — the auto-pin width rule stops
+    // firing once they have expressed a preference.
+    inspector_pin_touched: bool,
+    // Set on the unpin frame: the side panel still occupies that frame's
+    // layout, so the floating host waits one frame and places against the
+    // settled chart instead of the pinned-era geometry.
+    inspector_settle_frame: bool,
     // The chart pane from the last frame (excludes axes and the live lane),
     // for inspector placement and manager centring.
     last_chart_area: Option<egui::Rect>,
     drawing_manager_open: bool,
+    // Last frame's open state: the manager places itself beside the rail on
+    // the frame it opens, and only then.
+    drawing_manager_was_open: bool,
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
@@ -599,8 +702,12 @@ impl QuantickApp {
             inspector_pinned: false,
             inspector_moved: false,
             inspector_last_selection: None,
+            inspector_pos: None,
+            inspector_pin_touched: false,
+            inspector_settle_frame: false,
             last_chart_area: None,
             drawing_manager_open: false,
+            drawing_manager_was_open: false,
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
@@ -2361,17 +2468,26 @@ impl QuantickApp {
                     input.pointer.delta(),
                 )
             });
+        // Floating chrome (inspector, manager, toast, flyouts) is opaque to
+        // the pointer: while it sits under the cursor the chart neither sets
+        // a cursor nor selects nor starts a drag. The gate applies at press
+        // time only — a drag that started on the canvas keeps running while
+        // the pointer travels across a panel (continuity, not priority).
+        let over_chrome = pointer_position
+            .and_then(|position| ui.ctx().layer_id_at(position))
+            .is_some_and(|layer| layer != ui.layer_id());
         // Simulated order lines take the pointer before the drawings: they
         // sit higher in the draw stack, and a grabbed stop is operational,
         // not annotational. The flag mirrors the drawings' gesture
-        // consumption so the chart never pans under a held line. Escape is
+        // consumption so the chart never pans under a held line; the chrome
+        // gate applies at press time only, like everywhere else. Escape is
         // deliberately absent here — cancels live in the app's single
         // escape stack (`handle_drawing_keys`).
         let paper_gesture = self.paper.handle_chart_input(&ChartInput {
             chart: drawing_area,
             scale: drawing_scale.as_ref(),
             pointer: pointer_position,
-            primary_pressed,
+            primary_pressed: primary_pressed && !over_chrome,
             primary_down,
             primary_released,
         });
@@ -2380,8 +2496,9 @@ impl QuantickApp {
             // Hover feedback: a resize cursor over a selected anchor, a move
             // cursor over any visible body, and not-allowed over locked
             // geometry (visible objects in the viewport only — bounded work).
-            if let Some(position) =
-                pointer_position.filter(|position| drawing_area.contains(*position))
+            if !over_chrome
+                && let Some(position) =
+                    pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
             {
                 if let Some(selected) = self.drawings.selected()
@@ -2425,13 +2542,13 @@ impl QuantickApp {
                 };
                 self.drawings.select(selected);
             }
-            // Floating inspectors normally own pointer input over their whole
-            // rectangle. Read the raw press so an already-selected drawing
-            // remains draggable even when its stroke or handle is underneath
-            // that inspector. Only an actual drawing hit takes precedence;
-            // every other inspector click remains a style interaction.
+            // Drag initiation reads the raw press (an `interact` per object
+            // would be unbounded work), so it must honour the chrome gate
+            // itself: a press on the inspector never grabs the stroke or the
+            // handle underneath — the panel is opaque by contract.
             let mut drawing_drag_started = false;
             if primary_pressed
+                && !over_chrome
                 && let Some(position) =
                     pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
@@ -3425,10 +3542,26 @@ impl QuantickApp {
                             self.dock.toggle_visible();
                             ui.close_menu();
                         }
+                        ui.menu_button("Drawing toolbar", |ui| {
+                            for (dock, label) in [
+                                (ToolboxDock::Left, "Left"),
+                                (ToolboxDock::Right, "Right"),
+                                (ToolboxDock::Top, "Top"),
+                                (ToolboxDock::Bottom, "Bottom"),
+                            ] {
+                                if ui
+                                    .selectable_label(self.toolrail.dock() == dock, label)
+                                    .clicked()
+                                {
+                                    self.toolrail.set_dock(dock);
+                                    ui.close_menu();
+                                }
+                            }
+                        });
                         let toolbox_label = if self.toolrail.visible() {
-                            "Hide drawing toolbox"
+                            "Hide drawing toolbar"
                         } else {
-                            "Show drawing toolbox"
+                            "Show drawing toolbar"
                         };
                         if ui.button(toolbox_label).clicked() {
                             self.toolrail.toggle_visible();
@@ -3539,13 +3672,15 @@ impl QuantickApp {
                 nudge_px: vertical * step,
             }
         });
-        // The escape stack: paper interaction → pending confirmation →
-        // draft → selection → Pointer, one layer per press. Paper trading's
-        // armed placement / grabbed line is the most transient layer, so it
-        // dies first — and reading Escape here, in the single stack, is what
-        // keeps one press from firing two cancels at once.
+        // The escape stack: rail drag → paper interaction → pending
+        // confirmation → draft → selection → Pointer, one layer per press.
+        // Paper trading's armed placement / grabbed line reads Escape here,
+        // in the single stack — what keeps one press from firing two
+        // cancels at once.
         if keys.escape {
-            if self.paper.cancel_interaction() {
+            if self.toolrail.drag_active() {
+                // The rail consumes this Esc to abort its dock drag.
+            } else if self.paper.cancel_interaction() {
                 // An armed order placement or a grabbed order line was
                 // dropped; nothing else loses state on this press.
             } else if self.drawing_delete_confirm {
@@ -3651,6 +3786,119 @@ impl QuantickApp {
         }
     }
 
+    /// The inspector's title bar, shared by both hosts: grip + title, then
+    /// the view controls (hide, pin, close) as icon buttons. In the floating
+    /// host the whole bar is the drag surface — the body never is, so a
+    /// slider drag can never move the window; double-click re-runs the
+    /// automatic placement.
+    fn draw_inspector_title_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        floating: bool,
+    ) -> InspectorActions {
+        let mut actions = InspectorActions::default();
+        let drawing = &self.drawings.items()[index];
+        let hidden = drawing.hidden;
+        let title = drawing.tool.settings_title();
+        let sense = if floating {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::hover()
+        };
+        let (bar_rect, bar) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), INSPECTOR_TITLE_HEIGHT_PX),
+            sense,
+        );
+        if ui.is_rect_visible(bar_rect) {
+            let painter = ui.painter();
+            if floating {
+                painter.text(
+                    egui::pos2(
+                        bar_rect.left() + INSPECTOR_TITLE_PAD_X_PX,
+                        bar_rect.center().y,
+                    ),
+                    egui::Align2::LEFT_CENTER,
+                    icons::DOTS_SIX_VERTICAL,
+                    egui::FontId::proportional(INSPECTOR_TITLE_GRIP_GLYPH_PX),
+                    theme::TEXT_FAINT,
+                );
+            }
+            let title_x = if floating {
+                INSPECTOR_TITLE_TEXT_X_PX
+            } else {
+                INSPECTOR_TITLE_PAD_X_PX
+            };
+            painter.text(
+                egui::pos2(bar_rect.left() + title_x, bar_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(INSPECTOR_TITLE_TEXT_PX),
+                theme::TEXT_PRIMARY,
+            );
+        }
+        // The controls are registered after the bar, so they win its pointer.
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let close = IconButton::new(icons::X, TOOLBAR_ICON)
+                    .hover_text("Close - keeps the drawing, clears the selection")
+                    .show(ui);
+                if close.clicked() {
+                    actions.close = true;
+                }
+                let pin_hover = if self.inspector_pinned {
+                    "Unpin - float the inspector over the chart"
+                } else {
+                    "Pin - dock the inspector at the side of the chart"
+                };
+                let pin = IconButton::new(icons::PUSH_PIN, TOOLBAR_ICON)
+                    .active(self.inspector_pinned)
+                    .hover_text(pin_hover)
+                    .show(ui);
+                #[cfg(test)]
+                {
+                    self.inspector_pin_rect = Some(pin.rect);
+                }
+                if pin.clicked() {
+                    actions.toggle_pin = true;
+                }
+                let eye_icon = if hidden { icons::EYE_SLASH } else { icons::EYE };
+                let eye_hover = if hidden {
+                    "Show this drawing again"
+                } else {
+                    "Hide this drawing - the inspector keeps the way back"
+                };
+                let eye = IconButton::new(eye_icon, TOOLBAR_ICON)
+                    .active(hidden)
+                    .hover_text(eye_hover)
+                    .show(ui);
+                if eye.clicked() {
+                    actions.toggle_hidden = true;
+                }
+            });
+        });
+        if floating {
+            let bar = bar.on_hover_text("Drag to move · double-click to reposition automatically");
+            if bar.double_clicked() {
+                // The reset path: back to automatic placement.
+                self.inspector_moved = false;
+                self.inspector_pos = self.inspector_target_position(ui.ctx(), index);
+            } else if bar.dragged() {
+                self.inspector_moved = true;
+                let position = self.inspector_pos.or_else(|| {
+                    ui.ctx()
+                        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                        .map(|rect| rect.min)
+                });
+                if let Some(position) = position {
+                    self.inspector_pos = Some(position + bar.drag_delta());
+                }
+            }
+        }
+        ui.separator();
+        actions
+    }
+
     /// Everything the inspector shows for the selected object, shared by the
     /// floating window and the pinned dock panel. Sections are driven by the
     /// tool's capabilities — an unsupported property is absent, not disabled.
@@ -3662,37 +3910,9 @@ impl QuantickApp {
         let hidden = drawing.hidden;
         let show_confirm = self.drawing_delete_confirm && locked;
 
-        // Header: object identity plus the view controls.
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(tool.name()).strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("Close").clicked() {
-                    actions.close = true;
-                }
-                let pin_label = if self.inspector_pinned {
-                    "Unpin"
-                } else {
-                    "Pin"
-                };
-                let pin = ui
-                    .small_button(pin_label)
-                    .on_hover_text("Dock the inspector at the side of the chart");
-                #[cfg(test)]
-                {
-                    self.inspector_pin_rect = Some(pin.rect);
-                }
-                if pin.clicked() {
-                    actions.toggle_pin = true;
-                }
-                let eye_label = if hidden { "Show" } else { "Hide" };
-                if ui.small_button(eye_label).clicked() {
-                    actions.toggle_hidden = true;
-                }
-            });
-        });
-
         // The always-visible textual actions (UX spec: never glyph-only,
-        // never behind a scroll).
+        // never behind a scroll). Identity and the view controls live in the
+        // host's title bar, not here.
         let intent = drawings::action_bar::draw(ui, locked);
         actions.toggle_lock |= intent.toggle_lock;
         actions.delete |= intent.delete;
@@ -3702,11 +3922,16 @@ impl QuantickApp {
                 egui::RichText::new(
                     "Locked - protected from accidental moves. Style stays editable.",
                 )
-                .small(),
+                .small()
+                .color(theme::TEXT_SUPPORT),
             );
         }
         if hidden {
-            ui.label(egui::RichText::new("Hidden - Show brings it back.").small());
+            ui.label(
+                egui::RichText::new("Hidden - Show brings it back.")
+                    .small()
+                    .color(theme::TEXT_SUPPORT),
+            );
         }
         if show_confirm {
             ui.separator();
@@ -3845,6 +4070,17 @@ impl QuantickApp {
         }
         if actions.toggle_pin {
             self.inspector_pinned = !self.inspector_pinned;
+            // The user has expressed a preference: the auto-pin width rule
+            // stops firing for the rest of the session.
+            self.inspector_pin_touched = true;
+            if !self.inspector_pinned {
+                // Unpinning re-opens the floating window. The pinned host
+                // has been claiming the selection each frame, so treat it
+                // as fresh again — otherwise automatic placement never runs
+                // and the window falls back to the fixed default corner.
+                self.inspector_last_selection = None;
+                self.inspector_settle_frame = true;
+            }
         }
         if actions.delete {
             self.request_delete_selected(now);
@@ -3868,12 +4104,29 @@ impl QuantickApp {
         }
     }
 
-    /// Where a freshly opened floating inspector should sit: 12 px right of
-    /// the object's bounding box, falling back to left, below and above, and
-    /// always clamped into the chart pane — which already excludes the price
-    /// and time axes, so the popup can never cover either or leave the view.
+    /// Where a freshly opened floating inspector should sit. Eight
+    /// candidates — four beside the object's bounding box, four in the
+    /// chart's corners — every one clamped into the chart pane *before*
+    /// scoring, then the least bbox overlap wins (ties: farther from the
+    /// object's centre, then candidate order). At zero overlap the order
+    /// tie-break keeps the right / left / below / above preference. The
+    /// chart pane already excludes both axes and the live lane, so the
+    /// popup can never cover them or leave the view.
     fn inspector_target_position(&self, ctx: &egui::Context, index: usize) -> Option<egui::Pos2> {
         let chart = self.last_chart_area?;
+        let bbox = self.drawing_bbox_on_screen(chart, index)?;
+        let size = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .map_or(
+                egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
+                |rect| rect.size(),
+            );
+        Some(inspector_placement(chart, bbox, size))
+    }
+
+    /// The selected object's screen bounding box, expanded by the anchor
+    /// radius — the rectangle the inspector must not cover.
+    fn drawing_bbox_on_screen(&self, chart: egui::Rect, index: usize) -> Option<egui::Rect> {
         let total = self.slots();
         let (auto_lo, auto_hi) = self.last_auto_range?;
         let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
@@ -3891,34 +4144,7 @@ impl QuantickApp {
         for point in &points {
             bbox.extend_with(*point);
         }
-        let bbox = bbox.expand(DRAWING_ANCHOR_RADIUS_PX);
-        let size = ctx
-            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-            .map_or(
-                egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
-                |rect| rect.size(),
-            );
-        let gap = INSPECTOR_OBJECT_GAP_PX;
-        let candidates = [
-            egui::pos2(bbox.right() + gap, bbox.top()),
-            egui::pos2(bbox.left() - gap - size.x, bbox.top()),
-            egui::pos2(bbox.left(), bbox.bottom() + gap),
-            egui::pos2(bbox.left(), bbox.top() - gap - size.y),
-        ];
-        let fits = |position: egui::Pos2| {
-            let rect = egui::Rect::from_min_size(position, size);
-            chart.contains_rect(rect) && !rect.intersects(bbox)
-        };
-        let chosen = candidates
-            .into_iter()
-            .find(|position| fits(*position))
-            .unwrap_or(candidates[0]);
-        let max_x = (chart.right() - size.x).max(chart.left());
-        let max_y = (chart.bottom() - size.y).max(chart.top());
-        Some(egui::pos2(
-            chosen.x.clamp(chart.left(), max_x),
-            chosen.y.clamp(chart.top(), max_y),
-        ))
+        Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
 
     /// Shared prologue of both inspector hosts. Returns the selection and its
@@ -3950,23 +4176,28 @@ impl QuantickApp {
         let Some((index, before)) = self.inspector_selection() else {
             return;
         };
+        self.inspector_last_selection = Some(index);
         let mut actions = InspectorActions::default();
         egui::SidePanel::right("drawing_inspector_panel")
             .resizable(true)
             .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
             .width_range(INSPECTOR_MIN_WIDTH_PX..=INSPECTOR_MAX_WIDTH_PX)
             .show(ctx, |ui| {
+                actions = self.draw_inspector_title_bar(ui, index, false);
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    actions = self.drawing_inspector_body(ui, index);
+                    let body = self.drawing_inspector_body(ui, index);
+                    actions.merge(body);
                 });
             });
         self.apply_inspector_actions(ctx, actions, index, before, now);
     }
 
     /// The selected object's floating inspector. Non-modal by contract: it
-    /// never captures the whole canvas and never blocks moving the geometry
-    /// underneath it. Opens beside the selection; once the user moves it, the
-    /// manual position wins for the rest of the session.
+    /// never captures the whole canvas — but it is opaque to the pointer, so
+    /// a press on it never falls through to the chart. Opens beside the
+    /// selection; once the user drags the title bar, the manual position
+    /// wins for the rest of the session (selection changes never snap it
+    /// back; the only automatic move is the re-clamp when the pane shrinks).
     fn draw_drawing_inspector(&mut self, ctx: &egui::Context, now: Instant) {
         if self.inspector_pinned {
             // The pinned panel already drew (and cleaned up) this frame.
@@ -3975,11 +4206,50 @@ impl QuantickApp {
         let Some((index, before)) = self.inspector_selection() else {
             return;
         };
+        if std::mem::take(&mut self.inspector_settle_frame) {
+            // The unpin happened this frame: the side panel still occupies
+            // this frame's layout and the drawing projects against the
+            // pinned-era chart. Wait one frame and place against the
+            // settled geometry.
+            return;
+        }
         let selection_changed = self.inspector_last_selection != Some(index);
+        // The auto-pin (§4.2): a fresh selection on a chart too narrow for a
+        // floating window opens pinned instead — decided here because this
+        // host is the one that would otherwise claim the selection. Stops
+        // firing once the user touches the pin.
+        if selection_changed
+            && !self.inspector_pin_touched
+            && self
+                .last_chart_area
+                .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX)
+        {
+            self.inspector_pinned = true;
+            // The pinned panel draws from the next frame on.
+            return;
+        }
         self.inspector_last_selection = Some(index);
-        let mut actions = InspectorActions::default();
-        let mut open = true;
-        let inspector_interactable = !self.drawing_drag.is_active();
+        // Automatic placement only while the window is untouched.
+        if selection_changed
+            && !self.inspector_moved
+            && let Some(position) = self.inspector_target_position(ctx, index)
+        {
+            self.inspector_pos = Some(position);
+        }
+        // Repair, never override: a position that no longer fits the chart
+        // pane is clamped back in, and `inspector_moved` survives.
+        if let (Some(position), Some(chart)) = (self.inspector_pos, self.last_chart_area) {
+            let size = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                .map_or(
+                    egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
+                    |rect| rect.size(),
+                );
+            let clamped = clamp_into_chart(position, size, chart);
+            if clamped != position {
+                self.inspector_pos = Some(clamped);
+            }
+        }
         // The level editor earns the wider default the spec reserves for it.
         let default_width = if before.tool.extra_tab().is_some() {
             INSPECTOR_LEVELS_WIDTH_PX
@@ -3988,34 +4258,48 @@ impl QuantickApp {
         };
         let mut window = egui::Window::new(before.tool.settings_title())
             .id(egui::Id::new("drawing_inspector"))
-            .open(&mut open)
+            .title_bar(false)
             .default_pos(DRAWING_INSPECTOR_DEFAULT_POSITION)
             .default_width(default_width)
             .min_width(INSPECTOR_MIN_WIDTH_PX)
             .max_width(INSPECTOR_MAX_WIDTH_PX)
-            .collapsible(false)
-            .movable(true)
-            .interactable(inspector_interactable)
+            .movable(false)
+            .interactable(true)
             .resizable(true);
-        if selection_changed
-            && !self.inspector_moved
-            && let Some(position) = self.inspector_target_position(ctx, index)
-        {
+        if let Some(position) = self.inspector_pos {
             window = window.current_pos(position);
         }
-        let response = window.show(ctx, |ui| self.drawing_inspector_body(ui, index));
-        if let Some(response) = &response {
-            if response.response.dragged() {
-                self.inspector_moved = true;
-            }
-            if let Some(inner) = response.inner {
-                actions = inner;
-            }
-        }
-        if !open {
-            actions.close = true;
-        }
+        let response = window.show(ctx, |ui| {
+            let mut actions = self.draw_inspector_title_bar(ui, index, true);
+            actions.merge(self.drawing_inspector_body(ui, index));
+            actions
+        });
+        let actions = response
+            .and_then(|response| response.inner)
+            .unwrap_or_default();
         self.apply_inspector_actions(ctx, actions, index, before, now);
+    }
+
+    /// Where the object manager opens: one gap inboard of the rail's inner
+    /// edge, aligned with the rail's leading end, clamped into the chart —
+    /// beside the button that opened it in all four docks.
+    fn manager_target_position(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
+        let chart = self.last_chart_area?;
+        let size = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
+            .map_or(
+                egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
+                |rect| rect.size(),
+            );
+        let gap = DRAWING_MANAGER_GAP_PX;
+        let position = match self.toolrail.dock() {
+            ToolboxDock::Left | ToolboxDock::Top => {
+                egui::pos2(chart.left() + gap, chart.top() + gap)
+            }
+            ToolboxDock::Right => egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
+            ToolboxDock::Bottom => egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
+        };
+        Some(clamp_into_chart(position, size, chart))
     }
 
     /// The object manager: a non-modal list of every drawing with the named
@@ -4023,8 +4307,11 @@ impl QuantickApp {
     /// and the keyboard — nothing here re-implements lock or delete rules.
     fn draw_drawing_manager(&mut self, ctx: &egui::Context, now: Instant) {
         if !self.drawing_manager_open {
+            self.drawing_manager_was_open = false;
             return;
         }
+        let just_opened = !self.drawing_manager_was_open;
+        self.drawing_manager_was_open = true;
         #[cfg(test)]
         self.manager_action_rects.clear();
         let mut open = true;
@@ -4035,79 +4322,82 @@ impl QuantickApp {
         let mut delete_row: Option<usize> = None;
         let mut show_all = false;
         let mut unlock_all = false;
-        egui::Window::new("Drawn objects")
+        let mut window = egui::Window::new("Drawn objects")
             .id(egui::Id::new("drawing_manager"))
             .open(&mut open)
             .default_pos(DRAWING_MANAGER_DEFAULT_POSITION)
             .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
             .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                let count = self.drawings.items().len();
-                if count == 0 {
-                    ui.label("No drawings yet.");
-                }
-                // Walked in reverse: the manager lists top-most first, the
-                // same order hit-testing resolves overlap.
-                for index in (0..count).rev() {
-                    let drawing = &self.drawings.items()[index];
-                    let selected = self.drawings.selected() == Some(index);
-                    let locked = drawing.locked;
-                    let hidden = drawing.hidden;
-                    let name = drawing.tool.name();
-                    ui.horizontal(|ui| {
-                        let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
-                        if hidden {
-                            label = label.weak();
-                        }
-                        if ui.selectable_label(selected, label).clicked() {
-                            select_row = Some(index);
-                        }
-                        if locked {
-                            ui.label(egui::RichText::new("locked").small());
-                        }
-                        if hidden {
-                            ui.label(egui::RichText::new("hidden").small());
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let delete = ui.small_button("Delete");
-                            #[cfg(test)]
-                            self.manager_action_rects
-                                .push((index, "Delete", delete.rect));
-                            if delete.clicked() {
-                                delete_row = Some(index);
-                            }
-                            let front = ui.small_button("Front");
-                            #[cfg(test)]
-                            self.manager_action_rects.push((index, "Front", front.rect));
-                            if front.clicked() {
-                                front_row = Some(index);
-                            }
-                            let lock = ui.small_button(if locked { "Unlock" } else { "Lock" });
-                            #[cfg(test)]
-                            self.manager_action_rects.push((index, "Lock", lock.rect));
-                            if lock.clicked() {
-                                lock_row = Some(index);
-                            }
-                            let eye = ui.small_button(if hidden { "Show" } else { "Hide" });
-                            #[cfg(test)]
-                            self.manager_action_rects.push((index, "Eye", eye.rect));
-                            if eye.clicked() {
-                                eye_row = Some(index);
-                            }
-                        });
-                    });
-                }
-                ui.separator();
+            .resizable(false);
+        if just_opened && let Some(position) = self.manager_target_position(ctx) {
+            window = window.current_pos(position);
+        }
+        window.show(ctx, |ui| {
+            let count = self.drawings.items().len();
+            if count == 0 {
+                ui.label("No drawings yet.");
+            }
+            // Walked in reverse: the manager lists top-most first, the
+            // same order hit-testing resolves overlap.
+            for index in (0..count).rev() {
+                let drawing = &self.drawings.items()[index];
+                let selected = self.drawings.selected() == Some(index);
+                let locked = drawing.locked;
+                let hidden = drawing.hidden;
+                let name = drawing.tool.name();
                 ui.horizontal(|ui| {
-                    if ui.button("Show all").clicked() {
-                        show_all = true;
+                    let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
+                    if hidden {
+                        label = label.weak();
                     }
-                    if ui.button("Unlock all").clicked() {
-                        unlock_all = true;
+                    if ui.selectable_label(selected, label).clicked() {
+                        select_row = Some(index);
                     }
+                    if locked {
+                        ui.label(egui::RichText::new("locked").small());
+                    }
+                    if hidden {
+                        ui.label(egui::RichText::new("hidden").small());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let delete = ui.small_button("Delete");
+                        #[cfg(test)]
+                        self.manager_action_rects
+                            .push((index, "Delete", delete.rect));
+                        if delete.clicked() {
+                            delete_row = Some(index);
+                        }
+                        let front = ui.small_button("Front");
+                        #[cfg(test)]
+                        self.manager_action_rects.push((index, "Front", front.rect));
+                        if front.clicked() {
+                            front_row = Some(index);
+                        }
+                        let lock = ui.small_button(if locked { "Unlock" } else { "Lock" });
+                        #[cfg(test)]
+                        self.manager_action_rects.push((index, "Lock", lock.rect));
+                        if lock.clicked() {
+                            lock_row = Some(index);
+                        }
+                        let eye = ui.small_button(if hidden { "Show" } else { "Hide" });
+                        #[cfg(test)]
+                        self.manager_action_rects.push((index, "Eye", eye.rect));
+                        if eye.clicked() {
+                            eye_row = Some(index);
+                        }
+                    });
                 });
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("Show all").clicked() {
+                    show_all = true;
+                }
+                if ui.button("Unlock all").clicked() {
+                    unlock_all = true;
+                }
             });
+        });
         self.drawing_manager_open = open;
         if let Some(index) = select_row {
             self.drawings.select(Some(index));
@@ -5457,15 +5747,36 @@ plot(close)
     ) -> drawings::DrawingTool {
         let drawing = drawing_tool(id);
         let tool = Tool::Drawing(drawing);
-        let button = app
-            .toolrail
-            .button_rect(tool)
-            .expect("drawing button was rendered");
-        click_chart(app, ctx, button.center());
+        if let Some(button) = app.toolrail.button_rect(tool) {
+            click_chart(app, ctx, button.center());
+        } else {
+            // A folded family member has no direct slot: open the family
+            // flyout through the slot's caret zone and arm it by its row —
+            // the same pointer path a user takes.
+            let family = drawing
+                .family()
+                .expect("only family members lack a direct slot");
+            let slot = drawings::DRAWING_TOOLS
+                .into_iter()
+                .filter(|candidate| {
+                    candidate
+                        .family()
+                        .is_some_and(|candidate_family| candidate_family.id == family.id)
+                })
+                .find_map(|candidate| app.toolrail.button_rect(Tool::Drawing(candidate)))
+                .expect("the family slot was rendered");
+            click_chart(app, ctx, slot.max - egui::vec2(4.0, 4.0));
+            run_frame(app, ctx);
+            let row = app
+                .toolrail
+                .flyout_row_rect(drawing)
+                .expect("the flyout lists the folded member");
+            click_chart(app, ctx, row.center());
+        }
         assert_eq!(
             app.toolrail.tool(),
             tool,
-            "clicking {id} must arm that drawing tool"
+            "arming {id} through the rail must land"
         );
         drawing
     }
@@ -5547,11 +5858,13 @@ plot(close)
 
         let before = app.drawings.items()[0].points[0];
         let viewport_before = app.viewport.right_edge_bar(app.slots());
+        // Left of the anchor: clear of the inspector, which opens to its
+        // right — the panel is opaque to presses by contract.
         drag_chart(
             &mut app,
             &ctx,
-            egui::pos2(1_000.0, 300.0),
-            egui::pos2(1_040.0, 340.0),
+            egui::pos2(400.0, 300.0),
+            egui::pos2(440.0, 340.0),
         );
         let after = app.drawings.items()[0].points[0];
 
@@ -5576,19 +5889,19 @@ plot(close)
     }
 
     #[test]
-    fn inspector_never_blocks_drawing_drag() {
+    fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
         let (mut app, _commands) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let anchor = egui::pos2(300.0, 250.0);
+        let anchor = egui::pos2(700.0, 300.0);
         click_chart(&mut app, &ctx, anchor);
         run_frame(&mut app, &ctx);
 
-        // The horizontal stroke crosses the whole pane, so wherever placement
-        // put the window, some stroke pixel sits underneath it. Drag exactly
-        // that pixel: the gesture must stay with the drawing.
+        // The horizontal stroke crosses the whole pane, so a stroke pixel
+        // sits under the inspector. Press exactly there: the panel is opaque
+        // — the press is a style interaction, never a drawing drag.
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("placing the selected line opens its inspector");
@@ -5596,16 +5909,52 @@ plot(close)
         let start = egui::pos2(inspector.center().x, line_y);
         assert!(
             inspector.contains(start),
-            "the regression requires the floating inspector to cover this stroke pixel"
+            "this proof needs the inspector to cover a stroke pixel"
         );
         let before = app.drawings.items()[0].points[0];
 
         drag_chart(&mut app, &ctx, start, egui::pos2(start.x, line_y + 100.0));
 
+        assert_eq!(
+            app.drawings.items()[0].points[0],
+            before,
+            "a press on the inspector must never fall through to the chart"
+        );
+        assert_eq!(
+            app.drawing_drag,
+            DrawingDrag::None,
+            "no drawing drag may start from a press on the inspector"
+        );
+    }
+
+    #[test]
+    fn a_canvas_drag_keeps_running_while_crossing_the_inspector() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is open");
+        let start = egui::pos2(400.0, 300.0);
+        assert!(
+            !inspector.contains(start),
+            "the gesture must begin on the open canvas"
+        );
+        let before = app.drawings.items()[0].points[0];
+
+        // The gate applies at press time only: a drag that began on the
+        // canvas keeps moving the object while the pointer crosses the panel.
+        drag_chart(&mut app, &ctx, start, inspector.center());
+
         assert_ne!(
             app.drawings.items()[0].points[0].price,
             before.price,
-            "the open inspector must not trap the line underneath it"
+            "continuity: the drag survives crossing the inspector"
         );
     }
 
@@ -5696,6 +6045,331 @@ plot(close)
         assert!(
             texts.iter().any(|text| text.contains("Delete drawing")),
             "the docked panel still shows the named actions"
+        );
+    }
+
+    /// The eight §4.2 candidates, clamped — restated here so a drifted
+    /// implementation cannot silently shrink its own search space.
+    fn placement_candidates(
+        chart: egui::Rect,
+        bbox: egui::Rect,
+        size: egui::Vec2,
+    ) -> [egui::Pos2; 8] {
+        let gap = INSPECTOR_OBJECT_GAP_PX;
+        [
+            egui::pos2(bbox.right() + gap, bbox.top()),
+            egui::pos2(bbox.left() - gap - size.x, bbox.top()),
+            egui::pos2(bbox.left(), bbox.bottom() + gap),
+            egui::pos2(bbox.left(), bbox.top() - gap - size.y),
+            egui::pos2(chart.left() + gap, chart.top() + gap),
+            egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
+            egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
+            egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
+        ]
+        .map(|candidate| clamp_into_chart(candidate, size, chart))
+    }
+
+    #[test]
+    fn placement_beside_a_centered_object_clears_it_and_prefers_the_right() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
+        let bbox = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
+        let size = egui::vec2(320.0, 280.0);
+        let position = inspector_placement(chart, bbox, size);
+        let rect = egui::Rect::from_min_size(position, size);
+        assert!(!rect.intersects(bbox), "a clear candidate exists and wins");
+        assert!(chart.contains_rect(rect));
+        assert_eq!(
+            position,
+            egui::pos2(bbox.right() + INSPECTOR_OBJECT_GAP_PX, bbox.top()),
+            "at zero overlap the order tie-break keeps the right-of-object preference"
+        );
+        assert_eq!(
+            position,
+            inspector_placement(chart, bbox, size),
+            "identical inputs give identical placements"
+        );
+    }
+
+    #[test]
+    fn placement_picks_the_least_overlap_when_nothing_clears() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+        // The object spans ~90% of the pane: every candidate overlaps.
+        let bbox = chart.shrink2(egui::vec2(50.0, 30.0));
+        let size = egui::vec2(320.0, 280.0);
+        let position = inspector_placement(chart, bbox, size);
+        let chosen = egui::Rect::from_min_size(position, size)
+            .intersect(bbox)
+            .area();
+        for candidate in placement_candidates(chart, bbox, size) {
+            let overlap = egui::Rect::from_min_size(candidate, size)
+                .intersect(bbox)
+                .area();
+            assert!(
+                chosen <= overlap + 0.01,
+                "the chosen spot must cover the object least: {chosen} vs {overlap}"
+            );
+        }
+        assert!(chart.contains_rect(egui::Rect::from_min_size(position, size)));
+    }
+
+    #[test]
+    fn placement_never_returns_the_blind_first_candidate_at_the_right_edge() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+        let bbox = egui::Rect::from_min_max(egui::pos2(900.0, 200.0), egui::pos2(1_000.0, 300.0));
+        let size = egui::vec2(320.0, 280.0);
+        let position = inspector_placement(chart, bbox, size);
+        let rect = egui::Rect::from_min_size(position, size);
+        assert!(
+            !rect.intersects(bbox),
+            "left of the object clears; the old code clamped right-of back onto it"
+        );
+        assert!(
+            position.x < bbox.left(),
+            "the panel must sit clear on the left, not clamp over the object"
+        );
+    }
+
+    #[test]
+    fn a_moved_inspector_keeps_its_position_across_selection_changes() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        for price_y in [250.0, 400.0] {
+            app.toolrail
+                .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+            click_chart(&mut app, &ctx, egui::pos2(700.0, price_y));
+        }
+        click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
+        run_frame(&mut app, &ctx);
+
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is open");
+        // Drag by the title bar (left of the trailing icons).
+        let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
+        drag_chart(&mut app, &ctx, bar, bar + egui::vec2(150.0, 120.0));
+        assert!(
+            app.inspector_moved,
+            "a title-bar drag records the manual move"
+        );
+        let held = app.inspector_pos.expect("the manual position is recorded");
+
+        // Selecting the other line must not snap the window back.
+        click_chart(&mut app, &ctx, egui::pos2(400.0, 400.0));
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.inspector_pos,
+            Some(held),
+            "the manual position survives a selection change"
+        );
+        assert!(app.inspector_moved, "the manual flag is never auto-cleared");
+    }
+
+    #[test]
+    fn double_clicking_the_title_bar_returns_to_automatic_placement() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is open");
+        let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
+        drag_chart(&mut app, &ctx, bar, bar + egui::vec2(120.0, 90.0));
+        assert!(app.inspector_moved);
+
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("still open");
+        let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(bar),
+                pointer_button(bar, true),
+                pointer_button(bar, false),
+                pointer_button(bar, true),
+                pointer_button(bar, false),
+            ],
+        );
+        assert!(
+            !app.inspector_moved,
+            "double-click on the title bar re-arms automatic placement"
+        );
+    }
+
+    fn run_sized_frame(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            events,
+            ..Default::default()
+        };
+        ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    fn click_sized(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        position: egui::Pos2,
+    ) {
+        run_sized_frame(
+            app,
+            ctx,
+            size,
+            vec![
+                egui::Event::PointerMoved(position),
+                pointer_button(position, true),
+            ],
+        );
+        run_sized_frame(
+            app,
+            ctx,
+            size,
+            vec![
+                egui::Event::PointerMoved(position),
+                pointer_button(position, false),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let narrow = egui::vec2(1_150.0, 900.0);
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        assert!(
+            app.last_chart_area
+                .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX),
+            "this proof needs a chart narrower than the auto-pin threshold"
+        );
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_sized(&mut app, &ctx, narrow, egui::pos2(600.0, 300.0));
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        assert!(
+            app.inspector_pinned,
+            "a fresh selection on a narrow chart opens pinned"
+        );
+
+        // The user unpins: their preference holds from here on.
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        let pin = app.inspector_pin_rect.expect("the panel renders its pin");
+        click_sized(&mut app, &ctx, narrow, pin.center());
+        assert!(!app.inspector_pinned, "the pin toggles the panel off");
+        assert!(app.inspector_pin_touched, "the preference is recorded");
+
+        // Unpinning with the same selection must recompute placement — not
+        // fall back to the fixed default corner (the pinned host claimed the
+        // selection each frame, so the floating host has to re-place it).
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        let floating = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("unpinning reopens the floating inspector");
+        assert_ne!(
+            floating.min, DRAWING_INSPECTOR_DEFAULT_POSITION,
+            "the reopened window must be placed, not parked at the default"
+        );
+        // The selected line's anchor bbox (anchor ± select radius).
+        let bbox = egui::Rect::from_center_size(egui::pos2(600.0, 300.0), egui::vec2(24.0, 24.0));
+        assert!(
+            !floating.intersects(bbox),
+            "the reopened window sits beside the selected object: {floating:?}"
+        );
+
+        // Deselect, reselect: same width, but the touched pin wins now.
+        run_sized_frame(
+            &mut app,
+            &ctx,
+            narrow,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        click_sized(&mut app, &ctx, narrow, egui::pos2(500.0, 300.0));
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        assert!(
+            !app.inspector_pinned,
+            "once touched, the auto-pin width rule stops firing"
+        );
+    }
+
+    #[test]
+    fn hovering_the_inspector_sets_no_chart_cursor() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is open");
+        // Over the inspector AND over the selected line's stroke: without
+        // the chrome gate this hover would show a Move cursor.
+        let hover = egui::pos2(inspector.center().x, 300.0);
+        assert!(inspector.contains(hover));
+        let output = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(hover)]);
+        assert!(
+            !matches!(
+                output.platform_output.cursor_icon,
+                egui::CursorIcon::Move
+                    | egui::CursorIcon::ResizeNwSe
+                    | egui::CursorIcon::NotAllowed
+            ),
+            "the chart must not read a hover through the inspector; got {:?}",
+            output.platform_output.cursor_icon
+        );
+    }
+
+    #[test]
+    fn the_object_manager_opens_beside_the_rail() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let objects = app
+            .toolrail
+            .objects_button_rect()
+            .expect("the rail shows the Objects entry");
+        click_chart(&mut app, &ctx, objects.center());
+        assert!(app.drawing_manager_open);
+        run_frame(&mut app, &ctx);
+
+        let manager = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
+            .expect("the manager is open");
+        let chart = app.last_chart_area.expect("chart laid out");
+        // Default dock is Left: the manager opens one gap inboard of the
+        // rail's inner edge, aligned with its leading (top) end.
+        assert!(
+            (manager.left() - (chart.left() + DRAWING_MANAGER_GAP_PX)).abs() < 1.0,
+            "manager left edge: {} vs chart {}",
+            manager.left(),
+            chart.left()
+        );
+        assert!(
+            (manager.top() - (chart.top() + DRAWING_MANAGER_GAP_PX)).abs() < 1.0,
+            "manager top edge: {} vs chart {}",
+            manager.top(),
+            chart.top()
         );
     }
 
@@ -5947,7 +6621,8 @@ plot(close)
         );
 
         let before_drag = app.drawings.items()[0].points[0];
-        let start = egui::pos2(1_000.0, 300.0);
+        // Left of the anchor, clear of the inspector that opened beside it.
+        let start = egui::pos2(400.0, 300.0);
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -5956,10 +6631,10 @@ plot(close)
                 pointer_button(start, true),
             ],
         );
-        for step in [egui::pos2(1_010.0, 312.0), egui::pos2(1_025.0, 326.0)] {
+        for step in [egui::pos2(410.0, 312.0), egui::pos2(425.0, 326.0)] {
             run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(step)]);
         }
-        let end = egui::pos2(1_040.0, 340.0);
+        let end = egui::pos2(440.0, 340.0);
         run_frame_with_events(
             &mut app,
             &ctx,

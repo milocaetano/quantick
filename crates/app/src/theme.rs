@@ -46,9 +46,17 @@ pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
 pub const WARN: Color32 = Color32::from_rgb(0xFF, 0x63, 0x47);
 /// `tag/bg` — tooltips and the axis price tag.
 pub const TAG_BG: Color32 = Color32::from_rgb(0x37, 0x3F, 0x50);
+/// `text/support` — small explanatory lines that carry real information
+/// (the inspector's locked/hidden notes). [`TEXT_FAINT`] stays reserved for
+/// decoration and disabled states, where 4.5:1 contrast is not required.
+pub const TEXT_SUPPORT: Color32 = Color32::from_rgb(0x86, 0x92, 0xA4);
 
 /// Alpha of an "active" tint: a layer accent at 22% over the chrome.
 const ACTIVE_TINT_ALPHA: u8 = 56; // ≈ 22% of 255
+/// Alpha of a "pressed" tint: a layer accent at 33% over the chrome. One
+/// step deeper than [`ACTIVE_TINT_ALPHA`], so a press on an already-active
+/// button is still visible.
+const PRESS_TINT_ALPHA: u8 = 84;
 
 /// `accent` reduced to the 22% tint used behind an active icon.
 #[must_use]
@@ -56,10 +64,19 @@ pub fn active_tint(accent: Color32) -> Color32 {
     Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), ACTIVE_TINT_ALPHA)
 }
 
+/// `accent` at the 33% tint painted while an icon button is held down.
+#[must_use]
+pub fn press_tint(accent: Color32) -> Color32 {
+    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), PRESS_TINT_ALPHA)
+}
+
 /// Point egui's own widgets at the tokens, so combos, sliders and windows
 /// drawn anywhere in the app match the chrome without per-call overrides.
 pub fn apply(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
+    // Tooltips wait a beat (350 ms) so a sweep across the tool rail does not
+    // flash a trail of labels.
+    style.interaction.tooltip_delay = 0.35;
     let visuals = &mut style.visuals;
     *visuals = egui::Visuals::dark();
     visuals.panel_fill = CHROME;
@@ -141,5 +158,20 @@ mod tests {
         let tint = active_tint(ACCENT);
         assert_eq!(tint, Color32::from_rgba_unmultiplied(0x8A, 0xB4, 0xF8, 56));
         assert_eq!(tint.a(), 56);
+    }
+
+    #[test]
+    fn press_tint_is_one_step_deeper_than_active() {
+        let tint = press_tint(ACCENT);
+        assert_eq!(tint, Color32::from_rgba_unmultiplied(0x8A, 0xB4, 0xF8, 84));
+        assert!(
+            tint.a() > active_tint(ACCENT).a(),
+            "a press on an armed button must be distinguishable"
+        );
+    }
+
+    #[test]
+    fn support_text_matches_the_redesign_spec() {
+        assert_eq!(TEXT_SUPPORT, Color32::from_rgb(0x86, 0x92, 0xA4));
     }
 }
