@@ -6753,6 +6753,63 @@ plot(close)
             .center()
     }
 
+    /// Where `price` sits on `side`'s axis, computed the way that pane's own
+    /// frame computes it.
+    fn price_y(app: &QuantickApp, side: PaneSide, price: f64) -> f32 {
+        let pane = app.active_tab().pane(side);
+        let chart = pane.last_chart_area.expect("the pane reported its rect");
+        let auto = pane.last_auto_range.expect("the pane fitted a range");
+        let (lo, hi) = pane.price_view.resolve(auto);
+        PriceScale::from_range(lo, hi, chart.top(), chart.bottom()).y(price)
+    }
+
+    /// Order entry belongs to the flow pane. Both panes draw the simulated
+    /// lines — same instrument, same prices — but only the flow pane hands
+    /// the pointer to the simulator: the time pane is the context view, and a
+    /// press on its copy of a line is an ordinary chart gesture.
+    ///
+    /// Proven through the consequence, not the flag: the position's entry line
+    /// consumes a press without moving (it is history, not an order), so a
+    /// vertical drag that starts on it pans nothing on the flow pane — and
+    /// pans normally on the time pane, where the simulator never sees it.
+    #[test]
+    fn only_the_flow_pane_hands_the_pointer_to_the_simulator() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        let fill = trade(4);
+        app.active_tab_mut().ingest_live_trade_at(&fill, 0);
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().paper.status_cell().is_some(),
+            "this proof needs an open simulated position to grab"
+        );
+        let entry = rust_decimal::prelude::ToPrimitive::to_f64(&fill.price)
+            .expect("the fill price is finite");
+
+        for (side, panned) in [(PaneSide::Time, true), (PaneSide::Flow, false)] {
+            app.active_tab_mut().pane_mut(side).price_view.reset();
+            let chart = app
+                .active_tab()
+                .pane(side)
+                .last_chart_area
+                .expect("the pane reported its rect");
+            let start = egui::pos2(chart.center().x, price_y(&app, side, entry));
+            assert!(
+                chart.contains(start),
+                "{side:?}: the entry line must cross this pane to be grabbed"
+            );
+            drag_chart(&mut app, &ctx, start, start + egui::vec2(0.0, 40.0));
+
+            assert_eq!(
+                !app.active_tab().pane(side).price_view.is_auto(),
+                panned,
+                "{side:?}: a drag on the entry line must {} pan this pane",
+                if panned { "" } else { "not " }
+            );
+        }
+    }
+
     /// (a) The split really puts two charts on the canvas: two panes with
     /// their own laid-out rects, side by side, and a divider between them.
     #[test]

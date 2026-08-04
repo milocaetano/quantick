@@ -326,12 +326,15 @@ pub struct PaneChrome<'a> {
     pub paper: &'a mut PaperTrading,
     /// Whether this pane is the one paper trading takes its pointer from.
     ///
-    /// The simulator holds one grabbed line and one armed placement for the
-    /// whole tab, so exactly one pane may drive them: running both would let
-    /// the second pane inherit a drag the first started and re-clamp it into
-    /// the wrong rectangle. [`crate::tab::Tab::draw_canvas`] sets this on the
-    /// focused pane, which is the honest owner — a press focuses the pane it
-    /// landed in on that same frame, and focus cannot move mid-drag.
+    /// Set for the flow pane, and only for it: order entry belongs to the
+    /// chart trading happens on. The time pane is the *context* view (§11) —
+    /// a 90-day 1-minute chart is not a surface to place a stop on, and its
+    /// price span is nothing like the one an order is sized against.
+    ///
+    /// It is also what keeps the gesture coherent: the simulator holds one
+    /// grabbed line and one armed placement for the whole tab, so exactly one
+    /// pane may drive them. Running both would let the second pane inherit a
+    /// drag the first started and re-clamp it into the wrong rectangle.
     pub paper_owns_input: bool,
 }
 
