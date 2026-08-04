@@ -51,7 +51,7 @@ Inventory, from code:
 | Candle style editor | floating window | `candle_view.rs::draw_style_window` |
 | Market Replay browser | floating window (Ctrl+R) | `replay_view.rs::draw_browser` |
 | Replay transport | bottom panel (while replaying) | `replay_view.rs::draw_transport` |
-| Drawing toolbox | external 44 px top/bottom panel, corner-docked | `toolrail.rs` |
+| Drawing toolbar | external 44 px rail, edge-docked | `toolrail.rs` |
 | Selected-drawing inspector | floating window | `app.rs::draw_drawing_inspector` |
 | Timezone picker | floating area, pinned bottom-right | `app.rs::draw_timezone_selector` |
 | Header line (symbol · spec · bar counts · mode) | text painted on chart | `app.rs::draw_header` |
@@ -150,7 +150,7 @@ Icons (§6–§7 use them):
 |---|---|---|---|
 | 1 | Menu bar | 28 px | rare actions, discoverability, shortcuts (§10) |
 | 2 | Context toolbar | 44 px | source · bars · history · layers · look · panels (§6) |
-| 3 | Drawing toolbox | 44 px top/bottom, left/right aligned | cursor, crosshair, drawings (§7) |
+| 3 | Drawing toolbar | 44 px rail, edge-docked (default left) | cursor, crosshair, drawings (§7) |
 | 4 | Chart canvas | elastic | candles, flow layers, overlay legends, drawings |
 | 5 | Sub-panes | ≤ 40% of 4, max 3 | pane indicators: CVD, delta… (§9) |
 | 6 | Time axis | 24 px | time labels, x-zoom drag |
@@ -158,12 +158,14 @@ Icons (§6–§7 use them):
 | 8 | Dock | 280–360 px, collapsible to 36 | tabbed settings panels (§7) |
 | 9 | Price axis | 64 px | price labels, y-zoom drag |
 
-Vertical chrome while live with the drawing toolbox visible:
-28+44+44+24+28 = **168 px**. The toolbox can be hidden from **View**, or
-docked above the status area instead of below the context toolbar. In
-exchange, persistent chrome never covers the candles; only contextual floating
-windows such as the selected-drawing inspector may overlap them. Canvas layers
-remain limited to the legend and honest market markers.
+Vertical chrome while live with the drawing toolbar on its default left
+edge: 28+44+24+28 = **124 px** — a lateral rail spends horizontal budget,
+not the vertical budget where price lives. Docked top or bottom it costs the
+familiar 168 px, and it can be hidden from **View** or re-docked on any of
+the four edges. In exchange, persistent chrome never covers the candles;
+only contextual floating windows such as the selected-drawing inspector may
+overlap them. Canvas layers remain limited to the legend and honest market
+markers.
 
 **The rule that keeps this stable:** a new feature must claim a slot inside
 zones 1–9. If it genuinely cannot, the shell — not the feature — is what gets
@@ -201,18 +203,21 @@ bar §8) and both panel-opening buttons (the dock's tab strip replaces them).
 
 ![Tool rail and dock](img/04-tool-rail-dock.svg)
 
-> The diagram records the original vertical-rail skeleton. The corner-docked
-> external toolbox described below supersedes that rail geometry, and the
-> detailed [Drawing tools UX specification](drawing-tools-ux-spec.html) is
-> authoritative for drawing interactions beyond it: favourites/flyouts, the
-> repeat pin, the Objects manager, lock/visibility/delete semantics, the
-> keyboard grammar and the complete Fibonacci level editor.
+> The rail geometry, docking, button states and inspector placement are now
+> specified in [drawing-toolbar-ux.md](../drawing-toolbar-ux.md), which
+> supersedes the corner-docked toolbox this section used to describe. The
+> detailed [Drawing tools UX specification](drawing-tools-ux-spec.html)
+> stays authoritative for drawing interactions beyond the chrome:
+> favourites/flyouts, the repeat pin, the Objects manager,
+> lock/visibility/delete semantics, the keyboard grammar and the complete
+> Fibonacci level editor.
 
-**Drawing toolbox (external, 44 px).** Exclusive selection; exactly one tool
-is armed and `Esc` always returns to Pointer. Its grip docks the controls at
-the nearest of the four chart-shell corners: top-left, top-right, bottom-left
-or bottom-right. The top/bottom panel reserves layout space, so the toolbox
-never floats over market data.
+**Drawing toolbar (external, 44 px rail).** Exclusive selection; exactly one
+tool is armed and `Esc` always returns to Pointer. Its grip docks the rail
+against the nearest of the four window edges — left (the default), right,
+top or bottom — vertical on the lateral edges, horizontal on the others.
+The panel reserves layout space, so the toolbar never floats over market
+data.
 
 | Tool | Key | Notes |
 |---|---|---|
@@ -339,7 +344,7 @@ Where future features land — decided now, so they never claim new chrome:
 | Future feature | Toggle/entry | Settings | Canvas presence | Status |
 |---|---|---|---|---|
 | Indicators (M1–M5) | LAYERS icon + Insert menu | dock tab Indicators | legend rows, overlays, sub-panes | recompute progress |
-| Drawing tools | corner-docked toolbox | selected-object inspector | drawings layer | — |
+| Drawing tools | edge-docked toolbar | selected-object inspector | drawings layer | — |
 | Alerts | on indicator/level context | dock tab Alerts | triggered marker on bar | armed count + last fired |
 | Bot / strategy monitor | LAYERS icon | dock tab | order/position markers | connection + P&L cell |
 | Second chart / layouts | File → Layout | — | split canvas (zones 4–6 duplicate per chart; zones 1–3, 7–9 stay singular) | per-chart provenance |

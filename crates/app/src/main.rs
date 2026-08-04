@@ -132,6 +132,10 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 650.0])
+            // Below this the drawing rail would fall past its Minimal stage
+            // (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
+            // clip chrome instead of collapsing it.
+            .with_min_inner_size([900.0, 560.0])
             .with_title("quantick")
             .with_icon(icon),
         ..Default::default()
