@@ -263,12 +263,17 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         // parse never reaches this point: the browser that opened it reports.
         notices: super::silent_notices(),
         // A recording is trades and nothing else: no depth in the file, no
-        // venue to page older history from. The sizes in it are the sizes that
-        // were captured, so anything measuring volume still works.
+        // venue to page older history from, and no candles — the time pane
+        // shows exactly what the tape covers, which is the honest answer for a
+        // file. Synthesizing months of candles around a recorded hour would
+        // present data the recording never held. The sizes in it are the sizes
+        // that were captured, so anything measuring volume still works.
         capabilities: super::fixed_capabilities(FeedCapabilities {
             book_capture: false,
             history_paging: false,
             traded_volume: true,
+            ohlcv_history: false,
+            ohlcv_generation: 0,
         }),
         commands: cmd_tx,
         replay: Some(link),
@@ -314,9 +319,27 @@ fn play(
         loop {
             match commands.try_recv() {
                 Ok(FeedCommand::Replay(control)) => drained.push(control),
-                // Live-feed commands have no meaning for a recording. Ignored
-                // rather than refused: the UI gates them by capability, and a
-                // stray one must not kill playback.
+                // A recording holds no candles, but the request still has to be
+                // answered: every FetchOhlcv gets exactly one reply, or the
+                // pane waits for one that never comes. Empty is that answer.
+                Ok(FeedCommand::FetchOhlcv { .. }) => {
+                    if tx
+                        .blocking_send(FeedEvent::OhlcvHistory {
+                            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                            bars: Vec::new(),
+                            // Complete: a recording holds no candles at all, and
+                            // that is the whole truth rather than a short fetch.
+                            complete: true,
+                        })
+                        .is_err()
+                    {
+                        return; // UI gone
+                    }
+                }
+                // Other live-feed commands have no meaning for a recording, and
+                // none of them is something the UI waits on. Ignored rather
+                // than refused: the UI gates them by capability, and a stray
+                // one must not kill playback.
                 Ok(_) => {}
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => return,
@@ -670,5 +693,66 @@ mod tests {
             std::thread::sleep(TICK_PAUSED);
         }
         assert_eq!(Arc::strong_count(&link.session), 1, "worker exited");
+    }
+
+    #[test]
+    fn a_recording_answers_a_candle_request_with_an_honest_nothing() {
+        // The exactly-once contract, at the one provider that can never
+        // satisfy the request. A recording holds ticks; the months of context
+        // a time pane wants were never captured, and synthesizing them would
+        // present data the file does not contain. So the answer is empty — but
+        // it *is* an answer, because the pane's loading indicator keys on the
+        // reply and silence would spin it forever.
+        let mut handle = spawn(ReplayRequest {
+            session: session(4),
+            options: ReplayOptions {
+                speed: 1.0,
+                autoplay: false,
+                skip_idle_over_ms: None,
+            },
+        });
+        assert!(
+            !handle.capabilities.borrow().ohlcv_history,
+            "a file has no candles, and says so before anything is asked"
+        );
+
+        handle
+            .commands
+            .blocking_send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            })
+            .expect("the worker is listening");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let reply = loop {
+            assert!(
+                Instant::now() < deadline,
+                "no reply: a pane would hang here"
+            );
+            match handle.events.try_recv() {
+                Ok(FeedEvent::OhlcvHistory {
+                    interval_ms,
+                    bars,
+                    complete,
+                }) => break (interval_ms, bars, complete),
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
+                Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),
+            }
+        };
+        let (interval_ms, bars, complete) = reply;
+        assert!(
+            complete,
+            "a recording holds no candles; that answer is whole, not short"
+        );
+        assert!(
+            bars.is_empty(),
+            "nothing was recorded, so nothing is claimed"
+        );
+        assert_eq!(
+            interval_ms,
+            crate::feed::OHLCV_BASE_INTERVAL_MS,
+            "the interval is tagged even on an empty answer, so a consumer never              has to guess what it would have been resampling"
+        );
     }
 }

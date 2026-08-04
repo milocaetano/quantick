@@ -125,6 +125,11 @@ async fn tcp_replay_equals_the_pure_mapper() {
             // The fixture is a tick-only recording and capture is off, so
             // depth must never appear on this path.
             Mt5Event::Depth(event) => panic!("unexpected depth event: {event:?}"),
+            // Nor may candles: this recording predates them and declares no
+            // `rates`, so a block here would be one the bridge never sent.
+            Mt5Event::Rates { bars, .. } => panic!("unexpected {} candles", bars.len()),
+            // Only one client ever dials this listener.
+            Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
         }
     }
 

@@ -115,6 +115,10 @@ pub struct StatusModel {
     /// chart never says whether the next print completes the bar or the
     /// fiftieth does.
     pub bar_progress: Option<String>,
+    /// Bars that came from the venue's own candle history, in front of
+    /// everything this app built from prints. Zero on any pane without a
+    /// venue prefix, which is every flow pane.
+    pub venue_bars: usize,
     /// Closed bars built from backfilled history.
     pub backfilled_bars: usize,
     /// Closed bars built live.
@@ -183,8 +187,15 @@ pub fn tape_text(
 
 /// The bar-count cell, keeping the backfilled+live split: `240+61 bars`.
 #[must_use]
-pub fn bars_text(backfilled: usize, live: usize) -> String {
-    format!("{backfilled}+{live} bars")
+pub fn bars_text(venue: usize, backfilled: usize, live: usize) -> String {
+    // Three sources, three counts, in the order they sit on the chart. The
+    // venue term is dropped rather than shown as zero: a chart with no venue
+    // prefix has nothing to disclose about one, and "0+" would read as a
+    // failed fetch.
+    if venue == 0 {
+        return format!("{backfilled}+{live} bars");
+    }
+    format!("{venue}v+{backfilled}+{live} bars")
 }
 
 /// Draw the status bar as the window's bottom panel. `tz` is the bar's only
@@ -268,9 +279,13 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
         .on_hover_text("how far the forming bar is from closing");
     }
     ui.label(
-        egui::RichText::new(bars_text(model.backfilled_bars, model.live_bars))
-            .monospace()
-            .color(theme::TEXT_MUTED),
+        egui::RichText::new(bars_text(
+            model.venue_bars,
+            model.backfilled_bars,
+            model.live_bars,
+        ))
+        .monospace()
+        .color(theme::TEXT_MUTED),
     );
     if let Some(note) = &model.side_note {
         // Inferred data wears the amber thread, like every not-quite-venue
@@ -412,8 +427,20 @@ mod tests {
 
     #[test]
     fn bar_counts_keep_the_backfilled_live_split() {
-        assert_eq!(bars_text(240, 61), "240+61 bars");
-        assert_eq!(bars_text(0, 0), "0+0 bars");
+        assert_eq!(bars_text(0, 240, 61), "240+61 bars");
+        assert_eq!(bars_text(0, 0, 0), "0+0 bars");
+    }
+
+    /// A time pane standing on venue history says so, in the same cell and the
+    /// same order the chart puts the three sources in.
+    #[test]
+    fn a_venue_prefix_becomes_a_third_term() {
+        assert_eq!(bars_text(26_000, 240, 61), "26000v+240+61 bars");
+        assert_eq!(
+            bars_text(0, 240, 61),
+            "240+61 bars",
+            "a chart with no prefix discloses nothing about one; `0v+` would read as a fetch that failed"
+        );
     }
 
     /// Lay the bar out for real, off-screen, in its live and replay shapes —
@@ -435,6 +462,7 @@ mod tests {
                 tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
+                venue_bars: 0,
                 backfilled_bars: 240,
                 live_bars: 61,
                 side_note: replaying.then(|| "side: inferred (tick rule)".to_owned()),
@@ -475,6 +503,7 @@ mod tests {
             tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),
+            venue_bars: 0,
             backfilled_bars: 3_999,
             live_bars: 17,
             side_note: Some("prints: quote-derived".to_owned()),

@@ -545,14 +545,31 @@ async fn a_second_bridge_on_a_busy_port_is_refused_promptly() {
     );
 
     // And the established session never noticed: same connection, still live.
+    // The refusal itself now reaches the chart as an event, emitted from the
+    // refusal task — so it and the tick race across tasks. Demand exactly one
+    // of each, in whichever order they land.
     first
         .write_all(tick(3, "177810", 1).as_bytes())
         .await
         .unwrap();
     first.flush().await.unwrap();
-    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
-        panic!("the served session must stream straight through a refusal");
-    };
+    let mut busy = None;
+    let mut live = None;
+    for _ in 0..2 {
+        match next_event(&mut rx).await {
+            Mt5Event::SessionBusy {
+                peer_symbol,
+                diagnosis,
+                ..
+            } => busy = Some((peer_symbol, diagnosis)),
+            Mt5Event::Live(trade) => live = Some(trade),
+            other => panic!("unexpected event around the refusal: {other:?}"),
+        }
+    }
+    let (peer_symbol, diagnosis) = busy.expect("the refusal must reach the event channel");
+    assert_eq!(peer_symbol.as_deref(), Some("WIN$N"));
+    assert_eq!(diagnosis, "same_symbol");
+    let trade = live.expect("the served session must stream straight through a refusal");
     assert_eq!(trade.agg_id, 3);
 }
 
@@ -597,8 +614,248 @@ async fn an_intruder_that_says_nothing_is_refused_too() {
         .await
         .unwrap();
     first.flush().await.unwrap();
-    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
-        panic!("the served session must survive a silent intruder");
-    };
+    // The silent intruder's refusal is an event too, racing the tick across
+    // tasks — accept both orders, demand both facts.
+    let mut busy = None;
+    let mut live = None;
+    for _ in 0..2 {
+        match next_event(&mut rx).await {
+            Mt5Event::SessionBusy {
+                peer_symbol,
+                diagnosis,
+                ..
+            } => busy = Some((peer_symbol, diagnosis)),
+            Mt5Event::Live(trade) => live = Some(trade),
+            other => panic!("unexpected event around the refusal: {other:?}"),
+        }
+    }
+    let (peer_symbol, diagnosis) = busy.expect("the refusal must reach the event channel");
+    assert_eq!(peer_symbol, None);
+    assert_eq!(diagnosis, "unidentified");
+    let trade = live.expect("the served session must survive a silent intruder");
     assert_eq!(trade.agg_id, 2);
+}
+
+/// A hello from a bridge that also sends a historical candle block.
+fn hello_with_rates(symbol: &str) -> String {
+    hello(symbol).replace("\"digits\":0", "\"rates\":true,\"digits\":0")
+}
+
+/// One `rate` batch line carrying `bars` as the bridge formats them.
+fn rate_chunk(bars: &[(i64, &str, &str, &str, &str, &str)]) -> String {
+    let rows: Vec<String> = bars
+        .iter()
+        .map(|(t, o, h, l, c, v)| format!("[{t},\"{o}\",\"{h}\",\"{l}\",\"{c}\",\"{v}\"]"))
+        .collect();
+    format!("{{\"type\":\"rate\",\"bars\":[{}]}}\n", rows.join(","))
+}
+
+/// Drain until the candle block arrives, or panic if the session ends first.
+async fn next_rates(rx: &mut mpsc::Receiver<Mt5Event>) -> (i64, Vec<quantick_engine::Bar>, bool) {
+    loop {
+        match next_event(rx).await {
+            Mt5Event::Rates {
+                interval_ms,
+                bars,
+                partial,
+            } => return (interval_ms, bars, partial),
+            Mt5Event::Status(Mt5Status::Lost { reason }) => {
+                panic!("session ended before the candle block: {reason}")
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_rates_block_arrives_as_one_ordered_series() {
+    // The time pane's whole supply on MetaTrader: the bridge pushes candles
+    // once, after the tick backfill, and the feed hands over one series.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+
+    let mut script = String::new();
+    script.push_str(&hello_with_rates("WIN$N"));
+    script.push_str("{\"type\":\"backfill_start\",\"count_hint\":0}\n");
+    script.push_str("{\"type\":\"backfill_end\"}\n");
+    script.push_str("{\"type\":\"rates_start\",\"interval_ms\":60000,\"count_hint\":4}\n");
+    // Two chunks, deliberately out of order across the boundary, with the
+    // first bucket repeated at a corrected close in the second chunk.
+    script.push_str(&rate_chunk(&[
+        (
+            1_784_824_320_000,
+            "177800",
+            "177860",
+            "177790",
+            "177850",
+            "20",
+        ),
+        (
+            1_784_824_260_000,
+            "177790",
+            "177850",
+            "177780",
+            "177800",
+            "10",
+        ),
+    ]));
+    script.push_str(&rate_chunk(&[
+        // A bucket the venue reported empty: dropped, never carried forward.
+        (
+            1_784_824_380_000,
+            "177850",
+            "177850",
+            "177850",
+            "177850",
+            "0",
+        ),
+        (
+            1_784_824_260_000,
+            "177790",
+            "177850",
+            "177780",
+            "177799",
+            "10",
+        ),
+    ]));
+    script.push_str("{\"type\":\"rates_end\"}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    let Mt5Event::Status(Mt5Status::Connected { rates, .. }) = next_event(&mut rx).await else {
+        panic!("expected the session to connect");
+    };
+    assert!(rates, "the hello declared a candle block");
+
+    let (interval_ms, bars, partial) = next_rates(&mut rx).await;
+    assert_eq!(interval_ms, 60_000);
+    assert!(!partial, "the bridge declared nothing missing");
+    assert_eq!(
+        bars.len(),
+        2,
+        "the empty bucket is dropped, the repeat merged"
+    );
+    // Ascending by open_time whatever order the chunks arrived in, and in UTC
+    // (the hello's server clock is three hours behind).
+    assert_eq!(bars[0].open_time, 1_784_824_260_000 + 10_800_000);
+    assert_eq!(bars[1].open_time, 1_784_824_320_000 + 10_800_000);
+    assert_eq!(bars[0].close_time, bars[0].open_time + 59_999);
+    // Last write wins: a repeated bucket is a correction, not a duplicate bar.
+    assert_eq!(
+        bars[0].close,
+        rust_decimal::Decimal::from(177_799),
+        "the corrected close replaced the first one"
+    );
+    assert_eq!(bars[0].volume(), rust_decimal::Decimal::from(10));
+    assert_eq!(
+        bars[0].delta(),
+        rust_decimal::Decimal::ZERO,
+        "MT5 publishes no aggressor split; delta reads as not measured"
+    );
+}
+
+#[tokio::test]
+async fn a_session_without_rates_says_so_instead_of_promising_candles() {
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello("WIN$N").as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    let Mt5Event::Status(Mt5Status::Connected { rates, .. }) = next_event(&mut rx).await else {
+        panic!("expected the session to connect");
+    };
+    assert!(
+        !rates,
+        "an Expert Advisor session, or any bridge predating candles"
+    );
+}
+
+#[tokio::test]
+async fn a_corrupt_candle_is_dropped_and_the_block_still_arrives() {
+    // One bad row in ninety days is a gap, not a reason to lose the history.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+
+    let mut script = String::new();
+    script.push_str(&hello_with_rates("WIN$N"));
+    script.push_str("{\"type\":\"rates_start\",\"interval_ms\":60000}\n");
+    script.push_str(&rate_chunk(&[
+        (
+            1_784_824_260_000,
+            "177790",
+            "177850",
+            "177780",
+            "177800",
+            "10",
+        ),
+        // High below low: not a candle any market printed.
+        (
+            1_784_824_320_000,
+            "177800",
+            "177700",
+            "177900",
+            "177850",
+            "20",
+        ),
+    ]));
+    // A line that is not even a rate batch: skipped and counted, like any
+    // other garbage, without ending the session.
+    script.push_str("{\"type\":\"rate\",\"bars\":\"not-an-array\"}\n");
+    script.push_str(&rate_chunk(&[(
+        1_784_824_380_000,
+        "177850",
+        "177900",
+        "177840",
+        "177870",
+        "30",
+    )]));
+    script.push_str("{\"type\":\"rates_end\"}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    let _ = next_event(&mut rx).await; // Connected
+    let (_, bars, _) = next_rates(&mut rx).await;
+    assert_eq!(bars.len(), 2, "only the incoherent candle was dropped");
+    assert_eq!(bars[0].open_time, 1_784_824_260_000 + 10_800_000);
+    assert_eq!(bars[1].open_time, 1_784_824_380_000 + 10_800_000);
+}
+
+#[tokio::test]
+async fn a_block_that_never_ended_is_discarded_not_half_delivered() {
+    // A candle series with a hole reads as a market that stopped trading, so
+    // an interrupted block is dropped whole; the next session re-sends it.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+
+    let mut script = String::new();
+    script.push_str(&hello_with_rates("WIN$N"));
+    script.push_str("{\"type\":\"rates_start\",\"interval_ms\":60000}\n");
+    script.push_str(&rate_chunk(&[(
+        1_784_824_260_000,
+        "177790",
+        "177850",
+        "177780",
+        "177800",
+        "10",
+    )]));
+    script.push_str("{\"type\":\"bye\",\"reason\":\"test_done\"}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+    sock.flush().await.unwrap();
+
+    let _ = next_event(&mut rx).await; // Connected
+    loop {
+        match next_event(&mut rx).await {
+            Mt5Event::Rates { bars, .. } => {
+                panic!(
+                    "an unfinished block must not be delivered: {} bars",
+                    bars.len()
+                )
+            }
+            Mt5Event::Status(Mt5Status::Lost { reason }) => {
+                assert_eq!(reason, "bye: test_done");
+                break;
+            }
+            _ => {}
+        }
+    }
 }

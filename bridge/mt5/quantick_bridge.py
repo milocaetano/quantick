@@ -68,6 +68,48 @@ CACHE_PATH = Path(__file__).with_name(".quantick_bridge_cache.json")
 #: tape-less. See `BridgeSession.detect_tape` for why this errs long.
 TAPE_PROBE_DAYS = 30
 
+# Milliseconds in the M1 bucket the candle block is sent in.
+M1_INTERVAL_MS = 60_000
+
+# Days charged per "month" of requested candle history. Calendar months vary and
+# nothing here needs them to be exact — this only decides how far back to ask.
+DAYS_PER_MONTH = 31
+
+# Candles per `rate` line. quantick drops a session whose line exceeds 64 KiB,
+# so the whole block on one line would take the connection down with it; this
+# bound is sized against that cap, and mirrors MAX_BARS_PER_RATE_LINE in
+# crates/feed-mt5/src/protocol.rs. See PROTOCOL.md for the arithmetic.
+MAX_BARS_PER_RATE_LINE = 300
+
+# Candles asked for per copy_rates call.
+#
+# NOT sized to the span, sized under the terminal's "Max bars in chart" setting.
+# MT5 validates a request's *potential* bar count against that setting and
+# refuses outright rather than truncating: probed 2026-08-03 against an XP
+# terminal capped at 100 000, a 90-day M1 range — 129 600 potential slots —
+# returned (-2, 'Terminal: Invalid params'), while a 1-day range returned its
+# 563 bars and a count of 50 000 returned everything the contract had. A count
+# above the cap fails the same way — and 20 000 is not "safely small": it is one
+# of the values the terminal's own Max-bars dialog offers, so a user who picks it
+# reproduces the bug exactly. `fetch_rates` halves and retries on the refusal
+# rather than trusting this number to be low enough.
+RATES_PAGE_BARS = 20_000
+
+# Smallest page worth retrying down to. Below this the page size is not the
+# problem, and halving further only multiplies round trips.
+RATES_MIN_PAGE_BARS = 1_000
+
+# The terminal's code for a request it refuses to size. It says nothing about
+# whether the data exists — only that the *request* was rejected — and telling
+# those two apart is the difference between "this symbol has no history" and
+# "raise Max bars in chart".
+MT5_INVALID_PARAMS = -2
+
+# Pages one candle block may request. Ninety days of M1 needs ~7 at the size
+# above, so reaching this means the walk is not advancing rather than that the
+# span was ambitious.
+RATES_MAX_PAGES = 64
+
 
 def log(event_code: str, **fields: object) -> None:
     """Emit one structured line, matching what the EA prints to Experts."""
@@ -209,6 +251,9 @@ class Session:
         self.offset_s = 0
         self.digits = 0
         self.book_subscribed = False
+        # What this venue prints, decided once at hello and reused by the
+        # candle block to choose an honest volume source.
+        self.tape = "trades"
         # Cursor: MT5 ticks share milliseconds, so it takes both the newest
         # millisecond sent and how many ticks at that millisecond already went.
         self.cursor_msc = 0
@@ -269,6 +314,7 @@ class Session:
             raise BridgeExit
         self.offset_s = offset_s
         self.digits = int(info.digits)
+        self.tape = self.detect_tape()
 
         hello = {
             "type": "hello",
@@ -279,8 +325,13 @@ class Session:
             "broker_symbol": info.basis or self.symbol,
             "digits": self.digits,
             "server_utc_offset_s": offset_s,
-            "tape": self.detect_tape(),
+            "tape": self.tape,
         }
+        # Candle history is announced only when this session will really send
+        # it, so a feed knows immediately whether a time pane has anything
+        # coming rather than waiting on a block that never arrives.
+        if self.args.rates_months > 0:
+            hello["rates"] = True
         # Depth fields are announced only when this session can really deliver
         # depth. Omitting them is the honest "no book here" quantick relies on
         # to explain an empty heatmap instead of drawing one.
@@ -300,6 +351,8 @@ class Session:
         self.send(hello)
 
         self.backfill()
+        if self.args.rates_months > 0:
+            self.send_rates()
         log(
             "BRIDGE_SESSION_STARTED",
             symbol=self.symbol,
@@ -353,6 +406,245 @@ class Session:
         else:
             self.cursor_msc = now_s * 1000
             self.sent_at_cursor = 0
+
+    @staticmethod
+    def rates_error_code() -> int:
+        """The numeric part of the terminal's last error, or 0 if unreadable."""
+        error = mt5.last_error()
+        try:
+            return int(error[0])
+        except (TypeError, IndexError, ValueError):
+            return 0
+
+    def fetch_rates(self, from_s: int, now_s: int) -> tuple[list, int, bool]:
+        """Walk M1 history backwards in bounded pages.
+
+        `copy_rates_range` over the whole span cannot be used, and the reason is
+        not obvious: the terminal validates a request's **potential** bar count
+        against its "Max bars in chart" setting and returns a hard error rather
+        than truncating to what it will serve. Probed 2026-08-03 against an XP
+        terminal capped at 100 000 bars — a 90-day M1 range is 129 600 potential
+        slots and returned `(-2, 'Terminal: Invalid params')`, while the same
+        call over one day returned its 563 bars. So every session was failing on
+        the request itself, never on the data.
+
+        `copy_rates_from(symbol, timeframe, anchor, count)` returns the `count`
+        bars ending at `anchor`, ascending, and takes the same validation
+        against `count` — so pages are counted well under any sane cap
+        (RATES_PAGE_BARS) rather than sized to the span, and walked backwards
+        from now until one of four things stops them: the span is covered, the
+        terminal returns a short page (its history is exhausted), the caller's
+        bar cap is reached, or the page budget runs out.
+
+        Returns the merged bars ascending by time, how many pages were
+        requested, and whether a page failed after others had succeeded.
+        Merging through a dict keyed by bar time settles the overlap that a
+        backwards walk produces at every seam, deterministically.
+        """
+        by_time: dict[int, object] = {}
+        anchor = now_s
+        pages = 0
+        partial = False
+        # Narrowed in place if this terminal refuses the starting width.
+        page_bars = RATES_PAGE_BARS
+        while pages < RATES_MAX_PAGES:
+            chunk = mt5.copy_rates_from(self.symbol, mt5.TIMEFRAME_M1, anchor, page_bars)
+            pages += 1
+            # A refusal about the request itself, not about the data: the page
+            # is wider than this terminal's Max-bars setting allows. Halve and
+            # try again, and keep the smaller size for the rest of the walk.
+            while (
+                chunk is None
+                and self.rates_error_code() == MT5_INVALID_PARAMS
+                and page_bars > RATES_MIN_PAGE_BARS
+            ):
+                page_bars = max(page_bars // 2, RATES_MIN_PAGE_BARS)
+                log(
+                    "BRIDGE_RATES_PAGE_TOO_WIDE",
+                    symbol=self.symbol,
+                    page=pages,
+                    retry_with=page_bars,
+                    action="halve_and_retry",
+                    hint="the terminal's Max bars in chart is below the page size",
+                )
+                chunk = mt5.copy_rates_from(
+                    self.symbol, mt5.TIMEFRAME_M1, anchor, page_bars
+                )
+            if chunk is None:
+                # A page that fails after others succeeded costs the oldest end
+                # of the window, not the block: what was already merged is real
+                # and is worth more than the nothing that refusing would give.
+                partial = bool(by_time)
+                log(
+                    "BRIDGE_RATES_PAGE_FAILED",
+                    symbol=self.symbol,
+                    page=pages,
+                    anchor_ms=anchor * 1000,
+                    collected=len(by_time),
+                    mt5_error=str(mt5.last_error()),
+                    action="send_what_was_collected" if by_time else "give_up",
+                )
+                break
+            if len(chunk) == 0:
+                break
+            for rate in chunk:
+                by_time[int(rate["time"])] = rate
+            oldest = int(chunk[0]["time"])
+            if oldest <= from_s:
+                break  # the requested span is covered
+            if len(chunk) < page_bars:
+                break  # the terminal has no history older than this
+            if len(by_time) >= self.args.rates_max_bars:
+                break  # the cap decides the rest; the newest are kept below
+            # One minute before the oldest bar seen, so the next page ends where
+            # this one began instead of repeating it wholesale.
+            anchor = oldest - 60
+        else:
+            log(
+                "BRIDGE_RATES_PAGE_BUDGET_SPENT",
+                symbol=self.symbol,
+                max_pages=RATES_MAX_PAGES,
+                collected=len(by_time),
+                action="send_what_was_collected",
+            )
+            partial = bool(by_time)
+
+        # Ascending, and clipped to what was actually asked for: the last page
+        # of a backwards walk usually reaches further back than the span.
+        return ([by_time[t] for t in sorted(by_time) if t >= from_s], pages, partial)
+
+    def send_rates(self) -> None:
+        """Historical M1 candles, so the time pane opens with real context.
+
+        Ticks answer "what just happened"; this answers "what has been
+        happening", and the two have very different shapes. Three months of
+        ticks is tens of millions of lines and is not on offer at any price —
+        three months of one-minute candles is about 130 000, which fits on the
+        socket in a few hundred batched lines.
+
+        Fetched in pages, not in one call: see `fetch_rates` for the terminal
+        setting that refuses the whole-span request outright.
+
+        Batched, and bounded: quantick drops a session whose line exceeds 64
+        KiB, so a whole block on one line would take the connection down with
+        it. MAX_BARS_PER_RATE_LINE is sized against that cap — see
+        bridge/mt5/PROTOCOL.md for the arithmetic.
+
+        Volume follows what the venue actually prints, matching how live ticks
+        are treated for the same instrument: an exchange tape reports traded
+        size, and a quote-only CFD — which prints nothing — reports its tick
+        count, the same one synthetic unit per tick the live path charts.
+        """
+        now_s = int(time.time() + self.offset_s)
+        from_s = now_s - self.args.rates_months * DAYS_PER_MONTH * 86400
+        rates, pages, partial = self.fetch_rates(from_s, now_s)
+        if not rates:
+            log(
+                "BRIDGE_RATES_FAILED",
+                symbol=self.symbol,
+                pages=pages,
+                mt5_error=str(mt5.last_error()),
+                hint=(
+                    "the terminal refused the request itself; raise Max bars in "
+                    "chart (Tools > Options > Charts) or lower --rates-months"
+                    if self.rates_error_code() == MT5_INVALID_PARAMS
+                    else "the terminal returned no M1 history for this symbol"
+                ),
+            )
+            # The hello already promised candles, so silence here would leave the
+            # feed holding nothing while advertising nothing — indistinguishable
+            # from a block still on its way. An empty pair delivers the absence.
+            self.send(
+                {"type": "rates_start", "interval_ms": M1_INTERVAL_MS, "count_hint": 0}
+            )
+            self.send({"type": "rates_end"})
+            return
+
+        available = len(rates)
+        if available > self.args.rates_max_bars:
+            rates = rates[-self.args.rates_max_bars :]
+            # Clipped is short in the same sense a failed page is short: bars
+            # that exist and are not being delivered.
+            partial = True
+            log(
+                "BRIDGE_RATES_TRUNCATED",
+                symbol=self.symbol,
+                available=available,
+                sending=len(rates),
+                dropped_oldest=available - len(rates),
+                action="keep_newest",
+            )
+
+        quotes_only = self.tape == "quotes"
+        # How often a tape instrument reported no real volume and the tick count
+        # stood in. Counted rather than silent: a WIN$N block that fell back on
+        # every bar is a different chart from one that never did, and the two
+        # are indistinguishable once the bars are drawn.
+        fell_back = 0
+        self.send(
+            {
+                "type": "rates_start",
+                "interval_ms": M1_INTERVAL_MS,
+                "count_hint": len(rates),
+            }
+        )
+        batch = []
+        sent = 0
+        for rate in rates:
+            volume = int(rate["tick_volume"] if quotes_only else rate["real_volume"])
+            # A terminal that reports no real volume on a tape instrument
+            # leaves the bar unmeasurable; the tick count is the honest
+            # fallback and matches what the live path charts for it.
+            if volume <= 0:
+                volume = int(rate["tick_volume"])
+                if not quotes_only:
+                    fell_back += 1
+            batch.append(
+                [
+                    int(rate["time"]) * 1000,
+                    self.price(rate["open"]),
+                    self.price(rate["high"]),
+                    self.price(rate["low"]),
+                    self.price(rate["close"]),
+                    str(volume),
+                ]
+            )
+            if len(batch) >= MAX_BARS_PER_RATE_LINE:
+                self.send({"type": "rate", "bars": batch})
+                sent += len(batch)
+                batch = []
+        if batch:
+            self.send({"type": "rate", "bars": batch})
+            sent += len(batch)
+        # The flag rather than only the log: a consumer cannot read stderr, and
+        # "this is all there is" and "this is all I could get" are different
+        # charts. Omitted when whole, so a feed predating the field is
+        # unaffected.
+        end: dict = {"type": "rates_end"}
+        if partial:
+            end["partial"] = True
+        self.send(end)
+        # Requested versus covered, so "this contract only has four weeks of
+        # history" is visible rather than inferred from a short chart. A young
+        # B3 contract genuinely has less than the ninety days asked for, and
+        # that is not a failure — but it must not look like one either.
+        oldest_s = int(rates[0]["time"])
+        newest_s = int(rates[-1]["time"])
+        log(
+            "BRIDGE_RATES_SENT",
+            symbol=self.symbol,
+            interval_ms=M1_INTERVAL_MS,
+            bars=sent,
+            pages=pages,
+            partial=partial,
+            requested_span_days=self.args.rates_months * DAYS_PER_MONTH,
+            covered_span_days=round((newest_s - oldest_s) / 86400.0, 1),
+            oldest_ms=oldest_s * 1000,
+            newest_ms=newest_s * 1000,
+            months=self.args.rates_months,
+            volume_source="tick_volume" if quotes_only else "real_volume",
+            fell_back_to_tick_volume=fell_back,
+        )
 
     def send_tick(self, tick) -> None:
         self.seq += 1
@@ -539,6 +831,21 @@ def main() -> int:
         type=int,
         default=200_000,
         help="hard cap on backfilled ticks; the newest ones win",
+    )
+    parser.add_argument(
+        "--rates-months",
+        type=int,
+        default=3,
+        help=(
+            "months of M1 candle history to send after the tick backfill "
+            "(0 disables the block, and the session declares no candles)"
+        ),
+    )
+    parser.add_argument(
+        "--rates-max-bars",
+        type=int,
+        default=200_000,
+        help="cap on candles sent; the newest win and the log says how many were left behind",
     )
     parser.add_argument("--heartbeat-seconds", type=float, default=5.0)
     parser.add_argument("--retry-seconds", type=float, default=5.0)

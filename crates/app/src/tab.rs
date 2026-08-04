@@ -62,6 +62,34 @@ pub struct CanvasChrome<'a> {
     pub tz: TzOffset,
 }
 
+/// Drop venue bars that overlap the trade-derived series.
+///
+/// The two series meet at a seam, and the composed chart is only searchable if
+/// `open_time` never decreases across it. A venue candle covering the same
+/// window as the first engine bar would sit *after* it in time while sitting
+/// before it in slot order, so every venue bucket from that one on is dropped:
+/// what the app cut from prints is the better record of that window anyway.
+///
+/// With no engine bars yet the whole prefix stands — there is nothing to
+/// overlap.
+fn trim_to_seam(
+    mut folded: Vec<quantick_engine::Bar>,
+    first_engine_bar: Option<&quantick_engine::Bar>,
+    partial: Option<&quantick_engine::Bar>,
+    interval_ms: i64,
+) -> Vec<quantick_engine::Bar> {
+    let Some(first) = first_engine_bar.or(partial) else {
+        return folded;
+    };
+    // Buckets, not stamps. A venue candle's `open_time` is its bucket start; an
+    // engine bar's is its *first trade*, which sits strictly inside the bucket.
+    // Comparing the two raw would keep the venue candle covering the same
+    // window and put a later-closing bar in an earlier slot.
+    let seam = crate::resample::bucket_start(first.open_time, interval_ms);
+    folded.retain(|bar| bar.open_time < seam);
+    folded
+}
+
 /// One open market. See the module docs for what does and does not live here.
 pub struct Tab {
     /// Stable for as long as the tab is open, and never reused. The indicator
@@ -143,6 +171,34 @@ pub struct Tab {
     pub time_pane: Option<ChartPane>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
+    /// The venue's own 1-minute candles for this market, fetched once and
+    /// folded locally to whatever interval the time pane shows.
+    ///
+    /// `None` until a reply lands; `Some(empty)` after one that carried
+    /// nothing, which is what keeps a failed or unsupported fetch from being
+    /// retried every frame. Held by the tab rather than the pane because it is
+    /// the *market's* history: changing the pane's interval refolds it, and
+    /// only a change of market throws it away.
+    ohlcv_base: Option<Vec<quantick_engine::Bar>>,
+    /// Whether a fetch is out. One at a time — the reply is what clears it,
+    /// and every provider always sends one.
+    ohlcv_pending: bool,
+    /// The candle generation this tab has already acted on.
+    ///
+    /// A pull feed leaves it at zero forever — it answers whenever asked, so
+    /// nothing changes behind us. A push feed moves it every time it stores a
+    /// block, including a replacement for one already delivered, and that is
+    /// the only signal saying "the answer changed, ask again". A rising
+    /// *capability* edge cannot say it: the flag rises once and stays, so a
+    /// block arriving after an empty answer would sit unread.
+    ohlcv_generation: u64,
+    /// What `ohlcv_history` said last frame, so the rising edge can be seen.
+    ///
+    /// MetaTrader narrows its capabilities when the bridge says hello, which
+    /// happens *after* the pane may already have asked and been answered
+    /// `nothing_held`. The edge is what asks again once the answer can be a
+    /// real one.
+    ohlcv_capable: bool,
     /// The id the time pane takes when this tab first shows the split.
     time_pane_id: u64,
     /// Set when the split is asked for and the time pane does not exist yet;
@@ -210,6 +266,10 @@ impl Tab {
             paper: PaperTrading::new(),
             flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
             chip_label: String::new(),
+            ohlcv_base: None,
+            ohlcv_pending: false,
+            ohlcv_generation: 0,
+            ohlcv_capable: false,
             time_pane: None,
             time_pane_id: pane_ids.1,
             pending_time_pane: false,
@@ -232,6 +292,16 @@ impl Tab {
     /// notice and the transport state start clean — switching away from a
     /// blocked source must not leave its instruction on screen.
     fn attach(&mut self, handle: FeedHandle) {
+        // The old market's candles describe the old market. Any reply still in
+        // flight belongs to a channel that is about to be dropped, so the wait
+        // restarts rather than draining to zero on an answer that never comes.
+        self.ohlcv_base = None;
+        self.ohlcv_pending = false;
+        self.ohlcv_capable = false;
+        self.loading.set_active(LoadingTask::VenueHistory, false);
+        if let Some(pane) = self.time_pane.as_mut() {
+            pane.install_history_prefix(Vec::new());
+        }
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
@@ -282,10 +352,202 @@ impl Tab {
         self.canvas_divider
     }
 
+    /// Forget which candle generation was acted on, so the next poll treats
+    /// the feed's as new — what a reconnect storing a fresh block does.
+    #[cfg(test)]
+    pub fn forget_ohlcv_generation_for_test(&mut self) {
+        self.ohlcv_generation = u64::MAX;
+    }
+
     /// Swap in a feed the test drives, through the same path a respawn takes.
     #[cfg(test)]
     pub fn attach_for_test(&mut self, handle: FeedHandle) {
         self.attach(handle);
+    }
+
+    /// Ask the venue for its candle history, if there is anything to ask.
+    ///
+    /// Gated on the capability, never on the provider: a feed that serves no
+    /// candles, and a recording — which is a fixed span of prints with no
+    /// venue behind it — are both simply not asked. One request at a time, and
+    /// a base already held is not re-fetched: changing the pane's interval is
+    /// a different fold over the same bars.
+    fn request_ohlcv_history(&mut self, config: &AppConfig) {
+        if self.time_pane.is_none()
+            || self.replay.is_some()
+            || self.ohlcv_pending
+            || self.ohlcv_base.is_some()
+            || !self.capabilities(config).ohlcv_history
+        {
+            return;
+        }
+        let command = FeedCommand::FetchOhlcv {
+            span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+        };
+        match self.commands.try_send(command) {
+            Ok(()) => {
+                self.ohlcv_pending = true;
+                self.loading.begin(LoadingTask::VenueHistory);
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "OHLCV_REQUESTED",
+                    tab = self.id,
+                    symbol = %self.symbol,
+                    span_ms = crate::feed::TIME_HISTORY_SPAN_MS,
+                    action = "await_single_reply",
+                    "asked the venue for candle history"
+                );
+            }
+            // A full channel is a busy frame, and the every-frame poll asks
+            // again. A closed one is a feed thread that is gone, which is
+            // worth saying out loud: nothing will answer, ever.
+            Err(mpsc::error::TrySendError::Full(_)) => tracing::debug!(
+                target: "quantick::app",
+                event_code = "OHLCV_REQUEST_BACKPRESSURE",
+                tab = self.id,
+                action = "retry_next_frame",
+                "candle-history request not queued; channel full"
+            ),
+            Err(mpsc::error::TrySendError::Closed(_)) => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_REQUEST_CHANNEL_CLOSED",
+                tab = self.id,
+                symbol = %self.symbol,
+                action = "no_history_until_feed_restart",
+                "candle-history request cannot be sent; the feed is gone"
+            ),
+        }
+    }
+
+    /// Watch the capability for the false→true edge and ask when it lands.
+    ///
+    /// Called every frame: the check is two bools and an `Option` when there
+    /// is nothing to do.
+    pub fn poll_ohlcv_capability(&mut self, config: &AppConfig) {
+        let capabilities = self.capabilities(config);
+        let capable = capabilities.ohlcv_history;
+        let rising = capable && !self.ohlcv_capable;
+        self.ohlcv_capable = capable;
+        if capabilities.ohlcv_generation != self.ohlcv_generation {
+            // The venue re-answered. A reconnect can carry a longer block than
+            // the one held, or a corrected one, so what is held goes whether or
+            // not it had bars in it — the guard below then lets a fresh request
+            // through, and the reply reinstalls the prefix by the same path the
+            // first one took.
+            self.ohlcv_generation = capabilities.ohlcv_generation;
+            self.ohlcv_base = None;
+        }
+        if rising {
+            // A session that narrowed *into* serving candles may have answered
+            // an earlier request with nothing; that answer described a feed
+            // that did not know itself yet. Only the edge clears it — a
+            // steady-state empty base is a real "the venue has none".
+            if self.ohlcv_base.as_ref().is_some_and(Vec::is_empty) {
+                self.ohlcv_base = None;
+            }
+        }
+        // Unconditional: every guard inside makes this a no-op once the
+        // request is out or answered, and asking here is what actually retries
+        // a request the command channel refused. The feed ignores a duplicate
+        // while one is in flight, and `ohlcv_pending` means we never send one.
+        self.request_ohlcv_history(config);
+    }
+
+    /// Take a candle-history reply, and put it in front of the time pane.
+    ///
+    /// An empty reply is a complete answer — the venue has none, the provider
+    /// serves none, or the fetch failed — and is recorded as such so the tab
+    /// stops asking. Either way the wait ends here: a provider that answered
+    /// only on success would strand the spinner on the one case that most
+    /// needs explaining.
+    fn take_ohlcv_history(
+        &mut self,
+        interval_ms: i64,
+        bars: Vec<quantick_engine::Bar>,
+        complete: bool,
+    ) {
+        self.ohlcv_pending = false;
+        if !complete {
+            // Known-short, not merely short: a venue that stopped answering
+            // partway, or a block clipped to a cap. An instrument younger than
+            // the span is a *complete* answer with fewer bars, which is why
+            // this is carried rather than guessed from the count.
+            //
+            // Said in the log today. §11 records where it will be said on
+            // screen — beside the three-way bar count — and the badge itself
+            // is deferred rather than half-built.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_INCOMPLETE",
+                tab = self.id,
+                symbol = %self.symbol,
+                interval_ms,
+                bars = bars.len(),
+                action = "install_what_arrived",
+                "the venue's candle history stopped short of the span asked for"
+            );
+        }
+        self.loading.end(LoadingTask::VenueHistory);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "OHLCV_RECEIVED",
+            tab = self.id,
+            symbol = %self.symbol,
+            interval_ms,
+            bars = bars.len(),
+            action = if bars.is_empty() { "no_prefix" } else { "install_prefix" },
+            "candle history arrived"
+        );
+        if interval_ms != crate::feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
+            // The event tags its own interval so a consumer never has to
+            // guess; a base this fold was not written for is refused rather
+            // than folded wrongly.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_UNEXPECTED_BASE",
+                interval_ms,
+                expected_ms = crate::feed::OHLCV_BASE_INTERVAL_MS,
+                action = "no_prefix",
+                "candle history arrived at an interval the pane cannot fold from"
+            );
+            self.ohlcv_base = Some(Vec::new());
+            return;
+        }
+        self.ohlcv_base = Some(bars);
+        self.refold_history_prefix();
+    }
+
+    /// Rebuild the time pane's prefix from the base at the pane's interval.
+    ///
+    /// Free of the venue: a chip click lands here, not on the network.
+    /// Reports whether the prefix actually changed — an installed prefix
+    /// rebuilds the indicators, so the caller can skip sending a second one.
+    pub fn refold_history_prefix(&mut self) -> bool {
+        let Some(base) = self.ohlcv_base.as_ref() else {
+            return false;
+        };
+        let Some(pane) = self.time_pane.as_mut() else {
+            return false;
+        };
+        // A pane not cutting by time has no interval to fold to, and a
+        // sub-minute one has no whole number of venue candles in it: both get
+        // no prefix, which is the honest answer rather than an invented one.
+        let Some(interval) = pane.state.spec().time_interval_ms() else {
+            return pane.install_history_prefix(Vec::new());
+        };
+        let folded = crate::resample::fold(base, interval);
+        let prefix = trim_to_seam(
+            folded,
+            pane.state.bars().first(),
+            pane.state.partial(),
+            interval,
+        );
+        pane.install_history_prefix(prefix)
     }
 
     /// Whether this tab has trouble worth showing on its chip while it sits in
@@ -405,7 +667,7 @@ impl Tab {
     ///
     /// Runs at the top of the frame after the click, so the overlay armed by
     /// [`Self::set_layout`] has already been painted once.
-    pub fn apply_pending_layout(&mut self) {
+    pub fn apply_pending_layout(&mut self, config: &AppConfig) {
         if !self.pending_time_pane {
             return;
         }
@@ -417,6 +679,15 @@ impl Tab {
         );
         self.time_pane = Some(pane);
         self.loading.end(LoadingTask::BarRebuild);
+        // The pane exists now, so there is something for a prefix to go in
+        // front of. A base already held (a layout toggled off and on) is
+        // folded rather than re-fetched; otherwise this is the first moment
+        // asking for one means anything.
+        if self.ohlcv_base.is_some() {
+            self.refold_history_prefix();
+        } else {
+            self.request_ohlcv_history(config);
+        }
     }
 
     /// The display name of the currently selected feed, or its id as a
@@ -767,8 +1038,8 @@ impl Tab {
     /// the flow pane and the time pane's own header governs the time pane
     /// (§11), so a timeframe change must not rebuild the chart beside it.
     fn apply_spec_change(&mut self, side: PaneSide) -> bool {
+        let desired = self.pane(side).current_spec();
         let pane = self.pane_mut(side);
-        let desired = pane.current_spec();
         if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
@@ -795,8 +1066,21 @@ impl Tab {
                 // window past the end of the data, drawing nothing.
                 let anchor = pane.right_edge_time();
                 pane.state.set_spec(desired);
-                pane.send_indicator_rebuild();
-                let slot = anchor.and_then(|ms| pane.state.slot_at_time(ms));
+                // The venue prefix folds to the new interval before the view
+                // is reanchored: the market time the user was looking at has
+                // to resolve against the series they will be looking at.
+                //
+                // Installing a prefix rebuilds the indicators over the whole
+                // composed series, so the plain rebuild is only sent when the
+                // refold did not — two rebuilds of ~130k bars per settled drag
+                // frame, with no coalescing in the worker, is the cost of
+                // sending both.
+                let refolded = side == PaneSide::Time && self.refold_history_prefix();
+                if !refolded {
+                    self.pane_mut(side).send_indicator_rebuild();
+                }
+                let pane = self.pane_mut(side);
+                let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
                 let slots = pane.slots();
                 pane.viewport.reanchor(slot, slots);
                 self.clear_overlay(side)
@@ -847,6 +1131,10 @@ impl Tab {
                     for pane in self.panes_mut() {
                         pane.prepend_history(&trades);
                     }
+                    // The first engine bar just moved backwards in time, and
+                    // the prefix was trimmed against where it used to be. Any
+                    // venue candle now covering a re-cut minute has to go.
+                    self.refold_history_prefix();
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
@@ -863,6 +1151,13 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::Reset) => cleared |= self.reset_market_state(),
+                Ok(FeedEvent::OhlcvHistory {
+                    interval_ms,
+                    bars,
+                    complete,
+                }) => {
+                    self.take_ohlcv_history(interval_ms, bars, complete);
+                }
                 Err(_) => break,
             }
         }

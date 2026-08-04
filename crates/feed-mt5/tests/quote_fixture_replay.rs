@@ -172,6 +172,10 @@ async fn tcp_replay_of_a_quote_venue_equals_the_pure_mapper() {
             Mt5Event::Status(_) => {}
             // This venue has no book to capture, and capture is off besides.
             Mt5Event::Depth(event) => panic!("unexpected depth event: {event:?}"),
+            // The recording declares no `rates` either.
+            Mt5Event::Rates { bars, .. } => panic!("unexpected {} candles", bars.len()),
+            // Only one client ever dials this listener.
+            Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
         }
     }
 

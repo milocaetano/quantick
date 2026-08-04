@@ -36,6 +36,7 @@ mod pane;
 mod paper_trading;
 mod price_view;
 mod replay_view;
+mod resample;
 mod state;
 mod statusbar;
 mod style;

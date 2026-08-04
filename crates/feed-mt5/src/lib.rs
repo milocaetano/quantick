@@ -54,6 +54,9 @@
 //! | `MT5_HELLO_OK` | session established | — |
 //! | `MT5_BACKFILL_START`/`_END` | history block | — |
 //! | `MT5_PARTIAL_BACKFILL_DISCARDED` | session died mid-history | next connection re-sends it |
+//! | `MT5_RATES_START` | candle block incoming | — |
+//! | `MT5_RATES_SUMMARY` | per-block candle ledger | audit dropped/empty candle counts here |
+//! | `MT5_PARTIAL_RATES_DISCARDED` | session died mid-candle-block | dropped whole; next connection re-sends it |
 //! | `MT5_HEARTBEAT` | liveness + fresh offset (debug level) | — |
 //! | `MT5_SEQ_GAP` | ticks lost in transport | terminal overloaded? check EA logs |
 //! | `MT5_SEQ_NOT_MONOTONIC` | seq went backwards/repeated | EA bug or duplicated stream |
@@ -83,13 +86,18 @@ pub mod bridge_log;
 pub mod depth;
 pub mod map;
 pub mod protocol;
+pub mod rates;
 pub mod session;
 pub mod stream;
 
 pub use bridge_log::{BridgeReport, BridgeSeverity, report_for_line};
 pub use depth::{BookMapper, BookStats};
 pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper};
-pub use protocol::{BridgeMsg, Hello, ParseError, SCHEMA_VERSION, TapeKind, Tick, parse_line};
+pub use protocol::{
+    BridgeMsg, Hello, MAX_BARS_PER_RATE_LINE, ParseError, RateChunk, RateRow, SCHEMA_VERSION,
+    TapeKind, Tick, parse_line,
+};
+pub use rates::{RateMapper, RateStats};
 pub use session::{SeqAnomaly, SeqTracker};
 pub use stream::{
     BookCaptureSwitch, BoundedLine, BoundedLineReader, DEFAULT_LISTEN_ADDR, MAX_LINE_BYTES,

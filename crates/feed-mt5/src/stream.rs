@@ -16,6 +16,7 @@
 //! `event_code` (see the diagnosis table in the crate docs, `lib.rs`): an AI
 //! or operator can reconstruct a session from logs alone.
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -27,12 +28,13 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-use quantick_engine::Trade;
+use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
 
 use crate::depth::BookMapper;
 use crate::map::{MapOutcome, SideMode, TickMapper};
 use crate::protocol::{self, BridgeMsg, SCHEMA_VERSION, TapeKind};
+use crate::rates::RateMapper;
 use crate::session::SeqTracker;
 
 /// Default address the feed listens on for the bridge.
@@ -169,6 +171,12 @@ pub enum Mt5Status {
         /// Levels per side this session can publish, or `None` when it sends no
         /// depth at all (the terminal refused the DOM, or the symbol has none).
         book_levels: Option<u32>,
+        /// Whether this session sends a historical candle block.
+        ///
+        /// Per-session like the two above: the Expert Advisor sends none, and
+        /// so does any bridge older than the feature. A consumer waiting on
+        /// candles needs to hear that now rather than after a timeout.
+        rates: bool,
     },
     /// The bridge went away; the server is looping back to waiting.
     Lost {
@@ -192,6 +200,40 @@ pub enum Mt5Event {
     /// Only produced while [`BookCaptureSwitch`] is enabled and the bridge
     /// declares depth support.
     Depth(DepthEvent),
+    /// Another bridge dialed this port while a session was being served, and
+    /// was refused.
+    ///
+    /// The log has said this since the refusal existed; the chart has not, and
+    /// the chart is where someone is looking at a window that says "waiting for
+    /// the bridge" while the answer sits in a file. Carries the same diagnosis
+    /// the log gets, so the consumer can put it in front of a person.
+    SessionBusy {
+        /// Address of the connection that was turned away.
+        peer: String,
+        /// The symbol its hello declared, when it sent one.
+        peer_symbol: Option<String>,
+        /// Stable classification: `same_symbol`, `other_symbol`, or
+        /// `unidentified`.
+        diagnosis: &'static str,
+        /// What to do about it, in words.
+        advice: &'static str,
+    },
+    /// The session's historical candle block, complete and already mapped.
+    ///
+    /// Sent exactly once per `rates_start`/`rates_end` pair, ascending by
+    /// `open_time` and deduplicated. A block that never finished is discarded
+    /// rather than half-delivered — a candle series with a hole in the middle
+    /// reads as a market that stopped trading.
+    Rates {
+        /// Milliseconds each bar covers, as the block declared.
+        interval_ms: i64,
+        /// The candles, ascending by `open_time`.
+        bars: Vec<Bar>,
+        /// Whether the block is known to be short of what was asked for —
+        /// the bridge said so, or this decoder clipped it. See
+        /// [`protocol::BridgeMsg::RatesEnd`].
+        partial: bool,
+    },
 }
 
 /// A fatal server error (the non-fatal ones are events/logs).
@@ -322,7 +364,7 @@ pub async fn run_bridge_server(
             tokio::select! {
                 end = &mut served => break end,
                 accepted = listener.accept() => match accepted {
-                    Ok((extra, peer)) => refuse_busy(extra, peer, &config.symbol, &bound, &mut refusal),
+                    Ok((extra, peer)) => refuse_busy(extra, peer, &config.symbol, &bound, &tx, &mut refusal),
                     Err(e) => warn!(
                         target: "quantick::feed",
                         schema_version = 1_u8,
@@ -386,6 +428,7 @@ fn refuse_busy(
     peer: SocketAddr,
     serving: &str,
     addr: &str,
+    tx: &mpsc::Sender<Mt5Event>,
     in_flight: &mut Option<JoinHandle<()>>,
 ) {
     if in_flight.as_ref().is_some_and(|task| !task.is_finished()) {
@@ -407,6 +450,7 @@ fn refuse_busy(
     }
     let serving = serving.to_string();
     let addr = addr.to_string();
+    let tx = tx.clone();
     *in_flight = Some(tokio::spawn(async move {
         let identity = identify(stream).await;
         let diagnosis = identity.diagnose(&serving);
@@ -425,6 +469,17 @@ fn refuse_busy(
             action = "closed",
             "a second bridge dialed a port that is already serving a session; refusing it"
         );
+        // And once where someone can see it. The chart otherwise says "waiting
+        // for the bridge" for as long as the mistake lasts, while the reason
+        // sits in a log file nobody has open.
+        let _ = tx
+            .send(Mt5Event::SessionBusy {
+                peer: peer.to_string(),
+                peer_symbol: identity.symbol,
+                diagnosis: diagnosis.code,
+                advice: diagnosis.advice,
+            })
+            .await;
     }));
 }
 
@@ -645,6 +700,7 @@ async fn serve_connection(
             broker_symbol: hello.broker_symbol.clone(),
             tape: hello.tape,
             book_levels: hello.book_levels,
+            rates: hello.rates.unwrap_or(false),
         }))
         .await
         .is_err()
@@ -661,6 +717,7 @@ async fn serve_connection(
         TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
     let mut backfill: Option<Vec<Trade>> = None;
+    let mut candles: Option<RatesBlock> = None;
     let mut undecodable: u64 = 0;
     let mut depth = DepthSession::new(&hello, config.symbol.clone());
     depth.log_capability();
@@ -806,6 +863,86 @@ async fn serve_connection(
                     break ConnEnd::UiGone;
                 }
             }
+            Ok(BridgeMsg::RatesStart {
+                interval_ms,
+                count_hint,
+            }) => {
+                info!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_RATES_START",
+                    interval_ms,
+                    count_hint = ?count_hint,
+                    "bridge is sending historical candles"
+                );
+                if let Some(open) = candles.take() {
+                    // A block already running: the bridge restarted mid-send,
+                    // or two are interleaved. Either way what was collected
+                    // belongs to a window this new header does not describe.
+                    warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_PROTOCOL_VIOLATION",
+                        bars = open.len(),
+                        action = "discard_open_block",
+                        "a second rates_start arrived inside an open block; discarding the first"
+                    );
+                }
+                candles = Some(RatesBlock::new(interval_ms, hello.server_utc_offset_s));
+            }
+            Ok(BridgeMsg::Rate(chunk)) => match candles.as_mut() {
+                Some(block) => block.absorb(&chunk),
+                // A batch outside a block has no interval to be measured in,
+                // and guessing one would misdate every bar in it.
+                None => warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_PROTOCOL_VIOLATION",
+                    bars = chunk.bars.len(),
+                    action = "drop_chunk",
+                    "candles arrived outside a rates block; dropping them"
+                ),
+            },
+            Ok(BridgeMsg::RatesEnd { partial }) => match candles.take() {
+                Some(block) => {
+                    let (interval_ms, bars, clipped) = block.finish(&config.symbol);
+                    // Either side may know the block is short: the bridge from
+                    // its paging, this decoder from its own cap. Kept apart in
+                    // the log — they point at different things to go fix.
+                    let bridge_said_partial = partial;
+                    let partial = bridge_said_partial || clipped;
+                    if partial {
+                        warn!(
+                            target: "quantick::feed",
+                            schema_version = 1_u8,
+                            event_code = "MT5_RATES_PARTIAL",
+                            symbol = %config.symbol,
+                            bars = bars.len(),
+                            bridge_said_partial,
+                            clipped_here = clipped,
+                            "the candle block is short of what was asked for"
+                        );
+                    }
+                    if tx
+                        .send(Mt5Event::Rates {
+                            interval_ms,
+                            bars,
+                            partial,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break ConnEnd::UiGone;
+                    }
+                }
+                None => warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_PROTOCOL_VIOLATION",
+                    action = "ignore",
+                    "rates_end without a rates_start; ignoring it"
+                ),
+            },
             Ok(BridgeMsg::Bye { reason }) => {
                 info!(
                     target: "quantick::feed",
@@ -835,11 +972,93 @@ async fn serve_connection(
             "session ended mid-backfill; discarding the incomplete block"
         );
     }
+    if let Some(block) = candles {
+        warn!(
+            target: "quantick::feed",
+            schema_version = 1_u8,
+            event_code = "MT5_PARTIAL_RATES_DISCARDED",
+            bars = block.len(),
+            "session ended mid-candle-block; discarding it (the next session re-sends)"
+        );
+    }
     mapper.stats.log_summary(&config.symbol);
     // A consumer that was capturing depth must hear that this generation ended,
     // so it renders the discontinuity instead of connecting liquidity across it.
     depth.close(tx).await;
     end
+}
+
+/// Most candles one block may deliver.
+///
+/// The bridge caps what it sends (`--rates-max-bars`) and logs the shortfall,
+/// but the bridge is the side this one cannot vouch for: a misconfigured or
+/// hostile one could stream candles until the feed runs out of memory. Ninety
+/// days of one-minute buckets is ~130 000, so this is comfortably above any
+/// legitimate block while still being a bound.
+const MAX_BARS_PER_BLOCK: usize = 1_000_000;
+
+/// The historical candle block being received, between `rates_start` and
+/// `rates_end`.
+///
+/// Bars land in a [`BTreeMap`] keyed by `open_time` rather than a `Vec`: the
+/// terminal can repeat a bucket across chunk boundaries, and a map both settles
+/// that (last write wins — a repeat is a correction) and hands back one
+/// ascending series without a sort whose tie-breaking would be an unstated
+/// rule. Same block in, same series out, whatever order the chunks arrived in.
+struct RatesBlock {
+    interval_ms: i64,
+    mapper: RateMapper,
+    bars: BTreeMap<i64, Bar>,
+    /// Whether the cap has been hit, so it is reported once rather than per row.
+    truncated: bool,
+}
+
+impl RatesBlock {
+    fn new(interval_ms: i64, server_utc_offset_s: i64) -> Self {
+        Self {
+            interval_ms,
+            mapper: RateMapper::new(interval_ms, server_utc_offset_s),
+            bars: BTreeMap::new(),
+            truncated: false,
+        }
+    }
+
+    /// Map and absorb one chunk. Unreadable rows are counted, not fatal: one
+    /// corrupt candle in ninety days is a gap, not a reason to lose the block.
+    fn absorb(&mut self, chunk: &protocol::RateChunk) {
+        for row in &chunk.bars {
+            if self.bars.len() >= MAX_BARS_PER_BLOCK {
+                if !self.truncated {
+                    self.truncated = true;
+                    warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_RATES_TRUNCATED",
+                        max_bars = MAX_BARS_PER_BLOCK as u64,
+                        action = "keep_oldest_stop_absorbing",
+                        "the candle block exceeded the cap; ignoring the rest of it"
+                    );
+                }
+                return;
+            }
+            if let Some(bar) = self.mapper.map(row) {
+                self.bars.insert(bar.open_time, bar);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.bars.len()
+    }
+
+    /// Close the block: log what it cost, and hand back the ascending series.
+    fn finish(self, symbol: &str) -> (i64, Vec<Bar>, bool) {
+        self.mapper.stats.log_summary(symbol, self.interval_ms);
+        // Clipping here is the same kind of shortfall the bridge reports with
+        // its own `partial`: bars that exist and were not delivered.
+        let clipped = self.truncated;
+        (self.interval_ms, self.bars.into_values().collect(), clipped)
+    }
 }
 
 /// Depth capture state for one bridge connection.

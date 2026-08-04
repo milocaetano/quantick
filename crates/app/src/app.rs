@@ -1680,6 +1680,7 @@ impl QuantickApp {
             Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
             None => (0, bars.len()),
         };
+        let venue_bars = pane.history_prefix.len();
         let note = self.active_tab().side_note(&self.config);
         statusbar::StatusModel {
             venue: if self.active_tab().replay.is_some() {
@@ -1704,6 +1705,7 @@ impl QuantickApp {
                 .state
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
+            venue_bars,
             backfilled_bars: backfilled,
             live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
@@ -2977,8 +2979,9 @@ impl QuantickApp {
         let mut cleared = tab.maybe_switch_feed(config);
         // Both deferrals settle here, a frame after the click that armed
         // them, so the frame carrying the change paints its overlay first.
-        for tab in self.tabs.iter_mut() {
-            tab.apply_pending_layout();
+        let Self { tabs, config, .. } = self;
+        for tab in tabs.iter_mut() {
+            tab.apply_pending_layout(config);
         }
         cleared |= self.active_tab_mut().apply_spec_changes();
         if cleared {
@@ -3067,6 +3070,11 @@ impl QuantickApp {
             // instead of leaving the session silently unrecorded. Free while it
             // is running: one bool read and an early return.
             tab.ensure_book_capture(config);
+            // MetaTrader narrows its capabilities when the bridge says hello,
+            // after the pane may already have asked and been told there was
+            // nothing held. Watching the edge is what asks again once the
+            // answer can be a real one.
+            tab.poll_ohlcv_capability(config);
             trades += tab.live_trades - before;
             if cleared && index == self.active_tab {
                 cleared_active = true;
@@ -3136,12 +3144,20 @@ impl QuantickApp {
                 self.source_picker = None;
                 self.open_tab(feed_id, symbol);
             }
-            PickerOutcome::Added { feed_id, symbol } => {
-                if self.add_symbol(&feed_id, &symbol) {
+            PickerOutcome::Added { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
+                Ok(()) => {
                     self.source_picker = None;
                     self.open_tab(feed_id, symbol);
                 }
-            }
+                // The dialog stays open carrying the reason: the user is one
+                // keystroke from a symbol that does fit, and closing would
+                // make the refusal look like a crash.
+                Err(reason) => {
+                    if let Some(picker) = self.source_picker.as_mut() {
+                        picker.refuse(reason);
+                    }
+                }
+            },
             PickerOutcome::Removed { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
         }
     }
@@ -3153,12 +3169,36 @@ impl QuantickApp {
     /// and all, and a program that rewrote it would eat them. The addition
     /// lives in its own sidecar, which the next launch folds back in before
     /// the config is validated (see [`crate::symbols_file`]).
-    fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
-        if !self.config.add_symbol(feed_id, symbol) {
-            return false;
+    fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
+        // Against the *whole* config, on a copy. A symbol is not just a name
+        // in a list: it takes part in every cross-check the config has, and
+        // the MetaTrader port map is one where a single mapped symbol offered
+        // by two feeds is a configuration the app refuses to load. Persisting
+        // one of those would write a file that kills the next launch — and the
+        // error would name the config, which is not the file that broke.
+        let mut candidate = self.config.clone();
+        if !candidate.add_symbol(feed_id, symbol) {
+            return Err(format!(
+                "{} already offers {symbol}",
+                self.config.feed_name(feed_id)
+            ));
         }
+        candidate.validate()?;
+        self.config = candidate;
         self.added_symbols.add(feed_id, symbol);
-        symbols_file::save(&self.symbols_path, &self.added_symbols);
+        if let Err(error) = symbols_file::save(&self.symbols_path, &self.added_symbols) {
+            // The catalog took it for this session either way; what is lost is
+            // the next launch, and the user is told which file did not take it.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
+                path = %self.symbols_path.display(),
+                error = %error,
+                action = "addition_is_session_only",
+                "cannot write the added-symbols file"
+            );
+        }
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -3169,7 +3209,7 @@ impl QuantickApp {
             action = "open_in_new_tab",
             "a symbol was added from the source picker"
         );
-        true
+        Ok(())
     }
 
     /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
@@ -3182,7 +3222,17 @@ impl QuantickApp {
             return;
         }
         self.added_symbols.remove(feed_id, symbol);
-        symbols_file::save(&self.symbols_path, &self.added_symbols);
+        if let Err(error) = symbols_file::save(&self.symbols_path, &self.added_symbols) {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
+                path = %self.symbols_path.display(),
+                error = %error,
+                action = "removal_is_session_only",
+                "cannot write the added-symbols file"
+            );
+        }
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -3218,7 +3268,7 @@ mod tests {
 
     use quantick_feed_binance::depth::DepthEvent;
 
-    use crate::config::{FeedCapabilities, FeedConfig, ProviderKind};
+    use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
     use crate::drawings::{ChartPoint, PresetHost};
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
     use crate::pane::DrawingDrag;
@@ -3669,6 +3719,8 @@ mod tests {
                     book_capture: false,
                     history_paging: false,
                     traded_volume: false,
+                    ohlcv_history: false,
+                    ohlcv_generation: 0,
                 }),
                 commands: cmd_tx,
                 replay: None,
@@ -7539,6 +7591,751 @@ plot(close)
         );
     }
 
+    // ---- venue candle history in the time pane ----
+
+    /// A minute candle at `minute`, priced so a fold is visible in the result.
+    fn venue_candle(minute: i64, seed: i64) -> quantick_engine::Bar {
+        let open_time = minute * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        quantick_engine::Bar {
+            open_time,
+            close_time: open_time + crate::feed::OHLCV_BASE_INTERVAL_MS - 1,
+            open: Decimal::from(100 + seed),
+            high: Decimal::from(110 + seed),
+            low: Decimal::from(90 + seed),
+            close: Decimal::from(105 + seed),
+            buy_volume: Decimal::from(2),
+            sell_volume: Decimal::from(3),
+            trade_count: 7,
+        }
+    }
+
+    /// A trade one minute after the one before it, so a fixture fills an M1
+    /// pane with real bars rather than one long forming candle.
+    fn minute_trade(minute: u64) -> quantick_engine::Trade {
+        minute_trade_at(minute as i64)
+    }
+
+    /// The same, for a minute that may sit before the fixture's first — what
+    /// "load older" delivers.
+    fn minute_trade_at(minute: i64) -> quantick_engine::Trade {
+        let mut trade = trade(minute.unsigned_abs() + 1);
+        trade.timestamp_ms = minute * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000;
+        trade
+    }
+
+    /// Venue candles for the minutes *before* the fixture trades, which start
+    /// in minute 0 — so the prefix never overlaps the engine's own bars.
+    fn venue_history(count: i64) -> Vec<quantick_engine::Bar> {
+        (-count..0)
+            .map(|m| venue_candle(m, m.rem_euclid(5)))
+            .collect()
+    }
+
+    /// Every FetchOhlcv sitting in the command channel.
+    fn drain_ohlcv_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> usize {
+        let mut count = 0;
+        while let Ok(command) = commands.try_recv() {
+            if matches!(command, FeedCommand::FetchOhlcv { .. }) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// A split app whose feed reports candle history, with the channel ends
+    /// the test drives.
+    fn history_app(
+        ctx: &egui::Context,
+    ) -> (
+        QuantickApp,
+        mpsc::Sender<FeedEvent>,
+        mpsc::Receiver<FeedCommand>,
+    ) {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let mut app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(1),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(FeedCapabilities {
+                    book_capture: false,
+                    history_paging: true,
+                    traded_volume: true,
+                    ohlcv_history: true,
+                    ohlcv_generation: 0,
+                }),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let _ = book_tx;
+        let trades: Vec<_> = (0..200).map(minute_trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.drain_tabs();
+        run_frame(&mut app, ctx);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, ctx);
+        run_frame(&mut app, ctx);
+        (app, evt_tx, cmd_rx)
+    }
+
+    /// (a) A time pane on a feed that serves candles asks once, and the reply
+    /// becomes bars in front of the ones cut from prints.
+    #[test]
+    fn a_time_pane_asks_for_venue_history_once_and_renders_the_reply() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+
+        assert_eq!(
+            drain_ohlcv_requests(&mut commands),
+            1,
+            "the pane asks exactly once when it is built"
+        );
+        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        assert!(
+            app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and says it is waiting"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        assert_eq!(
+            pane.seam_slot(),
+            120,
+            "the whole prefix stands in front of the engine's bars"
+        );
+        assert!(pane.slots() > slots_before, "and the chart grew by it");
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "the wait ended with the reply"
+        );
+        // And it really paints: the axis is there and the candles are drawn.
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            has_price_axis(&texts),
+            "the pane draws its chart: {texts:?}"
+        );
+    }
+
+    /// "Load older" moves the first engine bar backwards in time, and the
+    /// prefix was trimmed against where that bar used to be.
+    ///
+    /// Three clicks reach this on Binance: split the canvas, let the venue
+    /// history land, pull older trades. The venue candles covering the newly
+    /// re-cut minutes then sat in front of engine bars covering the *same*
+    /// minutes — the window drawn twice, `open_time` going backwards across
+    /// the seam, and the precondition `slot_at_time` documents quietly false.
+    #[test]
+    fn pulling_older_trades_re_trims_the_venue_prefix() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // Something anchored to a bar index, and a view off the live edge, so
+        // the shift has something to preserve.
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .viewport
+            .pan_pixels(40.0, slots);
+        let edge_before = app.active_tab().pane(PaneSide::Time).right_edge_time();
+        let mark_before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].points[0];
+        let mark_time_before = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .slot_open_time(mark_before.bar as usize);
+        assert!(edge_before.is_some(), "the view is off the live edge");
+
+        // Five minutes of older trades, inside the window the prefix covers.
+        let older: Vec<_> = (-5_i64..0).map(minute_trade_at).collect();
+        events.try_send(FeedEvent::HistoryPrepended(older)).unwrap();
+        app.drain_tabs();
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        let first_engine = pane
+            .state
+            .bars()
+            .first()
+            .or_else(|| pane.state.partial())
+            .expect("the pane holds bars")
+            .open_time;
+        assert!(
+            pane.history_prefix.iter().all(|bar| bar.open_time
+                < crate::resample::bucket_start(first_engine, crate::feed::OHLCV_BASE_INTERVAL_MS)),
+            "no venue candle may cover a minute the engine has now re-cut"
+        );
+        assert_eq!(
+            pane.seam_slot(),
+            115,
+            "the five overlapping buckets left the prefix"
+        );
+        let opens: Vec<i64> = (0..pane.closed_slots())
+            .filter_map(|slot| pane.slot_open_time(slot))
+            .collect();
+        assert!(
+            opens.windows(2).all(|pair| pair[0] <= pair[1]),
+            "and open_time still never decreases across the seam"
+        );
+
+        // The user was reading a market moment; they still are, and their mark
+        // is still on the bar they put it on.
+        assert_eq!(
+            pane.right_edge_time(),
+            edge_before,
+            "the view kept the market time it was showing"
+        );
+        assert_eq!(
+            pane.slot_open_time(pane.drawings.items()[0].points[0].bar as usize),
+            mark_time_before,
+            "and the mark kept the bar it was drawn against"
+        );
+    }
+
+    /// (b) Changing the timeframe refolds what is already held. A chip click
+    /// must never reach the venue.
+    #[test]
+    fn a_timeframe_change_refolds_locally_without_asking_again() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_requests(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // 1m → 5m: the same history, folded five ways.
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            24,
+            "120 minutes are 24 five-minute bars"
+        );
+        assert_eq!(
+            drain_ohlcv_requests(&mut commands),
+            0,
+            "and the venue was not asked again"
+        );
+    }
+
+    /// §11's own clause, and one drag away in the UI: an interval that is not
+    /// a whole number of minutes gets no prefix rather than an approximated
+    /// one, and the pane keeps drawing.
+    #[test]
+    fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // 90 seconds: a minute and a half, which no whole number of venue
+        // candles adds up to.
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .time_interval_ms = 90_000;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "no prefix rather than buckets built from fractions of a candle"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            has_price_axis(&texts),
+            "and the pane keeps drawing what it does have: {texts:?}"
+        );
+
+        // Back to a foldable one, and the history returns from the same base.
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 24);
+    }
+
+    /// A feed switch is a different market: the candles that described the old
+    /// one go with it, and nothing is left waiting on a reply that can never
+    /// arrive down a dropped channel.
+    #[test]
+    fn switching_the_feed_drops_the_prefix_and_clears_the_wait() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+
+        // A fresh feed arrives, as a symbol switch installs one.
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        app.active_tab_mut().attach_for_test(FeedHandle {
+            events: evt_rx,
+            book_events: book_rx,
+            notices: feed::silent_notices(),
+            capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            commands: cmd_tx,
+            replay: None,
+        });
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "the old market's candles do not describe the new one"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and nothing waits on a reply that went with the old channel"
+        );
+        run_frame(&mut app, &ctx);
+    }
+
+    /// The interval a reply carries is tagged rather than assumed. A base this
+    /// fold was not written for is refused, not folded wrongly.
+    #[test]
+    fn a_reply_at_an_unexpected_base_interval_is_refused() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                // Five-minute candles, from a venue that one day changes its
+                // mind about what it serves.
+                interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "bars at an unknown base are not folded as if they were minutes"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "the reply still answered the request"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(has_price_axis(&texts), "and the pane draws: {texts:?}");
+    }
+
+    /// (e) The rebuild an indicator sees spans the prefix, so an average over
+    /// three months of context is a real average and not a warm-up.
+    #[test]
+    fn the_indicator_rebuild_covers_the_venue_prefix() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        settle_indicators(&mut app);
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        let view = pane
+            .indicators
+            .all()
+            .first()
+            .expect("the EMA is on the time pane");
+        assert!(
+            view.columns[0].len() >= pane.seam_slot(),
+            "the EMA has a row for every venue bar, not just the ones from prints"
+        );
+        // A value inside the prefix region is a real number, not a warm-up gap.
+        let inside = view.columns[0]
+            .iter()
+            .take(pane.seam_slot())
+            .rev()
+            .find(|value| value.is_finite());
+        assert!(
+            inside.is_some(),
+            "and the average is finite over the venue history"
+        );
+    }
+
+    /// (f) The prefix arrives under a chart the user is already reading: the
+    /// right edge must not move.
+    #[test]
+    fn installing_the_prefix_keeps_the_view_where_it_was() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        // Pan off the live edge, so there is a position to preserve.
+        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .viewport
+            .pan_pixels(40.0, slots);
+        let edge_time = app.active_tab().pane(PaneSide::Time).right_edge_time();
+        let edge_bar = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .viewport
+            .right_edge_bar(slots);
+        assert!(edge_time.is_some(), "the view is off the live edge");
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        assert_eq!(
+            pane.viewport.right_edge_bar(pane.slots()),
+            edge_bar + 120.0,
+            "the right edge moved with the bars inserted in front of it"
+        );
+        assert_eq!(
+            pane.right_edge_time(),
+            edge_time,
+            "so the user is still looking at the same market time"
+        );
+    }
+
+    /// (g) MetaTrader narrows into serving candles after the bridge says
+    /// hello, so a pane that asked early was told there was nothing held. The
+    /// rising edge asks again, and the empty answer strands no spinner.
+    #[test]
+    fn a_capability_that_rises_later_is_asked_again() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+            book_capture: false,
+            history_paging: true,
+            traded_volume: true,
+            ohlcv_history: false,
+            ohlcv_generation: 0,
+        });
+        let mut app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(1),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: caps_rx,
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let trades: Vec<_> = (0..50).map(minute_trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.drain_tabs();
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            0,
+            "a feed that says it serves no candles is not asked"
+        );
+
+        // The bridge says hello and the session turns out to hold rates.
+        caps_tx.send_modify(|caps| caps.ohlcv_history = true);
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            1,
+            "the rising edge asks once"
+        );
+
+        // ...and the venue holds nothing after all.
+        evt_tx
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "an empty reply is a complete answer, and ends the wait"
+        );
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            0,
+            "with no prefix rather than a fabricated one"
+        );
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            0,
+            "and the tab stops asking"
+        );
+    }
+
+    /// (h) A recording is a fixed span of prints with no venue behind it.
+    #[test]
+    fn a_replaying_tab_never_asks_for_venue_history() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, mut commands) = history_app(&ctx);
+        drain_ohlcv_requests(&mut commands);
+        // Put the tab on a recording, then give it a fresh time pane.
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        with_config(&mut app, |tab, config| {
+            tab.open_replay(
+                config,
+                crate::feed::ReplayRequest {
+                    session: std::sync::Arc::new(session),
+                    options: crate::feed::ReplayOptions {
+                        autoplay: false,
+                        ..Default::default()
+                    },
+                },
+            )
+        });
+        let commands_after = std::mem::replace(&mut commands, mpsc::channel(1).1);
+        drop(commands_after);
+        run_frame(&mut app, &ctx);
+        app.drain_tabs();
+
+        assert!(app.active_tab().replay.is_some());
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "a recording has no venue to wait on"
+        );
+    }
+
+    /// (i) The status bar names all three sources, in the order the chart puts
+    /// them in.
+    #[test]
+    fn the_status_bar_counts_venue_bars_separately() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(
+            app.status_model().venue_bars,
+            0,
+            "nothing to disclose before the reply"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let status = app.status_model();
+        assert_eq!(status.venue_bars, 120);
+        assert!(
+            status.backfilled_bars > 0,
+            "and the trade-derived counts are still their own"
+        );
+        // The flow pane beside it has no prefix and says nothing about one.
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.status_model().venue_bars, 0);
+    }
+
+    /// (j) A venue bucket covering the same window as the first engine bar
+    /// would sit after it in time and before it in slot order. It is dropped,
+    /// which is what keeps the composed series searchable.
+    #[test]
+    fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        let first_engine_open = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .state
+            .bars()
+            .first()
+            .map(|bar| bar.open_time)
+            .or_else(|| {
+                app.active_tab()
+                    .pane(PaneSide::Time)
+                    .state
+                    .partial()
+                    .map(|bar| bar.open_time)
+            })
+            .expect("the pane holds the fixture trades");
+
+        // Two candles before the engine's first bar and one covering it.
+        let mut bars = venue_history(2);
+        bars.push(venue_candle(
+            first_engine_open / crate::feed::OHLCV_BASE_INTERVAL_MS,
+            0,
+        ));
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars,
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        assert_eq!(
+            pane.seam_slot(),
+            2,
+            "the overlapping bucket is dropped; what the app cut from prints \
+             is the better record of that window"
+        );
+        // The composed series is non-decreasing in open_time, which is what
+        // the slot search depends on.
+        let opens: Vec<i64> = (0..pane.closed_slots())
+            .filter_map(|slot| pane.slot_open_time(slot))
+            .collect();
+        assert!(
+            opens.windows(2).all(|pair| pair[0] <= pair[1]),
+            "open_time never decreases across the seam"
+        );
+    }
+
+    /// (d) Two dividers, two boundaries: the venue seam and the backfill mark
+    /// sit at their own slots and neither moves the other.
+    #[test]
+    fn the_seam_and_the_backfill_divider_mark_different_slots() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        // Live prints after the backfill, so the backfill boundary is real.
+        for minute in 200..205 {
+            let trade = minute_trade(minute);
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        run_frame(&mut app, &ctx);
+
+        let pane = app.active_tab().pane(PaneSide::Time);
+        let seam = pane.seam_slot();
+        let backfill = pane
+            .state
+            .backfill_boundary()
+            .expect("the pane took a backfill batch");
+        assert_eq!(seam, 120);
+        assert!(
+            backfill + seam > seam,
+            "the backfill mark sits inside the trade-derived half, past the seam"
+        );
+        // Both marks paint. The view follows the live edge, and three months
+        // of venue history is far behind it, so bring the seam on screen the
+        // way a user scrolling back would.
+        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let width = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .last_chart_area
+            .expect("the time pane was laid out")
+            .width();
+        app.active_tab_mut()
+            .pane_mut(PaneSide::Time)
+            .viewport
+            .center_on_bar(seam as f32, width, slots);
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts.iter().any(|text| text == "venue"),
+            "the seam names itself: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text == "backfill"),
+            "and the backfill divider still draws: {texts:?}"
+        );
+    }
+
     // ---- adding a symbol from the picker (§11) ----
 
     /// A scratch sidecar path, so a test never touches the real one.
@@ -7609,6 +8406,252 @@ plot(close)
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A config with two MetaTrader feeds, one of them mapping a port — the
+    /// shape where adding the wrong symbol used to write a file that killed
+    /// the next launch.
+    fn two_metatrader_feeds() -> AppConfig {
+        let mut ports = std::collections::BTreeMap::new();
+        ports.insert("US500".to_string(), 9102_u16);
+        AppConfig {
+            default_feed: "tickmill".to_string(),
+            default_symbol: "US500".to_string(),
+            feeds: vec![
+                FeedConfig {
+                    id: "tickmill".to_string(),
+                    name: "MetaTrader 5 — Tickmill".to_string(),
+                    provider: ProviderKind::MetaTrader,
+                    symbols: vec!["US500".to_string()],
+                    bubble_preset: None,
+                },
+                FeedConfig {
+                    id: "b3".to_string(),
+                    name: "MetaTrader 5 — B3".to_string(),
+                    provider: ProviderKind::MetaTrader,
+                    symbols: vec!["WIN$N".to_string()],
+                    bubble_preset: None,
+                },
+            ],
+            metatrader: crate::config::MetaTraderSettings {
+                ports,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// An addition that the *whole* config would reject is refused where it
+    /// was typed, and nothing is written.
+    ///
+    /// Typing `US500` into the B3 feed made two MetaTrader feeds offer one
+    /// mapped symbol — a configuration the app refuses to load. It used to be
+    /// accepted, persisted, and then kill the next launch with an error naming
+    /// the config file, which was not the file that broke.
+    #[test]
+    fn an_addition_the_config_would_reject_is_refused_and_not_written() {
+        let ctx = egui::Context::default();
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let mut app = QuantickApp::new(
+            two_metatrader_feeds(),
+            "b3",
+            "WIN$N",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::MetaTrader.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let path = symbols_scratch("refused");
+        let _ = std::fs::remove_file(&path);
+        app.symbols_path = path.clone();
+        let tabs_before = app.tabs.len();
+
+        // The real dialog, on the B3 feed, typing the Tickmill instrument.
+        app.apply_tab_action(TabAction::New);
+        run_frame(&mut app, &ctx);
+        {
+            let picker = app.source_picker.as_mut().expect("the picker is open");
+            picker.feed_id = "b3".to_string();
+            picker.set_draft_symbol("US500");
+        }
+        run_frame(&mut app, &ctx);
+        let add = app
+            .source_picker
+            .as_ref()
+            .expect("still open")
+            .add_button_rect()
+            .expect("the Add button was laid out");
+        click_chart(&mut app, &ctx, add.center());
+        run_frame(&mut app, &ctx);
+
+        let picker = app
+            .source_picker
+            .as_ref()
+            .expect("the dialog stays open on a refusal");
+        assert!(
+            picker
+                .refusal()
+                .is_some_and(|reason| reason.contains("US500")),
+            "the reason is shown where the symbol was typed: {:?}",
+            picker.refusal()
+        );
+        assert_eq!(app.tabs.len(), tabs_before, "and no market was opened");
+        assert!(
+            !app.config
+                .feed("b3")
+                .expect("the feed")
+                .symbols
+                .iter()
+                .any(|symbol| symbol == "US500"),
+            "the catalog is untouched"
+        );
+        assert!(
+            !path.exists(),
+            "and nothing was persisted — the next launch is unharmed"
+        );
+        // The same symbol on the feed that *does* own it is still fine.
+        assert!(app.add_symbol("tickmill", "WINQ26").is_ok());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A push feed re-answers: an empty block, then a real one on the next
+    /// reconnect. The capability flag rose once and stays, so only the
+    /// generation can say the answer changed.
+    #[test]
+    fn a_new_candle_generation_is_asked_for_again_and_installed() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+            book_capture: false,
+            history_paging: true,
+            traded_volume: true,
+            ohlcv_history: true,
+            ohlcv_generation: 1,
+        });
+        let mut app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(1),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: caps_rx,
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let trades: Vec<_> = (0..50).map(minute_trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.drain_tabs();
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            1,
+            "generation 1 is asked"
+        );
+
+        // A cold terminal: the block it had was empty.
+        evt_tx
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 0);
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            0,
+            "an answered request is not repeated on its own"
+        );
+
+        // The reconnect stores a real block, and says so by moving the count.
+        caps_tx.send_modify(|caps| caps.ohlcv_generation = 2);
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            1,
+            "a new generation is a new answer, and is asked for"
+        );
+
+        evt_tx
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(30),
+                complete: false,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            30,
+            "and the block it carried is installed through the usual path"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "a short answer is still an answer, and ends the wait"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(has_price_axis(&texts), "the pane draws it: {texts:?}");
+    }
+
+    /// A block already held is replaced too: a reconnect can carry a longer or
+    /// corrected one, and holding the first would pin the chart to it.
+    #[test]
+    fn a_new_generation_replaces_a_block_already_held() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(30),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        drain_ohlcv_requests(&mut commands);
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 30);
+
+        // The feed's capabilities are fixed in this fixture, so move the tab's
+        // own record of what it has acted on — the same thing a bumped
+        // generation does when it arrives.
+        app.active_tab_mut().forget_ohlcv_generation_for_test();
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_requests(&mut commands),
+            1,
+            "the tab asks again rather than keeping the block it has"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(90),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            90,
+            "and the longer block replaces the shorter one"
+        );
+    }
+
     /// (b) The point of writing it: the next launch has it. Proven without
     /// restarting, by loading a config through the same path `load` uses.
     #[test]
@@ -7617,7 +8660,7 @@ plot(close)
         let _ = std::fs::remove_file(&path);
         let mut added = crate::symbols_file::AddedSymbols::default();
         added.add("binance", "WINQ26");
-        crate::symbols_file::save(&path, &added);
+        crate::symbols_file::save(&path, &added).expect("the scratch file is writable");
 
         let reloaded = crate::symbols_file::load(&path);
         let mut config = test_config();
@@ -7645,7 +8688,8 @@ plot(close)
         let path = symbols_scratch("removed");
         let _ = std::fs::remove_file(&path);
         app.symbols_path = path.clone();
-        app.add_symbol("binance", "WINQ26");
+        app.add_symbol("binance", "WINQ26")
+            .expect("the catalog takes a symbol that fits");
         app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
         run_frame(&mut app, &ctx);
         let open_tabs = app.tabs.len();
@@ -7699,7 +8743,8 @@ plot(close)
         let (mut app, _cmd_rx) = app_with_history(50);
         app.symbols_path = symbols_scratch("guard");
         let _ = std::fs::remove_file(&app.symbols_path);
-        app.add_symbol("binance", "WINQ26");
+        app.add_symbol("binance", "WINQ26")
+            .expect("the catalog takes a symbol that fits");
         app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
         run_frame(&mut app, &ctx);
 

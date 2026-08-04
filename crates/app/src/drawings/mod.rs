@@ -680,8 +680,11 @@ impl Drawings {
         self.gesture_baseline = None;
     }
 
-    pub fn shift_bars(&mut self, added: usize) {
-        let delta = added as f32;
+    pub fn shift_bars(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        let delta = delta as f32;
         let shift = |items: &mut Vec<Drawing>| {
             for drawing in items {
                 for point in &mut drawing.points {

@@ -418,10 +418,40 @@ pane keeps quantick's identity.
   (open beside the selection, auto-pin on a narrow chart, re-clamp when the
   pane shrinks) measure that pane's chart rectangle, not the window's, so a
   split half is what decides whether a floating inspector still fits.
+- **Venue history in front of the tape.** The time pane opens on the venue's
+  own candles — ninety days of them, roughly 130 000 1-minute bars and about
+  45 MB per tab, fetched once and folded locally to whatever the header asks
+  for, so a chip click never reaches the network. They stand *in front of* the bars quantick cut
+  from prints, never mixed into them: the engine rebuilds its own series from
+  retained trades on every spec change, and a prefix living inside it would be
+  eaten. Gated on `FeedCapabilities::ohlcv_history`; a recording asks for
+  nothing, and an interval that is not a whole number of minutes gets no
+  prefix rather than an approximated one.
+- **The seam is marked.** A dashed amber rule where venue candles give way to
+  bars built from prints, labelled `venue` — distinct from the solid amber
+  backfill divider, which keeps marking its own boundary further right. The
+  status bar's content section counts all three sources in the order they sit
+  on the chart (`26000v+240+61 bars`). A block the venue cut short — it stopped
+  answering, or the answer hit a cap — belongs beside that count as an amber
+  mark: a chart showing six weeks where ninety days were asked for is making a
+  claim about the market it cannot support. Logged today (`OHLCV_INCOMPLETE`);
+  the badge is deferred rather than half-built. A *short* series is not the
+  same thing — an instrument younger than the span has fewer candles, and that
+  answer is complete.
+- **What a venue candle is not.** It is one summary per interval, not a bar
+  replayed from prints. Only Binance publishes an aggressor split, so only
+  there does the prefix carry a real delta; on Hyperliquid and MetaTrader the
+  volume is exact and the delta is identically zero — read as *not measured*,
+  never as measured and found balanced. That zero is a *stored representation*:
+  the two sides each carry half the candle's volume, so an indicator reading
+  `buy_volume` directly over the prefix sees half-volumes, not a measured
+  aggressor side. The mapping sites record this per provider.
 - **Honest gaps**: time bars skip empty intervals (engine policy, stated in
   `crates/engine/src/time.rs`); the x-axis stays slot-indexed, so quiet
   periods compress instead of rendering fabricated empty candles. The time
-  axis labels make the jump visible; nothing interpolates.
+  axis labels make the jump visible; nothing interpolates. The fold keeps that
+  rule: an interval in which the venue reported nothing is skipped, not
+  emitted flat.
 
 ## 12. Growth map
 

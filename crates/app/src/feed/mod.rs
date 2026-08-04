@@ -21,7 +21,7 @@ pub mod replay;
 
 use tokio::sync::{mpsc, watch};
 
-use quantick_engine::Trade;
+use quantick_engine::{Bar, Trade};
 // The provider-neutral depth type, from the crate that defines it. Three
 // feeds publish on this channel now; routing the shared type through one
 // venue's re-export is the name the next feed author would copy.
@@ -34,6 +34,26 @@ pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 /// Default number of recent trades to backfill so the chart opens populated,
 /// when `QUANTICK_BACKFILL` is unset. One Binance REST page.
 pub const DEFAULT_BACKFILL_TARGET: usize = 1000;
+
+/// How far back a time pane asks for candle history: 90 days, i.e. "at least
+/// three months".
+///
+/// Trade backfill and candle history answer different questions and are sized
+/// differently on purpose. The tape is a recent window — what is happening now,
+/// in full detail. Candles are the context around it, and a quarter is the
+/// shortest span in which a daily or weekly chart says anything at all.
+///
+pub const TIME_HISTORY_SPAN_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
+
+/// The one interval every provider delivers candle history in: one minute.
+///
+/// A single base series, resampled locally to whatever the pane shows, is what
+/// makes this work across four very different transports. The venues disagree
+/// about paging, and MetaTrader cannot be *asked* for anything at all (its
+/// bridge only pushes), so "every provider answers the same one request" is
+/// the only contract all of them can keep. It also makes switching a pane's
+/// interval free — no refetch, just a different fold over bars already held.
+pub const OHLCV_BASE_INTERVAL_MS: i64 = 60_000;
 
 /// A message from the feed thread to the UI, tagged by source so the chart can
 /// label backfilled vs live data honestly.
@@ -59,6 +79,41 @@ pub enum FeedEvent {
     /// Bars that were already closed cannot be un-closed, so the honest answer
     /// is to rebuild from the new position rather than patch the series.
     Reset,
+    /// Venue-native candle history, answering exactly one
+    /// [`FeedCommand::FetchOhlcv`].
+    ///
+    /// Empty means the request finished with nothing: the venue has no history
+    /// for this symbol, the provider does not serve candles, or the fetch
+    /// failed. As with [`HistoryPrepended`](Self::HistoryPrepended), the reply
+    /// itself is the signal that loading ended — a provider that stayed silent
+    /// would strand a spinner forever.
+    ///
+    OhlcvHistory {
+        /// The interval each bar covers. Always
+        /// [`OHLCV_BASE_INTERVAL_MS`] today, and tagged rather than assumed:
+        /// a consumer resampling these must never have to guess what it is
+        /// resampling *from*, and a venue that one day serves a different base
+        /// would otherwise be an invisible change.
+        interval_ms: i64,
+        /// Closed candles, ascending by `open_time`, deduplicated.
+        ///
+        /// These are venue candles, not engine bars replayed from trades: see
+        /// the mapping rules on [`FeedCommand::FetchOhlcv`] for what that costs
+        /// in fidelity.
+        bars: Vec<Bar>,
+        /// Whether these bars cover the whole span that was asked for.
+        ///
+        /// False means the answer is short and *known* to be short: a venue
+        /// that stopped answering partway, a bridge whose paging failed after
+        /// some pages had landed, a block clipped to a cap. It does not mean
+        /// the same thing as a short series — an instrument younger than the
+        /// span genuinely has fewer candles, and that answer is complete.
+        ///
+        /// Carried rather than inferred from the bar count, which cannot tell
+        /// those two apart, and cannot tell either from a quiet market.
+        ///
+        complete: bool,
+    },
 }
 
 /// A command from the UI to the feed thread.
@@ -79,6 +134,41 @@ pub enum FeedCommand {
     },
     /// Drive playback of a recorded session. Ignored by live feeds.
     Replay(ReplayControl),
+    /// Fetch venue-native candle history covering `span_ms` back from now.
+    ///
+    /// Answered by **exactly one** [`FeedEvent::OhlcvHistory`], by every
+    /// provider, always — empty when the provider serves no candles, when the
+    /// venue has none for this symbol, or when the fetch failed. A provider
+    /// that answered only on success would leave the pane's loading indicator
+    /// spinning on the one case a user most needs explained.
+    ///
+    /// # What these bars are, and are not
+    ///
+    /// A venue candle is not an engine bar replayed from trades, and the
+    /// difference is recorded rather than smoothed over:
+    ///
+    /// - `open_time` is the bucket start and `close_time` the bucket end minus
+    ///   one millisecond — the interval the candle *covers*. An engine bar
+    ///   instead stamps its first and last trade, so its times sit strictly
+    ///   inside its bucket. Anything joining the two series has to reconcile
+    ///   that seam explicitly.
+    /// - Intervals the venue reports as empty are dropped, never emitted, so
+    ///   the series follows the engine's empty-interval rule: a gap is the
+    ///   honest record that nothing traded, and a carried-forward price would
+    ///   be a fabricated one.
+    /// - `trade_count` is the venue's own count where it publishes one, and 0
+    ///   where it does not — 0 meaning "not reported", not "no trades", since
+    ///   a candle with no trades is not emitted at all.
+    /// - Only Binance publishes an aggressor split. Elsewhere `buy_volume` and
+    ///   `sell_volume` each carry half the candle's volume, which keeps
+    ///   [`Bar::volume`] exact and makes [`Bar::delta`] identically zero — read
+    ///   as "not measured", never as "measured and found balanced".
+    ///
+    FetchOhlcv {
+        /// How far back to reach, in milliseconds. See
+        /// [`TIME_HISTORY_SPAN_MS`].
+        span_ms: i64,
+    },
 }
 
 /// Where a feed's trades come from. One variant per backend, mirroring the
