@@ -346,6 +346,7 @@ Where future features land — decided now, so they never claim new chrome:
 | Indicators (M1–M5) | LAYERS icon + Insert menu | dock tab Indicators | legend rows, overlays, sub-panes | recompute progress |
 | Drawing tools | edge-docked toolbar | selected-object inspector | drawings layer | — |
 | Alerts | on indicator/level context | dock tab Alerts | triggered marker on bar | armed count + last fired |
+| Paper trading ([spec](paper-trading.md)) | toolbar BUY/SELL | dock tab Trading | order/position price lines | SIM P&L cell |
 | Bot / strategy monitor | LAYERS icon | dock tab | order/position markers | connection + P&L cell |
 | Second chart / layouts | File → Layout | — | split canvas (zones 4–6 duplicate per chart; zones 1–3, 7–9 stay singular) | per-chart provenance |
 | Watchlist | — | dock tab | — | — |

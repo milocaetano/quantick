@@ -34,10 +34,9 @@ pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x96, 0xA0, 0xAF);
 pub const TEXT_FAINT: Color32 = Color32::from_rgb(0x6E, 0x78, 0x87);
 /// `buy` — bull candles, buy flow and the healthy/live status dot.
 pub const BUY: Color32 = Color32::from_rgb(0x26, 0xA6, 0x9A);
-/// `sell` — bear candles and sell flow. Candles read their editable copy
-/// from [`crate::style`]; the parity test below pins the two together, which
-/// is this token's only consumer until a chrome surface needs sell red.
-#[allow(dead_code)]
+/// `sell` — bear candles, sell flow, and the chrome's SELL affordances
+/// (paper trading). Candles read their editable copy from [`crate::style`];
+/// the parity test below pins the two together.
 pub const SELL: Color32 = Color32::from_rgb(0xEF, 0x53, 0x50);
 /// `accent/overlay` — selection accent and the future first indicator plot.
 pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
