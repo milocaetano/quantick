@@ -60,11 +60,6 @@ const MARKER_TEXT_GAP_PX: f32 = 2.0;
 /// anchor to the pane's edges instead; this is the substitution, named so it
 /// no longer reads as an unexplained multiple of the bar gap.
 const PANE_MARKER_INSET_PX: f32 = MARKER_GAP_PX * 2.0;
-/// Gap between the axis line and a tick label, in pixels. Matches the price
-/// axis, so both gutters read as one column of numbers.
-const AXIS_LABEL_GAP_PX: f32 = 6.0;
-/// Tick label font size, in pixels.
-const AXIS_LABEL_FONT_PX: f32 = 11.0;
 /// A tick label is dropped when it would be drawn within this many pixels of
 /// the pane's own edge: the frame hairline and the pane's title/headline live
 /// there, and a number crossing either reads as a smudge rather than a value.
@@ -296,7 +291,7 @@ fn draw_pane_axis(
 ) {
     let pane = frame.rect;
     let (lo, hi) = scale.range();
-    let font = egui::FontId::monospace(AXIS_LABEL_FONT_PX);
+    let font = egui::FontId::monospace(crate::chart::AXIS_LABEL_FONT_PX);
     for (tick, label) in crate::chart::axis_labels(lo, hi, pane.height()) {
         let y = scale.y(tick);
         clipped.line_segment(
@@ -311,7 +306,7 @@ fn draw_pane_axis(
             continue;
         }
         painter.text(
-            pos2(frame.gutter.left() + AXIS_LABEL_GAP_PX, y),
+            pos2(frame.gutter.left() + crate::chart::AXIS_LABEL_GAP_PX, y),
             egui::Align2::LEFT_CENTER,
             label,
             font.clone(),

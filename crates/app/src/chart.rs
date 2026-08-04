@@ -336,7 +336,15 @@ const AXIS_MAX_TICKS: usize = 8;
 const AXIS_LABEL_MIN_GAP_PX: f32 = 18.0;
 /// Thresholds a tick label is abbreviated at, largest first, with the suffix
 /// that replaces the zeros. Below the smallest the value is printed as it is.
-const AXIS_UNITS: [(f64, &str); 3] = [(1e9, "B"), (1e6, "M"), (1e3, "k")];
+///
+/// Same spellings as the aggression bubbles' own `format_quantity`: one chart,
+/// one way to write a thousand.
+const AXIS_UNITS: [(f64, &str); 3] = [(1e9, "B"), (1e6, "M"), (1e3, "K")];
+/// Gap between the axis rule and a tick label, in pixels. Shared by the price
+/// gutter and every pane's, so the numbers form one column down the chart.
+pub const AXIS_LABEL_GAP_PX: f32 = 6.0;
+/// Tick label font size, in pixels. Shared for the same reason.
+pub const AXIS_LABEL_FONT_PX: f32 = 11.0;
 /// Most decimals a tick label ever shows. Past this the step is so fine that
 /// the digits stop distinguishing neighbouring labels.
 const AXIS_MAX_DECIMALS: usize = 4;
@@ -375,7 +383,7 @@ pub fn axis_labels(lo: f64, hi: f64, height_px: f32) -> Vec<(f64, String)> {
         .map(|tick| {
             // Zero is zero in every unit; "0.0M" is three characters of noise
             // on the one label a flow pane is read against.
-            let label = if tick == 0.0 {
+            let label = if is_zero_tick(tick, step) {
                 "0".to_owned()
             } else {
                 format!("{:.*}{suffix}", decimals, tick / unit)
@@ -383,6 +391,17 @@ pub fn axis_labels(lo: f64, hi: f64, height_px: f32) -> Vec<(f64, String)> {
             (tick, label)
         })
         .collect()
+}
+
+/// Whether `tick` is the sequence's zero.
+///
+/// Not `tick == 0.0`: [`nice_ticks`] walks the range by adding `step`, so a
+/// step that is not exact in binary (0.1, 0.05, …) lands on `-2.8e-17` where
+/// zero should be — which prints as `-0.0` on the one label a flow pane is
+/// read against, and hides zero from the thinning anchor. Anything within a
+/// rounding error of a step is the zero.
+fn is_zero_tick(tick: f64, step: f64) -> bool {
+    tick.abs() <= step.abs() * AXIS_STEP_EPSILON
 }
 
 /// How many labels an axis `height_px` tall asks for.
@@ -406,12 +425,16 @@ fn thin_to_fit(ticks: Vec<f64>, span: f64, height_px: f32) -> Vec<f64> {
     let [first, second, ..] = ticks.as_slice() else {
         return ticks;
     };
-    let gap_px = f64::from(height_px) * ((second - first) / span);
+    let step = second - first;
+    let gap_px = f64::from(height_px) * (step / span);
     if !gap_px.is_finite() || gap_px <= 0.0 || gap_px >= f64::from(AXIS_LABEL_MIN_GAP_PX) {
         return ticks;
     }
     let stride = (f64::from(AXIS_LABEL_MIN_GAP_PX) / gap_px).ceil() as usize;
-    let anchor = ticks.iter().position(|tick| *tick == 0.0).unwrap_or(0);
+    let anchor = ticks
+        .iter()
+        .position(|tick| is_zero_tick(*tick, step))
+        .unwrap_or(0);
     ticks
         .into_iter()
         .enumerate()
@@ -622,6 +645,7 @@ mod tests {
         // A CVD in the millions: one unit for the whole column, because a
         // column mixing "900000" and "1M" is a column you read twice.
         assert_eq!(labels(0.0, 4.0e6), vec!["0", "1M", "2M", "3M", "4M"]);
+        assert_eq!(labels(0.0, 4.0e3), vec!["0", "1K", "2K", "3K", "4K"]);
         // A finer step keeps its decimal rather than rounding two labels onto
         // the same number.
         assert_eq!(labels(0.0, 1.2e6), vec!["0", "0.5M", "1.0M"]);
@@ -689,6 +713,30 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["0", "20", "40", "60", "80", "100"]
         );
+    }
+
+    /// `nice_ticks` walks the range by adding `step`, so a sub-unit step lands
+    /// on `-2.8e-17` where zero belongs. Printed naively that is `-0.0` on the
+    /// one label a flow pane is read against — a normalised oscillator or a
+    /// per-contract delta hits it, a CVD in the thousands never does, which is
+    /// why every other test here passes over it.
+    #[test]
+    fn the_zero_label_survives_a_step_that_is_not_exact_in_binary() {
+        for (lo, hi) in [(-0.324, 0.324), (-0.756, 0.756), (-0.19, 0.03)] {
+            let labels: Vec<String> = axis_labels(lo, hi, 163.0)
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect();
+            assert!(
+                labels.iter().any(|label| label == "0"),
+                "{lo}..{hi} must label its zero as zero: {labels:?}"
+            );
+            assert!(
+                !labels.iter().any(|label| label.starts_with('-')
+                    && label.parse::<f64>().is_ok_and(|value| value == 0.0)),
+                "and never as a negative nothing: {labels:?}"
+            );
+        }
     }
 
     #[test]

@@ -204,9 +204,49 @@ const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 /// axes stretch at the same rate, so the gesture feels the same wherever the
 /// numbers being dragged happen to live.
 const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
-/// The same, for a scroll over an axis rather than a drag. Scroll deltas are
-/// coarser than pointer motion, so the divisor is smaller.
+/// The same, for a scroll over an axis rather than a drag. One wheel notch
+/// reports far more units than a pointer travels in a frame, so each unit has
+/// to count for less — a larger divisor, not a smaller one.
 const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
+
+/// The gesture that scales a vertical axis, wherever its numbers live: drag up
+/// to compress the span, down to expand, scroll to zoom, double-click to hand
+/// the axis back to auto-fit.
+///
+/// One implementation for the price gutter and for every indicator pane's, so
+/// a third band that wants an axis — a volume profile, the tape — registers it
+/// rather than copying it, and no two axes can drift apart in feel.
+///
+/// `auto` is the range the last frame fitted; `None` means nothing has been
+/// computed to scale yet, and only the reset stays available.
+fn axis_zoom_gesture(
+    ui: &egui::Ui,
+    id: egui::Id,
+    band: egui::Rect,
+    view: &mut PriceView,
+    auto: Option<(f64, f64)>,
+) {
+    let response = ui.interact(band, id, egui::Sense::click_and_drag());
+    if response.double_clicked() {
+        view.reset();
+    }
+    let Some(auto) = auto else {
+        return;
+    };
+    if response.dragged() {
+        // Drag up → compress the span (a taller trace); down → expand it.
+        view.zoom(
+            f64::from(response.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
+            auto,
+        );
+    }
+    if response.hovered() {
+        let scroll = ui.input(|input| input.raw_scroll_delta.y);
+        if scroll.abs() > 0.0 {
+            view.zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
+        }
+    }
+}
 
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
@@ -2600,66 +2640,28 @@ impl QuantickApp {
             }
         }
 
-        // Right price gutter: drag or scroll to zoom the price scale. It spans
-        // the candles' height only — the bands below belong to the panes.
-        let price = ui.interact(
-            areas.price_gutter,
+        // Right price gutter: the candles' own axis gesture. It spans their
+        // height only — the bands below belong to the panes.
+        axis_zoom_gesture(
+            ui,
             egui::Id::new("price_nav"),
-            egui::Sense::click_and_drag(),
+            areas.price_gutter,
+            &mut self.price_view,
+            auto,
         );
-        if let Some(auto) = auto {
-            if price.dragged() {
-                // Drag up → compress span (bigger candles); down → expand.
-                self.price_view.zoom(
-                    f64::from(price.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
-                    auto,
-                );
-            }
-            if price.double_clicked() {
-                self.price_view.reset();
-            }
-            if price.hovered() {
-                let scroll = ui.input(|i| i.raw_scroll_delta.y);
-                if scroll.abs() > 0.0 {
-                    self.price_view
-                        .zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
-                }
-            }
-        }
 
-        // Each pane's own axis, in the gutter band beside it: the price
-        // gutter's gesture aimed at the pane under the pointer. Keyed by slot,
-        // so the scale that moves is always the one whose numbers were
-        // grabbed — panes come and go and a positional id would follow the
-        // position, not the indicator.
-        let pane_gutters = areas.pane_gutters.clone();
-        let scroll = ui.input(|i| i.raw_scroll_delta.y);
-        for (view, gutter) in self.indicators.visible_panes_mut().zip(&pane_gutters) {
-            let pane_axis = ui.interact(
-                *gutter,
+        // The same gesture, once per pane, over the gutter band beside it.
+        // Keyed by slot, so the scale that moves is always the one whose
+        // numbers were grabbed — panes come and go, and a positional id would
+        // follow the position rather than the indicator.
+        for (view, gutter) in self.indicators.visible_panes_mut().zip(&areas.pane_gutters) {
+            axis_zoom_gesture(
+                ui,
                 egui::Id::new(("pane_price_nav", view.slot)),
-                egui::Sense::click_and_drag(),
+                *gutter,
+                &mut view.scale,
+                view.last_auto,
             );
-            if pane_axis.double_clicked() {
-                view.scale.reset();
-            }
-            // Nothing computed yet is nothing to scale: the pane says "warming
-            // up" and its axis has no range a gesture could stretch.
-            let Some(auto) = view.last_auto else {
-                continue;
-            };
-            if pane_axis.dragged() {
-                // Drag up → compress the pane's span (a taller trace); down →
-                // expand it. Same pixels, same feel as the price axis.
-                view.scale.zoom(
-                    f64::from(pane_axis.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
-                    auto,
-                );
-            }
-            if pane_axis.hovered() && scroll.abs() > 0.0 {
-                view.scale
-                    .zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
-            }
         }
     }
 
@@ -2875,12 +2877,11 @@ impl QuantickApp {
         // pane records the range it auto-fitted to, so the gesture over its
         // axis zooms the very range this frame drew.
         let grid = self.grid();
-        let pane_gutters = areas.pane_gutters.clone();
         for ((view, pane), gutter) in self
             .indicators
             .visible_panes_mut()
             .zip(&pane_rects)
-            .zip(&pane_gutters)
+            .zip(&areas.pane_gutters)
         {
             let auto = indicator_render::pane_auto_range(view, start, end);
             view.last_auto = auto;
@@ -3055,7 +3056,7 @@ impl QuantickApp {
         scale: &PriceScale,
     ) {
         let (lo, hi) = scale.range();
-        let font = egui::FontId::monospace(11.0);
+        let font = egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX);
         for tick in crate::chart::nice_ticks(lo, hi, 8) {
             let y = scale.y(tick);
             if y < chart_rect.top() || y > chart_rect.bottom() {
@@ -3069,7 +3070,7 @@ impl QuantickApp {
                 egui::Stroke::new(1.0_f32, self.grid()),
             );
             painter.text(
-                egui::pos2(axis_x + 6.0, y),
+                egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
                 egui::Align2::LEFT_CENTER,
                 format!("{tick:.2}"),
                 font.clone(),
@@ -3129,10 +3130,10 @@ impl QuantickApp {
         // where a price sits on the axis.
         let galley = painter.layout_no_wrap(
             format!("{price:.2}"),
-            egui::FontId::monospace(11.0),
+            egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
             LAST_PRICE_CHIP_TEXT,
         );
-        let text_pos = egui::pos2(axis_x + 6.0, y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
@@ -3259,10 +3260,13 @@ impl QuantickApp {
         let price = scale.price_at(pos.y);
         let galley = painter.layout_no_wrap(
             format!("{price:.2}"),
-            egui::FontId::monospace(11.0),
+            egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
             egui::Color32::WHITE,
         );
-        let text_pos = egui::pos2(axis_x + 6.0, pos.y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(
+            axis_x + chart::AXIS_LABEL_GAP_PX,
+            pos.y - galley.size().y / 2.0,
+        );
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),

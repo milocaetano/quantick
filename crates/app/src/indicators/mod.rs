@@ -241,7 +241,7 @@ impl IndicatorViews {
     pub(crate) fn visible_panes(&self) -> impl Iterator<Item = &IndicatorView> {
         self.views
             .iter()
-            .filter(|v| !v.descriptor.overlay && !v.hidden && v.error.is_none())
+            .filter(|v| is_visible_pane(v))
             .take(MAX_PANES)
     }
 
@@ -251,9 +251,20 @@ impl IndicatorViews {
     pub(crate) fn visible_panes_mut(&mut self) -> impl Iterator<Item = &mut IndicatorView> {
         self.views
             .iter_mut()
-            .filter(|v| !v.descriptor.overlay && !v.hidden && v.error.is_none())
+            .filter(|v| is_visible_pane(v))
             .take(MAX_PANES)
     }
+}
+
+/// Whether this indicator gets a pane of its own right now.
+///
+/// One predicate for both iterators, because the two are zipped against the
+/// same rects: `plot_split` carves bands from `visible_panes().count()` and the
+/// input pass walks `visible_panes_mut()`. A condition added to one and not the
+/// other would misalign the zip silently — and a drag would then stretch the
+/// pane next to the one whose numbers were grabbed.
+fn is_visible_pane(view: &IndicatorView) -> bool {
+    !view.descriptor.overlay && !view.hidden && view.error.is_none()
 }
 
 /// Carve the pane band off the bottom of the chart rect: each pane takes
