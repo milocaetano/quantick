@@ -36,6 +36,16 @@ const TOAST_MS: u64 = 4_000;
 /// Grab distance for order lines — the drawings' select radius, so the two
 /// grammars feel identical under the pointer.
 const LINE_GRAB_RADIUS_PX: f32 = 10.0;
+/// Dash geometry of a pending order's line (the last-price line's rhythm).
+const ORDER_DASH_PX: f32 = 4.0;
+/// Gap between dashes of a pending order's line.
+const ORDER_GAP_PX: f32 = 4.0;
+/// How far above the bottom chrome the paper toast floats — clear of the
+/// drawings toast so the two never overlap.
+const TOAST_LIFT_PX: f32 = 96.0;
+/// Price precision for snapped drags before any print reveals the
+/// instrument's own (two decimals, the crypto-major default).
+const SNAP_FALLBACK_DECIMALS: u32 = 2;
 /// Text color inside colored gutter chips (the last-price chip's near-black).
 const CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x14, 0x18, 0x1F);
 
@@ -531,7 +541,10 @@ impl PaperTrading {
     /// mark's decimal places), so a dragged line lands on a price the
     /// instrument can actually print.
     fn snap(&self, price: f64) -> Decimal {
-        let places = self.sim.mark_price().map_or(2, |mark| mark.scale());
+        let places = self
+            .sim
+            .mark_price()
+            .map_or(SNAP_FALLBACK_DECIMALS, |mark| mark.scale());
         Decimal::from_f64_retain(price)
             .unwrap_or_default()
             .round_dp(places)
@@ -925,7 +938,7 @@ impl PaperTrading {
         }
         let message = toast.message.clone();
         egui::Area::new(egui::Id::new("paper_toast"))
-            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -96.0))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -TOAST_LIFT_PX))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::none()
@@ -1259,8 +1272,8 @@ fn draw_price_line(
         painter.extend(egui::Shape::dashed_line(
             &[egui::pos2(chart_rect.left(), y), egui::pos2(axis_x, y)],
             stroke,
-            4.0,
-            4.0,
+            ORDER_DASH_PX,
+            ORDER_GAP_PX,
         ));
     } else {
         painter.line_segment(
@@ -1526,6 +1539,115 @@ mod tests {
         paper.stop_offset_text = "abc".to_owned();
         assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
         assert!(paper.toast.is_some(), "the refusal teaches, never silent");
+    }
+
+    /// A 800×400 chart over the given price range, plus the input for one
+    /// pointer frame at `(x, y)`.
+    fn chart_and_scale(lo: f64, hi: f64) -> (egui::Rect, PriceScale) {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        (chart, PriceScale::from_range(lo, hi, 0.0, 400.0))
+    }
+
+    fn frame<'a>(
+        chart: egui::Rect,
+        scale: &'a PriceScale,
+        y: f32,
+        pressed: bool,
+        down: bool,
+        released: bool,
+    ) -> ChartInput<'a> {
+        ChartInput {
+            chart,
+            scale: Some(scale),
+            pointer: Some(egui::pos2(400.0, y)),
+            primary_pressed: pressed,
+            primary_down: down,
+            primary_released: released,
+            escape: false,
+        }
+    }
+
+    #[test]
+    fn an_armed_click_places_the_order_at_the_clicked_price_and_disarms() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.armed = Some(ArmedPlacement {
+            side: Side::Buy,
+            kind: EntryKind::Limit,
+        });
+        let (chart, scale) = chart_and_scale(90.0, 110.0);
+        // y = 300 sits at price 95 on this scale.
+        let consumed = paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false));
+        assert!(consumed, "the armed click never reaches the chart pan");
+        assert!(paper.armed.is_none(), "a successful placement disarms");
+        assert_eq!(paper.sim.orders().len(), 1);
+        assert_eq!(paper.sim.orders()[0].price, Some(Decimal::from(95)));
+    }
+
+    #[test]
+    fn a_rejected_armed_click_stays_armed_and_teaches() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.armed = Some(ArmedPlacement {
+            side: Side::Buy,
+            kind: EntryKind::Limit,
+        });
+        let (chart, scale) = chart_and_scale(90.0, 110.0);
+        // y = 100 sits at price 105 — a buy limit above the market.
+        let consumed = paper.handle_chart_input(&frame(chart, &scale, 100.0, true, true, false));
+        assert!(consumed);
+        assert!(
+            paper.armed.is_some(),
+            "the user clicks again after the toast"
+        );
+        assert!(paper.sim.orders().is_empty());
+        assert!(paper.toast.is_some(), "the refusal explains itself");
+    }
+
+    #[test]
+    fn dragging_the_stop_loss_reprices_it_on_release() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.stop_offset_text = "10".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        assert_eq!(
+            paper.sim.position().expect("long").stop_loss,
+            Some(Decimal::from(90)),
+        );
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // The stop at 90 sits at y = 300; grab it, pull to 95 (y = 250), drop.
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 250.0, false, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 250.0, false, false, true)));
+        assert_eq!(
+            paper.sim.position().expect("still long").stop_loss,
+            Some(Decimal::from(95)),
+            "the drop resubmitted the bracket at the dragged price"
+        );
+    }
+
+    #[test]
+    fn the_entry_line_blocks_the_gesture_but_never_moves() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // The entry at 100 sits at y = 200: grabbing it consumes the gesture
+        // (the chart must not pan under it) but repositions nothing.
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
+        assert_eq!(
+            paper.sim.position().expect("long").avg_price,
+            Decimal::from(100),
+            "an average entry is history, not an order"
+        );
+        // Empty space is not ours: the press falls through to the chart.
+        assert!(
+            !paper.handle_chart_input(&frame(chart, &scale, 40.0, true, true, false)),
+            "a press far from every line belongs to the pan"
+        );
     }
 
     #[test]
