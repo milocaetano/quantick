@@ -1235,9 +1235,13 @@ impl Tab {
         }
         ui.painter()
             .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+        // Namespaced by tab for the same reason a pane namespaces its own ids
+        // (see [`crate::pane`]): egui keeps drag state per id, so one shared
+        // id would let a drag started on this tab's divider carry on into the
+        // next tab's the moment Ctrl+Tab switches under a held button.
         let handle = ui.interact(
             divider.expand2(egui::vec2(CANVAS_DIVIDER_HANDLE_PX, 0.0)),
-            egui::Id::new("canvas_divider"),
+            egui::Id::new(("canvas_divider", self.id)),
             egui::Sense::drag(),
         );
         if handle.hovered() || handle.dragged() {

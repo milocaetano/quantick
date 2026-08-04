@@ -6704,6 +6704,48 @@ plot(close)
         );
     }
 
+    /// A divider drag belongs to the tab it started on. egui keeps drag state
+    /// per interaction id, so one id shared across tabs would hand the
+    /// in-flight gesture to the next tab's divider the moment `Ctrl+Tab`
+    /// fires under a held button — the tab-level case of the rule
+    /// [`crate::pane`] states for panes.
+    #[test]
+    fn a_divider_drag_does_not_follow_a_tab_switch() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        // A second market, split as well, so both tabs register a divider.
+        app.adopt_tab("binance".to_owned(), "ETHUSDT".to_owned(), stub_feed().0);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let untouched = app.tabs[1].split_fraction;
+
+        // Back to the first tab, and press its divider.
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        let grab = app
+            .active_tab()
+            .canvas_divider_rect()
+            .expect("the first tab's divider was registered")
+            .center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+        );
+
+        // Ctrl+Tab mid-gesture, with the button still down.
+        app.cycle_tab(1);
+        let moved = egui::pos2(grab.x + 120.0, grab.y);
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(moved)]);
+        run_frame_with_events(&mut app, &ctx, vec![pointer_button(moved, false)]);
+
+        assert_eq!(
+            app.tabs[1].split_fraction, untouched,
+            "the second tab's divider must not inherit the first tab's drag"
+        );
+    }
+
     /// The keyboard's drawing grammar follows focus as well: Delete removes
     /// the selection on the pane the user is in, never its opposite number on
     /// the chart beside it.
