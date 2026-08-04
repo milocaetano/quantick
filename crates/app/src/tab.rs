@@ -1491,9 +1491,6 @@ impl Tab {
         });
 
         {
-            // Read before the panes borrow `self`: which side owns the
-            // simulator's pointer this frame.
-            let focus = self.focused_side();
             let Self {
                 flow_pane,
                 time_pane,
@@ -1521,10 +1518,11 @@ impl Tab {
                 flow_area,
                 PaneSide::Flow,
             ))) {
-                // One simulator per tab, so one pane drives it: the focused
-                // one. Unsplit that is always the flow pane, which is exactly
-                // the behaviour before the split existed.
-                chrome.paper_owns_input = side == focus;
+                // Order entry belongs to the flow pane: trading happens on the
+                // chart quantick is built around, and the time pane is the
+                // context view beside it. Unsplit this is the only pane there
+                // is, so it is exactly the behaviour before the split existed.
+                chrome.paper_owns_input = side == PaneSide::Flow;
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &chrome);
             }
