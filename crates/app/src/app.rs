@@ -40,6 +40,7 @@ use crate::loading::{self, LoadingTask, LoadingTracker};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
+use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::price_view::PriceView;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::{BarKind, BarSpec, ChartState};
@@ -398,6 +399,10 @@ pub struct QuantickApp {
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
     drawings: Drawings,
+    /// Paper trading: the deterministic simulator plus its journal, chart
+    /// layer, dock tab and report. Order state lives here, not in
+    /// `drawings` — a series rebuild clears annotations, never orders.
+    paper: PaperTrading,
 
     // How many older trades to pull per "load older" click, and how many
     // trades have been backfilled in total (for the readout).
@@ -563,6 +568,7 @@ impl QuantickApp {
             dock: Dock::new(),
             toolrail: ToolRail::new(),
             drawings: Drawings::default(),
+            paper: PaperTrading::new(),
             config,
             feed_id,
             symbol,
@@ -811,6 +817,7 @@ impl QuantickApp {
             live_strip_on: self.live_strip_visible,
             dock_visible: self.dock.visible(),
             appearance_open: self.show_style,
+            paper_ready: self.paper.ready(),
             indicators: self
                 .indicators
                 .all()
@@ -895,6 +902,8 @@ impl QuantickApp {
                     });
                 }
             }
+            ToolbarAction::PaperBuy => self.paper.market(quantick_engine::Side::Buy),
+            ToolbarAction::PaperSell => self.paper.market(quantick_engine::Side::Sell),
         }
     }
 
@@ -1435,6 +1444,11 @@ impl QuantickApp {
                     self.loading.end(LoadingTask::History);
                     self.history_trades += trades.len();
                     self.state.ingest_backfill(&trades);
+                    // History only seeds the simulator's mark — filling
+                    // against the past would be look-ahead.
+                    if let Some(last) = trades.last() {
+                        self.paper.seed(last);
+                    }
                     self.indicator_worker
                         .send(IndicatorCommand::Backfilled(self.state.bars().to_vec()));
                     self.indicator_worker.send(IndicatorCommand::PartialUpdated(
@@ -1506,6 +1520,7 @@ impl QuantickApp {
         self.live_trades += 1;
         self.trades_since_summary += 1;
         self.orderflow.record_trade(trade);
+        self.paper.on_trade(trade);
         let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
         // At most one bar closes per trade (an atomic market event is never
@@ -1779,6 +1794,9 @@ impl QuantickApp {
         // never be answered, so the count restarts rather than accumulates.
         self.loading.restart(LoadingTask::History);
         self.orderflow.reset_for_symbol(self.symbol.clone());
+        // The simulator flattens at its last mark and says so — a position
+        // cannot honestly survive into a rebuilt timeline.
+        self.paper.on_timeline_reset();
     }
 
     /// Bar-index anchors are meaningful only for the market/spec that created
@@ -2338,8 +2356,22 @@ impl QuantickApp {
                     input.pointer.delta(),
                 )
             });
+        // Simulated order lines take the pointer before the drawings: they
+        // sit higher in the draw stack, and a grabbed stop is operational,
+        // not annotational. The flag mirrors the drawings' gesture
+        // consumption so the chart never pans under a held line.
+        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        let paper_gesture = self.paper.handle_chart_input(&ChartInput {
+            chart: drawing_area,
+            scale: drawing_scale.as_ref(),
+            pointer: pointer_position,
+            primary_pressed,
+            primary_down,
+            primary_released,
+            escape,
+        });
         let mut drawing_drag_consumes_gesture = false;
-        if self.toolrail.tool() == Tool::Pointer {
+        if !paper_gesture && self.toolrail.tool() == Tool::Pointer {
             // Hover feedback: a resize cursor over a selected anchor, a move
             // cursor over any visible body, and not-allowed over locked
             // geometry (visible objects in the viewport only — bounded work).
@@ -2477,7 +2509,12 @@ impl QuantickApp {
         let dragging_candles = chart
             .interact_pointer_pos()
             .is_some_and(|press| !in_lane(press));
-        if total > 0 && chart.dragged() && dragging_candles && !drawing_drag_consumes_gesture {
+        if total > 0
+            && chart.dragged()
+            && dragging_candles
+            && !drawing_drag_consumes_gesture
+            && !paper_gesture
+        {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
@@ -2851,6 +2888,11 @@ impl QuantickApp {
         // Drawings sit above market layers and remain anchored to chart space,
         // not the screen, while the viewport moves beneath them.
         self.draw_drawings(painter, chart_rect, right, total, &scale);
+
+        // Simulated orders and the position sit above the drawings: they are
+        // operational state, read against the last price painted next. The
+        // unclipped painter carries their chips into the gutter.
+        self.paper.draw_layer(painter, chart_rect, axis_x, &scale);
 
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
@@ -3301,6 +3343,7 @@ impl QuantickApp {
             live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
             side_detail: note.and_then(|(_, detail)| detail),
+            sim_pnl: self.paper.status_cell(),
             follows_live: self.viewport.follows_live(),
             price_auto: self.price_view.is_auto(),
             live_trades: self.live_trades,
@@ -3390,6 +3433,7 @@ impl QuantickApp {
                             (DockTab::L2, "L2 settings"),
                             (DockTab::Bubbles, "Bubble settings"),
                             (DockTab::Session, "Session"),
+                            (DockTab::Trading, "Paper trading"),
                         ] {
                             if ui.button(label).clicked() {
                                 self.dock.open_tab(tab);
@@ -4255,6 +4299,9 @@ impl QuantickApp {
         }
         self.last_frame = Some(now);
 
+        // The journal follows the active symbol; synced before the drain so a
+        // new feed's first trades are never attributed to the old symbol.
+        self.paper.set_symbol(&self.symbol);
         self.drain_feed();
         // Apply the indicator worker's deltas before the draw reads columns.
         for event in self.indicator_worker.drain_events() {
@@ -4306,6 +4353,7 @@ impl QuantickApp {
                 orderflow,
                 replay_view,
                 replay,
+                paper,
                 ..
             } = self;
             dock.draw(
@@ -4314,6 +4362,7 @@ impl QuantickApp {
                     orderflow,
                     replay_view,
                     replay: replay.as_ref(),
+                    paper,
                 },
             )
         };
@@ -4355,6 +4404,8 @@ impl QuantickApp {
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
         self.draw_drawing_toast(ctx, now);
+        self.paper.draw_report_window(ctx);
+        self.paper.draw_toast(ctx, now);
         if notice_action == notice_card::NoticeAction::Retry {
             self.restart_feed();
         }
@@ -4999,6 +5050,74 @@ plot(close)
                 quantick_engine::Side::Sell
             },
         }
+    }
+
+    /// Paper trading through the app's own event path: backfill only seeds
+    /// (never fills), the toolbar buy queues, the next live print fills, and
+    /// the status-bar cell reports the simulated position.
+    #[test]
+    fn a_simulated_buy_fills_from_the_next_live_print_only() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.drain_feed_with_clock(|| 0);
+        assert!(app.paper.ready(), "backfill seeds the mark");
+        assert!(
+            app.paper.status_cell().is_none(),
+            "an untouched simulator owes no status line"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        assert!(
+            app.paper.status_cell().is_some(),
+            "a queued market order is visible state"
+        );
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.drain_feed_with_clock(|| 0);
+        let (text, _) = app.paper.status_cell().expect("the fill opened a position");
+        assert!(
+            text.starts_with("SIM"),
+            "the cell is labeled simulated: {text}"
+        );
+        assert!(
+            app.status_model().sim_pnl.is_some(),
+            "the status bar model carries the cell"
+        );
+    }
+
+    /// A source reset (replay seek, feed switch) flattens the simulated
+    /// position at the last mark and journals the round trip — the same
+    /// honesty contract the drawings' clear follows.
+    #[test]
+    fn a_source_reset_flattens_the_simulated_position_and_journals_it() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-app-reset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.paper.redirect_history_dir(dir.clone());
+        // draw_frame syncs the symbol before the first drain; do the same.
+        app.paper.set_symbol("TESTUSDT");
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.drain_feed_with_clock(|| 0);
+
+        evt_tx.try_send(FeedEvent::Reset).unwrap();
+        app.drain_feed_with_clock(|| 0);
+        assert!(
+            app.paper.status_cell().is_some(),
+            "the realized history keeps the cell alive"
+        );
+        let files: Vec<_> = std::fs::read_dir(dir.join("TESTUSDT"))
+            .expect("the flatten was journaled under the symbol's folder")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 1, "one session, one history file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

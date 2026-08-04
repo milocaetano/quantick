@@ -13,6 +13,7 @@ use egui_phosphor::regular as icons;
 
 use crate::feed::ReplayLink;
 use crate::orderflow_view::OrderflowView;
+use crate::paper_trading::PaperTrading;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::theme;
 use crate::widgets::{IconButton, RAIL_ICON};
@@ -33,11 +34,13 @@ pub enum DockTab {
     Bubbles,
     /// The replay session: what is playing, and the browser entry.
     Session,
+    /// Paper trading: simulated position, order entry, pending orders.
+    Trading,
 }
 
 impl DockTab {
     /// Every tab, in strip order.
-    pub const ALL: [Self; 3] = [Self::L2, Self::Bubbles, Self::Session];
+    pub const ALL: [Self; 4] = [Self::L2, Self::Bubbles, Self::Session, Self::Trading];
 
     /// The Phosphor glyph on the strip.
     #[must_use]
@@ -46,6 +49,7 @@ impl DockTab {
             Self::L2 => icons::STACK,
             Self::Bubbles => icons::CIRCLES_THREE,
             Self::Session => icons::FILM_STRIP,
+            Self::Trading => icons::TREND_UP,
         }
     }
 
@@ -56,6 +60,7 @@ impl DockTab {
             Self::L2 => "L2 · LIQUIDITY MAP",
             Self::Bubbles => "AGGRESSION BUBBLES",
             Self::Session => "SESSION",
+            Self::Trading => "PAPER TRADING · SIM",
         }
     }
 
@@ -66,6 +71,7 @@ impl DockTab {
             Self::L2 => "L2 settings — the heatmap toggle stays in the toolbar",
             Self::Bubbles => "Bubble settings — the layer toggle stays in the toolbar",
             Self::Session => "Market replay session",
+            Self::Trading => "Paper trading — simulated orders, position and history",
         }
     }
 
@@ -84,6 +90,8 @@ pub struct DockEnv<'a> {
     pub replay_view: &'a mut ReplayView,
     /// The playing session, if any.
     pub replay: Option<&'a ReplayLink>,
+    /// The paper-trading host the Trading tab drives.
+    pub paper: &'a mut PaperTrading,
 }
 
 /// What drawing the dock asked the app to do.
@@ -119,7 +127,7 @@ impl Dock {
             active: None,
             // Opening widths per tab, ordered as [`DockTab::ALL`]: the L2 tab
             // carries the densest controls, the Session tab the fewest.
-            widths: [340.0, 320.0, 300.0],
+            widths: [340.0, 320.0, 300.0, 320.0],
         }
     }
 
@@ -205,6 +213,7 @@ impl Dock {
                         DockTab::Session => {
                             response.replay_action = draw_session_tab(ui, env);
                         }
+                        DockTab::Trading => env.paper.draw_trading_tab(ui),
                     }
                 });
             self.remember_width(tab, panel.response.rect.width());
@@ -345,6 +354,7 @@ mod tests {
         let mut dock = Dock::new();
         let mut orderflow = OrderflowView::new("TESTUSDT");
         let mut replay_view = ReplayView::new();
+        let mut paper = PaperTrading::new();
         for tab in DockTab::ALL {
             dock.open_tab(tab);
             for _ in 0..2 {
@@ -355,6 +365,7 @@ mod tests {
                             orderflow: &mut orderflow,
                             replay_view: &mut replay_view,
                             replay: None,
+                            paper: &mut paper,
                         },
                     );
                     assert!(
@@ -374,6 +385,7 @@ mod tests {
                     orderflow: &mut orderflow,
                     replay_view: &mut replay_view,
                     replay: None,
+                    paper: &mut paper,
                 },
             );
             assert!(!response.restart_book_capture);

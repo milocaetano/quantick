@@ -6,6 +6,7 @@ members = [
     "crates/orderbook",
     "crates/pine",
     "crates/replay",
+    "crates/sim",
     "crates/feed-binance",
     "crates/feed-hyperliquid",
     "crates/feed-mt5",
