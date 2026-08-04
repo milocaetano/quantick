@@ -1070,7 +1070,12 @@ impl Tab {
                     }
                 }
                 Ok(FeedEvent::Reset) => cleared |= self.reset_market_state(),
-                Ok(FeedEvent::OhlcvHistory { interval_ms, bars }) => {
+                Ok(FeedEvent::OhlcvHistory {
+                    interval_ms,
+                    bars,
+                    // `complete` is now on the wire; labeling it is app-lane work.
+                    ..
+                }) => {
                     self.take_ohlcv_history(interval_ms, bars);
                 }
                 Err(_) => break,

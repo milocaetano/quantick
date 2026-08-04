@@ -81,6 +81,7 @@ impl ProviderKind {
                 history_paging: true,
                 traded_volume: true,
                 ohlcv_history: true,
+                ohlcv_generation: 0,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
@@ -95,6 +96,7 @@ impl ProviderKind {
                 history_paging: false,
                 traded_volume: true,
                 ohlcv_history: true,
+                ohlcv_generation: 0,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -113,6 +115,7 @@ impl ProviderKind {
                 history_paging: false,
                 traded_volume: true,
                 ohlcv_history: false,
+                ohlcv_generation: 0,
             },
         }
     }
@@ -144,6 +147,23 @@ pub struct FeedCapabilities {
     /// trade history at all; a recording is the mirror image, holding every
     /// tick it captured and no candles whatsoever.
     pub ohlcv_history: bool,
+    /// Bumped whenever the venue-history answer *changed* — a new block
+    /// arrived, or an old one was replaced by a better one.
+    ///
+    /// [`ohlcv_history`](Self::ohlcv_history) alone cannot carry this. It is a
+    /// latch on the one provider that pushes: MetaTrader raises it when its
+    /// first block lands and never lowers it, so a consumer that asked, was
+    /// answered with an empty block (a cold terminal, a paging failure), and
+    /// cached that emptiness would watch for a rising edge that can never come
+    /// again — while the full block from the next routine reconnect sits held.
+    /// A counter has no such ceiling: every block moves it, including a
+    /// replacement for one already delivered.
+    ///
+    /// Zero, and staying zero forever, is the correct answer for a pull-based
+    /// feed: Binance and Hyperliquid answer whenever they are asked, so nothing
+    /// ever changes behind the consumer's back. Read this as "the answer
+    /// changed, ask again if you care", never as "how many blocks exist".
+    pub ohlcv_generation: u64,
 }
 
 impl FeedCapabilities {
@@ -156,6 +176,7 @@ impl FeedCapabilities {
             history_paging: false,
             traded_volume: false,
             ohlcv_history: false,
+            ohlcv_generation: 0,
         }
     }
 }
@@ -1037,6 +1058,7 @@ mod tests {
                 history_paging: false,
                 traded_volume: true,
                 ohlcv_history: true,
+                ohlcv_generation: 0,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

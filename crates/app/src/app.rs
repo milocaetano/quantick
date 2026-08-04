@@ -3033,6 +3033,7 @@ mod tests {
                     history_paging: false,
                     traded_volume: false,
                     ohlcv_history: false,
+                    ohlcv_generation: 0,
                 }),
                 commands: cmd_tx,
                 replay: None,
@@ -6479,6 +6480,7 @@ plot(close)
                     history_paging: true,
                     traded_volume: true,
                     ohlcv_history: true,
+                    ohlcv_generation: 0,
                 }),
                 commands: cmd_tx,
                 replay: None,
@@ -6519,6 +6521,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6560,6 +6563,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6640,6 +6644,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6675,6 +6680,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6719,6 +6725,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6764,6 +6771,7 @@ plot(close)
                 // mind about what it serves.
                 interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6798,6 +6806,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6849,6 +6858,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -6880,6 +6890,7 @@ plot(close)
             history_paging: true,
             traded_volume: true,
             ohlcv_history: false,
+            ohlcv_generation: 0,
         });
         let mut app = QuantickApp::new(
             test_config(),
@@ -6923,6 +6934,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: Vec::new(),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -7005,6 +7017,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -7054,6 +7067,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars,
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();
@@ -7086,6 +7100,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
+                complete: true,
             })
             .unwrap();
         app.drain_tabs();

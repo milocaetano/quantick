@@ -118,17 +118,18 @@ async fn feed_task(
     // from being polled for the duration: the trade channel fills, the
     // websocket read loop behind it stalls, and pongs stop going out. The task
     // sends its result back here and the loop keeps turning meanwhile.
-    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<Vec<quantick_engine::Bar>>(1);
+    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<(Vec<quantick_engine::Bar>, bool)>(1);
     let mut ohlcv_task: Option<JoinHandle<()>> = None;
 
     loop {
         tokio::select! {
-            Some(bars) = ohlcv_rx.recv() => {
+            Some((bars, complete)) = ohlcv_rx.recv() => {
                 ohlcv_task = None;
                 if tx
                     .send(FeedEvent::OhlcvHistory {
                         interval_ms: ONE_MINUTE_MS,
                         bars,
+                        complete,
                     })
                     .await
                     .is_err()
@@ -384,7 +385,7 @@ fn spawn_ohlcv(
     klines: BinanceKlineHttp,
     symbol: String,
     span_ms: i64,
-    reply: mpsc::Sender<Vec<quantick_engine::Bar>>,
+    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, bool)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let to_ms = crate::metrics::wall_clock_ms();
@@ -412,7 +413,7 @@ fn spawn_ohlcv(
         }
         // A closed channel means the feed loop is gone, which is not this
         // task's problem to report: it is already being reported there.
-        let _ = reply.send(history.bars).await;
+        let _ = reply.send((history.bars, history.complete)).await;
     })
 }
 

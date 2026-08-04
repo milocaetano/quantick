@@ -184,13 +184,24 @@ terminal validates a `CopyRates` request's *potential* bar count against its
 what it will serve. Probed 2026-08-03 against a terminal capped at 100 000: a
 90-day M1 range is 129 600 potential slots and came back
 `(-2, 'Terminal: Invalid params')`, while the same call over a single day
-returned its 563 bars. The bridge therefore walks backwards in counted pages
-well under any sane cap, merging by bar time. Two consequences are visible on
+returned its 563 bars. The bridge therefore walks backwards in counted pages,
+merging by bar time — and because its page size is itself a value the Max-bars
+dialog offers, a page the terminal still refuses is halved and retried rather
+than trusted to be small enough. Two consequences are visible on
 the wire: the block is assembled from several terminal calls, so a page failing
 partway delivers the newer part rather than nothing; and a young contract simply
 has less history than was asked for. `BRIDGE_RATES_SENT` reports
 `requested_span_days` against `covered_span_days` so the second case reads as a
 fact about the instrument rather than as a bug.
+
+`rates_end` carries **`partial: true`** when the bridge knows the block is short
+of what was asked: a page failed after others had landed, the walk hit its page
+budget, or the block was clipped to `--rates-max-bars`. **Absent means
+complete**, so a bridge predating the field is unaffected. Note what the flag is
+*not*: a contract younger than the request has fewer candles and is still
+complete — that case shows up as `covered_span_days` below `requested_span_days`,
+and the two facts are separate on purpose. The feed sets it too when its own
+per-block cap clips the series, so either side knowing is enough.
 
 A block that never reaches `rates_end` is discarded whole rather than delivered
 short: a candle series with a hole in it reads as a market that stopped trading.

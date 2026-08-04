@@ -89,8 +89,21 @@ MAX_BARS_PER_RATE_LINE = 300
 # terminal capped at 100 000, a 90-day M1 range — 129 600 potential slots —
 # returned (-2, 'Terminal: Invalid params'), while a 1-day range returned its
 # 563 bars and a count of 50 000 returned everything the contract had. A count
-# above the cap fails the same way, so this stays far below any sane setting.
+# above the cap fails the same way — and 20 000 is not "safely small": it is one
+# of the values the terminal's own Max-bars dialog offers, so a user who picks it
+# reproduces the bug exactly. `fetch_rates` halves and retries on the refusal
+# rather than trusting this number to be low enough.
 RATES_PAGE_BARS = 20_000
+
+# Smallest page worth retrying down to. Below this the page size is not the
+# problem, and halving further only multiplies round trips.
+RATES_MIN_PAGE_BARS = 1_000
+
+# The terminal's code for a request it refuses to size. It says nothing about
+# whether the data exists — only that the *request* was rejected — and telling
+# those two apart is the difference between "this symbol has no history" and
+# "raise Max bars in chart".
+MT5_INVALID_PARAMS = -2
 
 # Pages one candle block may request. Ninety days of M1 needs ~7 at the size
 # above, so reaching this means the walk is not advancing rather than that the
@@ -394,6 +407,15 @@ class Session:
             self.cursor_msc = now_s * 1000
             self.sent_at_cursor = 0
 
+    @staticmethod
+    def rates_error_code() -> int:
+        """The numeric part of the terminal's last error, or 0 if unreadable."""
+        error = mt5.last_error()
+        try:
+            return int(error[0])
+        except (TypeError, IndexError, ValueError):
+            return 0
+
     def fetch_rates(self, from_s: int, now_s: int) -> tuple[list, int, bool]:
         """Walk M1 history backwards in bounded pages.
 
@@ -423,11 +445,31 @@ class Session:
         anchor = now_s
         pages = 0
         partial = False
+        # Narrowed in place if this terminal refuses the starting width.
+        page_bars = RATES_PAGE_BARS
         while pages < RATES_MAX_PAGES:
-            chunk = mt5.copy_rates_from(
-                self.symbol, mt5.TIMEFRAME_M1, anchor, RATES_PAGE_BARS
-            )
+            chunk = mt5.copy_rates_from(self.symbol, mt5.TIMEFRAME_M1, anchor, page_bars)
             pages += 1
+            # A refusal about the request itself, not about the data: the page
+            # is wider than this terminal's Max-bars setting allows. Halve and
+            # try again, and keep the smaller size for the rest of the walk.
+            while (
+                chunk is None
+                and self.rates_error_code() == MT5_INVALID_PARAMS
+                and page_bars > RATES_MIN_PAGE_BARS
+            ):
+                page_bars = max(page_bars // 2, RATES_MIN_PAGE_BARS)
+                log(
+                    "BRIDGE_RATES_PAGE_TOO_WIDE",
+                    symbol=self.symbol,
+                    page=pages,
+                    retry_with=page_bars,
+                    action="halve_and_retry",
+                    hint="the terminal's Max bars in chart is below the page size",
+                )
+                chunk = mt5.copy_rates_from(
+                    self.symbol, mt5.TIMEFRAME_M1, anchor, page_bars
+                )
             if chunk is None:
                 # A page that fails after others succeeded costs the oldest end
                 # of the window, not the block: what was already merged is real
@@ -450,7 +492,7 @@ class Session:
             oldest = int(chunk[0]["time"])
             if oldest <= from_s:
                 break  # the requested span is covered
-            if len(chunk) < RATES_PAGE_BARS:
+            if len(chunk) < page_bars:
                 break  # the terminal has no history older than this
             if len(by_time) >= self.args.rates_max_bars:
                 break  # the cap decides the rest; the newest are kept below
@@ -502,7 +544,12 @@ class Session:
                 symbol=self.symbol,
                 pages=pages,
                 mt5_error=str(mt5.last_error()),
-                hint="the terminal returned no M1 history for this symbol",
+                hint=(
+                    "the terminal refused the request itself; raise Max bars in "
+                    "chart (Tools > Options > Charts) or lower --rates-months"
+                    if self.rates_error_code() == MT5_INVALID_PARAMS
+                    else "the terminal returned no M1 history for this symbol"
+                ),
             )
             # The hello already promised candles, so silence here would leave the
             # feed holding nothing while advertising nothing — indistinguishable
@@ -516,6 +563,9 @@ class Session:
         available = len(rates)
         if available > self.args.rates_max_bars:
             rates = rates[-self.args.rates_max_bars :]
+            # Clipped is short in the same sense a failed page is short: bars
+            # that exist and are not being delivered.
+            partial = True
             log(
                 "BRIDGE_RATES_TRUNCATED",
                 symbol=self.symbol,
@@ -566,7 +616,14 @@ class Session:
         if batch:
             self.send({"type": "rate", "bars": batch})
             sent += len(batch)
-        self.send({"type": "rates_end"})
+        # The flag rather than only the log: a consumer cannot read stderr, and
+        # "this is all there is" and "this is all I could get" are different
+        # charts. Omitted when whole, so a feed predating the field is
+        # unaffected.
+        end: dict = {"type": "rates_end"}
+        if partial:
+            end["partial"] = True
+        self.send(end)
         # Requested versus covered, so "this contract only has four weeks of
         # history" is visible rather than inferred from a short chart. A young
         # B3 contract genuinely has less than the ninety days asked for, and

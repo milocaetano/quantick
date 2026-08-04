@@ -112,7 +112,20 @@ pub enum BridgeMsg {
     /// size arithmetic behind the bound.
     Rate(RateChunk),
     /// End of the candle block.
-    RatesEnd {},
+    RatesEnd {
+        /// Whether the bridge knows this block is short of what was asked.
+        ///
+        /// Set when paging failed after some pages had landed, or when the
+        /// block was clipped to the bridge's own cap. **Absent means complete**
+        /// — as in every bridge that predates the field — so the flag is
+        /// additive within schema 1 like the rest.
+        ///
+        /// "Complete" is a claim about the *fetch*, not about the span: a
+        /// contract younger than the request has fewer candles and is still
+        /// complete. The two are different facts and the chart needs both.
+        #[serde(default)]
+        partial: bool,
+    },
     /// The bridge is going away on purpose (EA removed, terminal closing).
     Bye {
         /// Why, e.g. `"deinit"`.
@@ -424,9 +437,14 @@ mod tests {
         assert_eq!(chunk.bars[0].0, 1_784_824_260_000);
         assert_eq!(chunk.bars[0].5, "1234");
 
+        // Absent means complete, so a bridge predating the flag still parses.
         assert!(matches!(
             parse_line(r#"{"type":"rates_end"}"#).unwrap(),
-            BridgeMsg::RatesEnd {}
+            BridgeMsg::RatesEnd { partial: false }
+        ));
+        assert!(matches!(
+            parse_line(r#"{"type":"rates_end","partial":true}"#).unwrap(),
+            BridgeMsg::RatesEnd { partial: true }
         ));
 
         // A count hint is optional, like the backfill's.

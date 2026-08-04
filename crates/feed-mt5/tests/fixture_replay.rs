@@ -128,6 +128,8 @@ async fn tcp_replay_equals_the_pure_mapper() {
             // Nor may candles: this recording predates them and declares no
             // `rates`, so a block here would be one the bridge never sent.
             Mt5Event::Rates { bars, .. } => panic!("unexpected {} candles", bars.len()),
+            // Only one client ever dials this listener.
+            Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
         }
     }
 

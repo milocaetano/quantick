@@ -273,6 +273,7 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             history_paging: false,
             traded_volume: true,
             ohlcv_history: false,
+            ohlcv_generation: 0,
         }),
         commands: cmd_tx,
         replay: Some(link),
@@ -326,6 +327,9 @@ fn play(
                         .blocking_send(FeedEvent::OhlcvHistory {
                             interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                             bars: Vec::new(),
+                            // Complete: a recording holds no candles at all, and
+                            // that is the whole truth rather than a short fetch.
+                            complete: true,
                         })
                         .is_err()
                     {
@@ -726,13 +730,21 @@ mod tests {
                 "no reply: a pane would hang here"
             );
             match handle.events.try_recv() {
-                Ok(FeedEvent::OhlcvHistory { interval_ms, bars }) => break (interval_ms, bars),
+                Ok(FeedEvent::OhlcvHistory {
+                    interval_ms,
+                    bars,
+                    complete,
+                }) => break (interval_ms, bars, complete),
                 Ok(_) => {}
                 Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
                 Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),
             }
         };
-        let (interval_ms, bars) = reply;
+        let (interval_ms, bars, complete) = reply;
+        assert!(
+            complete,
+            "a recording holds no candles; that answer is whole, not short"
+        );
         assert!(
             bars.is_empty(),
             "nothing was recorded, so nothing is claimed"

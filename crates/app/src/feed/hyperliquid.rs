@@ -89,7 +89,7 @@ async fn feed_task(
     let mut book_capture: Option<BookCaptureTask> = None;
     // Candle history runs off this loop: see `spawn_ohlcv` for what awaiting it
     // in a command arm used to cost the live trade stream.
-    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<Vec<quantick_engine::Bar>>(1);
+    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<(Vec<quantick_engine::Bar>, bool)>(1);
     let mut ohlcv_task: Option<JoinHandle<()>> = None;
     let mut ever_connected = false;
     let mut recovery_pending = true;
@@ -98,12 +98,13 @@ async fn feed_task(
 
     loop {
         tokio::select! {
-            Some(bars) = ohlcv_rx.recv() => {
+            Some((bars, complete)) = ohlcv_rx.recv() => {
                 ohlcv_task = None;
                 if tx
                     .send(FeedEvent::OhlcvHistory {
                         interval_ms: ONE_MINUTE_MS,
                         bars,
+                        complete,
                     })
                     .await
                     .is_err()
@@ -319,13 +320,13 @@ fn start_book_capture(
 fn spawn_ohlcv(
     symbol: String,
     span_ms: i64,
-    reply: mpsc::Sender<Vec<quantick_engine::Bar>>,
+    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, bool)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let symbol = symbol.as_str();
         let to_ms = crate::metrics::wall_clock_ms();
         let from_ms = to_ms.saturating_sub(span_ms.max(0));
-        let bars = match fetch_candle_history(
+        let (bars, complete) = match fetch_candle_history(
             HYPERLIQUID_WS_URL,
             symbol,
             CANDLE_INTERVAL_1M,
@@ -348,7 +349,7 @@ fn spawn_ohlcv(
                         "candle history is short of the requested span"
                     );
                 }
-                history.bars
+                (history.bars, history.complete)
             }
             Err(error) => {
                 warn!(
@@ -361,12 +362,13 @@ fn spawn_ohlcv(
                     action = "answer_empty",
                     "could not fetch candle history"
                 );
-                Vec::new()
+                // A failed fetch is the clearest "not the whole span" there is.
+                (Vec::new(), false)
             }
         };
         // A closed channel means the feed loop is gone, which is not this task's
         // problem to report: it is already being reported there.
-        let _ = reply.send(bars).await;
+        let _ = reply.send((bars, complete)).await;
     })
 }
 

@@ -200,6 +200,24 @@ pub enum Mt5Event {
     /// Only produced while [`BookCaptureSwitch`] is enabled and the bridge
     /// declares depth support.
     Depth(DepthEvent),
+    /// Another bridge dialed this port while a session was being served, and
+    /// was refused.
+    ///
+    /// The log has said this since the refusal existed; the chart has not, and
+    /// the chart is where someone is looking at a window that says "waiting for
+    /// the bridge" while the answer sits in a file. Carries the same diagnosis
+    /// the log gets, so the consumer can put it in front of a person.
+    SessionBusy {
+        /// Address of the connection that was turned away.
+        peer: String,
+        /// The symbol its hello declared, when it sent one.
+        peer_symbol: Option<String>,
+        /// Stable classification: `same_symbol`, `other_symbol`, or
+        /// `unidentified`.
+        diagnosis: &'static str,
+        /// What to do about it, in words.
+        advice: &'static str,
+    },
     /// The session's historical candle block, complete and already mapped.
     ///
     /// Sent exactly once per `rates_start`/`rates_end` pair, ascending by
@@ -211,6 +229,10 @@ pub enum Mt5Event {
         interval_ms: i64,
         /// The candles, ascending by `open_time`.
         bars: Vec<Bar>,
+        /// Whether the block is known to be short of what was asked for —
+        /// the bridge said so, or this decoder clipped it. See
+        /// [`protocol::BridgeMsg::RatesEnd`].
+        partial: bool,
     },
 }
 
@@ -342,7 +364,7 @@ pub async fn run_bridge_server(
             tokio::select! {
                 end = &mut served => break end,
                 accepted = listener.accept() => match accepted {
-                    Ok((extra, peer)) => refuse_busy(extra, peer, &config.symbol, &bound, &mut refusal),
+                    Ok((extra, peer)) => refuse_busy(extra, peer, &config.symbol, &bound, &tx, &mut refusal),
                     Err(e) => warn!(
                         target: "quantick::feed",
                         schema_version = 1_u8,
@@ -406,6 +428,7 @@ fn refuse_busy(
     peer: SocketAddr,
     serving: &str,
     addr: &str,
+    tx: &mpsc::Sender<Mt5Event>,
     in_flight: &mut Option<JoinHandle<()>>,
 ) {
     if in_flight.as_ref().is_some_and(|task| !task.is_finished()) {
@@ -427,6 +450,7 @@ fn refuse_busy(
     }
     let serving = serving.to_string();
     let addr = addr.to_string();
+    let tx = tx.clone();
     *in_flight = Some(tokio::spawn(async move {
         let identity = identify(stream).await;
         let diagnosis = identity.diagnose(&serving);
@@ -445,6 +469,17 @@ fn refuse_busy(
             action = "closed",
             "a second bridge dialed a port that is already serving a session; refusing it"
         );
+        // And once where someone can see it. The chart otherwise says "waiting
+        // for the bridge" for as long as the mistake lasts, while the reason
+        // sits in a log file nobody has open.
+        let _ = tx
+            .send(Mt5Event::SessionBusy {
+                peer: peer.to_string(),
+                peer_symbol: identity.symbol,
+                diagnosis: diagnosis.code,
+                advice: diagnosis.advice,
+            })
+            .await;
     }));
 }
 
@@ -868,11 +903,32 @@ async fn serve_connection(
                     "candles arrived outside a rates block; dropping them"
                 ),
             },
-            Ok(BridgeMsg::RatesEnd {}) => match candles.take() {
+            Ok(BridgeMsg::RatesEnd { partial }) => match candles.take() {
                 Some(block) => {
-                    let (interval_ms, bars) = block.finish(&config.symbol);
+                    let (interval_ms, bars, clipped) = block.finish(&config.symbol);
+                    // Either side may know the block is short: the bridge from
+                    // its paging, this decoder from its own cap. Kept apart in
+                    // the log — they point at different things to go fix.
+                    let bridge_said_partial = partial;
+                    let partial = bridge_said_partial || clipped;
+                    if partial {
+                        warn!(
+                            target: "quantick::feed",
+                            schema_version = 1_u8,
+                            event_code = "MT5_RATES_PARTIAL",
+                            symbol = %config.symbol,
+                            bars = bars.len(),
+                            bridge_said_partial,
+                            clipped_here = clipped,
+                            "the candle block is short of what was asked for"
+                        );
+                    }
                     if tx
-                        .send(Mt5Event::Rates { interval_ms, bars })
+                        .send(Mt5Event::Rates {
+                            interval_ms,
+                            bars,
+                            partial,
+                        })
                         .await
                         .is_err()
                     {
@@ -996,9 +1052,12 @@ impl RatesBlock {
     }
 
     /// Close the block: log what it cost, and hand back the ascending series.
-    fn finish(self, symbol: &str) -> (i64, Vec<Bar>) {
+    fn finish(self, symbol: &str) -> (i64, Vec<Bar>, bool) {
         self.mapper.stats.log_summary(symbol, self.interval_ms);
-        (self.interval_ms, self.bars.into_values().collect())
+        // Clipping here is the same kind of shortfall the bridge reports with
+        // its own `partial`: bars that exist and were not delivered.
+        let clipped = self.truncated;
+        (self.interval_ms, self.bars.into_values().collect(), clipped)
     }
 }
 

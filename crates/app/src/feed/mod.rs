@@ -101,6 +101,22 @@ pub enum FeedEvent {
         /// the mapping rules on [`FeedCommand::FetchOhlcv`] for what that costs
         /// in fidelity.
         bars: Vec<Bar>,
+        /// Whether these bars cover the whole span that was asked for.
+        ///
+        /// False means the answer is short and *known* to be short: a venue
+        /// that stopped answering partway, a bridge whose paging failed after
+        /// some pages had landed, a block clipped to a cap. It does not mean
+        /// the same thing as a short series — an instrument younger than the
+        /// span genuinely has fewer candles, and that answer is complete.
+        ///
+        /// Carried rather than inferred from the bar count, which cannot tell
+        /// those two apart, and cannot tell either from a quiet market.
+        ///
+        /// Every provider sets this; nothing labels it yet, because the pane
+        /// that would say "six weeks, and the venue stopped answering" is not
+        /// built. Delete the attribute when it is.
+        #[allow(dead_code)]
+        complete: bool,
     },
 }
 

@@ -618,10 +618,14 @@ fn rate_chunk(bars: &[(i64, &str, &str, &str, &str, &str)]) -> String {
 }
 
 /// Drain until the candle block arrives, or panic if the session ends first.
-async fn next_rates(rx: &mut mpsc::Receiver<Mt5Event>) -> (i64, Vec<quantick_engine::Bar>) {
+async fn next_rates(rx: &mut mpsc::Receiver<Mt5Event>) -> (i64, Vec<quantick_engine::Bar>, bool) {
     loop {
         match next_event(rx).await {
-            Mt5Event::Rates { interval_ms, bars } => return (interval_ms, bars),
+            Mt5Event::Rates {
+                interval_ms,
+                bars,
+                partial,
+            } => return (interval_ms, bars, partial),
             Mt5Event::Status(Mt5Status::Lost { reason }) => {
                 panic!("session ended before the candle block: {reason}")
             }
@@ -690,8 +694,9 @@ async fn a_rates_block_arrives_as_one_ordered_series() {
     };
     assert!(rates, "the hello declared a candle block");
 
-    let (interval_ms, bars) = next_rates(&mut rx).await;
+    let (interval_ms, bars, partial) = next_rates(&mut rx).await;
     assert_eq!(interval_ms, 60_000);
+    assert!(!partial, "the bridge declared nothing missing");
     assert_eq!(
         bars.len(),
         2,
@@ -776,7 +781,7 @@ async fn a_corrupt_candle_is_dropped_and_the_block_still_arrives() {
     sock.flush().await.unwrap();
 
     let _ = next_event(&mut rx).await; // Connected
-    let (_, bars) = next_rates(&mut rx).await;
+    let (_, bars, _) = next_rates(&mut rx).await;
     assert_eq!(bars.len(), 2, "only the incoherent candle was dropped");
     assert_eq!(bars[0].open_time, 1_784_824_260_000 + 10_800_000);
     assert_eq!(bars[1].open_time, 1_784_824_380_000 + 10_800_000);
