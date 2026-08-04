@@ -419,7 +419,13 @@ pane keeps quantick's identity.
   bars built from prints, labelled `venue` — distinct from the solid amber
   backfill divider, which keeps marking its own boundary further right. The
   status bar's content section counts all three sources in the order they sit
-  on the chart (`26000v+240+61 bars`).
+  on the chart (`26000v+240+61 bars`). A block the venue cut short — it stopped
+  answering, or the answer hit a cap — belongs beside that count as an amber
+  mark: a chart showing six weeks where ninety days were asked for is making a
+  claim about the market it cannot support. Logged today (`OHLCV_INCOMPLETE`);
+  the badge is deferred rather than half-built. A *short* series is not the
+  same thing — an instrument younger than the span has fewer candles, and that
+  answer is complete.
 - **What a venue candle is not.** It is one summary per interval, not a bar
   replayed from prints. Only Binance publishes an aggressor split, so only
   there does the prefix carry a real delta; on Hyperliquid and MetaTrader the

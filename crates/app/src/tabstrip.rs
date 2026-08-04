@@ -112,6 +112,8 @@ pub struct SourcePicker {
     pub symbol: String,
     /// What the "Add symbol…" field currently holds.
     draft_symbol: String,
+    /// Why the last addition was refused, until the next submit clears it.
+    refusal: Option<String>,
     #[cfg(test)]
     add_button: Option<egui::Rect>,
 }
@@ -154,15 +156,31 @@ impl SourcePicker {
             feed_id,
             symbol,
             draft_symbol: String::new(),
+            refusal: None,
             #[cfg(test)]
             add_button: None,
         }
+    }
+
+    /// Record why an addition was refused, to show under the field.
+    ///
+    /// The window owns the rule — a symbol has to fit the whole config, not
+    /// just its feed's list — so it owns the message too; this only carries it
+    /// back to where the user typed.
+    pub fn refuse(&mut self, reason: String) {
+        self.refusal = Some(reason);
     }
 
     /// Where the Add button landed, so a test can press the one a user would.
     #[cfg(test)]
     pub(crate) fn add_button_rect(&self) -> Option<egui::Rect> {
         self.add_button
+    }
+
+    /// Whether the last addition was refused, and why.
+    #[cfg(test)]
+    pub(crate) fn refusal(&self) -> Option<&str> {
+        self.refusal.as_deref()
     }
 
     /// Put text in the add field, as typing does.
@@ -193,6 +211,7 @@ impl SourcePicker {
             return None;
         }
         self.draft_symbol.clear();
+        self.refusal = None;
         if symbols.iter().any(|existing| existing == &symbol) {
             self.symbol = symbol;
             return None;
@@ -316,12 +335,12 @@ impl SourcePicker {
                     {
                         outcome = added;
                     }
-                })
-                .response
-                .on_hover_text(
-                    "Venues rename contracts — a dated B3 future, say. Added symbols \
-                     persist in quantick-symbols.toml.",
-                );
+                });
+                // Why the last one was refused, under the field it was typed
+                // in — the user is one keystroke from a symbol that fits.
+                if let Some(reason) = &self.refusal {
+                    ui.label(egui::RichText::new(reason).small().color(theme::WARN));
+                }
 
                 ui.separator();
                 ui.horizontal(|ui| {

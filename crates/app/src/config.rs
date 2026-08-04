@@ -615,6 +615,23 @@ impl AppConfig {
             if feed.symbols.is_empty() {
                 return Err(format!("feed '{}' lists no symbols", feed.id));
             }
+            // Same rule the port map keys follow: a symbol is matched by exact
+            // string against what a venue calls an instrument, so padding is a
+            // silent mismatch and an empty entry names nothing at all. Checked
+            // for every feed, because the catalog the app runs on includes
+            // whatever the added-symbols sidecar merged into it.
+            for symbol in &feed.symbols {
+                if symbol.trim().is_empty() {
+                    return Err(format!("feed '{}' lists an empty symbol", feed.id));
+                }
+                if symbol.trim() != symbol {
+                    return Err(format!(
+                        "feed '{}' lists symbol '{symbol}' with surrounding whitespace; \
+                         a venue matches its instrument names exactly",
+                        feed.id
+                    ));
+                }
+            }
             if self.feeds.iter().filter(|f| f.id == feed.id).count() > 1 {
                 return Err(format!("duplicate feed id '{}'", feed.id));
             }
@@ -833,6 +850,43 @@ fn parse(text: &str, source: ConfigSource, added: &AddedSymbols) -> Result<AppCo
     Ok(config)
 }
 
+/// Parse with the user's added symbols, falling back to the config alone when
+/// those additions are what makes it invalid.
+///
+/// A file the app wrote must never be able to stop the app starting. The
+/// picker refuses an addition that would not validate, so reaching this needs
+/// a hand-edited sidecar or a config that changed underneath one — both real,
+/// and neither a reason to exit with an error naming a file the user did not
+/// break. The additions are dropped, loudly, and the chart opens.
+///
+/// A config that fails on its own is still a hard error: that file *is* the
+/// user's, and silently running on something else would be worse than saying
+/// so.
+fn parse_with_additions(
+    text: &str,
+    source: ConfigSource,
+    added: &AddedSymbols,
+    added_path: &Path,
+) -> Result<AppConfig, ConfigError> {
+    let merged = match parse(text, source.clone(), added) {
+        Ok(config) => return Ok(config),
+        Err(error) => error,
+    };
+    let clean = parse(text, source, &AddedSymbols::default())?;
+    tracing::warn!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "SYMBOL_CATALOG_REJECTED",
+        path = %added_path.display(),
+        entries = added.entries().map(|(_, symbols)| symbols.len()).sum::<usize>(),
+        feeds = added.entries().count(),
+        reason = %merged,
+        action = "start_without_added_symbols",
+        "the added-symbols file does not fit the current config; ignoring it"
+    );
+    Ok(clean)
+}
+
 /// Load the config, following the resolution order documented on this module.
 ///
 /// Returns the config together with where it came from. An external file (env
@@ -845,7 +899,8 @@ fn parse(text: &str, source: ConfigSource, added: &AddedSymbols) -> Result<AppCo
 /// Returns [`ConfigError`] when a present external file cannot be read, parsed,
 /// or validated. The embedded default is validated in tests, so it never errors.
 pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
-    let added = crate::symbols_file::load(&crate::symbols_file::default_path());
+    let added_path = crate::symbols_file::default_path();
+    let added = crate::symbols_file::load(&added_path);
     if let Some(path) = std::env::var_os(CONFIG_ENV) {
         let path = PathBuf::from(path);
         let source = ConfigSource::EnvPath(path.clone());
@@ -853,7 +908,10 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
             path,
             message: e.to_string(),
         })?;
-        return Ok((parse(&text, source.clone(), &added)?, source));
+        return Ok((
+            parse_with_additions(&text, source.clone(), &added, &added_path)?,
+            source,
+        ));
     }
 
     let cwd_path = Path::new(CONFIG_FILENAME);
@@ -863,10 +921,18 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
             path: cwd_path.to_path_buf(),
             message: e.to_string(),
         })?;
-        return Ok((parse(&text, source.clone(), &added)?, source));
+        return Ok((
+            parse_with_additions(&text, source.clone(), &added, &added_path)?,
+            source,
+        ));
     }
 
-    let config = parse(EMBEDDED_DEFAULT, ConfigSource::Embedded, &added)?;
+    let config = parse_with_additions(
+        EMBEDDED_DEFAULT,
+        ConfigSource::Embedded,
+        &added,
+        &added_path,
+    )?;
     Ok((config, ConfigSource::Embedded))
 }
 
@@ -909,6 +975,113 @@ mod tests {
             1,
             "adding one the config already has changes nothing"
         );
+    }
+
+    /// A file the app wrote must never be able to stop the app starting.
+    ///
+    /// The picker refuses an addition that would not validate, so reaching
+    /// this needs a hand-edited sidecar — or a config that changed underneath
+    /// one that was fine when it was written. Either way the additions go, the
+    /// warning names the file that actually went wrong, and the chart opens.
+    #[test]
+    fn a_sidecar_that_breaks_the_port_cross_check_does_not_stop_the_launch() {
+        let text = "\
+            default_feed = \"tickmill\"\n\
+            default_symbol = \"US500\"\n\
+            [[feeds]]\n\
+            id = \"tickmill\"\n\
+            name = \"MetaTrader 5 — Tickmill\"\n\
+            provider = \"metatrader\"\n\
+            symbols = [\"US500\"]\n\
+            [[feeds]]\n\
+            id = \"b3\"\n\
+            name = \"MetaTrader 5 — B3\"\n\
+            provider = \"metatrader\"\n\
+            symbols = [\"WIN$N\"]\n\
+            [metatrader]\n\
+            listen_addr = \"127.0.0.1:9100\"\n\
+            [metatrader.ports]\n\
+            US500 = 9102\n";
+
+        // On its own the config is fine: one feed offers the mapped symbol.
+        assert!(parse(text, ConfigSource::Embedded, &AddedSymbols::default()).is_ok());
+
+        // The sidecar makes a second MetaTrader feed offer it, and one port
+        // cannot carry two feeds — the cross-check rejects the merged catalog.
+        let mut added = AddedSymbols::default();
+        added.add("b3", "US500");
+        assert!(
+            parse(text, ConfigSource::Embedded, &added).is_err(),
+            "the merged catalog really is invalid; the repair below is not vacuous"
+        );
+
+        let repaired = parse_with_additions(
+            text,
+            ConfigSource::Embedded,
+            &added,
+            std::path::Path::new("quantick-symbols.toml"),
+        )
+        .expect("a bad sidecar costs its entries, not the launch");
+        assert_eq!(
+            repaired.feed("b3").expect("the feed").symbols,
+            ["WIN$N"],
+            "the poisoning addition was dropped"
+        );
+        assert!(repaired.validate().is_ok());
+    }
+
+    /// A config that is broken on its own is still a hard error: that file is
+    /// the user's, and quietly running on something else would be worse.
+    #[test]
+    fn a_config_broken_without_the_sidecar_still_fails() {
+        let text = "\
+            default_feed = \"mt\"\n\
+            default_symbol = \"NOPE\"\n\
+            [[feeds]]\n\
+            id = \"mt\"\n\
+            name = \"MetaTrader 5\"\n\
+            provider = \"metatrader\"\n\
+            symbols = [\"WIN$N\"]\n";
+        let mut added = AddedSymbols::default();
+        added.add("mt", "WINQ26");
+
+        assert!(
+            parse_with_additions(
+                text,
+                ConfigSource::Embedded,
+                &added,
+                std::path::Path::new("quantick-symbols.toml"),
+            )
+            .is_err(),
+            "dropping the additions cannot fix a default_symbol nothing offers"
+        );
+    }
+
+    /// A symbol is matched by exact string against what a venue calls an
+    /// instrument, so padding is a silent mismatch — in the config or in
+    /// anything the sidecar merged into it.
+    #[test]
+    fn padded_and_empty_catalog_symbols_are_rejected() {
+        let base = "\
+            default_feed = \"a\"\n\
+            default_symbol = \"AAA\"\n\
+            [[feeds]]\n\
+            id = \"a\"\n\
+            name = \"A\"\n\
+            provider = \"binance\"\n\
+            symbols = [\"AAA\"]\n";
+        assert!(parse(base, ConfigSource::Embedded, &AddedSymbols::default()).is_ok());
+
+        for bad in [" AAA", "AAA ", "  ", ""] {
+            let mut added = AddedSymbols::default();
+            added.add("a", bad);
+            let error = parse(base, ConfigSource::Embedded, &added)
+                .expect_err("a padded or empty symbol is not a symbol");
+            assert!(
+                format!("{error}").contains("symbol"),
+                "the message has to say what is wrong: {error}"
+            );
+        }
     }
 
     /// A feed that was renamed or dropped should cost its additions, never the

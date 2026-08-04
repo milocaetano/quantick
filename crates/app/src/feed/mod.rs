@@ -112,10 +112,6 @@ pub enum FeedEvent {
         /// Carried rather than inferred from the bar count, which cannot tell
         /// those two apart, and cannot tell either from a quiet market.
         ///
-        /// Every provider sets this; nothing labels it yet, because the pane
-        /// that would say "six weeks, and the venue stopped answering" is not
-        /// built. Delete the attribute when it is.
-        #[allow(dead_code)]
         complete: bool,
     },
 }

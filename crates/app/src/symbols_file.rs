@@ -112,8 +112,26 @@ pub fn default_path() -> PathBuf {
 /// version (reported, never half-read).
 #[must_use]
 pub fn load(path: &std::path::Path) -> AddedSymbols {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return AddedSymbols::default();
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        // No file is the normal case — nothing has been added yet. Anything
+        // else is a file that exists and cannot be read, which costs the user
+        // their additions and should not do so quietly.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return AddedSymbols::default();
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_UNREADABLE",
+                path = %path.display(),
+                error = %error,
+                action = "starting_empty",
+                "cannot open the added-symbols file"
+            );
+            return AddedSymbols::default();
+        }
     };
     match toml::from_str::<AddedSymbols>(&text) {
         Ok(added) if added.version == FORMAT_VERSION => added,
@@ -145,41 +163,30 @@ pub fn load(path: &std::path::Path) -> AddedSymbols {
 }
 
 /// Write the added symbols, header and all.
-pub fn save(path: &std::path::Path, added: &AddedSymbols) {
+///
+/// # Errors
+///
+/// Returns what went wrong, for the caller to surface with the path: a
+/// read-only working directory is a real thing, and an addition that looked
+/// like it stuck but did not is the kind of quiet loss the user only finds
+/// out about at the next launch.
+pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> {
     let file = AddedSymbols {
         version: FORMAT_VERSION,
         feeds: added.feeds.clone(),
     };
-    match toml::to_string_pretty(&file) {
-        Ok(body) => {
-            // Temp sibling + rename, like the indicator state: `fs::write`
-            // truncates first, so a crash mid-write would leave a half file
-            // that the next load reports unreadable and starts empty.
-            let temp = path.with_extension("toml.tmp");
-            let text = format!("{HEADER}\n{body}");
-            let written = std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path));
-            if let Err(error) = written {
-                let _ = std::fs::remove_file(&temp);
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                    path = %path.display(),
-                    error = %error,
-                    action = "additions_lost_on_exit",
-                    "cannot write the added-symbols file"
-                );
-            }
-        }
-        Err(error) => tracing::warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "SYMBOL_CATALOG_ENCODE_FAILED",
-            error = %error,
-            action = "additions_lost_on_exit",
-            "cannot encode the added-symbols file"
-        ),
-    }
+    let body = toml::to_string_pretty(&file).map_err(|error| error.to_string())?;
+    // Temp sibling + rename, like the indicator state: `fs::write` truncates
+    // first, so a crash mid-write would leave a half file that the next load
+    // reports unreadable and starts empty.
+    let temp = path.with_extension("toml.tmp");
+    let text = format!("{HEADER}\n{body}");
+    std::fs::write(&temp, text)
+        .and_then(|()| std::fs::rename(&temp, path))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&temp);
+            error.to_string()
+        })
 }
 
 #[cfg(test)]
@@ -234,7 +241,7 @@ mod tests {
         added.add("metatrader-b3", "WINQ26");
         added.add("binance", "SOLUSDT");
 
-        save(&path, &added);
+        save(&path, &added).expect("the scratch file is writable");
 
         let text = std::fs::read_to_string(&path).expect("the file was written");
         assert!(

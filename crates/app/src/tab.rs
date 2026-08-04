@@ -172,6 +172,15 @@ pub struct Tab {
     /// Whether a fetch is out. One at a time — the reply is what clears it,
     /// and every provider always sends one.
     ohlcv_pending: bool,
+    /// The candle generation this tab has already acted on.
+    ///
+    /// A pull feed leaves it at zero forever — it answers whenever asked, so
+    /// nothing changes behind us. A push feed moves it every time it stores a
+    /// block, including a replacement for one already delivered, and that is
+    /// the only signal saying "the answer changed, ask again". A rising
+    /// *capability* edge cannot say it: the flag rises once and stays, so a
+    /// block arriving after an empty answer would sit unread.
+    ohlcv_generation: u64,
     /// What `ohlcv_history` said last frame, so the rising edge can be seen.
     ///
     /// MetaTrader narrows its capabilities when the bridge says hello, which
@@ -247,6 +256,7 @@ impl Tab {
             chip_label: String::new(),
             ohlcv_base: None,
             ohlcv_pending: false,
+            ohlcv_generation: 0,
             ohlcv_capable: false,
             time_pane: None,
             time_pane_id: pane_ids.1,
@@ -330,6 +340,13 @@ impl Tab {
         self.canvas_divider
     }
 
+    /// Forget which candle generation was acted on, so the next poll treats
+    /// the feed's as new — what a reconnect storing a fresh block does.
+    #[cfg(test)]
+    pub fn forget_ohlcv_generation_for_test(&mut self) {
+        self.ohlcv_generation = u64::MAX;
+    }
+
     /// Swap in a feed the test drives, through the same path a respawn takes.
     #[cfg(test)]
     pub fn attach_for_test(&mut self, handle: FeedHandle) {
@@ -397,9 +414,19 @@ impl Tab {
     /// Called every frame: the check is two bools and an `Option` when there
     /// is nothing to do.
     pub fn poll_ohlcv_capability(&mut self, config: &AppConfig) {
-        let capable = self.capabilities(config).ohlcv_history;
+        let capabilities = self.capabilities(config);
+        let capable = capabilities.ohlcv_history;
         let rising = capable && !self.ohlcv_capable;
         self.ohlcv_capable = capable;
+        if capabilities.ohlcv_generation != self.ohlcv_generation {
+            // The venue re-answered. A reconnect can carry a longer block than
+            // the one held, or a corrected one, so what is held goes whether or
+            // not it had bars in it — the guard below then lets a fresh request
+            // through, and the reply reinstalls the prefix by the same path the
+            // first one took.
+            self.ohlcv_generation = capabilities.ohlcv_generation;
+            self.ohlcv_base = None;
+        }
         if rising {
             // A session that narrowed *into* serving candles may have answered
             // an earlier request with nothing; that answer described a feed
@@ -423,8 +450,34 @@ impl Tab {
     /// stops asking. Either way the wait ends here: a provider that answered
     /// only on success would strand the spinner on the one case that most
     /// needs explaining.
-    fn take_ohlcv_history(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) {
+    fn take_ohlcv_history(
+        &mut self,
+        interval_ms: i64,
+        bars: Vec<quantick_engine::Bar>,
+        complete: bool,
+    ) {
         self.ohlcv_pending = false;
+        if !complete {
+            // Known-short, not merely short: a venue that stopped answering
+            // partway, or a block clipped to a cap. An instrument younger than
+            // the span is a *complete* answer with fewer bars, which is why
+            // this is carried rather than guessed from the count.
+            //
+            // Said in the log today. §11 records where it will be said on
+            // screen — beside the three-way bar count — and the badge itself
+            // is deferred rather than half-built.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_INCOMPLETE",
+                tab = self.id,
+                symbol = %self.symbol,
+                interval_ms,
+                bars = bars.len(),
+                action = "install_what_arrived",
+                "the venue's candle history stopped short of the span asked for"
+            );
+        }
         self.loading.end(LoadingTask::VenueHistory);
         tracing::info!(
             target: "quantick::app",
@@ -1073,10 +1126,9 @@ impl Tab {
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
-                    // `complete` is now on the wire; labeling it is app-lane work.
-                    ..
+                    complete,
                 }) => {
-                    self.take_ohlcv_history(interval_ms, bars);
+                    self.take_ohlcv_history(interval_ms, bars, complete);
                 }
                 Err(_) => break,
             }

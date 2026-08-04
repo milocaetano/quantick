@@ -2804,12 +2804,20 @@ impl QuantickApp {
                 self.source_picker = None;
                 self.open_tab(feed_id, symbol);
             }
-            PickerOutcome::Added { feed_id, symbol } => {
-                if self.add_symbol(&feed_id, &symbol) {
+            PickerOutcome::Added { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
+                Ok(()) => {
                     self.source_picker = None;
                     self.open_tab(feed_id, symbol);
                 }
-            }
+                // The dialog stays open carrying the reason: the user is one
+                // keystroke from a symbol that does fit, and closing would
+                // make the refusal look like a crash.
+                Err(reason) => {
+                    if let Some(picker) = self.source_picker.as_mut() {
+                        picker.refuse(reason);
+                    }
+                }
+            },
             PickerOutcome::Removed { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
         }
     }
@@ -2821,12 +2829,36 @@ impl QuantickApp {
     /// and all, and a program that rewrote it would eat them. The addition
     /// lives in its own sidecar, which the next launch folds back in before
     /// the config is validated (see [`crate::symbols_file`]).
-    fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> bool {
-        if !self.config.add_symbol(feed_id, symbol) {
-            return false;
+    fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
+        // Against the *whole* config, on a copy. A symbol is not just a name
+        // in a list: it takes part in every cross-check the config has, and
+        // the MetaTrader port map is one where a single mapped symbol offered
+        // by two feeds is a configuration the app refuses to load. Persisting
+        // one of those would write a file that kills the next launch — and the
+        // error would name the config, which is not the file that broke.
+        let mut candidate = self.config.clone();
+        if !candidate.add_symbol(feed_id, symbol) {
+            return Err(format!(
+                "{} already offers {symbol}",
+                self.config.feed_name(feed_id)
+            ));
         }
+        candidate.validate()?;
+        self.config = candidate;
         self.added_symbols.add(feed_id, symbol);
-        symbols_file::save(&self.symbols_path, &self.added_symbols);
+        if let Err(error) = symbols_file::save(&self.symbols_path, &self.added_symbols) {
+            // The catalog took it for this session either way; what is lost is
+            // the next launch, and the user is told which file did not take it.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
+                path = %self.symbols_path.display(),
+                error = %error,
+                action = "addition_is_session_only",
+                "cannot write the added-symbols file"
+            );
+        }
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -2837,7 +2869,7 @@ impl QuantickApp {
             action = "open_in_new_tab",
             "a symbol was added from the source picker"
         );
-        true
+        Ok(())
     }
 
     /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
@@ -2850,7 +2882,17 @@ impl QuantickApp {
             return;
         }
         self.added_symbols.remove(feed_id, symbol);
-        symbols_file::save(&self.symbols_path, &self.added_symbols);
+        if let Err(error) = symbols_file::save(&self.symbols_path, &self.added_symbols) {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
+                path = %self.symbols_path.display(),
+                error = %error,
+                action = "removal_is_session_only",
+                "cannot write the added-symbols file"
+            );
+        }
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -2886,7 +2928,7 @@ mod tests {
 
     use quantick_feed_binance::depth::DepthEvent;
 
-    use crate::config::{FeedCapabilities, FeedConfig, ProviderKind};
+    use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
     use crate::drawings::{ChartPoint, PresetHost};
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
     use crate::pane::DrawingDrag;
@@ -7218,6 +7260,252 @@ plot(close)
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A config with two MetaTrader feeds, one of them mapping a port — the
+    /// shape where adding the wrong symbol used to write a file that killed
+    /// the next launch.
+    fn two_metatrader_feeds() -> AppConfig {
+        let mut ports = std::collections::BTreeMap::new();
+        ports.insert("US500".to_string(), 9102_u16);
+        AppConfig {
+            default_feed: "tickmill".to_string(),
+            default_symbol: "US500".to_string(),
+            feeds: vec![
+                FeedConfig {
+                    id: "tickmill".to_string(),
+                    name: "MetaTrader 5 — Tickmill".to_string(),
+                    provider: ProviderKind::MetaTrader,
+                    symbols: vec!["US500".to_string()],
+                    bubble_preset: None,
+                },
+                FeedConfig {
+                    id: "b3".to_string(),
+                    name: "MetaTrader 5 — B3".to_string(),
+                    provider: ProviderKind::MetaTrader,
+                    symbols: vec!["WIN$N".to_string()],
+                    bubble_preset: None,
+                },
+            ],
+            metatrader: crate::config::MetaTraderSettings {
+                ports,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// An addition that the *whole* config would reject is refused where it
+    /// was typed, and nothing is written.
+    ///
+    /// Typing `US500` into the B3 feed made two MetaTrader feeds offer one
+    /// mapped symbol — a configuration the app refuses to load. It used to be
+    /// accepted, persisted, and then kill the next launch with an error naming
+    /// the config file, which was not the file that broke.
+    #[test]
+    fn an_addition_the_config_would_reject_is_refused_and_not_written() {
+        let ctx = egui::Context::default();
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let mut app = QuantickApp::new(
+            two_metatrader_feeds(),
+            "b3",
+            "WIN$N",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::MetaTrader.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let path = symbols_scratch("refused");
+        let _ = std::fs::remove_file(&path);
+        app.symbols_path = path.clone();
+        let tabs_before = app.tabs.len();
+
+        // The real dialog, on the B3 feed, typing the Tickmill instrument.
+        app.apply_tab_action(TabAction::New);
+        run_frame(&mut app, &ctx);
+        {
+            let picker = app.source_picker.as_mut().expect("the picker is open");
+            picker.feed_id = "b3".to_string();
+            picker.set_draft_symbol("US500");
+        }
+        run_frame(&mut app, &ctx);
+        let add = app
+            .source_picker
+            .as_ref()
+            .expect("still open")
+            .add_button_rect()
+            .expect("the Add button was laid out");
+        click_chart(&mut app, &ctx, add.center());
+        run_frame(&mut app, &ctx);
+
+        let picker = app
+            .source_picker
+            .as_ref()
+            .expect("the dialog stays open on a refusal");
+        assert!(
+            picker
+                .refusal()
+                .is_some_and(|reason| reason.contains("US500")),
+            "the reason is shown where the symbol was typed: {:?}",
+            picker.refusal()
+        );
+        assert_eq!(app.tabs.len(), tabs_before, "and no market was opened");
+        assert!(
+            !app.config
+                .feed("b3")
+                .expect("the feed")
+                .symbols
+                .iter()
+                .any(|symbol| symbol == "US500"),
+            "the catalog is untouched"
+        );
+        assert!(
+            !path.exists(),
+            "and nothing was persisted — the next launch is unharmed"
+        );
+        // The same symbol on the feed that *does* own it is still fine.
+        assert!(app.add_symbol("tickmill", "WINQ26").is_ok());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A push feed re-answers: an empty block, then a real one on the next
+    /// reconnect. The capability flag rose once and stays, so only the
+    /// generation can say the answer changed.
+    #[test]
+    fn a_new_candle_generation_is_asked_for_again_and_installed() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+            book_capture: false,
+            history_paging: true,
+            traded_volume: true,
+            ohlcv_history: true,
+            ohlcv_generation: 1,
+        });
+        let mut app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(1),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: caps_rx,
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let trades: Vec<_> = (0..50).map(minute_trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.drain_tabs();
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            1,
+            "generation 1 is asked"
+        );
+
+        // A cold terminal: the block it had was empty.
+        evt_tx
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 0);
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            0,
+            "an answered request is not repeated on its own"
+        );
+
+        // The reconnect stores a real block, and says so by moving the count.
+        caps_tx.send_modify(|caps| caps.ohlcv_generation = 2);
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            1,
+            "a new generation is a new answer, and is asked for"
+        );
+
+        evt_tx
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(30),
+                complete: false,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            30,
+            "and the block it carried is installed through the usual path"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "a short answer is still an answer, and ends the wait"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(has_price_axis(&texts), "the pane draws it: {texts:?}");
+    }
+
+    /// A block already held is replaced too: a reconnect can carry a longer or
+    /// corrected one, and holding the first would pin the chart to it.
+    #[test]
+    fn a_new_generation_replaces_a_block_already_held() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(30),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        drain_ohlcv_requests(&mut commands);
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 30);
+
+        // The feed's capabilities are fixed in this fixture, so move the tab's
+        // own record of what it has acted on — the same thing a bumped
+        // generation does when it arrives.
+        app.active_tab_mut().forget_ohlcv_generation_for_test();
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_requests(&mut commands),
+            1,
+            "the tab asks again rather than keeping the block it has"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(90),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            90,
+            "and the longer block replaces the shorter one"
+        );
+    }
+
     /// (b) The point of writing it: the next launch has it. Proven without
     /// restarting, by loading a config through the same path `load` uses.
     #[test]
@@ -7226,7 +7514,7 @@ plot(close)
         let _ = std::fs::remove_file(&path);
         let mut added = crate::symbols_file::AddedSymbols::default();
         added.add("binance", "WINQ26");
-        crate::symbols_file::save(&path, &added);
+        crate::symbols_file::save(&path, &added).expect("the scratch file is writable");
 
         let reloaded = crate::symbols_file::load(&path);
         let mut config = test_config();
@@ -7254,7 +7542,8 @@ plot(close)
         let path = symbols_scratch("removed");
         let _ = std::fs::remove_file(&path);
         app.symbols_path = path.clone();
-        app.add_symbol("binance", "WINQ26");
+        app.add_symbol("binance", "WINQ26")
+            .expect("the catalog takes a symbol that fits");
         app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
         run_frame(&mut app, &ctx);
         let open_tabs = app.tabs.len();
@@ -7308,7 +7597,8 @@ plot(close)
         let (mut app, _cmd_rx) = app_with_history(50);
         app.symbols_path = symbols_scratch("guard");
         let _ = std::fs::remove_file(&app.symbols_path);
-        app.add_symbol("binance", "WINQ26");
+        app.add_symbol("binance", "WINQ26")
+            .expect("the catalog takes a symbol that fits");
         app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
         run_frame(&mut app, &ctx);
 

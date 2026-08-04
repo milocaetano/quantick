@@ -71,8 +71,10 @@ bubble_preset = "live lane pie"
 # Brokers usually serve the *dated* contract rather than these aliases, and B3
 # rolls it every two months (WINQ26, then WINV26). You do not need to edit this
 # file for that: add the current contract from the chart's source picker (the
-# tab strip's `+`, or Ctrl+T). It is remembered in `quantick-symbols.toml`
-# beside this config, and shows up in the symbol selectors from then on.
+# tab strip's `+`, or Ctrl+T). It is remembered in the file named by the
+# QUANTICK_SYMBOLS environment variable, or `quantick-symbols.toml` in the
+# working directory when that is unset, and shows up in the symbol selectors
+# from then on.
 [[feeds]]
 id = "metatrader-b3"
 name = "MetaTrader 5 — B3"
