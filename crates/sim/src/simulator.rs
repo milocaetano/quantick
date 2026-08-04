@@ -499,6 +499,48 @@ impl Simulator {
         }
     }
 
+    /// Keep only the attached protective prices the fill has not strictly
+    /// outrun. A market (or stop) order validates its bracket against the
+    /// mark it was placed at, but fills at a later print — a level the
+    /// tape ran *past* in between would exit on the very next print with a
+    /// lying label (`take_profit` on a loss, `stop_loss` on a profit), so
+    /// it is dropped and reported; the user re-places it from the fill
+    /// they actually got. A level exactly at the fill is kept: it exits at
+    /// zero points, an honest break-even, not a lie.
+    fn admissible_bracket(
+        side: Side,
+        at: Decimal,
+        bracket: Bracket,
+        events: &mut Vec<SimEvent>,
+    ) -> Bracket {
+        let mut kept = bracket;
+        if let Some(level) = kept.stop_loss {
+            let lying = match side {
+                Side::Buy => level > at,
+                Side::Sell => level < at,
+            };
+            if lying {
+                events.push(SimEvent::BracketDropped {
+                    reason: RejectReason::StopLossOnWrongSide(side),
+                });
+                kept.stop_loss = None;
+            }
+        }
+        if let Some(level) = kept.take_profit {
+            let lying = match side {
+                Side::Buy => level < at,
+                Side::Sell => level > at,
+            };
+            if lying {
+                events.push(SimEvent::BracketDropped {
+                    reason: RejectReason::TakeProfitOnWrongSide(side),
+                });
+                kept.take_profit = None;
+            }
+        }
+        kept
+    }
+
     /// Execute an entry order at `at` against the print that caused it,
     /// netting against any opposite position.
     fn fill_entry_at(
@@ -516,6 +558,10 @@ impl Simulator {
             quantity: order.quantity,
             role: FillRole::Entry(order.id),
         }));
+        // Re-check the attached levels against the real fill: a limit's
+        // reference *is* its fill price so nothing changes for it, but a
+        // market/stop order may have been outrun by the tape.
+        let bracket = Self::admissible_bracket(order.side, at, order.bracket, events);
         match self.position.take() {
             None => {
                 self.position = Some(Position {
@@ -523,8 +569,8 @@ impl Simulator {
                     quantity: order.quantity,
                     avg_price: at,
                     opened_ms: print.timestamp_ms,
-                    stop_loss: order.bracket.stop_loss,
-                    take_profit: order.bracket.take_profit,
+                    stop_loss: bracket.stop_loss,
+                    take_profit: bracket.take_profit,
                 });
             }
             Some(mut position) if position.side == order.side => {
@@ -539,11 +585,11 @@ impl Simulator {
                     position.avg_price = weighted / total;
                 }
                 position.quantity = total;
-                if order.bracket.stop_loss.is_some() {
-                    position.stop_loss = order.bracket.stop_loss;
+                if bracket.stop_loss.is_some() {
+                    position.stop_loss = bracket.stop_loss;
                 }
-                if order.bracket.take_profit.is_some() {
-                    position.take_profit = order.bracket.take_profit;
+                if bracket.take_profit.is_some() {
+                    position.take_profit = bracket.take_profit;
                 }
                 self.position = Some(position);
             }
@@ -580,8 +626,8 @@ impl Simulator {
                             quantity: remainder,
                             avg_price: at,
                             opened_ms: print.timestamp_ms,
-                            stop_loss: order.bracket.stop_loss,
-                            take_profit: order.bracket.take_profit,
+                            stop_loss: bracket.stop_loss,
+                            take_profit: bracket.take_profit,
                         });
                     }
                 }
@@ -888,6 +934,54 @@ mod tests {
         assert_eq!(closed.exit_reason, ExitReason::StopLoss);
         assert_eq!(closed.pnl_points, dec(-15), "(95 - 100) × 3");
         assert!(sim.position().is_none());
+    }
+
+    #[test]
+    fn a_target_outrun_by_the_fill_is_dropped_and_reported() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            bracket: Bracket {
+                stop_loss: None,
+                take_profit: Some(dec(101)),
+            },
+        });
+        // The tape outruns the target before the fill: entry lands at 102,
+        // above the 101 target that validated fine against the 100 mark.
+        let events = sim.on_trade(&print(1, 102));
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SimEvent::BracketDropped {
+                    reason: RejectReason::TakeProfitOnWrongSide(Side::Buy)
+                }
+            )),
+            "the drop is reported, never silent"
+        );
+        let position = sim.position().expect("opened without the target");
+        assert_eq!(position.take_profit, None);
+        // The next print must not exit at a "take profit" below the entry.
+        let events = sim.on_trade(&print(2, 102));
+        assert!(fills(&events).is_empty(), "no lying take_profit exit");
+    }
+
+    #[test]
+    fn a_stop_that_survives_the_gap_is_kept() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceStop {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            trigger: dec(105),
+            bracket: Bracket {
+                stop_loss: Some(dec(104)),
+                take_profit: None,
+            },
+        });
+        // Gap to 108: the fill is worse than the trigger, but 104 still
+        // protects a long entered at 108 — kept, not dropped.
+        sim.on_trade(&print(1, 108));
+        assert_eq!(sim.position().expect("long").stop_loss, Some(dec(104)));
     }
 
     #[test]

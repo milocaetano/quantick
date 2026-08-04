@@ -46,8 +46,10 @@ const TOAST_LIFT_PX: f32 = 96.0;
 /// Price precision for snapped drags before any print reveals the
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
-/// Text color inside colored gutter chips (the last-price chip's near-black).
-const CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x14, 0x18, 0x1F);
+/// Text color inside colored gutter chips — the same ink as the last-price
+/// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
+/// duplicated here; keep the two identical).
+const CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
 
 /// The next chart click places this entry (`Limit` or `Stop` only — a
 /// market order needs no price and fires straight from its button).
@@ -104,7 +106,6 @@ pub struct ChartInput<'a> {
     pub primary_pressed: bool,
     pub primary_down: bool,
     pub primary_released: bool,
-    pub escape: bool,
 }
 
 /// The app-side paper-trading host: simulator, order-entry form state,
@@ -397,11 +398,23 @@ impl PaperTrading {
     /// Route pointer input to the simulated lines. Returns true when paper
     /// trading owns the gesture this frame — the chart must not pan and the
     /// drawings must not select under it.
-    pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
-        if input.escape {
-            self.armed = None;
+    /// Cancel the transient chart interaction — an armed placement or a
+    /// grabbed line (dropped without submitting). Called from the app's
+    /// escape stack; returns true when there was something to cancel, so
+    /// the stack spends exactly one layer on it.
+    pub fn cancel_interaction(&mut self) -> bool {
+        if self.armed.take().is_some() {
+            return true;
         }
+        if self.drag != PaperDrag::None {
+            self.drag = PaperDrag::None;
+            self.drag_price = None;
+            return true;
+        }
+        false
+    }
 
+    pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
         // An armed placement takes the next chart click.
         if let Some(armed) = self.armed
             && input.primary_pressed
@@ -968,6 +981,9 @@ impl PaperTrading {
         for event in events {
             match event {
                 SimEvent::Rejected(reason) => self.show_toast(format!("SIM: {reason}")),
+                SimEvent::BracketDropped { reason } => {
+                    self.show_toast(format!("SIM: dropped at the fill - {reason}"));
+                }
                 SimEvent::Filled(fill) => {
                     if matches!(fill.role, quantick_sim::FillRole::Entry(_)) {
                         self.show_toast(format!(
@@ -1174,7 +1190,7 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
                 "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
                 data.unreadable_files, data.problem_rows,
             ))
-            .color(theme::AMBER)
+            .color(theme::WARN)
             .small(),
         );
     }
@@ -1445,7 +1461,10 @@ mod tests {
 
     #[test]
     fn closed_trades_journal_to_one_session_file_and_reload() {
-        let dir = std::env::temp_dir().join("quantick-paper-journal-test");
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-journal-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let mut paper = PaperTrading::new();
         paper.dir.clone_from(&dir);
@@ -1488,7 +1507,8 @@ mod tests {
 
     #[test]
     fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
-        let dir = std::env::temp_dir().join("quantick-paper-reset-test");
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-reset-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut paper = PaperTrading::new();
         paper.dir.clone_from(&dir);
@@ -1563,8 +1583,36 @@ mod tests {
             primary_pressed: pressed,
             primary_down: down,
             primary_released: released,
-            escape: false,
         }
+    }
+
+    /// Escape (routed through the app's escape stack) cancels exactly one
+    /// paper interaction per press, and a cancelled drag submits nothing.
+    #[test]
+    fn escape_cancels_the_armed_placement_then_the_grabbed_line() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.armed = Some(ArmedPlacement {
+            side: Side::Buy,
+            kind: EntryKind::Limit,
+        });
+        assert!(paper.cancel_interaction(), "the armed placement dies first");
+        assert!(paper.armed.is_none());
+        assert!(!paper.cancel_interaction(), "nothing left to cancel");
+
+        paper.stop_offset_text = "10".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // Grab the stop at 90 (y = 300), cancel, then let go: no submit.
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false)));
+        assert!(paper.cancel_interaction(), "the grabbed line is released");
+        assert!(!paper.handle_chart_input(&frame(chart, &scale, 250.0, false, false, true)));
+        assert_eq!(
+            paper.sim.position().expect("still long").stop_loss,
+            Some(Decimal::from(90)),
+            "a cancelled drag never moves the stop"
+        );
     }
 
     #[test]

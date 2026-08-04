@@ -1249,6 +1249,11 @@ impl QuantickApp {
         self.loading.restart(LoadingTask::History);
         self.latest_trade_latency_ms = None;
         self.orderflow.reset_for_symbol(self.symbol.clone());
+        // The simulated position cannot follow the chart onto another
+        // market: flatten at the old symbol's last mark, labeled and
+        // journaled (the paper journal still targets the old symbol — it
+        // only follows `self.symbol` at the top of the next frame).
+        self.paper.on_timeline_reset();
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.ensure_book_capture();
@@ -2359,8 +2364,9 @@ impl QuantickApp {
         // Simulated order lines take the pointer before the drawings: they
         // sit higher in the draw stack, and a grabbed stop is operational,
         // not annotational. The flag mirrors the drawings' gesture
-        // consumption so the chart never pans under a held line.
-        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        // consumption so the chart never pans under a held line. Escape is
+        // deliberately absent here — cancels live in the app's single
+        // escape stack (`handle_drawing_keys`).
         let paper_gesture = self.paper.handle_chart_input(&ChartInput {
             chart: drawing_area,
             scale: drawing_scale.as_ref(),
@@ -2368,7 +2374,6 @@ impl QuantickApp {
             primary_pressed,
             primary_down,
             primary_released,
-            escape,
         });
         let mut drawing_drag_consumes_gesture = false;
         if !paper_gesture && self.toolrail.tool() == Tool::Pointer {
@@ -3534,10 +3539,16 @@ impl QuantickApp {
                 nudge_px: vertical * step,
             }
         });
-        // The escape stack: pending confirmation → draft → selection →
-        // Pointer, one layer per press.
+        // The escape stack: paper interaction → pending confirmation →
+        // draft → selection → Pointer, one layer per press. Paper trading's
+        // armed placement / grabbed line is the most transient layer, so it
+        // dies first — and reading Escape here, in the single stack, is what
+        // keeps one press from firing two cancels at once.
         if keys.escape {
-            if self.drawing_delete_confirm {
+            if self.paper.cancel_interaction() {
+                // An armed order placement or a grabbed order line was
+                // dropped; nothing else loses state on this press.
+            } else if self.drawing_delete_confirm {
                 self.drawing_delete_confirm = false;
             } else if self.drawings.draft().is_some() {
                 self.drawings.cancel_draft();

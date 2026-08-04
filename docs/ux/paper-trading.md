@@ -28,7 +28,10 @@ Non-negotiables, inherited from `CLAUDE.md` and the sim crate's contract:
   a limit fills at its own price when the tape trades at or through it; a
   stop fills at the triggering print (gaps fill honestly worse). No book
   depth, no queue position, no slippage model — and the UI never implies
-  otherwise.
+  otherwise. A protective level attached to a market or stop entry is
+  re-checked against the actual fill: if the tape outran it in between,
+  the level is dropped and a toast says so — never kept to fire with a
+  lying label.
 - **P&L is shown in points** (price units × quantity), never in currency:
   the workspace has no per-instrument tick value table. Labels read
   `+12.5 pts`, not `R$` or `$`. (An instrument table is future work; until

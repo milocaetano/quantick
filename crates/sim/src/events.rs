@@ -206,4 +206,9 @@ pub enum SimEvent {
         stop_loss: Option<Decimal>,
         take_profit: Option<Decimal>,
     },
+    /// An attached protective price was dropped at fill time: the market
+    /// moved past it between the command and the fill, and a level that
+    /// would exit instantly with a lying label is dropped and reported —
+    /// never silently kept.
+    BracketDropped { reason: RejectReason },
 }

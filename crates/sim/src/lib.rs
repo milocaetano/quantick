@@ -28,6 +28,12 @@
 //! is rejected with advice rather than silently filled — a didactic
 //! simulator teaches the difference instead of papering over it.
 //!
+//! A protective level attached to a market or stop entry is re-checked
+//! against the *actual* fill price: validation ran against the mark, but
+//! the fill lands on a later print, and when the tape outran the level in
+//! between it is dropped and reported ([`SimEvent::BracketDropped`]) —
+//! kept, it would exit on the next print wearing a lying label.
+//!
 //! # Processing order within one print
 //!
 //! Deterministic and fixed: (1) position brackets — stop loss, then take

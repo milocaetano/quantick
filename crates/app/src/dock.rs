@@ -1,8 +1,8 @@
 //! The right dock: one tabbed panel for everything a trader keeps open while
 //! trading (`docs/ux/ui-design-model.md` §7).
 //!
-//! Tabs — L2, Bubbles, Session (Indicators docks here when it lands) —
-//! replace the stack of left `SidePanel`s: the chart pays the dock width
+//! Tabs — L2, Bubbles, Session, Trading (Indicators docks here when it
+//! lands) — replace the stack of left `SidePanel`s: the chart pays the dock width
 //! once, not per panel. The 36 px tab strip stays visible when the dock is
 //! collapsed; clicking the active tab collapses, clicking any other switches.
 //! A layer's *toggle* lives in the toolbar; opening a tab never toggles the
