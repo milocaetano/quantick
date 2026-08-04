@@ -128,6 +128,10 @@ pub struct StatusModel {
     /// The hover text behind [`StatusModel::side_note`], where the disclosure
     /// can be as long as it needs to be. `None` reuses the label itself.
     pub side_detail: Option<String>,
+    /// The paper-trading cell: `SIM ±N pts` plus its sign for color, `None`
+    /// while the simulator has never been touched (an idle chart owes no
+    /// account line).
+    pub sim_pnl: Option<(String, std::cmp::Ordering)>,
     /// Whether the viewport follows the live edge.
     pub follows_live: bool,
     /// Whether the price axis is auto-fitting.
@@ -274,6 +278,18 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
         // row with the machinery readouts, and a long label overruns them.
         ui.label(egui::RichText::new(note).small().color(theme::AMBER))
             .on_hover_text(model.side_detail.as_deref().unwrap_or(note.as_str()));
+    }
+    if let Some((text, sign)) = &model.sim_pnl {
+        let color = match sign {
+            std::cmp::Ordering::Greater => theme::BUY,
+            std::cmp::Ordering::Less => theme::SELL,
+            std::cmp::Ordering::Equal => theme::TEXT_MUTED,
+        };
+        ui.label(egui::RichText::new(text).monospace().color(color))
+            .on_hover_text(
+                "paper-trading P&L (realized + open) in points - simulated fills, \
+                 not a broker account",
+            );
     }
     if !model.follows_live {
         ui.label(
@@ -423,6 +439,7 @@ mod tests {
                 live_bars: 61,
                 side_note: replaying.then(|| "side: inferred (tick rule)".to_owned()),
                 side_detail: None,
+                sim_pnl: Some(("SIM +12.5 pts".to_owned(), std::cmp::Ordering::Greater)),
                 follows_live: false,
                 price_auto: false,
                 live_trades: 12_345,
@@ -465,6 +482,7 @@ mod tests {
                 "this venue quotes prices but prints no trades: every candle is built \n                 from one synthetic print per tick"
                     .to_owned(),
             ),
+            sim_pnl: None,
             follows_live: true,
             price_auto: true,
             live_trades: 846,

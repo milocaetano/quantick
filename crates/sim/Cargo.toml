@@ -1,0 +1,10 @@
+[package]
+name = "quantick-sim"
+description = "Deterministic paper-trading simulator: trades in, simulated fills out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+rust_decimal = "1"

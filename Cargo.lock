@@ -2476,6 +2476,7 @@ dependencies = [
  "quantick-orderbook",
  "quantick-pine",
  "quantick-replay",
+ "quantick-sim",
  "rfd",
  "rust_decimal",
  "serde",
@@ -2569,6 +2570,14 @@ dependencies = [
  "quantick-engine",
  "rust_decimal",
  "serde_json",
+]
+
+[[package]]
+name = "quantick-sim"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "rust_decimal",
 ]
 
 [[package]]

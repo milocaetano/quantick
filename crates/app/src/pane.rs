@@ -28,6 +28,7 @@ use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
 use crate::indicators::IndicatorViews;
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
+use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState};
 use crate::style::ChartStyle;
@@ -147,6 +148,57 @@ pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
 /// so.
 const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 
+/// Pixels of drag on a vertical axis that change its span by a factor of `e`.
+///
+/// One number for the price gutter and for every indicator pane's gutter: the
+/// axes stretch at the same rate, so the gesture feels the same wherever the
+/// numbers being dragged happen to live.
+const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
+/// The same, for a scroll over an axis rather than a drag. One wheel notch
+/// reports far more units than a pointer travels in a frame, so each unit has
+/// to count for less — a larger divisor, not a smaller one.
+const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
+
+/// The gesture that scales a vertical axis, wherever its numbers live: drag up
+/// to compress the span, down to expand, scroll to zoom, double-click to hand
+/// the axis back to auto-fit.
+///
+/// One implementation for the price gutter and for every indicator pane's, so
+/// a third band that wants an axis — a volume profile, the tape — registers it
+/// rather than copying it, and no two axes can drift apart in feel. Lives here
+/// with the panes that use it: every axis in the window belongs to one.
+///
+/// `auto` is the range the last frame fitted; `None` means nothing has been
+/// computed to scale yet, and only the reset stays available.
+fn axis_zoom_gesture(
+    ui: &egui::Ui,
+    id: egui::Id,
+    band: egui::Rect,
+    view: &mut PriceView,
+    auto: Option<(f64, f64)>,
+) {
+    let response = ui.interact(band, id, egui::Sense::click_and_drag());
+    if response.double_clicked() {
+        view.reset();
+    }
+    let Some(auto) = auto else {
+        return;
+    };
+    if response.dragged() {
+        // Drag up → compress the span (a taller trace); down → expand it.
+        view.zoom(
+            f64::from(response.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
+            auto,
+        );
+    }
+    if response.hovered() {
+        let scroll = ui.input(|input| input.raw_scroll_delta.y);
+        if scroll.abs() > 0.0 {
+            view.zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
+        }
+    }
+}
+
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
 /// Matches the candles' own feel: dragging the time axis zooms it by
@@ -202,7 +254,8 @@ impl DrawingDrag {
 /// What a pane borrows from the window around it for one frame.
 ///
 /// All of it is single-instance chrome: there is one toolbox, one preset
-/// store, one appearance and one timezone however many panes are on screen.
+/// store, one appearance and one timezone however many panes are on screen —
+/// and, per tab, one simulator, because one market holds one position.
 /// The input pass takes this by `&mut` because placing a drawing re-arms the
 /// tool; the draw pass takes it by `&`, which is what stops a paint from
 /// arming anything.
@@ -213,6 +266,18 @@ pub struct PaneChrome<'a> {
     pub tz: TzOffset,
     /// The symbol to name while the series is still empty.
     pub symbol: &'a str,
+    /// The tab's paper-trading simulator. Both panes *draw* its lines — the
+    /// same instrument at the same prices — while only one *handles* them.
+    pub paper: &'a mut PaperTrading,
+    /// Whether this pane is the one paper trading takes its pointer from.
+    ///
+    /// The simulator holds one grabbed line and one armed placement for the
+    /// whole tab, so exactly one pane may drive them: running both would let
+    /// the second pane inherit a drag the first started and re-clamp it into
+    /// the wrong rectangle. [`crate::tab::Tab::draw_canvas`] sets this on the
+    /// focused pane, which is the honest owner — a press focuses the pane it
+    /// landed in on that same frame, and focus cannot move mid-drag.
+    pub paper_owns_input: bool,
 }
 
 /// One chart pane. See the module docs for what does and does not live here.
@@ -268,6 +333,11 @@ pub struct ChartPane {
     // The chart pane from the last frame (excludes axes and the live lane),
     // for inspector placement and manager centring.
     pub last_chart_area: Option<egui::Rect>,
+    // The raw canvas area the last frame split into chart, panes and gutters.
+    // Kept so a caller that needs a band it does not otherwise see — the pane
+    // axis tests aiming a drag at a pane's own gutter — asks `plot_split` for
+    // it rather than re-deriving the layout and drifting from it.
+    pub last_plot_area: Option<egui::Rect>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
 
@@ -335,6 +405,7 @@ impl ChartPane {
             last_chart_height: 1.0,
             last_chart_top: 0.0,
             last_chart_area: None,
+            last_plot_area: None,
             hover_pos: None,
             drawings: Drawings::default(),
             drawing_hover: None,
@@ -799,6 +870,7 @@ impl ChartPane {
     ) {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
+        self.last_plot_area = Some(area);
         self.last_chart_area = Some(self.plot_areas(area).chart);
         if self.handle_drawing_placement(ui, area, chrome) {
             return;
@@ -844,8 +916,25 @@ impl ChartPane {
         let over_chrome = pointer_position
             .and_then(|position| ui.ctx().layer_id_at(position))
             .is_some_and(|layer| layer != ui.layer_id());
+        // Simulated order lines take the pointer before the drawings: they
+        // sit higher in the draw stack, and a grabbed stop is operational,
+        // not annotational. The flag mirrors the drawings' gesture
+        // consumption so the chart never pans under a held line; the chrome
+        // gate applies at press time only, like everywhere else. Escape is
+        // deliberately absent here — cancels live in the app's single escape
+        // stack (`handle_drawing_keys`). Only the focused pane offers the
+        // gesture, because the whole tab shares one simulator.
+        let paper_gesture = chrome.paper_owns_input
+            && chrome.paper.handle_chart_input(&ChartInput {
+                chart: drawing_area,
+                scale: drawing_scale.as_ref(),
+                pointer: pointer_position,
+                primary_pressed: primary_pressed && !over_chrome,
+                primary_down,
+                primary_released,
+            });
         let mut drawing_drag_consumes_gesture = false;
-        if chrome.toolrail.tool() == Tool::Pointer {
+        if !paper_gesture && chrome.toolrail.tool() == Tool::Pointer {
             // Hover feedback: a resize cursor over a selected anchor, a move
             // cursor over any visible body, and not-allowed over locked
             // geometry (visible objects in the viewport only — bounded work).
@@ -984,7 +1073,12 @@ impl ChartPane {
         let dragging_candles = chart
             .interact_pointer_pos()
             .is_some_and(|press| !in_lane(press));
-        if total > 0 && chart.dragged() && dragging_candles && !drawing_drag_consumes_gesture {
+        if total > 0
+            && chart.dragged()
+            && dragging_candles
+            && !drawing_drag_consumes_gesture
+            && !paper_gesture
+        {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
@@ -1085,27 +1179,29 @@ impl ChartPane {
             }
         }
 
-        // Right price gutter: drag or scroll to zoom the price scale.
-        let price = ui.interact(
-            areas.price_gutter,
+        // Right price gutter: the candles' own axis gesture. It spans their
+        // height only — the bands below belong to the panes.
+        axis_zoom_gesture(
+            ui,
             self.interaction_id("price_nav"),
-            egui::Sense::click_and_drag(),
+            areas.price_gutter,
+            &mut self.price_view,
+            auto,
         );
-        if let Some(auto) = auto {
-            if price.dragged() {
-                // Drag up → compress span (bigger candles); down → expand.
-                self.price_view
-                    .zoom(f64::from(price.drag_delta().y / 150.0).exp(), auto);
-            }
-            if price.double_clicked() {
-                self.price_view.reset();
-            }
-            if price.hovered() {
-                let scroll = ui.input(|i| i.raw_scroll_delta.y);
-                if scroll.abs() > 0.0 {
-                    self.price_view.zoom(f64::from(-scroll / 200.0).exp(), auto);
-                }
-            }
+
+        // The same gesture, once per pane, over the gutter band beside it.
+        // Keyed by slot *and* pane id: slots are allocated per pane, so a
+        // split's two charts can hold the same slot number and a slot-only id
+        // would make one pane's axis answer for the other's.
+        let pane_id = self.id;
+        for (view, gutter) in self.indicators.visible_panes_mut().zip(&areas.pane_gutters) {
+            axis_zoom_gesture(
+                ui,
+                egui::Id::new(("pane_price_nav", pane_id, view.slot)),
+                *gutter,
+                &mut view.scale,
+                view.last_auto,
+            );
         }
     }
 
@@ -1334,21 +1430,36 @@ impl ChartPane {
             );
         }
         // Pane indicators stack in the band carved off above, sharing the
-        // candles' x-mapping so bars and their flow read as one chart.
-        for (view, pane) in self.indicators.visible_panes().zip(&pane_rects) {
-            let pane = egui::Rect::from_min_max(
-                egui::pos2(history_rect.left(), pane.top()),
-                egui::pos2(history_rect.right(), pane.bottom()),
-            );
+        // candles' x-mapping so bars and their flow read as one chart. Each
+        // pane records the range it auto-fitted to, so the gesture over its
+        // axis zooms the very range this frame drew.
+        let grid = grid_color(chrome.style);
+        for ((view, pane), gutter) in self
+            .indicators
+            .visible_panes_mut()
+            .zip(&pane_rects)
+            .zip(&areas.pane_gutters)
+        {
+            let auto = indicator_render::pane_auto_range(view, start, end);
+            view.last_auto = auto;
+            let frame = indicator_render::PaneFrame {
+                rect: egui::Rect::from_min_max(
+                    egui::pos2(history_rect.left(), pane.top()),
+                    egui::pos2(history_rect.right(), pane.bottom()),
+                ),
+                gutter: *gutter,
+                background: canvas_background,
+                grid,
+            };
             indicator_render::draw_pane(
                 painter,
-                pane,
+                &frame,
                 view,
                 &plot_x,
+                auto.map(|auto| view.scale.resolve(auto)),
                 start,
                 end,
                 partial_visible.map(|_| closed.len()),
-                canvas_background,
             );
         }
         if let Some(orderflow) = self.orderflow.as_mut()
@@ -1385,6 +1496,14 @@ impl ChartPane {
         // Drawings sit above market layers and remain anchored to chart space,
         // not the screen, while the viewport moves beneath them.
         self.draw_drawings(painter, chart_rect, right, total, &scale);
+
+        // Simulated orders and the position sit above the drawings: they are
+        // operational state, read against the last price painted next. The
+        // unclipped painter carries their chips into the gutter. Both panes
+        // paint them — one market, one set of price levels, and a level is as
+        // true on the 5-minute context as it is on the flow chart. Prices out
+        // of a pane's visible range simply do not draw.
+        chrome.paper.draw_layer(painter, chart_rect, axis_x, &scale);
 
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
@@ -1514,7 +1633,7 @@ impl ChartPane {
     ) {
         let grid = grid_color(chrome.style);
         let (lo, hi) = scale.range();
-        let font = egui::FontId::monospace(11.0);
+        let font = egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX);
         for tick in crate::chart::nice_ticks(lo, hi, 8) {
             let y = scale.y(tick);
             if y < chart_rect.top() || y > chart_rect.bottom() {
@@ -1528,7 +1647,7 @@ impl ChartPane {
                 egui::Stroke::new(1.0_f32, grid),
             );
             painter.text(
-                egui::pos2(axis_x + 6.0, y),
+                egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
                 egui::Align2::LEFT_CENTER,
                 format!("{tick:.2}"),
                 font.clone(),
@@ -1589,10 +1708,10 @@ impl ChartPane {
         // where a price sits on the axis.
         let galley = painter.layout_no_wrap(
             format!("{price:.2}"),
-            egui::FontId::monospace(11.0),
+            egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
             LAST_PRICE_CHIP_TEXT,
         );
-        let text_pos = egui::pos2(axis_x + 6.0, y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
@@ -1720,10 +1839,13 @@ impl ChartPane {
         let price = scale.price_at(pos.y);
         let galley = painter.layout_no_wrap(
             format!("{price:.2}"),
-            egui::FontId::monospace(11.0),
+            egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
             egui::Color32::WHITE,
         );
-        let text_pos = egui::pos2(axis_x + 6.0, pos.y - galley.size().y / 2.0);
+        let text_pos = egui::pos2(
+            axis_x + chart::AXIS_LABEL_GAP_PX,
+            pos.y - galley.size().y / 2.0,
+        );
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
             galley.size() + egui::vec2(6.0, 2.0),
