@@ -555,6 +555,10 @@ pub struct QuantickApp {
     // Whether the user ever toggled the pin — the auto-pin width rule stops
     // firing once they have expressed a preference.
     inspector_pin_touched: bool,
+    // Set on the unpin frame: the side panel still occupies that frame's
+    // layout, so the floating host waits one frame and places against the
+    // settled chart instead of the pinned-era geometry.
+    inspector_settle_frame: bool,
     // The chart pane from the last frame (excludes axes and the live lane),
     // for inspector placement and manager centring.
     last_chart_area: Option<egui::Rect>,
@@ -694,6 +698,7 @@ impl QuantickApp {
             inspector_last_selection: None,
             inspector_pos: None,
             inspector_pin_touched: false,
+            inspector_settle_frame: false,
             last_chart_area: None,
             drawing_manager_open: false,
             drawing_manager_was_open: false,
@@ -4012,6 +4017,14 @@ impl QuantickApp {
             // The user has expressed a preference: the auto-pin width rule
             // stops firing for the rest of the session.
             self.inspector_pin_touched = true;
+            if !self.inspector_pinned {
+                // Unpinning re-opens the floating window. The pinned host
+                // has been claiming the selection each frame, so treat it
+                // as fresh again — otherwise automatic placement never runs
+                // and the window falls back to the fixed default corner.
+                self.inspector_last_selection = None;
+                self.inspector_settle_frame = true;
+            }
         }
         if actions.delete {
             self.request_delete_selected(now);
@@ -4137,6 +4150,13 @@ impl QuantickApp {
         let Some((index, before)) = self.inspector_selection() else {
             return;
         };
+        if std::mem::take(&mut self.inspector_settle_frame) {
+            // The unpin happened this frame: the side panel still occupies
+            // this frame's layout and the drawing projects against the
+            // pinned-era chart. Wait one frame and place against the
+            // settled geometry.
+            return;
+        }
         let selection_changed = self.inspector_last_selection != Some(index);
         // The auto-pin (§4.2): a fresh selection on a chart too narrow for a
         // floating window opens pinned instead — decided here because this
@@ -6118,6 +6138,25 @@ plot(close)
         click_sized(&mut app, &ctx, narrow, pin.center());
         assert!(!app.inspector_pinned, "the pin toggles the panel off");
         assert!(app.inspector_pin_touched, "the preference is recorded");
+
+        // Unpinning with the same selection must recompute placement — not
+        // fall back to the fixed default corner (the pinned host claimed the
+        // selection each frame, so the floating host has to re-place it).
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        let floating = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("unpinning reopens the floating inspector");
+        assert_ne!(
+            floating.min, DRAWING_INSPECTOR_DEFAULT_POSITION,
+            "the reopened window must be placed, not parked at the default"
+        );
+        // The selected line's anchor bbox (anchor ± select radius).
+        let bbox = egui::Rect::from_center_size(egui::pos2(600.0, 300.0), egui::vec2(24.0, 24.0));
+        assert!(
+            !floating.intersects(bbox),
+            "the reopened window sits beside the selected object: {floating:?}"
+        );
 
         // Deselect, reselect: same width, but the touched pin wins now.
         run_sized_frame(
