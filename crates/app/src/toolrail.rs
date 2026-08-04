@@ -36,6 +36,17 @@ const TOOLBOX_FLYOUT_WIDTH_PX: f32 = 208.0;
 const TOOLBOX_FLYOUT_ROW_HEIGHT_PX: f32 = 26.0;
 /// Chart-facing accent line of the drop preview band.
 const TOOLBOX_DROP_BAND_EDGE_PX: f32 = 3.0;
+/// Flyout paint metrics: popup corner radius, row backdrop radius, the
+/// glyph centre / name / shortcut columns and their font sizes.
+const FLYOUT_CORNER_RADIUS_PX: f32 = 6.0;
+const FLYOUT_ROW_RADIUS_PX: f32 = 4.0;
+const FLYOUT_GLYPH_CENTER_X_PX: f32 = 12.0;
+const FLYOUT_NAME_X_PX: f32 = 26.0;
+const FLYOUT_SHORTCUT_INSET_PX: f32 = 6.0;
+const FLYOUT_GLYPH_PX: f32 = 18.0;
+const FLYOUT_NAME_TEXT_PX: f32 = 12.0;
+const FLYOUT_SHORTCUT_TEXT_PX: f32 = 11.0;
+const FLYOUT_HEADER_TEXT_PX: f32 = 11.0;
 /// Side of the caret triangle on a family slot.
 const CARET_SIDE_PX: f32 = 5.0;
 /// Inset of the caret from the button's trailing-bottom corner.
@@ -194,29 +205,34 @@ enum RailSlot {
 /// Fold the registry into rail slots. Consecutive entries with the same
 /// family id share one slot — consecutive, not sorted, so rail order stays
 /// registry order and adding a tool cannot silently reorder the rail.
-fn tool_slots() -> Vec<RailSlot> {
-    let mut slots: Vec<RailSlot> = Vec::new();
-    for tool in DRAWING_TOOLS {
-        match tool.family() {
-            Some(family) => {
-                if let Some(RailSlot::Family {
-                    family: previous,
-                    members,
-                }) = slots.last_mut()
-                    && previous.id == family.id
-                {
-                    members.push(tool);
-                } else {
-                    slots.push(RailSlot::Family {
-                        family,
-                        members: vec![tool],
-                    });
+/// Folded once per process: the registry is `const`, so rebuilding this
+/// every frame would be per-frame allocation of stable data.
+fn tool_slots() -> &'static [RailSlot] {
+    static SLOTS: std::sync::OnceLock<Vec<RailSlot>> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let mut slots: Vec<RailSlot> = Vec::new();
+        for tool in DRAWING_TOOLS {
+            match tool.family() {
+                Some(family) => {
+                    if let Some(RailSlot::Family {
+                        family: previous,
+                        members,
+                    }) = slots.last_mut()
+                        && previous.id == family.id
+                    {
+                        members.push(tool);
+                    } else {
+                        slots.push(RailSlot::Family {
+                            family,
+                            members: vec![tool],
+                        });
+                    }
                 }
+                None => slots.push(RailSlot::Single(tool)),
             }
-            None => slots.push(RailSlot::Single(tool)),
         }
-    }
-    slots
+        slots
+    })
 }
 
 /// Long-axis length of the full rail (§2.8 of the spec).
@@ -552,7 +568,7 @@ impl ToolRail {
             }
             match stage {
                 RailStage::Full => {
-                    for slot in &slots {
+                    for slot in slots {
                         match slot {
                             RailSlot::Single(tool) => {
                                 self.draw_button(ui, Tool::Drawing(*tool), drawings);
@@ -968,9 +984,9 @@ impl ToolRail {
         let Some((family_id, anchor)) = self.flyout else {
             return;
         };
-        let Some((family, members)) = tool_slots().into_iter().find_map(|slot| match slot {
+        let Some((family, members)) = tool_slots().iter().find_map(|slot| match slot {
             RailSlot::Family { family, members } if family.id == family_id => {
-                Some((family, members))
+                Some((*family, members.as_slice()))
             }
             _ => None,
         }) else {
@@ -1010,15 +1026,15 @@ impl ToolRail {
                 egui::Frame::popup(ui.style())
                     .fill(theme::CONTROL)
                     .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                    .rounding(egui::Rounding::same(6.0))
+                    .rounding(egui::Rounding::same(FLYOUT_CORNER_RADIUS_PX))
                     .show(ui, |ui| {
                         ui.set_width(TOOLBOX_FLYOUT_WIDTH_PX - 2.0 * TOOLBOX_ITEM_GAP_PX);
                         ui.label(
                             egui::RichText::new(family.title)
                                 .color(theme::TEXT_MUTED)
-                                .size(11.0),
+                                .size(FLYOUT_HEADER_TEXT_PX),
                         );
-                        for member in &members {
+                        for member in members {
                             if self.draw_flyout_row(ui, *member) {
                                 self.arm(Tool::Drawing(*member));
                                 self.flyout = None;
@@ -1056,12 +1072,15 @@ impl ToolRail {
             if armed {
                 ui.painter().rect_filled(
                     rect,
-                    egui::Rounding::same(4.0),
+                    egui::Rounding::same(FLYOUT_ROW_RADIUS_PX),
                     theme::active_tint(theme::ACCENT),
                 );
             } else if response.hovered() {
-                ui.painter()
-                    .rect_filled(rect, egui::Rounding::same(4.0), theme::BORDER);
+                ui.painter().rect_filled(
+                    rect,
+                    egui::Rounding::same(FLYOUT_ROW_RADIUS_PX),
+                    theme::BORDER,
+                );
             }
             let glyph_color = if armed {
                 theme::ACCENT
@@ -1069,25 +1088,25 @@ impl ToolRail {
                 theme::TEXT_MUTED
             };
             ui.painter().text(
-                egui::pos2(rect.left() + 12.0, rect.center().y),
+                egui::pos2(rect.left() + FLYOUT_GLYPH_CENTER_X_PX, rect.center().y),
                 egui::Align2::CENTER_CENTER,
                 member.icon(),
-                egui::FontId::proportional(18.0),
+                egui::FontId::proportional(FLYOUT_GLYPH_PX),
                 glyph_color,
             );
             ui.painter().text(
-                egui::pos2(rect.left() + 26.0, rect.center().y),
+                egui::pos2(rect.left() + FLYOUT_NAME_X_PX, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 member.name(),
-                egui::FontId::proportional(12.0),
+                egui::FontId::proportional(FLYOUT_NAME_TEXT_PX),
                 theme::TEXT_PRIMARY,
             );
             if let Some(shortcut) = Tool::Drawing(member).shortcut_label() {
                 ui.painter().text(
-                    egui::pos2(rect.right() - 6.0, rect.center().y),
+                    egui::pos2(rect.right() - FLYOUT_SHORTCUT_INSET_PX, rect.center().y),
                     egui::Align2::RIGHT_CENTER,
                     shortcut,
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(FLYOUT_SHORTCUT_TEXT_PX),
                     theme::TEXT_FAINT,
                 );
             }
@@ -1569,9 +1588,9 @@ mod tests {
         rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
         for slot in tool_slots() {
             let shown = match slot {
-                RailSlot::Single(tool) => tool,
+                RailSlot::Single(tool) => *tool,
                 RailSlot::Family { family, members } => {
-                    rail.family_member(family, &members).unwrap_or(members[0])
+                    rail.family_member(*family, members).unwrap_or(members[0])
                 }
             };
             assert!(

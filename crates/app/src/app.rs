@@ -96,6 +96,12 @@ const INSPECTOR_FALLBACK_HEIGHT_PX: f32 = 280.0;
 const INSPECTOR_AUTO_PIN_CHART_WIDTH_PX: f32 = 1180.0;
 /// Height of the floating inspector's custom title bar.
 const INSPECTOR_TITLE_HEIGHT_PX: f32 = 28.0;
+/// Title-bar paint metrics: leading padding, the title column when the grip
+/// glyph precedes it, and the two font sizes.
+const INSPECTOR_TITLE_PAD_X_PX: f32 = 2.0;
+const INSPECTOR_TITLE_TEXT_X_PX: f32 = 18.0;
+const INSPECTOR_TITLE_GRIP_GLYPH_PX: f32 = 14.0;
+const INSPECTOR_TITLE_TEXT_PX: f32 = 13.0;
 /// Gap between the object manager and the rail edge it opens beside.
 const DRAWING_MANAGER_GAP_PX: f32 = 12.0;
 /// Dragging the price field across the whole visible range takes this many
@@ -3747,19 +3753,26 @@ impl QuantickApp {
             let painter = ui.painter();
             if floating {
                 painter.text(
-                    egui::pos2(bar_rect.left() + 2.0, bar_rect.center().y),
+                    egui::pos2(
+                        bar_rect.left() + INSPECTOR_TITLE_PAD_X_PX,
+                        bar_rect.center().y,
+                    ),
                     egui::Align2::LEFT_CENTER,
                     icons::DOTS_SIX_VERTICAL,
-                    egui::FontId::proportional(14.0),
+                    egui::FontId::proportional(INSPECTOR_TITLE_GRIP_GLYPH_PX),
                     theme::TEXT_FAINT,
                 );
             }
-            let title_x = if floating { 18.0 } else { 2.0 };
+            let title_x = if floating {
+                INSPECTOR_TITLE_TEXT_X_PX
+            } else {
+                INSPECTOR_TITLE_PAD_X_PX
+            };
             painter.text(
                 egui::pos2(bar_rect.left() + title_x, bar_rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 title,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(INSPECTOR_TITLE_TEXT_PX),
                 theme::TEXT_PRIMARY,
             );
         }
@@ -6154,6 +6167,39 @@ plot(close)
             ),
             "the chart must not read a hover through the inspector; got {:?}",
             output.platform_output.cursor_icon
+        );
+    }
+
+    #[test]
+    fn the_object_manager_opens_beside_the_rail() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let objects = app
+            .toolrail
+            .objects_button_rect()
+            .expect("the rail shows the Objects entry");
+        click_chart(&mut app, &ctx, objects.center());
+        assert!(app.drawing_manager_open);
+        run_frame(&mut app, &ctx);
+
+        let manager = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
+            .expect("the manager is open");
+        let chart = app.last_chart_area.expect("chart laid out");
+        // Default dock is Left: the manager opens one gap inboard of the
+        // rail's inner edge, aligned with its leading (top) end.
+        assert!(
+            (manager.left() - (chart.left() + DRAWING_MANAGER_GAP_PX)).abs() < 1.0,
+            "manager left edge: {} vs chart {}",
+            manager.left(),
+            chart.left()
+        );
+        assert!(
+            (manager.top() - (chart.top() + DRAWING_MANAGER_GAP_PX)).abs() < 1.0,
+            "manager top edge: {} vs chart {}",
+            manager.top(),
+            chart.top()
         );
     }
 
