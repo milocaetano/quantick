@@ -186,19 +186,27 @@ pub fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) ->
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
     let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
     let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_count);
+    // The gutter is banded exactly like the body it labels: the candles' price
+    // scale owns the height of the candles and not a pixel more, so a drag
+    // over a pane's numbers can only ever move that pane.
+    let band = |top: f32, bottom: f32| {
+        egui::Rect::from_min_max(egui::pos2(gutter_x, top), egui::pos2(plot.right(), bottom))
+    };
+    let pane_gutters = indicator_panes
+        .iter()
+        .map(|pane| band(pane.top(), pane.bottom()))
+        .collect();
     PlotAreas {
         chart,
         indicator_panes,
+        pane_gutters,
         live_strip: (strip_width > 0.0).then(|| {
             egui::Rect::from_min_max(
                 egui::pos2(split_x, plot.top()),
                 egui::pos2(gutter_x, split_y),
             )
         }),
-        price_gutter: egui::Rect::from_min_max(
-            egui::pos2(gutter_x, plot.top()),
-            egui::pos2(plot.right(), split_y),
-        ),
+        price_gutter: band(plot.top(), chart.bottom()),
         time_strip: egui::Rect::from_min_max(
             egui::pos2(plot.left(), split_y),
             egui::pos2(split_x, plot.bottom()),
@@ -306,6 +314,9 @@ pub struct PlotAreas {
     /// Stacked indicator panes below the candles, top to bottom. Empty when
     /// no pane indicator is visible.
     pub indicator_panes: Vec<egui::Rect>,
+    /// The gutter band beside each pane, in the same order: where that pane's
+    /// value labels are drawn and where its own zoom gesture lives.
+    pub pane_gutters: Vec<egui::Rect>,
     /// Present only while the strip is shown; sits between `chart` and
     /// `price_gutter` and is not an input region.
     pub live_strip: Option<egui::Rect>,
@@ -796,7 +807,13 @@ impl QuantickApp {
         if self.tabs.len() <= 1 || index >= self.tabs.len() {
             return;
         }
-        let closed = self.tabs.remove(index);
+        let mut closed = self.tabs.remove(index);
+        // The tab's session ends here. Everything else it owns can simply be
+        // dropped — the feed thread and the workers stop when their channels
+        // go — but a simulated position is state the user created, and the
+        // paper-trading contract says it ends in a labeled, journaled flatten,
+        // never by vanishing with its window.
+        closed.close();
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -940,6 +957,7 @@ impl QuantickApp {
             live_strip_on: tab.flow_pane.live_strip_visible,
             dock_visible,
             appearance_open: show_style,
+            paper_ready: tab.paper.ready(),
             indicators,
             scripts,
         };
@@ -1024,6 +1042,16 @@ impl QuantickApp {
                     self.indicator_settings_target = target;
                 }
             }
+            // The toolbar acts on the market it is showing: the active tab's
+            // simulator, whose tape the buttons' price came from.
+            ToolbarAction::PaperBuy => self
+                .active_tab_mut()
+                .paper
+                .market(quantick_engine::Side::Buy),
+            ToolbarAction::PaperSell => self
+                .active_tab_mut()
+                .paper
+                .market(quantick_engine::Side::Sell),
         }
     }
 
@@ -1682,6 +1710,10 @@ impl QuantickApp {
             live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
             side_detail: note.and_then(|(_, detail)| detail),
+            // Provenance follows the active tab (§11), and so does the
+            // simulated P&L: the cell speaks for the market on screen, never
+            // for a background tab's position.
+            sim_pnl: self.active_tab().paper.status_cell(),
             follows_live: pane.viewport.follows_live(),
             price_auto: pane.price_view.is_auto(),
             live_trades: self.active_tab().live_trades,
@@ -1847,6 +1879,7 @@ impl QuantickApp {
                             (DockTab::L2, "L2 settings"),
                             (DockTab::Bubbles, "Bubble settings"),
                             (DockTab::Session, "Session"),
+                            (DockTab::Trading, "Paper trading"),
                         ] {
                             if ui.button(label).clicked() {
                                 self.dock.open_tab(tab);
@@ -1968,11 +2001,19 @@ impl QuantickApp {
                 nudge_px: vertical * step,
             }
         });
-        // The escape stack: rail drag → pending confirmation → draft →
-        // selection → Pointer, one layer per press.
+        // The escape stack: rail drag → paper interaction → pending
+        // confirmation → draft → selection → Pointer, one layer per press.
+        // Paper trading's armed placement / grabbed line reads Escape here,
+        // in the single stack — what keeps one press from firing two
+        // cancels at once.
         if keys.escape {
             if self.toolrail.drag_active() {
                 // The rail consumes this Esc to abort its dock drag.
+            } else if self.active_tab_mut().paper.cancel_interaction() {
+                // An armed order placement or a grabbed order line was
+                // dropped; nothing else loses state on this press. Only the
+                // active tab can have one in flight — a background tab has
+                // no pointer over it to arm or grab with.
             } else if self.drawing_delete_confirm {
                 self.drawing_delete_confirm = false;
             } else if self.focused_pane().drawings.draft().is_some() {
@@ -2900,9 +2941,16 @@ impl QuantickApp {
                 replay_view,
                 ..
             } = self;
-            let tab = &mut tabs[*active_tab];
-            let orderflow = tab
-                .flow_pane
+            // The Trading tab speaks for the market on screen: one tab, one
+            // simulator, and the dock reads the active tab's — exactly like
+            // the tape and the session panel beside it.
+            let Tab {
+                flow_pane,
+                replay,
+                paper,
+                ..
+            } = &mut tabs[*active_tab];
+            let orderflow = flow_pane
                 .orderflow
                 .as_mut()
                 .expect("the flow pane is built with a tape and never drops it");
@@ -2911,7 +2959,8 @@ impl QuantickApp {
                 &mut DockEnv {
                     orderflow,
                     replay_view,
-                    replay: tab.replay.as_ref(),
+                    replay: replay.as_ref(),
+                    paper,
                 },
             )
         };
@@ -2982,6 +3031,10 @@ impl QuantickApp {
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
         self.draw_drawing_toast(ctx, now);
+        // Both are window chrome reading the active tab, like the notice card
+        // and the transport strip: they speak for one market at a time.
+        self.active_tab_mut().paper.draw_report_window(ctx);
+        self.active_tab_mut().paper.draw_toast(ctx, now);
         if notice_action == notice_card::NoticeAction::Retry {
             let (tab, config) = self.active_with_config();
             let cleared = tab.restart_feed(config);
@@ -3277,13 +3330,318 @@ mod tests {
         assert_eq!(one.chart.bottom(), pane.top(), "no gap, no overlap");
         assert_eq!(pane.bottom(), none.chart.bottom());
         assert_eq!(one.chart.width(), none.chart.width());
-        // The axes stay where they were: only the candle body shrinks.
-        assert_eq!(one.price_gutter, none.price_gutter);
+        // The axes keep their column; the time strip is untouched.
+        assert_eq!(one.price_gutter.x_range(), none.price_gutter.x_range());
         assert_eq!(one.time_strip, none.time_strip);
 
         let three = plot_split(area, 0.0, 3);
         assert_eq!(three.indicator_panes.len(), 3);
         assert!(three.chart.height() < one.chart.height());
+    }
+
+    /// The gutter is banded like the body it labels. Before it was, the whole
+    /// column belonged to the candles: dragging the numbers beside a CVD pane
+    /// stretched the *price* scale, and the pane — which had no axis at all —
+    /// did not move.
+    #[test]
+    fn every_pane_owns_the_gutter_band_beside_it() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let none = plot_split(area, 0.0, 0);
+        assert!(none.pane_gutters.is_empty());
+        assert_eq!(
+            none.price_gutter.bottom(),
+            none.chart.bottom(),
+            "with no pane the gutter is the candles', top to bottom"
+        );
+
+        let two = plot_split(area, 0.0, 2);
+        assert_eq!(two.pane_gutters.len(), two.indicator_panes.len());
+        assert_eq!(
+            two.price_gutter.bottom(),
+            two.chart.bottom(),
+            "the candles' scale stops where the candles do"
+        );
+        for (pane, gutter) in two.indicator_panes.iter().zip(&two.pane_gutters) {
+            assert_eq!(gutter.y_range(), pane.y_range(), "band beside its pane");
+            assert_eq!(gutter.x_range(), two.price_gutter.x_range(), "one column");
+        }
+        // No pixel answers to two scales: the bands tile the gutter exactly.
+        assert_eq!(two.price_gutter.bottom(), two.pane_gutters[0].top());
+        assert_eq!(two.pane_gutters[0].bottom(), two.pane_gutters[1].top());
+
+        // The strip pays out of the candles, not the gutter: the pane bands
+        // keep the same column when the tape is shown.
+        let with_strip = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 2);
+        assert_eq!(with_strip.pane_gutters, two.pane_gutters);
+    }
+
+    /// A pane indicator with `values` as its single plot, delivered the way
+    /// the worker delivers one.
+    fn add_pane_indicator(app: &mut QuantickApp, title: &str, values: Vec<f64>) -> SlotId {
+        let slot = app.active_tab_mut().flow_pane.indicators.allocate_slot();
+        rebuild_pane_indicator(app, slot, title, values);
+        slot
+    }
+
+    /// The same indicator, recomputed — an edited input, a hot reload, older
+    /// trades re-cutting the series.
+    fn rebuild_pane_indicator(app: &mut QuantickApp, slot: SlotId, title: &str, values: Vec<f64>) {
+        app.active_tab_mut()
+            .flow_pane
+            .indicators
+            .apply(IndicatorEvent::Rebuilt {
+                slot,
+                descriptor: quantick_indicators::IndicatorDescriptor {
+                    title: title.to_owned(),
+                    short_title: None,
+                    overlay: false,
+                    plots: vec![quantick_indicators::PlotSpec {
+                        id: quantick_indicators::PlotId::new(0),
+                        title: title.to_owned(),
+                        style: quantick_indicators::PlotStyle::Line,
+                        base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
+                        width: 1.0,
+                        offset: 0,
+                        marker: None,
+                    }],
+                    inputs: Vec::new(),
+                    fills: Vec::new(),
+                },
+                columns: vec![values],
+                inputs: Vec::new(),
+                stale: None,
+            });
+    }
+
+    /// The `(lo, hi)` a pane is drawing with right now: its manual range if the
+    /// user has taken control of the axis, else the fit the last frame made.
+    fn pane_range(app: &QuantickApp, slot: SlotId) -> (f64, f64) {
+        let view = app
+            .active_tab()
+            .flow_pane
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == slot)
+            .expect("the pane is still there");
+        let auto = view.last_auto.expect("a frame fitted this pane");
+        view.scale.resolve(auto)
+    }
+
+    /// Whether a pane is still auto-fitting its values.
+    fn pane_is_auto(app: &QuantickApp, slot: SlotId) -> bool {
+        app.active_tab()
+            .flow_pane
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == slot)
+            .expect("the pane is still there")
+            .scale
+            .is_auto()
+    }
+
+    /// The gutter band beside pane `index`, computed the way the frame does.
+    fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
+        let pane = &app.active_tab().flow_pane;
+        let areas = plot_split(
+            pane.last_plot_area.expect("a frame has been drawn"),
+            pane.live_strip_width(),
+            pane.indicators.visible_panes().count(),
+        );
+        areas.pane_gutters[index]
+    }
+
+    /// The headline of this feature: a pane's numbers are its own axis. A drag
+    /// there stretches that pane and nothing else — before the gutter was
+    /// banded, the same pixels moved the *candles'* price scale, and the pane
+    /// had no axis to grab at all.
+    #[test]
+    fn dragging_a_pane_axis_zooms_that_pane_and_nothing_else() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        let other = add_pane_indicator(&mut app, "delta", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx); // the frame that fits each pane and records it
+
+        let gutter = pane_gutter(&app, 0);
+        let (lo, hi) = pane_range(&app, flow);
+        let untouched = pane_range(&app, other);
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 60.0),
+        );
+
+        let (zoomed_lo, zoomed_hi) = pane_range(&app, flow);
+        assert!(
+            zoomed_hi - zoomed_lo < hi - lo,
+            "drag up compresses the span: {lo}..{hi} -> {zoomed_lo}..{zoomed_hi}"
+        );
+        assert!(
+            (f64::midpoint(zoomed_lo, zoomed_hi) - f64::midpoint(lo, hi)).abs() < 1e-6,
+            "and stretches around the middle rather than sliding the pane"
+        );
+        assert_eq!(pane_range(&app, other), untouched, "one pane, one scale");
+        assert!(
+            app.active_tab().flow_pane.price_view.is_auto(),
+            "the candles never felt it: their gutter ends where they do"
+        );
+    }
+
+    /// The other half of the isolation: the candles' own gutter must not reach
+    /// down into a pane. Both gestures exist on the same column of pixels, and
+    /// only the band decides which scale they mean.
+    #[test]
+    fn dragging_the_price_gutter_leaves_every_pane_alone() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let untouched = pane_range(&app, flow);
+        let gutter = {
+            let pane = &app.active_tab().flow_pane;
+            plot_split(
+                pane.last_plot_area.expect("a frame has been drawn"),
+                pane.live_strip_width(),
+                1,
+            )
+            .price_gutter
+        };
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 60.0),
+        );
+
+        assert!(
+            !app.active_tab().flow_pane.price_view.is_auto(),
+            "the candles took the drag"
+        );
+        assert_eq!(
+            pane_range(&app, flow),
+            untouched,
+            "and the pane never felt it"
+        );
+        assert!(pane_is_auto(&app, flow));
+    }
+
+    /// Scroll is the same gesture with a wheel: it zooms the pane under the
+    /// pointer, and the candles keep auto-fitting.
+    #[test]
+    fn scrolling_a_pane_axis_zooms_that_pane() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let (lo, hi) = pane_range(&app, flow);
+        let over = pane_gutter(&app, 0).center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(over),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 120.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+
+        let (zoomed_lo, zoomed_hi) = pane_range(&app, flow);
+        assert!(
+            zoomed_hi - zoomed_lo < hi - lo,
+            "scrolling up zooms in: {lo}..{hi} -> {zoomed_lo}..{zoomed_hi}"
+        );
+        assert!(
+            app.active_tab().flow_pane.price_view.is_auto(),
+            "the candles kept auto-fitting"
+        );
+    }
+
+    /// Manual control is manual: the range holds while values keep arriving,
+    /// and a double-click on the axis hands the pane back to auto-fit.
+    #[test]
+    fn a_zoomed_pane_holds_its_range_until_the_axis_is_double_clicked() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let gutter = pane_gutter(&app, 0);
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 60.0),
+        );
+        let held = pane_range(&app, flow);
+        assert!(!pane_is_auto(&app, flow), "the drag took manual control");
+
+        // The indicator recomputes ten times bigger: auto-fit would jump, a
+        // range the user set does not.
+        rebuild_pane_indicator(
+            &mut app,
+            flow,
+            "cvd",
+            (0..200).map(|row| f64::from(row) * 10.0).collect(),
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(pane_range(&app, flow), held, "the range the user set holds");
+
+        click_chart(&mut app, &ctx, gutter.center());
+        click_chart(&mut app, &ctx, gutter.center());
+        run_frame(&mut app, &ctx);
+        assert!(
+            pane_is_auto(&app, flow),
+            "double-click returns the pane to auto-fit"
+        );
+        let refitted = pane_range(&app, flow);
+        assert!(
+            refitted.1 > held.1,
+            "and auto-fit sees the values that arrived meanwhile: {refitted:?} vs {held:?}"
+        );
+    }
+
+    /// The pane reads as a chart: its own round numbers, in the gutter beside
+    /// it. The candles' axis never labels those pixels, and the pane's labels
+    /// never appear over the candles.
+    #[test]
+    fn a_pane_prints_its_own_value_labels_in_the_gutter() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        // Values well away from the test's 95..115 price range, so a label can
+        // only have come from the pane's own axis.
+        add_pane_indicator(
+            &mut app,
+            "cvd",
+            (0..200).map(|row| f64::from(row) - 200.0).collect(),
+        );
+        let output = run_frame(&mut app, &ctx);
+        let texts = painted_text(&output);
+
+        let pane_labels: Vec<&String> = texts
+            .iter()
+            .filter(|text| {
+                text.parse::<f64>()
+                    .is_ok_and(|value| (-200.0..=-1.0).contains(&value))
+            })
+            .collect();
+        assert!(
+            pane_labels.len() >= 3,
+            "the pane's own round numbers are drawn, and enough of them to \
+             read as a scale: {texts:?}"
+        );
+        assert!(
+            has_price_axis(&texts),
+            "and the candles keep theirs: {texts:?}"
+        );
     }
 
     /// Each pane zooms from the strip under it, and the split is exactly the
@@ -3903,6 +4261,79 @@ plot(close)
                 quantick_engine::Side::Sell
             },
         }
+    }
+
+    /// Paper trading through the app's own event path: backfill only seeds
+    /// (never fills), the toolbar buy queues, the next live print fills, and
+    /// the status-bar cell reports the simulated position.
+    #[test]
+    fn a_simulated_buy_fills_from_the_next_live_print_only() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert!(app.active_tab().paper.ready(), "backfill seeds the mark");
+        assert!(
+            app.active_tab().paper.status_cell().is_none(),
+            "an untouched simulator owes no status line"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        assert!(
+            app.active_tab().paper.status_cell().is_some(),
+            "a queued market order is visible state"
+        );
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        let (text, _) = app
+            .active_tab()
+            .paper
+            .status_cell()
+            .expect("the fill opened a position");
+        assert!(
+            text.starts_with("SIM"),
+            "the cell is labeled simulated: {text}"
+        );
+        assert!(
+            app.status_model().sim_pnl.is_some(),
+            "the status bar model carries the cell"
+        );
+    }
+
+    /// A source reset (replay seek, feed switch) flattens the simulated
+    /// position at the last mark and journals the round trip — the same
+    /// honesty contract the drawings' clear follows.
+    #[test]
+    fn a_source_reset_flattens_the_simulated_position_and_journals_it() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-app-reset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+        // No `set_symbol` here: the tab's own drain syncs the journal to its
+        // symbol before reading a single event, which is what makes the
+        // folder assertion below a proof of that wiring too.
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+
+        evt_tx.try_send(FeedEvent::Reset).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert!(
+            app.active_tab().paper.status_cell().is_some(),
+            "the realized history keeps the cell alive"
+        );
+        let files: Vec<_> = std::fs::read_dir(dir.join("TESTUSDT"))
+            .expect("the flatten was journaled under the symbol's folder")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 1, "one session, one history file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -6756,6 +7187,48 @@ plot(close)
         );
     }
 
+    /// A divider drag belongs to the tab it started on. egui keeps drag state
+    /// per interaction id, so one id shared across tabs would hand the
+    /// in-flight gesture to the next tab's divider the moment `Ctrl+Tab`
+    /// fires under a held button — the tab-level case of the rule
+    /// [`crate::pane`] states for panes.
+    #[test]
+    fn a_divider_drag_does_not_follow_a_tab_switch() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        // A second market, split as well, so both tabs register a divider.
+        app.adopt_tab("binance".to_owned(), "ETHUSDT".to_owned(), stub_feed().0);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let untouched = app.tabs[1].split_fraction;
+
+        // Back to the first tab, and press its divider.
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        let grab = app
+            .active_tab()
+            .canvas_divider_rect()
+            .expect("the first tab's divider was registered")
+            .center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+        );
+
+        // Ctrl+Tab mid-gesture, with the button still down.
+        app.cycle_tab(1);
+        let moved = egui::pos2(grab.x + 120.0, grab.y);
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(moved)]);
+        run_frame_with_events(&mut app, &ctx, vec![pointer_button(moved, false)]);
+
+        assert_eq!(
+            app.tabs[1].split_fraction, untouched,
+            "the second tab's divider must not inherit the first tab's drag"
+        );
+    }
+
     /// The keyboard's drawing grammar follows focus as well: Delete removes
     /// the selection on the pane the user is in, never its opposite number on
     /// the chart beside it.
@@ -8510,6 +8983,49 @@ plot(close)
         app.apply_tab_action(TabAction::Close(0));
         assert_eq!(app.tabs.len(), 1, "the last tab is not closable");
         run_frame(&mut app, &ctx);
+    }
+
+    /// Closing a tab ends that market's paper-trading session, and the
+    /// simulator's honesty contract says a session ends in a labeled,
+    /// journaled flatten — never by vanishing with its window. Everything
+    /// else a tab owns can simply be dropped; an open position is state the
+    /// user created, so it is the one thing `Tab::close` has to settle.
+    #[test]
+    fn closing_a_tab_flattens_and_journals_its_simulated_position() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-tab-close-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+
+        // A filled position on the second tab: backfill seeds the mark, the
+        // toolbar queues the order, the next live print fills it.
+        ends.events
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert!(
+            app.active_tab().paper.status_cell().is_some(),
+            "this proof needs an open simulated position to lose"
+        );
+
+        app.apply_tab_action(TabAction::Close(1));
+
+        assert_eq!(app.tabs.len(), 1, "the tab is gone");
+        let files: Vec<_> = std::fs::read_dir(dir.join("ETHUSDT"))
+            .expect("the flatten was journaled under the closed tab's symbol")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 1, "one session, one history file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The workers a closed tab owned end with it: their run loops exit when

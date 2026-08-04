@@ -27,6 +27,7 @@ use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneSide,
     clamp_pane_fraction, split_canvas, split_time_pane,
 };
+use crate::paper_trading::PaperTrading;
 use crate::state::{BarKind, BarSpec};
 use crate::style::ChartStyle;
 use crate::theme;
@@ -147,6 +148,16 @@ pub struct Tab {
     pub latest_trade_ms: Option<i64>,
     pub live_trades: u64,
 
+    /// Paper trading for this market: the deterministic simulator plus its
+    /// journal, chart layer, dock tab and report.
+    ///
+    /// Per tab, because a simulated position belongs to a tape. Two tabs on
+    /// two markets hold two independent positions, and a position can never
+    /// be marked against prints it was not opened against — the invariant
+    /// [`PaperTrading::on_timeline_reset`] protects when one tab switches
+    /// symbol is the same one tab-scoping protects between tabs.
+    pub paper: PaperTrading,
+
     /// quantick's own chart, and the only one in the default layout.
     pub flow_pane: ChartPane,
     /// The context chart beside it (§11), built the first time the split is
@@ -252,6 +263,7 @@ impl Tab {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
+            paper: PaperTrading::new(),
             flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
             chip_label: String::new(),
             ohlcv_base: None,
@@ -931,6 +943,11 @@ impl Tab {
         self.latest_trade_latency_ms = None;
         let symbol = self.symbol.clone();
         self.tape_mut().reset_for_symbol(symbol);
+        // The simulated position cannot follow this tab onto another market:
+        // flatten at the old symbol's last mark, labeled and journaled (the
+        // journal still targets the old symbol — it only follows `self.symbol`
+        // at the top of the next drain).
+        self.paper.on_timeline_reset();
 
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.refresh_chip_label(config);
@@ -1079,6 +1096,12 @@ impl Tab {
 
     /// Clock-injected drain used to prove that one UI cycle is one observation.
     pub fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
+        // The journal follows this tab's symbol; synced before the drain so a
+        // new feed's first trades are never attributed to the old symbol.
+        // Every tab drains every frame, so every journal tracks its own market
+        // whether or not that tab is the one on screen.
+        let Self { paper, symbol, .. } = self;
+        paper.set_symbol(symbol);
         let mut cleared = false;
         let mut live = false;
         let mut received_at_ms = None;
@@ -1087,6 +1110,11 @@ impl Tab {
                 Ok(FeedEvent::Backfilled(trades)) => {
                     self.loading.end(LoadingTask::History);
                     self.history_trades += trades.len();
+                    // History only seeds the simulator's mark — filling
+                    // against the past would be look-ahead.
+                    if let Some(last) = trades.last() {
+                        self.paper.seed(last);
+                    }
                     // One tape, every pane: the split multiplies views of the
                     // market, never the stream behind them.
                     for pane in self.panes_mut() {
@@ -1175,6 +1203,11 @@ impl Tab {
             metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
         self.latest_trade_ms = Some(trade.timestamp_ms);
         self.live_trades += 1;
+        // The simulator taps the same per-trade point the bar engine does, so
+        // paper trading works identically on a live feed and a replay — and on
+        // a tab the user is not looking at, whose position keeps marking
+        // against its own tape.
+        self.paper.on_trade(trade);
         for pane in self.panes_mut() {
             pane.ingest_live_trade(trade);
         }
@@ -1204,7 +1237,20 @@ impl Tab {
         self.loading.restart(LoadingTask::History);
         let symbol = self.symbol.clone();
         self.tape_mut().reset_for_symbol(symbol);
+        // The simulator flattens at its last mark and says so — a position
+        // cannot honestly survive into a rebuilt timeline.
+        self.paper.on_timeline_reset();
         cleared
+    }
+
+    /// Everything this tab must settle before it is dropped.
+    ///
+    /// Feeds and workers need nothing: their loops end when the channels go
+    /// with the tab. The simulator does — an open position is state the user
+    /// created, and the honesty contract says it ends in an explicit, labeled,
+    /// journaled flatten, never by silently vanishing with its window.
+    pub fn close(&mut self) {
+        self.paper.on_timeline_reset();
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
@@ -1445,10 +1491,14 @@ impl Tab {
         });
 
         {
+            // Read before the panes borrow `self`: which side owns the
+            // simulator's pointer this frame.
+            let focus = self.focused_side();
             let Self {
                 flow_pane,
                 time_pane,
                 symbol,
+                paper,
                 ..
             } = self;
             let mut chrome = PaneChrome {
@@ -1457,16 +1507,24 @@ impl Tab {
                 style: chrome.style,
                 tz: chrome.tz,
                 symbol,
+                paper,
+                paper_owns_input: false,
             };
             // Time pane first, then flow. Both take the same two steps in the
             // same order — which is what keeps the split honest: the second
             // pane cannot drift from the first, and one pane is this same
             // loop with one entry in it.
-            let time = time_chart.and_then(|chart| Some((time_pane.as_mut()?, chart)));
-            for (pane, rect) in time
-                .into_iter()
-                .chain(std::iter::once((&mut *flow_pane, flow_area)))
-            {
+            let time =
+                time_chart.and_then(|chart| Some((time_pane.as_mut()?, chart, PaneSide::Time)));
+            for (pane, rect, side) in time.into_iter().chain(std::iter::once((
+                &mut *flow_pane,
+                flow_area,
+                PaneSide::Flow,
+            ))) {
+                // One simulator per tab, so one pane drives it: the focused
+                // one. Unsplit that is always the flow pane, which is exactly
+                // the behaviour before the split existed.
+                chrome.paper_owns_input = side == focus;
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &chrome);
             }
@@ -1530,9 +1588,13 @@ impl Tab {
         }
         ui.painter()
             .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+        // Namespaced by tab for the same reason a pane namespaces its own ids
+        // (see [`crate::pane`]): egui keeps drag state per id, so one shared
+        // id would let a drag started on this tab's divider carry on into the
+        // next tab's the moment Ctrl+Tab switches under a held button.
         let handle = ui.interact(
             divider.expand2(egui::vec2(CANVAS_DIVIDER_HANDLE_PX, 0.0)),
-            egui::Id::new("canvas_divider"),
+            egui::Id::new(("canvas_divider", self.id)),
             egui::Sense::drag(),
         );
         if handle.hovered() || handle.dragged() {
