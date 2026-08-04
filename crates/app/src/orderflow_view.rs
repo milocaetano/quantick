@@ -240,8 +240,9 @@ impl OrderflowView {
     }
 
     /// Show or hide the gap boundaries — the same field as the dock's "L2 gap"
-    /// checkbox. Hiding them hides a *statement about missing data*, so it is
-    /// the one layer whose menu entry says what silence then means.
+    /// checkbox. This one hides a *statement about missing data* rather than
+    /// data itself, which is why the layer menu's entry spells out that an
+    /// unrecorded stretch will then look like a recorded one.
     pub fn set_gaps_visible(&mut self, visible: bool) {
         if self.config.show_gaps == visible {
             return;

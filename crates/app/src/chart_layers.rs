@@ -68,7 +68,9 @@ pub(crate) enum ChartLayer {
 }
 
 impl ChartLayer {
-    /// Every layer, in menu order.
+    /// Every layer, in menu order. A variant missing from here has no switch
+    /// and cannot be turned off at all, so a new one belongs in this list and
+    /// in the menu test that counts it.
     pub(crate) const ALL: [Self; 10] = [
         Self::Heatmap,
         Self::Bubbles,
@@ -135,7 +137,14 @@ impl ChartLayer {
                 "the dashed line where the bar slots end and the tape begins, and the line on the \
                  live edge itself. Saved with the order-flow preset, not with the other layers"
             }
-            Self::DepthGaps => "dashed boundaries around intervals with no depth coverage",
+            // Data honesty: this is the one switch that hides a statement
+            // about missing data rather than data itself, so the entry says
+            // what its absence will mean.
+            Self::DepthGaps => {
+                "dashed boundaries around intervals with no depth coverage. Off, a stretch the \
+                 recorder never saw looks exactly like one it did. Drawn over the heatmap, so \
+                 they only show while it is on"
+            }
             Self::Grid => "price and time gridlines behind the candles",
             Self::LastPrice => "the dashed line at the last traded price, and its chip on the axis",
             Self::BackfillDivider => "where backfilled history ends and bars built live begin",

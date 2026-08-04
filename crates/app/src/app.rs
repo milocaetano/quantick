@@ -1469,8 +1469,10 @@ impl QuantickApp {
     /// A layer the source cannot produce is *unavailable*, not hidden: the menu
     /// shows the entry disabled with the reason, the same wording the toolbar
     /// uses, rather than offering a switch that would do nothing.
-    fn layer_blocked(&self, layer: ChartLayer) -> Option<&'static str> {
-        let capabilities = self.capabilities();
+    ///
+    /// `capabilities` is passed in rather than read here so one menu frame
+    /// resolves the running feed once instead of once per entry.
+    fn layer_blocked(layer: ChartLayer, capabilities: FeedCapabilities) -> Option<&'static str> {
         match layer {
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
@@ -1541,9 +1543,11 @@ impl QuantickApp {
         );
     }
 
-    /// Write the layer visibility out. Called from the menu: one click is one
-    /// event, so this needs no debounce (unlike indicator inputs, which a drag
-    /// can change at frame rate).
+    /// Write the layer visibility out. Only ever reached from
+    /// [`Self::maintain_chart_layers`], which has already established that the
+    /// canvas differs from the file — a switch is a click, so there is nothing
+    /// here to debounce (unlike indicator inputs, which a drag changes at frame
+    /// rate).
     fn save_chart_layers(&self) {
         chart_layers::save(&self.chart_layers_path, &self.persisted_layer_states());
     }
@@ -1562,8 +1566,9 @@ impl QuantickApp {
         );
         #[cfg(test)]
         self.layer_menu_rects.clear();
+        let capabilities = self.capabilities();
         for layer in ChartLayer::ALL {
-            let blocked = self.layer_blocked(layer);
+            let blocked = Self::layer_blocked(layer, capabilities);
             let mut visible = self.layer_visible(layer);
             let response = ui
                 .add_enabled(
@@ -1580,28 +1585,24 @@ impl QuantickApp {
             }
         }
 
+        // Borrowed straight from the view list — no per-frame copy of the
+        // labels — and the one mutation waits until the loop lets go.
         let mut toggled = None;
-        let entries: Vec<(SlotId, String, bool)> = self
-            .indicators
-            .all()
-            .iter()
-            .map(|view| (view.slot, view.label().to_owned(), view.hidden))
-            .collect();
-        if !entries.is_empty() {
+        if !self.indicators.all().is_empty() {
             ui.separator();
             ui.label(
                 egui::RichText::new("indicators")
                     .size(11.0)
                     .color(theme::TEXT_MUTED),
             );
-            for (slot, label, hidden) in entries {
-                let mut visible = !hidden;
+            for view in self.indicators.all() {
+                let mut visible = !view.hidden;
                 if ui
-                    .checkbox(&mut visible, label)
+                    .checkbox(&mut visible, view.label())
                     .on_hover_text("hide/show without removing (no recompute)")
                     .changed()
                 {
-                    toggled = Some(slot);
+                    toggled = Some(view.slot);
                 }
             }
         }
@@ -2295,12 +2296,6 @@ impl QuantickApp {
             self.drawing_press_started_empty = false;
             return false;
         };
-        // Picking up a drawing tool while the layer is hidden brings it back:
-        // placing an object that cannot appear would read as a broken tool, and
-        // the user just said they want to draw.
-        if !self.layer_visible(ChartLayer::Drawings) {
-            self.set_layer_visible(ChartLayer::Drawings, true);
-        }
         let areas = plot_split(
             area,
             self.live_strip_width(),
@@ -2528,7 +2523,24 @@ impl QuantickApp {
     /// The live lane is a pane of its own and answers to none of it: a gesture
     /// that starts inside the tape moves nothing, and scrolling there zooms the
     /// tape's own window instead of the candles.
+    /// Arming a tool brings back the layer it draws on.
+    ///
+    /// A crosshair that draws no cross, or a line tool that places invisible
+    /// objects, reads as a broken tool rather than as a hidden layer — and
+    /// reaching for the tool is the user saying they want to see it.
+    fn unhide_layer_for_armed_tool(&mut self) {
+        let layer = match self.toolrail.tool() {
+            Tool::Crosshair => ChartLayer::Crosshair,
+            Tool::Drawing(_) => ChartLayer::Drawings,
+            Tool::Pointer => return,
+        };
+        if !self.layer_visible(layer) {
+            self.set_layer_visible(layer, true);
+        }
+    }
+
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
+        self.unhide_layer_for_armed_tool();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_chart_area = Some(
@@ -4904,14 +4916,15 @@ mod tests {
         // A capability the source lacks is disabled, not silently absent: a
         // recording has no book, and the entry says so instead of offering a
         // switch that would do nothing.
-        assert!(app.layer_blocked(ChartLayer::Heatmap).is_none());
+        assert!(QuantickApp::layer_blocked(ChartLayer::Heatmap, app.capabilities()).is_none());
         let (mut quote_only, _events, _commands, _book) = test_app_without_depth();
+        let quotes_only = quote_only.capabilities();
         assert!(
-            quote_only.layer_blocked(ChartLayer::Heatmap).is_some(),
+            QuantickApp::layer_blocked(ChartLayer::Heatmap, quotes_only).is_some(),
             "a source with no book cannot promise a heatmap"
         );
-        assert!(quote_only.layer_blocked(ChartLayer::Bubbles).is_some());
-        assert!(quote_only.layer_blocked(ChartLayer::Grid).is_none());
+        assert!(QuantickApp::layer_blocked(ChartLayer::Bubbles, quotes_only).is_some());
+        assert!(QuantickApp::layer_blocked(ChartLayer::Grid, quotes_only).is_none());
         menu_frame(&mut quote_only, Vec::new());
         assert_eq!(
             quote_only.layer_menu_rects.len(),
@@ -4921,34 +4934,114 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
-    /// Hidden objects answer no pointer, and reaching for a drawing tool brings
-    /// the layer back — placing an object that cannot appear reads as a broken
-    /// tool, not as a hidden layer.
+    /// A switched-off layer really stops painting.
+    ///
+    /// The switches above only prove the *state* moved; this one draws a real
+    /// chart twice and counts the shapes, so a gate someone forgets to place
+    /// (or later deletes) shows up as a menu entry that changes nothing.
     #[test]
-    fn picking_up_a_drawing_tool_unhides_the_drawings() {
+    fn a_hidden_layer_paints_nothing() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        let (mut app, _commands) = app_with_history(120);
+        // The crosshair is a mode: it paints under a pointer, with its own tool
+        // armed. Both are set here so the layer has something to switch off.
+        app.toolrail.arm(Tool::Crosshair);
+        app.hover_pos = Some(screen.center());
+
+        let shapes = |app: &mut QuantickApp| -> usize {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let area = ui.available_rect_before_wrap();
+                        app.hover_pos = Some(area.center());
+                        app.draw_chart(ui.painter(), area);
+                    });
+                },
+            );
+            output.shapes.len()
+        };
+
+        let all_on = shapes(&mut app);
+        for layer in [
+            ChartLayer::LastPrice,
+            ChartLayer::BackfillDivider,
+            ChartLayer::Crosshair,
+        ] {
+            app.set_layer_visible(layer, false);
+            let off = shapes(&mut app);
+            assert!(
+                off < all_on,
+                "{} kept painting after it was switched off ({off} shapes vs {all_on})",
+                layer.id()
+            );
+            app.set_layer_visible(layer, true);
+            assert_eq!(
+                shapes(&mut app),
+                all_on,
+                "{} did not come back exactly as it was",
+                layer.id()
+            );
+        }
+    }
+
+    /// Hidden objects answer no pointer, and reaching for a tool brings its own
+    /// layer back — a crosshair that draws no cross, or a line tool that places
+    /// invisible objects, reads as a broken tool rather than a hidden layer.
+    #[test]
+    fn arming_a_tool_unhides_the_layer_it_draws_on() {
         let dir = std::env::temp_dir().join(format!("quantick-app-tool-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("chart-layers.toml");
         let _ = std::fs::remove_file(&path);
 
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let (mut app, _events, _commands, _book) = test_app();
         app.chart_layers_path = path.clone();
-        app.set_layer_visible(ChartLayer::Drawings, false);
-        assert!(!app.layer_visible(ChartLayer::Drawings));
 
-        let ctx = egui::Context::default();
-        let tool = drawings::DRAWING_TOOLS[0];
-        app.toolrail.arm(Tool::Drawing(tool));
-        let _ = ctx.run(Default::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
-                app.handle_drawing_placement(ui, area);
-            });
-        });
-        assert!(
-            app.layer_visible(ChartLayer::Drawings),
-            "a drawing tool needs a layer the user can see"
-        );
+        let navigate = |app: &mut QuantickApp| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let area = ui.available_rect_before_wrap();
+                        app.handle_navigation(ui, area);
+                    });
+                },
+            );
+        };
+
+        for (tool, layer) in [
+            (
+                Tool::Drawing(drawings::DRAWING_TOOLS[0]),
+                ChartLayer::Drawings,
+            ),
+            (Tool::Crosshair, ChartLayer::Crosshair),
+        ] {
+            app.toolrail.arm(Tool::Pointer);
+            app.set_layer_visible(layer, false);
+            navigate(&mut app);
+            assert!(
+                !app.layer_visible(layer),
+                "{} must stay hidden while nothing needs it",
+                layer.id()
+            );
+            app.toolrail.arm(tool);
+            navigate(&mut app);
+            assert!(
+                app.layer_visible(layer),
+                "arming its tool has to bring {} back",
+                layer.id()
+            );
+        }
         std::fs::remove_file(&path).ok();
     }
 
