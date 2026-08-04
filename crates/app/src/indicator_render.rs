@@ -60,6 +60,15 @@ const MARKER_TEXT_GAP_PX: f32 = 2.0;
 /// anchor to the pane's edges instead; this is the substitution, named so it
 /// no longer reads as an unexplained multiple of the bar gap.
 const PANE_MARKER_INSET_PX: f32 = MARKER_GAP_PX * 2.0;
+/// Gap between the axis line and a tick label, in pixels. Matches the price
+/// axis, so both gutters read as one column of numbers.
+const AXIS_LABEL_GAP_PX: f32 = 6.0;
+/// Tick label font size, in pixels.
+const AXIS_LABEL_FONT_PX: f32 = 11.0;
+/// A tick label is dropped when it would be drawn within this many pixels of
+/// the pane's own edge: the frame hairline and the pane's title/headline live
+/// there, and a number crossing either reads as a smudge rather than a value.
+const AXIS_LABEL_EDGE_MARGIN_PX: f32 = 7.0;
 
 fn color32(c: Rgba8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -133,21 +142,58 @@ pub(crate) fn draw_overlays<'a>(
     }
 }
 
-/// Draw one pane indicator into its own rect: subtle frame, its plots on an
-/// auto-fitted value scale, a zero line when zero is in range, and the
-/// label + last value so the pane reads without a y-axis (v1).
+/// Where one pane paints, and in what colours.
+///
+/// A pane spans two rects that the chart's own layout keeps apart — the plot
+/// area and the slice of the right-hand gutter beside it — so they travel
+/// together rather than as two more positional arguments no caller can read.
+pub(crate) struct PaneFrame {
+    /// The pane's plot area: the candles' x-range, the live lane excluded.
+    pub rect: Rect,
+    /// The gutter band beside `rect`, where this pane's value labels go. It
+    /// is the same band the pane's zoom gesture is registered over, which is
+    /// what makes the numbers the thing you grab.
+    pub gutter: Rect,
+    /// The canvas colour behind the pane.
+    pub background: Color32,
+    /// Gridline and axis-rule colour, shared with the price axis so both
+    /// read as one grid.
+    pub grid: Color32,
+}
+
+/// The value range a pane auto-fits to: its visible values plus breathing
+/// room above and below. `None` while everything visible is still NaN warmup
+/// — there is nothing to scale to yet, and no axis to draw.
+pub(crate) fn pane_auto_range(
+    view: &IndicatorView,
+    start: usize,
+    end: usize,
+) -> Option<(f64, f64)> {
+    let (lo, hi) = value_range(view, start, end)?;
+    let pad = (hi - lo).max(f64::EPSILON) * PANE_PAD_FRAC;
+    Some((lo - pad, hi + pad))
+}
+
+/// Draw one pane indicator into its own rect: subtle frame, its plots on the
+/// given value range, its own y-axis in the gutter beside it, a zero line
+/// when zero is in range, and the label + last value.
+///
+/// `range` is the `(lo, hi)` the pane draws with — [`pane_auto_range`] unless
+/// the user has zoomed this pane's axis — and `None` means the indicator has
+/// computed nothing visible yet.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_pane(
     painter: &egui::Painter,
-    pane: Rect,
+    frame: &PaneFrame,
     view: &IndicatorView,
     x: &PlotX<'_>,
+    range: Option<(f64, f64)>,
     start: usize,
     end: usize,
     partial_slot: Option<usize>,
-    background: Color32,
 ) {
-    painter.rect_filled(pane, egui::Rounding::ZERO, background);
+    let pane = frame.rect;
+    painter.rect_filled(pane, egui::Rounding::ZERO, frame.background);
     painter.line_segment(
         [pane.left_top(), pane.right_top()],
         Stroke::new(
@@ -155,8 +201,18 @@ pub(crate) fn draw_pane(
             theme::TEXT_MUTED.gamma_multiply(PANE_FRAME_ALPHA),
         ),
     );
+    // The rule that closes the pane's right edge is drawn whatever the pane
+    // has to say: the gutter is one column down the whole chart, and a gap in
+    // it at the height of a warming-up pane reads as a broken axis.
+    painter.line_segment(
+        [
+            pos2(frame.gutter.left(), pane.top()),
+            pos2(frame.gutter.left(), pane.bottom()),
+        ],
+        Stroke::new(PANE_RULE_WIDTH_PX, frame.grid),
+    );
 
-    let Some((lo, hi)) = value_range(view, start, end) else {
+    let Some((lo, hi)) = range else {
         painter.text(
             pane.center(),
             egui::Align2::CENTER_CENTER,
@@ -166,11 +222,12 @@ pub(crate) fn draw_pane(
         );
         return;
     };
-    let span = (hi - lo).max(f64::EPSILON);
-    let pad = span * PANE_PAD_FRAC;
-    let scale = PriceScale::from_range(lo - pad, hi + pad, pane.top(), pane.bottom());
+    let scale = PriceScale::from_range(lo, hi, pane.top(), pane.bottom());
 
     let clipped = painter.with_clip_rect(pane);
+    // The axis first, so its grid sits behind the plots rather than over them
+    // — the price axis' own paint order.
+    draw_pane_axis(painter, &clipped, frame, &scale);
     // A zero line anchors flow panes (cvd, delta) visually.
     if lo < 0.0 && hi > 0.0 {
         let y = scale.y(0.0);
@@ -221,6 +278,43 @@ pub(crate) fn draw_pane(
             egui::Align2::RIGHT_TOP,
             format_value(last),
             egui::FontId::monospace(PANE_LABEL_FONT_PX),
+            theme::TEXT_MUTED,
+        );
+    }
+}
+
+/// One pane's y-axis: round-number gridlines across the pane and their
+/// labels in the gutter beside it.
+///
+/// `clipped` is the pane's own clipped painter, so gridlines stop at the pane;
+/// the labels are painted on `painter`, since the gutter is outside that clip.
+fn draw_pane_axis(
+    painter: &egui::Painter,
+    clipped: &egui::Painter,
+    frame: &PaneFrame,
+    scale: &PriceScale,
+) {
+    let pane = frame.rect;
+    let (lo, hi) = scale.range();
+    let font = egui::FontId::monospace(AXIS_LABEL_FONT_PX);
+    for (tick, label) in crate::chart::axis_labels(lo, hi, pane.height()) {
+        let y = scale.y(tick);
+        clipped.line_segment(
+            [pos2(pane.left(), y), pos2(pane.right(), y)],
+            Stroke::new(PANE_RULE_WIDTH_PX, frame.grid),
+        );
+        // A label centred on the pane's own edge would be sliced in half by
+        // the neighbouring pane; the gridline still marks the value.
+        if y - pane.top() < AXIS_LABEL_EDGE_MARGIN_PX
+            || pane.bottom() - y < AXIS_LABEL_EDGE_MARGIN_PX
+        {
+            continue;
+        }
+        painter.text(
+            pos2(frame.gutter.left() + AXIS_LABEL_GAP_PX, y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            font.clone(),
             theme::TEXT_MUTED,
         );
     }
@@ -828,6 +922,8 @@ mod tests {
             stale: None,
             error: None,
             hidden: false,
+            scale: crate::price_view::PriceView::new(),
+            last_auto: None,
         }
     }
 
@@ -903,6 +999,22 @@ mod tests {
             }
         }
         assert_eq!(runs, 2, "two segments, one gap");
+    }
+
+    #[test]
+    fn the_auto_range_pads_the_values_and_has_nothing_to_pad_during_warmup() {
+        let pane = view(vec![vec![0.0, 10.0]], None);
+        let (lo, hi) = pane_auto_range(&pane, 0, 2).expect("two values are a range");
+        assert!(lo < 0.0 && hi > 10.0, "the trace never touches the edges");
+        assert!(
+            (lo + 0.8).abs() < 1e-9 && (hi - 10.8).abs() < 1e-9,
+            "8% of the span on each side: {lo}..{hi}"
+        );
+
+        assert!(
+            pane_auto_range(&view(vec![vec![f64::NAN]], None), 0, 1).is_none(),
+            "nothing computed yet is nothing to scale — and no axis to draw"
+        );
     }
 
     #[test]

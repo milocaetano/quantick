@@ -198,6 +198,16 @@ fn dec_from_f64(x: f64) -> Decimal {
 /// so.
 const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 
+/// Pixels of drag on a vertical axis that change its span by a factor of `e`.
+///
+/// One number for the price gutter and for every indicator pane's gutter: the
+/// axes stretch at the same rate, so the gesture feels the same wherever the
+/// numbers being dragged happen to live.
+const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
+/// The same, for a scroll over an axis rather than a drag. Scroll deltas are
+/// coarser than pointer motion, so the divisor is smaller.
+const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
+
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
 /// Matches the candles' own feel: dragging the time axis zooms it by
@@ -222,19 +232,27 @@ fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) -> Plo
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
     let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
     let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_count);
+    // The gutter is banded exactly like the body it labels: the candles' price
+    // scale owns the height of the candles and not a pixel more, so a drag
+    // over a pane's numbers can only ever move that pane.
+    let band = |top: f32, bottom: f32| {
+        egui::Rect::from_min_max(egui::pos2(gutter_x, top), egui::pos2(plot.right(), bottom))
+    };
+    let pane_gutters = indicator_panes
+        .iter()
+        .map(|pane| band(pane.top(), pane.bottom()))
+        .collect();
     PlotAreas {
         chart,
         indicator_panes,
+        pane_gutters,
         live_strip: (strip_width > 0.0).then(|| {
             egui::Rect::from_min_max(
                 egui::pos2(split_x, plot.top()),
                 egui::pos2(gutter_x, split_y),
             )
         }),
-        price_gutter: egui::Rect::from_min_max(
-            egui::pos2(gutter_x, plot.top()),
-            egui::pos2(plot.right(), split_y),
-        ),
+        price_gutter: band(plot.top(), chart.bottom()),
         time_strip: egui::Rect::from_min_max(
             egui::pos2(plot.left(), split_y),
             egui::pos2(split_x, plot.bottom()),
@@ -280,6 +298,9 @@ struct PlotAreas {
     /// Stacked indicator panes below the candles, top to bottom. Empty when
     /// no pane indicator is visible.
     indicator_panes: Vec<egui::Rect>,
+    /// The gutter band beside each pane, in the same order: where that pane's
+    /// value labels are drawn and where its own zoom gesture lives.
+    pane_gutters: Vec<egui::Rect>,
     /// Present only while the strip is shown; sits between `chart` and
     /// `price_gutter` and is not an input region.
     live_strip: Option<egui::Rect>,
@@ -437,6 +458,11 @@ pub struct QuantickApp {
     last_auto_range: Option<(f64, f64)>,
     last_chart_height: f32,
     last_chart_top: f32,
+    // The raw plot area the last frame split into chart, panes and gutters.
+    // Kept so a caller that needs a band it does not otherwise see — the pane
+    // axis tests aiming a drag at a pane's own gutter — asks `plot_split` for
+    // it rather than re-deriving the layout and drifting from it.
+    last_plot_area: Option<egui::Rect>,
     // Pointer position over the plot this frame, for the crosshair.
     hover_pos: Option<egui::Pos2>,
     // Drawing placement/movement state. Anchors are chart coordinates; only
@@ -581,6 +607,7 @@ impl QuantickApp {
             last_auto_range: None,
             last_chart_height: 1.0,
             last_chart_top: 0.0,
+            last_plot_area: None,
             hover_pos: None,
             drawing_hover: None,
             drawing_press_position: None,
@@ -2288,6 +2315,7 @@ impl QuantickApp {
     /// that starts inside the tape moves nothing, and scrolling there zooms the
     /// tape's own window instead of the candles.
     fn handle_navigation(&mut self, ui: &egui::Ui, area: egui::Rect) {
+        self.last_plot_area = Some(area);
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_chart_area = Some(
@@ -2572,7 +2600,8 @@ impl QuantickApp {
             }
         }
 
-        // Right price gutter: drag or scroll to zoom the price scale.
+        // Right price gutter: drag or scroll to zoom the price scale. It spans
+        // the candles' height only — the bands below belong to the panes.
         let price = ui.interact(
             areas.price_gutter,
             egui::Id::new("price_nav"),
@@ -2581,8 +2610,10 @@ impl QuantickApp {
         if let Some(auto) = auto {
             if price.dragged() {
                 // Drag up → compress span (bigger candles); down → expand.
-                self.price_view
-                    .zoom(f64::from(price.drag_delta().y / 150.0).exp(), auto);
+                self.price_view.zoom(
+                    f64::from(price.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
+                    auto,
+                );
             }
             if price.double_clicked() {
                 self.price_view.reset();
@@ -2590,8 +2621,44 @@ impl QuantickApp {
             if price.hovered() {
                 let scroll = ui.input(|i| i.raw_scroll_delta.y);
                 if scroll.abs() > 0.0 {
-                    self.price_view.zoom(f64::from(-scroll / 200.0).exp(), auto);
+                    self.price_view
+                        .zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
                 }
+            }
+        }
+
+        // Each pane's own axis, in the gutter band beside it: the price
+        // gutter's gesture aimed at the pane under the pointer. Keyed by slot,
+        // so the scale that moves is always the one whose numbers were
+        // grabbed — panes come and go and a positional id would follow the
+        // position, not the indicator.
+        let pane_gutters = areas.pane_gutters.clone();
+        let scroll = ui.input(|i| i.raw_scroll_delta.y);
+        for (view, gutter) in self.indicators.visible_panes_mut().zip(&pane_gutters) {
+            let pane_axis = ui.interact(
+                *gutter,
+                egui::Id::new(("pane_price_nav", view.slot)),
+                egui::Sense::click_and_drag(),
+            );
+            if pane_axis.double_clicked() {
+                view.scale.reset();
+            }
+            // Nothing computed yet is nothing to scale: the pane says "warming
+            // up" and its axis has no range a gesture could stretch.
+            let Some(auto) = view.last_auto else {
+                continue;
+            };
+            if pane_axis.dragged() {
+                // Drag up → compress the pane's span (a taller trace); down →
+                // expand it. Same pixels, same feel as the price axis.
+                view.scale.zoom(
+                    f64::from(pane_axis.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
+                    auto,
+                );
+            }
+            if pane_axis.hovered() && scroll.abs() > 0.0 {
+                view.scale
+                    .zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
             }
         }
     }
@@ -2804,21 +2871,37 @@ impl QuantickApp {
             );
         }
         // Pane indicators stack in the band carved off above, sharing the
-        // candles' x-mapping so bars and their flow read as one chart.
-        for (view, pane) in self.indicators.visible_panes().zip(&pane_rects) {
-            let pane = egui::Rect::from_min_max(
-                egui::pos2(history_rect.left(), pane.top()),
-                egui::pos2(history_rect.right(), pane.bottom()),
-            );
+        // candles' x-mapping so bars and their flow read as one chart. Each
+        // pane records the range it auto-fitted to, so the gesture over its
+        // axis zooms the very range this frame drew.
+        let grid = self.grid();
+        let pane_gutters = areas.pane_gutters.clone();
+        for ((view, pane), gutter) in self
+            .indicators
+            .visible_panes_mut()
+            .zip(&pane_rects)
+            .zip(&pane_gutters)
+        {
+            let auto = indicator_render::pane_auto_range(view, start, end);
+            view.last_auto = auto;
+            let frame = indicator_render::PaneFrame {
+                rect: egui::Rect::from_min_max(
+                    egui::pos2(history_rect.left(), pane.top()),
+                    egui::pos2(history_rect.right(), pane.bottom()),
+                ),
+                gutter: *gutter,
+                background: canvas_background,
+                grid,
+            };
             indicator_render::draw_pane(
                 painter,
-                pane,
+                &frame,
                 view,
                 &plot_x,
+                auto.map(|auto| view.scale.resolve(auto)),
                 start,
                 end,
                 partial_visible.map(|_| closed.len()),
-                canvas_background,
             );
         }
         if let Some(frame) = &orderflow_frame {
@@ -4416,13 +4499,301 @@ mod tests {
         assert_eq!(one.chart.bottom(), pane.top(), "no gap, no overlap");
         assert_eq!(pane.bottom(), none.chart.bottom());
         assert_eq!(one.chart.width(), none.chart.width());
-        // The axes stay where they were: only the candle body shrinks.
-        assert_eq!(one.price_gutter, none.price_gutter);
+        // The axes keep their column; the time strip is untouched.
+        assert_eq!(one.price_gutter.x_range(), none.price_gutter.x_range());
         assert_eq!(one.time_strip, none.time_strip);
 
         let three = plot_split(area, 0.0, 3);
         assert_eq!(three.indicator_panes.len(), 3);
         assert!(three.chart.height() < one.chart.height());
+    }
+
+    /// The gutter is banded like the body it labels. Before it was, the whole
+    /// column belonged to the candles: dragging the numbers beside a CVD pane
+    /// stretched the *price* scale, and the pane — which had no axis at all —
+    /// did not move.
+    #[test]
+    fn every_pane_owns_the_gutter_band_beside_it() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+
+        let none = plot_split(area, 0.0, 0);
+        assert!(none.pane_gutters.is_empty());
+        assert_eq!(
+            none.price_gutter.bottom(),
+            none.chart.bottom(),
+            "with no pane the gutter is the candles', top to bottom"
+        );
+
+        let two = plot_split(area, 0.0, 2);
+        assert_eq!(two.pane_gutters.len(), two.indicator_panes.len());
+        assert_eq!(
+            two.price_gutter.bottom(),
+            two.chart.bottom(),
+            "the candles' scale stops where the candles do"
+        );
+        for (pane, gutter) in two.indicator_panes.iter().zip(&two.pane_gutters) {
+            assert_eq!(gutter.y_range(), pane.y_range(), "band beside its pane");
+            assert_eq!(gutter.x_range(), two.price_gutter.x_range(), "one column");
+        }
+        // No pixel answers to two scales: the bands tile the gutter exactly.
+        assert_eq!(two.price_gutter.bottom(), two.pane_gutters[0].top());
+        assert_eq!(two.pane_gutters[0].bottom(), two.pane_gutters[1].top());
+
+        // The strip pays out of the candles, not the gutter: the pane bands
+        // keep the same column when the tape is shown.
+        let with_strip = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 2);
+        assert_eq!(with_strip.pane_gutters, two.pane_gutters);
+    }
+
+    /// A pane indicator with `values` as its single plot, delivered the way
+    /// the worker delivers one.
+    fn add_pane_indicator(app: &mut QuantickApp, title: &str, values: Vec<f64>) -> SlotId {
+        let slot = app.indicators.allocate_slot();
+        rebuild_pane_indicator(app, slot, title, values);
+        slot
+    }
+
+    /// The same indicator, recomputed — an edited input, a hot reload, older
+    /// trades re-cutting the series.
+    fn rebuild_pane_indicator(app: &mut QuantickApp, slot: SlotId, title: &str, values: Vec<f64>) {
+        app.indicators.apply(IndicatorEvent::Rebuilt {
+            slot,
+            descriptor: quantick_indicators::IndicatorDescriptor {
+                title: title.to_owned(),
+                short_title: None,
+                overlay: false,
+                plots: vec![quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(0),
+                    title: title.to_owned(),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                }],
+                inputs: Vec::new(),
+                fills: Vec::new(),
+            },
+            columns: vec![values],
+            inputs: Vec::new(),
+            stale: None,
+        });
+    }
+
+    /// The `(lo, hi)` a pane is drawing with right now: its manual range if the
+    /// user has taken control of the axis, else the fit the last frame made.
+    fn pane_range(app: &QuantickApp, slot: SlotId) -> (f64, f64) {
+        let view = app
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == slot)
+            .expect("the pane is still there");
+        let auto = view.last_auto.expect("a frame fitted this pane");
+        view.scale.resolve(auto)
+    }
+
+    /// Whether a pane is still auto-fitting its values.
+    fn pane_is_auto(app: &QuantickApp, slot: SlotId) -> bool {
+        app.indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == slot)
+            .expect("the pane is still there")
+            .scale
+            .is_auto()
+    }
+
+    /// The gutter band beside pane `index`, computed the way the frame does.
+    fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
+        let areas = plot_split(
+            app.last_plot_area.expect("a frame has been drawn"),
+            app.live_strip_width(),
+            app.indicators.visible_panes().count(),
+        );
+        areas.pane_gutters[index]
+    }
+
+    /// The headline of this feature: a pane's numbers are its own axis. A drag
+    /// there stretches that pane and nothing else — before the gutter was
+    /// banded, the same pixels moved the *candles'* price scale, and the pane
+    /// had no axis to grab at all.
+    #[test]
+    fn dragging_a_pane_axis_zooms_that_pane_and_nothing_else() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        let other = add_pane_indicator(&mut app, "delta", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx); // the frame that fits each pane and records it
+
+        let gutter = pane_gutter(&app, 0);
+        let (lo, hi) = pane_range(&app, flow);
+        let untouched = pane_range(&app, other);
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 60.0),
+        );
+
+        let (zoomed_lo, zoomed_hi) = pane_range(&app, flow);
+        assert!(
+            zoomed_hi - zoomed_lo < hi - lo,
+            "drag up compresses the span: {lo}..{hi} -> {zoomed_lo}..{zoomed_hi}"
+        );
+        assert!(
+            (f64::midpoint(zoomed_lo, zoomed_hi) - f64::midpoint(lo, hi)).abs() < 1e-6,
+            "and stretches around the middle rather than sliding the pane"
+        );
+        assert_eq!(pane_range(&app, other), untouched, "one pane, one scale");
+        assert!(
+            app.price_view.is_auto(),
+            "the candles never felt it: their gutter ends where they do"
+        );
+    }
+
+    /// The other half of the isolation: the candles' own gutter must not reach
+    /// down into a pane. Both gestures exist on the same column of pixels, and
+    /// only the band decides which scale they mean.
+    #[test]
+    fn dragging_the_price_gutter_leaves_every_pane_alone() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let untouched = pane_range(&app, flow);
+        let gutter = plot_split(
+            app.last_plot_area.expect("a frame has been drawn"),
+            app.live_strip_width(),
+            1,
+        )
+        .price_gutter;
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 60.0),
+        );
+
+        assert!(!app.price_view.is_auto(), "the candles took the drag");
+        assert_eq!(
+            pane_range(&app, flow),
+            untouched,
+            "and the pane never felt it"
+        );
+        assert!(pane_is_auto(&app, flow));
+    }
+
+    /// Scroll is the same gesture with a wheel: it zooms the pane under the
+    /// pointer, and the candles keep auto-fitting.
+    #[test]
+    fn scrolling_a_pane_axis_zooms_that_pane() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let (lo, hi) = pane_range(&app, flow);
+        let over = pane_gutter(&app, 0).center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(over),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 120.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+
+        let (zoomed_lo, zoomed_hi) = pane_range(&app, flow);
+        assert!(
+            zoomed_hi - zoomed_lo < hi - lo,
+            "scrolling up zooms in: {lo}..{hi} -> {zoomed_lo}..{zoomed_hi}"
+        );
+        assert!(app.price_view.is_auto(), "the candles kept auto-fitting");
+    }
+
+    /// Manual control is manual: the range holds while values keep arriving,
+    /// and a double-click on the axis hands the pane back to auto-fit.
+    #[test]
+    fn a_zoomed_pane_holds_its_range_until_the_axis_is_double_clicked() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let gutter = pane_gutter(&app, 0);
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 60.0),
+        );
+        let held = pane_range(&app, flow);
+        assert!(!pane_is_auto(&app, flow), "the drag took manual control");
+
+        // The indicator recomputes ten times bigger: auto-fit would jump, a
+        // range the user set does not.
+        rebuild_pane_indicator(
+            &mut app,
+            flow,
+            "cvd",
+            (0..200).map(|row| f64::from(row) * 10.0).collect(),
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(pane_range(&app, flow), held, "the range the user set holds");
+
+        click_chart(&mut app, &ctx, gutter.center());
+        click_chart(&mut app, &ctx, gutter.center());
+        run_frame(&mut app, &ctx);
+        assert!(
+            pane_is_auto(&app, flow),
+            "double-click returns the pane to auto-fit"
+        );
+        let refitted = pane_range(&app, flow);
+        assert!(
+            refitted.1 > held.1,
+            "and auto-fit sees the values that arrived meanwhile: {refitted:?} vs {held:?}"
+        );
+    }
+
+    /// The pane reads as a chart: its own round numbers, in the gutter beside
+    /// it. The candles' axis never labels those pixels, and the pane's labels
+    /// never appear over the candles.
+    #[test]
+    fn a_pane_prints_its_own_value_labels_in_the_gutter() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        // Values well away from the test's 95..115 price range, so a label can
+        // only have come from the pane's own axis.
+        add_pane_indicator(
+            &mut app,
+            "cvd",
+            (0..200).map(|row| f64::from(row) - 200.0).collect(),
+        );
+        let output = run_frame(&mut app, &ctx);
+        let texts = painted_text(&output);
+
+        let pane_labels: Vec<&String> = texts
+            .iter()
+            .filter(|text| {
+                text.parse::<f64>()
+                    .is_ok_and(|value| (-200.0..=-1.0).contains(&value))
+            })
+            .collect();
+        assert!(
+            pane_labels.len() >= 3,
+            "the pane's own round numbers are drawn, and enough of them to \
+             read as a scale: {texts:?}"
+        );
+        assert!(
+            has_price_axis(&texts),
+            "and the candles keep theirs: {texts:?}"
+        );
     }
 
     /// Each pane zooms from the strip under it, and the split is exactly the
