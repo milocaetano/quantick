@@ -522,13 +522,13 @@ impl ChartPane {
     /// Whether `layer` is painted on this pane right now.
     ///
     /// Every arm reads the one field that already owns that layer, so the menu
-    /// and the toolbar/dock can never disagree about a pixel. `grid` is the
-    /// window's shared style flag, passed in because the window owns it and a
-    /// pane holding a copy is exactly the disagreement this avoids.
+    /// and the toolbar/dock can never disagree about a pixel. `style` is the
+    /// window's, passed in because the grid lives there and a pane holding a
+    /// copy of it is exactly the disagreement this avoids.
     ///
     /// A layer this pane has no machinery for reports hidden: a time pane runs
     /// no tape (§11), so it has no heatmap to show.
-    pub fn layer_visible(&self, layer: ChartLayer, grid: bool) -> bool {
+    pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
         let tape = self.orderflow.as_ref();
         match layer {
             ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_visible),
@@ -536,7 +536,7 @@ impl ChartPane {
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
             ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
-            ChartLayer::Grid => grid,
+            ChartLayer::Grid => style.canvas.grid_enabled,
             // The toolbox's global eye already owns this one, undo history and
             // all; the menu is a second door to the same switch.
             ChartLayer::Drawings => !self.drawings.all_hidden(),
@@ -642,23 +642,23 @@ impl ChartPane {
 
     /// Every layer this pane persists, and whether it is on.
     ///
-    /// `grid` comes from the shared style for the same reason it does in
+    /// `style` comes from the window for the same reason it does in
     /// [`Self::layer_visible`].
-    pub fn layer_states(&self, grid: bool) -> std::collections::BTreeMap<ChartLayer, bool> {
+    pub fn layer_states(&self, style: &ChartStyle) -> std::collections::BTreeMap<ChartLayer, bool> {
         ChartLayer::ALL
             .into_iter()
             .filter(|layer| layer.persisted())
-            .map(|layer| (layer, self.layer_visible(layer, grid)))
+            .map(|layer| (layer, self.layer_visible(layer, style)))
             .collect()
     }
 
     /// The same visibility as one bit per persisted layer, for change
     /// detection. `ALL` is a dozen entries, so the mask cannot outgrow `u16`.
-    pub fn layer_mask(&self, grid: bool) -> u16 {
+    pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
         ChartLayer::ALL
             .into_iter()
             .enumerate()
-            .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, grid))
+            .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
             .fold(0_u16, |mask, (bit, _)| mask | (1 << bit))
     }
 
@@ -687,7 +687,7 @@ impl ChartPane {
             Tool::Drawing(_) => ChartLayer::Drawings,
             Tool::Pointer => return,
         };
-        if !self.layer_visible(layer, chrome.style.canvas.grid_enabled) {
+        if !self.layer_visible(layer, chrome.style) {
             self.set_layer_visible(layer, true, chrome.layers);
         }
     }
@@ -706,10 +706,9 @@ impl ChartPane {
         );
         #[cfg(test)]
         self.layer_menu_rects.clear();
-        let grid = chrome.style.canvas.grid_enabled;
         for layer in ChartLayer::ALL {
             let blocked = self.layer_blocked(layer, chrome.capabilities);
-            let mut visible = self.layer_visible(layer, grid);
+            let mut visible = self.layer_visible(layer, chrome.style);
             let response = ui
                 .add_enabled(
                     blocked.is_none(),
@@ -1665,9 +1664,6 @@ impl ChartPane {
     ) {
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
-        // The window's grid flag, read once: every layer question this frame
-        // answers against the same value (see [`Self::layer_visible`]).
-        let grid_on = chrome.style.canvas.grid_enabled;
 
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
@@ -1981,13 +1977,13 @@ impl ChartPane {
         //
         // Switched off, they are only unpainted: the orders keep working and
         // the dock keeps listing them (see the layer's hint).
-        if self.layer_visible(ChartLayer::PaperTrading, grid_on) {
+        if self.layer_visible(ChartLayer::PaperTrading, chrome.style) {
             chrome.paper.draw_layer(painter, chart_rect, axis_x, &scale);
         }
 
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
-        if self.layer_visible(ChartLayer::LastPrice, grid_on)
+        if self.layer_visible(ChartLayer::LastPrice, chrome.style)
             && let Some(bar) = partial.or_else(|| closed.last())
         {
             self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, chrome);
@@ -1995,10 +1991,10 @@ impl ChartPane {
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
-        if self.layer_visible(ChartLayer::SeamDivider, grid_on) {
+        if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
             self.draw_seam_divider(painter, history_rect, total, cw);
         }
-        if self.layer_visible(ChartLayer::BackfillDivider, grid_on) {
+        if self.layer_visible(ChartLayer::BackfillDivider, chrome.style) {
             self.draw_backfill_divider(painter, history_rect, total, cw);
         }
         self.draw_time_strip(painter, areas.time_strip, start, end, total, chrome);
@@ -2021,7 +2017,7 @@ impl ChartPane {
                 theme::TEXT_MUTED,
             );
         }
-        if self.layer_visible(ChartLayer::Crosshair, grid_on) {
+        if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
             self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
         }
         // The status badge is not a layer: it reports whether the source is

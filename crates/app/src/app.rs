@@ -1552,9 +1552,7 @@ impl QuantickApp {
     /// (see [`Self::maintain_indicator_state`]). A tab's second pane opens
     /// matching it and is in-session from there.
     fn layer_mask(&self) -> u16 {
-        self.active_tab()
-            .flow_pane
-            .layer_mask(self.style.canvas.grid_enabled)
+        self.active_tab().flow_pane.layer_mask(&self.style)
     }
 
     /// Save the layer visibility when it differs from what is on disk.
@@ -1569,10 +1567,7 @@ impl QuantickApp {
         }
         chart_layers::save(
             &self.chart_layers_path,
-            &self
-                .active_tab()
-                .flow_pane
-                .layer_states(self.style.canvas.grid_enabled),
+            &self.active_tab().flow_pane.layer_states(&self.style),
         );
         self.saved_layer_mask = mask;
     }
@@ -4690,9 +4685,7 @@ plot(close)
 
     /// Whether the active tab's flow pane is painting `layer`.
     fn layer_on(app: &QuantickApp, layer: ChartLayer) -> bool {
-        app.active_tab()
-            .flow_pane
-            .layer_visible(layer, app.style.canvas.grid_enabled)
+        app.active_tab().flow_pane.layer_visible(layer, &app.style)
     }
 
     /// The layer menu writes through to whoever owns the layer, and touches
@@ -4994,7 +4987,7 @@ plot(close)
                 "{} has no machinery on a time pane",
                 layer.id()
             );
-            assert!(!time.layer_visible(layer, true));
+            assert!(!time.layer_visible(layer, &app.style));
         }
         for layer in [
             ChartLayer::Grid,
@@ -5064,6 +5057,59 @@ plot(close)
                 layer.id()
             );
         }
+    }
+
+    /// The gesture itself: a right-click on the canvas opens the menu, and the
+    /// primary button — which pans, zooms and places drawings — never does.
+    ///
+    /// The menu's contents are covered above; what this proves is the one thing
+    /// between the user and all of it, the button it is bound to.
+    #[test]
+    fn only_the_secondary_button_opens_the_layer_menu() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut app, _events, _commands, _book) = test_app();
+
+        let click = |app: &mut QuantickApp, button: egui::PointerButton| -> usize {
+            with_flow_pane(app, |pane, chrome| {
+                let target = screen.center();
+                for pressed in [true, false] {
+                    let _ = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            events: vec![
+                                egui::Event::PointerMoved(target),
+                                egui::Event::PointerButton {
+                                    pos: target,
+                                    button,
+                                    pressed,
+                                    modifiers: egui::Modifiers::default(),
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default().show(ctx, |ui| {
+                                let area = ui.available_rect_before_wrap();
+                                pane.handle_navigation(ui, area, chrome);
+                            });
+                        },
+                    );
+                }
+                pane.layer_menu_rects.len()
+            })
+        };
+
+        assert_eq!(
+            click(&mut app, egui::PointerButton::Primary),
+            0,
+            "a left click is a pan or a placement; it must not open the menu"
+        );
+        assert_eq!(
+            click(&mut app, egui::PointerButton::Secondary),
+            ChartLayer::ALL.len(),
+            "a right click on the canvas has to open the layer menu"
+        );
     }
 
     /// Reaching for a tool brings its own layer back — a crosshair that draws
