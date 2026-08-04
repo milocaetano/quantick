@@ -208,6 +208,9 @@ struct SlotMirror {
 pub(crate) struct IndicatorWorker {
     commands: Sender<IndicatorCommand>,
     events: Receiver<IndicatorEvent>,
+    /// Forming-bar updates sent, so a test can hold the UI to one per drain.
+    #[cfg(test)]
+    partial_updates: std::cell::Cell<usize>,
 }
 
 impl IndicatorWorker {
@@ -223,6 +226,8 @@ impl IndicatorWorker {
         Self {
             commands: cmd_tx,
             events: evt_rx,
+            #[cfg(test)]
+            partial_updates: std::cell::Cell::new(0),
         }
     }
 
@@ -230,6 +235,10 @@ impl IndicatorWorker {
     /// line, never a full queue (the channel is unbounded and command volume
     /// is bounded by feed cadence).
     pub(crate) fn send(&self, command: IndicatorCommand) {
+        #[cfg(test)]
+        if matches!(command, IndicatorCommand::PartialUpdated(_)) {
+            self.partial_updates.set(self.partial_updates.get() + 1);
+        }
         if self.commands.send(command).is_err() {
             tracing::error!(
                 target: "quantick::app",
@@ -248,6 +257,15 @@ impl IndicatorWorker {
             events.push(event);
         }
         events
+    }
+
+    /// How many forming-bar updates have been sent down this channel.
+    ///
+    /// The cost the UI controls: the worker coalesces them anyway, so sending
+    /// one per print is work that buys nothing.
+    #[cfg(test)]
+    pub(crate) fn partial_updates_for_test(&self) -> usize {
+        self.partial_updates.get()
     }
 
     /// Block until every command sent before this call has been applied and

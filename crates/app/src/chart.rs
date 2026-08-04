@@ -35,16 +35,16 @@ impl PriceScale {
     /// padded by `pad_frac` of the range on each side so candles don't touch the
     /// edges. Returns `None` if there is nothing to scale.
     #[must_use]
-    pub fn auto(
-        bars: &[Bar],
-        partial: Option<&Bar>,
+    pub fn auto<'a>(
+        bars: impl IntoIterator<Item = &'a Bar>,
+        partial: Option<&'a Bar>,
         top: f32,
         bottom: f32,
         pad_frac: f64,
     ) -> Option<Self> {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
-        for bar in bars.iter().chain(partial) {
+        for bar in bars.into_iter().chain(partial) {
             lo = lo.min(to_f64(bar.low));
             hi = hi.max(to_f64(bar.high));
         }
@@ -121,9 +121,9 @@ impl PriceScale {
 /// still instead of jumping) and then to the newest bar of the series. `None`
 /// only when there is no data anywhere to scale to.
 #[must_use]
-pub fn price_window(
-    visible: &[Bar],
-    visible_partial: Option<&Bar>,
+pub fn price_window<'a>(
+    visible: impl IntoIterator<Item = &'a Bar>,
+    visible_partial: Option<&'a Bar>,
     last: Option<(f64, f64)>,
     newest: Option<&Bar>,
     top: f32,
@@ -316,6 +316,150 @@ pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
     ticks
 }
 
+/// Pixels of axis height per label *asked for*.
+///
+/// The ask is not a promise: [`nice_ticks`] rounds the step to 1, 2 or 5,
+/// which can hand back half of what was asked or nearly double it. So an axis
+/// asks generously — one label per 20 pixels — and thins the result to fit
+/// ([`AXIS_LABEL_MIN_GAP_PX`]). Asking modestly instead is what left a 163 px
+/// CVD pane drawing a single label: an ask of three rounded down to one, and
+/// there was nothing left to thin.
+const AXIS_LABEL_SPACING_PX: f32 = 20.0;
+/// Fewest labels an axis asks for: below two there is no scale to read, only
+/// a number floating in a band.
+const AXIS_MIN_TICKS: usize = 2;
+/// Most labels an axis asks for, however tall it grows.
+const AXIS_MAX_TICKS: usize = 8;
+/// Least vertical room between two labels, in pixels. Below this the column
+/// reads as texture rather than as numbers, and the axis drops every other
+/// label until it clears.
+const AXIS_LABEL_MIN_GAP_PX: f32 = 18.0;
+/// Thresholds a tick label is abbreviated at, largest first, with the suffix
+/// that replaces the zeros. Below the smallest the value is printed as it is.
+///
+/// Same spellings as the aggression bubbles' own `format_quantity`: one chart,
+/// one way to write a thousand.
+const AXIS_UNITS: [(f64, &str); 3] = [(1e9, "B"), (1e6, "M"), (1e3, "K")];
+/// Gap between the axis rule and a tick label, in pixels. Shared by the price
+/// gutter and every pane's, so the numbers form one column down the chart.
+pub const AXIS_LABEL_GAP_PX: f32 = 6.0;
+/// Tick label font size, in pixels. Shared for the same reason.
+pub const AXIS_LABEL_FONT_PX: f32 = 11.0;
+/// Most decimals a tick label ever shows. Past this the step is so fine that
+/// the digits stop distinguishing neighbouring labels.
+const AXIS_MAX_DECIMALS: usize = 4;
+/// Relative tolerance for "this many decimals writes the step back exactly".
+/// Steps are 1/2/5 × a power of ten, so the only error to absorb is the one
+/// binary floating point introduces.
+const AXIS_STEP_EPSILON: f64 = 1e-6;
+
+/// Labelled ticks for a vertical axis `height_px` tall spanning `[lo, hi]`:
+/// round numbers, written against the step they advance by and the magnitude
+/// they reach — so a CVD in the millions reads `1.2M` while an oscillator
+/// reads `70`.
+///
+/// Every label shares one unit, because a column mixing `900` and `1.1k` is a
+/// column you have to read twice. The height decides both how many labels are
+/// asked for and how many the column has room to keep.
+#[must_use]
+pub fn axis_labels(lo: f64, hi: f64, height_px: f32) -> Vec<(f64, String)> {
+    let ticks = thin_to_fit(
+        nice_ticks(lo, hi, tick_target(height_px)),
+        hi - lo,
+        height_px,
+    );
+    let step = match ticks.as_slice() {
+        [first, second, ..] => second - first,
+        _ => hi - lo,
+    };
+    let largest = ticks.iter().fold(0.0_f64, |acc, tick| acc.max(tick.abs()));
+    let (unit, suffix) = AXIS_UNITS
+        .into_iter()
+        .find(|(threshold, _)| largest >= *threshold)
+        .unwrap_or((1.0, ""));
+    let decimals = tick_decimals(step / unit);
+    ticks
+        .into_iter()
+        .map(|tick| {
+            // Zero is zero in every unit; "0.0M" is three characters of noise
+            // on the one label a flow pane is read against.
+            let label = if is_zero_tick(tick, step) {
+                "0".to_owned()
+            } else {
+                format!("{:.*}{suffix}", decimals, tick / unit)
+            };
+            (tick, label)
+        })
+        .collect()
+}
+
+/// Whether `tick` is the sequence's zero.
+///
+/// Not `tick == 0.0`: [`nice_ticks`] walks the range by adding `step`, so a
+/// step that is not exact in binary (0.1, 0.05, …) lands on `-2.8e-17` where
+/// zero should be — which prints as `-0.0` on the one label a flow pane is
+/// read against, and hides zero from the thinning anchor. Anything within a
+/// rounding error of a step is the zero.
+fn is_zero_tick(tick: f64, step: f64) -> bool {
+    tick.abs() <= step.abs() * AXIS_STEP_EPSILON
+}
+
+/// How many labels an axis `height_px` tall asks for.
+fn tick_target(height_px: f32) -> usize {
+    let by_room = if height_px.is_finite() && height_px > 0.0 {
+        (height_px / AXIS_LABEL_SPACING_PX) as usize
+    } else {
+        0
+    };
+    by_room.clamp(AXIS_MIN_TICKS, AXIS_MAX_TICKS)
+}
+
+/// Keep every `stride`-th label until the column clears
+/// [`AXIS_LABEL_MIN_GAP_PX`], anchored on zero when zero is one of them — it
+/// is the line a flow pane is read against, and dropping it to keep a tidy
+/// stride would cost the pane its only landmark.
+///
+/// What survives is still round: the ticks are an arithmetic sequence, so
+/// keeping every other one only multiplies the step.
+fn thin_to_fit(ticks: Vec<f64>, span: f64, height_px: f32) -> Vec<f64> {
+    let [first, second, ..] = ticks.as_slice() else {
+        return ticks;
+    };
+    let step = second - first;
+    let gap_px = f64::from(height_px) * (step / span);
+    if !gap_px.is_finite() || gap_px <= 0.0 || gap_px >= f64::from(AXIS_LABEL_MIN_GAP_PX) {
+        return ticks;
+    }
+    let stride = (f64::from(AXIS_LABEL_MIN_GAP_PX) / gap_px).ceil() as usize;
+    let anchor = ticks
+        .iter()
+        .position(|tick| is_zero_tick(*tick, step))
+        .unwrap_or(0);
+    ticks
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| index % stride == anchor % stride)
+        .map(|(_, tick)| tick)
+        .collect()
+}
+
+/// Decimals that keep two neighbouring labels apart when they advance by
+/// `step`: a step of 250 needs none, 2.5k needs one, 0.05 needs two.
+///
+/// The fewest that write `step` back exactly, so no label is ever rounded
+/// into its neighbour ("2.5" and "5.0" must not both print as "2" and "5").
+fn tick_decimals(step: f64) -> usize {
+    if !step.is_finite() || step <= 0.0 {
+        return 0;
+    }
+    (0..AXIS_MAX_DECIMALS)
+        .find(|decimals| {
+            let factor = 10f64.powi(i32::try_from(*decimals).unwrap_or(0));
+            ((step * factor).round() / factor - step).abs() <= step * AXIS_STEP_EPSILON
+        })
+        .unwrap_or(AXIS_MAX_DECIMALS)
+}
+
 /// A "nice" number near `range`: 1, 2, 5 or 10 × a power of ten. When `round`,
 /// picks the nearest nice value; otherwise the smallest nice value ≥ `range`.
 fn nice_num(range: f64, round: bool) -> f64 {
@@ -486,6 +630,123 @@ mod tests {
         assert!(nice_ticks(100.0, 100.0, 5).is_empty());
         assert!(nice_ticks(110.0, 100.0, 5).is_empty());
         assert!(nice_ticks(100.0, 110.0, 0).is_empty());
+    }
+
+    #[test]
+    fn axis_labels_are_round_numbers_sharing_one_unit() {
+        // An axis 120 px tall: what a fifth of a laptop-sized chart comes to.
+        let labels = |lo: f64, hi: f64| -> Vec<String> {
+            axis_labels(lo, hi, 120.0)
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect()
+        };
+
+        // A CVD in the millions: one unit for the whole column, because a
+        // column mixing "900000" and "1M" is a column you read twice.
+        assert_eq!(labels(0.0, 4.0e6), vec!["0", "1M", "2M", "3M", "4M"]);
+        assert_eq!(labels(0.0, 4.0e3), vec!["0", "1K", "2K", "3K", "4K"]);
+        // A finer step keeps its decimal rather than rounding two labels onto
+        // the same number.
+        assert_eq!(labels(0.0, 1.2e6), vec!["0", "0.5M", "1.0M"]);
+        // An oscillator: plain integers, no suffix, no decimals.
+        assert_eq!(labels(0.0, 100.0), vec!["0", "20", "40", "60", "80", "100"]);
+
+        // A ratio near 1: the step decides the decimals, so no label is
+        // rounded into its neighbour — or into a value it does not sit at.
+        let ratio = axis_labels(0.9, 1.1, 120.0);
+        let printed: Vec<&String> = ratio.iter().map(|(_, label)| label).collect();
+        let unique: std::collections::BTreeSet<_> = printed.iter().collect();
+        assert_eq!(
+            unique.len(),
+            printed.len(),
+            "no repeated labels: {printed:?}"
+        );
+        for (tick, label) in &ratio {
+            let value: f64 = label.parse().expect("a plain number near 1");
+            assert!(
+                (value - tick).abs() < 1e-9,
+                "{label} must not round {tick} away"
+            );
+        }
+    }
+
+    #[test]
+    fn a_degenerate_range_labels_nothing_instead_of_guessing() {
+        assert!(axis_labels(5.0, 5.0, 120.0).is_empty());
+        assert!(axis_labels(f64::NAN, 1.0, 120.0).is_empty());
+        // An axis with no height cannot be measured for room; it still labels
+        // round numbers rather than dividing by zero.
+        assert!(!axis_labels(0.0, 10.0, 0.0).is_empty());
+    }
+
+    /// The bug this ask exists for, measured on a running chart: a 163 px CVD
+    /// pane spanning roughly -30..30 asked for three labels, `nice_ticks`
+    /// rounded that down to one, and the pane read as a band with a number
+    /// floating in it.
+    #[test]
+    fn an_axis_asks_for_labels_generously_and_thins_them_to_fit() {
+        assert_eq!(tick_target(40.0), 2, "a short axis still asks for two");
+        assert_eq!(tick_target(163.0), 8);
+        assert_eq!(tick_target(f32::NAN), AXIS_MIN_TICKS);
+
+        assert_eq!(
+            nice_ticks(-30.7, 29.4, 3).len(),
+            1,
+            "the shape of the bug, kept as evidence: a modest ask rounds to one"
+        );
+        let fitted = axis_labels(-30.7, 29.4, 163.0);
+        assert!(
+            fitted.len() >= 3,
+            "asking generously gets the pane a scale: {fitted:?}"
+        );
+
+        // And the ask is not blindly honoured. Over 0..100 a 163 px axis is
+        // handed eleven labels 16 px apart — texture, not numbers — so every
+        // other one goes, and what stays is still round.
+        assert_eq!(nice_ticks(0.0, 100.0, 8).len(), 11);
+        let thinned = axis_labels(0.0, 100.0, 163.0);
+        assert_eq!(
+            thinned
+                .iter()
+                .map(|(_, label)| label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0", "20", "40", "60", "80", "100"]
+        );
+    }
+
+    /// `nice_ticks` walks the range by adding `step`, so a sub-unit step lands
+    /// on `-2.8e-17` where zero belongs. Printed naively that is `-0.0` on the
+    /// one label a flow pane is read against — a normalised oscillator or a
+    /// per-contract delta hits it, a CVD in the thousands never does, which is
+    /// why every other test here passes over it.
+    #[test]
+    fn the_zero_label_survives_a_step_that_is_not_exact_in_binary() {
+        for (lo, hi) in [(-0.324, 0.324), (-0.756, 0.756), (-0.19, 0.03)] {
+            let labels: Vec<String> = axis_labels(lo, hi, 163.0)
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect();
+            assert!(
+                labels.iter().any(|label| label == "0"),
+                "{lo}..{hi} must label its zero as zero: {labels:?}"
+            );
+            assert!(
+                !labels.iter().any(|label| label.starts_with('-')
+                    && label.parse::<f64>().is_ok_and(|value| value == 0.0)),
+                "and never as a negative nothing: {labels:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tick_decimals_are_the_fewest_that_write_the_step_back() {
+        assert_eq!(tick_decimals(250.0), 0);
+        assert_eq!(tick_decimals(1.0), 0);
+        // 2500 shown in thousands: "2.5k", never "2k" twice in a column.
+        assert_eq!(tick_decimals(2.5), 1);
+        assert_eq!(tick_decimals(0.05), 2);
+        assert_eq!(tick_decimals(0.0), 0, "a degenerate step asks for nothing");
     }
 
     #[test]

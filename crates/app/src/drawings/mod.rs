@@ -159,6 +159,18 @@ pub struct ToolShortcut {
     pub shift: bool,
 }
 
+/// A family of related tools sharing one rail slot. Declared by each member,
+/// never listed centrally — the rail folds consecutive registry entries with
+/// equal `id` into a single split button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolFamily {
+    pub id: &'static str,
+    /// Header of the family flyout.
+    pub title: &'static str,
+    /// Slot icon before any member has been armed.
+    pub icon: &'static str,
+}
+
 /// The implementation port every drawing plugs into. Selection visuals (halo
 /// and anchor handles) are common chrome painted by the wrapper, so a tool
 /// only ever paints its own geometry in the style it is given. Capability
@@ -174,6 +186,11 @@ trait DrawingToolImpl: Sync {
     fn required_points(&self) -> usize;
     /// The key that arms this tool from the chart, if it has one.
     fn shortcut(&self) -> Option<ToolShortcut> {
+        None
+    }
+    /// The rail family this tool belongs to, if any. Consecutive registry
+    /// entries with the same family id share one rail slot.
+    fn family(&self) -> Option<ToolFamily> {
         None
     }
     /// Whether the tool paints an interior that the fill controls affect.
@@ -251,6 +268,11 @@ impl DrawingTool {
     #[must_use]
     pub fn shortcut(self) -> Option<ToolShortcut> {
         self.0.shortcut()
+    }
+
+    #[must_use]
+    pub fn family(self) -> Option<ToolFamily> {
+        self.0.family()
     }
 
     #[must_use]
@@ -658,8 +680,11 @@ impl Drawings {
         self.gesture_baseline = None;
     }
 
-    pub fn shift_bars(&mut self, added: usize) {
-        let delta = added as f32;
+    pub fn shift_bars(&mut self, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        let delta = delta as f32;
         let shift = |items: &mut Vec<Drawing>| {
             for drawing in items {
                 for point in &mut drawing.points {

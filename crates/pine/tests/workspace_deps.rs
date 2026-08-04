@@ -63,6 +63,7 @@ fn the_domain_crates_never_depend_upwards() {
         ("engine", &[]),
         ("orderbook", &[]),
         ("replay", &["engine"]),
+        ("sim", &["engine"]),
         ("indicators", &["engine"]),
         ("pine", &["indicators"]),
     ];

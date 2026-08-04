@@ -51,7 +51,7 @@ Inventory, from code:
 | Candle style editor | floating window | `candle_view.rs::draw_style_window` |
 | Market Replay browser | floating window (Ctrl+R) | `replay_view.rs::draw_browser` |
 | Replay transport | bottom panel (while replaying) | `replay_view.rs::draw_transport` |
-| Drawing toolbox | external 44 px top/bottom panel, corner-docked | `toolrail.rs` |
+| Drawing toolbar | external 44 px rail, edge-docked | `toolrail.rs` |
 | Selected-drawing inspector | floating window | `app.rs::draw_drawing_inspector` |
 | Timezone picker | floating area, pinned bottom-right | `app.rs::draw_timezone_selector` |
 | Header line (symbol · spec · bar counts · mode) | text painted on chart | `app.rs::draw_header` |
@@ -148,9 +148,9 @@ Icons (§6–§7 use them):
 
 | # | Zone | Size | Owns |
 |---|---|---|---|
-| 1 | Menu bar | 28 px | rare actions, discoverability, shortcuts (§10) |
+| 1 | Menu bar + workspace tabs | 28 px | menus left (§10); one tab per open market right (§11) |
 | 2 | Context toolbar | 44 px | source · bars · history · layers · look · panels (§6) |
-| 3 | Drawing toolbox | 44 px top/bottom, left/right aligned | cursor, crosshair, drawings (§7) |
+| 3 | Drawing toolbar | 44 px rail, edge-docked (default left) | cursor, crosshair, drawings (§7) |
 | 4 | Chart canvas | elastic | candles, flow layers, overlay legends, drawings |
 | 5 | Sub-panes | ≤ 40% of 4, max 3 | pane indicators: CVD, delta… (§9) |
 | 6 | Time axis | 24 px | time labels, x-zoom drag |
@@ -158,16 +158,21 @@ Icons (§6–§7 use them):
 | 8 | Dock | 280–360 px, collapsible to 36 | tabbed settings panels (§7) |
 | 9 | Price axis | 64 px | price labels, y-zoom drag |
 
-Vertical chrome while live with the drawing toolbox visible:
-28+44+44+24+28 = **168 px**. The toolbox can be hidden from **View**, or
-docked above the status area instead of below the context toolbar. In
-exchange, persistent chrome never covers the candles; only contextual floating
-windows such as the selected-drawing inspector may overlap them. Canvas layers
-remain limited to the legend and honest market markers.
+Vertical chrome while live with the drawing toolbar on its default left
+edge: 28+44+24+28 = **124 px** — a lateral rail spends horizontal budget,
+not the vertical budget where price lives. Docked top or bottom it costs the
+familiar 168 px, and it can be hidden from **View** or re-docked on any of
+the four edges. In exchange, persistent chrome never covers the candles;
+only contextual floating windows such as the selected-drawing inspector may
+overlap them. Canvas layers remain limited to the legend and honest market
+markers.
 
 **The rule that keeps this stable:** a new feature must claim a slot inside
 zones 1–9. If it genuinely cannot, the shell — not the feature — is what gets
 redesigned, in this document first.
+
+With the split view active (§11), zones 4, 5, 6 and 9 exist **once per chart
+pane**; zones 1–3, 7 and 8 stay singular and follow the *focused* pane.
 
 ## 6. Toolbar
 
@@ -201,18 +206,21 @@ bar §8) and both panel-opening buttons (the dock's tab strip replaces them).
 
 ![Tool rail and dock](img/04-tool-rail-dock.svg)
 
-> The diagram records the original vertical-rail skeleton. The corner-docked
-> external toolbox described below supersedes that rail geometry, and the
-> detailed [Drawing tools UX specification](drawing-tools-ux-spec.html) is
-> authoritative for drawing interactions beyond it: favourites/flyouts, the
-> repeat pin, the Objects manager, lock/visibility/delete semantics, the
-> keyboard grammar and the complete Fibonacci level editor.
+> The rail geometry, docking, button states and inspector placement are now
+> specified in [drawing-toolbar-ux.md](../drawing-toolbar-ux.md), which
+> supersedes the corner-docked toolbox this section used to describe. The
+> detailed [Drawing tools UX specification](drawing-tools-ux-spec.html)
+> stays authoritative for drawing interactions beyond the chrome:
+> favourites/flyouts, the repeat pin, the Objects manager,
+> lock/visibility/delete semantics, the keyboard grammar and the complete
+> Fibonacci level editor.
 
-**Drawing toolbox (external, 44 px).** Exclusive selection; exactly one tool
-is armed and `Esc` always returns to Pointer. Its grip docks the controls at
-the nearest of the four chart-shell corners: top-left, top-right, bottom-left
-or bottom-right. The top/bottom panel reserves layout space, so the toolbox
-never floats over market data.
+**Drawing toolbar (external, 44 px rail).** Exclusive selection; exactly one
+tool is armed and `Esc` always returns to Pointer. Its grip docks the rail
+against the nearest of the four window edges — left (the default), right,
+top or bottom — vertical on the lateral edges, horizontal on the others.
+The panel reserves layout space, so the toolbar never floats over market
+data.
 
 | Tool | Key | Notes |
 |---|---|---|
@@ -319,7 +327,8 @@ shell:
 Menus stay shallow; they exist for discoverability and shortcuts, never as
 the only path:
 
-- **File** — Market Replay… (`Ctrl+R`), Close Replay, Exit.
+- **File** — New Tab… (`Ctrl+T`), Close Tab (`Ctrl+W`), Layout ▸ Single /
+  Time + Flow (§11), Market Replay… (`Ctrl+R`), Close Replay, Exit.
 - **View** — dock show/hide (`Ctrl+B`), each dock tab, sub-pane
   collapse-all, perf readings on/off, timezone.
 - **Insert** — indicators (natives + library), drawing tools (§9).
@@ -329,23 +338,136 @@ the only path:
 
 Shortcut map currently implemented:
 `Esc/1` pointer · `2` crosshair · `Ctrl+R` replay browser · `Ctrl+B` dock · `Space`
-play/pause while replaying · `+`/`−` replay speed. Single letters stay free
-of modifiers (no text inputs live on the chart).
+play/pause while replaying · `+`/`−` replay speed · `Ctrl+T` new tab ·
+`Ctrl+W` close tab · `Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs. Single letters
+stay free of modifiers (no text inputs live on the chart).
 
-## 11. Growth map
+## 11. Workspace tabs and split view
+
+Lands with the timeframe-split milestone. Two orthogonal capabilities: **tabs**
+multiply markets, the **split** multiplies views of one market. Either works
+without the other.
+
+### Workspace tabs (zone 1, right of the menus)
+
+One tab per open market. A tab chip reads `SYMBOL · venue` in chrome type,
+with a close `×` on hover and a trailing `+` that opens the source picker
+(feed + symbol, from the config catalog — the same catalog the toolbar's
+SOURCE group reads). Zone 1 already had the horizontal room; the chrome
+budget is unchanged.
+
+- **A tab owns its market wholesale**: feed connection and channels, flow
+  pane, optional time pane, drawings, indicator slots, replay link, notices,
+  loading state. Nothing market-scoped lives outside a tab.
+- **Switching never tears down feeds.** Background tabs keep draining their
+  bounded channels every frame (a stalled channel would back the feed thread
+  up); only the active tab renders.
+- **Provenance follows the active tab**: status bar, side-honesty note,
+  notice cards and the transport strip all read from it. A background tab
+  with a dead feed shows an amber dot on its chip — honesty at a glance.
+- Replay is **per-tab**: a recording opens inside the tab that requested it,
+  replacing that tab's SOURCE group with the amber session label (existing
+  behaviour, now scoped). Other tabs keep streaming live.
+- Default open: one tab, the config default (`default_feed`/`default_symbol`).
+- **The picker can add a symbol the catalog does not have.** An "Add symbol…"
+  field under the symbol list opens it immediately and remembers it in
+  `quantick-symbols.toml` beside the config — the config file itself is
+  hand-written and never rewritten by the app. Added symbols merge into the
+  catalog before it is validated, so they reach the MetaTrader port map like
+  any other, and they carry the only remove affordance in the app: a shipped
+  entry is the config's, not the app's. This is what a rolling B3 contract
+  (WINQ26 → WINV26) needs, and it costs no file editing.
+- **The last tab is not closable.** Its `×` disables itself and says why: a
+  window with no market has nothing to draw, and an empty canvas is not a
+  state the chrome has anything true to say about.
+- **The same market may be open twice.** Two views of one book — different
+  bar specs, different drawings, different indicator slots — is a legitimate
+  thing to want, so nothing dedupes the strip. For MetaTrader that means two
+  listeners on one mapped port, and the second loses the bind: that tab shows
+  the bridge's own port-in-use notice. One port per *symbol* is what
+  `[metatrader.ports]` buys; one port per tab is not on offer.
+- MT5 tabs each need their own bridge port (`[metatrader.ports]` ↔ the EA's
+  `InpPort`); a port collision surfaces as that tab's notice card, never as
+  another tab's problem.
+
+### Split view (per tab: zones 4–6 + 9 duplicate)
+
+`File → Layout → Time + Flow` (per-tab, remembered). The canvas splits on a
+draggable vertical divider — **time pane left, flow pane right**, 50/50
+default, 25% minimum each. The time pane is the *context* view; the flow
+pane keeps quantick's identity.
+
+- **One engine, one tape.** Both panes are fed the same trades from the
+  tab's feed; the time pane is a second `ChartState` with `BarSpec::Time`.
+  No second bar-building path exists.
+- **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h`
+  presets plus the existing custom interval drag. The toolbar's BARS group
+  keeps governing the flow pane only; two selectors, two panes, no modes.
+- **Flow layers stay on the flow pane.** Heatmap, bubbles and the live strip
+  never render on the time pane. Indicators and drawings work on both, each
+  pane owning its slots and objects (anchors are bar-index + price and do
+  not translate across bar streams).
+- **Focus**: clicking a pane focuses it; the focused pane drives the status
+  bar's content section, `Insert → Indicator` targeting and the Indicators
+  dock tab. A 1 px accent under the pane's top edge marks focus — no
+  border boxes around market data.
+- **The drawing chrome stays singular and follows focus.** One rail, one
+  properties inspector, one object manager per window — zone 3 is singular
+  by §5 — and each reads and writes the *focused* pane's objects. The
+  placement rules in [drawing-toolbar-ux.md](../drawing-toolbar-ux.md) §4.2
+  (open beside the selection, auto-pin on a narrow chart, re-clamp when the
+  pane shrinks) measure that pane's chart rectangle, not the window's, so a
+  split half is what decides whether a floating inspector still fits.
+- **Venue history in front of the tape.** The time pane opens on the venue's
+  own candles — ninety days of them, roughly 130 000 1-minute bars and about
+  45 MB per tab, fetched once and folded locally to whatever the header asks
+  for, so a chip click never reaches the network. They stand *in front of* the bars quantick cut
+  from prints, never mixed into them: the engine rebuilds its own series from
+  retained trades on every spec change, and a prefix living inside it would be
+  eaten. Gated on `FeedCapabilities::ohlcv_history`; a recording asks for
+  nothing, and an interval that is not a whole number of minutes gets no
+  prefix rather than an approximated one.
+- **The seam is marked.** A dashed amber rule where venue candles give way to
+  bars built from prints, labelled `venue` — distinct from the solid amber
+  backfill divider, which keeps marking its own boundary further right. The
+  status bar's content section counts all three sources in the order they sit
+  on the chart (`26000v+240+61 bars`). A block the venue cut short — it stopped
+  answering, or the answer hit a cap — belongs beside that count as an amber
+  mark: a chart showing six weeks where ninety days were asked for is making a
+  claim about the market it cannot support. Logged today (`OHLCV_INCOMPLETE`);
+  the badge is deferred rather than half-built. A *short* series is not the
+  same thing — an instrument younger than the span has fewer candles, and that
+  answer is complete.
+- **What a venue candle is not.** It is one summary per interval, not a bar
+  replayed from prints. Only Binance publishes an aggressor split, so only
+  there does the prefix carry a real delta; on Hyperliquid and MetaTrader the
+  volume is exact and the delta is identically zero — read as *not measured*,
+  never as measured and found balanced. That zero is a *stored representation*:
+  the two sides each carry half the candle's volume, so an indicator reading
+  `buy_volume` directly over the prefix sees half-volumes, not a measured
+  aggressor side. The mapping sites record this per provider.
+- **Honest gaps**: time bars skip empty intervals (engine policy, stated in
+  `crates/engine/src/time.rs`); the x-axis stays slot-indexed, so quiet
+  periods compress instead of rendering fabricated empty candles. The time
+  axis labels make the jump visible; nothing interpolates. The fold keeps that
+  rule: an interval in which the venue reported nothing is skipped, not
+  emitted flat.
+
+## 12. Growth map
 
 Where future features land — decided now, so they never claim new chrome:
 
 | Future feature | Toggle/entry | Settings | Canvas presence | Status |
 |---|---|---|---|---|
 | Indicators (M1–M5) | LAYERS icon + Insert menu | dock tab Indicators | legend rows, overlays, sub-panes | recompute progress |
-| Drawing tools | corner-docked toolbox | selected-object inspector | drawings layer | — |
+| Drawing tools | edge-docked toolbar | selected-object inspector | drawings layer | — |
 | Alerts | on indicator/level context | dock tab Alerts | triggered marker on bar | armed count + last fired |
+| Paper trading ([spec](paper-trading.md)) | toolbar BUY/SELL | dock tab Trading | order/position price lines | SIM P&L cell |
 | Bot / strategy monitor | LAYERS icon | dock tab | order/position markers | connection + P&L cell |
-| Second chart / layouts | File → Layout | — | split canvas (zones 4–6 duplicate per chart; zones 1–3, 7–9 stay singular) | per-chart provenance |
+| Second chart / layouts | **landed — §11** | — | split canvas per §11 | per-chart provenance |
 | Watchlist | — | dock tab | — | — |
 
-## 12. Migration plan
+## 13. Migration plan
 
 Each phase is one small PR, passing the four checks, shippable alone, no
 engine changes anywhere. Suggested order — cheapest confidence first:
@@ -372,13 +494,13 @@ Phases 1–3 are pure relocation and can precede indicator M1; phase 4 should
 land before the Indicators tab is needed; phase 5 anytime; phase 6 rides the
 indicator plan.
 
-## 13. Open questions
+## 14. Open questions
 
 - **Persistence of chrome state** (dock width, active tab, rail tool,
   sub-pane heights): piggyback on the indicator plan's
   `indicators-state.toml` or a sibling `ui-state.toml`. Decide at phase 4.
-- **Multi-chart** (§11) doubles zones 4–6 per chart; the model supports it,
-  but splitter behaviour and per-chart toolbars are deliberately unspecified
-  until a real need exists.
+- **Multi-chart** is now specified in §11 (tabs + one split). Grid layouts
+  (2×2 and beyond) and per-pane toolbars remain unspecified until a real
+  need exists.
 - **Themes**: tokens (§4) make a light theme *possible*; it is a non-goal
   until someone asks for one.

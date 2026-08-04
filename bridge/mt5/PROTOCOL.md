@@ -5,6 +5,11 @@ dials out** (MQL5 sockets are client-only); the quantick feed listens
 (default `127.0.0.1:9100`). One connection = one session. The stream is
 one-way: bridge → feed.
 
+**One port carries one symbol.** A listener serves a single session at a time
+and refuses the `hello` of any other symbol, so streaming several symbols means
+several listeners, each on its own port with its own bridge (quantick:
+`[metatrader.ports]`; EA: `InpPort`).
+
 Two bridges implement it — `quantick_bridge.py` (outside the terminal, via the
 official Python package) and `QuantickBridge.mq5` (inside it) — and the feed
 accepts either without knowing the difference. The protocol is the contract;
@@ -21,9 +26,22 @@ hello                        exactly once, first line
 backfill_start               optional block, at most once, right after hello
   tick × N                   historical ticks (CopyTicks)
 backfill_end
+rates_start                  optional block, at most once, after backfill_end
+  rate × N                   batched historical candles (CopyRates)
+rates_end
 tick | book | heartbeat × …  live, until the session ends
 bye                          optional clean goodbye
 ```
+
+A session lasts until the connection ends; the feed then goes back to
+accepting. While one is being served, **a second connection to the same port is
+accepted and closed**, not queued: it gets a short window (250 ms) to send its
+`hello` so the feed's log can name the symbol that dialed the wrong port, then
+the socket is closed with no reply — the stream is one-way, so a close is the
+only answer the protocol has. The served session is untouched. A bridge sees
+this as an ordinary disconnect and retries on its own schedule; the feed logs
+`MT5_SESSION_BUSY` every time, which is what makes two EAs sharing one
+`InpPort` visible instead of looking like a hang.
 
 ## Messages
 
@@ -57,9 +75,13 @@ bye                          optional clean goodbye
 - `tick_size` — *optional*, `SYMBOL_TRADE_TICK_SIZE` as an exact decimal
   string. The instrument's real price grid (WIN: `"5"`), so the consumer does
   not render liquidity on rows that can never hold any.
+- `rates` — *optional*, `true` when this session sends the historical candle
+  block below. **Absent means no candles**: an older bridge, the Expert Advisor
+  (which does not implement them), or `--rates-months 0`. The feed reports the
+  absence instead of leaving a time pane waiting for a block that is not coming.
 
-Both depth fields are additive within schema 1: a bridge that predates them
-still connects and still streams ticks.
+Depth and candle fields are all additive within schema 1: a bridge that predates
+any of them still connects and still streams ticks.
 
 ### tick
 
@@ -110,6 +132,81 @@ Empty sides are legitimate (auction, halted book), not an error. A **crossed**
 image (best bid ≥ best ask) is real during B3's pre-open auction; the feed
 rejects and counts it, keeping the last uncrossed image.
 
+### rates_start / rate / rates_end
+
+```json
+{"type":"rates_start","interval_ms":60000,"count_hint":129600}
+{"type":"rate","bars":[[1784824260000,"177790","177850","177780","177800","1234"],…]}
+{"type":"rates_end"}
+```
+
+Historical candles, so a time pane opens with months of context rather than
+with the tick window. Sent **once, after `backfill_end`**, by a bridge whose
+hello declared `"rates": true`; the transport is one-way, so this block arrives
+unasked and the feed holds it until something requests it.
+
+- `interval_ms` — what each candle covers. `60000` (M1) is what ships: one base
+  series, resampled locally to whatever the pane shows, which is the only
+  contract a push-only transport can keep.
+- `count_hint` — *optional*, like `backfill_start`'s.
+- `bars` — `[time_ms, open, high, low, close, volume]`, ascending. `time_ms` is
+  the **bucket start in server time** (see hello), prices are decimal strings
+  with `digits` decimals, and volume is a decimal string.
+- **Volume follows what the venue prints.** An exchange tape reports traded size
+  (`real_volume`); a broker-quoted CFD prints nothing at all and reports its
+  tick count instead — the same one-synthetic-unit-per-tick the live path
+  charts for that instrument (see `tape`). The `BRIDGE_RATES_SENT` log line
+  names which was used, and counts the per-bar substitutions in
+  `fell_back_to_tick_volume`: a tape instrument whose terminal reported no real
+  volume on some bars is a different chart from one that reported it on all of
+  them, and once the bars are drawn the two look identical.
+- No aggressor split exists in a MetaTrader candle. The feed puts half the
+  volume on each side, so total volume stays exact and delta is identically
+  zero — read as *not measured*, never as a balanced market.
+- Candles the terminal reports with no volume are dropped by the feed, never
+  emitted: an empty bucket is a gap, and a carried-forward price would be an
+  invented one.
+
+**Why a batch per line.** A `rate` message carries many candles because the
+alternatives both fail. One candle per line spends the block in newline framing
+— 130 000 lines for a quarter. The whole block on one line breaks the 64 KiB
+line cap, which does not truncate the line but *ends the session*. So a batch is
+bounded at **300 candles**: a row is a ≤20-character timestamp plus five quoted
+decimals of at most 22 characters, separators included — under 150 bytes even
+for an instrument quoting eight integer and eight fractional digits. Three
+hundred of those is ~44 KiB, about two thirds of the cap.
+`rates_line_stays_under_the_cap` in `crates/feed-mt5/src/protocol.rs` pins it,
+and `MAX_BARS_PER_RATE_LINE` appears on both sides of the wire.
+
+**Why the bridge pages, and why the block can be shorter than asked.** The
+terminal validates a `CopyRates` request's *potential* bar count against its
+"Max bars in chart" setting and returns a hard error rather than truncating to
+what it will serve. Probed 2026-08-03 against a terminal capped at 100 000: a
+90-day M1 range is 129 600 potential slots and came back
+`(-2, 'Terminal: Invalid params')`, while the same call over a single day
+returned its 563 bars. The bridge therefore walks backwards in counted pages,
+merging by bar time — and because its page size is itself a value the Max-bars
+dialog offers, a page the terminal still refuses is halved and retried rather
+than trusted to be small enough. Two consequences are visible on
+the wire: the block is assembled from several terminal calls, so a page failing
+partway delivers the newer part rather than nothing; and a young contract simply
+has less history than was asked for. `BRIDGE_RATES_SENT` reports
+`requested_span_days` against `covered_span_days` so the second case reads as a
+fact about the instrument rather than as a bug.
+
+`rates_end` carries **`partial: true`** when the bridge knows the block is short
+of what was asked: a page failed after others had landed, the walk hit its page
+budget, or the block was clipped to `--rates-max-bars`. **Absent means
+complete**, so a bridge predating the field is unaffected. Note what the flag is
+*not*: a contract younger than the request has fewer candles and is still
+complete — that case shows up as `covered_span_days` below `requested_span_days`,
+and the two facts are separate on purpose. The feed sets it too when its own
+per-block cap clips the series, so either side knowing is enough.
+
+A block that never reaches `rates_end` is discarded whole rather than delivered
+short: a candle series with a hole in it reads as a market that stopped trading.
+The next session re-sends it.
+
 ### heartbeat
 
 ```json
@@ -147,5 +244,23 @@ Clean goodbye (EA removed, terminal closing). Anything after it is ignored.
   would let any local process exhaust the feed's memory.
 - Wrong first message, schema or symbol mismatch: session refused, feed keeps
   listening.
-- A session that dies mid-backfill discards the partial block; the next
-  connection re-sends history.
+- A connection arriving while a session is being served: refused and closed
+  (`MT5_SESSION_BUSY`), the running session unaffected.
+- A session that dies mid-backfill, or mid-candle-block, discards the partial
+  block; the next connection re-sends it.
+- A `rate` batch arriving outside a `rates_start`/`rates_end` pair is dropped
+  and counted: it has no declared interval, and guessing one would misdate
+  every candle in it.
+
+## Compatibility
+
+Schema 1 grows by optional fields and optional message types rather than by
+version bumps, so the two sides can be upgraded independently:
+
+- **New bridge, old feed.** The candle block is unknown to a feed that predates
+  it, so it lands in the existing "unknown message type" path: skipped and
+  counted per line (`MT5_UNDECODABLE_LINE`), session unharmed. Batching keeps
+  the cost of that visible-but-harmless case small — a quarter of M1 candles is
+  ~440 warnings rather than 130 000.
+- **Old bridge, new feed.** No `rates` in the hello, so the feed reports no
+  candle history and the time pane says so rather than waiting.

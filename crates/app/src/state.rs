@@ -91,7 +91,8 @@ pub enum BarSpec {
     Volume(Decimal),
     /// N notional per bar.
     Dollar(Decimal),
-    /// N milliseconds per bar.
+    /// N milliseconds per bar. The interval a control may ask for is bounded
+    /// by [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`].
     Time(i64),
     /// Target trades per bar for the adaptive imbalance rule.
     Imbalance(u64),
@@ -123,6 +124,19 @@ impl BarSpec {
         }
     }
 
+    /// The interval this spec cuts bars at, when it cuts by time at all.
+    ///
+    /// Only a time spec has one: a tick or volume bar covers whatever span its
+    /// count happened to take, which is not an interval anything can be folded
+    /// to.
+    #[must_use]
+    pub fn time_interval_ms(&self) -> Option<i64> {
+        match self {
+            Self::Time(ms) => Some(*ms),
+            _ => None,
+        }
+    }
+
     /// A human-readable summary, e.g. `tick(50)` or `dollar(500000)`.
     #[must_use]
     pub fn summary(&self) -> String {
@@ -138,6 +152,27 @@ impl BarSpec {
 
 /// The bars derived from the retained trade stream, plus the backfill/live
 /// boundary, for the currently selected [`BarSpec`].
+/// Smallest interval a time-bar control may ask for, in milliseconds.
+///
+/// A tenth of a second is already finer than any venue's own bar; below it
+/// the series is a tick chart wearing a clock.
+pub const MIN_TIME_INTERVAL_MS: i64 = 100;
+/// Largest interval a time-bar control may ask for, in milliseconds — one
+/// day, the coarsest that still fits inside a session.
+///
+/// The two time-bar controls (the toolbar's BARS group and the time pane's
+/// own header) read the same bounds: they set the same `BarSpec::Time`, and a
+/// preset one of them offers has to be a value the other accepts.
+pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
+/// Milliseconds per drag point, shared by both controls so the same gesture
+/// moves the same amount wherever it is made.
+///
+/// Kept at the fine end of the domain — the BARS group's existing feel —
+/// because that is where dragging is the right gesture. Crossing to the
+/// coarse end is what the time pane's presets and click-to-type are for, and
+/// a speed that made an hour a short drag would make a second unreachable.
+pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
+
 pub struct ChartState {
     spec: BarSpec,
     /// O(1) identity of the current temporal bar partition.
@@ -291,6 +326,21 @@ impl ChartState {
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
+    }
+
+    /// Every trade this chart still holds, oldest first — what a rebuild
+    /// replays, and what a second view of the same market is seeded from.
+    #[must_use]
+    pub fn trades(&self) -> &[Trade] {
+        &self.trades
+    }
+
+    /// How many of [`Self::trades`] arrived as backfilled history rather than
+    /// live. Seeding another chart needs this: a trade that was streamed live
+    /// must not become "history" just because the second view opened late.
+    #[must_use]
+    pub fn backfill_trade_count(&self) -> usize {
+        self.backfill_trade_count
     }
 
     /// When the bar in chart slot `index` opened — a closed bar, or the forming

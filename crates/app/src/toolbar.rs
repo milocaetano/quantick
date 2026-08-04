@@ -5,10 +5,12 @@
 //! BARS (kind + one parameter), HISTORY (a `+ older ▾` split button whose
 //! menu holds the page size). Right: LAYERS (one icon toggle per visual
 //! layer; right-click opens its dock tab), LOOK (appearance dialog), PANELS
-//! (dock show/hide). The toolbar never wraps: [`collapse_plan`] folds groups
-//! into the `⋯` overflow menu in the §6 order — LOOK → PANELS → HISTORY →
-//! bar parameter merges into the kind combo → the feed name shrinks to its
-//! initial. The symbol and LAYERS never fold.
+//! (dock show/hide). Between HISTORY and the right groups sits TRADE — the
+//! simulated BUY/SELL market buttons (`docs/ux/paper-trading.md`). The
+//! toolbar never wraps: [`collapse_plan`] folds groups into the `⋯` overflow
+//! menu in the §6 order — LOOK → PANELS → HISTORY → TRADE → bar parameter
+//! merges into the kind combo → the feed name shrinks to its initial. The
+//! symbol and LAYERS never fold.
 //!
 //! The widgets edit the app's state through [`ToolbarModel`]'s borrows;
 //! anything with a side effect beyond a field write comes back as a
@@ -41,6 +43,8 @@ const W_BARS: f32 = 160.0;
 const W_BAR_PARAM: f32 = 150.0;
 /// The `+ older ▾` split button.
 const W_HISTORY: f32 = 100.0;
+/// The simulated BUY/SELL pair.
+const W_TRADE: f32 = 110.0;
 /// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
 const W_LAYERS: f32 = 128.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
@@ -56,6 +60,8 @@ pub struct CollapsePlan {
     pub panels_inline: bool,
     /// HISTORY renders as the split button.
     pub history_inline: bool,
+    /// TRADE renders as the BUY/SELL pair.
+    pub trade_inline: bool,
     /// The bar parameter renders next to the kind combo.
     pub param_inline: bool,
     /// The feed combo shows its full display name.
@@ -68,6 +74,7 @@ impl CollapsePlan {
         look_inline: true,
         panels_inline: true,
         history_inline: true,
+        trade_inline: true,
         param_inline: true,
         feed_full_name: true,
     };
@@ -76,7 +83,11 @@ impl CollapsePlan {
     /// name loses no affordance, so it alone needs no overflow.
     #[must_use]
     pub fn overflow_needed(self) -> bool {
-        !(self.look_inline && self.panels_inline && self.history_inline && self.param_inline)
+        !(self.look_inline
+            && self.panels_inline
+            && self.history_inline
+            && self.trade_inline
+            && self.param_inline)
     }
 
     /// Estimated width of the toolbar under this plan. The `⋯` slot is
@@ -96,6 +107,9 @@ impl CollapsePlan {
         if self.history_inline {
             width += W_HISTORY;
         }
+        if self.trade_inline {
+            width += W_TRADE;
+        }
         if self.look_inline {
             width += W_ICON;
         }
@@ -112,10 +126,11 @@ impl CollapsePlan {
 #[must_use]
 pub fn collapse_plan(available: f32) -> CollapsePlan {
     let mut plan = CollapsePlan::FULL;
-    let steps: [fn(&mut CollapsePlan); 5] = [
+    let steps: [fn(&mut CollapsePlan); 6] = [
         |plan| plan.look_inline = false,
         |plan| plan.panels_inline = false,
         |plan| plan.history_inline = false,
+        |plan| plan.trade_inline = false,
         |plan| plan.param_inline = false,
         |plan| plan.feed_full_name = false,
     ];
@@ -179,6 +194,9 @@ pub struct ToolbarModel<'a> {
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
     pub appearance_open: bool,
+    /// Whether the paper-trading simulator has seen a price — the TRADE
+    /// buttons disable themselves (with the reason) until it has.
+    pub paper_ready: bool,
     /// Active indicators, for the INDICATORS menu (add order).
     pub indicators: Vec<IndicatorMenuEntry>,
     /// Loadable script names, embedded first (the INDICATORS menu's "add"
@@ -234,6 +252,10 @@ pub enum ToolbarAction {
     AddScriptIndicator(usize),
     /// Open the settings dialog of an indicator.
     OpenIndicatorSettings(u64),
+    /// Simulated market buy at the Trading tab's quantity (paper trading).
+    PaperBuy,
+    /// Simulated market sell at the Trading tab's quantity (paper trading).
+    PaperSell,
 }
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
@@ -259,6 +281,10 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 if plan.history_inline {
                     ui.separator();
                     draw_history(ui, model, &mut actions);
+                }
+                if plan.trade_inline {
+                    ui.separator();
+                    draw_trade(ui, model, &mut actions);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if plan.overflow_needed() {
@@ -392,8 +418,11 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             ui.label("interval ms");
             ui.add(
                 egui::DragValue::new(model.time_interval_ms)
-                    .range(100.0..=600_000.0)
-                    .speed(100.0),
+                    .range(
+                        crate::state::MIN_TIME_INTERVAL_MS as f64
+                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                    )
+                    .speed(crate::state::TIME_INTERVAL_DRAG_SPEED),
             );
         }
         BarKind::Imbalance => {
@@ -445,6 +474,39 @@ fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             .speed(100.0),
     );
     ui.small(format!("{} trades backfilled so far", model.history_trades));
+}
+
+/// TRADE: the simulated market entries (`docs/ux/paper-trading.md`).
+/// Quantity, brackets and everything else live in the Trading dock tab;
+/// these two buttons are the "act now" pair. Gated on the simulator having
+/// seen a price, never on the provider — paper trading works on any feed.
+fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
+    let buy = ui
+        .add_enabled(
+            model.paper_ready,
+            egui::Button::new(egui::RichText::new("BUY").color(theme::BUY).strong()),
+        )
+        .on_hover_text(
+            "simulated market buy - fills at the next print; quantity and brackets \
+             live in the Trading tab",
+        )
+        .on_disabled_hover_text("waiting for the first print - there is no market yet");
+    if buy.clicked() {
+        actions.push(ToolbarAction::PaperBuy);
+    }
+    let sell = ui
+        .add_enabled(
+            model.paper_ready,
+            egui::Button::new(egui::RichText::new("SELL").color(theme::SELL).strong()),
+        )
+        .on_hover_text(
+            "simulated market sell - fills at the next print; quantity and brackets \
+             live in the Trading tab",
+        )
+        .on_disabled_hover_text("waiting for the first print - there is no market yet");
+    if sell.clicked() {
+        actions.push(ToolbarAction::PaperSell);
+    }
 }
 
 /// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
@@ -641,6 +703,23 @@ fn draw_overflow(
                 draw_history_menu(ui, model);
             }
         }
+        if !plan.trade_inline {
+            ui.separator();
+            let buy = ui
+                .add_enabled(model.paper_ready, egui::Button::new("Buy at market (SIM)"))
+                .on_disabled_hover_text("waiting for the first print - there is no market yet");
+            if buy.clicked() {
+                actions.push(ToolbarAction::PaperBuy);
+                ui.close_menu();
+            }
+            let sell = ui
+                .add_enabled(model.paper_ready, egui::Button::new("Sell at market (SIM)"))
+                .on_disabled_hover_text("waiting for the first print - there is no market yet");
+            if sell.clicked() {
+                actions.push(ToolbarAction::PaperSell);
+                ui.close_menu();
+            }
+        }
         if !plan.param_inline {
             ui.separator();
             ui.label(egui::RichText::new("bar parameter").color(theme::TEXT_MUTED));
@@ -654,15 +733,16 @@ mod tests {
     use super::*;
 
     /// How many §6 collapse steps a plan has taken. `None` when the plan is
-    /// not one of the six canonical states — folding out of order.
+    /// not one of the seven canonical states — folding out of order.
     fn stage(plan: CollapsePlan) -> Option<usize> {
         let states = [
-            (true, true, true, true, true),
-            (false, true, true, true, true),
-            (false, false, true, true, true),
-            (false, false, false, true, true),
-            (false, false, false, false, true),
-            (false, false, false, false, false),
+            (true, true, true, true, true, true),
+            (false, true, true, true, true, true),
+            (false, false, true, true, true, true),
+            (false, false, false, true, true, true),
+            (false, false, false, false, true, true),
+            (false, false, false, false, false, true),
+            (false, false, false, false, false, false),
         ];
         states.iter().position(|&state| {
             state
@@ -670,6 +750,7 @@ mod tests {
                     plan.look_inline,
                     plan.panels_inline,
                     plan.history_inline,
+                    plan.trade_inline,
                     plan.param_inline,
                     plan.feed_full_name,
                 )
@@ -686,13 +767,13 @@ mod tests {
     #[test]
     fn a_hopeless_width_ends_fully_folded() {
         let plan = collapse_plan(0.0);
-        assert_eq!(stage(plan), Some(5));
+        assert_eq!(stage(plan), Some(6));
         assert!(plan.overflow_needed());
     }
 
     #[test]
     fn folding_follows_the_documented_order_and_never_skips() {
-        let mut last_stage = 5;
+        let mut last_stage = 6;
         // Sweep from narrow to wide: the collapse stage must only decrease,
         // and every plan must be one of the canonical §6 states.
         let mut width = 100.0;
@@ -767,12 +848,15 @@ mod tests {
                             book_capture: !replaying,
                             history_paging: !replaying,
                             traded_volume: true,
+                            ohlcv_history: !replaying,
+                            ohlcv_generation: 0,
                         },
                         heatmap_on: false,
                         bubbles_on: true,
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
+                        paper_ready: true,
                         // Non-empty on purpose: the entry rows (status dot,
                         // eye, trash) are only drawn when the menu has
                         // something in it, and an empty vec never exercises
@@ -841,12 +925,17 @@ mod tests {
                             book_capture: false,
                             history_paging: false,
                             traded_volume: false,
+                            ohlcv_history: false,
+                            ohlcv_generation: 0,
                         },
                         heatmap_on: false,
                         bubbles_on: false,
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
+                        // Not yet ready: the TRADE pair must lay out in its
+                        // disabled state without asking anything of the app.
+                        paper_ready: false,
                         indicators: Vec::new(),
                         scripts: Vec::new(),
                     };

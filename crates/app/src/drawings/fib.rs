@@ -16,7 +16,15 @@ use smallvec::SmallVec;
 
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX,
-    PresetHost, distance_to_segment, drawing_stroke,
+    PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
+};
+
+/// The one rail family both Fib tools declare, shared here so the two
+/// members can never drift onto different family ids.
+pub(super) const FIB_FAMILY: ToolFamily = ToolFamily {
+    id: "fib",
+    title: "Fibonacci",
+    icon: egui_phosphor::regular::ROWS,
 };
 
 /// Ratios closer than this are the same level; a duplicate is rejected.

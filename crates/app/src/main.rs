@@ -33,12 +33,19 @@ mod orderflow_engine;
 mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
+mod pane;
+mod paper_trading;
 mod price_view;
 mod replay_view;
+mod resample;
 mod state;
 mod statusbar;
 mod style;
+mod symbols_file;
+mod tab;
+mod tabstrip;
 mod theme;
+mod time_header;
 mod timezone;
 mod toolbar;
 mod toolrail;
@@ -133,6 +140,10 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 650.0])
+            // Below this the drawing rail would fall past its Minimal stage
+            // (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
+            // clip chrome instead of collapsing it.
+            .with_min_inner_size([900.0, 560.0])
             .with_title("quantick")
             .with_icon(icon),
         ..Default::default()

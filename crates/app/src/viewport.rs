@@ -115,14 +115,22 @@ impl Viewport {
         self.follow = (self.right_bar - newest).abs() <= 0.5;
     }
 
-    /// Account for `added` bars newly prepended at the front of the series: shift
-    /// the right-edge bar index by the same amount so the visible window keeps
-    /// showing the same bars instead of jumping. A no-op while following live —
-    /// the newest bar, and thus the right edge, is unchanged.
-    pub fn shift_right_edge(&mut self, added: usize) {
-        if !self.follow && added > 0 {
-            self.right_bar += added as f32;
+    /// Account for bars appearing at — or leaving — the front of the series:
+    /// shift the right-edge bar index by the same amount so the visible window
+    /// keeps showing the same bars instead of jumping.
+    ///
+    /// Signed, because the front can shrink as well as grow. Prepending older
+    /// trades adds bars; re-trimming a venue prefix against a series that has
+    /// just been re-cut further back *removes* them, and a window that only
+    /// knew how to move one way would jump on the other.
+    ///
+    /// A no-op while following live — the newest bar, and thus the right edge,
+    /// is unchanged whatever happened in front of it.
+    pub fn shift_right_edge(&mut self, delta: isize) {
+        if self.follow || delta == 0 {
+            return;
         }
+        self.right_bar = (self.right_bar + delta as f32).max(0.0);
     }
 
     /// Put the right edge back on `bar` of a series that was rebuilt under it.

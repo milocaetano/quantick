@@ -16,6 +16,7 @@ use quantick_indicators::{
 };
 
 use crate::indicator_worker::{IndicatorEvent, SlotId};
+use crate::price_view::PriceView;
 
 /// Fraction of the chart's height each indicator pane takes (plan §4.3:
 /// fixed fraction v1, draggable dividers later).
@@ -49,6 +50,21 @@ pub(crate) struct IndicatorView {
     /// A failed hot reload's errors: the running version is stale relative
     /// to the file on disk, and the panel says so.
     pub stale: Option<String>,
+    /// This pane's vertical scale: auto-fits its visible values until the
+    /// user drags the pane's own y-axis, then holds the range they set — the
+    /// candles' price axis rule, applied per pane.
+    ///
+    /// Render-side state, like `hidden`, and it lives on the view rather than
+    /// in a slot-keyed map on the side: a removed indicator takes its scale
+    /// with it, so a later pane can never inherit a range someone set for a
+    /// different series.
+    pub scale: PriceView,
+    /// The auto-fitted `(lo, hi)` the last frame drew this pane with.
+    ///
+    /// The gesture that zooms the pane runs before the frame that draws it,
+    /// so it needs the range the renderer actually used — the same handshake
+    /// `last_auto_range` performs for the candles.
+    pub last_auto: Option<(f64, f64)>,
 }
 
 impl IndicatorView {
@@ -132,6 +148,8 @@ impl IndicatorViews {
                         objects: ObjectSnapshot::default(),
                         input_values: inputs,
                         stale,
+                        scale: PriceView::new(),
+                        last_auto: None,
                     });
                 }
             }
@@ -223,9 +241,30 @@ impl IndicatorViews {
     pub(crate) fn visible_panes(&self) -> impl Iterator<Item = &IndicatorView> {
         self.views
             .iter()
-            .filter(|v| !v.descriptor.overlay && !v.hidden && v.error.is_none())
+            .filter(|v| is_visible_pane(v))
             .take(MAX_PANES)
     }
+
+    /// The same panes, in the same order, mutable: the renderer records the
+    /// range it fitted and the axis gesture moves the scale, both on the view
+    /// the pane rect belongs to.
+    pub(crate) fn visible_panes_mut(&mut self) -> impl Iterator<Item = &mut IndicatorView> {
+        self.views
+            .iter_mut()
+            .filter(|v| is_visible_pane(v))
+            .take(MAX_PANES)
+    }
+}
+
+/// Whether this indicator gets a pane of its own right now.
+///
+/// One predicate for both iterators, because the two are zipped against the
+/// same rects: `plot_split` carves bands from `visible_panes().count()` and the
+/// input pass walks `visible_panes_mut()`. A condition added to one and not the
+/// other would misalign the zip silently — and a drag would then stretch the
+/// pane next to the one whose numbers were grabbed.
+fn is_visible_pane(view: &IndicatorView) -> bool {
+    !view.descriptor.overlay && !view.hidden && view.error.is_none()
 }
 
 /// Carve the pane band off the bottom of the chart rect: each pane takes
@@ -375,6 +414,39 @@ mod tests {
         }
         assert_eq!(views.visible_overlays().count(), 1);
         assert_eq!(views.visible_panes().count(), 1);
+    }
+
+    /// A pane's scale belongs to the indicator, not to the slot's position on
+    /// screen: removing one and adding another must not hand the newcomer a
+    /// range someone set for a different series.
+    #[test]
+    fn a_removed_pane_takes_its_scale_with_it() {
+        let mut views = IndicatorViews::new();
+        let first = views.allocate_slot();
+        views.apply(IndicatorEvent::Rebuilt {
+            slot: first,
+            descriptor: descriptor(false, 1),
+            columns: vec![vec![1.0]],
+            inputs: Vec::new(),
+            stale: None,
+        });
+        let view = views.view_mut(first).expect("the pane is there");
+        view.last_auto = Some((0.0, 10.0));
+        view.scale.zoom(0.5, (0.0, 10.0));
+        assert!(!views.all()[0].scale.is_auto());
+
+        views.remove(first);
+        let second = views.allocate_slot();
+        views.apply(IndicatorEvent::Rebuilt {
+            slot: second,
+            descriptor: descriptor(false, 1),
+            columns: vec![vec![1.0]],
+            inputs: Vec::new(),
+            stale: None,
+        });
+        let fresh = &views.all()[0];
+        assert!(fresh.scale.is_auto(), "a new pane fits its own values");
+        assert!(fresh.last_auto.is_none(), "and has not been drawn yet");
     }
 
     #[test]

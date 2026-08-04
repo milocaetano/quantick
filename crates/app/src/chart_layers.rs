@@ -6,9 +6,17 @@
 //! switch any of them off.
 //!
 //! It is deliberately *not* a second copy of their state. Each entry resolves
-//! to the one field that already owns that layer (see `App::layer_visible`), so
-//! the menu and the toolbar/dock can never disagree about a pixel. This module
-//! only names the layers and stores the switches nothing else stores.
+//! to the one field that already owns that layer (see
+//! [`crate::pane::ChartPane::layer_visible`]), so the menu and the toolbar/dock
+//! can never disagree about a pixel. This module only names the layers and
+//! stores the switches nothing else stores.
+//!
+//! The layers belong to the pane that draws them (§11: the flow pane has the
+//! tape and everything read off it, the time pane has neither), so the menu is
+//! the pane's and each pane answers for its own canvas. Two of them are not the
+//! pane's to switch — the grid lives in the window's shared chart style, and
+//! hiding an indicator has to reach the state file the app owns — so the menu
+//! records those as [`LayerActions`] and the app settles them.
 //!
 //! One layer is switchable here but persisted elsewhere: the live lane's marks
 //! belong to the order-flow preset, which a feed may declare and the dock
@@ -61,8 +69,12 @@ pub(crate) enum ChartLayer {
     LastPrice,
     /// The mark where backfilled history ends and live bars begin.
     BackfillDivider,
+    /// The mark where venue candles give way to bars built from prints.
+    SeamDivider,
     /// The hover crosshair and its axis tags.
     Crosshair,
+    /// Simulated orders, the position line and their chips.
+    PaperTrading,
     /// User drawings (lines, boxes, Fibs).
     Drawings,
 }
@@ -71,7 +83,7 @@ impl ChartLayer {
     /// Every layer, in menu order. A variant missing from here has no switch
     /// and cannot be turned off at all, so a new one belongs in this list and
     /// in the menu test that counts it.
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::Heatmap,
         Self::Bubbles,
         Self::LiveStrip,
@@ -80,7 +92,9 @@ impl ChartLayer {
         Self::Grid,
         Self::LastPrice,
         Self::BackfillDivider,
+        Self::SeamDivider,
         Self::Crosshair,
+        Self::PaperTrading,
         Self::Drawings,
     ];
 
@@ -96,7 +110,9 @@ impl ChartLayer {
             Self::Grid => "grid",
             Self::LastPrice => "last_price",
             Self::BackfillDivider => "backfill_divider",
+            Self::SeamDivider => "seam_divider",
             Self::Crosshair => "crosshair",
+            Self::PaperTrading => "paper_trading",
             Self::Drawings => "drawings",
         }
     }
@@ -118,7 +134,9 @@ impl ChartLayer {
             Self::Grid => "grid",
             Self::LastPrice => "last price line",
             Self::BackfillDivider => "backfill divider",
+            Self::SeamDivider => "venue/prints seam",
             Self::Crosshair => "crosshair",
+            Self::PaperTrading => "paper orders & position",
             Self::Drawings => "drawings",
         }
     }
@@ -148,7 +166,14 @@ impl ChartLayer {
             Self::Grid => "price and time gridlines behind the candles",
             Self::LastPrice => "the dashed line at the last traded price, and its chip on the axis",
             Self::BackfillDivider => "where backfilled history ends and bars built live begin",
+            Self::SeamDivider => "where venue candles give way to bars built from prints",
             Self::Crosshair => "the hover cross and its price/time tags",
+            // Same honesty rule as the gap boundaries: what is hidden here is a
+            // drawing of live state, so the entry says the state is still live.
+            Self::PaperTrading => {
+                "simulated entries, exits and the open position. Hiding them draws nothing and \
+                 cancels nothing — the orders stay working and the dock still shows them"
+            }
             Self::Drawings => {
                 "everything drawn by hand. Hidden objects keep their anchors and stop answering \
                  the pointer until the layer is shown again"
@@ -166,6 +191,21 @@ impl ChartLayer {
     }
 }
 
+/// What a pane's layer menu asked of the app, drained once the canvas is done.
+///
+/// Two entries are not the pane's to switch. The grid belongs to the window's
+/// shared [`crate::style::ChartStyle`], which the appearance panel also edits;
+/// hiding an indicator has to reach the state file the app persists. Rather
+/// than hand the pane a second copy of either — the one thing this menu refuses
+/// to do — it records the wish and the app applies it to the real owner.
+#[derive(Debug, Default)]
+pub(crate) struct LayerActions {
+    /// The grid was switched to this.
+    pub(crate) grid: Option<bool>,
+    /// An indicator was hidden or shown, so the indicator state needs saving.
+    pub(crate) indicators_changed: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct LayersFile {
     version: u32,
@@ -176,9 +216,28 @@ struct LayersFile {
 }
 
 /// The layer-visibility file the app opens with and writes back to.
+///
+/// Under test it is a scratch file of its own per app instead. The app's own
+/// tests build many apps and draw many frames in one process, and a store
+/// rooted in the working directory would have them restoring one another's
+/// canvas — and rewriting the repo's copy while they did it.
 #[must_use]
 pub(crate) fn default_path() -> PathBuf {
+    if cfg!(test) {
+        return scratch_path();
+    }
     std::env::var_os(LAYERS_ENV).map_or_else(|| PathBuf::from(LAYERS_FILE), PathBuf::from)
+}
+
+/// A store of its own, for an app built by a test. See [`default_path`].
+fn scratch_path() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "quantick-chart-layers-{}-{}.toml",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// Load the stored visibility; empty (change nothing) when the file is

@@ -13,3 +13,9 @@ __pycache__/
 
 # Server-time offset the MT5 bridge measures and remembers (per machine).
 .quantick_bridge_cache.json
+# Simulated paper-trading history, written by the app at runtime
+/paper-trades
+# The drawing presets the app remembers between runs (PR #94 follow-up)
+/quantick-drawing-presets.toml
+# Which chart layers the app was last showing (the right-click layer menu)
+/chart-layers.toml

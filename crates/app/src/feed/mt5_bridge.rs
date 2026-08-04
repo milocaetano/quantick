@@ -36,7 +36,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::config::MetaTraderSettings;
+use crate::config::{MetaTraderSettings, Mt5Endpoint};
 
 use super::FeedNotice;
 
@@ -139,6 +139,12 @@ pub fn default_search_roots() -> Vec<PathBuf> {
 pub struct Supervision {
     /// The instrument the bridge is asked to stream.
     pub symbol: String,
+    /// Where the feed is listening for it, already resolved for this symbol
+    /// (see [`MetaTraderSettings::endpoint_for`]). The bridge is launched with
+    /// this port rather than one derived here a second time: a bridge dialing
+    /// a different port than the feed bound is a chart that never fills, and
+    /// deriving it twice is how that happens.
+    pub endpoint: Mt5Endpoint,
     /// Whether a bridge is feeding us **right now** — set by the feed on
     /// hello, cleared when the session is lost.
     ///
@@ -164,18 +170,22 @@ pub struct Supervision {
 /// is wrong rather than the terminal briefly away, and says so.
 pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
     let symbol = sup.symbol.as_str();
-    let Some((host, port)) = settings.bridge_endpoint() else {
+    let Some((host, port)) = sup.endpoint.dial.as_ref() else {
         warn!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
             symbol = %symbol,
-            listen_addr = %settings.listen_addr,
+            listen_addr = %sup.endpoint.listen_addr,
             action = "wait_for_manual_bridge",
             "cannot derive a dial address from listen_addr; not starting a bridge"
         );
         return;
     };
+    // Named apart from the `port` above rather than shadowing it: this is the
+    // command-line argument, and a reader (or a log field) silently changing
+    // from u16 to String is exactly the kind of thing shadowing hides.
+    let (host, port_arg) = (host.as_str(), port.to_string());
     let Some((program, extra)) = settings.bridge_command.split_first() else {
         warn!(
             target: "quantick::app",
@@ -296,7 +306,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
                 .arg("--host")
                 .arg(host)
                 .arg("--port")
-                .arg(port)
+                .arg(&port_arg)
                 .stdin(Stdio::null())
                 // Read rather than inherit: the same lines still reach the log
                 // (one story, one place), and they also become something the
@@ -756,10 +766,12 @@ mod tests {
             ],
             ..MetaTraderSettings::default()
         };
+        let endpoint = settings.endpoint_for("WINQ26");
         supervise(
             settings,
             Supervision {
                 symbol: "WINQ26".to_string(),
+                endpoint,
                 connected: Arc::new(AtomicBool::new(false)),
                 notices: tx,
             },
