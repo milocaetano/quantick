@@ -158,6 +158,13 @@ impl Simulator {
         self.mark.map(|mark| mark.price)
     }
 
+    /// Venue time of the last print seen (live or seeded), if any — the
+    /// only "now" an open trade's age can honestly be measured against.
+    #[must_use]
+    pub fn mark_timestamp_ms(&self) -> Option<i64> {
+        self.mark.map(|mark| mark.timestamp_ms)
+    }
+
     #[must_use]
     pub fn position(&self) -> Option<&Position> {
         self.position.as_ref()

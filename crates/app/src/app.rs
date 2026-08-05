@@ -2109,6 +2109,7 @@ impl QuantickApp {
                             (DockTab::Bubbles, "Bubble settings"),
                             (DockTab::Session, "Session"),
                             (DockTab::Trading, "Paper trading"),
+                            (DockTab::Trades, "Trades"),
                         ] {
                             if ui.button(label).clicked() {
                                 self.dock.open_tab(tab);
@@ -3215,6 +3216,7 @@ impl QuantickApp {
                 tabs,
                 active_tab,
                 replay_view,
+                tz,
                 ..
             } = self;
             // The Trading tab speaks for the market on screen: one tab, one
@@ -3237,6 +3239,7 @@ impl QuantickApp {
                     replay_view,
                     replay: replay.as_ref(),
                     paper,
+                    tz: *tz,
                 },
             )
         };
@@ -3245,6 +3248,20 @@ impl QuantickApp {
         }
         if let Some(action) = dock_response.replay_action {
             self.apply_replay_action(action);
+        }
+        // The ledger's jump-to-trade: center the flow pane on the round
+        // trip's midpoint, the object manager's own "select and centre".
+        if let Some((opened, closed)) = dock_response.navigate_to_trade {
+            let pane = &mut self.active_tab_mut().flow_pane;
+            if let (Some(entry), Some(exit), Some(area)) = (
+                pane.slot_at_time(opened),
+                pane.slot_at_time(closed),
+                pane.last_chart_area,
+            ) {
+                let slots = pane.slots();
+                let mid = (entry + exit) as f32 / 2.0;
+                pane.viewport.center_on_bar(mid, area.width(), slots);
+            }
         }
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.

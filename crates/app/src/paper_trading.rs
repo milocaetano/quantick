@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+use egui_phosphor::regular as icons;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
     Bracket, ClosedTrade, Command, EntryKind, OrderId, PerformanceReport, Position, QueuedAction,
@@ -25,6 +26,7 @@ use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
 use crate::theme;
+use crate::timezone::TzOffset;
 
 /// Overrides the history folder (cwd-relative otherwise, like every
 /// quantick path).
@@ -83,6 +85,13 @@ const HANDLE_TAG_GAP_PX: f32 = 8.0;
 /// How far (in pixels) a press on the entry line must travel before it
 /// commits to creating one bracket leg — the drawings' drag threshold.
 const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
+/// Fixed ledger row height — two lines plus their padding, held constant so
+/// the trade list can virtualise through `ScrollArea::show_rows`.
+const LEDGER_ROW_HEIGHT_PX: f32 = 34.0;
+/// The side rail on ledger rows — the position HUD card's rail width.
+const SIDE_RAIL_WIDTH_PX: f32 = 3.0;
+/// Height reserved under the ledger for the pinned totals strip.
+const TOTALS_STRIP_PX: f32 = 26.0;
 /// Text color inside colored gutter chips — the same ink as the last-price
 /// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
 /// duplicated here; keep the two identical).
@@ -176,12 +185,48 @@ enum ReportScope {
 /// What the report window shows, loaded fresh from disk when opened.
 struct ReportData {
     report: PerformanceReport,
-    trades: usize,
+    history: LoadedHistory,
+}
+
+/// Journal rows loaded from disk, each remembering the symbol folder it
+/// came from, merged into one closing-order timeline.
+struct LoadedHistory {
+    /// `(symbol, trade)` in closing order across every file read.
+    rows: Vec<(String, ClosedTrade)>,
     files: usize,
     /// Files that were not readable quantick-trades files.
     unreadable_files: usize,
     /// Rows the parser had to report as unreadable (torn tails and such).
     problem_rows: usize,
+}
+
+/// What the Trades ledger asked of its host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedgerAction {
+    /// Center the chart on this round trip (`opened_ms`, `closed_ms`).
+    Navigate(i64, i64),
+    /// Switch the dock to the Trading tab — the empty state's call to
+    /// action.
+    OpenTicket,
+}
+
+/// One virtualised ledger line.
+enum LedgerRow<'a> {
+    /// A group caption and its count.
+    Header(&'static str, usize),
+    /// A closed trade from this session's simulator: selectable, and its
+    /// round trip is on the current tape.
+    Session(usize, &'a ClosedTrade),
+    /// A row loaded from an earlier session's journal — display only; its
+    /// tape is not the one on screen.
+    Earlier(&'a str, &'a ClosedTrade),
+}
+
+/// What one painted ledger row reported back.
+#[derive(Default)]
+struct LedgerRowResponse {
+    clicked: bool,
+    navigate: bool,
 }
 
 /// Everything `handle_chart_input` needs from the frame, gathered by the
@@ -223,6 +268,15 @@ pub struct PaperTrading {
     report_open: bool,
     report_scope: ReportScope,
     report: Option<ReportData>,
+    // Trades ledger.
+    ledger_scope: ReportScope,
+    /// Earlier sessions' journal rows, read on first draw and on demand —
+    /// the live session file is excluded (its trades are already in the
+    /// simulator).
+    history_cache: Option<LoadedHistory>,
+    /// Index into the session's closed trades selected in the ledger; the
+    /// chart emphasizes that round trip.
+    selected_trade: Option<usize>,
 }
 
 impl Default for PaperTrading {
@@ -254,6 +308,9 @@ impl PaperTrading {
             report_open: false,
             report_scope: ReportScope::Symbol,
             report: None,
+            ledger_scope: ReportScope::Symbol,
+            history_cache: None,
+            selected_trade: None,
         }
     }
 
@@ -270,6 +327,8 @@ impl PaperTrading {
         if self.symbol != symbol {
             self.symbol = symbol.to_owned();
             self.journal_path = None;
+            self.history_cache = None;
+            self.selected_trade = None;
         }
     }
 
@@ -753,6 +812,9 @@ impl PaperTrading {
         if self.drag != PaperDrag::None {
             self.drag = PaperDrag::None;
             self.drag_price = None;
+            return true;
+        }
+        if self.selected_trade.take().is_some() {
             return true;
         }
         false
@@ -1334,6 +1396,255 @@ impl PaperTrading {
     }
 
     // ------------------------------------------------------------------
+    // Trades ledger tab
+    // ------------------------------------------------------------------
+
+    /// Load the earlier sessions' rows for the ledger, scoped to the
+    /// current symbol or the whole folder. The live session's own file is
+    /// excluded — its trades are already in the simulator.
+    fn reload_ledger(&mut self) {
+        let symbol = match self.ledger_scope {
+            ReportScope::Symbol => Some(self.symbol.as_str()),
+            ReportScope::All => None,
+        };
+        self.history_cache = Some(load_history(
+            &self.dir,
+            symbol,
+            self.journal_path.as_deref(),
+        ));
+    }
+
+    /// The Trades dock tab: the ledger of closed simulated trades — the
+    /// open position pinned on top, this session under it, the saved
+    /// history under that, and a totals strip that never scrolls away.
+    pub fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset) -> Option<LedgerAction> {
+        if self.history_cache.is_none() {
+            self.reload_ledger();
+        }
+        let mut action = None;
+
+        // Scope row: which symbols the saved history contributes.
+        let mut reload = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(if self.symbol.is_empty() {
+                    "—"
+                } else {
+                    &self.symbol
+                })
+                .monospace()
+                .color(theme::TEXT_MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(icons::ARROWS_CLOCKWISE)
+                    .on_hover_text("re-read the history folder")
+                    .clicked()
+                {
+                    reload = true;
+                }
+                let all = self.ledger_scope == ReportScope::All;
+                if pill_toggle(
+                    ui,
+                    "All symbols",
+                    all,
+                    "include every symbol's saved history, not just this chart's",
+                )
+                .clicked()
+                {
+                    self.ledger_scope = if all {
+                        ReportScope::Symbol
+                    } else {
+                        ReportScope::All
+                    };
+                    reload = true;
+                }
+            });
+        });
+        if reload {
+            self.reload_ledger();
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(caption("TRADE"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(caption("PTS"));
+            });
+        });
+        ui.separator();
+
+        // The open position rides above the scroll — panning through
+        // history must never hide the trade you are in.
+        if let Some(summary) = self.position_summary() {
+            ui.label(caption("OPEN"));
+            let held_ms = self
+                .sim
+                .mark_timestamp_ms()
+                .zip(self.sim.position().map(|position| position.opened_ms))
+                .map(|(mark, opened)| mark.saturating_sub(opened));
+            draw_open_row(ui, &summary, self.sim.mark_price(), held_ms);
+        }
+
+        let all_scope = self.ledger_scope == ReportScope::All;
+        let session: Vec<(usize, &ClosedTrade)> =
+            self.sim.closed_trades().iter().enumerate().rev().collect();
+        let earlier: Vec<(&str, &ClosedTrade)> = self
+            .history_cache
+            .as_ref()
+            .map(|cache| {
+                cache
+                    .rows
+                    .iter()
+                    .rev()
+                    .map(|(symbol, trade)| (symbol.as_str(), trade))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if session.is_empty() && earlier.is_empty() {
+            if self.position_summary().is_none() {
+                ui.add_space(12.0);
+                let headline = match self.ledger_scope {
+                    ReportScope::Symbol if !self.symbol.is_empty() => {
+                        format!("No trades for {}.", self.symbol)
+                    }
+                    _ => "No simulated trades yet.".to_owned(),
+                };
+                ui.label(egui::RichText::new(headline).color(theme::TEXT_PRIMARY));
+                ui.label(
+                    egui::RichText::new(
+                        "Close a position and it lands here - this session and every saved one.",
+                    )
+                    .color(theme::TEXT_SUPPORT)
+                    .small(),
+                );
+                ui.add_space(4.0);
+                if ui
+                    .button("Open the ticket")
+                    .on_hover_text("switch to the Trading tab and place an order")
+                    .clicked()
+                {
+                    action = Some(LedgerAction::OpenTicket);
+                }
+            }
+            self.draw_ledger_disclosure(ui);
+            return action;
+        }
+
+        let mut rows = Vec::new();
+        if !session.is_empty() {
+            rows.push(LedgerRow::Header("THIS SESSION", session.len()));
+            rows.extend(
+                session
+                    .iter()
+                    .map(|(index, trade)| LedgerRow::Session(*index, trade)),
+            );
+        }
+        if !earlier.is_empty() {
+            rows.push(LedgerRow::Header("EARLIER SESSIONS", earlier.len()));
+            rows.extend(
+                earlier
+                    .iter()
+                    .map(|(symbol, trade)| LedgerRow::Earlier(symbol, trade)),
+            );
+        }
+
+        // Totals over everything listed, computed before the scroll so the
+        // strip below can never disagree with the rows above it.
+        let mut total_trades = 0usize;
+        let mut total_wins = 0usize;
+        let mut net = Decimal::ZERO;
+        for trade in session
+            .iter()
+            .map(|(_, trade)| *trade)
+            .chain(earlier.iter().map(|(_, trade)| *trade))
+        {
+            total_trades += 1;
+            if trade.pnl_points > Decimal::ZERO {
+                total_wins += 1;
+            }
+            net = net.saturating_add(trade.pnl_points);
+        }
+
+        let list_height = (ui.available_height() - TOTALS_STRIP_PX).max(LEDGER_ROW_HEIGHT_PX);
+        let selected = self.selected_trade;
+        let mut clicked: Option<Option<usize>> = None;
+        let mut navigate = None;
+        egui::ScrollArea::vertical()
+            .id_salt("paper_trades_ledger")
+            .auto_shrink([false, false])
+            .max_height(list_height)
+            .show_rows(ui, LEDGER_ROW_HEIGHT_PX, rows.len(), |ui, range| {
+                for index in range {
+                    match &rows[index] {
+                        LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
+                        LedgerRow::Session(trade_index, trade) => {
+                            let is_selected = selected == Some(*trade_index);
+                            let response = draw_ledger_row(ui, trade, None, is_selected, true, tz);
+                            if response.navigate {
+                                navigate =
+                                    Some(LedgerAction::Navigate(trade.opened_ms, trade.closed_ms));
+                            } else if response.clicked {
+                                clicked = Some((!is_selected).then_some(*trade_index));
+                            }
+                        }
+                        LedgerRow::Earlier(symbol, trade) => {
+                            let symbol = all_scope.then_some(*symbol);
+                            draw_ledger_row(ui, trade, symbol, false, false, tz);
+                        }
+                    }
+                }
+            });
+        if let Some(selection) = clicked {
+            self.selected_trade = selection;
+        }
+        if navigate.is_some() {
+            action = navigate;
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            let win_rate = (total_wins * 100)
+                .checked_div(total_trades)
+                .map_or_else(String::new, |rate| format!(" · {rate}% win"));
+            ui.label(
+                egui::RichText::new(format!("{total_trades} trades{win_rate}"))
+                    .monospace()
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!("{} pts", fmt_signed_points(net)))
+                        .monospace()
+                        .strong()
+                        .color(points_color(net)),
+                );
+            });
+        });
+        self.draw_ledger_disclosure(ui);
+        action
+    }
+
+    /// The honesty line under the ledger: unreadable files and skipped rows
+    /// are counted, never silently dropped.
+    fn draw_ledger_disclosure(&self, ui: &mut egui::Ui) {
+        let Some(cache) = &self.history_cache else {
+            return;
+        };
+        if cache.unreadable_files == 0 && cache.problem_rows == 0 {
+            return;
+        }
+        ui.label(
+            egui::RichText::new(format!(
+                "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
+                cache.unreadable_files, cache.problem_rows,
+            ))
+            .color(theme::WARN)
+            .small(),
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Report window
     // ------------------------------------------------------------------
 
@@ -1377,7 +1688,7 @@ impl PaperTrading {
                 });
                 ui.separator();
                 match &self.report {
-                    Some(data) if data.trades > 0 => draw_report_body(ui, data),
+                    Some(data) if !data.history.rows.is_empty() => draw_report_body(ui, data),
                     _ => {
                         ui.label(
                             egui::RichText::new(
@@ -1652,12 +1963,12 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
                 "best single trade and worst single trade magnitude",
             );
         });
-    if data.unreadable_files > 0 || data.problem_rows > 0 {
+    if data.history.unreadable_files > 0 || data.history.problem_rows > 0 {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(format!(
                 "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
-                data.unreadable_files, data.problem_rows,
+                data.history.unreadable_files, data.history.problem_rows,
             ))
             .color(theme::WARN)
             .small(),
@@ -1666,7 +1977,8 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
     ui.label(
         egui::RichText::new(format!(
             "{} trade(s) across {} file(s)",
-            data.trades, data.files
+            data.history.rows.len(),
+            data.history.files
         ))
         .color(theme::TEXT_MUTED)
         .small(),
@@ -1674,9 +1986,10 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
 }
 
 /// Read every history file under `dir` (one symbol's folder, or all of
-/// them), merge chronologically, and aggregate. Missing folders are simply
-/// empty — the report says "no saved trades", not an error.
-fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
+/// them), remembering each row's symbol and skipping `exclude` (the live
+/// session's own file — its trades are already in the simulator). Missing
+/// folders are simply empty, not an error.
+fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> LoadedHistory {
     let mut folders = Vec::new();
     match symbol {
         Some(symbol) => folders.push(dir.join(sanitize_symbol(symbol))),
@@ -1692,7 +2005,7 @@ fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
             }
         }
     }
-    let mut trades = Vec::new();
+    let mut rows = Vec::new();
     let mut files = 0usize;
     let mut unreadable_files = 0usize;
     let mut problem_rows = 0usize;
@@ -1700,6 +2013,10 @@ fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
         let Ok(entries) = std::fs::read_dir(&folder) else {
             continue;
         };
+        let folder_symbol = folder
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let mut paths: Vec<PathBuf> = entries
             .flatten()
             .map(|entry| entry.path())
@@ -1710,12 +2027,21 @@ fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
             .collect();
         paths.sort();
         for path in paths {
+            if exclude.is_some_and(|exclude| exclude == path) {
+                continue;
+            }
             files += 1;
             match std::fs::read_to_string(&path).map_err(|error| error.to_string()) {
                 Ok(text) => match history::parse(&text) {
                     Ok(parsed) => {
                         problem_rows += parsed.problems.len();
-                        trades.extend(parsed.trades);
+                        let symbol = parsed.symbol.unwrap_or_else(|| folder_symbol.clone());
+                        rows.extend(
+                            parsed
+                                .trades
+                                .into_iter()
+                                .map(|trade| (symbol.clone(), trade)),
+                        );
                     }
                     Err(_) => unreadable_files += 1,
                 },
@@ -1725,13 +2051,26 @@ fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
     }
     // Files are per-session; merge into one closing-order timeline so the
     // drawdown walk is honest across sessions.
-    trades.sort_by_key(|trade| (trade.closed_ms, trade.opened_ms));
-    ReportData {
-        report: PerformanceReport::from_trades(&trades),
-        trades: trades.len(),
+    rows.sort_by_key(|row| (row.1.closed_ms, row.1.opened_ms));
+    LoadedHistory {
+        rows,
         files,
         unreadable_files,
         problem_rows,
+    }
+}
+
+/// Aggregate the saved history into the report window's data.
+fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
+    let history = load_history(dir, symbol, None);
+    let trades: Vec<ClosedTrade> = history
+        .rows
+        .iter()
+        .map(|(_, trade)| trade.clone())
+        .collect();
+    ReportData {
+        report: PerformanceReport::from_trades(&trades),
+        history,
     }
 }
 
@@ -2079,6 +2418,261 @@ fn kind_short(kind: EntryKind) -> &'static str {
     }
 }
 
+/// Uppercase section caption — the ledger's group labels and column header.
+fn caption(text: &str) -> egui::RichText {
+    egui::RichText::new(text)
+        .size(10.0)
+        .color(theme::TEXT_FAINT)
+}
+
+/// A pill-shaped toggle chip: accent fill while on, quiet control while off.
+fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
+    let (fill, ink, stroke) = if on {
+        (theme::ACCENT, theme::CHIP_INK, egui::Stroke::NONE)
+    } else {
+        (
+            theme::CONTROL,
+            theme::TEXT_MUTED,
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        )
+    };
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(ink).small())
+            .fill(fill)
+            .stroke(stroke)
+            .rounding(egui::Rounding::same(9.0)),
+    )
+    .on_hover_text(hover)
+}
+
+/// A group caption inside the virtualised list, sharing the fixed row
+/// height so `show_rows` stays honest about where every row is.
+fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 2.0, rect.bottom() - 4.0),
+        egui::Align2::LEFT_BOTTOM,
+        format!("{label} · {count}"),
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+}
+
+/// The pinned open-position row: sunken, live open points on the right,
+/// the current mark standing in for the exit.
+fn draw_open_row(
+    ui: &mut egui::Ui,
+    summary: &PositionSummary,
+    mark: Option<Decimal>,
+    held_ms: Option<i64>,
+) {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::Rounding::ZERO, theme::INSET);
+    for y in [rect.top(), rect.bottom()] {
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        );
+    }
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.left() + SIDE_RAIL_WIDTH_PX, rect.bottom()),
+        ),
+        egui::Rounding::ZERO,
+        side_color(summary.side),
+    );
+    let exit = mark.map_or_else(|| "…".to_owned(), fmt_decimal);
+    let held = held_ms.map_or_else(String::new, |ms| format!("open {}", fmt_duration_ms(ms)));
+    draw_row_lines(
+        painter,
+        rect,
+        RowLines {
+            side: summary.side,
+            head: format!(
+                "{} {}",
+                position_word(summary.side),
+                fmt_decimal(summary.quantity)
+            ),
+            route: format!("{} → {}", fmt_decimal(summary.avg_price), exit),
+            points: summary.open_points,
+            detail: format!("{held} · at the last print"),
+        },
+    );
+}
+
+/// The two text lines every ledger row shares.
+struct RowLines {
+    side: Side,
+    head: String,
+    route: String,
+    points: Option<Decimal>,
+    detail: String,
+}
+
+fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
+    let font = egui::FontId::monospace(11.0);
+    let x = rect.left() + SIDE_RAIL_WIDTH_PX + 6.0;
+    let y1 = rect.top() + 9.0;
+    let y2 = rect.top() + 24.0;
+    let color = side_color(lines.side);
+    let head = painter.layout_no_wrap(lines.head, font.clone(), color);
+    let head_w = head.size().x;
+    painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
+    painter.text(
+        egui::pos2(x + head_w + 8.0, y1),
+        egui::Align2::LEFT_CENTER,
+        lines.route,
+        font.clone(),
+        theme::TEXT_MUTED,
+    );
+    if let Some(points) = lines.points {
+        painter.text(
+            egui::pos2(rect.right() - 6.0, y1),
+            egui::Align2::RIGHT_CENTER,
+            fmt_signed_points(points),
+            font,
+            points_color(points),
+        );
+    }
+    painter.text(
+        egui::pos2(x, y2),
+        egui::Align2::LEFT_CENTER,
+        lines.detail,
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+}
+
+/// One closed trade in the ledger. Session rows select on click and reveal
+/// a jump-to-chart control on hover; rows from earlier sessions are
+/// display-only — their tape is not the one on screen, so the chart has
+/// nothing honest to point at.
+fn draw_ledger_row(
+    ui: &mut egui::Ui,
+    trade: &ClosedTrade,
+    symbol: Option<&str>,
+    selected: bool,
+    session: bool,
+    tz: TzOffset,
+) -> LedgerRowResponse {
+    let width = ui.available_width();
+    let sense = if session {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, LEDGER_ROW_HEIGHT_PX), sense);
+    if !ui.is_rect_visible(rect) {
+        return LedgerRowResponse::default();
+    }
+    if selected {
+        ui.painter().rect_filled(
+            rect,
+            egui::Rounding::ZERO,
+            theme::active_tint(theme::ACCENT),
+        );
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::ZERO, theme::BORDER);
+    }
+    ui.painter().rect_filled(
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.left() + SIDE_RAIL_WIDTH_PX, rect.bottom()),
+        ),
+        egui::Rounding::ZERO,
+        side_color(trade.side),
+    );
+    let mut detail = format!(
+        "{} · {} · {}",
+        crate::app::fmt_time(trade.closed_ms, tz),
+        fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
+        trade.exit_reason.as_str().replace('_', " "),
+    );
+    if let Some(symbol) = symbol {
+        detail.push_str(" · ");
+        detail.push_str(symbol);
+    }
+    draw_row_lines(
+        ui.painter(),
+        rect,
+        RowLines {
+            side: trade.side,
+            head: format!(
+                "{} {}",
+                position_word(trade.side),
+                fmt_decimal(trade.quantity)
+            ),
+            route: format!(
+                "{} → {}",
+                fmt_decimal(trade.entry_price),
+                fmt_decimal(trade.exit_price)
+            ),
+            points: Some(trade.pnl_points),
+            detail,
+        },
+    );
+    let mut navigate = false;
+    if session && response.hovered() {
+        let nav_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 14.0, rect.top() + 24.0),
+            egui::vec2(16.0, 14.0),
+        );
+        let nav = ui
+            .interact(
+                nav_rect,
+                ui.id()
+                    .with(("ledger_nav", trade.opened_ms, trade.closed_ms)),
+                egui::Sense::click(),
+            )
+            .on_hover_text("center the chart on this trade");
+        ui.painter().text(
+            nav_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::ARROW_UP_RIGHT,
+            egui::FontId::proportional(11.0),
+            if nav.hovered() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            },
+        );
+        navigate = nav.clicked();
+    }
+    LedgerRowResponse {
+        clicked: response.clicked() && !navigate,
+        navigate,
+    }
+}
+
+/// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
+fn fmt_duration_ms(ms: i64) -> String {
+    let seconds = (ms / 1000).max(0);
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
 /// Keep a gutter chip legible when it would land on the last-price chip:
 /// push it just clear of the reserved row, towards its own side of the
 /// price, clamped into the pane. At the exact fill price (no distance at
@@ -2294,10 +2888,10 @@ mod tests {
         assert_eq!(parsed.trades[1].pnl_points, Decimal::from(2));
 
         let data = load_report(&dir, Some("TESTUSDT"));
-        assert_eq!(data.trades, 2);
+        assert_eq!(data.history.rows.len(), 2);
         assert_eq!(data.report.net_points, Decimal::from(7));
-        assert_eq!(data.files, 1);
-        assert_eq!(data.unreadable_files, 0);
+        assert_eq!(data.history.files, 1);
+        assert_eq!(data.history.unreadable_files, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2325,11 +2919,70 @@ mod tests {
         );
         assert!(paper.toast.is_some(), "the flatten is never silent");
         let data = load_report(&dir, Some("RESETX"));
-        assert_eq!(data.trades, 1);
+        assert_eq!(data.history.rows.len(), 1);
         assert_eq!(
             data.report.trades, 1,
             "the reset exit is a real, journaled trade"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn durations_format_by_magnitude() {
+        assert_eq!(fmt_duration_ms(38_000), "38s");
+        assert_eq!(fmt_duration_ms(258_000), "4m 18s");
+        assert_eq!(fmt_duration_ms(3_720_000), "1h 02m");
+        assert_eq!(fmt_duration_ms(-5), "0s", "clock skew never explodes");
+    }
+
+    /// The ledger's cache reads every saved file except the live session's
+    /// own (its trades are already in the simulator), and remembers which
+    /// symbol each row came from.
+    #[test]
+    fn the_ledger_cache_excludes_the_live_session_file() {
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-ledger-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut paper = PaperTrading::new();
+        paper.dir.clone_from(&dir);
+        paper.set_symbol("LEDGX");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+        assert!(paper.journal_path.is_some(), "the close journaled");
+
+        // An earlier session's file, written by hand beside the live one.
+        let trade = ClosedTrade {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            entry_price: Decimal::from(200),
+            exit_price: Decimal::from(195),
+            opened_ms: 10,
+            closed_ms: 20,
+            pnl_points: Decimal::from(5),
+            exit_reason: quantick_sim::ExitReason::Manual,
+            entry_agg_id: Some(1),
+            exit_agg_id: Some(2),
+            mae_points: Some(Decimal::ZERO),
+            mfe_points: Some(Decimal::from(5)),
+        };
+        let mut text = history::write_header("LEDGX");
+        text.push_str(&history::write_trade(&trade));
+        std::fs::write(dir.join("LEDGX").join("20200101-000000.csv"), text)
+            .expect("the earlier session file writes");
+
+        paper.reload_ledger();
+        let cache = paper.history_cache.as_ref().expect("loaded");
+        assert_eq!(
+            cache.rows.len(),
+            1,
+            "the live session's file is excluded, the earlier one loads"
+        );
+        assert_eq!(cache.rows[0].0, "LEDGX");
+        assert_eq!(cache.rows[0].1, trade);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
