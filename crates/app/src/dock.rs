@@ -256,7 +256,20 @@ impl Dock {
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
                 )
                 .show(ctx, |ui| {
-                    draw_tab_header(ui, tab, &mut self.active);
+                    let mut export = false;
+                    draw_tab_header(ui, tab, &mut self.active, |ui| {
+                        if tab == DockTab::Trades
+                            && ui
+                                .small_button(icons::DOWNLOAD_SIMPLE)
+                                .on_hover_text("export these trades to a CSV file")
+                                .clicked()
+                        {
+                            export = true;
+                        }
+                    });
+                    if export {
+                        env.paper.start_export();
+                    }
                     match tab {
                         DockTab::L2 => {
                             response.restart_book_capture |= env.orderflow.draw_l2_tab(ui);
@@ -296,8 +309,14 @@ impl Dock {
     }
 }
 
-/// Title row shared by every tab, with the collapse affordance.
-fn draw_tab_header(ui: &mut egui::Ui, tab: DockTab, active: &mut Option<DockTab>) {
+/// Title row shared by every tab, with the collapse affordance and one
+/// optional action slot left of it (the Trades tab's export lives there).
+fn draw_tab_header(
+    ui: &mut egui::Ui,
+    tab: DockTab,
+    active: &mut Option<DockTab>,
+    actions: impl FnOnce(&mut egui::Ui),
+) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(tab.title())
@@ -314,6 +333,7 @@ fn draw_tab_header(ui: &mut egui::Ui, tab: DockTab, active: &mut Option<DockTab>
             {
                 *active = None;
             }
+            actions(ui);
         });
     });
     ui.separator();

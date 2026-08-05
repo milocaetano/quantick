@@ -112,6 +112,9 @@ const CURVE_MAX_POINTS: usize = 1000;
 const CURVE_GRID_RESERVE_PX: f32 = 230.0;
 /// Width of the equity curve's y-tick gutter.
 const CURVE_GUTTER_PX: f32 = 52.0;
+/// Longest export path a toast prints whole; past it the folder elides
+/// and the file name stays.
+const EXPORT_PATH_ELIDE_CHARS: usize = 64;
 /// Text color inside colored gutter chips — the same ink as the last-price
 /// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
 /// duplicated here; keep the two identical).
@@ -334,7 +337,6 @@ pub struct PaperTrading {
     /// A failed journal write warns once, not once per trade.
     journal_warned: bool,
     // Order-entry form.
-    side: Side,
     qty_text: String,
     order_type: EntryKind,
     stop_offset_text: String,
@@ -346,6 +348,12 @@ pub struct PaperTrading {
     /// Interactive rects painted by the last `draw_layer` pass (tag ✕s,
     /// bracket handles), pressed against on the next input pass.
     controls: Vec<(PaperControl, egui::Rect)>,
+    /// The working order hovered in the dock this frame — its chart line
+    /// lifts, so one hover reads on both surfaces. Cleared after the chart
+    /// consumed it (`draw_toast` runs last in the frame).
+    hovered_order: Option<OrderId>,
+    /// The in-flight export, if any; resolved by `draw_toast`'s poll.
+    export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
     toast: Option<Toast>,
     report_open: bool,
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
@@ -385,7 +393,6 @@ impl PaperTrading {
                 .map_or_else(|| PathBuf::from(TRADES_DIR), PathBuf::from),
             journal_path: None,
             journal_warned: false,
-            side: Side::Buy,
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -394,6 +401,8 @@ impl PaperTrading {
             drag: PaperDrag::None,
             drag_price: None,
             controls: Vec::new(),
+            hovered_order: None,
+            export_rx: None,
             toast: None,
             report_open: false,
             report_symbol: None,
@@ -714,7 +723,7 @@ impl PaperTrading {
             if !ctx.in_range(y) {
                 continue;
             }
-            let hovered = ctx.hovers_line(y);
+            let hovered = ctx.hovers_line(y) || self.hovered_order == Some(order.id);
             let shown = if dragged { self.snap(price) } else { level };
             ctx.level_line(y, theme::ACCENT, true, LINE_WIDTH_PX, hovered, dragged);
             ctx.gutter_chip(y, theme::ACCENT, &fmt_decimal(shown));
@@ -1210,9 +1219,10 @@ impl PaperTrading {
     // Dock tab
     // ------------------------------------------------------------------
 
-    /// The Trading dock tab: position card, order entry, pending orders,
-    /// session summary. See `docs/ux/paper-trading.md` §3.
+    /// The Trading dock tab: position, ticket, working orders, session
+    /// strip. See `docs/ux/paper-trading.md` §3.
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) {
+        self.hovered_order = None;
         ui.label(
             egui::RichText::new("Simulated fills from the tape - no broker, points not currency.")
                 .color(theme::TEXT_MUTED)
@@ -1234,199 +1244,443 @@ impl PaperTrading {
         self.draw_session_summary(ui);
     }
 
+    /// A quiet action button — the HUD's control grammar, sized to share a
+    /// row evenly.
+    fn quiet_action(label: &str, width: f32) -> egui::Button<'_> {
+        egui::Button::new(
+            egui::RichText::new(label)
+                .color(theme::TEXT_PRIMARY)
+                .small(),
+        )
+        .fill(theme::CONTROL)
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .rounding(egui::Rounding::same(3.0))
+        .min_size(egui::vec2(width, 22.0))
+    }
+
+    /// The position block: a one-row FLAT card while flat (with the
+    /// session's realized points), the full card while a position is open —
+    /// identity, brackets with their P&L, the R:R read, and the actions.
     fn draw_position_card(&mut self, ui: &mut egui::Ui) {
         let Some(position) = self.sim.position().cloned() else {
-            ui.label(egui::RichText::new("No open position.").color(theme::TEXT_MUTED));
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("FLAT")
+                        .monospace()
+                        .color(theme::TEXT_MUTED),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let realized = self.sim.realized_points();
+                    ui.label(
+                        egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
+                            .monospace()
+                            .strong()
+                            .color(points_color(realized)),
+                    )
+                    .on_hover_text("this session's realized points");
+                });
+            });
+            if !self.sim.orders().is_empty()
+                && ui
+                    .button("Cancel all orders")
+                    .on_hover_text("remove every working order without trading")
+                    .clicked()
+            {
+                self.cancel_all_orders();
+            }
             return;
         };
-        let color = match position.side {
-            Side::Buy => theme::BUY,
-            Side::Sell => theme::SELL,
-        };
+        let color = side_color(position.side);
+        let open = self.sim.mark_price().map(|mark| position.open_points(mark));
+
+        // Identity: the HUD's own chip, so the two surfaces read as one.
         ui.horizontal(|ui| {
+            egui::Frame::none()
+                .fill(color)
+                .rounding(egui::Rounding::same(2.0))
+                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "SIM {} {}",
+                            position_word(position.side),
+                            fmt_decimal(position.quantity)
+                        ))
+                        .color(theme::CHIP_INK)
+                        .strong()
+                        .small(),
+                    );
+                });
             ui.label(
-                egui::RichText::new(format!(
-                    "{} {} @ {}",
-                    position_word(position.side),
-                    fmt_decimal(position.quantity),
-                    fmt_decimal(position.avg_price),
-                ))
-                .color(color)
-                .strong(),
+                egui::RichText::new(format!("@ {}", fmt_decimal(position.avg_price)))
+                    .monospace()
+                    .color(theme::TEXT_PRIMARY),
             );
-            if let Some(mark) = self.sim.mark_price() {
-                let open = position.open_points(mark);
-                ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
-                        .color(points_color(open)),
-                )
-                .on_hover_text("open profit at the last print, in points (price units × quantity)");
+            if let Some(open) = open {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
+                            .monospace()
+                            .strong()
+                            .color(points_color(open)),
+                    )
+                    .on_hover_text(
+                        "open profit at the last print, in points (price units × quantity)",
+                    );
+                });
             }
         });
+
+        // Brackets: the level, what it pays, ✕ to clear — or the way to set
+        // the missing leg right here, from the ticket's offset.
         let mut bracket_change = None;
-        ui.horizontal(|ui| match position.stop_loss {
-            Some(stop) => {
-                ui.label(format!("stop loss {}", fmt_decimal(stop)));
-                if ui
-                    .small_button("clear")
-                    .on_hover_text("remove the protective stop")
-                    .clicked()
-                {
-                    bracket_change = Some(Command::SetBracket {
-                        stop_loss: None,
-                        take_profit: position.take_profit,
-                    });
+        egui::Grid::new("paper_position_brackets")
+            .num_columns(3)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                let legs = [
+                    (
+                        "SL",
+                        position.stop_loss,
+                        theme::SELL,
+                        parse_offset(&self.stop_offset_text).ok().flatten(),
+                        "remove the protective stop",
+                    ),
+                    (
+                        "TP",
+                        position.take_profit,
+                        theme::BUY,
+                        parse_offset(&self.profit_offset_text).ok().flatten(),
+                        "remove the profit target",
+                    ),
+                ];
+                for (word, level, leg_color, offset, clear_hover) in legs {
+                    ui.label(egui::RichText::new(word).color(theme::TEXT_MUTED).small());
+                    match level {
+                        Some(level) => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} {} pts",
+                                    fmt_decimal(level),
+                                    fmt_signed_points(position.open_points(level)),
+                                ))
+                                .monospace()
+                                .color(leg_color),
+                            );
+                            if ui.small_button("×").on_hover_text(clear_hover).clicked() {
+                                bracket_change = Some(match word {
+                                    "SL" => Command::SetBracket {
+                                        stop_loss: None,
+                                        take_profit: position.take_profit,
+                                    },
+                                    _ => Command::SetBracket {
+                                        stop_loss: position.stop_loss,
+                                        take_profit: None,
+                                    },
+                                });
+                            }
+                        }
+                        None => match offset {
+                            Some(offset) => {
+                                ui.label(
+                                    egui::RichText::new("—")
+                                        .monospace()
+                                        .color(theme::TEXT_FAINT),
+                                );
+                                if ui
+                                    .small_button(format!("Set {} pts", fmt_decimal(offset)))
+                                    .on_hover_text(
+                                        "place this leg the ticket's offset away from the \
+                                         average entry",
+                                    )
+                                    .clicked()
+                                {
+                                    let (stop_loss, take_profit) = if word == "SL" {
+                                        (
+                                            Some(offset_price(&position, offset, true)),
+                                            position.take_profit,
+                                        )
+                                    } else {
+                                        (
+                                            position.stop_loss,
+                                            Some(offset_price(&position, offset, false)),
+                                        )
+                                    };
+                                    bracket_change = Some(Command::SetBracket {
+                                        stop_loss,
+                                        take_profit,
+                                    });
+                                }
+                            }
+                            None => {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "drag from the entry line, or type an offset below",
+                                    )
+                                    .color(theme::TEXT_SUPPORT)
+                                    .small(),
+                                );
+                                ui.label("");
+                            }
+                        },
+                    }
+                    ui.end_row();
                 }
-            }
-            None => {
+            });
+        if let (Some(stop), Some(target)) = (position.stop_loss, position.take_profit) {
+            let risk = position.avg_price.saturating_sub(stop).abs();
+            let reward = target.saturating_sub(position.avg_price).abs();
+            if risk > Decimal::ZERO {
                 ui.label(
-                    egui::RichText::new(
-                        "stop loss - (drag one on the chart, or use the offsets below)",
-                    )
-                    .color(theme::TEXT_MUTED),
-                );
+                    egui::RichText::new(format!("R:R {}", fmt_points(reward / risk)))
+                        .monospace()
+                        .color(theme::TEXT_MUTED),
+                )
+                .on_hover_text("reward divided by risk, in points, at the current levels");
             }
-        });
-        ui.horizontal(|ui| match position.take_profit {
-            Some(target) => {
-                ui.label(format!("take profit {}", fmt_decimal(target)));
-                if ui
-                    .small_button("clear")
-                    .on_hover_text("remove the profit target")
-                    .clicked()
-                {
-                    bracket_change = Some(Command::SetBracket {
-                        stop_loss: position.stop_loss,
-                        take_profit: None,
-                    });
-                }
-            }
-            None => {
-                ui.label(
-                    egui::RichText::new(
-                        "take profit - (drag one on the chart, or use the offsets below)",
-                    )
-                    .color(theme::TEXT_MUTED),
-                );
-            }
-        });
+        }
         if let Some(command) = bracket_change {
             let events = self.sim.apply(command);
             self.handle_events(events);
         }
+
+        // Actions, two per row at equal width; consequential ones stay
+        // text-first, never a bare glyph.
         ui.add_space(4.0);
+        let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        let word = position_word(position.side);
+        let qty = fmt_decimal(position.quantity);
         ui.horizontal(|ui| {
             if ui
-                .button("Close")
-                .on_hover_text("exit the position at the next print")
+                .add(Self::quiet_action("× Close", half))
+                .on_hover_text(format!("exit the {word} {qty} at the next print (market)"))
                 .clicked()
             {
                 self.close_position();
             }
             if ui
-                .button("Flatten")
-                .on_hover_text("close the position and cancel every pending order")
+                .add(Self::quiet_action(
+                    &format!("{} Reverse", icons::ARROWS_LEFT_RIGHT),
+                    half,
+                ))
+                .on_hover_text(format!(
+                    "close the {word} {qty} and open the opposite side at the same size"
+                ))
                 .clicked()
             {
-                self.flatten();
+                self.reverse_position();
             }
         });
+        ui.horizontal(|ui| {
+            let in_profit = open.is_some_and(|open| open > Decimal::ZERO);
+            if ui
+                .add_enabled(in_profit, Self::quiet_action("Breakeven", half))
+                .on_hover_text(
+                    "move the stop to the average entry - with no fees simulated, \
+                     break-even is the entry exactly",
+                )
+                .on_disabled_hover_text(
+                    "the stop can only move to entry while the position is in profit - \
+                     below it, this would widen your risk",
+                )
+                .clicked()
+            {
+                let events = self.sim.apply(Command::SetBracket {
+                    stop_loss: Some(position.avg_price),
+                    take_profit: position.take_profit,
+                });
+                self.handle_events(events);
+            }
+            if ui
+                .add(Self::quiet_action("Close 50%", half))
+                .on_hover_text(
+                    "close half the open quantity at the next print; the rest keeps \
+                     its average entry and brackets",
+                )
+                .clicked()
+            {
+                let events = self.sim.apply(Command::ClosePartial {
+                    quantity: (position.quantity / Decimal::TWO).normalize(),
+                });
+                self.handle_events(events);
+            }
+        });
+        let full = ui.available_width();
+        if ui
+            .add(Self::quiet_action("Flatten all", full))
+            .on_hover_text("close the position and cancel every working order")
+            .clicked()
+        {
+            self.flatten();
+        }
     }
 
     fn draw_order_entry(&mut self, ui: &mut egui::Ui) {
+        ui.label(caption("ORDER"));
+        // Qty: free decimal text (empty must keep meaning "fix me"), with
+        // steppers beside it; Shift steps by ten.
         ui.horizontal(|ui| {
-            ui.selectable_value(
-                &mut self.side,
-                Side::Buy,
-                egui::RichText::new("BUY").color(theme::BUY).strong(),
-            );
-            ui.selectable_value(
-                &mut self.side,
-                Side::Sell,
-                egui::RichText::new("SELL").color(theme::SELL).strong(),
-            );
-            ui.label(egui::RichText::new("qty").color(theme::TEXT_MUTED));
-            ui.add(egui::TextEdit::singleline(&mut self.qty_text).desired_width(48.0));
-            egui::ComboBox::from_id_salt("paper_order_type")
-                .selected_text(kind_word(self.order_type))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.order_type, EntryKind::Market, "market");
-                    ui.selectable_value(&mut self.order_type, EntryKind::Limit, "limit");
-                    ui.selectable_value(&mut self.order_type, EntryKind::Stop, "stop");
-                });
+            ui.label(egui::RichText::new("Qty").color(theme::TEXT_MUTED).small());
+            let step = if ui.input(|input| input.modifiers.shift) {
+                Decimal::TEN
+            } else {
+                Decimal::ONE
+            };
+            if ui
+                .small_button("−")
+                .on_hover_text("one less (Shift: ten)")
+                .clicked()
+            {
+                self.step_quantity(-step);
+            }
+            ui.add(egui::TextEdit::singleline(&mut self.qty_text).desired_width(56.0));
+            if ui
+                .small_button("+")
+                .on_hover_text("one more (Shift: ten)")
+                .clicked()
+            {
+                self.step_quantity(step);
+            }
+        });
+        // Type: three pills. Picking Limit or Stop is a promise of an
+        // accent line on the chart, so the selected pill wears the accent.
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Type").color(theme::TEXT_MUTED).small());
+            for kind in [EntryKind::Market, EntryKind::Limit, EntryKind::Stop] {
+                let on = self.order_type == kind;
+                if pill_toggle(ui, kind_word(kind), on, "how the entry meets the market").clicked()
+                    && !on
+                {
+                    self.order_type = kind;
+                    self.armed = None;
+                }
+            }
         });
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("stop -pts").color(theme::TEXT_MUTED))
+            ui.label(egui::RichText::new("Stop").color(theme::TEXT_MUTED).small())
                 .on_hover_text(
                     "optional protective stop, this many points on the losing side of the \
                      entry; empty places no stop",
                 );
-            ui.add(egui::TextEdit::singleline(&mut self.stop_offset_text).desired_width(48.0));
-            ui.label(egui::RichText::new("profit +pts").color(theme::TEXT_MUTED))
-                .on_hover_text(
-                    "optional profit target, this many points on the winning side of the \
-                     entry; empty places no target",
-                );
-            ui.add(egui::TextEdit::singleline(&mut self.profit_offset_text).desired_width(48.0));
+            ui.add(egui::TextEdit::singleline(&mut self.stop_offset_text).desired_width(52.0));
+            ui.label(
+                egui::RichText::new("Target")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            )
+            .on_hover_text(
+                "optional profit target, this many points on the winning side of the \
+                 entry; empty places no target",
+            );
+            ui.add(egui::TextEdit::singleline(&mut self.profit_offset_text).desired_width(52.0));
+            ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
         });
         ui.add_space(4.0);
-        let side = self.side;
-        let side_color = match side {
-            Side::Buy => theme::BUY,
-            Side::Sell => theme::SELL,
-        };
-        match self.order_type {
-            EntryKind::Market => {
-                let label = format!(
-                    "{} {} at market",
-                    side_word_upper(side),
-                    self.qty_text.trim()
-                );
-                let button = ui
-                    .add_enabled(
-                        self.ready(),
-                        egui::Button::new(egui::RichText::new(label).color(side_color).strong()),
-                    )
-                    .on_hover_text("simulated: fills at the next print of the tape")
-                    .on_disabled_hover_text("waiting for the first print - there is no market yet");
-                if button.clicked() {
-                    self.market(side);
-                }
-            }
-            kind @ (EntryKind::Limit | EntryKind::Stop) => {
-                if self.armed.is_some() {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("click the chart at your price…")
-                                .color(theme::ACCENT),
-                        );
-                        if ui.small_button("cancel").clicked() {
-                            self.armed = None;
-                        }
-                    });
+
+        // The entry pair: the surface where you commit, taller than the
+        // toolbar's buttons. An armed side inverts — a mode you are in must
+        // be visible on the control that put you there.
+        let half = (ui.available_width() - 6.0) / 2.0;
+        let ready = self.ready();
+        let mut fire: Option<Side> = None;
+        let mut arm: Option<Side> = None;
+        let mut disarm = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for side in [Side::Buy, Side::Sell] {
+                let color = side_color(side);
+                let armed_here = self.armed.is_some_and(|armed| armed.side == side);
+                let armed_other = self.armed.is_some_and(|armed| armed.side != side);
+                let label = match (self.order_type, armed_here) {
+                    (_, true) => "Click a price…".to_owned(),
+                    (EntryKind::Market, _) => self.entry_label(side),
+                    (kind, _) => format!(
+                        "{} {} {}",
+                        side_word_upper(side),
+                        kind_word(kind).to_uppercase(),
+                        self.quantity_preview()
+                            .map_or_else(String::new, fmt_decimal),
+                    ),
+                };
+                let button = if armed_here {
+                    egui::Button::new(egui::RichText::new(label).color(color).strong())
+                        .fill(theme::CONTROL)
+                        .stroke(egui::Stroke::new(1.5_f32, color))
                 } else {
-                    let label = format!(
-                        "Place {} {} on the chart…",
-                        side_word(side),
-                        kind_word(kind)
-                    );
-                    let button = ui
-                        .add_enabled(
-                            self.ready(),
-                            egui::Button::new(egui::RichText::new(label).color(side_color)),
-                        )
-                        .on_hover_text(
-                            "arms a click: the next chart click rests the order at that price \
-                             (Esc cancels)",
-                        )
-                        .on_disabled_hover_text(
-                            "waiting for the first print - there is no market yet",
-                        );
-                    if button.clicked() {
-                        self.armed = Some(ArmedPlacement { side, kind });
+                    egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
+                        .fill(color)
+                        .stroke(egui::Stroke::NONE)
+                }
+                .rounding(egui::Rounding::same(3.0))
+                .min_size(egui::vec2(half, 34.0));
+                let response = ui
+                    .add_enabled(ready && !armed_other, button)
+                    .on_hover_text(self.entry_hover(side))
+                    .on_disabled_hover_text(if armed_other {
+                        "cancel the armed order first (Esc)"
+                    } else {
+                        "waiting for the first print - there is no market yet"
+                    });
+                if response.clicked() {
+                    match (self.order_type, armed_here) {
+                        (_, true) => disarm = true,
+                        (EntryKind::Market, _) => fire = Some(side),
+                        (EntryKind::Limit | EntryKind::Stop, _) => arm = Some(side),
                     }
                 }
             }
+        });
+        if disarm {
+            self.armed = None;
+        }
+        if let Some(side) = fire {
+            self.market(side);
+        }
+        if let Some(side) = arm {
+            self.armed = Some(ArmedPlacement {
+                side,
+                kind: self.order_type,
+            });
+        }
+        ui.label(
+            egui::RichText::new(if self.armed.is_some() {
+                "Click the chart at your price. Esc cancels."
+            } else if self.order_type == EntryKind::Market {
+                "Market orders fill at the next print."
+            } else {
+                "The button arms a click; the next chart click rests the order there."
+            })
+            .color(theme::TEXT_SUPPORT)
+            .small(),
+        );
+    }
+
+    /// Step the quantity field by `delta`, never below a positive value;
+    /// an unparseable field steps from one.
+    fn step_quantity(&mut self, delta: Decimal) {
+        let current = self
+            .qty_text
+            .trim()
+            .parse::<Decimal>()
+            .ok()
+            .filter(|quantity| *quantity > Decimal::ZERO)
+            .unwrap_or(Decimal::ONE);
+        let next = current.saturating_add(delta);
+        if next > Decimal::ZERO {
+            self.qty_text = fmt_decimal(next);
+        }
+    }
+
+    /// Cancel every working order (resting and queued), trading nothing.
+    pub fn cancel_all_orders(&mut self) {
+        let mut ids: Vec<OrderId> = self.sim.orders().iter().map(|order| order.id).collect();
+        ids.extend(self.sim.queued().iter().filter_map(|action| match action {
+            QueuedAction::Entry(order) => Some(order.id),
+            QueuedAction::Close | QueuedAction::ClosePartial { .. } => None,
+        }));
+        for id in ids {
+            let events = self.sim.apply(Command::CancelOrder { id });
+            self.handle_events(events);
         }
     }
 
@@ -1438,6 +1692,8 @@ impl PaperTrading {
             .filter(|action| matches!(action, QueuedAction::Entry(_)))
             .count();
         let queued_closes = self.sim.queued().len() - queued_entries;
+        let orders: Vec<_> = self.sim.orders().to_vec();
+        ui.label(caption(&format!("WORKING ORDERS · {}", orders.len())));
         if queued_entries > 0 {
             ui.label(
                 egui::RichText::new(format!(
@@ -1454,54 +1710,114 @@ impl PaperTrading {
                     .small(),
             );
         }
-        let orders: Vec<_> = self.sim.orders().to_vec();
         if orders.is_empty() && queued_entries == 0 {
-            ui.label(egui::RichText::new("No pending orders.").color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new("No working orders.").color(theme::TEXT_MUTED));
+            ui.label(
+                egui::RichText::new("Pick Limit or Stop, then click a price on the chart.")
+                    .color(theme::TEXT_SUPPORT)
+                    .small(),
+            );
             return;
         }
         for order in orders {
-            ui.horizontal(|ui| {
-                let price = order.price.map_or_else(String::new, fmt_decimal);
-                ui.label(format!(
-                    "#{} {} {} {} @ {}",
-                    order.id.0,
-                    side_word(order.side),
-                    kind_word(order.kind),
-                    fmt_decimal(order.quantity),
-                    price,
-                ));
-                if ui
-                    .small_button("×")
-                    .on_hover_text("cancel this order")
-                    .clicked()
-                {
-                    let events = self.sim.apply(Command::CancelOrder { id: order.id });
-                    self.handle_events(events);
-                }
+            let response = ui.horizontal(|ui| {
+                // A short accent dash, echoing the dashed chart line.
+                let (dash, _) =
+                    ui.allocate_exact_size(egui::vec2(10.0, 12.0), egui::Sense::hover());
+                ui.painter().line_segment(
+                    [
+                        egui::pos2(dash.left(), dash.center().y),
+                        egui::pos2(dash.right(), dash.center().y),
+                    ],
+                    egui::Stroke::new(2.0_f32, theme::ACCENT),
+                );
+                ui.label(
+                    egui::RichText::new(format!("#{}", order.id.0))
+                        .color(theme::TEXT_FAINT)
+                        .small(),
+                );
+                ui.label(
+                    egui::RichText::new(side_word_upper(order.side))
+                        .monospace()
+                        .color(side_color(order.side)),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {} @ {}",
+                        kind_short(order.kind),
+                        fmt_decimal(order.quantity),
+                        order.price.map_or_else(String::new, fmt_decimal),
+                    ))
+                    .monospace()
+                    .color(theme::TEXT_PRIMARY),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("cancel this order")
+                        .clicked()
+                    {
+                        let events = self.sim.apply(Command::CancelOrder { id: order.id });
+                        self.handle_events(events);
+                    }
+                });
             });
+            // One hover, two surfaces: the row lifts its chart line.
+            if response.response.hovered() {
+                self.hovered_order = Some(order.id);
+            }
         }
     }
 
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "session: {} pts realized · {} closed trade(s)",
-            fmt_signed_points(self.sim.realized_points()),
-            self.sim.closed_trades().len(),
-        ));
         ui.horizontal(|ui| {
-            if ui
-                .button("Report…")
-                .on_hover_text("performance metrics computed from the saved history")
-                .clicked()
-            {
-                self.open_report();
-            }
-        });
-        ui.label(
-            egui::RichText::new(format!("history: {}", self.dir.display()))
+            let realized = self.sim.realized_points();
+            ui.label(
+                egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
+                    .monospace()
+                    .strong()
+                    .color(points_color(realized)),
+            );
+            ui.label(
+                egui::RichText::new(format!(
+                    "realized · {} trades",
+                    self.sim.closed_trades().len()
+                ))
                 .color(theme::TEXT_MUTED)
                 .small(),
-        );
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("Report…")
+                    .on_hover_text("performance metrics computed from the saved history")
+                    .clicked()
+                {
+                    self.open_report();
+                }
+            });
+        });
+        if ui
+            .add(
+                egui::Button::new(
+                    egui::RichText::new(format!("history: {}", self.dir.display()))
+                        .color(theme::TEXT_MUTED)
+                        .small(),
+                )
+                .fill(theme::CONTROL)
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                .rounding(egui::Rounding::same(3.0))
+                .min_size(egui::vec2(ui.available_width(), 20.0)),
+            )
+            .on_hover_text(format!(
+                "open the history folder — {}",
+                std::path::absolute(&self.dir)
+                    .unwrap_or_else(|_| self.dir.clone())
+                    .display()
+            ))
+            .clicked()
+        {
+            reveal_folder(&self.dir);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1997,8 +2313,13 @@ impl PaperTrading {
     // Toast
     // ------------------------------------------------------------------
 
-    /// The transient message slot; newest wins, expires on its own.
+    /// The transient message slot; newest wins, expires on its own. Runs
+    /// last in the frame, so it also settles the per-frame handshakes: the
+    /// dock-hover link is cleared (the chart already read it) and a
+    /// finished export lands its toast.
     pub fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
+        self.hovered_order = None;
+        self.poll_export();
         let Some(toast) = &self.toast else {
             return;
         };
@@ -2026,6 +2347,92 @@ impl PaperTrading {
             message,
             shown_at: Instant::now(),
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Export
+    // ------------------------------------------------------------------
+
+    /// Write everything the ledger lists (this session plus the saved
+    /// history, in the ledger's scope) to one CSV, off the UI thread. The
+    /// toast answers with the path or the failure.
+    pub fn start_export(&mut self) {
+        if self.export_rx.is_some() {
+            self.show_toast("SIM: an export is already running.".to_owned());
+            return;
+        }
+        if self.history_cache.is_none() {
+            self.reload_ledger();
+        }
+        let mut rows: Vec<(String, ClosedTrade)> = Vec::new();
+        if let Some(cache) = &self.history_cache {
+            rows.extend(cache.rows.iter().cloned());
+        }
+        rows.extend(
+            self.sim
+                .closed_trades()
+                .iter()
+                .map(|trade| (self.symbol.clone(), trade.clone())),
+        );
+        rows.sort_by_key(|row| (row.1.closed_ms, row.1.opened_ms));
+        if rows.is_empty() {
+            self.show_toast("SIM: nothing to export yet - close a trade first.".to_owned());
+            return;
+        }
+        let text = export_csv(&rows);
+        let count = rows.len();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
+            .unwrap_or(0);
+        let dir = self.dir.clone();
+        let path = dir.join(format!("export-{}.csv", utc_compact(stamp)));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::fs::create_dir_all(&dir)
+                .and_then(|()| std::fs::write(&path, text))
+                .map(|()| (path, count))
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
+        });
+        self.export_rx = Some(receiver);
+    }
+
+    /// Land the export's result, if it arrived.
+    fn poll_export(&mut self) {
+        let Some(receiver) = &self.export_rx else {
+            return;
+        };
+        let Ok(result) = receiver.try_recv() else {
+            return;
+        };
+        self.export_rx = None;
+        match result {
+            Ok((path, count)) => {
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "PAPER_TRADES_EXPORTED",
+                    path = %path.display(),
+                    trades = count,
+                    "exported the simulated trade history"
+                );
+                self.show_toast(format!("Exported {count} trades to {}", elide_path(&path)));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "PAPER_TRADES_EXPORT_FAILED",
+                    %error,
+                    action = "export_not_saved",
+                    "could not write the trade export"
+                );
+                self.show_toast(
+                    "SIM: could not write the export - see the log for the path.".to_owned(),
+                );
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -3631,6 +4038,102 @@ fn fmt_utc_minute(timestamp_ms: i64) -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
+/// A protective price the ticket's offset away from the average entry:
+/// the losing side for a stop, the winning side for a target. A long's
+/// stop and a short's target sit below the entry; the other two above.
+fn offset_price(position: &Position, offset: Decimal, stop: bool) -> Decimal {
+    let below = (position.side == Side::Buy) == stop;
+    if below {
+        position.avg_price.saturating_sub(offset)
+    } else {
+        position.avg_price.saturating_add(offset)
+    }
+}
+
+/// Open `path` in the platform's file manager — created first, so the
+/// reveal never points at nothing on a fresh install.
+fn reveal_folder(path: &Path) {
+    let _ = std::fs::create_dir_all(path);
+    let launcher = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    if let Err(error) = std::process::Command::new(launcher).arg(path).spawn() {
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "PAPER_HISTORY_REVEAL_FAILED",
+            path = %path.display(),
+            %error,
+            "could not open the history folder"
+        );
+    }
+}
+
+/// The export CSV: one merged, Excel-facing artifact — the journal stays
+/// the machine-readable source of truth. Human-readable UTC stamps ride
+/// beside the venue epoch, decimals always use `.`, and the running
+/// equity is a column so a spreadsheet shows it without a formula.
+fn export_csv(rows: &[(String, ClosedTrade)]) -> String {
+    let mut text = String::from(
+        "symbol,side,quantity,opened_ms,opened_utc,entry_price,closed_ms,closed_utc,\
+         exit_price,pnl_points,cum_pnl_points,duration_ms,exit_reason,entry_agg_id,\
+         exit_agg_id,mae_points,mfe_points\n",
+    );
+    let mut cumulative = Decimal::ZERO;
+    let opt_u64 = |value: Option<u64>| value.map(|value| value.to_string()).unwrap_or_default();
+    let opt_points = |value: Option<Decimal>| value.map(fmt_decimal).unwrap_or_default();
+    for (symbol, trade) in rows {
+        cumulative = cumulative.saturating_add(trade.pnl_points);
+        let side = match trade.side {
+            Side::Buy => "long",
+            Side::Sell => "short",
+        };
+        text.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            symbol.replace(',', "_"),
+            side,
+            fmt_decimal(trade.quantity),
+            trade.opened_ms,
+            fmt_utc_iso(trade.opened_ms),
+            fmt_decimal(trade.entry_price),
+            trade.closed_ms,
+            fmt_utc_iso(trade.closed_ms),
+            fmt_decimal(trade.exit_price),
+            fmt_decimal(trade.pnl_points),
+            fmt_decimal(cumulative),
+            trade.closed_ms.saturating_sub(trade.opened_ms).max(0),
+            trade.exit_reason.as_str(),
+            opt_u64(trade.entry_agg_id),
+            opt_u64(trade.exit_agg_id),
+            opt_points(trade.mae_points),
+            opt_points(trade.mfe_points),
+        ));
+    }
+    text
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` in UTC — the export's human-readable stamp.
+fn fmt_utc_iso(timestamp_ms: i64) -> String {
+    let (year, month, day, hour, minute, second) = civil_utc(timestamp_ms);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// A toast-sized path: printed whole when short, elided to `…/file.csv`
+/// past the limit — the file name always stays whole.
+fn elide_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if text.chars().count() <= EXPORT_PATH_ELIDE_CHARS {
+        return text;
+    }
+    path.file_name().map_or(text, |name| {
+        format!("…{}{}", std::path::MAIN_SEPARATOR, name.to_string_lossy())
+    })
+}
+
 /// The symbol folders under the history dir, for the report's combo box.
 fn list_symbol_folders(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -3817,6 +4320,60 @@ mod tests {
         assert_eq!(cache.rows[0].0, "LEDGX");
         assert_eq!(cache.rows[0].1, trade);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_export_csv_carries_readable_stamps_and_running_equity() {
+        let trade = |closed_ms: i64, pnl: i64, mae: Option<i64>| ClosedTrade {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            entry_price: Decimal::from(100),
+            exit_price: Decimal::from(100 + pnl),
+            opened_ms: closed_ms - 60_000,
+            closed_ms,
+            pnl_points: Decimal::from(pnl),
+            exit_reason: quantick_sim::ExitReason::Manual,
+            entry_agg_id: mae.map(|_| 1),
+            exit_agg_id: mae.map(|_| 2),
+            mae_points: mae.map(Decimal::from),
+            mfe_points: mae.map(Decimal::from),
+        };
+        let rows = vec![
+            ("BTCUSDT".to_owned(), trade(1_773_666_068_000, 5, Some(2))),
+            ("WINQ26".to_owned(), trade(1_773_666_368_000, -2, None)),
+        ];
+        let text = export_csv(&rows);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "header plus two rows");
+        assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
+        assert!(
+            lines[1].contains("2026-03-16T13:01:08Z"),
+            "human-readable UTC beside the epoch: {}",
+            lines[1]
+        );
+        assert!(lines[1].ends_with(",manual,1,2,2,2"), "{}", lines[1]);
+        assert!(
+            lines[2].contains(",3,"),
+            "running equity 5 + (-2): {}",
+            lines[2]
+        );
+        assert!(
+            lines[2].ends_with(",manual,,,,"),
+            "unknown v1 fields stay empty, never zero: {}",
+            lines[2]
+        );
+    }
+
+    #[test]
+    fn long_export_paths_elide_to_the_file_name() {
+        let short = Path::new("paper-trades/export-1.csv");
+        assert_eq!(elide_path(short), short.display().to_string());
+        let long = Path::new(
+            "C:/some/extremely/long/path/that/never/ends/and/keeps/going/paper-trades/export-20260805-141233.csv",
+        );
+        let elided = elide_path(long);
+        assert!(elided.starts_with('…'), "{elided}");
+        assert!(elided.ends_with("export-20260805-141233.csv"), "{elided}");
     }
 
     #[test]
