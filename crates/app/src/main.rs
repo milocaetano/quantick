@@ -35,6 +35,7 @@ mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
 mod pane;
+mod paper_hud;
 mod paper_trading;
 mod price_view;
 mod replay_view;

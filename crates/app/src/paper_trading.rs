@@ -50,6 +50,12 @@ const SNAP_FALLBACK_DECIMALS: u32 = 2;
 /// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
 /// duplicated here; keep the two identical).
 const CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
+/// Vertical clearance between a paper chip's centre and the last-price
+/// chip's, in pixels — just over one chip height, so the two can never
+/// overprint. At the instant a market order fills, the entry price *is* the
+/// last price, and without this the one persistent "you are long" statement
+/// is born unreadable.
+const CHIP_CLEAR_PX: f32 = 16.0;
 
 /// The next chart click places this entry (`Limit` or `Stop` only — a
 /// market order needs no price and fires straight from its button).
@@ -57,6 +63,20 @@ const CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
 pub struct ArmedPlacement {
     side: Side,
     kind: EntryKind,
+}
+
+/// The open position, read-only, as every chrome surface reports it — the
+/// HUD, the dock badge and the status cell all describe the same trade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PositionSummary {
+    /// Which way the position points.
+    pub side: Side,
+    /// Contracts/units held.
+    pub quantity: Decimal,
+    /// Average entry price.
+    pub avg_price: Decimal,
+    /// Open profit at the current mark; `None` before any mark exists.
+    pub open_points: Option<Decimal>,
 }
 
 /// Which simulated line the pointer is dragging.
@@ -243,28 +263,179 @@ impl PaperTrading {
         self.handle_events(events);
     }
 
-    /// The status-bar cell: `SIM ±N pts` (realized + open), and the sign
-    /// for its color. `None` while the simulator has never been touched.
+    /// The status-bar cell, honest about open versus flat: `SIM LONG 1 ·
+    /// +2 pts` while a position is open (side, size and its open profit),
+    /// `SIM +7 pts · flat` otherwise (the session's realized points). `None`
+    /// while the simulator has never been touched.
     #[must_use]
     pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
-        let untouched = self.sim.position().is_none()
-            && self.sim.closed_trades().is_empty()
+        if let Some(position) = self.sim.position() {
+            let open = self
+                .sim
+                .mark_price()
+                .map(|mark| position.open_points(mark))
+                .unwrap_or_default();
+            return Some((
+                format!(
+                    "SIM {} {} · {} pts",
+                    position_word(position.side),
+                    fmt_decimal(position.quantity),
+                    fmt_signed_points(open),
+                ),
+                open.cmp(&Decimal::ZERO),
+            ));
+        }
+        let untouched = self.sim.closed_trades().is_empty()
             && self.sim.orders().is_empty()
             && self.sim.queued().is_empty();
         if untouched {
             return None;
         }
-        let open = self
-            .sim
-            .position()
-            .and_then(|position| self.sim.mark_price().map(|mark| position.open_points(mark)));
-        let total = self
-            .sim
-            .realized_points()
-            .saturating_add(open.unwrap_or_default());
+        let realized = self.sim.realized_points();
         Some((
-            format!("SIM {} pts", fmt_signed_points(total)),
-            total.cmp(&Decimal::ZERO),
+            format!("SIM {} pts · flat", fmt_signed_points(realized)),
+            realized.cmp(&Decimal::ZERO),
+        ))
+    }
+
+    /// The open position as the chrome reports it: side, size, entry, and
+    /// the open profit at the current mark. `None` while flat.
+    #[must_use]
+    pub fn position_summary(&self) -> Option<PositionSummary> {
+        let position = self.sim.position()?;
+        Some(PositionSummary {
+            side: position.side,
+            quantity: position.quantity,
+            avg_price: position.avg_price,
+            open_points: self.sim.mark_price().map(|mark| position.open_points(mark)),
+        })
+    }
+
+    /// Exit the open position at the next print — the toolbar's close
+    /// button, the HUD's, and the Trading tab's all funnel here.
+    pub fn close_position(&mut self) {
+        let events = self.sim.apply(Command::ClosePosition);
+        self.handle_events(events);
+    }
+
+    /// Close the position and cancel every pending order.
+    pub fn flatten(&mut self) {
+        let events = self.sim.apply(Command::Flatten);
+        self.handle_events(events);
+    }
+
+    /// Flip the open position: one market order for twice its size, which
+    /// closes it and opens the opposite side at the same quantity. The
+    /// form's protective offsets apply to the new entry, exactly as they do
+    /// to any market order.
+    pub fn reverse_position(&mut self) {
+        let Some(position) = self.sim.position().cloned() else {
+            return;
+        };
+        let side = match position.side {
+            Side::Buy => Side::Sell,
+            Side::Sell => Side::Buy,
+        };
+        let reference = self.sim.mark_price().unwrap_or_default();
+        let Some(bracket) = self.parse_bracket(side, reference) else {
+            return;
+        };
+        let events = self.sim.apply(Command::PlaceMarket {
+            side,
+            quantity: position.quantity.saturating_add(position.quantity),
+            bracket,
+        });
+        self.handle_events(events);
+    }
+
+    /// The form quantity, parsed without side effects — the label builders
+    /// peek at it every frame and must not toast.
+    fn quantity_preview(&self) -> Option<Decimal> {
+        match self.qty_text.trim().parse::<Decimal>() {
+            Ok(quantity) if quantity > Decimal::ZERO => Some(quantity),
+            _ => None,
+        }
+    }
+
+    /// State-aware entry label: what pressing this side's button would do to
+    /// the open position — `SELL 1 (closes)`, `SELL 5 (reverses to short
+    /// 4)`. Whether a press closes or flips hangs on a quantity field the
+    /// toolbar never shows, so the button itself must say. Falls back to the
+    /// bare side word while the form quantity does not parse — the click
+    /// will toast the correction.
+    #[must_use]
+    pub fn entry_label(&self, side: Side) -> String {
+        let word = side_word_upper(side);
+        let Some(qty) = self.quantity_preview() else {
+            return word.to_owned();
+        };
+        let qty_text = fmt_decimal(qty);
+        let Some(position) = self.sim.position() else {
+            return format!("{word} {qty_text}");
+        };
+        if position.side == side {
+            return format!(
+                "{word} {qty_text} (adds to {})",
+                fmt_decimal(position.quantity.saturating_add(qty)),
+            );
+        }
+        match qty.cmp(&position.quantity) {
+            std::cmp::Ordering::Less => format!(
+                "{word} {qty_text} (closes {qty_text} of {})",
+                fmt_decimal(position.quantity),
+            ),
+            std::cmp::Ordering::Equal => format!("{word} {qty_text} (closes)"),
+            std::cmp::Ordering::Greater => format!(
+                "{word} {qty_text} (reverses to {} {})",
+                match side {
+                    Side::Buy => "long",
+                    Side::Sell => "short",
+                },
+                fmt_decimal(qty.saturating_sub(position.quantity)),
+            ),
+        }
+    }
+
+    /// The entry buttons' hover text: the quantity and protective offsets
+    /// the press will use, which the toolbar itself has no widgets for.
+    #[must_use]
+    pub fn entry_hover(&self, side: Side) -> String {
+        let quantity = match self.quantity_preview() {
+            Some(qty) => format!("quantity {}", fmt_decimal(qty)),
+            None => "the quantity is not a positive number".to_owned(),
+        };
+        let bracket = match (
+            parse_offset(&self.stop_offset_text),
+            parse_offset(&self.profit_offset_text),
+        ) {
+            (Ok(None), Ok(None)) => "no protective bracket set".to_owned(),
+            (Ok(stop), Ok(profit)) => {
+                let mut parts = Vec::new();
+                if let Some(stop) = stop {
+                    parts.push(format!("stop {} pts", fmt_decimal(stop)));
+                }
+                if let Some(profit) = profit {
+                    parts.push(format!("target {} pts", fmt_decimal(profit)));
+                }
+                format!("{} on fill", parts.join(" / "))
+            }
+            _ => "an offset field needs fixing".to_owned(),
+        };
+        format!(
+            "simulated market {} - fills at the next print; {quantity}, {bracket} (Trading tab)",
+            side_word(side),
+        )
+    }
+
+    /// `Close 1 LONG` while a position is open — the toolbar's exit button
+    /// label. `None` while flat, which is what removes the button.
+    #[must_use]
+    pub fn close_button_label(&self) -> Option<String> {
+        let position = self.sim.position()?;
+        Some(format!(
+            "Close {} {}",
+            fmt_decimal(position.quantity),
+            position_word(position.side),
         ))
     }
 
@@ -275,13 +446,15 @@ impl PaperTrading {
     /// Paint the simulated lines: pending orders (dashed, accent), then the
     /// position's entry / stop-loss / take-profit (solid, semantic colors).
     /// Chips share the last-price chip geometry so prices never disagree
-    /// about their pixel.
+    /// about their pixel; `reserved_chip_y` is the last-price chip's row,
+    /// which every paper chip dodges rather than overprints.
     pub fn draw_layer(
         &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
         axis_x: f32,
         scale: &PriceScale,
+        reserved_chip_y: Option<f32>,
     ) {
         for order in self.sim.orders() {
             let Some(level) = order.price else { continue };
@@ -308,6 +481,7 @@ impl PaperTrading {
                 theme::ACCENT,
                 true,
                 &label,
+                reserved_chip_y,
             );
         }
         if let Some(position) = self.sim.position() {
@@ -331,6 +505,7 @@ impl PaperTrading {
                 entry_color,
                 false,
                 &label,
+                reserved_chip_y,
             );
             if let Some(stop) = position.stop_loss {
                 let price = if self.drag == PaperDrag::StopLoss {
@@ -353,6 +528,7 @@ impl PaperTrading {
                     theme::SELL,
                     false,
                     &label,
+                    reserved_chip_y,
                 );
             }
             if let Some(target) = position.take_profit {
@@ -376,6 +552,7 @@ impl PaperTrading {
                     theme::BUY,
                     false,
                     &label,
+                    reserved_chip_y,
                 );
             }
         }
@@ -385,9 +562,11 @@ impl PaperTrading {
                 side_word(armed.side),
                 kind_word(armed.kind),
             );
+            // Bottom-left: the top-left corner belongs to the position HUD,
+            // and arming an entry with a position open is a normal flow.
             painter.text(
-                chart_rect.left_top() + egui::vec2(8.0, 8.0),
-                egui::Align2::LEFT_TOP,
+                chart_rect.left_bottom() + egui::vec2(8.0, -8.0),
+                egui::Align2::LEFT_BOTTOM,
                 hint,
                 egui::FontId::proportional(12.0),
                 theme::ACCENT,
@@ -679,16 +858,14 @@ impl PaperTrading {
                 .on_hover_text("exit the position at the next print")
                 .clicked()
             {
-                let events = self.sim.apply(Command::ClosePosition);
-                self.handle_events(events);
+                self.close_position();
             }
             if ui
                 .button("Flatten")
                 .on_hover_text("close the position and cancel every pending order")
                 .clicked()
             {
-                let events = self.sim.apply(Command::Flatten);
-                self.handle_events(events);
+                self.flatten();
             }
         });
     }
@@ -1267,7 +1444,8 @@ fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
 }
 
 /// One price line with its gutter chip — the last-price chip geometry, so
-/// prices never disagree about their pixel.
+/// prices never disagree about their pixel. The line always sits at its true
+/// price; only the chip dodges the reserved last-price row.
 #[expect(clippy::too_many_arguments, reason = "a paint helper, not an API")]
 fn draw_price_line(
     painter: &egui::Painter,
@@ -1278,6 +1456,7 @@ fn draw_price_line(
     color: egui::Color32,
     dashed: bool,
     label: &str,
+    reserved_chip_y: Option<f32>,
 ) {
     let y = scale.y(price);
     if y < chart_rect.top() || y > chart_rect.bottom() {
@@ -1297,14 +1476,38 @@ fn draw_price_line(
             stroke,
         );
     }
+    let chip_y = dodged_chip_y(y, reserved_chip_y, chart_rect.top(), chart_rect.bottom());
     let galley = painter.layout_no_wrap(label.to_owned(), egui::FontId::monospace(11.0), CHIP_TEXT);
-    let text_pos = egui::pos2(axis_x + 6.0, y - galley.size().y / 2.0);
+    let text_pos = egui::pos2(axis_x + 6.0, chip_y - galley.size().y / 2.0);
     let bg = egui::Rect::from_min_size(
         text_pos - egui::vec2(3.0, 1.0),
         galley.size() + egui::vec2(6.0, 2.0),
     );
     painter.rect_filled(bg, egui::Rounding::same(2.0), color);
     painter.galley(text_pos, galley, CHIP_TEXT);
+}
+
+/// Keep a gutter chip legible when it would land on the last-price chip:
+/// push it just clear of the reserved row, towards its own side of the
+/// price, clamped into the pane. At the exact fill price (no distance at
+/// all) the chip steps down, below the last-price chip. When the reserved
+/// row itself hugs a pane edge the clamp can land the chip back inside the
+/// band — accepted: a chip pinned at the edge beats one pushed out of the
+/// pane, and the next print separates them.
+fn dodged_chip_y(y: f32, reserved: Option<f32>, top: f32, bottom: f32) -> f32 {
+    let Some(reserved) = reserved else {
+        return y;
+    };
+    let delta = y - reserved;
+    if delta.abs() >= CHIP_CLEAR_PX {
+        return y;
+    }
+    let dodged = if delta >= 0.0 {
+        reserved + CHIP_CLEAR_PX
+    } else {
+        reserved - CHIP_CLEAR_PX
+    };
+    dodged.clamp(top, bottom)
 }
 
 /// Empty means "none"; otherwise a strictly positive decimal.
@@ -1333,7 +1536,8 @@ fn side_word_upper(side: Side) -> &'static str {
     }
 }
 
-fn position_word(side: Side) -> &'static str {
+/// `LONG`/`SHORT` — shared with the HUD so every surface uses one register.
+pub(crate) fn position_word(side: Side) -> &'static str {
     match side {
         Side::Buy => "LONG",
         Side::Sell => "SHORT",
@@ -1348,7 +1552,8 @@ fn kind_word(kind: EntryKind) -> &'static str {
     }
 }
 
-fn points_color(points: Decimal) -> egui::Color32 {
+/// Green gains, red losses, muted zero — shared with the HUD.
+pub(crate) fn points_color(points: Decimal) -> egui::Color32 {
     match points.cmp(&Decimal::ZERO) {
         std::cmp::Ordering::Greater => theme::BUY,
         std::cmp::Ordering::Less => theme::SELL,
@@ -1357,7 +1562,7 @@ fn points_color(points: Decimal) -> egui::Color32 {
 }
 
 /// Exact value, trailing zeros stripped — prices and quantities.
-fn fmt_decimal(value: Decimal) -> String {
+pub(crate) fn fmt_decimal(value: Decimal) -> String {
     value.normalize().to_string()
 }
 
@@ -1368,7 +1573,7 @@ fn fmt_points(value: Decimal) -> String {
 
 /// Signed points: an explicit `+` on gains so a green `12` can never be
 /// misread as a count.
-fn fmt_signed_points(value: Decimal) -> String {
+pub(crate) fn fmt_signed_points(value: Decimal) -> String {
     if value > Decimal::ZERO {
         format!("+{}", fmt_points(value))
     } else {
@@ -1696,6 +1901,125 @@ mod tests {
             !paper.handle_chart_input(&frame(chart, &scale, 40.0, true, true, false)),
             "a press far from every line belongs to the pan"
         );
+    }
+
+    /// One long, then every label the entry buttons can wear: the button
+    /// must disclose close-or-reverse, because the quantity deciding it
+    /// lives in a tab the toolbar never shows.
+    #[test]
+    fn entry_labels_disclose_what_the_press_would_do() {
+        let mut paper = PaperTrading::new();
+        assert_eq!(
+            paper.entry_label(Side::Buy),
+            "BUY 1",
+            "flat is a plain entry"
+        );
+        paper.qty_text = "x".to_owned();
+        assert_eq!(
+            paper.entry_label(Side::Sell),
+            "SELL",
+            "an unparseable quantity promises nothing"
+        );
+        paper.qty_text = "2".to_owned();
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+
+        paper.qty_text = "1".to_owned();
+        assert_eq!(paper.entry_label(Side::Buy), "BUY 1 (adds to 3)");
+        assert_eq!(paper.entry_label(Side::Sell), "SELL 1 (closes 1 of 2)");
+        paper.qty_text = "2".to_owned();
+        assert_eq!(paper.entry_label(Side::Sell), "SELL 2 (closes)");
+        paper.qty_text = "5".to_owned();
+        assert_eq!(
+            paper.entry_label(Side::Sell),
+            "SELL 5 (reverses to short 3)"
+        );
+    }
+
+    /// The status cell answers the reported question — "am I in a trade?" —
+    /// not just "how many points".
+    #[test]
+    fn the_status_cell_distinguishes_open_from_flat() {
+        let mut paper = PaperTrading::new();
+        assert!(paper.status_cell().is_none(), "untouched owes no line");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let (text, _) = paper.status_cell().expect("a position is state");
+        assert_eq!(text, "SIM LONG 1 · 0 pts");
+        paper.on_trade(&print(2, 105));
+        let (text, sign) = paper.status_cell().expect("still open");
+        assert_eq!(text, "SIM LONG 1 · +5 pts");
+        assert_eq!(sign, std::cmp::Ordering::Greater);
+
+        paper.close_position();
+        paper.on_trade(&print(3, 107));
+        let (text, sign) = paper.status_cell().expect("history keeps the cell");
+        assert_eq!(text, "SIM +7 pts · flat");
+        assert_eq!(sign, std::cmp::Ordering::Greater);
+        assert!(paper.close_button_label().is_none(), "flat has no close");
+    }
+
+    #[test]
+    fn the_close_button_names_the_position_it_exits() {
+        let mut paper = PaperTrading::new();
+        paper.qty_text = "3".to_owned();
+        paper.seed(&print(0, 100));
+        paper.market(Side::Sell);
+        paper.on_trade(&print(1, 100));
+        assert_eq!(paper.close_button_label().as_deref(), Some("Close 3 SHORT"));
+        let summary = paper.position_summary().expect("open");
+        assert_eq!(summary.side, Side::Sell);
+        assert_eq!(summary.quantity, Decimal::from(3));
+        assert_eq!(summary.avg_price, Decimal::from(100));
+    }
+
+    /// Reverse flips side and size in one market order, and the form's
+    /// protective offsets ride along to the new entry.
+    #[test]
+    fn reverse_flips_the_position_with_the_forms_bracket() {
+        let mut paper = PaperTrading::new();
+        paper.qty_text = "2".to_owned();
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        paper.stop_offset_text = "5".to_owned();
+        paper.reverse_position();
+        paper.on_trade(&print(2, 100));
+        let position = paper.sim.position().expect("reversed, not flat");
+        assert_eq!(position.side, Side::Sell);
+        assert_eq!(position.quantity, Decimal::from(2));
+        assert_eq!(
+            position.stop_loss,
+            Some(Decimal::from(105)),
+            "the new short is protected by the form's offset"
+        );
+    }
+
+    /// The chip dodge: lines keep their price, chips clear the last-price
+    /// row by the minimum, and the fill-moment tie steps down.
+    #[test]
+    fn paper_chips_dodge_the_last_price_chip_never_the_line() {
+        // No reservation, or far enough away: the chip stays at its line.
+        assert_eq!(dodged_chip_y(100.0, None, 0.0, 400.0), 100.0);
+        assert_eq!(dodged_chip_y(100.0, Some(200.0), 0.0, 400.0), 100.0);
+        // Inside the band: pushed just clear, towards its own side.
+        assert_eq!(
+            dodged_chip_y(210.0, Some(200.0), 0.0, 400.0),
+            200.0 + CHIP_CLEAR_PX
+        );
+        assert_eq!(
+            dodged_chip_y(190.0, Some(200.0), 0.0, 400.0),
+            200.0 - CHIP_CLEAR_PX
+        );
+        // The fill moment: entry == last price, and the chip steps down.
+        assert_eq!(
+            dodged_chip_y(200.0, Some(200.0), 0.0, 400.0),
+            200.0 + CHIP_CLEAR_PX
+        );
+        // Never dodged out of the pane.
+        assert_eq!(dodged_chip_y(398.0, Some(399.0), 0.0, 400.0), 383.0);
     }
 
     #[test]

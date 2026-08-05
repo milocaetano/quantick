@@ -304,7 +304,7 @@ impl Tab {
         self.ohlcv_pending = false;
         self.ohlcv_capable = false;
         self.loading.set_active(LoadingTask::VenueHistory, false);
-        if let Some(pane) = self.time_pane.as_mut() {
+        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
             pane.install_history_prefix(Vec::new());
         }
         self.events = handle.events;
@@ -370,15 +370,32 @@ impl Tab {
         self.attach(handle);
     }
 
+    /// Whether any pane on this tab cuts bars by a foldable time interval —
+    /// the gate for venue candle history. Capability-shaped, like every other
+    /// gate in the app (audit S1): the prefix belongs to what a pane *shows*
+    /// (`BarSpec::Time` at a whole number of venue candles), never to which
+    /// pane object it is. `bars → time` on the flow pane earns the same 90
+    /// days the split's time pane gets.
+    fn any_pane_wants_venue_history(&self) -> bool {
+        std::iter::once(&self.flow_pane)
+            .chain(self.time_pane.as_ref())
+            .any(|pane| {
+                pane.state
+                    .spec()
+                    .time_interval_ms()
+                    .is_some_and(crate::resample::is_foldable)
+            })
+    }
+
     /// Ask the venue for its candle history, if there is anything to ask.
     ///
     /// Gated on the capability, never on the provider: a feed that serves no
     /// candles, and a recording — which is a fixed span of prints with no
     /// venue behind it — are both simply not asked. One request at a time, and
-    /// a base already held is not re-fetched: changing the pane's interval is
+    /// a base already held is not re-fetched: changing a pane's interval is
     /// a different fold over the same bars.
     fn request_ohlcv_history(&mut self, config: &AppConfig) {
-        if self.time_pane.is_none()
+        if !self.any_pane_wants_venue_history()
             || self.replay.is_some()
             || self.ohlcv_pending
             || self.ohlcv_base.is_some()
@@ -527,32 +544,38 @@ impl Tab {
         self.refold_history_prefix();
     }
 
-    /// Rebuild the time pane's prefix from the base at the pane's interval.
+    /// Rebuild every pane's prefix from the base at that pane's interval.
     ///
-    /// Free of the venue: a chip click lands here, not on the network.
-    /// Reports whether the prefix actually changed — an installed prefix
+    /// Free of the venue: a chip click lands here, not on the network. One
+    /// base, one fold per time-cutting pane — the flow pane showing time
+    /// bars folds exactly as the split's time pane does (audit S1).
+    /// Reports whether any prefix actually changed — an installed prefix
     /// rebuilds the indicators, so the caller can skip sending a second one.
     pub fn refold_history_prefix(&mut self) -> bool {
         let Some(base) = self.ohlcv_base.as_ref() else {
             return false;
         };
-        let Some(pane) = self.time_pane.as_mut() else {
-            return false;
-        };
-        // A pane not cutting by time has no interval to fold to, and a
-        // sub-minute one has no whole number of venue candles in it: both get
-        // no prefix, which is the honest answer rather than an invented one.
-        let Some(interval) = pane.state.spec().time_interval_ms() else {
-            return pane.install_history_prefix(Vec::new());
-        };
-        let folded = crate::resample::fold(base, interval);
-        let prefix = trim_to_seam(
-            folded,
-            pane.state.bars().first(),
-            pane.state.partial(),
-            interval,
-        );
-        pane.install_history_prefix(prefix)
+        let mut changed = false;
+        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+            // A pane not cutting by time has no interval to fold to, and a
+            // sub-minute one has no whole number of venue candles in it: both
+            // get no prefix, which is the honest answer rather than an
+            // invented one.
+            let prefix = match pane.state.spec().time_interval_ms() {
+                Some(interval) => {
+                    let folded = crate::resample::fold(base, interval);
+                    trim_to_seam(
+                        folded,
+                        pane.state.bars().first(),
+                        pane.state.partial(),
+                        interval,
+                    )
+                }
+                None => Vec::new(),
+            };
+            changed |= pane.install_history_prefix(prefix);
+        }
+        changed
     }
 
     /// Whether this tab has trouble worth showing on its chip while it sits in
@@ -1078,13 +1101,15 @@ impl Tab {
                 // The venue prefix folds to the new interval before the view
                 // is reanchored: the market time the user was looking at has
                 // to resolve against the series they will be looking at.
+                // Either pane: `bars → time` on the flow pane is exactly the
+                // spec change this refold exists for (audit S1).
                 //
                 // Installing a prefix rebuilds the indicators over the whole
                 // composed series, so the plain rebuild is only sent when the
                 // refold did not — two rebuilds of ~130k bars per settled drag
                 // frame, with no coalescing in the worker, is the cost of
                 // sending both.
-                let refolded = side == PaneSide::Time && self.refold_history_prefix();
+                let refolded = self.refold_history_prefix();
                 if !refolded {
                     self.pane_mut(side).send_indicator_rebuild();
                 }
@@ -1537,6 +1562,14 @@ impl Tab {
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &chrome);
             }
+        }
+
+        // The position HUD rides the pane that owns order entry. It draws
+        // here, after the pane loop, because its buttons need the paper host
+        // mutably — inside the loop that borrow is pinned behind the shared
+        // chrome.
+        if let Some((rect, scale)) = self.flow_pane.paper_hud_anchor() {
+            crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
         }
 
         let (Some(time_area), Some(divider)) = (time_area, divider) else {

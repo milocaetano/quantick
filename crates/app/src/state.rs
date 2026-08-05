@@ -137,16 +137,34 @@ impl BarSpec {
         }
     }
 
-    /// A human-readable summary, e.g. `tick(50)` or `dollar(500000)`.
+    /// A human-readable summary, e.g. `tick(50)` or `time(1m)`.
     #[must_use]
     pub fn summary(&self) -> String {
         match self {
             BarSpec::Tick(n) => format!("tick({n})"),
             BarSpec::Volume(u) => format!("volume({u})"),
             BarSpec::Dollar(d) => format!("dollar({d})"),
-            BarSpec::Time(ms) => format!("time({ms}ms)"),
+            BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
             BarSpec::Imbalance(target) => format!("imbalance({target})"),
         }
+    }
+}
+
+/// A time-bar interval for humans: `1m`, `5m`, `1h` for round units, `90s`
+/// for whole seconds, raw milliseconds otherwise. The same vocabulary the
+/// timeframe chips speak, so the status bar, the toolbar and the chips can
+/// never disagree about what `60000` means (the audit's MAJOR-6: two time
+/// controls speaking different languages).
+#[must_use]
+pub fn fmt_time_interval(ms: i64) -> String {
+    if ms >= 3_600_000 && ms % 3_600_000 == 0 {
+        format!("{}h", ms / 3_600_000)
+    } else if ms >= 60_000 && ms % 60_000 == 0 {
+        format!("{}m", ms / 60_000)
+    } else if ms >= 1_000 && ms % 1_000 == 0 {
+        format!("{}s", ms / 1_000)
+    } else {
+        format!("{ms}ms")
     }
 }
 
@@ -428,6 +446,26 @@ mod tests {
         assert!(!BarKind::Tick.needs_traded_volume());
         assert!(!BarKind::Time.needs_traded_volume());
         assert!(!BarKind::Imbalance.needs_traded_volume());
+    }
+
+    /// One vocabulary for every surface that names a timeframe: the summary
+    /// speaks the chips' own labels, falling back to finer units only where
+    /// no coarser one writes the value back exactly.
+    #[test]
+    fn time_summaries_speak_the_chips_language() {
+        assert_eq!(fmt_time_interval(60_000), "1m");
+        assert_eq!(fmt_time_interval(300_000), "5m");
+        assert_eq!(fmt_time_interval(900_000), "15m");
+        assert_eq!(fmt_time_interval(3_600_000), "1h");
+        assert_eq!(
+            fmt_time_interval(90_000),
+            "90s",
+            "90s is not a round minute"
+        );
+        assert_eq!(fmt_time_interval(1_000), "1s");
+        assert_eq!(fmt_time_interval(1_500), "1500ms");
+        assert_eq!(BarSpec::Time(60_000).summary(), "time(1m)");
+        assert_eq!(BarSpec::Time(500).summary(), "time(500ms)");
     }
 
     #[test]
