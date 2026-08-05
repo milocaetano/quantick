@@ -8478,6 +8478,91 @@ plot(close)
         );
     }
 
+    /// S1 end to end on the single-pane route: `bars → time` on the flow
+    /// pane asks the venue for candle history and wears the reply as its
+    /// prefix — the fix for the audit's BLOCKER-1, where the toolbar route
+    /// produced a 1-second chart and then an empty one. The venue prefix
+    /// belongs to what a pane shows, never to which pane object it is.
+    #[test]
+    fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let mut app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(1),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(FeedCapabilities {
+                    book_capture: false,
+                    history_paging: true,
+                    traded_volume: true,
+                    ohlcv_history: true,
+                    ohlcv_generation: 0,
+                }),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let _ = book_tx;
+        let trades: Vec<_> = (0..200).map(minute_trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.drain_tabs();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            0,
+            "a tick chart asks for no candles"
+        );
+
+        // The toolbar route: `bars → time`. The kind's default interval is a
+        // real timeframe (QW2), so the spec that lands is one minute.
+        app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Time;
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            *app.active_tab().flow_pane.state.spec(),
+            BarSpec::Time(crate::time_header::DEFAULT_INTERVAL_MS),
+            "bars → time opens on 1m, not one second"
+        );
+        assert!(
+            drain_ohlcv_requests(&mut cmd_rx) >= 1,
+            "the time-cutting flow pane asks the venue for history"
+        );
+
+        evt_tx
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                complete: true,
+            })
+            .unwrap();
+        app.drain_tabs();
+        let tab = app.active_tab();
+        assert_eq!(
+            tab.flow_pane.seam_slot(),
+            120,
+            "the venue candles stand in front of the bars cut from prints"
+        );
+
+        // And leaving the time kind hands the prefix back: a tick chart is
+        // the tape's alone.
+        app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Tick;
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().flow_pane.seam_slot(),
+            0,
+            "a pane that stopped cutting by time carries no venue candles"
+        );
+    }
+
     /// "Load older" moves the first engine bar backwards in time, and the
     /// prefix was trimmed against where that bar used to be.
     ///

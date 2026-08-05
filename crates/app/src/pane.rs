@@ -432,8 +432,10 @@ pub struct ChartPane {
     /// [`Self::closed_bar`], the rebuild payload and the draw — and survives
     /// every rebuild the engine does.
     ///
-    /// Only ever non-empty on a time pane. The flow pane is the tape's, and a
-    /// venue candle has no tape in it.
+    /// Non-empty on any pane cutting by a foldable time interval — the
+    /// split's time pane, and the flow pane whenever its spec is
+    /// `BarSpec::Time` (audit S1). A venue candle has no tape in it, so over
+    /// the prefix the flow layers simply draw nothing.
     pub history_prefix: Vec<quantick_engine::Bar>,
 
     /// User drawings live entirely in the app overlay layer, never in market
@@ -469,7 +471,9 @@ impl ChartPane {
         let mut tick_n = 50;
         let mut volume_units = 5.0;
         let mut dollar_notional = 500_000.0;
-        let mut time_interval_ms = 1_000;
+        // `bars → time` opens on a real timeframe, not a one-second chart
+        // (audit QW2): the same 1m the split's time pane opens on.
+        let mut time_interval_ms = crate::time_header::DEFAULT_INTERVAL_MS;
         let mut imbalance_target = 100;
         match &spec {
             BarSpec::Tick(n) => tick_n = *n,
@@ -903,13 +907,11 @@ impl ChartPane {
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
-        // Only a time pane ever carries one, and a time pane has no tape. Held
-        // as an assertion rather than a comment because the draw path reads
-        // the two as mutually exclusive.
-        debug_assert!(
-            bars.is_empty() || self.orderflow.is_none(),
-            "a venue prefix belongs to a pane with no tape"
-        );
+        // Any time-cutting pane may carry one (audit S1) — the flow pane
+        // showing time bars included. On a pane with a tape the flow layers
+        // simply have nothing to draw over the prefix: a venue candle has no
+        // prints in it, and the projection maps only the engine's own bars
+        // (see `draw_chart`'s timeline).
         if !prefix_differs(&self.history_prefix, &bars) {
             return false;
         }
@@ -1773,11 +1775,13 @@ impl ChartPane {
         // to `lane_width_px` rather than restated, because the two decide the
         // same thing: with them apart, the newest prints would be clustered and
         // sized as lane prints and then squeezed into a single candle slot.
-        // Flow-pane only: a pane with a tape never carries a venue prefix, so
-        // the state half *is* the window here.
+        // Only the engine's own bars carry tape, so the timeline starts at
+        // the first *state* bar's global slot: when the window straddles the
+        // venue seam (a time-cutting flow pane, audit S1), that is the seam
+        // itself, not the window's first slot.
         let timeline = VisibleBarTimeline::new(
             self.state.timeline_revision(),
-            closed_start,
+            closed_start.max(prefix.len()),
             visible_state,
             partial_visible,
         );
