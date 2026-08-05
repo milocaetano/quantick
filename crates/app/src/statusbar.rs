@@ -262,6 +262,8 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
         (_, Some(arrival)) if arrival > metrics::HIGH_LAG_MS => theme::WARN,
         (FeedState::Connecting | FeedState::Reconnecting | FeedState::Live, _) => theme::TEXT_MUTED,
     };
+    // The two measurements this cell can show are easy to conflate, so the
+    // cell explains itself (audit: every readout answers on hover).
     ui.label(
         egui::RichText::new(tape_text(
             model.replay,
@@ -270,6 +272,11 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
         ))
         .monospace()
         .color(tape_color),
+    )
+    .on_hover_text(
+        "arrival: how late the newest print was when it reached the chart; \
+         stale: how long the tape has been silent (a socket can stay open \
+         and deliver nothing); replay shows speed and progress instead",
     );
 }
 
@@ -298,6 +305,10 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
         ))
         .monospace()
         .color(theme::TEXT_MUTED),
+    )
+    .on_hover_text(
+        "closed bars by source, oldest first: venue candles (v), bars built \
+         from backfilled prints, bars built live",
     );
     if let Some(note) = &model.side_note {
         // Inferred data wears the amber thread, like every not-quite-venue

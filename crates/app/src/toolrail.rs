@@ -444,6 +444,13 @@ impl ToolRail {
     /// input → draft → selection → Pointer), not here. Each drawing tool
     /// declares its own shortcut through the registry.
     pub fn handle_keys(&mut self, ctx: &egui::Context) {
+        // A hidden rail arms nothing (audit M9): with no rail on screen an
+        // armed tool has no indication anywhere, and the next chart click
+        // would draw instead of pan — the keyboard twin of the invariant
+        // `hiding_the_toolbox_cannot_leave_an_invisible_drawing_tool_armed`.
+        if !self.visible {
+            return;
+        }
         if ctx.memory(|memory| memory.focused().is_some()) {
             return;
         }
@@ -1247,6 +1254,49 @@ mod tests {
         rail.toggle_visible();
         assert!(!rail.visible());
         assert_eq!(rail.tool(), Tool::Pointer);
+    }
+
+    /// The keyboard twin of the invariant above (audit M9): the shortcut
+    /// path must be as gated as the toggle path, or `H` with the rail hidden
+    /// arms a tool nothing on screen reports.
+    #[test]
+    fn shortcuts_cannot_arm_a_tool_while_the_rail_is_hidden() {
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        rail.toggle_visible();
+        let shortcut = DRAWING_TOOLS[0].shortcut().expect("the first tool has one");
+        let press = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: shortcut.key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run(press, |ctx| rail.handle_keys(ctx));
+        assert_eq!(
+            rail.tool(),
+            Tool::Pointer,
+            "a hidden rail must swallow its shortcuts"
+        );
+
+        // The same press with the rail visible arms the tool — proving the
+        // gate above is the visibility, not a broken key path.
+        rail.toggle_visible();
+        let press = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: shortcut.key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run(press, |ctx| rail.handle_keys(ctx));
+        assert_eq!(rail.tool(), Tool::Drawing(DRAWING_TOOLS[0]));
     }
 
     #[test]

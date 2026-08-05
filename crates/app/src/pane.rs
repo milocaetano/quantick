@@ -217,6 +217,12 @@ fn axis_zoom_gesture(
     auto: Option<(f64, f64)>,
 ) {
     let response = ui.interact(band, id, egui::Sense::click_and_drag());
+    // The cursor is the affordance (audit F5): nothing else on the band says
+    // it scales, mirroring the lane divider's own rule that the pointer's
+    // shape is what announces a gesture.
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
     if response.double_clicked() {
         view.reset();
     }
@@ -244,6 +250,48 @@ fn axis_zoom_gesture(
 /// `exp(dx / 120)`, so the two panes answer a drag at the same rate even
 /// though they are zooming different things.
 const LANE_ZOOM_DRAG_PX: f32 = 120.0;
+
+/// Width of the jump-to-live chip on the time strip, in pixels.
+const LIVE_CHIP_WIDTH_PX: f32 = 56.0;
+/// Gap between the chip and the strip's right edge, in pixels.
+const LIVE_CHIP_MARGIN_PX: f32 = 6.0;
+/// Vertical inset of the chip inside the strip, in pixels.
+const LIVE_CHIP_VPAD_PX: f32 = 3.0;
+
+/// Where the jump-to-live chip sits (audit F6): right-aligned inside the
+/// history segment of the time strip — the live end of the axis, which is
+/// where the eye looks for the way back. One geometry for the input region
+/// and the paint, so the click can never miss the pixels.
+fn live_chip_rect(history_strip: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(
+            history_strip.right() - LIVE_CHIP_MARGIN_PX - LIVE_CHIP_WIDTH_PX,
+            history_strip.top() + LIVE_CHIP_VPAD_PX,
+        ),
+        egui::pos2(
+            history_strip.right() - LIVE_CHIP_MARGIN_PX,
+            history_strip.bottom() - LIVE_CHIP_VPAD_PX,
+        ),
+    )
+}
+
+/// Paint the jump-to-live chip. Accent, not amber: it is a control, not a
+/// provenance statement.
+fn draw_live_chip(painter: &egui::Painter, rect: egui::Rect) {
+    painter.rect_filled(rect, egui::Rounding::same(3.0), theme::TAG_BG);
+    painter.rect_stroke(
+        rect,
+        egui::Rounding::same(3.0),
+        egui::Stroke::new(1.0_f32, theme::ACCENT),
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "» live",
+        egui::FontId::proportional(11.0),
+        theme::ACCENT,
+    );
+}
 
 /// Whether a freshly folded prefix differs from the one already installed.
 ///
@@ -1399,6 +1447,19 @@ impl ChartPane {
                 primary_down,
                 primary_released,
             });
+        // The paper lines announce their grabbability (audit paper M3/M4):
+        // drawings get hover cursors below, and a draggable stop must not
+        // feel deader than an annotation — nor may the entry line's blocked
+        // band refuse a pan with no explanation at all.
+        if chrome.paper_owns_input
+            && !over_chrome
+            && let Some(position) =
+                pointer_position.filter(|position| drawing_area.contains(*position))
+            && let Some(scale) = drawing_scale.as_ref()
+            && let Some(cursor) = chrome.paper.hover_cursor(position, scale)
+        {
+            ui.ctx().set_cursor_icon(cursor);
+        }
         let mut drawing_drag_consumes_gesture = false;
         if !paper_gesture && chrome.toolrail.tool() == Tool::Pointer {
             // Hover feedback: a resize cursor over a selected anchor, a move
@@ -1616,10 +1677,32 @@ impl ChartPane {
             self.viewport
                 .zoom((time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
         }
+        if time.hovered() || time.dragged() {
+            // Same rule as the vertical axes (audit F5): the cursor is what
+            // announces the zoom gesture.
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
         if time.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
                 self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+            }
+        }
+        // Jump-to-live (audit F6): panned into history, the way back is one
+        // click at the axis' live end. Registered after the strip gesture so
+        // the click is the chip's, not a zoom-drag's — the lane divider's
+        // own registration rule.
+        if !self.viewport.follows_live() {
+            let chip = ui.interact(
+                live_chip_rect(history_strip),
+                self.interaction_id("jump_to_live"),
+                egui::Sense::click(),
+            );
+            if chip.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if chip.clicked() {
+                self.viewport.snap_to_live();
             }
         }
         // A lane strip exists only where a lane does, so this is flow-pane
@@ -2048,6 +2131,12 @@ impl ChartPane {
                 orderflow.live_lane_window_ms(closed),
             );
         }
+        // The way back from history (audit F6), painted over the strip's
+        // labels on the same geometry the input path registered.
+        if !self.viewport.follows_live() {
+            let (history_strip, _) = split_time_strip(areas.time_strip, self.last_lane_divider_x);
+            draw_live_chip(painter, live_chip_rect(history_strip));
+        }
         // Panned off the data (or a rebuild re-cut the series under the
         // window): the chart is whole — axis, tape, badges — but there is
         // nothing in the candles' pane, so say so and say the way back.
@@ -2301,7 +2390,14 @@ impl ChartPane {
             );
         }
 
-        if let Some(draft) = self.drawings.draft() {
+        // With hide-all engaged the finished object would be invisible, so
+        // the rubber-band must not pretend otherwise (audit M8) — placement
+        // itself releases hide-all when it commits, in `place_with`.
+        if let Some(draft) = self
+            .drawings
+            .draft()
+            .filter(|_| !self.drawings.all_hidden())
+        {
             let mut points = self.projected_drawing_points(draft, history_right, total, scale);
             // The preview completes the geometry with the hovered anchor, in
             // both screen and chart space, so payload-driven tools can show
@@ -2468,6 +2564,20 @@ impl ChartPane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One geometry for the jump-to-live chip's click region and its paint
+    /// (audit F6): right-aligned inside the strip, inset on every side, so
+    /// the click can never miss the pixels.
+    #[test]
+    fn the_live_chip_sits_inside_the_strips_right_end() {
+        let strip = egui::Rect::from_min_max(egui::pos2(0.0, 576.0), egui::pos2(800.0, 600.0));
+        let chip = live_chip_rect(strip);
+        assert!(strip.contains_rect(chip), "the chip never leaves its band");
+        assert_eq!(chip.right(), strip.right() - LIVE_CHIP_MARGIN_PX);
+        assert_eq!(chip.width(), LIVE_CHIP_WIDTH_PX);
+        assert_eq!(chip.top(), strip.top() + LIVE_CHIP_VPAD_PX);
+        assert_eq!(chip.bottom(), strip.bottom() - LIVE_CHIP_VPAD_PX);
+    }
 
     /// Time pane left, flow pane right, on a divider that costs both of them
     /// nothing but its own width (§11).
