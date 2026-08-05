@@ -1761,7 +1761,7 @@ impl ChartPane {
         &mut self,
         painter: &egui::Painter,
         area: egui::Rect,
-        chrome: &PaneChrome<'_>,
+        chrome: &mut PaneChrome<'_>,
     ) {
         self.paper_hud_anchor = None;
         let canvas_background = background_color(chrome.style);
@@ -2095,9 +2095,27 @@ impl ChartPane {
             } else {
                 None
             };
-            chrome
-                .paper
-                .draw_layer(painter, chart_rect, axis_x, &scale, reserved_chip_y);
+            // Tags anchor inside the interactive plot (left of the live
+            // lane when one is up) — the same right edge the input pass
+            // hands to `handle_chart_input`, so a painted ✕ and its press
+            // agree about where it is.
+            let tag_right = self.last_lane_divider_x.unwrap_or(chart_rect.right());
+            // Hover affordances paint only on the pane whose pointer feeds
+            // the paper input; the other pane keeps display-only tags.
+            let paper_pointer = if chrome.paper_owns_input {
+                self.hover_pos
+            } else {
+                None
+            };
+            chrome.paper.draw_layer(
+                painter,
+                chart_rect,
+                tag_right,
+                axis_x,
+                &scale,
+                reserved_chip_y,
+                paper_pointer,
+            );
             if chrome.paper_owns_input {
                 self.paper_hud_anchor = Some((chart_rect, scale));
             }

@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
-    Bracket, ClosedTrade, Command, EntryKind, OrderId, PerformanceReport, QueuedAction, SimEvent,
-    Simulator, history,
+    Bracket, ClosedTrade, Command, EntryKind, OrderId, PerformanceReport, Position, QueuedAction,
+    SimEvent, Simulator, history,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -46,6 +46,43 @@ const TOAST_LIFT_PX: f32 = 96.0;
 /// Price precision for snapped drags before any print reveals the
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
+/// The position's entry line leads the paper lines: it is the one that is
+/// history rather than an order, and it matches the drawings' default width.
+const POSITION_LINE_WIDTH_PX: f32 = 1.5;
+/// Resting width of every other paper line (orders, stop, target).
+const LINE_WIDTH_PX: f32 = 1.0;
+/// Width of a paper line while the pointer is within grab range — the same
+/// emphasis step the drawings use.
+const LINE_HOVER_WIDTH_PX: f32 = 1.5;
+/// Width of a paper line while it is being dragged.
+const LINE_DRAG_WIDTH_PX: f32 = 2.0;
+/// The drawings' selection-halo treatment, mirrored for a dragged paper
+/// line so a grabbed stop feels identical to a grabbed drawing (the
+/// originals are private to `drawings`).
+const DRAG_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
+/// How much wider than the line the halo pass paints.
+const DRAG_HALO_EXTRA_WIDTH_PX: f32 = 3.5;
+/// Height of an in-plot tag (fits mono 11 plus its padding).
+const TAG_HEIGHT_PX: f32 = 20.0;
+/// Gap between a tag's right edge and the plot's right edge — the inside
+/// mirror of the gutter chips' `AXIS_LABEL_GAP_PX`.
+const TAG_GAP_PX: f32 = 6.0;
+/// Horizontal padding inside a tag.
+const TAG_PAD_X: f32 = 6.0;
+/// Width of the ✕ zone a hovered tag reveals. An overlay convenience —
+/// every action here has a ≥ 28 px twin in the chrome.
+const TAG_BUTTON_PX: f32 = 20.0;
+/// How far around a tag the hover that reveals its ✕ still counts.
+const TAG_HOVER_SLACK_PX: f32 = 4.0;
+/// Size of a labelled SL/TP bracket handle on the entry line.
+const HANDLE_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
+/// Vertical clearance between the entry line and a bracket handle.
+const HANDLE_GAP_PX: f32 = 4.0;
+/// Horizontal gap between the position tag and its bracket handles.
+const HANDLE_TAG_GAP_PX: f32 = 8.0;
+/// How far (in pixels) a press on the entry line must travel before it
+/// commits to creating one bracket leg — the drawings' drag threshold.
+const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
 /// Text color inside colored gutter chips — the same ink as the last-price
 /// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
 /// duplicated here; keep the two identical).
@@ -89,8 +126,38 @@ enum PaperDrag {
     Order(OrderId),
     /// The press landed on the entry line: an average entry is history, not
     /// an order, so the geometry stays put — but the gesture still belongs
-    /// to the line (the chart must not pan under it).
+    /// to the line (the chart must not pan under it). This is the state for
+    /// a fully bracketed position, whose legs are their own handles.
     Blocked,
+    /// The press landed on the entry line and at least one bracket leg is
+    /// missing: the first committed pull decides which leg the drag creates
+    /// (profit side → take profit, losing side → stop loss).
+    CreatePending,
+    /// Dragging a stop loss into existence from the entry line or its
+    /// handle; release submits it, exactly like repricing an existing one.
+    CreateStopLoss,
+    /// Dragging a take profit into existence (see `CreateStopLoss`).
+    CreateTakeProfit,
+}
+
+/// A painted overlay control from the last paint pass: a tag's ✕ or a
+/// bracket handle. Hit rects are cached one frame behind the paint — the
+/// input pass runs before the draw, and an immediate-mode overlay control is
+/// pressed against where it was actually painted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaperControl {
+    /// ✕ on the position tag: exit at the next print.
+    ClosePosition,
+    /// ✕ on the stop-loss tag: clear the protective stop.
+    ClearStopLoss,
+    /// ✕ on the take-profit tag: clear the profit target.
+    ClearTakeProfit,
+    /// ✕ on a working order's tag: cancel it.
+    CancelOrder(OrderId),
+    /// Labelled `SL` handle on the entry line: press starts a create-drag.
+    HandleStopLoss,
+    /// Labelled `TP` handle on the entry line.
+    HandleTakeProfit,
 }
 
 /// One transient message; rejections double as the tutorial.
@@ -149,6 +216,9 @@ pub struct PaperTrading {
     // Chart-layer drag.
     drag: PaperDrag,
     drag_price: Option<f64>,
+    /// Interactive rects painted by the last `draw_layer` pass (tag ✕s,
+    /// bracket handles), pressed against on the next input pass.
+    controls: Vec<(PaperControl, egui::Rect)>,
     toast: Option<Toast>,
     report_open: bool,
     report_scope: ReportScope,
@@ -179,6 +249,7 @@ impl PaperTrading {
             armed: None,
             drag: PaperDrag::None,
             drag_price: None,
+            controls: Vec::new(),
             toast: None,
             report_open: false,
             report_scope: ReportScope::Symbol,
@@ -443,119 +514,164 @@ impl PaperTrading {
     // Chart layer
     // ------------------------------------------------------------------
 
-    /// Paint the simulated lines: pending orders (dashed, accent), then the
-    /// position's entry / stop-loss / take-profit (solid, semantic colors).
-    /// Chips share the last-price chip geometry so prices never disagree
-    /// about their pixel; `reserved_chip_y` is the last-price chip's row,
-    /// which every paper chip dodges rather than overprints.
+    /// Paint the simulated lines and their in-plot tags: pending orders
+    /// (dashed, accent), then the position's entry / stop-loss / take-profit
+    /// (solid, semantic colors). Gutter chips keep the last-price chip's
+    /// geometry and carry *the price and nothing else*, so prices never
+    /// disagree about their pixel; the words and the controls live in tags
+    /// right-anchored inside the plot. `pointer` is `Some` only on the pane
+    /// that owns paper input, so hover affordances (a tag's ✕, the bracket
+    /// handles) paint nowhere else. The interactive rects painted here are
+    /// cached for the next input pass — immediate mode presses against what
+    /// was actually drawn.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pane hands over its frame geometry; bundling it here would rename, not simplify"
+    )]
     pub fn draw_layer(
-        &self,
+        &mut self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
+        tag_right: f32,
         axis_x: f32,
         scale: &PriceScale,
         reserved_chip_y: Option<f32>,
+        pointer: Option<egui::Pos2>,
     ) {
+        let ctx = PaintCtx {
+            painter,
+            chart_rect,
+            tag_right,
+            axis_x,
+            scale,
+            reserved_chip_y,
+            pointer,
+        };
+        let mut controls = Vec::new();
+
         for order in self.sim.orders() {
             let Some(level) = order.price else { continue };
-            let price = if self.drag == PaperDrag::Order(order.id) {
+            let dragged = self.drag == PaperDrag::Order(order.id);
+            let price = if dragged {
                 self.drag_price
                     .unwrap_or_else(|| level.to_f64().unwrap_or_default())
             } else {
                 level.to_f64().unwrap_or_default()
             };
-            let label = format!(
+            let y = ctx.scale.y(price);
+            if !ctx.in_range(y) {
+                continue;
+            }
+            let hovered = ctx.hovers_line(y);
+            let shown = if dragged { self.snap(price) } else { level };
+            ctx.level_line(y, theme::ACCENT, true, LINE_WIDTH_PX, hovered, dragged);
+            ctx.gutter_chip(y, theme::ACCENT, &fmt_decimal(shown));
+            let text = format!(
                 "#{} {} {} {} @ {}",
                 order.id.0,
-                side_word(order.side),
-                kind_word(order.kind),
+                side_word_upper(order.side),
+                kind_short(order.kind),
                 fmt_decimal(order.quantity),
-                fmt_decimal(level),
+                fmt_decimal(shown),
             );
-            draw_price_line(
-                painter,
-                chart_rect,
-                axis_x,
-                scale,
-                price,
-                theme::ACCENT,
-                true,
-                &label,
-                reserved_chip_y,
-            );
-        }
-        if let Some(position) = self.sim.position() {
-            let entry_color = match position.side {
-                Side::Buy => theme::BUY,
-                Side::Sell => theme::SELL,
-            };
-            let entry = position.avg_price.to_f64().unwrap_or_default();
-            let label = format!(
-                "SIM {} {} @ {}",
-                position_word(position.side),
-                fmt_decimal(position.quantity),
-                fmt_decimal(position.avg_price),
-            );
-            draw_price_line(
-                painter,
-                chart_rect,
-                axis_x,
-                scale,
-                entry,
-                entry_color,
-                false,
-                &label,
-                reserved_chip_y,
-            );
-            if let Some(stop) = position.stop_loss {
-                let price = if self.drag == PaperDrag::StopLoss {
-                    self.drag_price
-                        .unwrap_or_else(|| stop.to_f64().unwrap_or_default())
-                } else {
-                    stop.to_f64().unwrap_or_default()
-                };
-                let label = format!(
-                    "SL {} {} pts",
-                    fmt_decimal(stop),
-                    fmt_signed_points(position.open_points(stop)),
-                );
-                draw_price_line(
-                    painter,
-                    chart_rect,
-                    axis_x,
-                    scale,
-                    price,
-                    theme::SELL,
-                    false,
-                    &label,
-                    reserved_chip_y,
-                );
-            }
-            if let Some(target) = position.take_profit {
-                let price = if self.drag == PaperDrag::TakeProfit {
-                    self.drag_price
-                        .unwrap_or_else(|| target.to_f64().unwrap_or_default())
-                } else {
-                    target.to_f64().unwrap_or_default()
-                };
-                let label = format!(
-                    "TP {} {} pts",
-                    fmt_decimal(target),
-                    fmt_signed_points(position.open_points(target)),
-                );
-                draw_price_line(
-                    painter,
-                    chart_rect,
-                    axis_x,
-                    scale,
-                    price,
-                    theme::BUY,
-                    false,
-                    &label,
-                    reserved_chip_y,
-                );
+            if let Some(close) = ctx.chip_tag(y, theme::ACCENT, &text, hovered, !dragged) {
+                controls.push((PaperControl::CancelOrder(order.id), close));
             }
         }
+
+        if let Some(position) = self.sim.position().cloned() {
+            let color = side_color(position.side);
+            let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
+            if ctx.in_range(entry_y) {
+                ctx.level_line(entry_y, color, false, POSITION_LINE_WIDTH_PX, false, false);
+                ctx.gutter_chip(entry_y, color, &fmt_decimal(position.avg_price));
+                let side_text = format!(
+                    "SIM {} {}",
+                    position_word(position.side),
+                    fmt_decimal(position.quantity),
+                );
+                let points = self
+                    .sim
+                    .mark_price()
+                    .map(|mark| position.open_points(mark))
+                    .map(|open| {
+                        (
+                            format!("{} pts", fmt_signed_points(open)),
+                            points_color(open),
+                        )
+                    });
+                let line_hovered = ctx.hovers_line(entry_y);
+                let (close, tag_rect) =
+                    ctx.position_tag(entry_y, color, &side_text, points, line_hovered);
+                if let Some(close) = close {
+                    controls.push((PaperControl::ClosePosition, close));
+                }
+
+                // Labelled handles for the missing bracket legs, revealed
+                // while the pointer is on the entry line or its tag: the
+                // affordance behind "drag from the position line to create".
+                let over_tag = ctx
+                    .pointer
+                    .is_some_and(|pointer| tag_rect.expand(TAG_HOVER_SLACK_PX).contains(pointer));
+                if self.drag == PaperDrag::None && (line_hovered || over_tag) {
+                    let anchor = tag_rect.left() - HANDLE_TAG_GAP_PX;
+                    let legs = [
+                        (
+                            position.stop_loss.is_none(),
+                            PaperControl::HandleStopLoss,
+                            "SL",
+                            position.side == Side::Buy,
+                            theme::SELL,
+                        ),
+                        (
+                            position.take_profit.is_none(),
+                            PaperControl::HandleTakeProfit,
+                            "TP",
+                            position.side == Side::Sell,
+                            theme::BUY,
+                        ),
+                    ];
+                    for (absent, control, label, below, leg_color) in legs {
+                        if !absent {
+                            continue;
+                        }
+                        let rect = handle_rect(anchor, entry_y, below);
+                        ctx.bracket_handle(rect, label, leg_color);
+                        controls.push((control, rect));
+                    }
+                }
+            }
+
+            self.draw_bracket_leg(
+                &ctx,
+                &LegPaint {
+                    position: &position,
+                    level: position.stop_loss,
+                    other_level: position.take_profit,
+                    word: "SL",
+                    color: theme::SELL,
+                    amend: PaperDrag::StopLoss,
+                    create: PaperDrag::CreateStopLoss,
+                    clear: PaperControl::ClearStopLoss,
+                },
+                &mut controls,
+            );
+            self.draw_bracket_leg(
+                &ctx,
+                &LegPaint {
+                    position: &position,
+                    level: position.take_profit,
+                    other_level: position.stop_loss,
+                    word: "TP",
+                    color: theme::BUY,
+                    amend: PaperDrag::TakeProfit,
+                    create: PaperDrag::CreateTakeProfit,
+                    clear: PaperControl::ClearTakeProfit,
+                },
+                &mut controls,
+            );
+        }
+
         if let Some(armed) = self.armed {
             let hint = format!(
                 "click a price to place your {} {} - Esc cancels",
@@ -571,6 +687,55 @@ impl PaperTrading {
                 egui::FontId::proportional(12.0),
                 theme::ACCENT,
             );
+        }
+        self.controls = controls;
+    }
+
+    /// One protective leg: its resting line and tag, the drag that reprices
+    /// it, or — while a create-drag runs and the leg does not exist yet —
+    /// the dashed preview of where release would put it. The tag gains the
+    /// live R:R read once both legs are known, which is what turns the drag
+    /// into a decision.
+    fn draw_bracket_leg(
+        &self,
+        ctx: &PaintCtx<'_>,
+        leg: &LegPaint<'_>,
+        controls: &mut Vec<(PaperControl, egui::Rect)>,
+    ) {
+        let amending = self.drag == leg.amend;
+        let creating = self.drag == leg.create && leg.level.is_none();
+        let resting = leg.level.map(|level| level.to_f64().unwrap_or_default());
+        let price = if amending || creating {
+            self.drag_price.or(resting)
+        } else {
+            resting
+        };
+        let Some(price) = price else { return };
+        let y = ctx.scale.y(price);
+        if !ctx.in_range(y) {
+            return;
+        }
+        let dragging = amending || creating;
+        let hovered = ctx.hovers_line(y);
+        let shown = if dragging {
+            self.snap(price)
+        } else {
+            leg.level.unwrap_or_else(|| self.snap(price))
+        };
+        // A leg being created previews dashed — it is not an order yet.
+        ctx.level_line(y, leg.color, creating, LINE_WIDTH_PX, hovered, dragging);
+        ctx.gutter_chip(y, leg.color, &fmt_decimal(shown));
+        let mut text = format!(
+            "{} {} {} pts",
+            leg.word,
+            fmt_decimal(shown),
+            fmt_signed_points(leg.position.open_points(shown)),
+        );
+        if dragging && let Some(ratio) = rr_ratio(leg, shown) {
+            text.push_str(&format!(" · R:R {ratio}"));
+        }
+        if let Some(close) = ctx.chip_tag(y, leg.color, &text, hovered, !dragging) {
+            controls.push((leg.clear, close));
         }
     }
 
@@ -605,6 +770,34 @@ impl PaperTrading {
             return true;
         }
 
+        // A painted overlay control (a tag's ✕, a bracket handle) takes the
+        // press before any line under it — it was drawn on top.
+        if input.primary_pressed
+            && self.drag == PaperDrag::None
+            && let Some(pointer) = input.pointer
+            && let Some(scale) = input.scale
+            && let Some(control) = self.control_at(pointer)
+        {
+            match control {
+                PaperControl::ClosePosition => self.close_position(),
+                PaperControl::ClearStopLoss => self.clear_bracket_leg(true),
+                PaperControl::ClearTakeProfit => self.clear_bracket_leg(false),
+                PaperControl::CancelOrder(id) => {
+                    let events = self.sim.apply(Command::CancelOrder { id });
+                    self.handle_events(events);
+                }
+                PaperControl::HandleStopLoss => {
+                    self.drag = PaperDrag::CreateStopLoss;
+                    self.drag_price = Some(scale.price_at(pointer.y));
+                }
+                PaperControl::HandleTakeProfit => {
+                    self.drag = PaperDrag::CreateTakeProfit;
+                    self.drag_price = Some(scale.price_at(pointer.y));
+                }
+            }
+            return true;
+        }
+
         // Grab a line.
         if input.primary_pressed
             && self.drag == PaperDrag::None
@@ -618,36 +811,45 @@ impl PaperTrading {
             return true;
         }
 
-        // Follow the pointer while dragging.
+        // Follow the pointer while dragging. A press that started on the
+        // entry line commits to one bracket leg on its first real pull:
+        // towards the profit side it creates the take profit, towards the
+        // losing side the stop — and a side whose leg already exists stays
+        // blocked (that leg's own line is its handle).
         if input.primary_down && self.drag != PaperDrag::None {
             if let (Some(pointer), Some(scale)) = (input.pointer, input.scale) {
                 let y = pointer.y.clamp(input.chart.top(), input.chart.bottom());
                 self.drag_price = Some(scale.price_at(y));
+                if self.drag == PaperDrag::CreatePending {
+                    self.decide_pending_leg(y, scale);
+                }
             }
             return true;
         }
 
         // Drop: submit the new price; the simulator answers (a rejection
-        // snaps the line back and the toast explains why).
+        // snaps the line back and the toast explains why). Creating a leg
+        // and repricing it are the same command — the bracket is replaced
+        // wholesale either way.
         if input.primary_released && self.drag != PaperDrag::None {
             let drag = std::mem::take(&mut self.drag);
             if let Some(price) = self.drag_price.take() {
                 let price = self.snap(price);
                 let command = match drag {
-                    PaperDrag::StopLoss => {
+                    PaperDrag::StopLoss | PaperDrag::CreateStopLoss => {
                         self.sim.position().map(|position| Command::SetBracket {
                             stop_loss: Some(price),
                             take_profit: position.take_profit,
                         })
                     }
-                    PaperDrag::TakeProfit => {
+                    PaperDrag::TakeProfit | PaperDrag::CreateTakeProfit => {
                         self.sim.position().map(|position| Command::SetBracket {
                             stop_loss: position.stop_loss,
                             take_profit: Some(price),
                         })
                     }
                     PaperDrag::Order(id) => Some(Command::ModifyOrder { id, price }),
-                    PaperDrag::None | PaperDrag::Blocked => None,
+                    PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => None,
                 };
                 if let Some(command) = command {
                     let events = self.sim.apply(command);
@@ -660,29 +862,94 @@ impl PaperTrading {
         self.drag != PaperDrag::None
     }
 
-    /// The cursor that announces a paper line under the pointer (audit
-    /// M3/M4): vertical-resize over a draggable order/stop/target line,
-    /// not-allowed over the entry line — an average entry is history, not an
-    /// order, and the chart will not pan across it either. `None` away from
-    /// every line, so the caller falls through to the drawings' own cursors.
+    /// Remove one protective leg, keeping the other — the tag ✕'s command.
+    fn clear_bracket_leg(&mut self, stop: bool) {
+        let Some(position) = self.sim.position() else {
+            return;
+        };
+        let command = if stop {
+            Command::SetBracket {
+                stop_loss: None,
+                take_profit: position.take_profit,
+            }
+        } else {
+            Command::SetBracket {
+                stop_loss: position.stop_loss,
+                take_profit: None,
+            }
+        };
+        let events = self.sim.apply(command);
+        self.handle_events(events);
+    }
+
+    /// The overlay control under the pointer, from the last paint pass.
+    fn control_at(&self, pointer: egui::Pos2) -> Option<PaperControl> {
+        self.controls
+            .iter()
+            .find(|(_, rect)| rect.contains(pointer))
+            .map(|(control, _)| *control)
+    }
+
+    /// Turn a pending entry-line press into the leg the pull chose, once it
+    /// travelled far enough to mean it.
+    fn decide_pending_leg(&mut self, pointer_y: f32, scale: &PriceScale) {
+        let Some(position) = self.sim.position() else {
+            self.drag = PaperDrag::Blocked;
+            return;
+        };
+        let entry_y = scale.y(position.avg_price.to_f64().unwrap_or_default());
+        let delta = pointer_y - entry_y;
+        if delta.abs() < CREATE_DECIDE_THRESHOLD_PX {
+            return;
+        }
+        // On screen, up is negative y; up is the profit side for a long.
+        let profit_side = match position.side {
+            Side::Buy => delta < 0.0,
+            Side::Sell => delta > 0.0,
+        };
+        self.drag = if profit_side {
+            if position.take_profit.is_none() {
+                PaperDrag::CreateTakeProfit
+            } else {
+                PaperDrag::Blocked
+            }
+        } else if position.stop_loss.is_none() {
+            PaperDrag::CreateStopLoss
+        } else {
+            PaperDrag::Blocked
+        };
+    }
+
+    /// The cursor that announces what is under the pointer (audit M3/M4):
+    /// a pointing hand over a painted control, vertical-resize over a
+    /// draggable order/stop/target line and over an entry line with a
+    /// missing bracket leg (dragging away from it creates that leg),
+    /// not-allowed over a fully bracketed entry — the average entry itself
+    /// is history and never moves. `None` away from everything, so the
+    /// caller falls through to the drawings' own cursors.
     #[must_use]
     pub fn hover_cursor(
         &self,
         pointer: egui::Pos2,
         scale: &PriceScale,
     ) -> Option<egui::CursorIcon> {
+        if self.control_at(pointer).is_some() {
+            return Some(egui::CursorIcon::PointingHand);
+        }
         match self.line_at(pointer, scale)? {
             PaperDrag::Blocked => Some(egui::CursorIcon::NotAllowed),
-            PaperDrag::StopLoss | PaperDrag::TakeProfit | PaperDrag::Order(_) => {
-                Some(egui::CursorIcon::ResizeVertical)
-            }
-            PaperDrag::None => None,
+            PaperDrag::StopLoss
+            | PaperDrag::TakeProfit
+            | PaperDrag::Order(_)
+            | PaperDrag::CreatePending => Some(egui::CursorIcon::ResizeVertical),
+            PaperDrag::None | PaperDrag::CreateStopLoss | PaperDrag::CreateTakeProfit => None,
         }
     }
 
     /// Which line sits under the pointer, in draw-stack priority: pending
     /// orders first (they draw on top), then take profit, stop loss, and
-    /// the (blocked) entry line.
+    /// the entry line — which starts a bracket-creating drag while a leg is
+    /// missing, and blocks the gesture once both exist.
     fn line_at(&self, pointer: egui::Pos2, scale: &PriceScale) -> Option<PaperDrag> {
         let near = |price: Decimal| {
             let y = scale.y(price.to_f64().unwrap_or_default());
@@ -707,7 +974,12 @@ impl PaperTrading {
             return Some(PaperDrag::StopLoss);
         }
         if near(position.avg_price) {
-            return Some(PaperDrag::Blocked);
+            let creatable = position.stop_loss.is_none() || position.take_profit.is_none();
+            return Some(if creatable {
+                PaperDrag::CreatePending
+            } else {
+                PaperDrag::Blocked
+            });
         }
         None
     }
@@ -1463,48 +1735,348 @@ fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
     }
 }
 
-/// One price line with its gutter chip — the last-price chip geometry, so
-/// prices never disagree about their pixel. The line always sits at its true
-/// price; only the chip dodges the reserved last-price row.
-#[expect(clippy::too_many_arguments, reason = "a paint helper, not an API")]
-fn draw_price_line(
-    painter: &egui::Painter,
+/// The frame geometry every paper paint helper reads: one struct so a tag,
+/// a chip and a line can never disagree about where the plot ends.
+struct PaintCtx<'a> {
+    painter: &'a egui::Painter,
     chart_rect: egui::Rect,
+    /// Right edge of the interactive plot (the lane divider when a live
+    /// lane is up, the chart's edge otherwise) — tags anchor inside it.
+    tag_right: f32,
+    /// Left edge of the price axis — lines run to it, gutter chips sit past
+    /// it.
     axis_x: f32,
-    scale: &PriceScale,
-    price: f64,
-    color: egui::Color32,
-    dashed: bool,
-    label: &str,
+    scale: &'a PriceScale,
+    /// The last-price chip's row, which every gutter chip dodges.
     reserved_chip_y: Option<f32>,
-) {
-    let y = scale.y(price);
-    if y < chart_rect.top() || y > chart_rect.bottom() {
-        return;
+    /// The pointer, `Some` only on the pane that owns paper input.
+    pointer: Option<egui::Pos2>,
+}
+
+/// One protective leg's paint inputs (see `draw_bracket_leg`).
+struct LegPaint<'a> {
+    position: &'a Position,
+    level: Option<Decimal>,
+    /// The other leg's level, for the R:R read while dragging.
+    other_level: Option<Decimal>,
+    word: &'static str,
+    color: egui::Color32,
+    amend: PaperDrag,
+    create: PaperDrag,
+    clear: PaperControl,
+}
+
+impl PaintCtx<'_> {
+    fn in_range(&self, y: f32) -> bool {
+        y >= self.chart_rect.top() && y <= self.chart_rect.bottom()
     }
-    let stroke = egui::Stroke::new(1.0_f32, color);
-    if dashed {
-        painter.extend(egui::Shape::dashed_line(
-            &[egui::pos2(chart_rect.left(), y), egui::pos2(axis_x, y)],
-            stroke,
-            ORDER_DASH_PX,
-            ORDER_GAP_PX,
-        ));
-    } else {
-        painter.line_segment(
-            [egui::pos2(chart_rect.left(), y), egui::pos2(axis_x, y)],
-            stroke,
+
+    /// Whether the pointer is within grab range of the line at `y`.
+    fn hovers_line(&self, y: f32) -> bool {
+        self.pointer.is_some_and(|pointer| {
+            self.chart_rect.contains(pointer) && (pointer.y - y).abs() <= LINE_GRAB_RADIUS_PX
+        })
+    }
+
+    /// The line itself: hover thickens it, a drag thickens it further and
+    /// paints the drawings' halo treatment beneath, so a grabbed stop feels
+    /// identical to a grabbed drawing.
+    fn level_line(
+        &self,
+        y: f32,
+        color: egui::Color32,
+        dashed: bool,
+        base_width: f32,
+        hovered: bool,
+        dragged: bool,
+    ) {
+        let width = if dragged {
+            LINE_DRAG_WIDTH_PX
+        } else if hovered {
+            LINE_HOVER_WIDTH_PX.max(base_width)
+        } else {
+            base_width
+        };
+        let points = [
+            egui::pos2(self.chart_rect.left(), y),
+            egui::pos2(self.axis_x, y),
+        ];
+        if dragged {
+            self.painter.line_segment(
+                points,
+                egui::Stroke::new(width + DRAG_HALO_EXTRA_WIDTH_PX, DRAG_HALO_COLOR),
+            );
+        }
+        let stroke = egui::Stroke::new(width, color);
+        if dashed {
+            self.painter.extend(egui::Shape::dashed_line(
+                &points,
+                stroke,
+                ORDER_DASH_PX,
+                ORDER_GAP_PX,
+            ));
+        } else {
+            self.painter.line_segment(points, stroke);
+        }
+    }
+
+    /// The gutter chip: the price and nothing else, on the last-price
+    /// chip's geometry. The line stays at its true price; only the chip
+    /// dodges the reserved last-price row.
+    fn gutter_chip(&self, y: f32, color: egui::Color32, text: &str) {
+        let chip_y = dodged_chip_y(
+            y,
+            self.reserved_chip_y,
+            self.chart_rect.top(),
+            self.chart_rect.bottom(),
+        );
+        let galley =
+            self.painter
+                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), CHIP_TEXT);
+        let text_pos = egui::pos2(self.axis_x + 6.0, chip_y - galley.size().y / 2.0);
+        let bg = egui::Rect::from_min_size(
+            text_pos - egui::vec2(3.0, 1.0),
+            galley.size() + egui::vec2(6.0, 2.0),
+        );
+        self.painter
+            .rect_filled(bg, egui::Rounding::same(2.0), color);
+        self.painter.galley(text_pos, galley, CHIP_TEXT);
+    }
+
+    /// A solid tag on a line, right-anchored inside the plot. While the
+    /// pointer is on the line or the tag (and `with_close` allows it), the
+    /// tag grows leftward to reveal a ✕ zone; the returned rect is that
+    /// button. Overlay ✕s carry no tooltip of their own — each has a
+    /// full-size, fully labelled twin in the chrome.
+    fn chip_tag(
+        &self,
+        y: f32,
+        fill: egui::Color32,
+        text: &str,
+        line_hovered: bool,
+        with_close: bool,
+    ) -> Option<egui::Rect> {
+        let galley =
+            self.painter
+                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), CHIP_TEXT);
+        let half = TAG_HEIGHT_PX / 2.0;
+        let center_y = y.clamp(
+            self.chart_rect.top() + half,
+            self.chart_rect.bottom() - half,
+        );
+        let content_w = galley.size().x + 2.0 * TAG_PAD_X;
+        let resting = egui::Rect::from_min_max(
+            egui::pos2(self.tag_right - TAG_GAP_PX - content_w, center_y - half),
+            egui::pos2(self.tag_right - TAG_GAP_PX, center_y + half),
+        );
+        let hovered = with_close
+            && (line_hovered
+                || self
+                    .pointer
+                    .is_some_and(|pointer| resting.expand(TAG_HOVER_SLACK_PX).contains(pointer)));
+        let full = if hovered {
+            egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max)
+        } else {
+            resting
+        };
+        self.painter
+            .rect_filled(full, egui::Rounding::same(3.0), fill);
+        self.painter.galley(
+            egui::pos2(resting.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),
+            galley,
+            CHIP_TEXT,
+        );
+        if !hovered {
+            return None;
+        }
+        let button = egui::Rect::from_min_size(full.min, egui::vec2(TAG_BUTTON_PX, TAG_HEIGHT_PX));
+        self.painter.text(
+            button.center(),
+            egui::Align2::CENTER_CENTER,
+            "×",
+            egui::FontId::monospace(11.0),
+            CHIP_TEXT,
+        );
+        Some(button)
+    }
+
+    /// The position's tag wears the card grammar, not a chip: a position is
+    /// a fact about the account, not an order that will fire. Returns the
+    /// hover-revealed ✕ rect and the resting rect (the bracket handles
+    /// anchor left of it).
+    fn position_tag(
+        &self,
+        y: f32,
+        side_color: egui::Color32,
+        side_text: &str,
+        points: Option<(String, egui::Color32)>,
+        line_hovered: bool,
+    ) -> (Option<egui::Rect>, egui::Rect) {
+        let font = egui::FontId::monospace(11.0);
+        let side_galley =
+            self.painter
+                .layout_no_wrap(side_text.to_owned(), font.clone(), side_color);
+        let points_galley = points.map(|(text, color)| {
+            (
+                self.painter.layout_no_wrap(text, font.clone(), color),
+                color,
+            )
+        });
+        let rail = 3.0;
+        let mut content_w = rail + TAG_PAD_X + side_galley.size().x + TAG_PAD_X;
+        if let Some((galley, _)) = &points_galley {
+            content_w += galley.size().x + TAG_PAD_X;
+        }
+        let half = TAG_HEIGHT_PX / 2.0;
+        let center_y = y.clamp(
+            self.chart_rect.top() + half,
+            self.chart_rect.bottom() - half,
+        );
+        let resting = egui::Rect::from_min_max(
+            egui::pos2(self.tag_right - TAG_GAP_PX - content_w, center_y - half),
+            egui::pos2(self.tag_right - TAG_GAP_PX, center_y + half),
+        );
+        let hovered = line_hovered
+            || self
+                .pointer
+                .is_some_and(|pointer| resting.expand(TAG_HOVER_SLACK_PX).contains(pointer));
+        let full = if hovered {
+            egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max)
+        } else {
+            resting
+        };
+        self.painter
+            .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
+        self.painter.rect_stroke(
+            full,
+            egui::Rounding::same(3.0),
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        );
+        // The side rail rides the card's left edge, ✕ zone and all.
+        self.painter.rect_filled(
+            egui::Rect::from_min_max(
+                full.min + egui::vec2(1.0, 1.0),
+                egui::pos2(full.min.x + 1.0 + rail, full.max.y - 1.0),
+            ),
+            egui::Rounding {
+                nw: 2.0,
+                sw: 2.0,
+                ne: 0.0,
+                se: 0.0,
+            },
+            side_color,
+        );
+        let mut x = resting.left() + rail + TAG_PAD_X;
+        let side_size = side_galley.size();
+        self.painter.galley(
+            egui::pos2(x, center_y - side_size.y / 2.0),
+            side_galley,
+            side_color,
+        );
+        x += side_size.x + TAG_PAD_X;
+        if let Some((galley, color)) = points_galley {
+            let size = galley.size();
+            self.painter
+                .galley(egui::pos2(x, center_y - size.y / 2.0), galley, color);
+        }
+        if !hovered {
+            return (None, resting);
+        }
+        let button = egui::Rect::from_min_size(
+            full.min + egui::vec2(1.0 + rail, 0.0),
+            egui::vec2(TAG_BUTTON_PX - rail, TAG_HEIGHT_PX),
+        );
+        let over_button = self.pointer.is_some_and(|pointer| button.contains(pointer));
+        self.painter.text(
+            button.center(),
+            egui::Align2::CENTER_CENTER,
+            "×",
+            egui::FontId::monospace(11.0),
+            if over_button {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            },
+        );
+        // A hairline between the ✕ zone and the words.
+        self.painter.line_segment(
+            [
+                egui::pos2(button.right(), full.top() + 3.0),
+                egui::pos2(button.right(), full.bottom() - 3.0),
+            ],
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        );
+        (Some(button), resting)
+    }
+
+    /// A labelled `SL`/`TP` handle on the entry line: quiet control fill,
+    /// the leg's own colour on hover.
+    fn bracket_handle(&self, rect: egui::Rect, label: &str, leg_color: egui::Color32) {
+        let hovered = self.pointer.is_some_and(|pointer| rect.contains(pointer));
+        self.painter
+            .rect_filled(rect, egui::Rounding::same(3.0), theme::CONTROL);
+        self.painter.rect_stroke(
+            rect,
+            egui::Rounding::same(3.0),
+            egui::Stroke::new(1.0_f32, if hovered { leg_color } else { theme::BORDER }),
+        );
+        self.painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::monospace(9.0),
+            if hovered {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            },
         );
     }
-    let chip_y = dodged_chip_y(y, reserved_chip_y, chart_rect.top(), chart_rect.bottom());
-    let galley = painter.layout_no_wrap(label.to_owned(), egui::FontId::monospace(11.0), CHIP_TEXT);
-    let text_pos = egui::pos2(axis_x + 6.0, chip_y - galley.size().y / 2.0);
-    let bg = egui::Rect::from_min_size(
-        text_pos - egui::vec2(3.0, 1.0),
-        galley.size() + egui::vec2(6.0, 2.0),
-    );
-    painter.rect_filled(bg, egui::Rounding::same(2.0), color);
-    painter.galley(text_pos, galley, CHIP_TEXT);
+}
+
+/// Where a bracket handle sits: right-anchored at `anchor_right`, one gap
+/// off the entry line, on the side its leg protects.
+fn handle_rect(anchor_right: f32, line_y: f32, below: bool) -> egui::Rect {
+    let x = anchor_right - HANDLE_SIZE.x;
+    let y = if below {
+        line_y + HANDLE_GAP_PX
+    } else {
+        line_y - HANDLE_GAP_PX - HANDLE_SIZE.y
+    };
+    egui::Rect::from_min_size(egui::pos2(x, y), HANDLE_SIZE)
+}
+
+/// Reward over risk at the dragged level, against the other leg — the read
+/// that turns a drag into a decision. `None` until both legs are known or
+/// while the risk is zero.
+fn rr_ratio(leg: &LegPaint<'_>, dragged: Decimal) -> Option<String> {
+    let other = leg.other_level?;
+    let entry = leg.position.avg_price;
+    let (stop, target) = if leg.word == "SL" {
+        (dragged, other)
+    } else {
+        (other, dragged)
+    };
+    let risk = entry.saturating_sub(stop).abs();
+    let reward = target.saturating_sub(entry).abs();
+    (risk > Decimal::ZERO).then(|| fmt_points(reward / risk))
+}
+
+/// The side's chrome colour — one mapping for every paper surface.
+fn side_color(side: Side) -> egui::Color32 {
+    match side {
+        Side::Buy => theme::BUY,
+        Side::Sell => theme::SELL,
+    }
+}
+
+/// Three-letter order kind for the compact chart tags (`LMT`, `STP`, `MKT`).
+fn kind_short(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::Market => "MKT",
+        EntryKind::Limit => "LMT",
+        EntryKind::Stop => "STP",
+    }
 }
 
 /// Keep a gutter chip legible when it would land on the last-price chip:
@@ -1878,10 +2450,10 @@ mod tests {
     }
 
     /// The lines say what a press would do before it happens (audit M3/M4):
-    /// draggable levels wear the resize cursor, the entry line wears
-    /// not-allowed, and empty tape asks nothing.
+    /// draggable levels wear the resize cursor, an entry line with a
+    /// missing leg offers the create-drag, and empty tape asks nothing.
     #[test]
-    fn hover_cursors_announce_draggable_and_blocked_lines() {
+    fn hover_cursors_announce_draggable_and_creatable_lines() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
         paper.stop_offset_text = "10".to_owned();
@@ -1895,8 +2467,8 @@ mod tests {
         );
         assert_eq!(
             paper.hover_cursor(egui::pos2(400.0, 200.0), &scale),
-            Some(egui::CursorIcon::NotAllowed),
-            "the entry at 100 sits at y 200 and never moves"
+            Some(egui::CursorIcon::ResizeVertical),
+            "the entry at 100 offers the missing take profit by drag"
         );
         assert_eq!(
             paper.hover_cursor(egui::pos2(400.0, 40.0), &scale),
@@ -1928,26 +2500,119 @@ mod tests {
         );
     }
 
+    /// The TradingView gesture: pull away from the entry line and the
+    /// missing bracket leg is born on release — the profit side makes a
+    /// take profit, the losing side a stop.
     #[test]
-    fn the_entry_line_blocks_the_gesture_but_never_moves() {
+    fn dragging_from_the_entry_line_creates_the_missing_leg() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
         let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // The entry at 100 sits at y = 200: grabbing it consumes the gesture
-        // (the chart must not pan under it) but repositions nothing.
+        // Grab the entry at 100 (y = 200), pull up to 105 (y = 150), drop.
         assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
+        let position = paper.sim.position().expect("still long");
         assert_eq!(
-            paper.sim.position().expect("long").avg_price,
-            Decimal::from(100),
-            "an average entry is history, not an order"
+            position.take_profit,
+            Some(Decimal::from(105)),
+            "above a long is the profit side"
         );
+        assert_eq!(
+            position.avg_price,
+            Decimal::from(100),
+            "the entry itself never moves"
+        );
+        // The same pull downward births the stop.
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
+        let position = paper.sim.position().expect("still long");
+        assert_eq!(position.stop_loss, Some(Decimal::from(90)));
+        assert_eq!(position.take_profit, Some(Decimal::from(105)), "untouched");
+    }
+
+    #[test]
+    fn a_fully_bracketed_entry_line_blocks_the_gesture_but_never_moves() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.stop_offset_text = "10".to_owned();
+        paper.profit_offset_text = "10".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        assert_eq!(
+            paper.hover_cursor(egui::pos2(400.0, 200.0), &scale),
+            Some(egui::CursorIcon::NotAllowed),
+            "both legs exist, so their own lines are the handles"
+        );
+        // Grabbing the entry still consumes the gesture (the chart must not
+        // pan under it) but repositions nothing.
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
+        let position = paper.sim.position().expect("long");
+        assert_eq!(position.avg_price, Decimal::from(100));
+        assert_eq!(position.stop_loss, Some(Decimal::from(90)), "untouched");
+        assert_eq!(position.take_profit, Some(Decimal::from(110)), "untouched");
         // Empty space is not ours: the press falls through to the chart.
         assert!(
             !paper.handle_chart_input(&frame(chart, &scale, 40.0, true, true, false)),
             "a press far from every line belongs to the pan"
+        );
+    }
+
+    /// Painted overlay controls (cached from the last paint pass) take the
+    /// press before the lines under them.
+    #[test]
+    fn painted_controls_take_the_press_before_the_lines() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let events = paper.sim.apply(Command::PlaceLimit {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            price: Decimal::from(95),
+            bracket: Bracket::none(),
+        });
+        paper.handle_events(events);
+        let id = paper.sim.orders()[0].id;
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // A ✕ painted last frame at (700, 120) — far from any line.
+        let button = egui::Rect::from_center_size(egui::pos2(700.0, 120.0), egui::vec2(20.0, 20.0));
+        paper.controls = vec![(PaperControl::CancelOrder(id), button)];
+        let input = ChartInput {
+            chart,
+            scale: Some(&scale),
+            pointer: Some(egui::pos2(700.0, 120.0)),
+            primary_pressed: true,
+            primary_down: true,
+            primary_released: false,
+        };
+        assert!(paper.handle_chart_input(&input), "the ✕ owns the press");
+        assert!(paper.sim.orders().is_empty(), "and it cancelled the order");
+
+        // A bracket handle press starts the create-drag for its leg.
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let handle = egui::Rect::from_center_size(egui::pos2(700.0, 210.0), HANDLE_SIZE);
+        paper.controls = vec![(PaperControl::HandleStopLoss, handle)];
+        let press = ChartInput {
+            chart,
+            scale: Some(&scale),
+            pointer: Some(egui::pos2(700.0, 210.0)),
+            primary_pressed: true,
+            primary_down: true,
+            primary_released: false,
+        };
+        assert!(paper.handle_chart_input(&press));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
+        assert_eq!(
+            paper.sim.position().expect("long").stop_loss,
+            Some(Decimal::from(90)),
+            "the handle drag placed the stop"
         );
     }
 

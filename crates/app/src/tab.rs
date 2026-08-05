@@ -1560,7 +1560,7 @@ impl Tab {
                 // is, so it is exactly the behaviour before the split existed.
                 chrome.paper_owns_input = side == PaneSide::Flow;
                 pane.handle_navigation(ui, rect, &mut chrome);
-                pane.draw_chart(ui.painter(), rect, &chrome);
+                pane.draw_chart(ui.painter(), rect, &mut chrome);
             }
         }
 
