@@ -731,6 +731,34 @@ impl QuantickApp {
                 "market replay autostart"
             );
         }
+        // Same convenience for the dock: open a named tab, so a scripted
+        // validation run shows a panel without a click.
+        if let Ok(name) = std::env::var("QUANTICK_DOCK_TAB") {
+            let tab = match name.trim() {
+                "l2" => Some(DockTab::L2),
+                "bubbles" => Some(DockTab::Bubbles),
+                "session" => Some(DockTab::Session),
+                "trading" => Some(DockTab::Trading),
+                "trades" => Some(DockTab::Trades),
+                _ => None,
+            };
+            match tab {
+                Some(tab) => app.dock.open_tab(tab),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",
+                    tab = %name,
+                    action = "dock_left_as_is",
+                    "QUANTICK_DOCK_TAB names no dock tab"
+                ),
+            }
+        }
+        // And for the performance report window — the Report… button's own
+        // path, so a scripted run can show it.
+        if std::env::var("QUANTICK_PAPER_REPORT_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.active_tab_mut().paper.autostart_report();
+        }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
@@ -4657,6 +4685,12 @@ plot(close)
     #[test]
     fn the_toolbar_close_action_exits_the_open_position() {
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        // The close journals; without this the test writes a real
+        // `paper-trades/` folder into the crate's source tree.
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-app-close-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.active_tab_mut().paper.redirect_history_dir(dir.clone());
         evt_tx
             .try_send(FeedEvent::Backfilled(vec![trade(2)]))
             .unwrap();
@@ -4684,6 +4718,7 @@ plot(close)
             app.active_tab().paper.close_button_label().is_none(),
             "flat removes the toolbar exit"
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A source reset (replay seek, feed switch) flattens the simulated

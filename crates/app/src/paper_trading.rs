@@ -31,6 +31,13 @@ use crate::timezone::TzOffset;
 /// Overrides the history folder (cwd-relative otherwise, like every
 /// quantick path).
 const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
+/// `=1` runs a fixed sequence of ordinary sim commands driven by print
+/// count, so a screenshot or demo run shows every trading surface without
+/// a click — the autostart family's member for paper trading. The trades
+/// are as real as any simulated trade (journaled, listed, painted); point
+/// `QUANTICK_TRADES_DIR` somewhere scratch to keep a demo out of your
+/// journal.
+const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
 /// Default history folder, relative to the working directory.
 const TRADES_DIR: &str = "paper-trades";
 /// How long a paper toast stays on screen.
@@ -196,6 +203,11 @@ enum PaperControl {
 struct Toast {
     message: String,
     shown_at: Instant,
+}
+
+/// The scripted demo's only state: how many prints it has seen.
+struct PaperDemo {
+    prints: u64,
 }
 
 /// Report scope: one symbol's history or the whole folder.
@@ -366,6 +378,9 @@ pub struct PaperTrading {
     /// The report filtered to the period — rebuilt when the period or the
     /// loaded history changes.
     report_view: Option<ReportView>,
+    /// The scripted demo (`QUANTICK_PAPER_DEMO=1`), for screenshot and
+    /// validation runs; `None` in normal use.
+    demo: Option<PaperDemo>,
     // Trades ledger.
     ledger_scope: ReportScope,
     /// Earlier sessions' journal rows, read on first draw and on demand —
@@ -410,6 +425,9 @@ impl PaperTrading {
             report_symbols: Vec::new(),
             report: None,
             report_view: None,
+            demo: std::env::var(PAPER_DEMO_ENV)
+                .is_ok_and(|value| value == "1")
+                .then_some(PaperDemo { prints: 0 }),
             ledger_scope: ReportScope::Symbol,
             history_cache: None,
             selected_trade: None,
@@ -442,6 +460,54 @@ impl PaperTrading {
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
         let events = self.sim.on_trade(trade);
+        self.handle_events(events);
+        if self.demo.is_some() {
+            self.run_demo_step();
+        }
+    }
+
+    /// One step of the scripted demo: a fixed command sequence by print
+    /// count — an entry, brackets, a partial, a flatten, a resting order,
+    /// a short round trip — so every surface has something honest to show.
+    fn run_demo_step(&mut self) {
+        let Some(demo) = &mut self.demo else { return };
+        demo.prints += 1;
+        let prints = demo.prints;
+        let Some(mark) = self.sim.mark_price() else {
+            return;
+        };
+        // Scale-free distance: 0.2% of the mark, snapped to its precision.
+        let offset = (mark * Decimal::new(2, 3)).round_dp(mark.scale());
+        let has_position = self.sim.position().is_some();
+        let command = match prints {
+            5 => Command::PlaceMarket {
+                side: Side::Buy,
+                quantity: Decimal::ONE,
+                bracket: Bracket::none(),
+            },
+            12 => Command::SetBracket {
+                stop_loss: Some(mark.saturating_sub(offset)),
+                take_profit: Some(mark.saturating_add(offset.saturating_add(offset))),
+            },
+            80 if has_position => Command::ClosePartial {
+                quantity: Decimal::new(5, 1),
+            },
+            160 => Command::Flatten,
+            220 => Command::PlaceLimit {
+                side: Side::Buy,
+                quantity: Decimal::ONE,
+                price: mark.saturating_sub(offset.saturating_add(offset)),
+                bracket: Bracket::none(),
+            },
+            260 => Command::PlaceMarket {
+                side: Side::Sell,
+                quantity: Decimal::ONE,
+                bracket: Bracket::none(),
+            },
+            340 if has_position => Command::ClosePosition,
+            _ => return,
+        };
+        let events = self.sim.apply(command);
         self.handle_events(events);
     }
 
@@ -2146,6 +2212,15 @@ impl PaperTrading {
     // Report window
     // ------------------------------------------------------------------
 
+    /// The `QUANTICK_PAPER_REPORT_AUTOSTART` hook: the report, scoped to
+    /// every symbol — an autostart runs before the first feed settles, so
+    /// "the current symbol" would be the wrong one anyway.
+    pub(crate) fn autostart_report(&mut self) {
+        self.report_symbol = None;
+        self.open_report();
+    }
+
+    /// Open the report window — the `Report…` button's path.
     fn open_report(&mut self) {
         self.report_open = true;
         if self.report.is_none() && !self.symbol.is_empty() {
