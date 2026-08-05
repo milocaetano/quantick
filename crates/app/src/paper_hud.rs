@@ -85,24 +85,44 @@ pub fn draw(
         .fixed_pos(chart_rect.left_top() + egui::vec2(HUD_MARGIN_PX, HUD_MARGIN_PX))
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
-            egui::Frame::none()
-                .fill(theme::TAG_BG)
-                .stroke(egui::Stroke::new(1.0_f32, side_color))
+            // A sunken card with a hairline border; the position's side is
+            // said once, loudly, by the rail on the left edge and the solid
+            // side tag — the chip language of the price gutter.
+            let card = egui::Frame::none()
+                .fill(theme::INSET)
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
                 .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                .inner_margin(egui::Margin {
+                    left: 12.0,
+                    right: 10.0,
+                    top: 7.0,
+                    bottom: 7.0,
+                })
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 5.0;
                     ui.horizontal(|ui| {
+                        egui::Frame::none()
+                            .fill(side_color)
+                            .rounding(egui::Rounding::same(2.0))
+                            .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("SIM {word} {qty}"))
+                                        .color(theme::CHIP_INK)
+                                        .strong()
+                                        .small(),
+                                );
+                            });
                         ui.label(
-                            egui::RichText::new(format!(
-                                "SIM {word} {qty} @ {}",
-                                fmt_decimal(summary.avg_price),
-                            ))
-                            .color(side_color)
-                            .strong(),
+                            egui::RichText::new(format!("@ {}", fmt_decimal(summary.avg_price)))
+                                .monospace()
+                                .color(theme::TEXT_PRIMARY),
                         );
                         if let Some(open) = summary.open_points {
                             ui.label(
                                 egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
+                                    .monospace()
+                                    .strong()
                                     .color(points_color(open)),
                             )
                             .on_hover_text(
@@ -112,11 +132,25 @@ pub fn draw(
                         }
                     });
                     if let Some(caret) = caret_text(&summary, drift) {
-                        ui.label(egui::RichText::new(caret).small().color(theme::TEXT_MUTED));
+                        ui.label(
+                            egui::RichText::new(caret)
+                                .small()
+                                .color(theme::TEXT_SUPPORT),
+                        );
                     }
                     ui.horizontal(|ui| {
+                        let quiet = |label: &str| {
+                            egui::Button::new(
+                                egui::RichText::new(label)
+                                    .color(theme::TEXT_PRIMARY)
+                                    .small(),
+                            )
+                            .fill(theme::CONTROL)
+                            .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                            .rounding(egui::Rounding::same(3.0))
+                        };
                         if ui
-                            .button("× Close")
+                            .add(quiet("× Close"))
                             .on_hover_text(format!(
                                 "exit the {word} {qty} at the next print (market)"
                             ))
@@ -125,7 +159,7 @@ pub fn draw(
                             paper.close_position();
                         }
                         if ui
-                            .button("Reverse")
+                            .add(quiet(&format!("{} Reverse", icons::ARROWS_LEFT_RIGHT)))
                             .on_hover_text(format!(
                                 "close the {word} {qty} and open {opposite} {qty} \
                                  at the next print"
@@ -136,6 +170,22 @@ pub fn draw(
                         }
                     });
                 });
+            // The side rail: 3 px of the position's colour down the card's
+            // left edge, inside the border, rounded with the card.
+            let rect = card.response.rect;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    rect.min + egui::vec2(1.0, 1.0),
+                    egui::pos2(rect.min.x + 4.0, rect.max.y - 1.0),
+                ),
+                egui::Rounding {
+                    nw: 3.0,
+                    sw: 3.0,
+                    ne: 0.0,
+                    se: 0.0,
+                },
+                side_color,
+            );
         });
 }
 

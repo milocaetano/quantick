@@ -54,6 +54,9 @@ const AXIS_GUTTER: f32 = 64.0;
 const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
+/// How far the indicator legend drops below the position HUD when both
+/// claim the chart's top-left corner.
+const LEGEND_BELOW_HUD_OFFSET_PX: f32 = 64.0;
 
 /// The (flow, time) pane ids for tab `id`.
 ///
@@ -1153,9 +1156,14 @@ impl QuantickApp {
             let pane = self.active_tab().pane(side);
             // The rect is last frame's, like every anchor the input path
             // reads; a pane not yet drawn has none and draws no legend.
-            let Some(rect) = pane.last_chart_area else {
+            let Some(mut rect) = pane.last_chart_area else {
                 continue;
             };
+            // The position HUD owns the very corner while a position is
+            // open; the legend rides just below it.
+            if side == PaneSide::Flow && self.active_tab().paper.position_summary().is_some() {
+                rect.min.y += LEGEND_BELOW_HUD_OFFSET_PX;
+            }
             for action in indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all()) {
                 pending.push((side, action));
             }

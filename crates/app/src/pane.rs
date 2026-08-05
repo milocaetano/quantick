@@ -275,21 +275,17 @@ fn live_chip_rect(history_strip: egui::Rect) -> egui::Rect {
     )
 }
 
-/// Paint the jump-to-live chip. Accent, not amber: it is a control, not a
-/// provenance statement.
+/// Paint the jump-to-live chip: solid accent, dark ink — the chip language
+/// of the price gutter, because this too is a statement about the axis.
+/// Accent, not amber: it is a control, not a provenance statement.
 fn draw_live_chip(painter: &egui::Painter, rect: egui::Rect) {
-    painter.rect_filled(rect, egui::Rounding::same(3.0), theme::TAG_BG);
-    painter.rect_stroke(
-        rect,
-        egui::Rounding::same(3.0),
-        egui::Stroke::new(1.0_f32, theme::ACCENT),
-    );
+    painter.rect_filled(rect, egui::Rounding::same(3.0), theme::ACCENT);
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         "» live",
         egui::FontId::proportional(11.0),
-        theme::ACCENT,
+        theme::CHIP_INK,
     );
 }
 
