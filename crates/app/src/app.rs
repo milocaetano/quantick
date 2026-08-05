@@ -996,7 +996,14 @@ impl QuantickApp {
             live_strip_on: tab.flow_pane.live_strip_visible,
             dock_visible,
             appearance_open: show_style,
-            paper_ready: tab.paper.ready(),
+            paper: toolbar::PaperTradeModel {
+                ready: tab.paper.ready(),
+                buy_label: tab.paper.entry_label(quantick_engine::Side::Buy),
+                sell_label: tab.paper.entry_label(quantick_engine::Side::Sell),
+                buy_hover: tab.paper.entry_hover(quantick_engine::Side::Buy),
+                sell_hover: tab.paper.entry_hover(quantick_engine::Side::Sell),
+                close_label: tab.paper.close_button_label(),
+            },
             indicators,
             scripts,
         };
@@ -1091,6 +1098,7 @@ impl QuantickApp {
                 .active_tab_mut()
                 .paper
                 .market(quantick_engine::Side::Sell),
+            ToolbarAction::PaperClose => self.active_tab_mut().paper.close_position(),
         }
     }
 
@@ -3028,7 +3036,10 @@ impl QuantickApp {
         self.maintain_indicator_state();
         self.maintain_chart_layers();
         let status = self.status_model();
-        statusbar::draw(ctx, &status, &mut self.tz);
+        let status_response = statusbar::draw(ctx, &status, &mut self.tz);
+        if status_response.open_trading_tab {
+            self.dock.open_tab(DockTab::Trading);
+        }
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
         // own feed thread; what it does not get is the strip, which speaks for
@@ -4433,6 +4444,41 @@ plot(close)
         assert!(
             app.status_model().sim_pnl.is_some(),
             "the status bar model carries the cell"
+        );
+    }
+
+    /// The toolbar's exit control end to end: with a position open the model
+    /// grows the ✕ button, the close action queues, the next print fills it,
+    /// and the status cell switches from naming the position to `flat`.
+    #[test]
+    fn the_toolbar_close_action_exits_the_open_position() {
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        let (text, _) = app.active_tab().paper.status_cell().expect("open");
+        assert!(text.contains("LONG"), "the cell names the side: {text}");
+        assert!(
+            app.active_tab().paper.close_button_label().is_some(),
+            "an open position grows the toolbar exit"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::PaperClose);
+        evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert!(
+            app.active_tab().paper.position_summary().is_none(),
+            "the close filled at the next print"
+        );
+        let (text, _) = app.active_tab().paper.status_cell().expect("history");
+        assert!(text.contains("flat"), "the cell says flat: {text}");
+        assert!(
+            app.active_tab().paper.close_button_label().is_none(),
+            "flat removes the toolbar exit"
         );
     }
 
