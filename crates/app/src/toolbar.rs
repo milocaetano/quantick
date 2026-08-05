@@ -953,8 +953,7 @@ mod tests {
     #[test]
     fn the_time_kind_widens_the_param_slot_and_folds_sooner() {
         assert!(param_width(BarKind::Time) > param_width(BarKind::Tick));
-        let exactly_drag =
-            CollapsePlan::FULL.width(FLAT_TRADE_W, param_width(BarKind::Tick));
+        let exactly_drag = CollapsePlan::FULL.width(FLAT_TRADE_W, param_width(BarKind::Tick));
         assert_eq!(
             stage(collapse_plan(
                 exactly_drag,
