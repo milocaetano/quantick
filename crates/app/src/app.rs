@@ -26,6 +26,7 @@ use crate::drawings::{
     self, DeleteOutcome, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
 };
 use crate::feed::{self, FeedCommand, FeedHandle};
+use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
 use crate::indicators::library::ScriptLibrary;
@@ -1044,42 +1045,19 @@ impl QuantickApp {
                 self.add_native_indicator(SavedKind::NativeCvd);
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
-                self.focused_pane_mut()
-                    .indicators
-                    .toggle_hidden(SlotId(slot));
-                self.mark_indicator_state_dirty();
+                let target = self.target_slot(SlotId(slot));
+                self.toggle_indicator_hidden_at(target);
             }
             ToolbarAction::RemoveIndicator(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                // UI first (the entry vanishes this frame), worker second;
-                // events already in flight for the slot are dropped on apply.
-                let pane = self.focused_pane_mut();
-                pane.indicators.remove(target.slot);
-                pane.indicator_worker
-                    .send(IndicatorCommand::Remove(target.slot));
-                self.slot_kinds.retain(|(owner, _)| *owner != target);
-                self.script_files.retain(|(owner, ..)| *owner != target);
-                self.mark_indicator_state_dirty();
+                self.remove_indicator_at(target);
             }
             ToolbarAction::AddScriptIndicator(index) => {
                 self.add_script_indicator(index);
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                if let Some(view) = self
-                    .focused_pane()
-                    .indicators
-                    .all()
-                    .iter()
-                    .find(|v| v.slot == target.slot)
-                {
-                    self.indicator_settings = Some(SettingsDialog {
-                        slot: target.slot,
-                        title: view.label().to_owned(),
-                        draft: view.input_values.clone(),
-                    });
-                    self.indicator_settings_target = target;
-                }
+                self.open_indicator_settings_at(target);
             }
             // The toolbar acts on the market it is showing: the active tab's
             // simulator, whose tape the buttons' price came from.
@@ -1091,6 +1069,102 @@ impl QuantickApp {
                 .active_tab_mut()
                 .paper
                 .market(quantick_engine::Side::Sell),
+        }
+    }
+
+    /// Flip a slot's render-side eye, wherever the slot lives. Addressed by
+    /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
+    /// on, and the toolbar path builds its target from focus before calling.
+    fn toggle_indicator_hidden_at(&mut self, target: TabSlot) {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
+            return;
+        };
+        tab.pane_mut(target.side)
+            .indicators
+            .toggle_hidden(target.slot);
+        self.mark_indicator_state_dirty();
+    }
+
+    /// Remove a slot, wherever it lives. UI first (the entry vanishes this
+    /// frame), worker second; events already in flight for the slot are
+    /// dropped on apply.
+    fn remove_indicator_at(&mut self, target: TabSlot) {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
+            return;
+        };
+        let pane = tab.pane_mut(target.side);
+        pane.indicators.remove(target.slot);
+        pane.indicator_worker
+            .send(IndicatorCommand::Remove(target.slot));
+        self.slot_kinds.retain(|(owner, _)| *owner != target);
+        self.script_files.retain(|(owner, ..)| *owner != target);
+        self.mark_indicator_state_dirty();
+    }
+
+    /// Open the settings dialog for a slot, wherever it lives.
+    fn open_indicator_settings_at(&mut self, target: TabSlot) {
+        let Some(view) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == target.tab)
+            .map(|tab| tab.pane(target.side))
+            .and_then(|pane| {
+                pane.indicators
+                    .all()
+                    .iter()
+                    .find(|view| view.slot == target.slot)
+            })
+        else {
+            return;
+        };
+        self.indicator_settings = Some(SettingsDialog {
+            slot: target.slot,
+            title: view.label().to_owned(),
+            draft: view.input_values.clone(),
+        });
+        self.indicator_settings_target = target;
+    }
+
+    /// Draw each visible pane's indicator legend and run what its rows asked
+    /// for. Actions resolve against the pane the legend was drawn on — the
+    /// legend must never act on the chart beside it (the audit's MAJOR-4
+    /// trap, avoided by construction).
+    fn draw_indicator_legends(&mut self, ctx: &egui::Context) {
+        let tab_id = self.active_tab().id;
+        let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
+            && self.active_tab().time_pane.is_some();
+        let mut pending: Vec<(PaneSide, indicator_legend::LegendAction)> = Vec::new();
+        for side in [PaneSide::Flow, PaneSide::Time] {
+            if side == PaneSide::Time && !split {
+                continue;
+            }
+            let pane = self.active_tab().pane(side);
+            // The rect is last frame's, like every anchor the input path
+            // reads; a pane not yet drawn has none and draws no legend.
+            let Some(rect) = pane.last_chart_area else {
+                continue;
+            };
+            for action in indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all()) {
+                pending.push((side, action));
+            }
+        }
+        for (side, action) in pending {
+            let at = |slot| TabSlot {
+                tab: tab_id,
+                side,
+                slot,
+            };
+            match action {
+                indicator_legend::LegendAction::ToggleHidden(slot) => {
+                    self.toggle_indicator_hidden_at(at(slot));
+                }
+                indicator_legend::LegendAction::OpenSettings(slot) => {
+                    self.open_indicator_settings_at(at(slot));
+                }
+                indicator_legend::LegendAction::Remove(slot) => {
+                    self.remove_indicator_at(at(slot));
+                }
+            }
         }
     }
 
@@ -1124,26 +1198,36 @@ impl QuantickApp {
                 *indicator_settings = None;
                 return;
             };
+            // Follow the live label: an applied edit can retitle the
+            // indicator (`EMA(9)` → `EMA(21)`), and a dialog that stays open
+            // must not keep announcing the old one.
+            dialog.title = view.label().to_owned();
             indicator_panel::draw(ctx, dialog, &view.descriptor.inputs)
         };
         match outcome {
             SettingsOutcome::Open => {}
-            SettingsOutcome::Cancel => self.indicator_settings = None,
-            SettingsOutcome::Apply => {
-                let dialog = self.indicator_settings.take().expect("dialog is open");
-                // The slot the dialog was opened on, not whatever has focus
-                // now: clicking Apply must not retarget the edit.
-                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
-                    tab.pane_mut(target.side)
-                        .indicator_worker
-                        .send(IndicatorCommand::SetInputs {
-                            slot: dialog.slot,
-                            values: dialog.draft,
-                        });
-                }
-                self.mark_indicator_state_dirty();
-            }
+            SettingsOutcome::Close => self.indicator_settings = None,
+            SettingsOutcome::Apply => self.apply_indicator_settings_draft(),
         }
+    }
+
+    /// Send the open dialog's draft to the worker and keep the dialog open
+    /// (audit M2): tuning is a nudge-and-look loop, and a dialog that dies
+    /// on every Apply makes each attempt four clicks. The slot is the one
+    /// the dialog was opened on, not whatever has focus now — clicking
+    /// Apply must not retarget the edit.
+    fn apply_indicator_settings_draft(&mut self) {
+        let target = self.indicator_settings_target;
+        let Some(dialog) = self.indicator_settings.as_ref() else {
+            return;
+        };
+        let (slot, values) = (dialog.slot, dialog.draft.clone());
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
+            tab.pane_mut(target.side)
+                .indicator_worker
+                .send(IndicatorCommand::SetInputs { slot, values });
+        }
+        self.mark_indicator_state_dirty();
     }
 
     /// Load a library script behind a fresh slot. A file that no longer
@@ -3024,6 +3108,7 @@ impl QuantickApp {
         self.draw_toolbar(ctx);
         self.draw_source_picker(ctx);
         self.draw_indicator_settings(ctx);
+        self.draw_indicator_legends(ctx);
         self.poll_script_files();
         self.maintain_indicator_state();
         self.maintain_chart_layers();
@@ -7794,6 +7879,91 @@ plot(close)
                 .iter()
                 .all(|(owner, _)| owner.side == PaneSide::Time),
             "and it is the time pane's"
+        );
+    }
+
+    /// Apply keeps the dialog open (audit M2): tuning is a nudge-and-look
+    /// loop, and each Apply must land without re-opening anything. The nudge
+    /// really lands — the EMA's length changes and the view retitles.
+    #[test]
+    fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+        app.apply_toolbar_action(ToolbarAction::OpenIndicatorSettings(slot.0));
+        assert!(app.indicator_settings.is_some(), "the dialog opened");
+
+        if let Some(dialog) = app.indicator_settings.as_mut()
+            && let Some(quantick_indicators::InputValue::Int(len)) = dialog.draft.first_mut()
+        {
+            *len = 21;
+        }
+        app.apply_indicator_settings_draft();
+        assert!(
+            app.indicator_settings.is_some(),
+            "Apply keeps the dialog open for the next nudge"
+        );
+        settle_indicators(&mut app);
+        let label = app.active_tab().flow_pane.indicators.all()[0]
+            .label()
+            .to_owned();
+        assert!(
+            label.contains("21"),
+            "the applied draft rebuilt the indicator: {label}"
+        );
+    }
+
+    /// A legend row acts on the pane it is drawn on, never the focused one —
+    /// the routing that keeps the audit's "commands target one pane, chrome
+    /// speaks for another" contradiction from reappearing here.
+    #[test]
+    fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        // An EMA on the time pane...
+        let point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("time pane")
+            .indicators
+            .all()[0]
+            .slot;
+        // ...while focus returns to the flow pane.
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
+
+        let target = TabSlot {
+            tab: app.active_tab().id,
+            side: PaneSide::Time,
+            slot,
+        };
+        app.toggle_indicator_hidden_at(target);
+        assert!(
+            app.active_tab()
+                .time_pane
+                .as_ref()
+                .expect("time pane")
+                .indicators
+                .all()[0]
+                .hidden,
+            "the time pane's own slot was toggled, focus notwithstanding"
+        );
+        app.open_indicator_settings_at(target);
+        assert!(app.indicator_settings.is_some());
+        assert_eq!(
+            app.indicator_settings_target.side,
+            PaneSide::Time,
+            "the dialog's Apply will land on the legend's pane"
         );
     }
 

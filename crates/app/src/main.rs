@@ -20,6 +20,7 @@ mod config;
 mod dock;
 mod drawings;
 mod feed;
+mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
 mod indicator_worker;

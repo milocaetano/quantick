@@ -644,6 +644,10 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
                     .clicked()
                 {
                     actions.push(ToolbarAction::OpenIndicatorSettings(entry.slot));
+                    // The menu closes so it cannot occlude the dialog it
+                    // just spawned (egui paints menus above windows) —
+                    // audit M3.
+                    ui.close_menu();
                 }
                 if ui
                     .small_button(icons::TRASH)
@@ -651,6 +655,10 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
                     .clicked()
                 {
                     actions.push(ToolbarAction::RemoveIndicator(entry.slot));
+                    // Closing beats redrawing the menu around a vanished
+                    // row. The eye deliberately keeps the menu open:
+                    // toggling several indicators is one errand.
+                    ui.close_menu();
                 }
             });
         }
