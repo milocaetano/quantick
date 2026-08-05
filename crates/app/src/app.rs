@@ -19,6 +19,7 @@ use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
 use crate::chart::PriceScale;
+use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{
@@ -477,6 +478,23 @@ pub struct QuantickApp {
     #[cfg(test)]
     manager_action_rects: Vec<(usize, &'static str, egui::Rect)>,
 
+    // Layer visibility (the right-click menu on a pane's canvas). The layers
+    // belong to the pane that draws them; what lives here is where the choices
+    // are written down and the switches no pane owns.
+    /// Where layer visibility persists.
+    chart_layers_path: std::path::PathBuf,
+    /// The visibility already on disk, as a bitmask over the active tab's flow
+    /// pane. Compared with the live one once per frame so a switch is saved
+    /// whoever flipped it — the menu, the toolbar, the dock or the appearance
+    /// panel. A dozen bool reads and an integer compare: cheaper than teaching
+    /// four call sites to remember.
+    saved_layer_mask: u16,
+    /// What the file said at startup, applied to every pane opened since.
+    layer_defaults: std::collections::BTreeMap<ChartLayer, bool>,
+    /// Where a pane's layer menu leaves the grid switch and the "an indicator
+    /// was hidden" flag; drained right after the canvas is drawn.
+    layer_actions: chart_layers::LayerActions,
+
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
     show_style: bool,
@@ -591,6 +609,10 @@ impl QuantickApp {
             toast_undo_rect: None,
             #[cfg(test)]
             manager_action_rects: Vec::new(),
+            chart_layers_path: chart_layers::default_path(),
+            saved_layer_mask: 0,
+            layer_defaults: std::collections::BTreeMap::new(),
+            layer_actions: chart_layers::LayerActions::default(),
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -612,11 +634,17 @@ impl QuantickApp {
         // A feed that declares its own look opens wearing it.
         app.active_tab_mut().apply_feed_bubble_preset(&config);
         // The map itself stays hidden until asked for — a layer nobody
-        // requested must cost no projection. Dev/ops can open it without a
-        // click; capture is already running either way.
-        app.active_tab_mut()
-            .tape_mut()
-            .set_depth_visible(std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|v| v == "1"));
+        // requested must cost no projection. Capture is already running either
+        // way, so this is a display choice and nothing else.
+        app.active_tab_mut().tape_mut().set_depth_visible(false);
+        // What the user last had on the canvas, applied over those defaults and
+        // under the autostart hooks below: an env var is an explicit request
+        // for this run and must still win (see `restore_chart_layers`).
+        app.restore_chart_layers();
+        // Dev/ops can open the map without a click.
+        if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.active_tab_mut().tape_mut().set_depth_visible(true);
+        }
         // Same convenience for the live strip; its pixels stay
         // capability-gated either way (see live_strip_width).
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
@@ -695,6 +723,10 @@ impl QuantickApp {
                 "market replay autostart"
             );
         }
+        // An env var is not a user edit: what the autostart hooks switched on
+        // must not be written back as though the user had asked for it every
+        // launch from now on. Same rule the indicator state follows.
+        app.saved_layer_mask = app.layer_mask();
         app
     }
 
@@ -794,6 +826,13 @@ impl QuantickApp {
         self.active_tab_mut().refresh_chip_label(&config);
         self.active_tab_mut().ensure_book_capture(&config);
         self.active_tab_mut().apply_feed_bubble_preset(&config);
+        // The new tab opens on the layers the user left showing, over the
+        // preset it just put on: opening a second market is not a request to
+        // bring back the chrome they switched off.
+        let defaults = self.layer_defaults.clone();
+        self.active_tab_mut()
+            .flow_pane
+            .apply_layer_states(&defaults);
     }
 
     /// Close the tab at `index`, activating a neighbour.
@@ -1485,6 +1524,92 @@ impl QuantickApp {
                 })
                 .collect();
             state_file::save(&self.indicator_state_path, &saved);
+        }
+    }
+
+    /// What a pane's layer menu could not switch itself.
+    ///
+    /// Drained right after the canvas, so the frame that clicked the entry is
+    /// the frame that applies it. Both wishes reach the real owner — the shared
+    /// style, the indicator state file — instead of a second copy on the pane.
+    fn apply_layer_actions(&mut self) {
+        let actions = std::mem::take(&mut self.layer_actions);
+        if let Some(visible) = actions.grid {
+            self.style.canvas.grid_enabled = visible;
+            // The appearance panel's own edits bump this; the renderer and the
+            // style log both read it to know something moved.
+            self.style_revision = self.style_revision.saturating_add(1);
+        }
+        if actions.indicators_changed {
+            self.mark_indicator_state_dirty();
+        }
+    }
+
+    /// The visibility this app persists, as one bit per layer.
+    ///
+    /// Read off the active tab's flow pane: the file records the canvas
+    /// quantick is built around, the same scope the indicator state file has
+    /// (see [`Self::maintain_indicator_state`]). A tab's second pane opens
+    /// matching it and is in-session from there.
+    fn layer_mask(&self) -> u16 {
+        self.active_tab().flow_pane.layer_mask(&self.style)
+    }
+
+    /// Save the layer visibility when it differs from what is on disk.
+    ///
+    /// Called once per frame instead of from each switch: the layers are owned
+    /// by four different pieces of chrome, and a save hook on each is four
+    /// chances to forget one.
+    fn maintain_chart_layers(&mut self) {
+        let mask = self.layer_mask();
+        if mask == self.saved_layer_mask {
+            return;
+        }
+        chart_layers::save(
+            &self.chart_layers_path,
+            &self.active_tab().flow_pane.layer_states(&self.style),
+        );
+        self.saved_layer_mask = mask;
+    }
+
+    /// Apply the saved layer visibility to the tab the app opened with.
+    ///
+    /// Runs before the autostart env vars so an explicit `QUANTICK_*_AUTOSTART`
+    /// still wins for the run it was set on: a validation session asks for the
+    /// heatmap on the command line and gets it, whatever the file remembers.
+    fn restore_chart_layers(&mut self) {
+        self.layer_defaults = chart_layers::load(&self.chart_layers_path);
+        // Whatever the file said (including nothing at all) is now on screen;
+        // only a change from here is worth another write.
+        if self.layer_defaults.is_empty() {
+            self.saved_layer_mask = self.layer_mask();
+            return;
+        }
+        if let Some(grid) = self.layer_defaults.get(&ChartLayer::Grid) {
+            self.style.canvas.grid_enabled = *grid;
+        }
+        let defaults = self.layer_defaults.clone();
+        self.apply_layer_defaults(&defaults);
+        self.saved_layer_mask = self.layer_mask();
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "CHART_LAYERS_RESTORED",
+            path = %self.chart_layers_path.display(),
+            hidden = defaults.values().filter(|visible| !**visible).count(),
+            "chart layer visibility restored"
+        );
+    }
+
+    /// Put every open pane on the saved visibility. Also run when a tab is
+    /// opened later, so a new tab looks like the one beside it rather than
+    /// bringing back layers the user switched off.
+    fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
+        for tab in &mut self.tabs {
+            tab.flow_pane.apply_layer_states(states);
+            if let Some(pane) = tab.time_pane.as_mut() {
+                pane.apply_layer_states(states);
+            }
         }
     }
 
@@ -2901,6 +3026,7 @@ impl QuantickApp {
         self.draw_indicator_settings(ctx);
         self.poll_script_files();
         self.maintain_indicator_state();
+        self.maintain_chart_layers();
         let status = self.status_model();
         statusbar::draw(ctx, &status, &mut self.tz);
         // The browser window and, while the *active* tab plays a session, its
@@ -2998,6 +3124,9 @@ impl QuantickApp {
         tab.loading.set_active(LoadingTask::BookSync, book_syncing);
 
         let mut notice_action = notice_card::NoticeAction::None;
+        // The layer menu offers what this source can produce; resolved once
+        // here rather than per pane, per entry, inside the canvas.
+        let capabilities = self.active_tab().capabilities(&self.config);
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -3010,6 +3139,7 @@ impl QuantickApp {
                         drawing_presets,
                         style,
                         tz,
+                        layer_actions,
                         ..
                     } = self;
                     let mut chrome = CanvasChrome {
@@ -3017,9 +3147,14 @@ impl QuantickApp {
                         presets: drawing_presets,
                         style,
                         tz: *tz,
+                        capabilities,
+                        layers: layer_actions,
                     };
                     tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
                 }
+                // The grid and the indicator state belong to the window, not
+                // to the pane whose menu switched them.
+                self.apply_layer_actions();
                 loading::overlay(ui, area, &self.active_tab().loading);
                 let tab = self.active_tab();
                 if notice_card::should_draw(&tab.notice, tab.flow_pane.state.bars().len()) {
@@ -4483,6 +4618,557 @@ plot(close)
         app.active_tab_mut().drain_feed();
         assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
         (app, cmd_rx)
+    }
+
+    /// An app whose source quotes prices and nothing else: no book, no traded
+    /// volume — what a live CFD bridge publishes.
+    fn app_without_depth() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+        let (_evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(FeedCapabilities::none()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        (app, cmd_rx)
+    }
+
+    /// The active tab's flow pane beside the chrome a canvas frame hands it.
+    fn with_flow_pane<R>(
+        app: &mut QuantickApp,
+        body: impl FnOnce(&mut ChartPane, &mut pane::PaneChrome<'_>) -> R,
+    ) -> R {
+        let capabilities = app.active_tab().capabilities(&app.config);
+        let QuantickApp {
+            tabs,
+            active_tab,
+            toolrail,
+            drawing_presets,
+            style,
+            tz,
+            layer_actions,
+            ..
+        } = app;
+        let tab = &mut tabs[*active_tab];
+        let mut chrome = pane::PaneChrome {
+            toolrail,
+            presets: drawing_presets,
+            style,
+            tz: *tz,
+            symbol: &tab.symbol,
+            paper: &mut tab.paper,
+            paper_owns_input: true,
+            capabilities,
+            layers: layer_actions,
+        };
+        body(&mut tab.flow_pane, &mut chrome)
+    }
+
+    /// Switch a layer exactly as the menu does, including the hop the app makes
+    /// for the ones a pane does not own.
+    fn switch_layer(app: &mut QuantickApp, layer: ChartLayer, visible: bool) {
+        with_flow_pane(app, |pane, chrome| {
+            pane.set_layer_visible(layer, visible, chrome.layers);
+        });
+        app.apply_layer_actions();
+    }
+
+    /// Whether the active tab's flow pane is painting `layer`.
+    fn layer_on(app: &QuantickApp, layer: ChartLayer) -> bool {
+        app.active_tab().flow_pane.layer_visible(layer, &app.style)
+    }
+
+    /// The layer menu writes through to whoever owns the layer, and touches
+    /// nothing else. A menu holding its own copy of "is the heatmap on" would
+    /// disagree with the toolbar the moment either one was used.
+    #[test]
+    fn each_layer_switch_moves_exactly_one_owner() {
+        let (mut app, _events, _commands, _book) = test_app();
+        // What the chart opens with: the market layers are opt-in, the chart's
+        // own chrome is on. This is the state the file's absence must preserve.
+        for (layer, expected) in [
+            (ChartLayer::Heatmap, false),
+            (ChartLayer::Bubbles, false),
+            (ChartLayer::LiveStrip, false),
+            (ChartLayer::LaneMarks, true),
+            (ChartLayer::DepthGaps, true),
+            (ChartLayer::Grid, true),
+            (ChartLayer::LastPrice, true),
+            // A full-height rule across the candles for a boundary read once:
+            // opt-in, like the market layers above it.
+            (ChartLayer::BackfillDivider, false),
+            (ChartLayer::SeamDivider, true),
+            (ChartLayer::Crosshair, true),
+            (ChartLayer::PaperTrading, true),
+            (ChartLayer::Drawings, true),
+        ] {
+            assert_eq!(
+                layer_on(&app, layer),
+                expected,
+                "{} opens in the wrong state",
+                layer.id()
+            );
+        }
+
+        for layer in ChartLayer::ALL {
+            let before: Vec<bool> = ChartLayer::ALL
+                .into_iter()
+                .map(|other| layer_on(&app, other))
+                .collect();
+            let flipped = !layer_on(&app, layer);
+            switch_layer(&mut app, layer, flipped);
+            for (other, was) in ChartLayer::ALL.into_iter().zip(before) {
+                let expected = if other == layer { flipped } else { was };
+                assert_eq!(
+                    layer_on(&app, other),
+                    expected,
+                    "switching {} moved {} too",
+                    layer.id(),
+                    other.id()
+                );
+            }
+            switch_layer(&mut app, layer, !flipped);
+        }
+    }
+
+    /// Hiding is a view state, never a kill switch: the recorder keeps running
+    /// behind a hidden heatmap, so unhiding repaints the retained past instead
+    /// of opening a hole in it.
+    #[test]
+    fn hiding_a_layer_never_stops_the_data_behind_it() {
+        let (mut app, _events, _commands, _book) = test_app();
+        let config = app.config.clone();
+        app.active_tab_mut().ensure_book_capture(&config);
+        assert!(
+            app.active_tab().tape().enabled(),
+            "capture is on before the test"
+        );
+
+        switch_layer(&mut app, ChartLayer::Heatmap, true);
+        assert!(layer_on(&app, ChartLayer::Heatmap));
+        switch_layer(&mut app, ChartLayer::Heatmap, false);
+        assert!(!layer_on(&app, ChartLayer::Heatmap));
+        assert!(
+            app.active_tab().tape().enabled(),
+            "the map went off screen; the recording must not stop with it"
+        );
+
+        // Same for the drawings: the layer switch hides them, it never removes
+        // them, and the objects come back with their anchors intact.
+        let before = app.active_tab().flow_pane.drawings.items().len();
+        switch_layer(&mut app, ChartLayer::Drawings, false);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            before,
+            "hiding deletes nothing"
+        );
+        switch_layer(&mut app, ChartLayer::Drawings, true);
+        assert!(layer_on(&app, ChartLayer::Drawings));
+    }
+
+    /// Close the app with layers hidden, open it again, and the canvas comes
+    /// back the way it was left — through the same restore the constructor runs.
+    #[test]
+    fn layer_visibility_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("quantick-app-layers-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("chart-layers.toml");
+        let _ = std::fs::remove_file(&path);
+
+        let (mut app, _events, _commands, _book) = test_app();
+        app.chart_layers_path = path.clone();
+        app.saved_layer_mask = app.layer_mask();
+        switch_layer(&mut app, ChartLayer::Crosshair, false);
+        switch_layer(&mut app, ChartLayer::PaperTrading, false);
+        switch_layer(&mut app, ChartLayer::Grid, false);
+        // Switched through the toolbar's own action rather than the menu: the
+        // save must follow the state, not the widget that moved it.
+        app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+        // A market layer switched *on* has to come back on, which is why the
+        // file records each layer's state instead of a list of hidden ones.
+        switch_layer(&mut app, ChartLayer::Bubbles, true);
+        app.maintain_chart_layers();
+        assert_eq!(
+            app.saved_layer_mask,
+            app.layer_mask(),
+            "a settled canvas writes nothing further"
+        );
+
+        let (mut restored, _events, _commands, _book) = test_app();
+        restored.chart_layers_path = path.clone();
+        restored.restore_chart_layers();
+        for (layer, expected) in [
+            (ChartLayer::Crosshair, false),
+            (ChartLayer::PaperTrading, false),
+            (ChartLayer::Grid, false),
+            (ChartLayer::Heatmap, true),
+            (ChartLayer::Bubbles, true),
+            (ChartLayer::LastPrice, true),
+            (ChartLayer::Drawings, true),
+        ] {
+            assert_eq!(
+                layer_on(&restored, layer),
+                expected,
+                "{} did not survive the restart",
+                layer.id()
+            );
+        }
+        // The lane marks belong to the order-flow preset; this file must not
+        // have taken a second opinion on them.
+        let text = std::fs::read_to_string(&path).expect("state file");
+        assert!(!text.contains("lane_marks"), "{text}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A tab opened later shows the same canvas as the one beside it: opening a
+    /// second market is not a request to bring back hidden chrome.
+    #[test]
+    fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
+        let dir = std::env::temp_dir().join(format!("quantick-app-newtab-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("chart-layers.toml");
+        let _ = std::fs::remove_file(&path);
+
+        let (mut app, _events, _commands, _book) = test_app();
+        app.chart_layers_path = path.clone();
+        app.saved_layer_mask = app.layer_mask();
+        switch_layer(&mut app, ChartLayer::Crosshair, false);
+        app.maintain_chart_layers();
+        // A fresh app reads the file, then opens a second market.
+        let (mut restored, _events, _commands, _book) = test_app();
+        restored.chart_layers_path = path.clone();
+        restored.restore_chart_layers();
+        let (_evt_tx, evt_rx) = mpsc::channel(4);
+        let (_book_tx, book_rx) = mpsc::channel(4);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(4);
+        restored.adopt_tab(
+            "binance".to_owned(),
+            "OTHERUSDT".to_owned(),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        assert_eq!(restored.tabs.len(), 2, "the second market opened");
+        assert!(
+            !layer_on(&restored, ChartLayer::Crosshair),
+            "the new tab brought back a layer the user had switched off"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The menu itself: every layer gets a switch, a layer the feed cannot
+    /// produce is offered disabled rather than as a lie, and clicking a real
+    /// checkbox hides the layer behind it.
+    #[test]
+    fn the_layer_menu_offers_every_layer_and_its_switches_work() {
+        let dir = std::env::temp_dir().join(format!("quantick-app-menu-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("chart-layers.toml");
+        let _ = std::fs::remove_file(&path);
+
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
+        let (mut app, _events, _commands, _book) = test_app();
+        app.chart_layers_path = path.clone();
+
+        let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
+            with_flow_pane(app, |pane, chrome| {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .show(ctx, |ui| pane.draw_layer_menu(ui, chrome));
+                    },
+                );
+            });
+        };
+
+        menu_frame(&mut app, Vec::new());
+        assert_eq!(
+            app.active_tab().flow_pane.layer_menu_rects.len(),
+            ChartLayer::ALL.len(),
+            "every layer needs a switch, or it cannot be turned off at all"
+        );
+
+        let crosshair = app
+            .active_tab()
+            .flow_pane
+            .layer_menu_rects
+            .iter()
+            .find(|(layer, _)| *layer == ChartLayer::Crosshair)
+            .expect("the crosshair has a switch")
+            .1
+            .center();
+        assert!(layer_on(&app, ChartLayer::Crosshair));
+        menu_frame(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(crosshair),
+                egui::Event::PointerButton {
+                    pos: crosshair,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+        );
+        menu_frame(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: crosshair,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+        assert!(
+            !layer_on(&app, ChartLayer::Crosshair),
+            "clicking the switch has to switch the layer"
+        );
+
+        // A capability the source lacks is disabled, not silently absent: a
+        // recording has no book, and the entry says so instead of offering a
+        // switch that would do nothing.
+        let full = app.active_tab().capabilities(&app.config);
+        let pane = &app.active_tab().flow_pane;
+        assert!(pane.layer_blocked(ChartLayer::Heatmap, full).is_none());
+        let (mut quote_only, _commands) = app_without_depth();
+        let quotes = quote_only.active_tab().capabilities(&quote_only.config);
+        let pane = &quote_only.active_tab().flow_pane;
+        assert!(
+            pane.layer_blocked(ChartLayer::Heatmap, quotes).is_some(),
+            "a source with no book cannot promise a heatmap"
+        );
+        assert!(pane.layer_blocked(ChartLayer::Bubbles, quotes).is_some());
+        assert!(pane.layer_blocked(ChartLayer::Grid, quotes).is_none());
+        menu_frame(&mut quote_only, Vec::new());
+        assert_eq!(
+            quote_only.active_tab().flow_pane.layer_menu_rects.len(),
+            ChartLayer::ALL.len(),
+            "an unavailable layer is still listed, just not switchable"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// §11 keeps the tape on the flow pane, so the time pane's menu says the
+    /// flow layers are drawn elsewhere instead of offering dead switches.
+    #[test]
+    fn the_time_pane_offers_the_flow_layers_as_drawn_elsewhere() {
+        let (app, _events, _commands, _book) = test_app();
+        let capabilities = app.active_tab().capabilities(&app.config);
+        let time = ChartPane::time(99, 60_000);
+        for layer in [
+            ChartLayer::Heatmap,
+            ChartLayer::Bubbles,
+            ChartLayer::LiveStrip,
+            ChartLayer::LaneMarks,
+            ChartLayer::DepthGaps,
+        ] {
+            assert_eq!(
+                time.layer_blocked(layer, capabilities),
+                Some("the order-flow layers are drawn on the flow pane"),
+                "{} has no machinery on a time pane",
+                layer.id()
+            );
+            assert!(!time.layer_visible(layer, &app.style));
+        }
+        for layer in [
+            ChartLayer::Grid,
+            ChartLayer::LastPrice,
+            ChartLayer::Crosshair,
+            ChartLayer::Drawings,
+        ] {
+            assert!(time.layer_blocked(layer, capabilities).is_none());
+        }
+    }
+
+    /// A switched-off layer really stops painting.
+    ///
+    /// The switches above only prove the *state* moved; this one draws a real
+    /// chart twice and counts the shapes, so a gate someone forgets to place
+    /// (or later deletes) shows up as a menu entry that changes nothing.
+    #[test]
+    fn a_hidden_layer_paints_nothing() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        let (mut app, _commands) = app_with_history(120);
+        // The crosshair is a mode: it paints under a pointer, with its own tool
+        // armed. Both are set here so the layer has something to switch off.
+        app.toolrail.arm(Tool::Crosshair);
+
+        let shapes = |app: &mut QuantickApp| -> usize {
+            with_flow_pane(app, |pane, chrome| {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let area = ui.available_rect_before_wrap();
+                            pane.hover_pos = Some(area.center());
+                            pane.draw_chart(ui.painter(), area, chrome);
+                        });
+                    },
+                );
+                output.shapes.len()
+            })
+        };
+
+        // Every layer under test on, whatever it opens as: the count below is
+        // the "all on" chart, so an opt-in layer has to be switched on first.
+        let under_test = [
+            ChartLayer::LastPrice,
+            ChartLayer::BackfillDivider,
+            ChartLayer::Crosshair,
+        ];
+        for layer in under_test {
+            switch_layer(&mut app, layer, true);
+        }
+        // One frame to settle: the live lane's divider and the price range are
+        // computed by a draw and read by the next one, so the first frame is
+        // not yet the chart this test is counting.
+        let _ = shapes(&mut app);
+        let all_on = shapes(&mut app);
+        for layer in under_test {
+            switch_layer(&mut app, layer, false);
+            let off = shapes(&mut app);
+            assert!(
+                off < all_on,
+                "{} kept painting after it was switched off ({off} shapes vs {all_on})",
+                layer.id()
+            );
+            switch_layer(&mut app, layer, true);
+            assert_eq!(
+                shapes(&mut app),
+                all_on,
+                "{} did not come back exactly as it was",
+                layer.id()
+            );
+        }
+    }
+
+    /// The gesture itself: a right-click on the canvas opens the menu, and the
+    /// primary button — which pans, zooms and places drawings — never does.
+    ///
+    /// The menu's contents are covered above; what this proves is the one thing
+    /// between the user and all of it, the button it is bound to.
+    #[test]
+    fn only_the_secondary_button_opens_the_layer_menu() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut app, _events, _commands, _book) = test_app();
+
+        let click = |app: &mut QuantickApp, button: egui::PointerButton| -> usize {
+            with_flow_pane(app, |pane, chrome| {
+                let target = screen.center();
+                for pressed in [true, false] {
+                    let _ = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            events: vec![
+                                egui::Event::PointerMoved(target),
+                                egui::Event::PointerButton {
+                                    pos: target,
+                                    button,
+                                    pressed,
+                                    modifiers: egui::Modifiers::default(),
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default().show(ctx, |ui| {
+                                let area = ui.available_rect_before_wrap();
+                                pane.handle_navigation(ui, area, chrome);
+                            });
+                        },
+                    );
+                }
+                pane.layer_menu_rects.len()
+            })
+        };
+
+        assert_eq!(
+            click(&mut app, egui::PointerButton::Primary),
+            0,
+            "a left click is a pan or a placement; it must not open the menu"
+        );
+        assert_eq!(
+            click(&mut app, egui::PointerButton::Secondary),
+            ChartLayer::ALL.len(),
+            "a right click on the canvas has to open the layer menu"
+        );
+    }
+
+    /// Reaching for a tool brings its own layer back — a crosshair that draws
+    /// no cross, or a line tool that places invisible objects, reads as a
+    /// broken tool rather than as a hidden layer.
+    #[test]
+    fn arming_a_tool_unhides_the_layer_it_draws_on() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut app, _events, _commands, _book) = test_app();
+
+        let navigate = |app: &mut QuantickApp| {
+            with_flow_pane(app, |pane, chrome| {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let area = ui.available_rect_before_wrap();
+                            pane.handle_navigation(ui, area, chrome);
+                        });
+                    },
+                );
+            });
+        };
+
+        for (tool, layer) in [
+            (
+                Tool::Drawing(drawings::DRAWING_TOOLS[0]),
+                ChartLayer::Drawings,
+            ),
+            (Tool::Crosshair, ChartLayer::Crosshair),
+        ] {
+            app.toolrail.arm(Tool::Pointer);
+            switch_layer(&mut app, layer, false);
+            navigate(&mut app);
+            assert!(
+                !layer_on(&app, layer),
+                "{} must stay hidden while nothing needs it",
+                layer.id()
+            );
+            app.toolrail.arm(tool);
+            navigate(&mut app);
+            assert!(
+                layer_on(&app, layer),
+                "arming its tool has to bring {} back",
+                layer.id()
+            );
+        }
     }
 
     /// The dark chart: with the view panned into history, a coarser spec cuts
@@ -8368,9 +9054,20 @@ plot(close)
             backfill + seam > seam,
             "the backfill mark sits inside the trade-derived half, past the seam"
         );
-        // Both marks paint. The view follows the live edge, and three months
-        // of venue history is far behind it, so bring the seam on screen the
-        // way a user scrolling back would.
+        // Both marks paint. The backfill divider is opt-in (see
+        // `ChartPane::new`) and this test is about where it lands, so switch
+        // it on first — on both panes, since either one's mark answers the
+        // assertion below.
+        for side in [PaneSide::Time, PaneSide::Flow] {
+            app.active_tab_mut().pane_mut(side).set_layer_visible(
+                ChartLayer::BackfillDivider,
+                true,
+                &mut chart_layers::LayerActions::default(),
+            );
+        }
+        // The view follows the live edge, and three months of venue history is
+        // far behind it, so bring the seam on screen the way a user scrolling
+        // back would.
         let slots = app.active_tab().pane(PaneSide::Time).slots();
         let width = app
             .active_tab()

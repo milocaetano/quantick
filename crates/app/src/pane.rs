@@ -13,6 +13,8 @@
 //! [`ChartPane::id`] for the same reason — two panes registering one id would
 //! share a drag.
 
+use std::collections::BTreeSet;
+
 use eframe::egui;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
@@ -23,6 +25,8 @@ use crate::app::{
 };
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
+use crate::chart_layers::{ChartLayer, LayerActions};
+use crate::config::FeedCapabilities;
 use crate::drawings::{self, ChartPoint, DrawContext, Drawings, PresetHost};
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
@@ -336,6 +340,13 @@ pub struct PaneChrome<'a> {
     /// pane may drive them. Running both would let the second pane inherit a
     /// drag the first started and re-clamp it into the wrong rectangle.
     pub paper_owns_input: bool,
+    /// What the running source can actually produce. The layer menu offers a
+    /// layer this feed has no data for as disabled-with-a-reason rather than as
+    /// a switch that would do nothing — the wording the toolbar already uses.
+    pub capabilities: FeedCapabilities,
+    /// Where the layer menu leaves the two switches the pane does not own.
+    /// Drained by the app once the canvas is done (see [`LayerActions`]).
+    pub layers: &'a mut LayerActions,
 }
 
 /// One chart pane. See the module docs for what does and does not live here.
@@ -361,6 +372,18 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
+
+    /// Layers switched off that nothing else on this pane owns.
+    ///
+    /// The rest of the right-click menu resolves to the field that already owns
+    /// its layer (see [`Self::layer_visible`]); only the chart's own marks —
+    /// which had no switch before the menu existed — are held here, so the menu
+    /// can never hold a second opinion about a pixel.
+    pub hidden_layers: BTreeSet<ChartLayer>,
+    /// Where each layer's switch landed in the last menu frame, so a test can
+    /// click the real widget instead of calling the setter behind it.
+    #[cfg(test)]
+    pub layer_menu_rects: Vec<(ChartLayer, egui::Rect)>,
 
     // Bar-type selector state (one parameter retained per kind).
     pub kind: BarKind,
@@ -464,6 +487,14 @@ impl ChartPane {
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             live_strip_visible: false,
+            // The backfill divider opens off: it is a full-height rule across
+            // the candles for a boundary that matters once, when reading how
+            // far the live tape goes back. Nothing is hidden about the data —
+            // the mark is one click away in the layer menu, and the bars
+            // either side of it are exactly what they were.
+            hidden_layers: BTreeSet::from([ChartLayer::BackfillDivider]),
+            #[cfg(test)]
+            layer_menu_rects: Vec::new(),
             pending_spec: None,
             tick_n,
             volume_units,
@@ -491,6 +522,238 @@ impl ChartPane {
     /// An egui interaction id scoped to this pane.
     fn interaction_id(&self, name: &'static str) -> egui::Id {
         egui::Id::new((name, self.id))
+    }
+
+    /// Whether `layer` is painted on this pane right now.
+    ///
+    /// Every arm reads the one field that already owns that layer, so the menu
+    /// and the toolbar/dock can never disagree about a pixel. `style` is the
+    /// window's, passed in because the grid lives there and a pane holding a
+    /// copy of it is exactly the disagreement this avoids.
+    ///
+    /// A layer this pane has no machinery for reports hidden: a time pane runs
+    /// no tape (§11), so it has no heatmap to show.
+    pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        let tape = self.orderflow.as_ref();
+        match layer {
+            ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_visible),
+            ChartLayer::Bubbles => tape.is_some_and(OrderflowView::bubbles_enabled),
+            ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
+            ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
+            ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
+            ChartLayer::Grid => style.canvas.grid_enabled,
+            // The toolbox's global eye already owns this one, undo history and
+            // all; the menu is a second door to the same switch.
+            ChartLayer::Drawings => !self.drawings.all_hidden(),
+            ChartLayer::LastPrice
+            | ChartLayer::BackfillDivider
+            | ChartLayer::SeamDivider
+            | ChartLayer::Crosshair
+            | ChartLayer::PaperTrading => !self.hidden_layers.contains(&layer),
+        }
+    }
+
+    /// Show or hide `layer`, writing through to whoever owns it.
+    ///
+    /// Display only: nothing here stops depth capture, bar building, indicator
+    /// computation or a working order, so unhiding repaints the retained past
+    /// instead of opening a hole in it. The grid is the window's, so that one
+    /// is left in `actions` for the app to apply.
+    pub fn set_layer_visible(
+        &mut self,
+        layer: ChartLayer,
+        visible: bool,
+        actions: &mut LayerActions,
+    ) {
+        match layer {
+            ChartLayer::Heatmap => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_depth_visible(visible);
+                }
+            }
+            ChartLayer::Bubbles => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_bubbles_enabled(visible);
+                }
+            }
+            ChartLayer::LiveStrip => self.live_strip_visible = visible,
+            ChartLayer::LaneMarks => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_lane_marks_visible(visible);
+                }
+            }
+            ChartLayer::DepthGaps => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_gaps_visible(visible);
+                }
+            }
+            ChartLayer::Grid => actions.grid = Some(visible),
+            ChartLayer::Drawings => self.drawings.set_all_hidden(!visible),
+            ChartLayer::LastPrice
+            | ChartLayer::BackfillDivider
+            | ChartLayer::SeamDivider
+            | ChartLayer::Crosshair
+            | ChartLayer::PaperTrading => {
+                if visible {
+                    self.hidden_layers.remove(&layer);
+                } else {
+                    self.hidden_layers.insert(layer);
+                }
+            }
+        }
+    }
+
+    /// Whether this pane draws `layer` at all, whatever the source can produce.
+    ///
+    /// §11 keeps the tape and everything read off it on the flow pane, so a
+    /// time pane has no machinery for those five and never will.
+    fn draws_layer(&self, layer: ChartLayer) -> bool {
+        self.orderflow.is_some()
+            || !matches!(
+                layer,
+                ChartLayer::Heatmap
+                    | ChartLayer::Bubbles
+                    | ChartLayer::LiveStrip
+                    | ChartLayer::LaneMarks
+                    | ChartLayer::DepthGaps
+            )
+    }
+
+    /// Why `layer` cannot be shown here, if it cannot.
+    ///
+    /// A layer the source cannot produce — or that this pane does not draw at
+    /// all — is *unavailable*, not hidden: the menu shows the entry disabled
+    /// with the reason, the same wording the toolbar uses, rather than offering
+    /// a switch that would do nothing.
+    ///
+    /// `capabilities` is passed in rather than read here so one menu frame
+    /// resolves the running feed once instead of once per entry.
+    pub fn layer_blocked(
+        &self,
+        layer: ChartLayer,
+        capabilities: FeedCapabilities,
+    ) -> Option<&'static str> {
+        if !self.draws_layer(layer) {
+            return Some("the order-flow layers are drawn on the flow pane");
+        }
+        match layer {
+            ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
+                .then_some("order-book capture is not available for this source"),
+            ChartLayer::Bubbles => (!capabilities.traded_volume)
+                .then_some("this source quotes prices but prints no traded volume"),
+            _ => None,
+        }
+    }
+
+    /// Every layer this pane persists, and whether it is on.
+    ///
+    /// `style` comes from the window for the same reason it does in
+    /// [`Self::layer_visible`].
+    pub fn layer_states(&self, style: &ChartStyle) -> std::collections::BTreeMap<ChartLayer, bool> {
+        ChartLayer::ALL
+            .into_iter()
+            .filter(|layer| layer.persisted())
+            .map(|layer| (layer, self.layer_visible(layer, style)))
+            .collect()
+    }
+
+    /// The same visibility as one bit per persisted layer, for change
+    /// detection. `ALL` is a dozen entries, so the mask cannot outgrow `u16`.
+    pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
+        ChartLayer::ALL
+            .into_iter()
+            .enumerate()
+            .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
+            .fold(0_u16, |mask, (bit, _)| mask | (1 << bit))
+    }
+
+    /// Apply saved visibility to this pane, ignoring layers it cannot draw.
+    ///
+    /// The grid is not applied here — one window, one grid, and the app sets
+    /// that once rather than once per pane.
+    pub fn apply_layer_states(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
+        let mut discarded = LayerActions::default();
+        for (layer, visible) in states {
+            if *layer == ChartLayer::Grid || !self.draws_layer(*layer) {
+                continue;
+            }
+            self.set_layer_visible(*layer, *visible, &mut discarded);
+        }
+    }
+
+    /// Arming a tool brings back the layer it draws on.
+    ///
+    /// A crosshair that draws no cross, or a line tool that places invisible
+    /// objects, reads as a broken tool rather than as a hidden layer — and
+    /// reaching for the tool is the user saying they want to see it.
+    fn unhide_layer_for_armed_tool(&mut self, chrome: &mut PaneChrome<'_>) {
+        let layer = match chrome.toolrail.tool() {
+            Tool::Crosshair => ChartLayer::Crosshair,
+            Tool::Drawing(_) => ChartLayer::Drawings,
+            Tool::Pointer => return,
+        };
+        if !self.layer_visible(layer, chrome.style) {
+            self.set_layer_visible(layer, true, chrome.layers);
+        }
+    }
+
+    /// The canvas right-click menu: one entry per chart layer, then one per
+    /// indicator on this pane.
+    ///
+    /// The indicator entries drive `IndicatorViews::toggle_hidden` — the same
+    /// state the toolbar's eye writes — so an indicator hidden here shows as
+    /// hidden there, and the indicator state file remains its single home.
+    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        ui.label(
+            egui::RichText::new("chart layers")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        #[cfg(test)]
+        self.layer_menu_rects.clear();
+        for layer in ChartLayer::ALL {
+            let blocked = self.layer_blocked(layer, chrome.capabilities);
+            let mut visible = self.layer_visible(layer, chrome.style);
+            let response = ui
+                .add_enabled(
+                    blocked.is_none(),
+                    egui::Checkbox::new(&mut visible, layer.label()),
+                )
+                .on_hover_text(layer.hint());
+            #[cfg(test)]
+            self.layer_menu_rects.push((layer, response.rect));
+            if let Some(reason) = blocked {
+                response.on_disabled_hover_text(reason);
+            } else if response.changed() {
+                self.set_layer_visible(layer, visible, chrome.layers);
+            }
+        }
+
+        // Borrowed straight from the view list — no per-frame copy of the
+        // labels — and the one mutation waits until the loop lets go.
+        let mut toggled = None;
+        if !self.indicators.all().is_empty() {
+            ui.separator();
+            ui.label(
+                egui::RichText::new("indicators")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            for view in self.indicators.all() {
+                let mut visible = !view.hidden;
+                if ui
+                    .checkbox(&mut visible, view.label())
+                    .on_hover_text("hide/show without removing (no recompute)")
+                    .changed()
+                {
+                    toggled = Some(view.slot);
+                }
+            }
+        }
+        if let Some(slot) = toggled {
+            self.indicators.toggle_hidden(slot);
+            chrome.layers.indicators_changed = true;
+        }
     }
 
     /// The bar spec implied by the current selector state.
@@ -1051,6 +1314,7 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) {
+        self.unhide_layer_for_armed_tool(chrome);
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_plot_area = Some(area);
@@ -1072,6 +1336,15 @@ impl ChartPane {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
+        // Right-click: what is on this canvas, and what is not. Secondary
+        // button only, so it shares no gesture with the pan, the zoom or the
+        // drawing tools — a pan that ends anywhere never opens it.
+        chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
+        // While the menu is open the pointer is reading it, not the chart, so
+        // no crosshair chases it across the candles behind it.
+        if chart.context_menu_opened() {
+            self.hover_pos = None;
+        }
         let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
             let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
             PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
@@ -1706,18 +1979,29 @@ impl ChartPane {
         // paint them — one market, one set of price levels, and a level is as
         // true on the 5-minute context as it is on the flow chart. Prices out
         // of a pane's visible range simply do not draw.
-        chrome.paper.draw_layer(painter, chart_rect, axis_x, &scale);
+        //
+        // Switched off, they are only unpainted: the orders keep working and
+        // the dock keeps listing them (see the layer's hint).
+        if self.layer_visible(ChartLayer::PaperTrading, chrome.style) {
+            chrome.paper.draw_layer(painter, chart_rect, axis_x, &scale);
+        }
 
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
-        if let Some(bar) = partial.or_else(|| closed.last()) {
+        if self.layer_visible(ChartLayer::LastPrice, chrome.style)
+            && let Some(bar) = partial.or_else(|| closed.last())
+        {
             self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, chrome);
         }
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
-        self.draw_seam_divider(painter, history_rect, total, cw);
-        self.draw_backfill_divider(painter, history_rect, total, cw);
+        if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
+            self.draw_seam_divider(painter, history_rect, total, cw);
+        }
+        if self.layer_visible(ChartLayer::BackfillDivider, chrome.style) {
+            self.draw_backfill_divider(painter, history_rect, total, cw);
+        }
         self.draw_time_strip(painter, areas.time_strip, start, end, total, chrome);
         if let Some(orderflow) = self.orderflow.as_ref() {
             self.draw_lane_time_axis(
@@ -1738,7 +2022,11 @@ impl ChartPane {
                 theme::TEXT_MUTED,
             );
         }
-        self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
+        if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
+            self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
+        }
+        // The status badge is not a layer: it reports whether the source is
+        // healthy, and a chart with every layer off must still say that.
         if let Some(orderflow) = self.orderflow.as_ref() {
             orderflow.draw_status_badge(painter, chart_rect);
         }

@@ -17,3 +17,5 @@ __pycache__/
 /paper-trades
 # The drawing presets the app remembers between runs (PR #94 follow-up)
 /quantick-drawing-presets.toml
+# Which chart layers the app was last showing (the right-click layer menu)
+/chart-layers.toml

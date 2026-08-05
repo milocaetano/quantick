@@ -60,6 +60,11 @@ pub struct CanvasChrome<'a> {
     pub presets: &'a crate::drawings::presets::PresetStore,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
+    /// What the running source can produce, for the layer menu's disabled
+    /// entries. Resolved once by the app rather than per pane, per entry.
+    pub capabilities: FeedCapabilities,
+    /// Where a pane's layer menu leaves the switches it does not own.
+    pub layers: &'a mut crate::chart_layers::LayerActions,
 }
 
 /// Drop venue bars that overlap the trade-derived series.
@@ -677,6 +682,10 @@ impl Tab {
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
         );
+        // The pane opens looking like the one it splits away from: a user who
+        // switched the crosshair off is not asking for it back by opening a
+        // second view of the same market.
+        pane.hidden_layers = self.flow_pane.hidden_layers.clone();
         self.time_pane = Some(pane);
         self.loading.end(LoadingTask::BarRebuild);
         // The pane exists now, so there is something for a prefix to go in
@@ -1506,6 +1515,8 @@ impl Tab {
                 symbol,
                 paper,
                 paper_owns_input: false,
+                capabilities: chrome.capabilities,
+                layers: chrome.layers,
             };
             // Time pane first, then flow. Both take the same two steps in the
             // same order — which is what keeps the split honest: the second
