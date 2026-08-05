@@ -653,8 +653,13 @@ impl PaperTrading {
             }
             _ => "an offset field needs fixing".to_owned(),
         };
+        let hotkey = match side {
+            Side::Buy => "Shift+B",
+            Side::Sell => "Shift+S",
+        };
         format!(
-            "simulated market {} - fills at the next print; {quantity}, {bracket} (Trading tab)",
+            "simulated market {} - fills at the next print; {quantity}, {bracket} \
+             (Trading tab) · {hotkey}",
             side_word(side),
         )
     }
@@ -1164,40 +1169,107 @@ impl PaperTrading {
         None
     }
 
-    /// The armed click: build the command at the clicked price and let the
-    /// simulator answer. Stays armed on a rejection — the toast explains
-    /// where the order may sit, and the user clicks again.
+    /// The armed click: place at the clicked price and disarm on success.
+    /// Stays armed on a rejection — the toast explains where the order may
+    /// sit, and the user clicks again.
     fn place_armed(&mut self, armed: ArmedPlacement, raw_price: f64) {
+        if self.place_resting(armed.side, armed.kind, raw_price) {
+            self.armed = None;
+        }
+    }
+
+    /// Rest a limit/stop entry at `raw_price` with the ticket's quantity
+    /// and offsets; returns whether the simulator accepted it.
+    fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
         let Some(quantity) = self.parse_quantity() else {
-            return;
+            return false;
         };
         let price = self.snap(raw_price);
-        let Some(bracket) = self.parse_bracket(armed.side, price) else {
-            return;
+        let Some(bracket) = self.parse_bracket(side, price) else {
+            return false;
         };
-        let command = match armed.kind {
+        let command = match kind {
             EntryKind::Limit => Command::PlaceLimit {
-                side: armed.side,
+                side,
                 quantity,
                 price,
                 bracket,
             },
             EntryKind::Stop => Command::PlaceStop {
-                side: armed.side,
+                side,
                 quantity,
                 trigger: price,
                 bracket,
             },
-            // Market never arms; the form fires it directly.
-            EntryKind::Market => return,
+            // Market never rests; the buttons fire it directly.
+            EntryKind::Market => return false,
         };
         let events = self.sim.apply(command);
         let placed = events
             .iter()
             .any(|event| matches!(event, SimEvent::Placed(_)));
         self.handle_events(events);
-        if placed {
-            self.armed = None;
+        placed
+    }
+
+    /// The chart context menu's trade section, anchored at the clicked
+    /// price: market both ways, then the resting types that are valid on
+    /// that side of the market. The invalid ones stay visible but
+    /// disabled, wearing the sim core's own rejection text — the same
+    /// curriculum the toasts teach.
+    pub fn context_trade_actions(&mut self, ui: &mut egui::Ui, raw_price: f64) {
+        ui.label(
+            egui::RichText::new("trade")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        let Some(mark) = self.sim.mark_price() else {
+            ui.label(
+                egui::RichText::new("no print yet - there is no market to trade against")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            return;
+        };
+        let quantity = self
+            .quantity_preview()
+            .map_or_else(|| "?".to_owned(), fmt_decimal);
+        for side in [Side::Buy, Side::Sell] {
+            if ui
+                .button(format!("{} {quantity} market", side_word_upper(side)))
+                .on_hover_text("fills at the next print, with the ticket's offsets")
+                .clicked()
+            {
+                self.market(side);
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        let price = self.snap(raw_price);
+        let entries = [
+            (Side::Buy, EntryKind::Limit, price < mark),
+            (Side::Buy, EntryKind::Stop, price > mark),
+            (Side::Sell, EntryKind::Limit, price > mark),
+            (Side::Sell, EntryKind::Stop, price < mark),
+        ];
+        for (side, kind, valid) in entries {
+            let label = format!(
+                "{} {quantity} {} @ {}",
+                side_word_upper(side),
+                kind_word(kind),
+                fmt_decimal(price),
+            );
+            let reason = match kind {
+                EntryKind::Limit => quantick_sim::RejectReason::LimitOnWrongSide(side),
+                _ => quantick_sim::RejectReason::StopOnWrongSide(side),
+            };
+            let response = ui
+                .add_enabled(valid, egui::Button::new(label))
+                .on_disabled_hover_text(reason.to_string());
+            if response.clicked() {
+                self.place_resting(side, kind, raw_price);
+                ui.close_menu();
+            }
         }
     }
 
@@ -1283,7 +1355,7 @@ impl PaperTrading {
             if !self.sim.orders().is_empty()
                 && ui
                     .button("Cancel all orders")
-                    .on_hover_text("remove every working order without trading")
+                    .on_hover_text("remove every working order without trading (Shift+X)")
                     .clicked()
             {
                 self.cancel_all_orders();
@@ -1464,7 +1536,8 @@ impl PaperTrading {
                     half,
                 ))
                 .on_hover_text(format!(
-                    "close the {word} {qty} and open the opposite side at the same size"
+                    "close the {word} {qty} and open the opposite side at the same size \
+                     (Shift+R)"
                 ))
                 .clicked()
             {
@@ -1508,7 +1581,7 @@ impl PaperTrading {
         let full = ui.available_width();
         if ui
             .add(Self::quiet_action("Flatten all", full))
-            .on_hover_text("close the position and cancel every working order")
+            .on_hover_text("close the position and cancel every working order (Shift+F)")
             .clicked()
         {
             self.flatten();

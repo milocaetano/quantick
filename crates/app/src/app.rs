@@ -1975,6 +1975,24 @@ const PREVIOUS_TAB_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::ne
     egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
     egui::Key::Tab,
 );
+/// Simulated buy at market (`docs/ux/paper-trading.md` §9). All the
+/// trading hotkeys are Shift+letter and stand down while any text field
+/// owns the keyboard — a capital letter typed into a symbol box must
+/// never become an order.
+const PAPER_BUY_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::B);
+/// Simulated sell at market.
+const PAPER_SELL_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::S);
+/// Reverse the simulated position.
+const PAPER_REVERSE_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::R);
+/// Flatten: close the position and cancel every working order.
+const PAPER_FLATTEN_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::F);
+/// Cancel every working order without trading.
+const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::X);
 /// Height of the menu bar, in pixels (§5 zone 1).
 const MENU_BAR_HEIGHT: f32 = 28.0;
 
@@ -1987,6 +2005,30 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        // Trading hotkeys, swallowed only while no text field owns the
+        // keyboard. Market entries use the ticket's quantity and offsets,
+        // exactly like the toolbar buttons they twin.
+        if !ctx.wants_keyboard_input() {
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_BUY_SHORTCUT)) {
+                self.active_tab_mut()
+                    .paper
+                    .market(quantick_engine::Side::Buy);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_SELL_SHORTCUT)) {
+                self.active_tab_mut()
+                    .paper
+                    .market(quantick_engine::Side::Sell);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_REVERSE_SHORTCUT)) {
+                self.active_tab_mut().paper.reverse_position();
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_FLATTEN_SHORTCUT)) {
+                self.active_tab_mut().paper.flatten();
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_CANCEL_SHORTCUT)) {
+                self.active_tab_mut().paper.cancel_all_orders();
+            }
         }
 
         let mut tab_action = None;

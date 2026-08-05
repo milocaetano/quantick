@@ -488,6 +488,9 @@ pub struct ChartPane {
     /// the paper host is mutably reachable outside the chrome's shared
     /// borrow.
     paper_hud_anchor: Option<(egui::Rect, PriceScale)>,
+    /// Price under the right-click that opened the layer menu — the trade
+    /// section's anchor. Refreshed by every secondary click on the canvas.
+    context_menu_price: Option<f64>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -567,6 +570,7 @@ impl ChartPane {
             hover_pos: None,
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
+            context_menu_price: None,
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_press_position: None,
@@ -763,6 +767,14 @@ impl ChartPane {
     /// state the toolbar's eye writes — so an indicator hidden here shows as
     /// hidden there, and the indicator state file remains its single home.
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        // The trade section rides on top, on the pane that owns order
+        // entry, anchored at the price the right-click landed on.
+        if chrome.paper_owns_input
+            && let Some(price) = self.context_menu_price
+        {
+            chrome.paper.context_trade_actions(ui, price);
+            ui.separator();
+        }
         ui.label(
             egui::RichText::new("chart layers")
                 .size(11.0)
@@ -1393,6 +1405,19 @@ impl ChartPane {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
+        let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
+            let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+            PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
+        });
+        // The price under a right-click, remembered before the menu eats
+        // the pointer: the trade section places orders at it.
+        if chart.secondary_clicked()
+            && let Some(position) = chart.interact_pointer_pos()
+            && areas.chart.contains(position)
+            && let Some(scale) = drawing_scale.as_ref()
+        {
+            self.context_menu_price = Some(scale.price_at(position.y));
+        }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
         // drawing tools — a pan that ends anywhere never opens it.
@@ -1402,10 +1427,6 @@ impl ChartPane {
         if chart.context_menu_opened() {
             self.hover_pos = None;
         }
-        let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
-            let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
-            PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
-        });
         let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
         let drawing_area = egui::Rect::from_min_max(
             areas.chart.min,
