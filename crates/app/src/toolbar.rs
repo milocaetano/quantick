@@ -495,9 +495,24 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             // hatch. `bars → time` must not require knowing that a minute is
             // 60000 (audit QW1).
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
                 for (label, preset_ms) in crate::time_header::PRESETS {
                     let selected = *model.time_interval_ms == preset_ms;
-                    if ui.selectable_label(selected, label).clicked() && !selected {
+                    // The selected timeframe wears the chip language (solid
+                    // accent, dark ink) — the unselected ones stay quiet.
+                    let (fill, ink) = if selected {
+                        (theme::ACCENT, theme::CHIP_INK)
+                    } else {
+                        (theme::CONTROL, theme::TEXT_MUTED)
+                    };
+                    let chip = ui.add(
+                        egui::Button::new(egui::RichText::new(label).color(ink).small())
+                            .fill(fill)
+                            .stroke(egui::Stroke::NONE)
+                            .rounding(egui::Rounding::same(9.0))
+                            .min_size(egui::vec2(28.0, 18.0)),
+                    );
+                    if chip.clicked() && !selected {
                         *model.time_interval_ms = preset_ms;
                     }
                 }
@@ -571,43 +586,47 @@ fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
 /// seen a price, never on the provider — paper trading works on any feed.
 fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     let paper = &model.paper;
-    let buy = ui
-        .add_enabled(
-            paper.ready,
-            egui::Button::new(
-                egui::RichText::new(&paper.buy_label)
-                    .color(theme::BUY)
-                    .strong(),
-            ),
+    // The entries speak the chip language: solid side colour, dark ink —
+    // the same grammar as the price chips in the gutter, because the button
+    // and the entry line it will create are one statement.
+    let entry = |ui: &mut egui::Ui, label: &str, fill: egui::Color32, enabled: bool| {
+        ui.add_enabled(
+            enabled,
+            egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
+                .fill(fill)
+                .stroke(egui::Stroke::NONE)
+                .rounding(egui::Rounding::same(3.0))
+                .min_size(egui::vec2(52.0, 24.0)),
         )
+    };
+    let buy = entry(ui, &paper.buy_label, theme::BUY, paper.ready)
         .on_hover_text(&paper.buy_hover)
         .on_disabled_hover_text("waiting for the first print - there is no market yet");
     if buy.clicked() {
         actions.push(ToolbarAction::PaperBuy);
     }
-    let sell = ui
-        .add_enabled(
-            paper.ready,
-            egui::Button::new(
-                egui::RichText::new(&paper.sell_label)
-                    .color(theme::SELL)
-                    .strong(),
-            ),
-        )
+    let sell = entry(ui, &paper.sell_label, theme::SELL, paper.ready)
         .on_hover_text(&paper.sell_hover)
         .on_disabled_hover_text("waiting for the first print - there is no market yet");
     if sell.clicked() {
         actions.push(ToolbarAction::PaperSell);
     }
     // The exit control, on the same surface as the entries: an open position
-    // must never require a dock dive to leave (audit pain 1, B2).
+    // must never require a dock dive to leave (audit pain 1, B2). Outlined,
+    // not filled — leaving is deliberate, never the loudest thing on the bar.
     if let Some(close) = &paper.close_label {
         let button = ui
-            .add(egui::Button::new(
-                egui::RichText::new(format!("× {close}"))
-                    .color(theme::TEXT_PRIMARY)
-                    .strong(),
-            ))
+            .add(
+                egui::Button::new(
+                    egui::RichText::new(format!("× {close}"))
+                        .color(theme::TEXT_PRIMARY)
+                        .strong(),
+                )
+                .fill(theme::CONTROL)
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                .rounding(egui::Rounding::same(3.0))
+                .min_size(egui::vec2(0.0, 24.0)),
+            )
             .on_hover_text("exit the open simulated position at the next print (market)");
         if button.clicked() {
             actions.push(ToolbarAction::PaperClose);

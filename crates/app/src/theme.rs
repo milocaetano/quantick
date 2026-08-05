@@ -50,6 +50,10 @@ pub const TAG_BG: Color32 = Color32::from_rgb(0x37, 0x3F, 0x50);
 /// (the inspector's locked/hidden notes). [`TEXT_FAINT`] stays reserved for
 /// decoration and disabled states, where 4.5:1 contrast is not required.
 pub const TEXT_SUPPORT: Color32 = Color32::from_rgb(0x86, 0x92, 0xA4);
+/// `chip/ink` — dark text inside a solid semantic-color chip: the last-price
+/// chip's ink, shared by every surface that speaks the chip language (trade
+/// buttons, the position HUD's side tag, the jump-to-live chip).
+pub const CHIP_INK: Color32 = Color32::from_rgb(0x0E, 0x12, 0x1A);
 
 /// Alpha of an "active" tint: a layer accent at 22% over the chrome.
 const ACTIVE_TINT_ALPHA: u8 = 56; // ≈ 22% of 255

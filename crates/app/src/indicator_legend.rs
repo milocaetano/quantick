@@ -56,11 +56,15 @@ pub(crate) fn draw(
         .fixed_pos(chart_rect.left_top() + egui::vec2(LEGEND_MARGIN_PX, LEGEND_MARGIN_PX))
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
+            // The HUD's card grammar, quieter: sunken fill, hairline border,
+            // no rail — the rows' own colour dots carry the identity.
             egui::Frame::none()
-                .fill(theme::TAG_BG)
+                .fill(theme::INSET)
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
                 .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+                .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
                     for view in views {
                         draw_row(ui, view, &mut actions);
                     }
