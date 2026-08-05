@@ -69,5 +69,5 @@ pub mod report;
 pub use events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, SimEvent};
 pub use order::{Bracket, EntryKind, Order, OrderId};
 pub use position::Position;
-pub use report::PerformanceReport;
+pub use report::{PerformanceReport, ReasonReport, SideReport};
 pub use simulator::{ClosedTrade, Command, QueuedAction, Simulator};
