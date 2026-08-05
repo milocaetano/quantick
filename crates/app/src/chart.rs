@@ -352,6 +352,24 @@ const AXIS_MAX_DECIMALS: usize = 4;
 /// Steps are 1/2/5 × a power of ten, so the only error to absorb is the one
 /// binary floating point introduces.
 const AXIS_STEP_EPSILON: f64 = 1e-6;
+/// Decimals a compact readout shows below the smallest abbreviation unit.
+const COMPACT_VALUE_DECIMALS: usize = 2;
+
+/// One value for a compact readout (the indicator legend's last-value cell):
+/// the axis units' own spellings — `1.20M`, `3.40K` — so the legend and the
+/// axis beside it can never write a thousand two ways. Non-finite values are
+/// an honest `—`, never a `NaN` on screen.
+#[must_use]
+pub fn compact_value(value: f64) -> String {
+    if !value.is_finite() {
+        return "—".to_owned();
+    }
+    let (unit, suffix) = AXIS_UNITS
+        .into_iter()
+        .find(|(threshold, _)| value.abs() >= *threshold)
+        .unwrap_or((1.0, ""));
+    format!("{:.COMPACT_VALUE_DECIMALS$}{suffix}", value / unit)
+}
 
 /// Labelled ticks for a vertical axis `height_px` tall spanning `[lo, hi]`:
 /// round numbers, written against the step they advance by and the magnitude
@@ -495,6 +513,19 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
     use std::str::FromStr as _;
+
+    /// The legend's value cell speaks the axis' own abbreviations, and a
+    /// missing value is a blank, never a `NaN`.
+    #[test]
+    fn compact_values_share_the_axis_spellings() {
+        assert_eq!(compact_value(70.0), "70.00");
+        assert_eq!(compact_value(-3.25), "-3.25");
+        assert_eq!(compact_value(1_234.0), "1.23K");
+        assert_eq!(compact_value(-2_500_000.0), "-2.50M");
+        assert_eq!(compact_value(7.2e9), "7.20B");
+        assert_eq!(compact_value(f64::NAN), "—");
+        assert_eq!(compact_value(f64::INFINITY), "—");
+    }
 
     fn bar(low: &str, high: &str) -> Bar {
         let l = Decimal::from_str(low).unwrap();

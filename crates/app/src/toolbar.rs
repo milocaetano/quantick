@@ -39,16 +39,22 @@ const W_SOURCE_FULL: f32 = 350.0;
 const W_SOURCE_SHRUNK: f32 = 260.0;
 /// BARS without the parameter widget.
 const W_BARS: f32 = 160.0;
-/// The bar-parameter label + drag value.
+/// The bar-parameter label + drag value (every kind but time).
 const W_BAR_PARAM: f32 = 150.0;
+/// The time kind's parameter row: four preset chips plus the custom drag.
+const W_TIME_PARAM: f32 = 260.0;
 /// The `+ older ▾` split button.
 const W_HISTORY: f32 = 100.0;
-/// The simulated BUY/SELL pair.
-const W_TRADE: f32 = 110.0;
 /// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
 const W_LAYERS: f32 = 128.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
 const W_ICON: f32 = 28.0;
+/// Estimated width of one glyph in a TRADE button label, in pixels.
+const TRADE_GLYPH_PX: f32 = 7.0;
+/// One TRADE button's own horizontal padding, in pixels.
+const TRADE_BUTTON_PAD_PX: f32 = 16.0;
+/// The close button's `× ` prefix, in pixels.
+const TRADE_CLOSE_PREFIX_PX: f32 = 14.0;
 
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
@@ -93,8 +99,11 @@ impl CollapsePlan {
     /// Estimated width of the toolbar under this plan. The `⋯` slot is
     /// always reserved: it appears exactly when something folds, so counting
     /// it conditionally would make the first fold width-neutral and leave
-    /// the planner skipping straight past it.
-    fn width(self) -> f32 {
+    /// the planner skipping straight past it. `trade_width` and
+    /// `param_width` come in as parameters: the TRADE group's state-aware
+    /// labels grow and shrink with the position, and the time kind's chip
+    /// row is wider than the other kinds' single drag.
+    fn width(self, trade_width: f32, param_width: f32) -> f32 {
         let mut width = W_SLACK + W_ICON + W_BARS + W_LAYERS;
         width += if self.feed_full_name {
             W_SOURCE_FULL
@@ -102,13 +111,13 @@ impl CollapsePlan {
             W_SOURCE_SHRUNK
         };
         if self.param_inline {
-            width += W_BAR_PARAM;
+            width += param_width;
         }
         if self.history_inline {
             width += W_HISTORY;
         }
         if self.trade_inline {
-            width += W_TRADE;
+            width += trade_width;
         }
         if self.look_inline {
             width += W_ICON;
@@ -124,7 +133,7 @@ impl CollapsePlan {
 /// The last plan is accepted even when it still overflows — there is nothing
 /// left to fold, and the symbol and LAYERS are never candidates.
 #[must_use]
-pub fn collapse_plan(available: f32) -> CollapsePlan {
+pub fn collapse_plan(available: f32, trade_width: f32, param_width: f32) -> CollapsePlan {
     let mut plan = CollapsePlan::FULL;
     let steps: [fn(&mut CollapsePlan); 6] = [
         |plan| plan.look_inline = false,
@@ -135,12 +144,36 @@ pub fn collapse_plan(available: f32) -> CollapsePlan {
         |plan| plan.feed_full_name = false,
     ];
     for fold in steps {
-        if plan.width() <= available {
+        if plan.width(trade_width, param_width) <= available {
             return plan;
         }
         fold(&mut plan);
     }
     plan
+}
+
+/// Estimated TRADE width for the collapse plan. The state-aware labels
+/// (`SELL 5 (reverses to short 4)`, the close button) change with the
+/// position, so the fold decision must read them rather than a constant.
+#[must_use]
+pub fn trade_width(paper: &PaperTradeModel) -> f32 {
+    let button = |label: &str| TRADE_BUTTON_PAD_PX + label.chars().count() as f32 * TRADE_GLYPH_PX;
+    let mut width = button(&paper.buy_label) + button(&paper.sell_label);
+    if let Some(close) = &paper.close_label {
+        width += button(close) + TRADE_CLOSE_PREFIX_PX;
+    }
+    width
+}
+
+/// Estimated width of the selected kind's parameter row, for the collapse
+/// plan: the time kind carries the preset chips (audit QW1), so its row is
+/// wider than the single label + drag every other kind shows.
+#[must_use]
+pub fn param_width(kind: BarKind) -> f32 {
+    match kind {
+        BarKind::Time => W_TIME_PARAM,
+        _ => W_BAR_PARAM,
+    }
 }
 
 /// The amber label that replaces SOURCE while a recording plays.
@@ -194,14 +227,50 @@ pub struct ToolbarModel<'a> {
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
     pub appearance_open: bool,
-    /// Whether the paper-trading simulator has seen a price — the TRADE
-    /// buttons disable themselves (with the reason) until it has.
-    pub paper_ready: bool,
+    /// The TRADE group: readiness, state-aware entry labels and the close
+    /// button, all computed by the paper host (`PaperTrading`).
+    pub paper: PaperTradeModel,
     /// Active indicators, for the INDICATORS menu (add order).
     pub indicators: Vec<IndicatorMenuEntry>,
     /// Loadable script names, embedded first (the INDICATORS menu's "add"
     /// section; indices map straight to [`ToolbarAction::AddScriptIndicator`]).
     pub scripts: Vec<String>,
+}
+
+/// What the TRADE group shows this frame, computed by the paper host so the
+/// toolbar stays decoupled from the simulator's types. The labels disclose
+/// what the press would do to the open position (`SELL 1 (closes)`), because
+/// the quantity deciding it lives in a tab the toolbar never shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaperTradeModel {
+    /// Whether the simulator has seen a price — the buttons disable
+    /// themselves (with the reason) until it has.
+    pub ready: bool,
+    /// The buy button's state-aware label.
+    pub buy_label: String,
+    /// The sell button's state-aware label.
+    pub sell_label: String,
+    /// The buy button's hover text (quantity and bracket disclosure).
+    pub buy_hover: String,
+    /// The sell button's hover text.
+    pub sell_hover: String,
+    /// `Close 1 LONG` while a position is open; `None` removes the button.
+    pub close_label: Option<String>,
+}
+
+impl PaperTradeModel {
+    /// A flat, ready TRADE group — the tests' baseline.
+    #[cfg(test)]
+    fn flat(ready: bool) -> Self {
+        Self {
+            ready,
+            buy_label: "BUY 1".to_owned(),
+            sell_label: "SELL 1".to_owned(),
+            buy_hover: "simulated market buy".to_owned(),
+            sell_hover: "simulated market sell".to_owned(),
+            close_label: None,
+        }
+    }
 }
 
 /// One active indicator as the INDICATORS menu shows it. Raw slot numbers
@@ -256,6 +325,8 @@ pub enum ToolbarAction {
     PaperBuy,
     /// Simulated market sell at the Trading tab's quantity (paper trading).
     PaperSell,
+    /// Exit the open simulated position at the next print.
+    PaperClose,
 }
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
@@ -272,7 +343,11 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
-            let plan = collapse_plan(ui.available_width());
+            let plan = collapse_plan(
+                ui.available_width(),
+                trade_width(&model.paper),
+                param_width(*model.kind),
+            );
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 draw_source(ui, model, plan);
@@ -415,15 +490,28 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             );
         }
         BarKind::Time => {
-            ui.label("interval ms");
-            ui.add(
-                egui::DragValue::new(model.time_interval_ms)
-                    .range(
-                        crate::state::MIN_TIME_INTERVAL_MS as f64
-                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                    )
-                    .speed(crate::state::TIME_INTERVAL_DRAG_SPEED),
-            );
+            // The same four presets the time pane's header offers — one
+            // list, two surfaces (§11) — with the drag as the custom escape
+            // hatch. `bars → time` must not require knowing that a minute is
+            // 60000 (audit QW1).
+            ui.horizontal(|ui| {
+                for (label, preset_ms) in crate::time_header::PRESETS {
+                    let selected = *model.time_interval_ms == preset_ms;
+                    if ui.selectable_label(selected, label).clicked() && !selected {
+                        *model.time_interval_ms = preset_ms;
+                    }
+                }
+                ui.add(
+                    egui::DragValue::new(model.time_interval_ms)
+                        .range(
+                            crate::state::MIN_TIME_INTERVAL_MS as f64
+                                ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                        )
+                        .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
+                        .suffix(" ms"),
+                )
+                .on_hover_text("custom interval, in milliseconds");
+            });
         }
         BarKind::Imbalance => {
             ui.label("target trades");
@@ -436,13 +524,14 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
     }
 }
 
-/// Short parameter readout for the merged kind combo, e.g. `tick · 50`.
+/// Short parameter readout for the merged kind combo, e.g. `tick · 50` or
+/// `time · 1m` — the chips' own vocabulary, never raw milliseconds (QW3).
 fn param_summary(model: &ToolbarModel) -> String {
     match model.kind {
         BarKind::Tick => model.tick_n.to_string(),
         BarKind::Volume => format!("{:.1}", model.volume_units),
         BarKind::Dollar => format!("{:.0}", model.dollar_notional),
-        BarKind::Time => format!("{} ms", model.time_interval_ms),
+        BarKind::Time => crate::state::fmt_time_interval(*model.time_interval_ms),
         BarKind::Imbalance => model.imbalance_target.to_string(),
     }
 }
@@ -476,36 +565,53 @@ fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
     ui.small(format!("{} trades backfilled so far", model.history_trades));
 }
 
-/// TRADE: the simulated market entries (`docs/ux/paper-trading.md`).
-/// Quantity, brackets and everything else live in the Trading dock tab;
-/// these two buttons are the "act now" pair. Gated on the simulator having
+/// TRADE: the simulated market entries and, while a position is open, its
+/// exit (`docs/ux/paper-trading.md`). Quantity and brackets live in the
+/// Trading dock tab; the labels disclose them. Gated on the simulator having
 /// seen a price, never on the provider — paper trading works on any feed.
 fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
+    let paper = &model.paper;
     let buy = ui
         .add_enabled(
-            model.paper_ready,
-            egui::Button::new(egui::RichText::new("BUY").color(theme::BUY).strong()),
+            paper.ready,
+            egui::Button::new(
+                egui::RichText::new(&paper.buy_label)
+                    .color(theme::BUY)
+                    .strong(),
+            ),
         )
-        .on_hover_text(
-            "simulated market buy - fills at the next print; quantity and brackets \
-             live in the Trading tab",
-        )
+        .on_hover_text(&paper.buy_hover)
         .on_disabled_hover_text("waiting for the first print - there is no market yet");
     if buy.clicked() {
         actions.push(ToolbarAction::PaperBuy);
     }
     let sell = ui
         .add_enabled(
-            model.paper_ready,
-            egui::Button::new(egui::RichText::new("SELL").color(theme::SELL).strong()),
+            paper.ready,
+            egui::Button::new(
+                egui::RichText::new(&paper.sell_label)
+                    .color(theme::SELL)
+                    .strong(),
+            ),
         )
-        .on_hover_text(
-            "simulated market sell - fills at the next print; quantity and brackets \
-             live in the Trading tab",
-        )
+        .on_hover_text(&paper.sell_hover)
         .on_disabled_hover_text("waiting for the first print - there is no market yet");
     if sell.clicked() {
         actions.push(ToolbarAction::PaperSell);
+    }
+    // The exit control, on the same surface as the entries: an open position
+    // must never require a dock dive to leave (audit pain 1, B2).
+    if let Some(close) = &paper.close_label {
+        let button = ui
+            .add(egui::Button::new(
+                egui::RichText::new(format!("× {close}"))
+                    .color(theme::TEXT_PRIMARY)
+                    .strong(),
+            ))
+            .on_hover_text("exit the open simulated position at the next print (market)");
+        if button.clicked() {
+            actions.push(ToolbarAction::PaperClose);
+        }
     }
 }
 
@@ -644,6 +750,10 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
                     .clicked()
                 {
                     actions.push(ToolbarAction::OpenIndicatorSettings(entry.slot));
+                    // The menu closes so it cannot occlude the dialog it
+                    // just spawned (egui paints menus above windows) —
+                    // audit M3.
+                    ui.close_menu();
                 }
                 if ui
                     .small_button(icons::TRASH)
@@ -651,6 +761,10 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
                     .clicked()
                 {
                     actions.push(ToolbarAction::RemoveIndicator(entry.slot));
+                    // Closing beats redrawing the menu around a vanished
+                    // row. The eye deliberately keeps the menu open:
+                    // toggling several indicators is one errand.
+                    ui.close_menu();
                 }
             });
         }
@@ -706,17 +820,29 @@ fn draw_overflow(
         if !plan.trade_inline {
             ui.separator();
             let buy = ui
-                .add_enabled(model.paper_ready, egui::Button::new("Buy at market (SIM)"))
+                .add_enabled(
+                    model.paper.ready,
+                    egui::Button::new(format!("{} at market (SIM)", model.paper.buy_label)),
+                )
                 .on_disabled_hover_text("waiting for the first print - there is no market yet");
             if buy.clicked() {
                 actions.push(ToolbarAction::PaperBuy);
                 ui.close_menu();
             }
             let sell = ui
-                .add_enabled(model.paper_ready, egui::Button::new("Sell at market (SIM)"))
+                .add_enabled(
+                    model.paper.ready,
+                    egui::Button::new(format!("{} at market (SIM)", model.paper.sell_label)),
+                )
                 .on_disabled_hover_text("waiting for the first print - there is no market yet");
             if sell.clicked() {
                 actions.push(ToolbarAction::PaperSell);
+                ui.close_menu();
+            }
+            if let Some(close) = &model.paper.close_label
+                && ui.button(format!("× {close} (SIM)")).clicked()
+            {
+                actions.push(ToolbarAction::PaperClose);
                 ui.close_menu();
             }
         }
@@ -731,6 +857,10 @@ fn draw_overflow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The flat TRADE pair's width — the old `W_TRADE` constant, kept as the
+    /// tests' baseline now that the group is measured from its labels.
+    const FLAT_TRADE_W: f32 = 110.0;
 
     /// How many §6 collapse steps a plan has taken. `None` when the plan is
     /// not one of the seven canonical states — folding out of order.
@@ -759,14 +889,14 @@ mod tests {
 
     #[test]
     fn a_wide_toolbar_folds_nothing() {
-        let plan = collapse_plan(10_000.0);
+        let plan = collapse_plan(10_000.0, FLAT_TRADE_W, W_BAR_PARAM);
         assert_eq!(stage(plan), Some(0));
         assert!(!plan.overflow_needed());
     }
 
     #[test]
     fn a_hopeless_width_ends_fully_folded() {
-        let plan = collapse_plan(0.0);
+        let plan = collapse_plan(0.0, FLAT_TRADE_W, W_BAR_PARAM);
         assert_eq!(stage(plan), Some(6));
         assert!(plan.overflow_needed());
     }
@@ -778,7 +908,7 @@ mod tests {
         // and every plan must be one of the canonical §6 states.
         let mut width = 100.0;
         while width <= 2000.0 {
-            let plan = collapse_plan(width);
+            let plan = collapse_plan(width, FLAT_TRADE_W, W_BAR_PARAM);
             let stage = stage(plan).expect("plans fold strictly in the §6 order");
             assert!(
                 stage <= last_stage,
@@ -793,10 +923,63 @@ mod tests {
     #[test]
     fn look_folds_first_and_alone_at_a_mildly_tight_width() {
         // One pixel short of the full plan: exactly LOOK moves to overflow.
-        let full_width = CollapsePlan::FULL.width();
-        let plan = collapse_plan(full_width - 1.0);
+        let full_width = CollapsePlan::FULL.width(FLAT_TRADE_W, W_BAR_PARAM);
+        let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W, W_BAR_PARAM);
         assert_eq!(stage(plan), Some(1));
         assert!(plan.overflow_needed());
+    }
+
+    /// An open position widens TRADE (state-aware labels + the close
+    /// button), and the plan reads that width: what exactly fits flat folds
+    /// once a position opens.
+    #[test]
+    fn an_open_position_widens_trade_and_folds_sooner() {
+        let flat = PaperTradeModel::flat(true);
+        let open = PaperTradeModel {
+            buy_label: "BUY 1 (adds to 2)".to_owned(),
+            sell_label: "SELL 1 (closes 1 of 2)".to_owned(),
+            close_label: Some("Close 2 LONG".to_owned()),
+            ..PaperTradeModel::flat(true)
+        };
+        let flat_w = trade_width(&flat);
+        let open_w = trade_width(&open);
+        assert!(open_w > flat_w, "{open_w} vs {flat_w}");
+        let exactly_flat = CollapsePlan::FULL.width(flat_w, W_BAR_PARAM);
+        assert_eq!(
+            stage(collapse_plan(exactly_flat, flat_w, W_BAR_PARAM)),
+            Some(0)
+        );
+        assert!(
+            stage(collapse_plan(exactly_flat, open_w, W_BAR_PARAM)).expect("canonical") > 0,
+            "the wider TRADE must fold something at the same window width"
+        );
+    }
+
+    /// The time kind's chip row widens the parameter slot, and the plan
+    /// reads that width: what exactly fits a drag-only kind folds once the
+    /// chips are on screen.
+    #[test]
+    fn the_time_kind_widens_the_param_slot_and_folds_sooner() {
+        assert!(param_width(BarKind::Time) > param_width(BarKind::Tick));
+        let exactly_drag = CollapsePlan::FULL.width(FLAT_TRADE_W, param_width(BarKind::Tick));
+        assert_eq!(
+            stage(collapse_plan(
+                exactly_drag,
+                FLAT_TRADE_W,
+                param_width(BarKind::Tick)
+            )),
+            Some(0)
+        );
+        assert!(
+            stage(collapse_plan(
+                exactly_drag,
+                FLAT_TRADE_W,
+                param_width(BarKind::Time)
+            ))
+            .expect("canonical")
+                > 0,
+            "the wider chip row must fold something at the same window width"
+        );
     }
 
     #[test]
@@ -856,7 +1039,7 @@ mod tests {
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
-                        paper_ready: true,
+                        paper: PaperTradeModel::flat(true),
                         // Non-empty on purpose: the entry rows (status dot,
                         // eye, trash) are only drawn when the menu has
                         // something in it, and an empty vec never exercises
@@ -884,6 +1067,86 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// With the time kind selected, the preset chips reach actual toolbar
+    /// pixels — the audit's pain 2 began with `bars → time` offering a bare
+    /// millisecond drag (QW1), and the summary speaks the chips' vocabulary
+    /// (QW3).
+    #[test]
+    fn the_time_kind_paints_the_preset_chips() {
+        let ctx = egui::Context::default();
+        let mut feed_id = "binance".to_owned();
+        let mut symbol = "BTCUSDT".to_owned();
+        let mut kind = BarKind::Time;
+        let mut tick_n = 50_u64;
+        let mut volume_units = 5.0_f64;
+        let mut dollar_notional = 500_000.0_f64;
+        let mut time_interval_ms = 60_000_i64;
+        let mut imbalance_target = 100_u64;
+        let mut history_step = 2_000_usize;
+        // Wide enough that the §6 plan folds nothing — the point is the
+        // inline chip row, not the overflow menu.
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1900.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        let mut painted = String::new();
+        for _ in 0..2 {
+            let output = ctx.run(input(), |ctx| {
+                let mut model = ToolbarModel {
+                    feeds: vec![("binance".to_owned(), "Binance".to_owned())],
+                    feed_id: &mut feed_id,
+                    feed_display_name: "Binance".to_owned(),
+                    symbols: vec!["BTCUSDT".to_owned()],
+                    symbol: &mut symbol,
+                    replay: None,
+                    kind: &mut kind,
+                    tick_n: &mut tick_n,
+                    volume_units: &mut volume_units,
+                    dollar_notional: &mut dollar_notional,
+                    time_interval_ms: &mut time_interval_ms,
+                    imbalance_target: &mut imbalance_target,
+                    history_step: &mut history_step,
+                    history_trades: 1_000,
+                    capabilities: FeedCapabilities {
+                        book_capture: true,
+                        history_paging: true,
+                        traded_volume: true,
+                        ohlcv_history: true,
+                        ohlcv_generation: 0,
+                    },
+                    heatmap_on: false,
+                    bubbles_on: false,
+                    live_strip_on: false,
+                    dock_visible: true,
+                    appearance_open: false,
+                    paper: PaperTradeModel::flat(true),
+                    indicators: Vec::new(),
+                    scripts: Vec::new(),
+                };
+                let actions = draw(ctx, &mut model);
+                assert!(actions.is_empty(), "no clicks, no actions");
+            });
+            painted.clear();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape {
+                    painted.push_str(text.galley.text());
+                    painted.push(' ');
+                }
+            }
+        }
+        for chip in ["1m", "5m", "15m", "1h"] {
+            assert!(
+                painted.contains(chip),
+                "the {chip} preset never reached the toolbar; painted: {painted}"
+            );
+        }
+        assert_eq!(kind, BarKind::Time, "an un-clicked frame changes nothing");
+        assert_eq!(time_interval_ms, 60_000);
     }
 
     /// The same layout for a venue that prints no volume — the shape a live
@@ -935,7 +1198,7 @@ mod tests {
                         appearance_open: false,
                         // Not yet ready: the TRADE pair must lay out in its
                         // disabled state without asking anything of the app.
-                        paper_ready: false,
+                        paper: PaperTradeModel::flat(false),
                         indicators: Vec::new(),
                         scripts: Vec::new(),
                     };
@@ -944,5 +1207,89 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// With a position open, the exit control reaches actual toolbar pixels
+    /// — the audit's pain 1 was precisely this button not existing anywhere
+    /// the user looks.
+    #[test]
+    fn an_open_position_paints_the_close_button() {
+        let ctx = egui::Context::default();
+        let mut feed_id = "binance".to_owned();
+        let mut symbol = "BTCUSDT".to_owned();
+        let mut kind = BarKind::Tick;
+        let mut tick_n = 50_u64;
+        let mut volume_units = 5.0_f64;
+        let mut dollar_notional = 500_000.0_f64;
+        let mut time_interval_ms = 1_000_i64;
+        let mut imbalance_target = 100_u64;
+        let mut history_step = 2_000_usize;
+        let mut painted = String::new();
+        // Wide enough that the §6 plan folds nothing — the point is the
+        // inline button, not the overflow menu.
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1900.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            let output = ctx.run(input(), |ctx| {
+                let mut model = ToolbarModel {
+                    feeds: vec![("binance".to_owned(), "Binance".to_owned())],
+                    feed_id: &mut feed_id,
+                    feed_display_name: "Binance".to_owned(),
+                    symbols: vec!["BTCUSDT".to_owned()],
+                    symbol: &mut symbol,
+                    replay: None,
+                    kind: &mut kind,
+                    tick_n: &mut tick_n,
+                    volume_units: &mut volume_units,
+                    dollar_notional: &mut dollar_notional,
+                    time_interval_ms: &mut time_interval_ms,
+                    imbalance_target: &mut imbalance_target,
+                    history_step: &mut history_step,
+                    history_trades: 1_000,
+                    capabilities: FeedCapabilities {
+                        book_capture: true,
+                        history_paging: true,
+                        traded_volume: true,
+                        ohlcv_history: true,
+                        ohlcv_generation: 0,
+                    },
+                    heatmap_on: false,
+                    bubbles_on: false,
+                    live_strip_on: false,
+                    dock_visible: true,
+                    appearance_open: false,
+                    paper: PaperTradeModel {
+                        buy_label: "BUY 1 (adds to 2)".to_owned(),
+                        sell_label: "SELL 1 (closes 1 of 2)".to_owned(),
+                        close_label: Some("Close 2 LONG".to_owned()),
+                        ..PaperTradeModel::flat(true)
+                    },
+                    indicators: Vec::new(),
+                    scripts: Vec::new(),
+                };
+                let actions = draw(ctx, &mut model);
+                assert!(actions.is_empty(), "no clicks, no actions");
+            });
+            painted.clear();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape {
+                    painted.push_str(text.galley.text());
+                    painted.push(' ');
+                }
+            }
+        }
+        assert!(
+            painted.contains("Close 2 LONG"),
+            "the exit control never reached the toolbar; painted: {painted}"
+        );
+        assert!(
+            painted.contains("SELL 1 (closes 1 of 2)"),
+            "the state-aware label never reached the toolbar; painted: {painted}"
+        );
     }
 }

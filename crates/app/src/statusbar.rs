@@ -198,9 +198,18 @@ pub fn bars_text(venue: usize, backfilled: usize, live: usize) -> String {
     format!("{venue}v+{backfilled}+{live} bars")
 }
 
-/// Draw the status bar as the window's bottom panel. `tz` is the bar's only
-/// control; picking an offset relabels the time axis immediately.
-pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) {
+/// What a click on the bar asked of the app this frame.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct StatusResponse {
+    /// The SIM cell was clicked: open the Trading dock tab, where the
+    /// position it summarizes is managed.
+    pub open_trading_tab: bool,
+}
+
+/// Draw the status bar as the window's bottom panel. `tz` is the bar's
+/// resident control; the SIM cell clicks through to the Trading tab.
+pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) -> StatusResponse {
+    let mut response = StatusResponse::default();
     egui::TopBottomPanel::bottom("status_bar")
         .exact_height(STATUS_BAR_HEIGHT)
         .frame(
@@ -213,12 +222,13 @@ pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) {
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
                 draw_provenance(ui, model);
                 ui.separator();
-                draw_content(ui, model);
+                response.open_trading_tab = draw_content(ui, model);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     draw_machinery(ui, model, tz)
                 });
             });
         });
+    response
 }
 
 /// Left section: state dot, venue, symbol, lag.
@@ -271,7 +281,9 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
 }
 
 /// Middle section: bar spec, counts, honesty labels and navigation hints.
-fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
+/// Returns whether the SIM cell was clicked.
+fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
+    let mut sim_clicked = false;
     ui.label(
         egui::RichText::new(&model.spec_summary)
             .monospace()
@@ -311,11 +323,19 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
             std::cmp::Ordering::Less => theme::SELL,
             std::cmp::Ordering::Equal => theme::TEXT_MUTED,
         };
-        ui.label(egui::RichText::new(text).monospace().color(color))
+        // A click-through, not just a readout: the cell summarizes a
+        // position managed two levels away, so it carries the way there.
+        let cell = ui
+            .add(
+                egui::Label::new(egui::RichText::new(text).monospace().color(color))
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text(
-                "paper-trading P&L (realized + open) in points - simulated fills, \
-                 not a broker account",
+                "paper-trading, in points - simulated fills, not a broker \
+                 account; click to open the Trading tab",
             );
+        sim_clicked = cell.clicked();
     }
     if !model.follows_live {
         ui.label(
@@ -331,6 +351,7 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) {
                 .color(theme::TEXT_FAINT),
         );
     }
+    sim_clicked
 }
 
 /// Right section, laid out right-to-left: timezone picker at the far edge,
@@ -488,7 +509,14 @@ mod tests {
                 show_perf: true,
             };
             for _ in 0..2 {
-                let _ = ctx.run(egui::RawInput::default(), |ctx| draw(ctx, &model, &mut tz));
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    let response = draw(ctx, &model, &mut tz);
+                    assert_eq!(
+                        response,
+                        StatusResponse::default(),
+                        "an un-clicked frame asks nothing of the app"
+                    );
+                });
             }
         }
         assert_eq!(
@@ -534,7 +562,9 @@ mod tests {
         // Two passes: egui settles its layout on the second.
         let mut painted = String::new();
         for _ in 0..2 {
-            let output = ctx.run(egui::RawInput::default(), |ctx| draw(ctx, &model, &mut tz));
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let _ = draw(ctx, &model, &mut tz);
+            });
             painted.clear();
             for shape in output.shapes {
                 if let egui::epaint::Shape::Text(text) = shape.shape {

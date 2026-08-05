@@ -3,8 +3,9 @@
 //! Every widget the user sees maps to exactly one spec variant — the crate
 //! declares, the app renders, nothing is hand-tailored per indicator. Apply
 //! sends the draft to the worker (construct anew → replace → replay), so a
-//! running indicator never observes a value changing mid-stream; Cancel
-//! drops the draft.
+//! running indicator never observes a value changing mid-stream — and the
+//! dialog stays open, because tuning is a nudge-and-look loop (audit M2);
+//! Close drops any un-applied edits.
 
 use eframe::egui;
 use quantick_indicators::{InputSpec, InputValue, Rgba8, SourceId};
@@ -14,6 +15,12 @@ use crate::theme;
 
 /// Drag sensitivity of a float input that declares no `step`.
 const DEFAULT_FLOAT_DRAG_SPEED: f64 = 0.1;
+
+/// Where the dialog first opens: beside the drawing inspector's own default
+/// (`DRAWING_INSPECTOR_DEFAULT_POSITION`), clear of the toolbar and of the
+/// INDICATORS menu that spawns it — a deliberate position instead of egui's
+/// centre default landing under the still-open menu (audit M3/QW2).
+const SETTINGS_DEFAULT_POSITION: egui::Pos2 = egui::pos2(120.0, 150.0);
 
 /// An open settings dialog: which slot, and the in-flight draft values.
 pub(crate) struct SettingsDialog {
@@ -29,9 +36,9 @@ pub(crate) struct SettingsDialog {
 pub(crate) enum SettingsOutcome {
     /// Keep showing the dialog.
     Open,
-    /// Discard the draft.
-    Cancel,
-    /// Send the draft to the worker and close.
+    /// Close the dialog, dropping any un-applied edits.
+    Close,
+    /// Send the draft to the worker; the dialog stays open.
     Apply,
 }
 
@@ -45,6 +52,7 @@ pub(crate) fn draw(
     let mut open = true;
     egui::Window::new(format!("Settings — {}", dialog.title))
         .id(egui::Id::new(("indicator-settings", dialog.slot.0)))
+        .default_pos(SETTINGS_DEFAULT_POSITION)
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -66,16 +74,24 @@ pub(crate) fn draw(
             }
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("Apply").clicked() {
+                if ui
+                    .button("Apply")
+                    .on_hover_text("apply and keep tuning - the dialog stays open")
+                    .clicked()
+                {
                     outcome = SettingsOutcome::Apply;
                 }
-                if ui.button("Cancel").clicked() {
-                    outcome = SettingsOutcome::Cancel;
+                if ui
+                    .button("Close")
+                    .on_hover_text("close without applying the current edits")
+                    .clicked()
+                {
+                    outcome = SettingsOutcome::Close;
                 }
             });
         });
     if !open {
-        outcome = SettingsOutcome::Cancel;
+        outcome = SettingsOutcome::Close;
     }
     outcome
 }

@@ -10,10 +10,11 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_engine::Side;
 
 use crate::feed::ReplayLink;
 use crate::orderflow_view::OrderflowView;
-use crate::paper_trading::PaperTrading;
+use crate::paper_trading::{PaperTrading, fmt_decimal, position_word};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::theme;
 use crate::widgets::{IconButton, RAIL_ICON};
@@ -24,6 +25,8 @@ pub const TAB_STRIP_WIDTH: f32 = 36.0;
 pub const DOCK_MIN_WIDTH: f32 = 280.0;
 /// Widest dock body the model allows.
 pub const DOCK_MAX_WIDTH: f32 = 360.0;
+/// Radius of the open-position badge on the Trading strip icon, in pixels.
+const BADGE_RADIUS_PX: f32 = 3.5;
 
 /// One dock tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,11 +183,44 @@ impl Dock {
             )
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
+                let position = env.paper.position_summary();
                 for tab in DockTab::ALL {
+                    // Only the Trading-with-position hover is dynamic; the
+                    // static texts stay borrowed rather than re-allocated
+                    // sixty times a second.
+                    let position_hover = match (tab, &position) {
+                        (DockTab::Trading, Some(summary)) => Some(format!(
+                            "{} — {} {} open",
+                            tab.hover_text(),
+                            position_word(summary.side),
+                            fmt_decimal(summary.quantity),
+                        )),
+                        _ => None,
+                    };
                     let button = IconButton::new(tab.icon(), RAIL_ICON)
                         .active(self.active == Some(tab))
-                        .hover_text(tab.hover_text())
+                        .hover_text(
+                            position_hover
+                                .as_deref()
+                                .unwrap_or_else(|| tab.hover_text()),
+                        )
                         .show(ui);
+                    // An open position must be findable from the chrome even
+                    // with the tab closed: the badge wears the side's own
+                    // color (amber stays reserved for provenance).
+                    if tab == DockTab::Trading
+                        && let Some(summary) = &position
+                    {
+                        let color = match summary.side {
+                            Side::Buy => theme::BUY,
+                            Side::Sell => theme::SELL,
+                        };
+                        let center = egui::pos2(
+                            button.rect.right() - BADGE_RADIUS_PX - 1.0,
+                            button.rect.top() + BADGE_RADIUS_PX + 1.0,
+                        );
+                        ui.painter().circle_filled(center, BADGE_RADIUS_PX, color);
+                    }
                     if button.clicked() {
                         self.select(tab);
                     }
@@ -398,5 +434,56 @@ mod tests {
             );
             assert!(!response.restart_book_capture);
         });
+    }
+
+    /// The strip wears a badge exactly while a position is open — the one
+    /// signal that survives the dock being collapsed.
+    #[test]
+    fn an_open_position_badges_the_trading_strip_icon() {
+        let ctx = egui::Context::default();
+        let mut dock = Dock::new();
+        let mut paper = PaperTrading::new();
+
+        let circles = |dock: &mut Dock, paper: &mut PaperTrading| {
+            let mut count = 0;
+            for _ in 0..2 {
+                count = 0;
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    let _ = dock.draw(
+                        ctx,
+                        &mut DockEnv {
+                            orderflow: &mut OrderflowView::new("TESTUSDT"),
+                            replay_view: &mut ReplayView::new(),
+                            replay: None,
+                            paper,
+                        },
+                    );
+                });
+                for shape in output.shapes {
+                    if matches!(shape.shape, egui::epaint::Shape::Circle(_)) {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        };
+
+        let flat = circles(&mut dock, &mut paper);
+        let print = |agg_id: u64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small test ids") * 1000,
+            price: rust_decimal::Decimal::from(100),
+            quantity: rust_decimal::Decimal::ONE,
+            side: Side::Buy,
+        };
+        paper.seed(&print(0));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1));
+        assert!(paper.position_summary().is_some(), "the buy filled");
+        let open = circles(&mut dock, &mut paper);
+        assert!(
+            open > flat,
+            "an open position must add the badge circle: {open} vs {flat}"
+        );
     }
 }
