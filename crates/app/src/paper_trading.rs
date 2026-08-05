@@ -481,6 +481,26 @@ impl PaperTrading {
         self.drag != PaperDrag::None
     }
 
+    /// The cursor that announces a paper line under the pointer (audit
+    /// M3/M4): vertical-resize over a draggable order/stop/target line,
+    /// not-allowed over the entry line — an average entry is history, not an
+    /// order, and the chart will not pan across it either. `None` away from
+    /// every line, so the caller falls through to the drawings' own cursors.
+    #[must_use]
+    pub fn hover_cursor(
+        &self,
+        pointer: egui::Pos2,
+        scale: &PriceScale,
+    ) -> Option<egui::CursorIcon> {
+        match self.line_at(pointer, scale)? {
+            PaperDrag::Blocked => Some(egui::CursorIcon::NotAllowed),
+            PaperDrag::StopLoss | PaperDrag::TakeProfit | PaperDrag::Order(_) => {
+                Some(egui::CursorIcon::ResizeVertical)
+            }
+            PaperDrag::None => None,
+        }
+    }
+
     /// Which line sits under the pointer, in draw-stack priority: pending
     /// orders first (they draw on top), then take profit, stop loss, and
     /// the (blocked) entry line.
@@ -1650,6 +1670,34 @@ mod tests {
         );
         assert!(paper.sim.orders().is_empty());
         assert!(paper.toast.is_some(), "the refusal explains itself");
+    }
+
+    /// The lines say what a press would do before it happens (audit M3/M4):
+    /// draggable levels wear the resize cursor, the entry line wears
+    /// not-allowed, and empty tape asks nothing.
+    #[test]
+    fn hover_cursors_announce_draggable_and_blocked_lines() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.stop_offset_text = "10".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let (_chart, scale) = chart_and_scale(80.0, 120.0);
+        assert_eq!(
+            paper.hover_cursor(egui::pos2(400.0, 300.0), &scale),
+            Some(egui::CursorIcon::ResizeVertical),
+            "the stop at 90 sits at y 300 and drags"
+        );
+        assert_eq!(
+            paper.hover_cursor(egui::pos2(400.0, 200.0), &scale),
+            Some(egui::CursorIcon::NotAllowed),
+            "the entry at 100 sits at y 200 and never moves"
+        );
+        assert_eq!(
+            paper.hover_cursor(egui::pos2(400.0, 40.0), &scale),
+            None,
+            "empty tape belongs to the chart"
+        );
     }
 
     #[test]

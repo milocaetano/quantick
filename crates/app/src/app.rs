@@ -468,6 +468,9 @@ pub struct QuantickApp {
     // Last frame's open state: the manager places itself beside the rail on
     // the frame it opens, and only then.
     drawing_manager_was_open: bool,
+    // The manager's delete-all confirmation row is showing (audit M7): the
+    // one command that removes locked objects too, so it is never one click.
+    drawing_manager_confirm_delete_all: bool,
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
@@ -600,6 +603,7 @@ impl QuantickApp {
             inspector_settle_frame: false,
             drawing_manager_open: false,
             drawing_manager_was_open: false,
+            drawing_manager_confirm_delete_all: false,
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
@@ -2826,13 +2830,17 @@ impl QuantickApp {
         let mut delete_row: Option<usize> = None;
         let mut show_all = false;
         let mut unlock_all = false;
+        let mut delete_all = false;
         let mut window = egui::Window::new("Drawn objects")
             .id(egui::Id::new("drawing_manager"))
             .open(&mut open)
             .default_pos(DRAWING_MANAGER_DEFAULT_POSITION)
             .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
             .collapsible(false)
-            .resizable(false);
+            // Resizable, with the list scrolling below (audit M13): thirty
+            // objects used to grow the window past the screen and put the
+            // footer out of reach.
+            .resizable(true);
         if just_opened && let Some(position) = self.manager_target_position(ctx) {
             window = window.current_pos(position);
         }
@@ -2841,68 +2849,106 @@ impl QuantickApp {
             if count == 0 {
                 ui.label("No drawings yet.");
             }
-            // Walked in reverse: the manager lists top-most first, the
-            // same order hit-testing resolves overlap.
-            for index in (0..count).rev() {
-                let drawing = &self.focused_pane().drawings.items()[index];
-                let selected = self.focused_pane().drawings.selected() == Some(index);
-                let locked = drawing.locked;
-                let hidden = drawing.hidden;
-                let name = drawing.tool.name();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    // Walked in reverse: the manager lists top-most first, the
+                    // same order hit-testing resolves overlap.
+                    for index in (0..count).rev() {
+                        let drawing = &self.focused_pane().drawings.items()[index];
+                        let selected = self.focused_pane().drawings.selected() == Some(index);
+                        let locked = drawing.locked;
+                        let hidden = drawing.hidden;
+                        let name = drawing.tool.name();
+                        ui.horizontal(|ui| {
+                            let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
+                            if hidden {
+                                label = label.weak();
+                            }
+                            if ui.selectable_label(selected, label).clicked() {
+                                select_row = Some(index);
+                            }
+                            if locked {
+                                ui.label(egui::RichText::new("locked").small());
+                            }
+                            if hidden {
+                                ui.label(egui::RichText::new("hidden").small());
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let delete = ui.small_button("Delete");
+                                    #[cfg(test)]
+                                    self.manager_action_rects
+                                        .push((index, "Delete", delete.rect));
+                                    if delete.clicked() {
+                                        delete_row = Some(index);
+                                    }
+                                    let front = ui.small_button("Front");
+                                    #[cfg(test)]
+                                    self.manager_action_rects.push((index, "Front", front.rect));
+                                    if front.clicked() {
+                                        front_row = Some(index);
+                                    }
+                                    let lock =
+                                        ui.small_button(if locked { "Unlock" } else { "Lock" });
+                                    #[cfg(test)]
+                                    self.manager_action_rects.push((index, "Lock", lock.rect));
+                                    if lock.clicked() {
+                                        lock_row = Some(index);
+                                    }
+                                    let eye = ui.small_button(if hidden { "Show" } else { "Hide" });
+                                    #[cfg(test)]
+                                    self.manager_action_rects.push((index, "Eye", eye.rect));
+                                    if eye.clicked() {
+                                        eye_row = Some(index);
+                                    }
+                                },
+                            );
+                        });
+                    }
+                });
+            ui.separator();
+            if self.drawing_manager_confirm_delete_all && count > 0 {
+                // The count-bearing gate (audit M7): deleting everything is
+                // one command, but never one stray click — and locked
+                // objects go too, which the question says out loud.
                 ui.horizontal(|ui| {
-                    let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
-                    if hidden {
-                        label = label.weak();
+                    ui.label(format!("Delete all {count} drawing(s), locked included?"));
+                    if ui.button("Delete all").clicked() {
+                        delete_all = true;
+                        self.drawing_manager_confirm_delete_all = false;
                     }
-                    if ui.selectable_label(selected, label).clicked() {
-                        select_row = Some(index);
+                    if ui.button("Keep").clicked() {
+                        self.drawing_manager_confirm_delete_all = false;
                     }
-                    if locked {
-                        ui.label(egui::RichText::new("locked").small());
+                });
+            } else {
+                self.drawing_manager_confirm_delete_all = false;
+                ui.horizontal(|ui| {
+                    if ui.button("Show all").clicked() {
+                        show_all = true;
                     }
-                    if hidden {
-                        ui.label(egui::RichText::new("hidden").small());
+                    if ui.button("Unlock all").clicked() {
+                        unlock_all = true;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let delete = ui.small_button("Delete");
-                        #[cfg(test)]
-                        self.manager_action_rects
-                            .push((index, "Delete", delete.rect));
-                        if delete.clicked() {
-                            delete_row = Some(index);
-                        }
-                        let front = ui.small_button("Front");
-                        #[cfg(test)]
-                        self.manager_action_rects.push((index, "Front", front.rect));
-                        if front.clicked() {
-                            front_row = Some(index);
-                        }
-                        let lock = ui.small_button(if locked { "Unlock" } else { "Lock" });
-                        #[cfg(test)]
-                        self.manager_action_rects.push((index, "Lock", lock.rect));
-                        if lock.clicked() {
-                            lock_row = Some(index);
-                        }
-                        let eye = ui.small_button(if hidden { "Show" } else { "Hide" });
-                        #[cfg(test)]
-                        self.manager_action_rects.push((index, "Eye", eye.rect));
-                        if eye.clicked() {
-                            eye_row = Some(index);
-                        }
-                    });
+                    if count > 0 && ui.button("Delete all…").clicked() {
+                        self.drawing_manager_confirm_delete_all = true;
+                    }
                 });
             }
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Show all").clicked() {
-                    show_all = true;
-                }
-                if ui.button("Unlock all").clicked() {
-                    unlock_all = true;
-                }
-            });
         });
         self.drawing_manager_open = open;
+        if delete_all {
+            let deleted = self.focused_pane_mut().drawings.delete_all();
+            if deleted > 0 {
+                self.drawing_toast = Some(DrawingToast {
+                    message: "All drawings deleted.",
+                    shown_at: now,
+                    offers_undo: true,
+                });
+            }
+        }
         if let Some(index) = select_row {
             self.focused_pane_mut().drawings.select(Some(index));
             // Centre the viewport on the object's bar span.
@@ -3227,6 +3273,12 @@ impl QuantickApp {
 
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
     fn handle_tab_keys(&mut self, ctx: &egui::Context) {
+        // Focus-gated like `handle_drawing_keys` (audit MINOR-13): typing in
+        // the source picker's field with Ctrl held must never close the tab
+        // under it — closing is instant and currently irreversible.
+        if ctx.memory(|memory| memory.focused().is_some()) {
+            return;
+        }
         let (new_tab, close_tab, next, previous) = ctx.input_mut(|input| {
             (
                 input.consume_shortcut(&NEW_TAB_SHORTCUT),

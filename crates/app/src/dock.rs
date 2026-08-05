@@ -213,7 +213,15 @@ impl Dock {
                         DockTab::Session => {
                             response.replay_action = draw_session_tab(ui, env);
                         }
-                        DockTab::Trading => env.paper.draw_trading_tab(ui),
+                        DockTab::Trading => {
+                            // The L2 tab scrolls; this body must too (audit
+                            // paper m3): a stack of pending orders used to
+                            // clip the session summary and the report button
+                            // with no way to reach them.
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| env.paper.draw_trading_tab(ui));
+                        }
                     }
                 });
             self.remember_width(tab, panel.response.rect.width());

@@ -790,6 +790,12 @@ pub(super) fn draw_levels_tab(
     ui.separator();
 
     // The level list. Visible / ratio / label / colour / fill / delete.
+    // A refused edit's message outlives its frame (audit M12): kept in temp
+    // storage until the next successful edit, because a label that lives
+    // only inside the `.changed()` branch is visible for ~16 ms — the typed
+    // ratio silently reverts and nothing explains why.
+    let error_id = ui.id().with("fib_level_error");
+    let sticky_error: Option<&'static str> = ui.data_mut(|data| data.get_temp(error_id));
     let mut error: Option<&'static str> = None;
     let mut remove: Option<usize> = None;
     let single_level = payload.levels.len() == 1;
@@ -893,7 +899,14 @@ pub(super) fn draw_levels_tab(
         payload.levels.remove(index);
         edited = true;
     }
-    if let Some(message) = error {
+    // A fresh refusal replaces the sticky one; a successful edit clears it;
+    // otherwise it stays on screen.
+    let shown = error.or(if edited { None } else { sticky_error });
+    ui.data_mut(|data| match shown {
+        Some(message) => data.insert_temp(error_id, message),
+        None => data.remove::<&'static str>(error_id),
+    });
+    if let Some(message) = shown {
         ui.colored_label(crate::theme::WARN, message);
     }
     ui.horizontal(|ui| {

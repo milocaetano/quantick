@@ -628,6 +628,12 @@ impl Drawings {
             self.items
                 .push(self.draft.take().expect("draft has points"));
             self.selected = Some(self.items.len() - 1);
+            // Drawing while hide-all is engaged releases it (audit M8): the
+            // act of placing a new object is the strongest possible request
+            // to see drawings, and a mark that vanishes on the click that
+            // finished it reads as a broken tool. One undo entry with the
+            // placement — undoing the object restores the hidden state too.
+            self.all_hidden = false;
             self.record(before);
             true
         } else {
@@ -707,6 +713,22 @@ impl Drawings {
         if let Some(baseline) = &mut self.gesture_baseline {
             shift(&mut baseline.items);
         }
+    }
+
+    /// Remove every drawing as one undoable step, and report how many went.
+    /// Locked objects go too: the caller gates this behind a count-bearing
+    /// confirmation, and a lock protects against a stray click, not against
+    /// an explicit clear-everything — `Ctrl+Z` brings the whole set back.
+    pub fn delete_all(&mut self) -> usize {
+        let count = self.items.len();
+        if count == 0 {
+            return 0;
+        }
+        let before = self.snapshot();
+        self.items.clear();
+        self.selected = None;
+        self.record(before);
+        count
     }
 
     /// One delete command for every trigger (button, manager, keyboard).
@@ -1059,6 +1081,67 @@ mod tests {
         assert!(drawings.undo(), "a forced delete is still undoable");
         assert_eq!(drawings.items().len(), 1);
         assert!(drawings.items()[0].locked, "undo restores the lock too");
+    }
+
+    /// Placing a drawing releases hide-all (audit M8): the finished object
+    /// must land on screen, never silently invisible behind the rail's eye —
+    /// and undo restores the hidden state along with the store.
+    #[test]
+    fn placing_a_drawing_releases_hide_all() {
+        let mut drawings = Drawings::default();
+        drawings.set_all_hidden(true);
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        assert!(!drawings.all_hidden(), "the new mark is visible");
+        assert!(drawings.undo(), "placement is one undoable step");
+        assert!(drawings.items().is_empty());
+        assert!(
+            drawings.all_hidden(),
+            "undoing the placement restores hide-all too"
+        );
+    }
+
+    /// Delete-all is one command, one undo entry, locked objects included —
+    /// the caller's count-bearing confirmation is the gate, not the lock.
+    #[test]
+    fn delete_all_takes_everything_in_one_undoable_step() {
+        let mut drawings = Drawings::default();
+        assert_eq!(drawings.delete_all(), 0, "an empty store deletes nothing");
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 1.0,
+                price: 100.0,
+            },
+        );
+        drawings.set_selected_locked(true);
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint {
+                bar: 2.0,
+                price: 105.0,
+            },
+        );
+        let undo_before = drawings.undo_depth();
+
+        assert_eq!(drawings.delete_all(), 2, "locked and unlocked both go");
+        assert!(drawings.items().is_empty());
+        assert_eq!(
+            drawings.undo_depth(),
+            undo_before + 1,
+            "one command, one entry"
+        );
+        assert!(drawings.undo(), "and it comes back whole");
+        assert_eq!(drawings.items().len(), 2);
+        assert!(
+            drawings.items().iter().any(|drawing| drawing.locked),
+            "the lock survives the round trip"
+        );
     }
 
     #[test]
