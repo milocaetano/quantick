@@ -19,7 +19,7 @@ use egui_phosphor::regular as icons;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
     Bracket, ClosedTrade, Command, EntryKind, OrderId, PerformanceReport, Position, QueuedAction,
-    SimEvent, Simulator, history,
+    SideReport, SimEvent, Simulator, history,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -92,6 +92,26 @@ const LEDGER_ROW_HEIGHT_PX: f32 = 34.0;
 const SIDE_RAIL_WIDTH_PX: f32 = 3.0;
 /// Height reserved under the ledger for the pinned totals strip.
 const TOTALS_STRIP_PX: f32 = 26.0;
+/// Headline tile geometry: a caption, a 22 px value, a sub-line.
+const TILE_HEIGHT_PX: f32 = 62.0;
+/// Gap between headline tiles.
+const TILE_GUTTER_PX: f32 = 8.0;
+/// The report's hero numbers — the one type size above 16 in the app.
+const HEADLINE_FONT_PX: f32 = 22.0;
+/// The equity curve's readable floor.
+const CURVE_MIN_H_PX: f32 = 160.0;
+/// Stops the curve from eating a resized window.
+const CURVE_MAX_H_PX: f32 = 240.0;
+/// Alpha of the equity area fill — ground under the line, not a mark.
+const CURVE_FILL_ALPHA: u8 = 31;
+/// At most this many curve points are drawn; the *drawing* downsamples
+/// past it (and says so), the metrics always use every trade.
+const CURVE_MAX_POINTS: usize = 1000;
+/// Space kept under the curve for the metric grids before the curve
+/// height clamps.
+const CURVE_GRID_RESERVE_PX: f32 = 230.0;
+/// Width of the equity curve's y-tick gutter.
+const CURVE_GUTTER_PX: f32 = 52.0;
 /// Text color inside colored gutter chips — the same ink as the last-price
 /// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
 /// duplicated here; keep the two identical).
@@ -182,10 +202,72 @@ enum ReportScope {
     All,
 }
 
-/// What the report window shows, loaded fresh from disk when opened.
-struct ReportData {
+/// The report's period filter, measured back from the newest saved trade
+/// in scope — never from a wall clock. The engine has no clock, and a
+/// replayed session's trades may be years old; a wall-clock "7 days" would
+/// report a perfectly good replay as empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReportPeriod {
+    Today,
+    Week,
+    Month,
+    Quarter,
+    All,
+}
+
+impl ReportPeriod {
+    /// Every period, in pill order.
+    const ALL: [Self; 5] = [
+        Self::Today,
+        Self::Week,
+        Self::Month,
+        Self::Quarter,
+        Self::All,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Today => "Today",
+            Self::Week => "7d",
+            Self::Month => "30d",
+            Self::Quarter => "90d",
+            Self::All => "All",
+        }
+    }
+
+    /// The anchor-relative phrase the support line reads.
+    fn phrase(self) -> &'static str {
+        match self {
+            Self::Today => "the newest trade's day",
+            Self::Week => "the last 7 days",
+            Self::Month => "the last 30 days",
+            Self::Quarter => "the last 90 days",
+            Self::All => "everything saved",
+        }
+    }
+
+    /// Oldest closing time still inside the period, measured back from
+    /// `anchor_ms`; `None` keeps everything.
+    fn cutoff_ms(self, anchor_ms: i64) -> Option<i64> {
+        const DAY_MS: i64 = 86_400_000;
+        match self {
+            Self::Today => Some(anchor_ms.div_euclid(DAY_MS) * DAY_MS),
+            Self::Week => Some(anchor_ms.saturating_sub(7 * DAY_MS)),
+            Self::Month => Some(anchor_ms.saturating_sub(30 * DAY_MS)),
+            Self::Quarter => Some(anchor_ms.saturating_sub(90 * DAY_MS)),
+            Self::All => None,
+        }
+    }
+}
+
+/// The report as filtered for display: the period's trades in closing
+/// order, their aggregation, and the anchor the period was measured from.
+struct ReportView {
+    period: ReportPeriod,
+    /// Newest closing time in scope — what the period counts back from.
+    anchor_ms: Option<i64>,
+    trades: Vec<ClosedTrade>,
     report: PerformanceReport,
-    history: LoadedHistory,
 }
 
 /// Journal rows loaded from disk, each remembering the symbol folder it
@@ -266,8 +348,16 @@ pub struct PaperTrading {
     controls: Vec<(PaperControl, egui::Rect)>,
     toast: Option<Toast>,
     report_open: bool,
-    report_scope: ReportScope,
-    report: Option<ReportData>,
+    /// Report symbol filter: `None` is every symbol, `Some` one folder.
+    report_symbol: Option<String>,
+    report_period: ReportPeriod,
+    /// Symbol folders on disk, for the report's combo box.
+    report_symbols: Vec<String>,
+    /// The report's history in scope, loaded fresh from disk.
+    report: Option<LoadedHistory>,
+    /// The report filtered to the period — rebuilt when the period or the
+    /// loaded history changes.
+    report_view: Option<ReportView>,
     // Trades ledger.
     ledger_scope: ReportScope,
     /// Earlier sessions' journal rows, read on first draw and on demand —
@@ -306,8 +396,11 @@ impl PaperTrading {
             controls: Vec::new(),
             toast: None,
             report_open: false,
-            report_scope: ReportScope::Symbol,
+            report_symbol: None,
+            report_period: ReportPeriod::All,
+            report_symbols: Vec::new(),
             report: None,
+            report_view: None,
             ledger_scope: ReportScope::Symbol,
             history_cache: None,
             selected_trade: None,
@@ -1666,55 +1759,143 @@ impl PaperTrading {
 
     fn open_report(&mut self) {
         self.report_open = true;
+        if self.report.is_none() && !self.symbol.is_empty() {
+            // First open lands on the chart's own symbol; later opens keep
+            // whatever the user last chose.
+            self.report_symbol = Some(self.symbol.clone());
+        }
         self.reload_report();
     }
 
     fn reload_report(&mut self) {
-        let symbol = match self.report_scope {
-            ReportScope::Symbol => Some(self.symbol.as_str()),
-            ReportScope::All => None,
+        self.report = Some(load_history(&self.dir, self.report_symbol.as_deref(), None));
+        self.report_view = None;
+        self.report_symbols = list_symbol_folders(&self.dir);
+    }
+
+    /// Rebuild the filtered view when the period (or the loaded history)
+    /// changed. The anchor is the newest trade in scope, never a clock.
+    fn ensure_report_view(&mut self) {
+        let fresh = self
+            .report_view
+            .as_ref()
+            .is_some_and(|view| view.period == self.report_period);
+        if fresh {
+            return;
+        }
+        let Some(history) = &self.report else {
+            self.report_view = None;
+            return;
         };
-        self.report = Some(load_report(&self.dir, symbol));
+        let anchor_ms = history.rows.last().map(|(_, trade)| trade.closed_ms);
+        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor));
+        let trades: Vec<ClosedTrade> = history
+            .rows
+            .iter()
+            .map(|(_, trade)| trade)
+            .filter(|trade| cutoff.is_none_or(|cutoff| trade.closed_ms >= cutoff))
+            .cloned()
+            .collect();
+        let report = PerformanceReport::from_trades(&trades);
+        self.report_view = Some(ReportView {
+            period: self.report_period,
+            anchor_ms,
+            trades,
+            report,
+        });
     }
 
     /// The performance report, computed from what is actually on disk.
+    /// Non-modal by the app's contract — dimming the chart while a
+    /// simulated position is open would be dangerous.
     pub fn draw_report_window(&mut self, ctx: &egui::Context) {
         if !self.report_open {
             return;
         }
+        self.ensure_report_view();
         let mut open = true;
-        let mut scope_changed = false;
+        let mut reload = false;
         egui::Window::new("Simulated performance")
             .open(&mut open)
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
+            .default_size(egui::vec2(620.0, 560.0))
+            .min_width(520.0)
+            .min_height(420.0)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("scope").color(theme::TEXT_MUTED));
-                    scope_changed |= ui
-                        .selectable_value(
-                            &mut self.report_scope,
-                            ReportScope::Symbol,
-                            format!("this symbol ({})", self.symbol),
-                        )
-                        .clicked();
-                    scope_changed |= ui
-                        .selectable_value(&mut self.report_scope, ReportScope::All, "all symbols")
-                        .clicked();
-                });
+                reload = self.draw_report_filters(ui);
                 ui.separator();
-                match &self.report {
-                    Some(data) if !data.history.rows.is_empty() => draw_report_body(ui, data),
+                match &self.report_view {
+                    Some(view) if !view.trades.is_empty() => {
+                        draw_report_tiles(ui, &view.report);
+                        ui.add_space(8.0);
+                        draw_equity_curve(ui, view);
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("paper_report_grids")
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                draw_report_grid(ui, &view.report);
+                                draw_side_grid(ui, &view.report);
+                                draw_exit_reason_grid(ui, &view.report);
+                            });
+                    }
                     _ => {
+                        ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new(
-                                "No saved trades yet - close a simulated trade and it lands here.",
-                            )
-                            .color(theme::TEXT_MUTED),
+                            egui::RichText::new("No saved trades for this filter.")
+                                .color(theme::TEXT_PRIMARY),
                         );
+                        let scope = self
+                            .report_symbol
+                            .as_deref()
+                            .unwrap_or("any symbol")
+                            .to_owned();
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{scope} has no trades in {}. Try \"All\", or another symbol.",
+                                self.report_period.phrase(),
+                            ))
+                            .color(theme::TEXT_SUPPORT)
+                            .small(),
+                        );
+                        let default_symbol = (!self.symbol.is_empty()).then(|| self.symbol.clone());
+                        if (self.report_period != ReportPeriod::All
+                            || self.report_symbol != default_symbol)
+                            && ui
+                                .button("Clear filters")
+                                .on_hover_text("back to this symbol, all time")
+                                .clicked()
+                        {
+                            self.report_symbol = default_symbol;
+                            self.report_period = ReportPeriod::All;
+                            reload = true;
+                        }
                     }
                 }
                 ui.add_space(6.0);
+                if let Some(history) = &self.report {
+                    if history.unreadable_files > 0 || history.problem_rows > 0 {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} file(s) unreadable, {} row(s) skipped - counted, never \
+                                 silently dropped.",
+                                history.unreadable_files, history.problem_rows,
+                            ))
+                            .color(theme::WARN)
+                            .small(),
+                        );
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} trade(s) across {} file(s) in scope",
+                            history.rows.len(),
+                            history.files
+                        ))
+                        .color(theme::TEXT_MUTED)
+                        .small(),
+                    );
+                }
                 ui.label(
                     egui::RichText::new(
                         "All figures are simulated, in points (price units × quantity) - \
@@ -1724,12 +1905,92 @@ impl PaperTrading {
                     .small(),
                 );
             });
-        if scope_changed {
+        if reload {
             self.reload_report();
         }
         if !open {
             self.report_open = false;
         }
+    }
+
+    /// The filter row (symbol combo + period pills + refresh) and the
+    /// support line stating the anchor out loud. Returns whether the
+    /// history must be re-read.
+    fn draw_report_filters(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut reload = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Symbol")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            let selected = self
+                .report_symbol
+                .clone()
+                .unwrap_or_else(|| "All symbols".to_owned());
+            let symbols = self.report_symbols.clone();
+            egui::ComboBox::from_id_salt("paper_report_symbol")
+                .width(140.0)
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(self.report_symbol.is_none(), "All symbols")
+                        .clicked()
+                    {
+                        self.report_symbol = None;
+                        reload = true;
+                    }
+                    for symbol in symbols {
+                        let on = self.report_symbol.as_deref() == Some(symbol.as_str());
+                        if ui.selectable_label(on, &symbol).clicked() {
+                            self.report_symbol = Some(symbol);
+                            reload = true;
+                        }
+                    }
+                });
+            ui.separator();
+            ui.label(
+                egui::RichText::new("Period")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            for period in ReportPeriod::ALL {
+                let on = self.report_period == period;
+                if pill_toggle(
+                    ui,
+                    period.label(),
+                    on,
+                    "measured back from the newest saved trade in scope, not the wall clock",
+                )
+                .clicked()
+                    && !on
+                {
+                    self.report_period = period;
+                    self.report_view = None;
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(icons::ARROWS_CLOCKWISE)
+                    .on_hover_text("re-read the history folder")
+                    .clicked()
+                {
+                    reload = true;
+                }
+            });
+        });
+        if let Some(view) = &self.report_view {
+            let text = match view.anchor_ms {
+                Some(anchor) => format!(
+                    "{} up to {} (newest saved trade, not the wall clock)",
+                    view.period.phrase(),
+                    fmt_utc_date(anchor),
+                ),
+                None => "no saved trades in this scope".to_owned(),
+            };
+            ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
+        }
+        reload
     }
 
     // ------------------------------------------------------------------
@@ -1904,10 +2165,421 @@ impl PaperTrading {
     }
 }
 
-/// The report body: one metric per row, the explanation on hover, honest
-/// blanks (`—`) where a ratio has no denominator.
-fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
-    let report = &data.report;
+/// The three headline tiles: NET (the one coloured number in the window),
+/// WIN RATE, PROFIT FACTOR — each with its denominator under it, so every
+/// tile is a self-explaining fact rather than a floating statistic.
+fn draw_report_tiles(ui: &mut egui::Ui, report: &PerformanceReport) {
+    let width = ((ui.available_width() - 2.0 * TILE_GUTTER_PX) / 3.0).max(80.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = TILE_GUTTER_PX;
+        draw_tile(
+            ui,
+            width,
+            "NET",
+            fmt_signed_points(report.net_points),
+            "pts",
+            points_color(report.net_points),
+            format!("{} trades", report.trades),
+        );
+        draw_tile(
+            ui,
+            width,
+            "WIN RATE",
+            report
+                .win_rate_pct
+                .map_or_else(|| "—".to_owned(), |rate| fmt_decimal(rate.round_dp(0))),
+            "%",
+            theme::TEXT_PRIMARY,
+            format!(
+                "{} W · {} L · {} scratch",
+                report.wins, report.losses, report.scratches
+            ),
+        );
+        draw_tile(
+            ui,
+            width,
+            "PROFIT FACTOR",
+            report
+                .profit_factor
+                .map_or_else(|| "—".to_owned(), fmt_points),
+            "",
+            theme::TEXT_PRIMARY,
+            format!(
+                "+{} / -{}",
+                fmt_points(report.gross_profit),
+                fmt_points(report.gross_loss)
+            ),
+        );
+    });
+}
+
+/// One headline tile: caption, hero value with its unit, denominator line.
+fn draw_tile(
+    ui: &mut egui::Ui,
+    width: f32,
+    label: &str,
+    value: String,
+    unit: &str,
+    value_color: egui::Color32,
+    subline: String,
+) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, TILE_HEIGHT_PX), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::Rounding::same(4.0), theme::INSET);
+    painter.rect_stroke(
+        rect,
+        egui::Rounding::same(4.0),
+        egui::Stroke::new(1.0_f32, theme::BORDER),
+    );
+    painter.text(
+        rect.min + egui::vec2(12.0, 6.0),
+        egui::Align2::LEFT_TOP,
+        label,
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+    let value_galley = painter.layout_no_wrap(
+        value,
+        egui::FontId::monospace(HEADLINE_FONT_PX),
+        value_color,
+    );
+    let value_w = value_galley.size().x;
+    let baseline = rect.top() + 38.0;
+    painter.galley(
+        egui::pos2(rect.left() + 12.0, baseline - value_galley.size().y),
+        value_galley,
+        value_color,
+    );
+    if !unit.is_empty() {
+        painter.text(
+            egui::pos2(rect.left() + 12.0 + value_w + 4.0, baseline - 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            unit,
+            egui::FontId::monospace(11.0),
+            theme::TEXT_MUTED,
+        );
+    }
+    painter.text(
+        egui::pos2(rect.left() + 12.0, rect.bottom() - 6.0),
+        egui::Align2::LEFT_BOTTOM,
+        subline,
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+}
+
+/// The realized equity curve, `E_k` by trade index — the closing order
+/// that defines the drawdown, so calling the axis "time" would misstate
+/// what is plotted. One quiet line; a diverging fill against the zero
+/// baseline answers "was I ever under water?" at a glance; the deepest
+/// drawdown is annotated so the number in the grid below is locatable.
+fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView) {
+    let n = view.trades.len();
+    if n == 0 {
+        return;
+    }
+    ui.label(caption("REALIZED EQUITY"));
+    let height =
+        (ui.available_height() - CURVE_GRID_RESERVE_PX).clamp(CURVE_MIN_H_PX, CURVE_MAX_H_PX);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter_at(rect);
+
+    // The walk E_0..E_n, with E_0 = 0 before the first trade.
+    let mut equity = Vec::with_capacity(n + 1);
+    equity.push(0.0_f32);
+    let mut sum = Decimal::ZERO;
+    for trade in &view.trades {
+        sum = sum.saturating_add(trade.pnl_points);
+        equity.push(sum.to_f64().unwrap_or_default() as f32);
+    }
+    let (mut low, mut high) = (0.0_f32, 0.0_f32);
+    for value in &equity {
+        low = low.min(*value);
+        high = high.max(*value);
+    }
+    let span = (high - low).max(f32::EPSILON);
+    let plot = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + CURVE_GUTTER_PX, rect.top() + 4.0),
+        egui::pos2(rect.right() - 4.0, rect.bottom() - 14.0),
+    );
+    let x_at = |k: usize| plot.left() + plot.width() * (k as f32) / (n as f32);
+    let y_at = |value: f32| plot.bottom() - (value - low) / span * plot.height();
+    let zero_y = y_at(0.0);
+
+    // Gridlines + y ticks at the floor, zero and the ceiling.
+    let mut ticks = vec![low, 0.0, high];
+    ticks.dedup_by(|a, b| (*a - *b).abs() < f32::EPSILON);
+    for tick in ticks {
+        let y = y_at(tick);
+        painter.line_segment(
+            [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
+            egui::Stroke::new(
+                1.0_f32,
+                egui::Color32::from_rgba_unmultiplied(
+                    theme::CONTROL.r(),
+                    theme::CONTROL.g(),
+                    theme::CONTROL.b(),
+                    128,
+                ),
+            ),
+        );
+        painter.text(
+            egui::pos2(plot.left() - 6.0, y),
+            egui::Align2::RIGHT_CENTER,
+            fmt_points(Decimal::from_f64_retain(f64::from(tick)).unwrap_or_default()),
+            egui::FontId::monospace(10.0),
+            theme::TEXT_FAINT,
+        );
+    }
+
+    // Diverging fill to the zero baseline: gains ground in BUY, losses in
+    // SELL, split exactly at each crossing.
+    let stride = n.div_ceil(CURVE_MAX_POINTS).max(1);
+    let fill_of = |value: f32| {
+        let color = if value >= 0.0 {
+            theme::BUY
+        } else {
+            theme::SELL
+        };
+        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), CURVE_FILL_ALPHA)
+    };
+    let mut drawn_points = vec![egui::pos2(x_at(0), y_at(equity[0]))];
+    let mut previous = 0usize;
+    let mut next = stride;
+    while previous < n {
+        let k = next.min(n);
+        let (a, b) = (equity[previous], equity[k]);
+        let (x0, x1) = (x_at(previous), x_at(k));
+        if a == 0.0 && b == 0.0 {
+            // Nothing to fill on the baseline itself.
+        } else if (a >= 0.0) == (b >= 0.0) {
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(x0, y_at(a)),
+                    egui::pos2(x1, y_at(b)),
+                    egui::pos2(x1, zero_y),
+                    egui::pos2(x0, zero_y),
+                ],
+                fill_of(if a == 0.0 { b } else { a }),
+                egui::Stroke::NONE,
+            ));
+        } else {
+            // The step crosses zero: split it at the exact crossing.
+            let t = a / (a - b);
+            let xc = x0 + (x1 - x0) * t;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(x0, y_at(a)),
+                    egui::pos2(xc, zero_y),
+                    egui::pos2(x0, zero_y),
+                ],
+                fill_of(a),
+                egui::Stroke::NONE,
+            ));
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(xc, zero_y),
+                    egui::pos2(x1, y_at(b)),
+                    egui::pos2(x1, zero_y),
+                ],
+                fill_of(b),
+                egui::Stroke::NONE,
+            ));
+        }
+        drawn_points.push(egui::pos2(x1, y_at(b)));
+        previous = k;
+        next += stride;
+    }
+
+    // The zero baseline over the fill, then the line over everything.
+    painter.line_segment(
+        [
+            egui::pos2(plot.left(), zero_y),
+            egui::pos2(plot.right(), zero_y),
+        ],
+        egui::Stroke::new(1.0_f32, theme::BORDER),
+    );
+    painter.add(egui::Shape::line(
+        drawn_points,
+        egui::Stroke::new(1.5_f32, theme::TEXT_PRIMARY),
+    ));
+    if n == 1 {
+        painter.circle_filled(
+            egui::pos2(x_at(1), y_at(equity[1])),
+            2.0,
+            theme::TEXT_PRIMARY,
+        );
+        painter.text(
+            plot.center(),
+            egui::Align2::CENTER_CENTER,
+            "one trade — no curve yet",
+            egui::FontId::monospace(10.0),
+            theme::TEXT_FAINT,
+        );
+    }
+
+    // The deepest drawdown, locatable: its peak level dotted, the drop
+    // solid, the number on a chip at the drop's midpoint.
+    if let Some((peak, trough)) = view.report.max_drawdown_span {
+        let (peak, trough) = (peak as usize, trough as usize);
+        if trough <= n {
+            let peak_y = y_at(equity[peak]);
+            let trough_x = x_at(trough);
+            let trough_y = y_at(equity[trough]);
+            painter.extend(egui::Shape::dashed_line(
+                &[egui::pos2(x_at(peak), peak_y), egui::pos2(trough_x, peak_y)],
+                egui::Stroke::new(1.0_f32, theme::SELL),
+                2.0,
+                3.0,
+            ));
+            painter.line_segment(
+                [egui::pos2(trough_x, peak_y), egui::pos2(trough_x, trough_y)],
+                egui::Stroke::new(1.0_f32, theme::SELL),
+            );
+            let label = format!("-{} pts", fmt_points(view.report.max_drawdown_points));
+            let galley = painter.layout_no_wrap(label, egui::FontId::monospace(10.0), CHIP_TEXT);
+            let center = egui::pos2((x_at(peak) + trough_x) / 2.0, (peak_y + trough_y) / 2.0);
+            let bg = egui::Rect::from_center_size(center, galley.size() + egui::vec2(8.0, 4.0));
+            painter.rect_filled(bg, egui::Rounding::same(2.0), theme::SELL);
+            painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, CHIP_TEXT);
+        }
+    }
+
+    // Axis words: first and last trade index, with the unit between them.
+    painter.text(
+        egui::pos2(plot.left(), rect.bottom()),
+        egui::Align2::LEFT_BOTTOM,
+        "1",
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+    painter.text(
+        egui::pos2(plot.right(), rect.bottom()),
+        egui::Align2::RIGHT_BOTTOM,
+        n.to_string(),
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+    painter.text(
+        egui::pos2(plot.center().x, rect.bottom()),
+        egui::Align2::CENTER_BOTTOM,
+        "trades",
+        egui::FontId::monospace(10.0),
+        theme::TEXT_FAINT,
+    );
+    if stride > 1 {
+        painter.text(
+            egui::pos2(plot.left() + 4.0, plot.top() + 2.0),
+            egui::Align2::LEFT_TOP,
+            format!(
+                "curve downsampled to ~{CURVE_MAX_POINTS} points; every metric uses every trade"
+            ),
+            egui::FontId::proportional(10.0),
+            theme::TEXT_SUPPORT,
+        );
+    }
+
+    // Hover: snap to the nearest trade index and answer in the ledger's
+    // vocabulary, so the two surfaces never disagree.
+    if let Some(pointer) = response.hover_pos()
+        && plot.contains(pointer)
+    {
+        let k = (((pointer.x - plot.left()) / plot.width()) * (n as f32))
+            .round()
+            .clamp(0.0, n as f32) as usize;
+        let x = x_at(k);
+        painter.line_segment(
+            [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
+            egui::Stroke::new(1.0_f32, theme::TEXT_FAINT),
+        );
+        let head = if k == 0 {
+            "start".to_owned()
+        } else {
+            let trade = &view.trades[k - 1];
+            format!(
+                "#{k} · {} {} · {} pts",
+                position_word(trade.side),
+                fmt_decimal(trade.quantity),
+                fmt_signed_points(trade.pnl_points),
+            )
+        };
+        let lines = [
+            head,
+            format!(
+                "equity {} pts",
+                fmt_signed_points(
+                    Decimal::from_f64_retain(f64::from(equity[k])).unwrap_or_default()
+                )
+            ),
+            if k == 0 {
+                String::new()
+            } else {
+                fmt_utc_minute(view.trades[k - 1].closed_ms)
+            },
+        ];
+        draw_hover_card(&painter, rect, pointer, &lines);
+    }
+}
+
+/// A small TAG_BG hover card with up to three lines, clamped into `rect`.
+fn draw_hover_card(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    pointer: egui::Pos2,
+    lines: &[String],
+) {
+    let font = egui::FontId::monospace(10.0);
+    let galleys: Vec<_> = lines
+        .iter()
+        .filter(|line| !line.is_empty())
+        .map(|line| painter.layout_no_wrap(line.clone(), font.clone(), theme::TEXT_PRIMARY))
+        .collect();
+    if galleys.is_empty() {
+        return;
+    }
+    let width = galleys
+        .iter()
+        .map(|galley| galley.size().x)
+        .fold(0.0_f32, f32::max)
+        + 12.0;
+    let height: f32 = galleys.iter().map(|galley| galley.size().y).sum::<f32>() + 10.0;
+    let mut origin = pointer + egui::vec2(10.0, -height - 6.0);
+    origin.x = origin.x.min(rect.right() - width).max(rect.left());
+    origin.y = origin.y.max(rect.top());
+    let card = egui::Rect::from_min_size(origin, egui::vec2(width, height));
+    painter.rect_filled(card, egui::Rounding::same(4.0), theme::TAG_BG);
+    let mut y = card.top() + 5.0;
+    for galley in galleys {
+        let advance = galley.size().y;
+        painter.galley(
+            egui::pos2(card.left() + 6.0, y),
+            galley,
+            theme::TEXT_PRIMARY,
+        );
+        y += advance;
+    }
+}
+
+/// The metric grid: one metric per row, the explanation on hover, honest
+/// blanks (`—`) where a ratio has no denominator. Every value here has a
+/// structurally fixed sign, so none of them is coloured.
+fn draw_report_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
+    let blank = || "—".to_owned();
+    let pts = |value: Decimal| format!("{} pts", fmt_points(value));
+    let opt_pts = |value: Option<Decimal>| {
+        value.map_or_else(blank, |value| format!("{} pts", fmt_points(value)))
+    };
+    let opt_plain = |value: Option<Decimal>| value.map_or_else(blank, fmt_points);
+    let duration = |value: Option<i64>| value.map_or_else(blank, fmt_duration_ms);
     egui::Grid::new("paper_report_grid")
         .num_columns(2)
         .spacing([16.0, 4.0])
@@ -1919,37 +2591,27 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
                 ui.end_row();
             };
             row(
-                "net P&L",
-                format!("{} pts", fmt_signed_points(report.net_points)),
-                "every closed trade's points, summed",
-            );
-            row(
                 "trades",
                 format!(
                     "{} ({} long / {} short)",
                     report.trades, report.long_trades, report.short_trades
                 ),
-                "closed round trips in the saved history",
-            );
-            row(
-                "win rate",
-                report
-                    .win_rate_pct
-                    .map_or_else(|| "—".to_owned(), |rate| format!("{}%", fmt_points(rate))),
-                "winning trades over all trades; a scratch counts as a trade but not a win",
-            );
-            row(
-                "profit factor",
-                report
-                    .profit_factor
-                    .map_or_else(|| "—".to_owned(), fmt_points),
-                "gross profit divided by gross loss; above 1 means the wins outweigh — \
-                 blank with no losses, because an undefined ratio is not infinity",
+                "closed round trips under the current filter",
             );
             row(
                 "max drawdown",
-                format!("{} pts", fmt_points(report.max_drawdown_points)),
+                pts(report.max_drawdown_points),
                 "deepest drop of realized equity below its running peak, in closing order",
+            );
+            row(
+                "max run-up",
+                pts(report.max_runup_points),
+                "highest rise of realized equity above its running trough — the drawdown's mirror",
+            );
+            row(
+                "recovery factor",
+                opt_plain(report.recovery_factor),
+                "net profit divided by the max drawdown; blank while nothing drew down",
             );
             row(
                 "gross profit / loss",
@@ -1964,10 +2626,53 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
                 "avg win / loss",
                 format!(
                     "{} / {} pts",
-                    report.avg_win.map_or_else(|| "—".to_owned(), fmt_points),
-                    report.avg_loss.map_or_else(|| "—".to_owned(), fmt_points),
+                    opt_plain(report.avg_win),
+                    opt_plain(report.avg_loss),
                 ),
                 "mean winner and mean loser magnitude",
+            );
+            row(
+                "payoff ratio",
+                opt_plain(report.payoff_ratio),
+                "average win divided by average loss — how much a winner pays for a loser",
+            );
+            row(
+                "expectancy",
+                report
+                    .expectancy_points
+                    .map_or_else(blank, |value| format!("{} pts/trade", fmt_points(value))),
+                "net profit per trade: what one average trade pays",
+            );
+            row(
+                "std deviation",
+                opt_pts(report.stddev_points),
+                "sample standard deviation of trade points (N−1); blank below two trades",
+            );
+            row(
+                "longest streaks",
+                format!(
+                    "{} wins / {} losses",
+                    report.max_consecutive_wins, report.max_consecutive_losses
+                ),
+                "longest consecutive runs, in closing order; a scratch breaks both",
+            );
+            row(
+                "avg / median duration",
+                format!(
+                    "{} / {}",
+                    duration(report.avg_duration_ms),
+                    duration(report.median_duration_ms),
+                ),
+                "trade lifetimes in venue time",
+            );
+            row(
+                "winner vs loser duration",
+                format!(
+                    "{} / {}",
+                    duration(report.avg_win_duration_ms),
+                    duration(report.avg_loss_duration_ms),
+                ),
+                "how long winners run against how long losers are held",
             );
             row(
                 "largest win / loss",
@@ -1978,27 +2683,105 @@ fn draw_report_body(ui: &mut egui::Ui, data: &ReportData) {
                 ),
                 "best single trade and worst single trade magnitude",
             );
+            row(
+                "avg winner MAE",
+                report.avg_winner_mae_points.map_or_else(blank, |value| {
+                    format!(
+                        "{} pts (over {} of {})",
+                        fmt_points(value),
+                        report.winners_with_mae,
+                        report.wins
+                    )
+                }),
+                "how far the average winner first ran against you; only trades that \
+                 recorded an excursion count, and the denominator says how many did",
+            );
+            row(
+                "avg loser MFE",
+                report.avg_loser_mfe_points.map_or_else(blank, |value| {
+                    format!(
+                        "{} pts (over {} of {})",
+                        fmt_points(value),
+                        report.losers_with_mfe,
+                        report.losses
+                    )
+                }),
+                "how far the average loser was in profit before it lost; same disclosure",
+            );
         });
-    if data.history.unreadable_files > 0 || data.history.problem_rows > 0 {
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(format!(
-                "{} file(s) unreadable, {} row(s) skipped - counted, never silently dropped.",
-                data.history.unreadable_files, data.history.problem_rows,
-            ))
-            .color(theme::WARN)
-            .small(),
-        );
+}
+
+/// Long and short, side by side, with the core metrics in each column.
+fn draw_side_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
+    ui.add_space(8.0);
+    ui.label(caption("LONG VS SHORT"));
+    fn opt_plain(value: Option<Decimal>) -> String {
+        value.map_or_else(|| "—".to_owned(), fmt_points)
     }
-    ui.label(
-        egui::RichText::new(format!(
-            "{} trade(s) across {} file(s)",
-            data.history.rows.len(),
-            data.history.files
-        ))
-        .color(theme::TEXT_MUTED)
-        .small(),
-    );
+    /// One side-by-side row's value, computed per column.
+    type SideValue = Box<dyn Fn(&SideReport) -> String>;
+    let side_rows: [(&str, SideValue); 7] = [
+        ("trades", Box::new(|side| side.trades.to_string())),
+        (
+            "net",
+            Box::new(|side| format!("{} pts", fmt_signed_points(side.net_points))),
+        ),
+        (
+            "win rate",
+            Box::new(|side| {
+                side.win_rate_pct
+                    .map_or_else(|| "—".to_owned(), |rate| format!("{}%", fmt_points(rate)))
+            }),
+        ),
+        (
+            "profit factor",
+            Box::new(|side| opt_plain(side.profit_factor)),
+        ),
+        ("avg win", Box::new(|side| opt_plain(side.avg_win))),
+        ("avg loss", Box::new(|side| opt_plain(side.avg_loss))),
+        (
+            "expectancy",
+            Box::new(|side| opt_plain(side.expectancy_points)),
+        ),
+    ];
+    egui::Grid::new("paper_report_sides")
+        .num_columns(3)
+        .spacing([16.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("");
+            ui.label(egui::RichText::new("LONG").color(theme::BUY).small());
+            ui.label(egui::RichText::new("SHORT").color(theme::SELL).small());
+            ui.end_row();
+            for (label, value_of) in &side_rows {
+                ui.label(egui::RichText::new(*label).color(theme::TEXT_MUTED));
+                ui.label(value_of(&report.long));
+                ui.label(value_of(&report.short));
+                ui.end_row();
+            }
+        });
+}
+
+/// How trades that left one way performed — count and net per exit reason.
+fn draw_exit_reason_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
+    if report.by_exit_reason.is_empty() {
+        return;
+    }
+    ui.add_space(8.0);
+    ui.label(caption("BY EXIT REASON"));
+    egui::Grid::new("paper_report_reasons")
+        .num_columns(3)
+        .spacing([16.0, 4.0])
+        .show(ui, |ui| {
+            for reason in &report.by_exit_reason {
+                ui.label(
+                    egui::RichText::new(reason.reason.as_str().replace('_', " "))
+                        .color(theme::TEXT_MUTED),
+                );
+                ui.label(format!("{} trade(s)", reason.trades));
+                ui.label(format!("{} pts", fmt_signed_points(reason.net_points)));
+                ui.end_row();
+            }
+        });
 }
 
 /// Read every history file under `dir` (one symbol's folder, or all of
@@ -2076,18 +2859,16 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
     }
 }
 
-/// Aggregate the saved history into the report window's data.
-fn load_report(dir: &Path, symbol: Option<&str>) -> ReportData {
-    let history = load_history(dir, symbol, None);
+/// Aggregate loaded history rows — the tests' shortcut from a journal on
+/// disk to a report.
+#[cfg(test)]
+fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
     let trades: Vec<ClosedTrade> = history
         .rows
         .iter()
         .map(|(_, trade)| trade.clone())
         .collect();
-    ReportData {
-        report: PerformanceReport::from_trades(&trades),
-        history,
-    }
+    PerformanceReport::from_trades(&trades)
 }
 
 /// The frame geometry every paper paint helper reads: one struct so a tag,
@@ -2804,10 +3585,10 @@ fn sanitize_symbol(symbol: &str) -> String {
     }
 }
 
-/// `YYYYMMDD-HHMMSS` in UTC from epoch milliseconds — session file names
-/// derive from venue time, so the same replay run names the same file.
-/// Civil-from-days per Howard Hinnant's algorithm; no clock, no chrono.
-fn utc_compact(timestamp_ms: i64) -> String {
+/// Civil UTC date-time from epoch milliseconds: `(year, month, day, hour,
+/// minute, second)`. Civil-from-days per Howard Hinnant's algorithm; no
+/// clock, no chrono.
+fn civil_utc(timestamp_ms: i64) -> (i64, i64, i64, i64, i64, i64) {
     let seconds = timestamp_ms.div_euclid(1000);
     let days = seconds.div_euclid(86_400);
     let time_of_day = seconds.rem_euclid(86_400);
@@ -2821,12 +3602,47 @@ fn utc_compact(timestamp_ms: i64) -> String {
     let day = day_of_year - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = year_of_era + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}{month:02}{day:02}-{:02}{:02}{:02}",
+    (
+        year,
+        month,
+        day,
         time_of_day / 3600,
         (time_of_day % 3600) / 60,
         time_of_day % 60,
     )
+}
+
+/// `YYYYMMDD-HHMMSS` in UTC from epoch milliseconds — session file names
+/// derive from venue time, so the same replay run names the same file.
+fn utc_compact(timestamp_ms: i64) -> String {
+    let (year, month, day, hour, minute, second) = civil_utc(timestamp_ms);
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
+}
+
+/// `YYYY-MM-DD` in UTC — the report's anchor date.
+fn fmt_utc_date(timestamp_ms: i64) -> String {
+    let (year, month, day, ..) = civil_utc(timestamp_ms);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// `YYYY-MM-DD HH:MM` in UTC — the equity curve's hover stamp.
+fn fmt_utc_minute(timestamp_ms: i64) -> String {
+    let (year, month, day, hour, minute, _) = civil_utc(timestamp_ms);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+/// The symbol folders under the history dir, for the report's combo box.
+fn list_symbol_folders(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .collect();
+    folders.sort();
+    folders
 }
 
 #[cfg(test)]
@@ -2903,11 +3719,11 @@ mod tests {
         assert_eq!(parsed.trades[0].pnl_points, Decimal::from(5));
         assert_eq!(parsed.trades[1].pnl_points, Decimal::from(2));
 
-        let data = load_report(&dir, Some("TESTUSDT"));
-        assert_eq!(data.history.rows.len(), 2);
-        assert_eq!(data.report.net_points, Decimal::from(7));
-        assert_eq!(data.history.files, 1);
-        assert_eq!(data.history.unreadable_files, 0);
+        let history = load_history(&dir, Some("TESTUSDT"), None);
+        assert_eq!(history.rows.len(), 2);
+        assert_eq!(report_from_history(&history).net_points, Decimal::from(7));
+        assert_eq!(history.files, 1);
+        assert_eq!(history.unreadable_files, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2934,10 +3750,11 @@ mod tests {
             "an armed click dies with the timeline"
         );
         assert!(paper.toast.is_some(), "the flatten is never silent");
-        let data = load_report(&dir, Some("RESETX"));
-        assert_eq!(data.history.rows.len(), 1);
+        let history = load_history(&dir, Some("RESETX"), None);
+        assert_eq!(history.rows.len(), 1);
         assert_eq!(
-            data.report.trades, 1,
+            report_from_history(&history).trades,
+            1,
             "the reset exit is a real, journaled trade"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -3000,6 +3817,78 @@ mod tests {
         assert_eq!(cache.rows[0].0, "LEDGX");
         assert_eq!(cache.rows[0].1, trade);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn report_periods_anchor_to_the_given_trade_never_a_clock() {
+        // 2026-03-16 13:01:08 UTC.
+        let anchor = 1_773_666_068_000_i64;
+        assert_eq!(ReportPeriod::All.cutoff_ms(anchor), None);
+        assert_eq!(
+            ReportPeriod::Today.cutoff_ms(anchor),
+            Some(1_773_619_200_000),
+            "the anchor's own UTC midnight"
+        );
+        assert_eq!(
+            ReportPeriod::Week.cutoff_ms(anchor),
+            Some(anchor - 7 * 86_400_000)
+        );
+    }
+
+    #[test]
+    fn utc_dates_format_from_the_same_civil_math() {
+        assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
+        assert_eq!(fmt_utc_minute(1_773_666_068_000), "2026-03-16 13:01");
+    }
+
+    #[test]
+    fn the_report_view_filters_by_period_from_the_newest_trade() {
+        fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
+            ClosedTrade {
+                side: Side::Buy,
+                quantity: Decimal::ONE,
+                entry_price: Decimal::from(100),
+                exit_price: Decimal::from(100 + pnl),
+                opened_ms: closed_ms - 1000,
+                closed_ms,
+                pnl_points: Decimal::from(pnl),
+                exit_reason: quantick_sim::ExitReason::Manual,
+                entry_agg_id: None,
+                exit_agg_id: None,
+                mae_points: None,
+                mfe_points: None,
+            }
+        }
+        let day = 86_400_000_i64;
+        let mut paper = PaperTrading::new();
+        paper.report = Some(LoadedHistory {
+            rows: vec![
+                ("X".to_owned(), trade_at(10 * day, 5)),
+                ("X".to_owned(), trade_at(18 * day, -2)),
+                ("X".to_owned(), trade_at(20 * day + 3_600_000, 7)),
+            ],
+            files: 1,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.report_period = ReportPeriod::Week;
+        paper.ensure_report_view();
+        let view = paper.report_view.as_ref().expect("view built");
+        assert_eq!(
+            view.anchor_ms,
+            Some(20 * day + 3_600_000),
+            "anchored to the newest saved trade, not a clock"
+        );
+        assert_eq!(view.trades.len(), 2, "the 10-day-old trade is outside 7d");
+        assert_eq!(view.report.net_points, Decimal::from(5));
+
+        paper.report_period = ReportPeriod::All;
+        paper.ensure_report_view();
+        assert_eq!(
+            paper.report_view.as_ref().expect("rebuilt").trades.len(),
+            3,
+            "All sees everything again"
+        );
     }
 
     #[test]
