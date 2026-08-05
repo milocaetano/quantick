@@ -438,6 +438,13 @@ pub struct ChartPane {
     /// the prefix the flow layers simply draw nothing.
     pub history_prefix: Vec<quantick_engine::Bar>,
 
+    /// Where the position HUD anchors this frame: the chart rect and price
+    /// scale, cached by the draw while the paper layer is painted on the
+    /// pane that owns order entry. The HUD itself draws in `tab.rs`, where
+    /// the paper host is mutably reachable outside the chrome's shared
+    /// borrow.
+    paper_hud_anchor: Option<(egui::Rect, PriceScale)>,
+
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
     pub drawings: Drawings,
@@ -515,6 +522,7 @@ impl ChartPane {
             last_plot_area: None,
             hover_pos: None,
             history_prefix: Vec::new(),
+            paper_hud_anchor: None,
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_press_position: None,
@@ -1663,12 +1671,20 @@ impl ChartPane {
         }
     }
 
+    /// The HUD anchor cached by the last draw, if the paper layer was
+    /// painted on the pane that owns order entry.
+    #[must_use]
+    pub fn paper_hud_anchor(&self) -> Option<(egui::Rect, PriceScale)> {
+        self.paper_hud_anchor
+    }
+
     pub fn draw_chart(
         &mut self,
         painter: &egui::Painter,
         area: egui::Rect,
         chrome: &PaneChrome<'_>,
     ) {
+        self.paper_hud_anchor = None;
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
@@ -1987,7 +2003,25 @@ impl ChartPane {
         // Switched off, they are only unpainted: the orders keep working and
         // the dock keeps listing them (see the layer's hint).
         if self.layer_visible(ChartLayer::PaperTrading, chrome.style) {
-            chrome.paper.draw_layer(painter, chart_rect, axis_x, &scale);
+            // The last-price chip's row, computed up front so the paper
+            // chips can dodge it: at the instant a market order fills the
+            // entry *is* the last price, and two chips on one pixel mangle
+            // the only persistent position statement.
+            let reserved_chip_y = if self.layer_visible(ChartLayer::LastPrice, chrome.style) {
+                partial
+                    .or_else(|| closed.last())
+                    .and_then(|bar| bar.close.to_f64())
+                    .map(|price| scale.y(price))
+                    .filter(|y| *y >= chart_rect.top() && *y <= chart_rect.bottom())
+            } else {
+                None
+            };
+            chrome
+                .paper
+                .draw_layer(painter, chart_rect, axis_x, &scale, reserved_chip_y);
+            if chrome.paper_owns_input {
+                self.paper_hud_anchor = Some((chart_rect, scale));
+            }
         }
 
         // Above the flow layers: everything else on the canvas is read against

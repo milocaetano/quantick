@@ -1564,6 +1564,14 @@ impl Tab {
             }
         }
 
+        // The position HUD rides the pane that owns order entry. It draws
+        // here, after the pane loop, because its buttons need the paper host
+        // mutably — inside the loop that borrow is pinned behind the shared
+        // chrome.
+        if let Some((rect, scale)) = self.flow_pane.paper_hud_anchor() {
+            crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
+        }
+
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
         };
