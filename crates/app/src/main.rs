@@ -51,6 +51,7 @@ mod time_header;
 mod timezone;
 mod toolbar;
 mod toolrail;
+mod trade_paint;
 mod viewport;
 mod widgets;
 

@@ -76,6 +76,8 @@ pub(crate) enum ChartLayer {
     Crosshair,
     /// Simulated orders, the position line and their chips.
     PaperTrading,
+    /// Entry/exit marks for closed simulated trades and their connectors.
+    TradePaint,
     /// User drawings (lines, boxes, Fibs).
     Drawings,
 }
@@ -83,8 +85,10 @@ pub(crate) enum ChartLayer {
 impl ChartLayer {
     /// Every layer, in menu order. A variant missing from here has no switch
     /// and cannot be turned off at all, so a new one belongs in this list and
-    /// in the menu test that counts it.
-    pub(crate) const ALL: [Self; 12] = [
+    /// in the menu test that counts it. The two paper layers sit together:
+    /// live orders and closed-trade marks are switched apart, because hiding
+    /// history must never hide the position you are in.
+    pub(crate) const ALL: [Self; 13] = [
         Self::Heatmap,
         Self::Bubbles,
         Self::LiveStrip,
@@ -96,6 +100,7 @@ impl ChartLayer {
         Self::SeamDivider,
         Self::Crosshair,
         Self::PaperTrading,
+        Self::TradePaint,
         Self::Drawings,
     ];
 
@@ -114,6 +119,7 @@ impl ChartLayer {
             Self::SeamDivider => "seam_divider",
             Self::Crosshair => "crosshair",
             Self::PaperTrading => "paper_trading",
+            Self::TradePaint => "trade_paint",
             Self::Drawings => "drawings",
         }
     }
@@ -138,6 +144,7 @@ impl ChartLayer {
             Self::SeamDivider => "venue/prints seam",
             Self::Crosshair => "crosshair",
             Self::PaperTrading => "paper orders & position",
+            Self::TradePaint => "closed trade marks",
             Self::Drawings => "drawings",
         }
     }
@@ -177,6 +184,11 @@ impl ChartLayer {
             Self::PaperTrading => {
                 "simulated entries, exits and the open position. Hiding them draws nothing and \
                  cancels nothing — the orders stay working and the dock still shows them"
+            }
+            Self::TradePaint => {
+                "entry and exit marks for closed simulated trades, joined by a faint line. \
+                 Hiding them draws nothing and forgets nothing — the trades stay in the \
+                 ledger and on disk"
             }
             Self::Drawings => {
                 "everything drawn by hand. Hidden objects keep their anchors and stop answering \

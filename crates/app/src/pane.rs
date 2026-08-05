@@ -605,7 +605,8 @@ impl ChartPane {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
-            | ChartLayer::PaperTrading => !self.hidden_layers.contains(&layer),
+            | ChartLayer::PaperTrading
+            | ChartLayer::TradePaint => !self.hidden_layers.contains(&layer),
         }
     }
 
@@ -649,7 +650,8 @@ impl ChartPane {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
-            | ChartLayer::PaperTrading => {
+            | ChartLayer::PaperTrading
+            | ChartLayer::TradePaint => {
                 if visible {
                     self.hidden_layers.remove(&layer);
                 } else {
@@ -714,7 +716,8 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is a dozen entries, so the mask cannot outgrow `u16`.
+    /// detection. `ALL` is thirteen entries, so the mask cannot outgrow
+    /// `u16`.
     pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
         ChartLayer::ALL
             .into_iter()
@@ -2071,6 +2074,28 @@ impl ChartPane {
         // Drawings sit above market layers and remain anchored to chart space,
         // not the screen, while the viewport moves beneath them.
         self.draw_drawings(painter, chart_rect, right, total, &scale);
+
+        // Closed-trade marks sit between the drawings and the live paper
+        // lines: history under the orders that are still working. Only the
+        // session's trades paint — the tape on screen proves their fills;
+        // rows loaded from earlier sessions stay in the ledger.
+        if self.layer_visible(ChartLayer::TradePaint, chrome.style) {
+            let frame = crate::trade_paint::TradePaintFrame {
+                painter,
+                chart_rect,
+                scale: &scale,
+                background: canvas_background,
+                pointer: self.hover_pos,
+                tz: chrome.tz,
+            };
+            crate::trade_paint::draw(
+                &frame,
+                chrome.paper.session_trades(),
+                chrome.paper.selected_trade_index(),
+                |ms| self.slot_at_time(ms),
+                |slot| self.viewport.x_center(slot, right, total),
+            );
+        }
 
         // Simulated orders and the position sit above the drawings: they are
         // operational state, read against the last price painted next. The

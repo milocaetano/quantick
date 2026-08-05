@@ -820,6 +820,22 @@ impl PaperTrading {
         false
     }
 
+    /// This session's closed round trips, oldest first — the trades whose
+    /// fills the current tape can prove, and so the only ones the chart
+    /// paints marks for.
+    #[must_use]
+    pub fn session_trades(&self) -> &[ClosedTrade] {
+        self.sim.closed_trades()
+    }
+
+    /// Index (into [`Self::session_trades`]) of the ledger's selected
+    /// trade, for the chart to emphasize; `None` while nothing is selected.
+    #[must_use]
+    pub fn selected_trade_index(&self) -> Option<usize> {
+        self.selected_trade
+            .filter(|index| *index < self.sim.closed_trades().len())
+    }
+
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
         // An armed placement takes the next chart click.
         if let Some(armed) = self.armed
@@ -2662,7 +2678,7 @@ fn draw_ledger_row(
 }
 
 /// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
-fn fmt_duration_ms(ms: i64) -> String {
+pub(crate) fn fmt_duration_ms(ms: i64) -> String {
     let seconds = (ms / 1000).max(0);
     if seconds < 60 {
         format!("{seconds}s")
