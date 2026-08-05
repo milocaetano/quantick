@@ -39,8 +39,10 @@ const W_SOURCE_FULL: f32 = 350.0;
 const W_SOURCE_SHRUNK: f32 = 260.0;
 /// BARS without the parameter widget.
 const W_BARS: f32 = 160.0;
-/// The bar-parameter label + drag value.
+/// The bar-parameter label + drag value (every kind but time).
 const W_BAR_PARAM: f32 = 150.0;
+/// The time kind's parameter row: four preset chips plus the custom drag.
+const W_TIME_PARAM: f32 = 260.0;
 /// The `+ older ▾` split button.
 const W_HISTORY: f32 = 100.0;
 /// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
@@ -97,10 +99,11 @@ impl CollapsePlan {
     /// Estimated width of the toolbar under this plan. The `⋯` slot is
     /// always reserved: it appears exactly when something folds, so counting
     /// it conditionally would make the first fold width-neutral and leave
-    /// the planner skipping straight past it. `trade_width` comes in as a
-    /// parameter because the TRADE group's state-aware labels grow and
-    /// shrink with the position (see [`trade_width`]).
-    fn width(self, trade_width: f32) -> f32 {
+    /// the planner skipping straight past it. `trade_width` and
+    /// `param_width` come in as parameters: the TRADE group's state-aware
+    /// labels grow and shrink with the position, and the time kind's chip
+    /// row is wider than the other kinds' single drag.
+    fn width(self, trade_width: f32, param_width: f32) -> f32 {
         let mut width = W_SLACK + W_ICON + W_BARS + W_LAYERS;
         width += if self.feed_full_name {
             W_SOURCE_FULL
@@ -108,7 +111,7 @@ impl CollapsePlan {
             W_SOURCE_SHRUNK
         };
         if self.param_inline {
-            width += W_BAR_PARAM;
+            width += param_width;
         }
         if self.history_inline {
             width += W_HISTORY;
@@ -130,7 +133,7 @@ impl CollapsePlan {
 /// The last plan is accepted even when it still overflows — there is nothing
 /// left to fold, and the symbol and LAYERS are never candidates.
 #[must_use]
-pub fn collapse_plan(available: f32, trade_width: f32) -> CollapsePlan {
+pub fn collapse_plan(available: f32, trade_width: f32, param_width: f32) -> CollapsePlan {
     let mut plan = CollapsePlan::FULL;
     let steps: [fn(&mut CollapsePlan); 6] = [
         |plan| plan.look_inline = false,
@@ -141,7 +144,7 @@ pub fn collapse_plan(available: f32, trade_width: f32) -> CollapsePlan {
         |plan| plan.feed_full_name = false,
     ];
     for fold in steps {
-        if plan.width(trade_width) <= available {
+        if plan.width(trade_width, param_width) <= available {
             return plan;
         }
         fold(&mut plan);
@@ -160,6 +163,17 @@ pub fn trade_width(paper: &PaperTradeModel) -> f32 {
         width += button(close) + TRADE_CLOSE_PREFIX_PX;
     }
     width
+}
+
+/// Estimated width of the selected kind's parameter row, for the collapse
+/// plan: the time kind carries the preset chips (audit QW1), so its row is
+/// wider than the single label + drag every other kind shows.
+#[must_use]
+pub fn param_width(kind: BarKind) -> f32 {
+    match kind {
+        BarKind::Time => W_TIME_PARAM,
+        _ => W_BAR_PARAM,
+    }
 }
 
 /// The amber label that replaces SOURCE while a recording plays.
@@ -329,7 +343,11 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
-            let plan = collapse_plan(ui.available_width(), trade_width(&model.paper));
+            let plan = collapse_plan(
+                ui.available_width(),
+                trade_width(&model.paper),
+                param_width(*model.kind),
+            );
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 draw_source(ui, model, plan);
@@ -472,15 +490,28 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             );
         }
         BarKind::Time => {
-            ui.label("interval ms");
-            ui.add(
-                egui::DragValue::new(model.time_interval_ms)
-                    .range(
-                        crate::state::MIN_TIME_INTERVAL_MS as f64
-                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                    )
-                    .speed(crate::state::TIME_INTERVAL_DRAG_SPEED),
-            );
+            // The same four presets the time pane's header offers — one
+            // list, two surfaces (§11) — with the drag as the custom escape
+            // hatch. `bars → time` must not require knowing that a minute is
+            // 60000 (audit QW1).
+            ui.horizontal(|ui| {
+                for (label, preset_ms) in crate::time_header::PRESETS {
+                    let selected = *model.time_interval_ms == preset_ms;
+                    if ui.selectable_label(selected, label).clicked() && !selected {
+                        *model.time_interval_ms = preset_ms;
+                    }
+                }
+                ui.add(
+                    egui::DragValue::new(model.time_interval_ms)
+                        .range(
+                            crate::state::MIN_TIME_INTERVAL_MS as f64
+                                ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                        )
+                        .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
+                        .suffix(" ms"),
+                )
+                .on_hover_text("custom interval, in milliseconds");
+            });
         }
         BarKind::Imbalance => {
             ui.label("target trades");
@@ -493,13 +524,14 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
     }
 }
 
-/// Short parameter readout for the merged kind combo, e.g. `tick · 50`.
+/// Short parameter readout for the merged kind combo, e.g. `tick · 50` or
+/// `time · 1m` — the chips' own vocabulary, never raw milliseconds (QW3).
 fn param_summary(model: &ToolbarModel) -> String {
     match model.kind {
         BarKind::Tick => model.tick_n.to_string(),
         BarKind::Volume => format!("{:.1}", model.volume_units),
         BarKind::Dollar => format!("{:.0}", model.dollar_notional),
-        BarKind::Time => format!("{} ms", model.time_interval_ms),
+        BarKind::Time => crate::state::fmt_time_interval(*model.time_interval_ms),
         BarKind::Imbalance => model.imbalance_target.to_string(),
     }
 }
@@ -849,14 +881,14 @@ mod tests {
 
     #[test]
     fn a_wide_toolbar_folds_nothing() {
-        let plan = collapse_plan(10_000.0, FLAT_TRADE_W);
+        let plan = collapse_plan(10_000.0, FLAT_TRADE_W, W_BAR_PARAM);
         assert_eq!(stage(plan), Some(0));
         assert!(!plan.overflow_needed());
     }
 
     #[test]
     fn a_hopeless_width_ends_fully_folded() {
-        let plan = collapse_plan(0.0, FLAT_TRADE_W);
+        let plan = collapse_plan(0.0, FLAT_TRADE_W, W_BAR_PARAM);
         assert_eq!(stage(plan), Some(6));
         assert!(plan.overflow_needed());
     }
@@ -868,7 +900,7 @@ mod tests {
         // and every plan must be one of the canonical §6 states.
         let mut width = 100.0;
         while width <= 2000.0 {
-            let plan = collapse_plan(width, FLAT_TRADE_W);
+            let plan = collapse_plan(width, FLAT_TRADE_W, W_BAR_PARAM);
             let stage = stage(plan).expect("plans fold strictly in the §6 order");
             assert!(
                 stage <= last_stage,
@@ -883,8 +915,8 @@ mod tests {
     #[test]
     fn look_folds_first_and_alone_at_a_mildly_tight_width() {
         // One pixel short of the full plan: exactly LOOK moves to overflow.
-        let full_width = CollapsePlan::FULL.width(FLAT_TRADE_W);
-        let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W);
+        let full_width = CollapsePlan::FULL.width(FLAT_TRADE_W, W_BAR_PARAM);
+        let plan = collapse_plan(full_width - 1.0, FLAT_TRADE_W, W_BAR_PARAM);
         assert_eq!(stage(plan), Some(1));
         assert!(plan.overflow_needed());
     }
@@ -904,11 +936,41 @@ mod tests {
         let flat_w = trade_width(&flat);
         let open_w = trade_width(&open);
         assert!(open_w > flat_w, "{open_w} vs {flat_w}");
-        let exactly_flat = CollapsePlan::FULL.width(flat_w);
-        assert_eq!(stage(collapse_plan(exactly_flat, flat_w)), Some(0));
+        let exactly_flat = CollapsePlan::FULL.width(flat_w, W_BAR_PARAM);
+        assert_eq!(
+            stage(collapse_plan(exactly_flat, flat_w, W_BAR_PARAM)),
+            Some(0)
+        );
         assert!(
-            stage(collapse_plan(exactly_flat, open_w)).expect("canonical") > 0,
+            stage(collapse_plan(exactly_flat, open_w, W_BAR_PARAM)).expect("canonical") > 0,
             "the wider TRADE must fold something at the same window width"
+        );
+    }
+
+    /// The time kind's chip row widens the parameter slot, and the plan
+    /// reads that width: what exactly fits a drag-only kind folds once the
+    /// chips are on screen.
+    #[test]
+    fn the_time_kind_widens_the_param_slot_and_folds_sooner() {
+        assert!(param_width(BarKind::Time) > param_width(BarKind::Tick));
+        let exactly_drag = CollapsePlan::FULL.width(FLAT_TRADE_W, param_width(BarKind::Tick));
+        assert_eq!(
+            stage(collapse_plan(
+                exactly_drag,
+                FLAT_TRADE_W,
+                param_width(BarKind::Tick)
+            )),
+            Some(0)
+        );
+        assert!(
+            stage(collapse_plan(
+                exactly_drag,
+                FLAT_TRADE_W,
+                param_width(BarKind::Time)
+            ))
+            .expect("canonical")
+                > 0,
+            "the wider chip row must fold something at the same window width"
         );
     }
 
@@ -997,6 +1059,86 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// With the time kind selected, the preset chips reach actual toolbar
+    /// pixels — the audit's pain 2 began with `bars → time` offering a bare
+    /// millisecond drag (QW1), and the summary speaks the chips' vocabulary
+    /// (QW3).
+    #[test]
+    fn the_time_kind_paints_the_preset_chips() {
+        let ctx = egui::Context::default();
+        let mut feed_id = "binance".to_owned();
+        let mut symbol = "BTCUSDT".to_owned();
+        let mut kind = BarKind::Time;
+        let mut tick_n = 50_u64;
+        let mut volume_units = 5.0_f64;
+        let mut dollar_notional = 500_000.0_f64;
+        let mut time_interval_ms = 60_000_i64;
+        let mut imbalance_target = 100_u64;
+        let mut history_step = 2_000_usize;
+        // Wide enough that the §6 plan folds nothing — the point is the
+        // inline chip row, not the overflow menu.
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1900.0, 400.0),
+            )),
+            ..Default::default()
+        };
+        let mut painted = String::new();
+        for _ in 0..2 {
+            let output = ctx.run(input(), |ctx| {
+                let mut model = ToolbarModel {
+                    feeds: vec![("binance".to_owned(), "Binance".to_owned())],
+                    feed_id: &mut feed_id,
+                    feed_display_name: "Binance".to_owned(),
+                    symbols: vec!["BTCUSDT".to_owned()],
+                    symbol: &mut symbol,
+                    replay: None,
+                    kind: &mut kind,
+                    tick_n: &mut tick_n,
+                    volume_units: &mut volume_units,
+                    dollar_notional: &mut dollar_notional,
+                    time_interval_ms: &mut time_interval_ms,
+                    imbalance_target: &mut imbalance_target,
+                    history_step: &mut history_step,
+                    history_trades: 1_000,
+                    capabilities: FeedCapabilities {
+                        book_capture: true,
+                        history_paging: true,
+                        traded_volume: true,
+                        ohlcv_history: true,
+                        ohlcv_generation: 0,
+                    },
+                    heatmap_on: false,
+                    bubbles_on: false,
+                    live_strip_on: false,
+                    dock_visible: true,
+                    appearance_open: false,
+                    paper: PaperTradeModel::flat(true),
+                    indicators: Vec::new(),
+                    scripts: Vec::new(),
+                };
+                let actions = draw(ctx, &mut model);
+                assert!(actions.is_empty(), "no clicks, no actions");
+            });
+            painted.clear();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape {
+                    painted.push_str(text.galley.text());
+                    painted.push(' ');
+                }
+            }
+        }
+        for chip in ["1m", "5m", "15m", "1h"] {
+            assert!(
+                painted.contains(chip),
+                "the {chip} preset never reached the toolbar; painted: {painted}"
+            );
+        }
+        assert_eq!(kind, BarKind::Time, "an un-clicked frame changes nothing");
+        assert_eq!(time_interval_ms, 60_000);
     }
 
     /// The same layout for a venue that prints no volume — the shape a live
