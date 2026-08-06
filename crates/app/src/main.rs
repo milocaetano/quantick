@@ -149,11 +149,8 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 650.0])
-            // Below this the drawing rail would fall past its Minimal stage
-            // (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
-            // clip chrome instead of collapsing it.
-            .with_min_inner_size([900.0, 560.0])
+            .with_inner_size(window_size())
+            .with_min_inner_size(MIN_WINDOW_PX)
             .with_title("quantick")
             .with_icon(icon),
         ..Default::default()
@@ -175,4 +172,87 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+/// Size the window opens at: [`DEFAULT_WINDOW_PX`] unless
+/// `QUANTICK_WINDOW_SIZE=WxH` says otherwise.
+///
+/// The hook exists because window size is not decoration here — it is what
+/// decides whether the indicator band has room for its panes and whether the
+/// time axis has room for its labels. Without a way to ask for a small window,
+/// that entire class of defect is invisible to any validation that is not a
+/// human dragging a corner.
+///
+/// Clamped to the same minimum the window itself enforces, so the hook can
+/// reach the smallest real layout and no smaller. A value that does not parse
+/// is ignored with a warning rather than failing the launch: a malformed
+/// env var must not stand between the user and their chart.
+/// Size the window opens at when nothing asks for another.
+const DEFAULT_WINDOW_PX: [f32; 2] = [1100.0, 650.0];
+/// Smallest the window may be. Below this the drawing rail would fall past its
+/// Minimal stage (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
+/// clip chrome instead of collapsing it.
+const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
+
+fn window_size() -> [f32; 2] {
+    let Ok(raw) = std::env::var("QUANTICK_WINDOW_SIZE") else {
+        return DEFAULT_WINDOW_PX;
+    };
+    match parse_window_size(&raw) {
+        Some(size) => {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "APP_WINDOW_SIZE_OVERRIDE",
+                width = size[0],
+                height = size[1],
+                "opening at the requested window size"
+            );
+            size
+        }
+        None => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "APP_WINDOW_SIZE_REJECTED",
+                value = %raw,
+                action = "using_default",
+                "QUANTICK_WINDOW_SIZE is not WIDTHxHEIGHT"
+            );
+            DEFAULT_WINDOW_PX
+        }
+    }
+}
+
+/// `WIDTHxHEIGHT` in pixels, clamped to the window's own minimum. `None` when
+/// the text is not two positive numbers.
+fn parse_window_size(raw: &str) -> Option<[f32; 2]> {
+    let (width, height) = raw.split_once(['x', 'X'])?;
+    let width: f32 = width.trim().parse().ok()?;
+    let height: f32 = height.trim().parse().ok()?;
+    (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
+        .then_some([width.max(MIN_WINDOW_PX[0]), height.max(MIN_WINDOW_PX[1])])
+}
+
+#[cfg(test)]
+mod window_size_tests {
+    use super::*;
+
+    #[test]
+    fn a_requested_size_is_honoured_and_floored_at_the_windows_own_minimum() {
+        assert_eq!(parse_window_size("1280x720"), Some([1280.0, 720.0]));
+        assert_eq!(parse_window_size(" 1280 X 720 "), Some([1280.0, 720.0]));
+        assert_eq!(
+            parse_window_size("200x100"),
+            Some(MIN_WINDOW_PX),
+            "the hook reaches the smallest real layout and no smaller"
+        );
+    }
+
+    #[test]
+    fn a_malformed_size_is_rejected_rather_than_guessed_at() {
+        for raw in ["", "1280", "1280x", "x720", "wide x tall", "0x0", "-5x10"] {
+            assert_eq!(parse_window_size(raw), None, "{raw:?}");
+        }
+    }
 }
