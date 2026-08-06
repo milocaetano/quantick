@@ -11,6 +11,7 @@
 
 use eframe::egui;
 use eframe::egui::{Color32, Pos2, Rect, Shape, Stroke, pos2};
+use egui_phosphor::regular as icons;
 use quantick_indicators::{PlotStyle, Rgba8};
 
 use crate::chart::PriceScale;
@@ -65,9 +66,13 @@ const PANE_MARKER_INSET_PX: f32 = MARKER_GAP_PX * 2.0;
 /// there, and a number crossing either reads as a smudge rather than a value.
 const AXIS_LABEL_EDGE_MARGIN_PX: f32 = 7.0;
 /// Marks a collapsed pane: a closed disclosure, pointing the way it opens.
-const COLLAPSED_CHEVRON: char = '▸';
+///
+/// From the bundled Phosphor font, like every other glyph in the chrome. The
+/// Unicode geometric triangles (`▸`, `▾`) are *not* in it and drew as
+/// tofu boxes — a visual capture caught it, which is exactly what one is for.
+const COLLAPSED_CHEVRON: &str = icons::CARET_RIGHT;
 /// Marks an expanded pane: an open disclosure, pointing the way it closes.
-const EXPANDED_CHEVRON: char = '▾';
+const EXPANDED_CHEVRON: &str = icons::CARET_DOWN;
 /// Side of the square at a pane's top-left corner that toggles it open or
 /// shut. Bigger than the glyph it holds, because a control you have to aim at
 /// is a control a trader does not use mid-tape.
