@@ -111,6 +111,9 @@ const CURVE_MIN_H_PX: f32 = 160.0;
 const CURVE_MAX_H_PX: f32 = 240.0;
 /// Alpha of the equity area fill — ground under the line, not a mark.
 const CURVE_FILL_ALPHA: u8 = 31;
+/// Alpha of the equity curve's gridlines — the chart's own grid token at
+/// half strength, recessive under one quiet line.
+const CURVE_GRID_LINE_ALPHA: u8 = 128;
 /// At most this many curve points are drawn; the *drawing* downsamples
 /// past it (and says so), the metrics always use every trade.
 const CURVE_MAX_POINTS: usize = 1000;
@@ -122,10 +125,6 @@ const CURVE_GUTTER_PX: f32 = 52.0;
 /// Longest export path a toast prints whole; past it the folder elides
 /// and the file name stays.
 const EXPORT_PATH_ELIDE_CHARS: usize = 64;
-/// Text color inside colored gutter chips — the same ink as the last-price
-/// chip (`LAST_PRICE_CHIP_TEXT` is private to `app.rs`, so the value is
-/// duplicated here; keep the two identical).
-const CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
 /// Vertical clearance between a paper chip's centre and the last-price
 /// chip's, in pixels — just over one chip height, so the two can never
 /// overprint. At the instant a market order fills, the entry price *is* the
@@ -2883,7 +2882,7 @@ fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView) {
                     theme::CONTROL.r(),
                     theme::CONTROL.g(),
                     theme::CONTROL.b(),
-                    128,
+                    CURVE_GRID_LINE_ALPHA,
                 ),
             ),
         );
@@ -3001,11 +3000,12 @@ fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView) {
                 egui::Stroke::new(1.0_f32, theme::SELL),
             );
             let label = format!("-{} pts", fmt_points(view.report.max_drawdown_points));
-            let galley = painter.layout_no_wrap(label, egui::FontId::monospace(10.0), CHIP_TEXT);
+            let galley =
+                painter.layout_no_wrap(label, egui::FontId::monospace(10.0), theme::CHIP_INK);
             let center = egui::pos2((x_at(peak) + trough_x) / 2.0, (peak_y + trough_y) / 2.0);
             let bg = egui::Rect::from_center_size(center, galley.size() + egui::vec2(8.0, 4.0));
             painter.rect_filled(bg, egui::Rounding::same(2.0), theme::SELL);
-            painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, CHIP_TEXT);
+            painter.galley(bg.min + egui::vec2(4.0, 2.0), galley, theme::CHIP_INK);
         }
     }
 
@@ -3521,9 +3521,11 @@ impl PaintCtx<'_> {
             self.chart_rect.top(),
             self.chart_rect.bottom(),
         );
-        let galley =
-            self.painter
-                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), CHIP_TEXT);
+        let galley = self.painter.layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::monospace(11.0),
+            theme::CHIP_INK,
+        );
         let text_pos = egui::pos2(self.axis_x + 6.0, chip_y - galley.size().y / 2.0);
         let bg = egui::Rect::from_min_size(
             text_pos - egui::vec2(3.0, 1.0),
@@ -3531,7 +3533,7 @@ impl PaintCtx<'_> {
         );
         self.painter
             .rect_filled(bg, egui::Rounding::same(2.0), color);
-        self.painter.galley(text_pos, galley, CHIP_TEXT);
+        self.painter.galley(text_pos, galley, theme::CHIP_INK);
     }
 
     /// A solid tag on a line, right-anchored inside the plot. While the
@@ -3547,9 +3549,11 @@ impl PaintCtx<'_> {
         line_hovered: bool,
         with_close: bool,
     ) -> Option<egui::Rect> {
-        let galley =
-            self.painter
-                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), CHIP_TEXT);
+        let galley = self.painter.layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::monospace(11.0),
+            theme::CHIP_INK,
+        );
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = y.clamp(
             self.chart_rect.top() + half,
@@ -3575,7 +3579,7 @@ impl PaintCtx<'_> {
         self.painter.galley(
             egui::pos2(resting.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),
             galley,
-            CHIP_TEXT,
+            theme::CHIP_INK,
         );
         if !hovered {
             return None;
@@ -3586,7 +3590,7 @@ impl PaintCtx<'_> {
             egui::Align2::CENTER_CENTER,
             "×",
             egui::FontId::monospace(11.0),
-            CHIP_TEXT,
+            theme::CHIP_INK,
         );
         Some(button)
     }

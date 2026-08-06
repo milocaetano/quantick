@@ -5352,6 +5352,70 @@ plot(close)
         }
     }
 
+    /// The closed-trade marks obey their own switch: a closed round trip
+    /// paints marks and a connector, `closed trade marks` off erases them,
+    /// and the live paper layer is untouched either way — hiding history
+    /// must never hide the position machinery.
+    #[test]
+    fn the_trade_paint_layer_switch_stops_the_marks() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let dir =
+            std::env::temp_dir().join(format!("quantick-trade-paint-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperClose);
+        evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert_eq!(
+            app.active_tab().paper.session_trades().len(),
+            1,
+            "one closed round trip to paint"
+        );
+
+        let shapes = |app: &mut QuantickApp| -> usize {
+            with_flow_pane(app, |pane, chrome| {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let area = ui.available_rect_before_wrap();
+                            pane.draw_chart(ui.painter(), area, chrome);
+                        });
+                    },
+                );
+                output.shapes.len()
+            })
+        };
+        // One frame to settle the ranges a draw computes for the next one.
+        let _ = shapes(&mut app);
+        let marks_on = shapes(&mut app);
+        switch_layer(&mut app, ChartLayer::TradePaint, false);
+        let marks_off = shapes(&mut app);
+        assert!(
+            marks_off < marks_on,
+            "the marks kept painting with their layer off ({marks_off} vs {marks_on})"
+        );
+        assert!(
+            app.active_tab()
+                .flow_pane
+                .layer_visible(ChartLayer::PaperTrading, &app.style),
+            "hiding closed-trade history leaves the live paper layer alone"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The gesture itself: a right-click on the canvas opens the menu, and the
     /// primary button — which pans, zooms and places drawings — never does.
     ///
