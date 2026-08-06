@@ -6209,6 +6209,70 @@ plot(close)
         }
     }
 
+    /// The reported flicker, root cause.
+    ///
+    /// The pinned inspector is a `SidePanel::right` laid out *before* the
+    /// central panel, so the frame a selection appears is the frame the
+    /// canvas narrows by the panel's width — and every drawing slides left
+    /// with it. Press on frame N (wide canvas) selects; release on frame N+1
+    /// (narrow canvas) hit-tests the same screen pixel, finds the drawing has
+    /// moved out from under it, and deselects. The panel opens and shuts in
+    /// two frames, forever, with the mouse standing still.
+    #[test]
+    fn a_pinned_inspector_cannot_wipe_the_selection_that_opened_it() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        click_chart(&mut app, &ctx, egui::pos2(600.0, 400.0));
+        click_chart(&mut app, &ctx, egui::pos2(900.0, 300.0));
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+
+        // Pinned, and the user has expressed the preference — the exact
+        // state the report was in.
+        app.inspector_pinned = true;
+        app.inspector_pin_touched = true;
+        app.active_tab_mut().flow_pane.drawings.select(None);
+        run_frame(&mut app, &ctx);
+        let wide = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("the canvas drew")
+            .width();
+
+        // Click the middle of the line: nowhere near a handle, squarely on
+        // the stroke. Nothing about this gesture is marginal.
+        click_chart(&mut app, &ctx, egui::pos2(750.0, 350.0));
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(0),
+            "the release must not undo the selection the press made"
+        );
+
+        let narrow = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("the canvas drew")
+            .width();
+        assert!(
+            narrow < wide,
+            "this proof needs the pinned panel to actually steal canvas              width: {wide} -> {narrow}"
+        );
+
+        for frame in 0..4 {
+            run_frame(&mut app, &ctx);
+            assert_eq!(
+                app.active_tab().flow_pane.drawings.selected(),
+                Some(0),
+                "the selection vanished {frame} frames after the click"
+            );
+        }
+    }
+
     /// The reported flicker, reduced to its cause.
     ///
     /// The press selects on an anchor grab (12 px); the release used to

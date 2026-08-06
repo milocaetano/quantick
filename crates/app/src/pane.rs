@@ -504,6 +504,16 @@ pub struct ChartPane {
     pub drawing_hover: Option<ChartPoint>,
     pub drawing_press_position: Option<egui::Pos2>,
     pub drawing_press_started_empty: bool,
+    /// What the press resolved under the Pointer tool, held until the click
+    /// it belongs to completes. `Some(None)` is a real answer — a press on
+    /// empty canvas, the one that deselects.
+    ///
+    /// It exists because the canvas is not the same shape before and after a
+    /// selection: the pinned inspector is a side panel laid out *before* the
+    /// central panel, so the frame a selection appears is the frame the chart
+    /// narrows by the panel's width and every drawing slides left with it.
+    /// Re-hit-testing on the release would be asking a different chart.
+    pub drawing_press_pick: Option<Option<usize>>,
     pub drawing_drag: DrawingDrag,
 }
 
@@ -579,6 +589,7 @@ impl ChartPane {
             drawing_hover: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
+            drawing_press_pick: None,
             drawing_drag: DrawingDrag::None,
         }
     }
@@ -1381,6 +1392,23 @@ impl ChartPane {
             .map(|(point_index, _)| point_index)
     }
 
+    /// What a pointer at `pos` is on: a drawing's handle first, then its
+    /// body. One function, so the press and the click that follows it can
+    /// never answer differently — grabbing a handle *is* clicking the object,
+    /// and the handle radius is the wider of the two.
+    fn drawing_pick_at(
+        &self,
+        pos: egui::Pos2,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        self.drawing_anchor_at(pos, history_right, total, scale)
+            .map(|(drawing_index, _)| drawing_index)
+            .or_else(|| self.drawing_at(pos, chart_rect, history_right, total, scale))
+    }
+
     fn drawing_anchor_at(
         &self,
         pos: egui::Pos2,
@@ -1561,14 +1589,17 @@ impl ChartPane {
                 // Alt+click walks down the z-order through overlapping
                 // objects; a plain click selects the topmost hit.
                 //
-                // Anchors first, exactly as the press below does. The two
-                // paths *must* ask the same question: the press selects on an
-                // anchor grab within `DRAWING_ANCHOR_RADIUS_PX`, and if the
-                // release only body-tested at the tighter
-                // `DRAWING_SELECT_RADIUS_PX` it would find nothing there and
-                // wipe the selection the press had just made — the object's
-                // panel flickering open and shut under a stationary cursor.
-                // Grabbing a handle *is* clicking the object.
+                // A click selects what the *press* grabbed. The release must
+                // not re-decide, because opening the panel moves the chart
+                // under the pointer (see `drawing_press_pick`) and the object
+                // the user pressed on is no longer at that pixel — the
+                // release would wipe the selection the press just made, and
+                // the panel would flicker open and shut with the mouse
+                // standing still.
+                //
+                // Alt+click keeps re-deciding on purpose: it walks down the
+                // z-order from the current selection, so it only ever runs
+                // while a selection already exists and the layout is settled.
                 let selected = if ui.input(|input| input.modifiers.alt) {
                     self.drawing_below_selection(
                         position,
@@ -1578,11 +1609,11 @@ impl ChartPane {
                         &scale,
                     )
                 } else {
-                    self.drawing_anchor_at(position, history_right, total, &scale)
-                        .map(|(drawing_index, _)| drawing_index)
-                        .or_else(|| {
-                            self.drawing_at(position, areas.chart, history_right, total, &scale)
-                        })
+                    self.drawing_press_pick.take().unwrap_or_else(|| {
+                        // No press was recorded (it landed on chrome, or off
+                        // the drawing area): fall back to asking now.
+                        self.drawing_pick_at(position, areas.chart, history_right, total, &scale)
+                    })
                 };
                 self.drawings.select(selected);
             }
@@ -1597,6 +1628,10 @@ impl ChartPane {
                     pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
             {
+                // One question, asked once, on the geometry the user was
+                // actually looking at when they pressed.
+                self.drawing_press_pick =
+                    Some(self.drawing_pick_at(position, areas.chart, history_right, total, &scale));
                 if let Some((drawing_index, point_index)) =
                     self.drawing_anchor_at(position, history_right, total, &scale)
                 {
@@ -1666,9 +1701,15 @@ impl ChartPane {
                 // One gesture, one undo entry — recorded only if it moved.
                 self.drawings.commit_gesture();
                 self.drawing_drag = DrawingDrag::None;
+                // A press that ended in a drag rather than a click leaves its
+                // answer unconsumed; it must not survive to decide the *next*
+                // click, which may be somewhere else entirely. The click path
+                // above already ran this frame and took it if it was a click.
+                self.drawing_press_pick = None;
             }
         } else {
             self.drawing_drag = DrawingDrag::None;
+            self.drawing_press_pick = None;
         }
         // Where the press landed, not where the pointer is now: a pan that
         // started on the candles keeps working when it crosses the divider.
