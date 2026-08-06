@@ -35,6 +35,7 @@ use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
+use crate::paper_trading::PaperTrading;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
 use crate::statusbar;
@@ -568,6 +569,7 @@ impl QuantickApp {
             symbol.into(),
             spec,
             feed,
+            PaperTrading::resolve_trades_dir(&config.paper.trades_dir),
         );
         let mut app = Self {
             tabs: vec![tab],
@@ -855,8 +857,16 @@ impl QuantickApp {
             "opening a market in a new tab"
         );
         let spec = self.active_tab().flow_pane.state.spec().clone();
-        self.tabs
-            .push(Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed));
+        let trades_dir = PaperTrading::resolve_trades_dir(&self.config.paper.trades_dir);
+        self.tabs.push(Tab::new(
+            id,
+            pane_ids(id),
+            feed_id,
+            symbol,
+            spec,
+            feed,
+            trades_dir,
+        ));
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
         self.active_tab_mut().refresh_chip_label(&config);
@@ -4074,6 +4084,7 @@ mod tests {
                 bubble_preset: None,
             }],
             metatrader: Default::default(),
+            paper: Default::default(),
         }
     }
 
@@ -7288,6 +7299,7 @@ plot(close)
                 },
             ],
             metatrader: Default::default(),
+            paper: Default::default(),
         };
         let mut app = QuantickApp::new(
             config,
@@ -7798,17 +7810,16 @@ plot(close)
         PriceScale::from_range(lo, hi, chart.top(), chart.bottom()).y(price)
     }
 
-    /// Order entry belongs to the flow pane. Both panes draw the simulated
-    /// lines — same instrument, same prices — but only the flow pane hands
-    /// the pointer to the simulator: the time pane is the context view, and a
-    /// press on its copy of a line is an ordinary chart gesture.
+    /// Order entry follows the focused pane — both charts are trading
+    /// surfaces, and the press that focuses a pane is the press that acts.
     ///
-    /// Proven through the consequence, not the flag: the position's entry line
-    /// consumes a press without moving (it is history, not an order), so a
-    /// vertical drag that starts on it pans nothing on the flow pane — and
-    /// pans normally on the time pane, where the simulator never sees it.
+    /// Proven through the consequence, not the flag: with a fully bracketed
+    /// position the entry line consumes a press without moving (it is
+    /// history, not an order), so a vertical drag that starts on it pans
+    /// nothing — on *either* pane, because the press itself moves the focus
+    /// (and with it the simulator's pointer) to the pane it landed in.
     #[test]
-    fn only_the_flow_pane_hands_the_pointer_to_the_simulator() {
+    fn the_focused_pane_hands_the_pointer_to_the_simulator() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         app.apply_toolbar_action(ToolbarAction::PaperBuy);
@@ -7819,10 +7830,18 @@ plot(close)
             app.active_tab().paper.status_cell().is_some(),
             "this proof needs an open simulated position to grab"
         );
+        // Both legs set, so the entry-line press blocks instead of starting
+        // a bracket-creating drag — the no-pan consequence stays provable.
+        app.active_tab_mut()
+            .paper
+            .apply_sim_command_for_tests(quantick_sim::Command::SetBracket {
+                stop_loss: Some(fill.price - rust_decimal::Decimal::from(10)),
+                take_profit: Some(fill.price + rust_decimal::Decimal::from(10)),
+            });
         let entry = rust_decimal::prelude::ToPrimitive::to_f64(&fill.price)
             .expect("the fill price is finite");
 
-        for (side, panned) in [(PaneSide::Time, true), (PaneSide::Flow, false)] {
+        for side in [PaneSide::Time, PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).price_view.reset();
             let chart = app
                 .active_tab()
@@ -7836,11 +7855,15 @@ plot(close)
             );
             drag_chart(&mut app, &ctx, start, start + egui::vec2(0.0, 40.0));
 
+            assert!(
+                app.active_tab().pane(side).price_view.is_auto(),
+                "{side:?}: the entry line owns the gesture on the pane the \
+                 press focused — the chart must not pan under it"
+            );
             assert_eq!(
-                !app.active_tab().pane(side).price_view.is_auto(),
-                panned,
-                "{side:?}: a drag on the entry line must {} pan this pane",
-                if panned { "" } else { "not " }
+                app.active_tab().focused_side(),
+                side,
+                "the press that traded is the press that focused"
             );
         }
     }
@@ -9708,6 +9731,7 @@ plot(close)
                 ports,
                 ..Default::default()
             },
+            paper: Default::default(),
         }
     }
 

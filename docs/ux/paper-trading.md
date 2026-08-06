@@ -202,8 +202,7 @@ Timeline honesty on rebuilds:
 
 ## 7. History on disk, and the export
 
-Closed trades append to `paper-trades/<SYMBOL>/<session>.csv` (cwd-relative
-like every quantick path, `QUANTICK_TRADES_DIR` override), in the
+Closed trades append to `<trades_dir>/<SYMBOL>/<session>.csv`, in the
 `quantick-trades 2` CSV format defined by `quantick_sim::history` — the
 first eight columns are exactly version 1's, then the tape-audit ids
 (`entry_agg_id`, `exit_agg_id`) and the excursions (`mae_points`,
@@ -213,6 +212,19 @@ Append-friendly, self-contained rows, torn tails reported not dropped. The
 `<session>` name derives from the first closed trade's venue timestamp, so
 the same replay run produces the same file name. Files are created lazily
 (no empty files), appended on each close, and never rewritten.
+
+**Where that folder is, is configuration**: `[paper] trades_dir` in
+`quantick.toml` (default `paper-trades`, relative to the working
+directory), overridden for one run by `QUANTICK_TRADES_DIR` — and the
+Trading tab's session strip says it out loud ("trades saved to: …", click
+to open). The folder is also the feature's **integration port**: the
+`quantick-trades` CSV format in `quantick_sim::history` is the contract,
+so any producer that writes it there — the future bot runner, a converter,
+another tool — appears in the Trades ledger (`EARLIER SESSIONS`), the
+report and the export with no extra wiring. The sim crate itself is the
+shared engine: a bot embeds the same `Simulator` and emits the same
+`ClosedTrade`s, so its trades wear the same mould everywhere by
+construction (one engine, three consumers).
 
 The **export** (the Trades tab's download icon) is a different artifact:
 one merged, spreadsheet-facing CSV of everything the ledger lists, written

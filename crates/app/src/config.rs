@@ -417,6 +417,42 @@ pub struct FeedConfig {
     pub bubble_preset: Option<String>,
 }
 
+/// Paper-trading options (`[paper]` in the TOML).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct PaperSettings {
+    /// Where the simulator saves closed trades — the per-symbol journals,
+    /// and the exports beside them. Relative paths resolve against
+    /// quantick's working directory; the `QUANTICK_TRADES_DIR` environment
+    /// variable still overrides it for one run (an env var is an explicit
+    /// request, like every autostart hook). The same folder is the
+    /// integration port for other producers: anything that writes the
+    /// `quantick-trades` format here — a bot runner, another tool — shows
+    /// up in the Trades ledger, the report and the export.
+    pub trades_dir: String,
+}
+
+impl Default for PaperSettings {
+    fn default() -> Self {
+        Self {
+            trades_dir: "paper-trades".to_string(),
+        }
+    }
+}
+
+impl PaperSettings {
+    fn validate(&self) -> Result<(), String> {
+        if self.trades_dir.trim().is_empty() {
+            return Err(
+                "paper.trades_dir must not be empty - drop the key to use the default \
+                 `paper-trades`"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// The whole feed/asset configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AppConfig {
@@ -429,6 +465,9 @@ pub struct AppConfig {
     /// MetaTrader bridge settings; defaults apply when the section is absent.
     #[serde(default)]
     pub metatrader: MetaTraderSettings,
+    /// Paper-trading settings; defaults apply when the section is absent.
+    #[serde(default)]
+    pub paper: PaperSettings,
 }
 
 impl AppConfig {
@@ -605,6 +644,7 @@ impl AppConfig {
     /// Returns a human-readable message describing the first problem found.
     pub fn validate(&self) -> Result<(), String> {
         self.metatrader.validate()?;
+        self.paper.validate()?;
         if self.feeds.is_empty() {
             return Err("no feeds configured; add at least one [[feeds]] entry".to_string());
         }

@@ -81,8 +81,11 @@ const TAG_PAD_X: f32 = 6.0;
 /// Width of the ✕ zone a hovered tag reveals. An overlay convenience —
 /// every action here has a ≥ 28 px twin in the chrome.
 const TAG_BUTTON_PX: f32 = 20.0;
-/// How far around a tag the hover that reveals its ✕ still counts.
+/// How far around a tag the hover that reveals the bracket handles still
+/// counts.
 const TAG_HOVER_SLACK_PX: f32 = 4.0;
+/// Alpha of the ink hairline between a chip tag's ✕ zone and its words.
+const CLOSE_DIVIDER_ALPHA: u8 = 90;
 /// Size of a labelled SL/TP bracket handle on the entry line.
 const HANDLE_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
 /// Vertical clearance between the entry line and a bracket handle.
@@ -120,6 +123,15 @@ const CURVE_MAX_POINTS: usize = 1000;
 /// Space kept under the curve for the metric grids before the curve
 /// height clamps.
 const CURVE_GRID_RESERVE_PX: f32 = 230.0;
+/// The report window's smallest usable size — everything scrolls or
+/// clamps below its defaults, so the window resizes freely down to this.
+const REPORT_MIN_WIDTH_PX: f32 = 440.0;
+/// See [`REPORT_MIN_WIDTH_PX`].
+const REPORT_MIN_HEIGHT_PX: f32 = 360.0;
+/// Height the report keeps for its honesty footer under the grids.
+const REPORT_FOOTER_RESERVE_PX: f32 = 64.0;
+/// The grids' readable floor inside a squeezed window.
+const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
 const CURVE_GUTTER_PX: f32 = 52.0;
 /// Longest export path a toast prints whole; past it the folder elides
@@ -398,13 +410,31 @@ impl Default for PaperTrading {
 }
 
 impl PaperTrading {
+    /// A host on the default journal folder (environment override, then
+    /// `paper-trades`) — tests and standalone use. The app itself goes
+    /// through [`Self::with_trades_dir`] with the configured folder.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_trades_dir(Self::resolve_trades_dir(TRADES_DIR))
+    }
+
+    /// The journal folder for this run: the environment override wins (an
+    /// env var is an explicit request for one run, like every autostart
+    /// hook), then `configured` — the `[paper] trades_dir` key, defaulting
+    /// to `paper-trades`.
+    #[must_use]
+    pub fn resolve_trades_dir(configured: &str) -> PathBuf {
+        std::env::var_os(TRADES_DIR_ENV).map_or_else(|| PathBuf::from(configured), PathBuf::from)
+    }
+
+    /// A host journaling to `dir`, already resolved from config and
+    /// environment.
+    #[must_use]
+    pub fn with_trades_dir(dir: PathBuf) -> Self {
         Self {
             sim: Simulator::new(),
             symbol: String::new(),
-            dir: std::env::var_os(TRADES_DIR_ENV)
-                .map_or_else(|| PathBuf::from(TRADES_DIR), PathBuf::from),
+            dir,
             journal_path: None,
             journal_warned: false,
             qty_text: "1".to_owned(),
@@ -437,6 +467,15 @@ impl PaperTrading {
     #[cfg(test)]
     pub(crate) fn redirect_history_dir(&mut self, dir: PathBuf) {
         self.dir = dir;
+    }
+
+    /// Apply a raw simulator command through the normal event funnel
+    /// (tests only) — for arranging sim state the UI would need gestures
+    /// to reach.
+    #[cfg(test)]
+    pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
+        let events = self.sim.apply(command);
+        self.handle_events(events);
     }
 
     /// Follow the app's active symbol. A change retargets the journal; the
@@ -805,7 +844,7 @@ impl PaperTrading {
                 fmt_decimal(order.quantity),
                 fmt_decimal(shown),
             );
-            if let Some(close) = ctx.chip_tag(y, theme::ACCENT, &text, hovered, !dragged) {
+            if let Some(close) = ctx.chip_tag(y, theme::ACCENT, &text, !dragged) {
                 controls.push((PaperControl::CancelOrder(order.id), close));
             }
         }
@@ -832,8 +871,7 @@ impl PaperTrading {
                         )
                     });
                 let line_hovered = ctx.hovers_line(entry_y);
-                let (close, tag_rect) =
-                    ctx.position_tag(entry_y, color, &side_text, points, line_hovered);
+                let (close, tag_rect) = ctx.position_tag(entry_y, color, &side_text, points);
                 if let Some(close) = close {
                     controls.push((PaperControl::ClosePosition, close));
                 }
@@ -965,7 +1003,7 @@ impl PaperTrading {
         if dragging && let Some(ratio) = rr_ratio(leg, shown) {
             text.push_str(&format!(" · R:R {ratio}"));
         }
-        if let Some(close) = ctx.chip_tag(y, leg.color, &text, hovered, !dragging) {
+        if let Some(close) = ctx.chip_tag(y, leg.color, &text, !dragging) {
             controls.push((leg.clear, close));
         }
     }
@@ -1937,7 +1975,7 @@ impl PaperTrading {
         if ui
             .add(
                 egui::Button::new(
-                    egui::RichText::new(format!("history: {}", self.dir.display()))
+                    egui::RichText::new(format!("trades saved to: {}", self.dir.display()))
                         .color(theme::TEXT_MUTED)
                         .small(),
                 )
@@ -1947,7 +1985,10 @@ impl PaperTrading {
                 .min_size(egui::vec2(ui.available_width(), 20.0)),
             )
             .on_hover_text(format!(
-                "open the history folder — {}",
+                "click to open the folder — {}\nset it with [paper] trades_dir in \
+                 quantick.toml; QUANTICK_TRADES_DIR overrides it for one run. Anything \
+                 writing the quantick-trades format here (a future bot included) shows \
+                 up in the ledger, the report and the export.",
                 std::path::absolute(&self.dir)
                     .unwrap_or_else(|_| self.dir.clone())
                     .display()
@@ -2282,9 +2323,9 @@ impl PaperTrading {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size(egui::vec2(620.0, 560.0))
-            .min_width(520.0)
-            .min_height(420.0)
+            .default_size(egui::vec2(600.0, 520.0))
+            .min_width(REPORT_MIN_WIDTH_PX)
+            .min_height(REPORT_MIN_HEIGHT_PX)
             .show(ctx, |ui| {
                 reload = self.draw_report_filters(ui);
                 ui.separator();
@@ -2294,9 +2335,18 @@ impl PaperTrading {
                         ui.add_space(8.0);
                         draw_equity_curve(ui, view);
                         ui.add_space(4.0);
+                        // The grids fill whatever height the user gave the
+                        // window and scroll inside it. Letting them take
+                        // their content height instead (auto-shrink) made
+                        // the window itself grow to fit and refuse to
+                        // resize down — the "stuck huge" report.
                         egui::ScrollArea::vertical()
                             .id_salt("paper_report_grids")
-                            .auto_shrink([false, true])
+                            .auto_shrink([false, false])
+                            .max_height(
+                                (ui.available_height() - REPORT_FOOTER_RESERVE_PX)
+                                    .max(REPORT_GRID_MIN_H_PX),
+                            )
                             .show(ui, |ui| {
                                 draw_report_grid(ui, &view.report);
                                 draw_side_grid(ui, &view.report);
@@ -3536,9 +3586,10 @@ impl PaintCtx<'_> {
         self.painter.galley(text_pos, galley, theme::CHIP_INK);
     }
 
-    /// A solid tag on a line, right-anchored inside the plot. While the
-    /// pointer is on the line or the tag (and `with_close` allows it), the
-    /// tag grows leftward to reveal a ✕ zone; the returned rect is that
+    /// A solid tag on a line, right-anchored inside the plot. When the tag
+    /// carries a close (`with_close` — everything but a mid-drag preview),
+    /// its ✕ zone is **always painted**: cancelling from the chart must not
+    /// depend on discovering a hover reveal. The returned rect is that
     /// button. Overlay ✕s carry no tooltip of their own — each has a
     /// full-size, fully labelled twin in the chrome.
     fn chip_tag(
@@ -3546,7 +3597,6 @@ impl PaintCtx<'_> {
         y: f32,
         fill: egui::Color32,
         text: &str,
-        line_hovered: bool,
         with_close: bool,
     ) -> Option<egui::Rect> {
         let galley = self.painter.layout_no_wrap(
@@ -3564,12 +3614,7 @@ impl PaintCtx<'_> {
             egui::pos2(self.tag_right - TAG_GAP_PX - content_w, center_y - half),
             egui::pos2(self.tag_right - TAG_GAP_PX, center_y + half),
         );
-        let hovered = with_close
-            && (line_hovered
-                || self
-                    .pointer
-                    .is_some_and(|pointer| resting.expand(TAG_HOVER_SLACK_PX).contains(pointer)));
-        let full = if hovered {
+        let full = if with_close {
             egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max)
         } else {
             resting
@@ -3581,7 +3626,7 @@ impl PaintCtx<'_> {
             galley,
             theme::CHIP_INK,
         );
-        if !hovered {
+        if !with_close {
             return None;
         }
         let button = egui::Rect::from_min_size(full.min, egui::vec2(TAG_BUTTON_PX, TAG_HEIGHT_PX));
@@ -3592,20 +3637,36 @@ impl PaintCtx<'_> {
             egui::FontId::monospace(11.0),
             theme::CHIP_INK,
         );
+        // A hairline of ink between the ✕ and the words, so the zone reads
+        // as a button rather than a longer label.
+        self.painter.line_segment(
+            [
+                egui::pos2(button.right(), full.top() + 4.0),
+                egui::pos2(button.right(), full.bottom() - 4.0),
+            ],
+            egui::Stroke::new(
+                1.0_f32,
+                egui::Color32::from_rgba_unmultiplied(
+                    theme::CHIP_INK.r(),
+                    theme::CHIP_INK.g(),
+                    theme::CHIP_INK.b(),
+                    CLOSE_DIVIDER_ALPHA,
+                ),
+            ),
+        );
         Some(button)
     }
 
     /// The position's tag wears the card grammar, not a chip: a position is
-    /// a fact about the account, not an order that will fire. Returns the
-    /// hover-revealed ✕ rect and the resting rect (the bracket handles
-    /// anchor left of it).
+    /// a fact about the account, not an order that will fire. Its ✕ is
+    /// always painted, like every chart close. Returns the ✕ rect and the
+    /// resting rect (the bracket handles anchor left of it).
     fn position_tag(
         &self,
         y: f32,
         side_color: egui::Color32,
         side_text: &str,
         points: Option<(String, egui::Color32)>,
-        line_hovered: bool,
     ) -> (Option<egui::Rect>, egui::Rect) {
         let font = egui::FontId::monospace(11.0);
         let side_galley =
@@ -3631,15 +3692,8 @@ impl PaintCtx<'_> {
             egui::pos2(self.tag_right - TAG_GAP_PX - content_w, center_y - half),
             egui::pos2(self.tag_right - TAG_GAP_PX, center_y + half),
         );
-        let hovered = line_hovered
-            || self
-                .pointer
-                .is_some_and(|pointer| resting.expand(TAG_HOVER_SLACK_PX).contains(pointer));
-        let full = if hovered {
-            egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max)
-        } else {
-            resting
-        };
+        let full =
+            egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max);
         self.painter
             .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
         self.painter.rect_stroke(
@@ -3673,9 +3727,6 @@ impl PaintCtx<'_> {
             let size = galley.size();
             self.painter
                 .galley(egui::pos2(x, center_y - size.y / 2.0), galley, color);
-        }
-        if !hovered {
-            return (None, resting);
         }
         let button = egui::Rect::from_min_size(
             full.min + egui::vec2(1.0 + rail, 0.0),
@@ -4829,6 +4880,44 @@ mod tests {
             !paper.handle_chart_input(&frame(chart, &scale, 40.0, true, true, false)),
             "a press far from every line belongs to the pan"
         );
+    }
+
+    /// The ✕ on a working order's chart tag is always painted — cancelling
+    /// from the chart must not depend on discovering a hover reveal — and
+    /// pressing it cancels the order.
+    #[test]
+    fn order_tags_offer_their_close_without_hover() {
+        let ctx = egui::Context::default();
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let events = paper.sim.apply(Command::PlaceLimit {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            price: Decimal::from(95),
+            bracket: Bracket::none(),
+        });
+        paper.handle_events(events);
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            paper.draw_layer(&painter, chart, 760.0, 760.0, &scale, None, None);
+        });
+        let close = paper
+            .controls
+            .iter()
+            .find(|(control, _)| matches!(control, PaperControl::CancelOrder(_)))
+            .map(|(_, rect)| *rect)
+            .expect("the ✕ is painted with no pointer anywhere near");
+        let input = ChartInput {
+            chart,
+            scale: Some(&scale),
+            pointer: Some(close.center()),
+            primary_pressed: true,
+            primary_down: true,
+            primary_released: false,
+        };
+        assert!(paper.handle_chart_input(&input), "the ✕ owns the press");
+        assert!(paper.sim.orders().is_empty(), "and the order is gone");
     }
 
     /// Painted overlay controls (cached from the last paint pass) take the

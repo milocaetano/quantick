@@ -376,6 +376,7 @@ mod tests {
                 bubble_preset: None,
             }],
             metatrader: MetaTraderSettings::default(),
+            paper: Default::default(),
         }
     }
 

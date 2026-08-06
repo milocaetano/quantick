@@ -33,6 +33,7 @@ use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
+use std::path::PathBuf;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
 /// late events from an aborted task below the next accepted generation floor.
@@ -243,6 +244,7 @@ impl Tab {
         symbol: String,
         spec: BarSpec,
         feed: FeedHandle,
+        trades_dir: PathBuf,
     ) -> Self {
         let mut loading = LoadingTracker::new();
         // The feed starts backfilling the moment it is spawned, so the tab
@@ -268,7 +270,7 @@ impl Tab {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
-            paper: PaperTrading::new(),
+            paper: PaperTrading::with_trades_dir(trades_dir),
             flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
             chip_label: String::new(),
             ohlcv_base: None,
@@ -1525,6 +1527,7 @@ impl Tab {
         });
 
         {
+            let focused = self.focused_side();
             let Self {
                 flow_pane,
                 time_pane,
@@ -1554,21 +1557,22 @@ impl Tab {
                 flow_area,
                 PaneSide::Flow,
             ))) {
-                // Order entry belongs to the flow pane: trading happens on the
-                // chart quantick is built around, and the time pane is the
-                // context view beside it. Unsplit this is the only pane there
-                // is, so it is exactly the behaviour before the split existed.
-                chrome.paper_owns_input = side == PaneSide::Flow;
+                // Order entry follows the focused pane (§11): both charts are
+                // trading surfaces — a level is as true on the time pane as on
+                // the flow pane — and focus lands on the press that acts, so
+                // the first click already trades where the accent rule is.
+                // Unsplit, the flow pane is the only pane and nothing changes.
+                chrome.paper_owns_input = side == focused;
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &mut chrome);
             }
         }
 
-        // The position HUD rides the pane that owns order entry. It draws
-        // here, after the pane loop, because its buttons need the paper host
-        // mutably — inside the loop that borrow is pinned behind the shared
-        // chrome.
-        if let Some((rect, scale)) = self.flow_pane.paper_hud_anchor() {
+        // The position HUD rides the pane that owns order entry (the focused
+        // one). It draws here, after the pane loop, because its buttons need
+        // the paper host mutably — inside the loop that borrow is pinned
+        // behind the shared chrome.
+        if let Some((rect, scale)) = self.focused_pane().paper_hud_anchor() {
             crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
         }
 
