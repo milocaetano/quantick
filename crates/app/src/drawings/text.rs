@@ -123,6 +123,11 @@ impl DrawingToolImpl for Text {
             shift: false,
         })
     }
+    /// Words have no stroke: the size lives on the Text tab, and the Style
+    /// tab must not offer a width slider that moves nothing.
+    fn supports_stroke_width(&self) -> bool {
+        false
+    }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(TextPayload::default())
     }

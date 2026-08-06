@@ -67,6 +67,14 @@ const LEGEND_BELOW_HUD_OFFSET_PX: f32 = 64.0;
 const fn pane_ids(tab: u64) -> (u64, u64) {
     (tab * 2, tab * 2 + 1)
 }
+/// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
+/// objects across. Close to what a default viewport shows, so every object
+/// lands on screen — a demo the camera cannot see proves nothing.
+const DEMO_VISIBLE_SLOTS: usize = 90;
+/// How many demo objects wide the visible window is — the reciprocal of how
+/// far a multi-anchor object reaches. Four keeps a rectangle big enough to
+/// read while still leaving the tools distinguishable from each other.
+const DEMO_SPANS_PER_WINDOW: usize = 4;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
@@ -2794,15 +2802,22 @@ impl QuantickApp {
                 actions.edited |= ui
                     .color_edit_button_srgba(&mut drawing.style.color)
                     .changed();
-                actions.edited |= ui
-                    .add(
-                        egui::Slider::new(
-                            &mut drawing.style.width_px,
-                            MIN_DRAWING_WIDTH_PX..=MAX_DRAWING_WIDTH_PX,
+                // Capability-driven, like the fill slider below: a tool with
+                // no stroke has no line width, and the repo's rule is that an
+                // unsupported property is *absent*, not present and inert.
+                // Caught by the visual pass — the text note's Style tab was
+                // offering a slider that moved nothing.
+                if tool.supports_stroke_width() {
+                    actions.edited |= ui
+                        .add(
+                            egui::Slider::new(
+                                &mut drawing.style.width_px,
+                                MIN_DRAWING_WIDTH_PX..=MAX_DRAWING_WIDTH_PX,
+                            )
+                            .text("line width (px)"),
                         )
-                        .text("line width (px)"),
-                    )
-                    .changed();
+                        .changed();
+                }
                 if tool.supports_fill() {
                     actions.edited |= ui
                         .add(
@@ -3420,13 +3435,28 @@ impl QuantickApp {
         self.pending_drawing_demo = false;
         let share = std::env::var("QUANTICK_DRAWINGS_DEMO_SHARED").is_ok_and(|v| v == "1");
         let pane = &mut self.active_tab_mut().flow_pane;
+        // Anchored inside the window the chart actually opens on, not at slot
+        // zero: a demo whose objects sit 300 bars off the left edge shows a
+        // screenshot of an empty chart, which is exactly the evidence this
+        // hook exists to produce. `visible` is the newest stretch, and the
+        // objects are laid across it left to right in registry order.
+        let visible = DEMO_VISIBLE_SLOTS.min(slots);
+        let first = slots - visible;
+        // Two different spacings on purpose. `stride` walks the *starts*
+        // apart so the objects are distinguishable; `span` sets how far a
+        // multi-anchor object reaches, and it has to be wide or a rectangle
+        // lands two bars across and photographs as a sliver. The objects
+        // overlap, which is fine — a QA screen wants every tool legible, not
+        // a tidy row.
+        let stride = (visible / drawings::DRAWING_TOOLS.len()).max(1);
+        let span = (visible / DEMO_SPANS_PER_WINDOW).max(2);
         let base = pane
-            .closed_bar(slots / 2)
+            .closed_bar(slots.saturating_sub(1))
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
             for anchor in 0..tool.required_points() {
-                let slot = index * 8 + anchor * 3;
+                let slot = (first + index * stride + anchor * span).min(slots.saturating_sub(1));
                 let point = drawings::ChartPoint::at_time(
                     slot as f32 + 0.5,
                     base * (1.0 + f64::from(anchor as i32) * 0.001
@@ -6089,6 +6119,58 @@ plot(close)
                 _ => false,
             })
             .count()
+    }
+
+    /// The repo's capability rule: an unsupported property is *absent* from
+    /// the inspector, never present and inert. A text note has glyphs and no
+    /// stroke, so a "line width" slider on its Style tab would be a control
+    /// that moves nothing — which reads as a broken app, not as a no-op.
+    /// Found by the visual pass on a real screen.
+    #[test]
+    fn the_style_tab_offers_line_width_only_to_tools_that_have_a_stroke() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        let style_tab_labels = |app: &mut QuantickApp, ctx: &egui::Context| -> Vec<String> {
+            app.inspector_tab = InspectorTab::Style;
+            painted_text(&run_frame(app, ctx))
+        };
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let with_stroke = style_tab_labels(&mut app, &ctx);
+        assert!(
+            with_stroke.iter().any(|text| text.contains("line width")),
+            "a stroked tool keeps its width slider; painted: {with_stroke:?}"
+        );
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "text");
+        click_chart(&mut app, &ctx, egui::pos2(760.0, 340.0));
+        assert_eq!(
+            app.active_tab()
+                .flow_pane
+                .drawings
+                .selected()
+                .and_then(|index| app
+                    .active_tab()
+                    .flow_pane
+                    .drawings
+                    .items()
+                    .get(index)
+                    .map(|drawing| drawing.tool.id())),
+            Some("text"),
+            "the note is the selection the inspector is describing"
+        );
+        let words_only = style_tab_labels(&mut app, &ctx);
+        assert!(
+            !words_only.iter().any(|text| text.contains("line width")),
+            "a note has no stroke to widen; painted: {words_only:?}"
+        );
+        assert!(
+            words_only.iter().any(|text| text.contains("Style")),
+            "the tab itself is still there, with the colour control"
+        );
     }
 
     /// Marina's ask (`docs/ux/drawing-tools-2026-08.md` §D7): a level drawn on

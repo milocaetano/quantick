@@ -211,6 +211,12 @@ trait DrawingToolImpl: Sync {
     fn supports_fill(&self) -> bool {
         false
     }
+    /// Whether the tool paints a stroke the width control affects. Almost
+    /// every tool does; a text note has glyphs and no stroke at all, and a
+    /// width slider on its Style tab would move nothing.
+    fn supports_stroke_width(&self) -> bool {
+        true
+    }
     /// Fresh tool-owned state for a newly placed object.
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(NoPayload)
@@ -272,6 +278,11 @@ impl DrawingTool {
     #[must_use]
     pub fn supports_fill(self) -> bool {
         self.0.supports_fill()
+    }
+
+    #[must_use]
+    pub fn supports_stroke_width(self) -> bool {
+        self.0.supports_stroke_width()
     }
 
     #[must_use]
