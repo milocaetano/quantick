@@ -1476,7 +1476,7 @@ impl ChartPane {
             && let Some(position) =
                 pointer_position.filter(|position| drawing_area.contains(*position))
             && let Some(scale) = drawing_scale.as_ref()
-            && let Some(cursor) = chrome.paper.hover_cursor(position, scale)
+            && let Some(cursor) = chrome.paper.hover_cursor(position, drawing_area, scale)
         {
             ui.ctx().set_cursor_icon(cursor);
         }

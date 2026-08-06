@@ -88,10 +88,9 @@ const TAG_HOVER_SLACK_PX: f32 = 4.0;
 const CLOSE_DIVIDER_ALPHA: u8 = 90;
 /// Size of a labelled SL/TP bracket handle on the entry line.
 const HANDLE_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
-/// Vertical clearance between the entry line and a bracket handle.
-const HANDLE_GAP_PX: f32 = 4.0;
-/// Horizontal gap between the position tag and its bracket handles.
-const HANDLE_TAG_GAP_PX: f32 = 8.0;
+/// Vertical clearance between the entry line and a bracket handle — past
+/// the tag's half height, so handle and tag never overlap.
+const HANDLE_CLEAR_PX: f32 = 12.0;
 /// How far (in pixels) a press on the entry line must travel before it
 /// commits to creating one bracket leg — the drawings' drag threshold.
 const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
@@ -368,9 +367,6 @@ pub struct PaperTrading {
     // Chart-layer drag.
     drag: PaperDrag,
     drag_price: Option<f64>,
-    /// Interactive rects painted by the last `draw_layer` pass (tag ✕s,
-    /// bracket handles), pressed against on the next input pass.
-    controls: Vec<(PaperControl, egui::Rect)>,
     /// The working order hovered in the dock this frame — its chart line
     /// lifts, so one hover reads on both surfaces. Cleared after the chart
     /// consumed it (`draw_toast` runs last in the frame).
@@ -444,7 +440,6 @@ impl PaperTrading {
             armed: None,
             drag: PaperDrag::None,
             drag_price: None,
-            controls: Vec::new(),
             hovered_order: None,
             export_rx: None,
             toast: None,
@@ -788,18 +783,19 @@ impl PaperTrading {
     /// (dashed, accent), then the position's entry / stop-loss / take-profit
     /// (solid, semantic colors). Gutter chips keep the last-price chip's
     /// geometry and carry *the price and nothing else*, so prices never
-    /// disagree about their pixel; the words and the controls live in tags
-    /// right-anchored inside the plot. `pointer` is `Some` only on the pane
-    /// that owns paper input, so hover affordances (a tag's ✕, the bracket
-    /// handles) paint nowhere else. The interactive rects painted here are
-    /// cached for the next input pass — immediate mode presses against what
-    /// was actually drawn.
+    /// disagree about their pixel; the words and the ✕s live in tags
+    /// right-anchored inside the plot. Every interactive rect painted here
+    /// comes from the same pure geometry the press-time hit-test computes
+    /// (`close_button_rect`, `bracket_handle_rect`) — nothing is cached
+    /// across frames, because a live chart autoscales between paint and
+    /// press. `pointer` is `Some` only on the pane that owns paper input,
+    /// so hover affordances paint nowhere else.
     #[expect(
         clippy::too_many_arguments,
         reason = "the pane hands over its frame geometry; bundling it here would rename, not simplify"
     )]
     pub fn draw_layer(
-        &mut self,
+        &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
         tag_right: f32,
@@ -817,7 +813,6 @@ impl PaperTrading {
             reserved_chip_y,
             pointer,
         };
-        let mut controls = Vec::new();
 
         for order in self.sim.orders() {
             let Some(level) = order.price else { continue };
@@ -844,9 +839,7 @@ impl PaperTrading {
                 fmt_decimal(order.quantity),
                 fmt_decimal(shown),
             );
-            if let Some(close) = ctx.chip_tag(y, theme::ACCENT, &text, !dragged) {
-                controls.push((PaperControl::CancelOrder(order.id), close));
-            }
+            ctx.chip_tag(y, theme::ACCENT, &text, !dragged);
         }
 
         if let Some(position) = self.sim.position().cloned() {
@@ -871,42 +864,46 @@ impl PaperTrading {
                         )
                     });
                 let line_hovered = ctx.hovers_line(entry_y);
-                let (close, tag_rect) = ctx.position_tag(entry_y, color, &side_text, points);
-                if let Some(close) = close {
-                    controls.push((PaperControl::ClosePosition, close));
-                }
+                let tag_rect = ctx.position_tag(entry_y, color, &side_text, points);
 
                 // Labelled handles for the missing bracket legs, revealed
-                // while the pointer is on the entry line or its tag: the
-                // affordance behind "drag from the position line to create".
+                // while the pointer is on the entry line, its tag, or the
+                // handles themselves — the affordance behind "drag from the
+                // position line to create". Their rects are the hit-test's
+                // own geometry, so a revealed handle is always pressable.
+                let entry_center =
+                    clamp_tag_center(entry_y, ctx.chart_rect.top(), ctx.chart_rect.bottom());
+                let legs = [
+                    (
+                        position.stop_loss.is_none(),
+                        "SL",
+                        position.side == Side::Sell,
+                        theme::SELL,
+                    ),
+                    (
+                        position.take_profit.is_none(),
+                        "TP",
+                        position.side == Side::Buy,
+                        theme::BUY,
+                    ),
+                ];
                 let over_tag = ctx
                     .pointer
                     .is_some_and(|pointer| tag_rect.expand(TAG_HOVER_SLACK_PX).contains(pointer));
-                if self.drag == PaperDrag::None && (line_hovered || over_tag) {
-                    let anchor = tag_rect.left() - HANDLE_TAG_GAP_PX;
-                    let legs = [
-                        (
-                            position.stop_loss.is_none(),
-                            PaperControl::HandleStopLoss,
-                            "SL",
-                            position.side == Side::Buy,
-                            theme::SELL,
-                        ),
-                        (
-                            position.take_profit.is_none(),
-                            PaperControl::HandleTakeProfit,
-                            "TP",
-                            position.side == Side::Sell,
-                            theme::BUY,
-                        ),
-                    ];
-                    for (absent, control, label, below, leg_color) in legs {
+                let over_handle = ctx.pointer.is_some_and(|pointer| {
+                    legs.iter().any(|(absent, _, above, _)| {
+                        *absent
+                            && bracket_handle_rect(ctx.tag_right, entry_center, *above)
+                                .contains(pointer)
+                    })
+                });
+                if self.drag == PaperDrag::None && (line_hovered || over_tag || over_handle) {
+                    for (absent, label, above, leg_color) in legs {
                         if !absent {
                             continue;
                         }
-                        let rect = handle_rect(anchor, entry_y, below);
+                        let rect = bracket_handle_rect(ctx.tag_right, entry_center, above);
                         ctx.bracket_handle(rect, label, leg_color);
-                        controls.push((control, rect));
                     }
                 }
             }
@@ -921,9 +918,7 @@ impl PaperTrading {
                     color: theme::SELL,
                     amend: PaperDrag::StopLoss,
                     create: PaperDrag::CreateStopLoss,
-                    clear: PaperControl::ClearStopLoss,
                 },
-                &mut controls,
             );
             self.draw_bracket_leg(
                 &ctx,
@@ -935,9 +930,7 @@ impl PaperTrading {
                     color: theme::BUY,
                     amend: PaperDrag::TakeProfit,
                     create: PaperDrag::CreateTakeProfit,
-                    clear: PaperControl::ClearTakeProfit,
                 },
-                &mut controls,
             );
         }
 
@@ -957,7 +950,6 @@ impl PaperTrading {
                 theme::ACCENT,
             );
         }
-        self.controls = controls;
     }
 
     /// One protective leg: its resting line and tag, the drag that reprices
@@ -965,12 +957,7 @@ impl PaperTrading {
     /// the dashed preview of where release would put it. The tag gains the
     /// live R:R read once both legs are known, which is what turns the drag
     /// into a decision.
-    fn draw_bracket_leg(
-        &self,
-        ctx: &PaintCtx<'_>,
-        leg: &LegPaint<'_>,
-        controls: &mut Vec<(PaperControl, egui::Rect)>,
-    ) {
+    fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, leg: &LegPaint<'_>) {
         let amending = self.drag == leg.amend;
         let creating = self.drag == leg.create && leg.level.is_none();
         let resting = leg.level.map(|level| level.to_f64().unwrap_or_default());
@@ -1003,9 +990,7 @@ impl PaperTrading {
         if dragging && let Some(ratio) = rr_ratio(leg, shown) {
             text.push_str(&format!(" · R:R {ratio}"));
         }
-        if let Some(close) = ctx.chip_tag(y, leg.color, &text, !dragging) {
-            controls.push((leg.clear, close));
-        }
+        ctx.chip_tag(y, leg.color, &text, !dragging);
     }
 
     /// Route pointer input to the simulated lines. Returns true when paper
@@ -1038,6 +1023,13 @@ impl PaperTrading {
         self.sim.closed_trades()
     }
 
+    /// The resting entry orders, in placement order — the simulator's own
+    /// view, read-only.
+    #[must_use]
+    pub fn working_orders(&self) -> &[quantick_sim::Order] {
+        self.sim.orders()
+    }
+
     /// Index (into [`Self::session_trades`]) of the ledger's selected
     /// trade, for the chart to emphasize; `None` while nothing is selected.
     #[must_use]
@@ -1047,24 +1039,18 @@ impl PaperTrading {
     }
 
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
-        // An armed placement takes the next chart click.
-        if let Some(armed) = self.armed
-            && input.primary_pressed
-            && let Some(pointer) = input.pointer
-            && input.chart.contains(pointer)
-            && let Some(scale) = input.scale
-        {
-            self.place_armed(armed, scale.price_at(pointer.y));
-            return true;
-        }
-
-        // A painted overlay control (a tag's ✕, a bracket handle) takes the
-        // press before any line under it — it was drawn on top.
+        // An overlay control (a tag's ✕, a bracket handle) takes the press
+        // before *everything*: before the armed click — arming an order must
+        // never eat the ✕ under the pointer — and before the line grab,
+        // which is what made "close this order" read as "drag this order".
+        // The hit is geometric, from this frame's own scale and state: a
+        // pixel rect cached from the last paint goes stale the moment a
+        // live chart autoscales, and the press then slips onto the line.
         if input.primary_pressed
             && self.drag == PaperDrag::None
             && let Some(pointer) = input.pointer
             && let Some(scale) = input.scale
-            && let Some(control) = self.control_at(pointer)
+            && let Some(control) = self.control_at(pointer, input.chart, scale)
         {
             match control {
                 PaperControl::ClosePosition => self.close_position(),
@@ -1083,6 +1069,17 @@ impl PaperTrading {
                     self.drag_price = Some(scale.price_at(pointer.y));
                 }
             }
+            return true;
+        }
+
+        // An armed placement takes the next chart click.
+        if let Some(armed) = self.armed
+            && input.primary_pressed
+            && let Some(pointer) = input.pointer
+            && input.chart.contains(pointer)
+            && let Some(scale) = input.scale
+        {
+            self.place_armed(armed, scale.price_at(pointer.y));
             return true;
         }
 
@@ -1170,12 +1167,64 @@ impl PaperTrading {
         self.handle_events(events);
     }
 
-    /// The overlay control under the pointer, from the last paint pass.
-    fn control_at(&self, pointer: egui::Pos2) -> Option<PaperControl> {
-        self.controls
-            .iter()
-            .find(|(_, rect)| rect.contains(pointer))
-            .map(|(control, _)| *control)
+    /// The overlay control under the pointer, computed from this frame's
+    /// scale and simulator state — never a cached pixel rect, which goes
+    /// stale between paint and press the moment a live chart autoscales.
+    /// Priority follows the draw stack: working orders on top, then the
+    /// take profit, the stop, the position's ✕, and last the bracket
+    /// handles beside the entry line.
+    fn control_at(
+        &self,
+        pointer: egui::Pos2,
+        chart: egui::Rect,
+        scale: &PriceScale,
+    ) -> Option<PaperControl> {
+        let tag_right = chart.right();
+        // A line outside the visible price range paints no tag, so it
+        // offers no control either — same gate the paint applies.
+        let visible_center = |price: Decimal| {
+            let y = scale.y(price.to_f64().unwrap_or_default());
+            (y >= chart.top() && y <= chart.bottom())
+                .then(|| clamp_tag_center(y, chart.top(), chart.bottom()))
+        };
+        for order in self.sim.orders().iter().rev() {
+            if let Some(level) = order.price
+                && let Some(center_y) = visible_center(level)
+                && close_button_rect(tag_right, center_y).contains(pointer)
+            {
+                return Some(PaperControl::CancelOrder(order.id));
+            }
+        }
+        let position = self.sim.position()?;
+        if let Some(target) = position.take_profit
+            && let Some(center_y) = visible_center(target)
+            && close_button_rect(tag_right, center_y).contains(pointer)
+        {
+            return Some(PaperControl::ClearTakeProfit);
+        }
+        if let Some(stop) = position.stop_loss
+            && let Some(center_y) = visible_center(stop)
+            && close_button_rect(tag_right, center_y).contains(pointer)
+        {
+            return Some(PaperControl::ClearStopLoss);
+        }
+        let entry_center = visible_center(position.avg_price)?;
+        if close_button_rect(tag_right, entry_center).contains(pointer) {
+            return Some(PaperControl::ClosePosition);
+        }
+        if position.take_profit.is_none()
+            && bracket_handle_rect(tag_right, entry_center, position.side == Side::Buy)
+                .contains(pointer)
+        {
+            return Some(PaperControl::HandleTakeProfit);
+        }
+        if position.stop_loss.is_none()
+            && bracket_handle_rect(tag_right, entry_center, position.side == Side::Sell)
+                .contains(pointer)
+        {
+            return Some(PaperControl::HandleStopLoss);
+        }
+        None
     }
 
     /// Turn a pending entry-line press into the leg the pull chose, once it
@@ -1219,9 +1268,10 @@ impl PaperTrading {
     pub fn hover_cursor(
         &self,
         pointer: egui::Pos2,
+        chart: egui::Rect,
         scale: &PriceScale,
     ) -> Option<egui::CursorIcon> {
-        if self.control_at(pointer).is_some() {
+        if self.control_at(pointer, chart, scale).is_some() {
             return Some(egui::CursorIcon::PointingHand);
         }
         match self.line_at(pointer, scale)? {
@@ -1868,7 +1918,7 @@ impl PaperTrading {
             .filter(|action| matches!(action, QueuedAction::Entry(_)))
             .count();
         let queued_closes = self.sim.queued().len() - queued_entries;
-        let orders: Vec<_> = self.sim.orders().to_vec();
+        let orders: Vec<_> = self.working_orders().to_vec();
         ui.label(caption(&format!("WORKING ORDERS · {}", orders.len())));
         if queued_entries > 0 {
             ui.label(
@@ -3504,7 +3554,6 @@ struct LegPaint<'a> {
     color: egui::Color32,
     amend: PaperDrag,
     create: PaperDrag,
-    clear: PaperControl,
 }
 
 impl PaintCtx<'_> {
@@ -3586,50 +3635,38 @@ impl PaintCtx<'_> {
         self.painter.galley(text_pos, galley, theme::CHIP_INK);
     }
 
-    /// A solid tag on a line, right-anchored inside the plot. When the tag
-    /// carries a close (`with_close` — everything but a mid-drag preview),
-    /// its ✕ zone is **always painted**: cancelling from the chart must not
-    /// depend on discovering a hover reveal. The returned rect is that
-    /// button. Overlay ✕s carry no tooltip of their own — each has a
-    /// full-size, fully labelled twin in the chrome.
-    fn chip_tag(
-        &self,
-        y: f32,
-        fill: egui::Color32,
-        text: &str,
-        with_close: bool,
-    ) -> Option<egui::Rect> {
+    /// A solid tag on a line, right-anchored inside the plot. When it is
+    /// closable (`with_close` — everything but a mid-drag preview) its ✕
+    /// occupies the tag's right edge, painted on `close_button_rect`'s own
+    /// geometry — the exact rect the press-time hit-test computes, so the
+    /// two can never disagree. Overlay ✕s carry no tooltip of their own —
+    /// each has a full-size, fully labelled twin in the chrome.
+    fn chip_tag(&self, y: f32, fill: egui::Color32, text: &str, with_close: bool) {
         let galley = self.painter.layout_no_wrap(
             text.to_owned(),
             egui::FontId::monospace(11.0),
             theme::CHIP_INK,
         );
         let half = TAG_HEIGHT_PX / 2.0;
-        let center_y = y.clamp(
-            self.chart_rect.top() + half,
-            self.chart_rect.bottom() - half,
+        let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
+        let right = self.tag_right - TAG_GAP_PX;
+        let button_w = if with_close { TAG_BUTTON_PX } else { 0.0 };
+        let content_w = galley.size().x + 2.0 * TAG_PAD_X + button_w;
+        let full = egui::Rect::from_min_max(
+            egui::pos2(right - content_w, center_y - half),
+            egui::pos2(right, center_y + half),
         );
-        let content_w = galley.size().x + 2.0 * TAG_PAD_X;
-        let resting = egui::Rect::from_min_max(
-            egui::pos2(self.tag_right - TAG_GAP_PX - content_w, center_y - half),
-            egui::pos2(self.tag_right - TAG_GAP_PX, center_y + half),
-        );
-        let full = if with_close {
-            egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max)
-        } else {
-            resting
-        };
         self.painter
             .rect_filled(full, egui::Rounding::same(3.0), fill);
         self.painter.galley(
-            egui::pos2(resting.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),
+            egui::pos2(full.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),
             galley,
             theme::CHIP_INK,
         );
         if !with_close {
-            return None;
+            return;
         }
-        let button = egui::Rect::from_min_size(full.min, egui::vec2(TAG_BUTTON_PX, TAG_HEIGHT_PX));
+        let button = close_button_rect(self.tag_right, center_y);
         self.painter.text(
             button.center(),
             egui::Align2::CENTER_CENTER,
@@ -3637,12 +3674,12 @@ impl PaintCtx<'_> {
             egui::FontId::monospace(11.0),
             theme::CHIP_INK,
         );
-        // A hairline of ink between the ✕ and the words, so the zone reads
+        // A hairline of ink between the words and the ✕, so the zone reads
         // as a button rather than a longer label.
         self.painter.line_segment(
             [
-                egui::pos2(button.right(), full.top() + 4.0),
-                egui::pos2(button.right(), full.bottom() - 4.0),
+                egui::pos2(button.left(), full.top() + 4.0),
+                egui::pos2(button.left(), full.bottom() - 4.0),
             ],
             egui::Stroke::new(
                 1.0_f32,
@@ -3654,20 +3691,19 @@ impl PaintCtx<'_> {
                 ),
             ),
         );
-        Some(button)
     }
 
     /// The position's tag wears the card grammar, not a chip: a position is
-    /// a fact about the account, not an order that will fire. Its ✕ is
-    /// always painted, like every chart close. Returns the ✕ rect and the
-    /// resting rect (the bracket handles anchor left of it).
+    /// a fact about the account, not an order that will fire. Its ✕ sits at
+    /// the right edge on `close_button_rect`'s own geometry, like every
+    /// chart close. Returns the tag's rect (the handle-reveal hover zone).
     fn position_tag(
         &self,
         y: f32,
         side_color: egui::Color32,
         side_text: &str,
         points: Option<(String, egui::Color32)>,
-    ) -> (Option<egui::Rect>, egui::Rect) {
+    ) -> egui::Rect {
         let font = egui::FontId::monospace(11.0);
         let side_galley =
             self.painter
@@ -3679,21 +3715,17 @@ impl PaintCtx<'_> {
             )
         });
         let rail = 3.0;
-        let mut content_w = rail + TAG_PAD_X + side_galley.size().x + TAG_PAD_X;
+        let mut content_w = rail + TAG_PAD_X + side_galley.size().x + TAG_PAD_X + TAG_BUTTON_PX;
         if let Some((galley, _)) = &points_galley {
             content_w += galley.size().x + TAG_PAD_X;
         }
         let half = TAG_HEIGHT_PX / 2.0;
-        let center_y = y.clamp(
-            self.chart_rect.top() + half,
-            self.chart_rect.bottom() - half,
+        let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
+        let right = self.tag_right - TAG_GAP_PX;
+        let full = egui::Rect::from_min_max(
+            egui::pos2(right - content_w, center_y - half),
+            egui::pos2(right, center_y + half),
         );
-        let resting = egui::Rect::from_min_max(
-            egui::pos2(self.tag_right - TAG_GAP_PX - content_w, center_y - half),
-            egui::pos2(self.tag_right - TAG_GAP_PX, center_y + half),
-        );
-        let full =
-            egui::Rect::from_min_max(resting.min - egui::vec2(TAG_BUTTON_PX, 0.0), resting.max);
         self.painter
             .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
         self.painter.rect_stroke(
@@ -3701,7 +3733,7 @@ impl PaintCtx<'_> {
             egui::Rounding::same(3.0),
             egui::Stroke::new(1.0_f32, theme::BORDER),
         );
-        // The side rail rides the card's left edge, ✕ zone and all.
+        // The side rail rides the card's left edge.
         self.painter.rect_filled(
             egui::Rect::from_min_max(
                 full.min + egui::vec2(1.0, 1.0),
@@ -3715,7 +3747,7 @@ impl PaintCtx<'_> {
             },
             side_color,
         );
-        let mut x = resting.left() + rail + TAG_PAD_X;
+        let mut x = full.left() + rail + TAG_PAD_X;
         let side_size = side_galley.size();
         self.painter.galley(
             egui::pos2(x, center_y - side_size.y / 2.0),
@@ -3728,10 +3760,7 @@ impl PaintCtx<'_> {
             self.painter
                 .galley(egui::pos2(x, center_y - size.y / 2.0), galley, color);
         }
-        let button = egui::Rect::from_min_size(
-            full.min + egui::vec2(1.0 + rail, 0.0),
-            egui::vec2(TAG_BUTTON_PX - rail, TAG_HEIGHT_PX),
-        );
+        let button = close_button_rect(self.tag_right, center_y);
         let over_button = self.pointer.is_some_and(|pointer| button.contains(pointer));
         self.painter.text(
             button.center(),
@@ -3744,15 +3773,15 @@ impl PaintCtx<'_> {
                 theme::TEXT_MUTED
             },
         );
-        // A hairline between the ✕ zone and the words.
+        // A hairline between the words and the ✕ zone.
         self.painter.line_segment(
             [
-                egui::pos2(button.right(), full.top() + 3.0),
-                egui::pos2(button.right(), full.bottom() - 3.0),
+                egui::pos2(button.left(), full.top() + 3.0),
+                egui::pos2(button.left(), full.bottom() - 3.0),
             ],
             egui::Stroke::new(1.0_f32, theme::BORDER),
         );
-        (Some(button), resting)
+        full
     }
 
     /// A labelled `SL`/`TP` handle on the entry line: quiet control fill,
@@ -3780,16 +3809,33 @@ impl PaintCtx<'_> {
     }
 }
 
-/// Where a bracket handle sits: right-anchored at `anchor_right`, one gap
-/// off the entry line, on the side its leg protects.
-fn handle_rect(anchor_right: f32, line_y: f32, below: bool) -> egui::Rect {
-    let x = anchor_right - HANDLE_SIZE.x;
-    let y = if below {
-        line_y + HANDLE_GAP_PX
+/// A tag's vertical center: the line's row, kept fully inside the plot.
+pub(crate) fn clamp_tag_center(y: f32, top: f32, bottom: f32) -> f32 {
+    let half = TAG_HEIGHT_PX / 2.0;
+    y.clamp(top + half, bottom - half)
+}
+
+/// The ✕ zone every closable tag reserves at its right edge — a fixed
+/// position derivable without measuring text, which is what lets the
+/// paint and the press-time geometric hit-test share one truth.
+pub(crate) fn close_button_rect(tag_right: f32, center_y: f32) -> egui::Rect {
+    let right = tag_right - TAG_GAP_PX;
+    egui::Rect::from_min_max(
+        egui::pos2(right - TAG_BUTTON_PX, center_y - TAG_HEIGHT_PX / 2.0),
+        egui::pos2(right, center_y + TAG_HEIGHT_PX / 2.0),
+    )
+}
+
+/// A bracket handle's rect: the ✕ column, one clear step above or below
+/// the entry line so it never overlaps the position tag between them.
+fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> egui::Rect {
+    let right = tag_right - TAG_GAP_PX;
+    let y = if above {
+        entry_y - HANDLE_CLEAR_PX - HANDLE_SIZE.y
     } else {
-        line_y - HANDLE_GAP_PX - HANDLE_SIZE.y
+        entry_y + HANDLE_CLEAR_PX
     };
-    egui::Rect::from_min_size(egui::pos2(x, y), HANDLE_SIZE)
+    egui::Rect::from_min_size(egui::pos2(right - HANDLE_SIZE.x, y), HANDLE_SIZE)
 }
 
 /// Reward over risk at the dragged level, against the other leg — the read
@@ -4777,19 +4823,19 @@ mod tests {
         paper.stop_offset_text = "10".to_owned();
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let (_chart, scale) = chart_and_scale(80.0, 120.0);
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
         assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 300.0), &scale),
+            paper.hover_cursor(egui::pos2(400.0, 300.0), chart, &scale),
             Some(egui::CursorIcon::ResizeVertical),
             "the stop at 90 sits at y 300 and drags"
         );
         assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 200.0), &scale),
+            paper.hover_cursor(egui::pos2(400.0, 200.0), chart, &scale),
             Some(egui::CursorIcon::ResizeVertical),
             "the entry at 100 offers the missing take profit by drag"
         );
         assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 40.0), &scale),
+            paper.hover_cursor(egui::pos2(400.0, 40.0), chart, &scale),
             None,
             "empty tape belongs to the chart"
         );
@@ -4862,7 +4908,7 @@ mod tests {
         paper.on_trade(&print(1, 100));
         let (chart, scale) = chart_and_scale(80.0, 120.0);
         assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 200.0), &scale),
+            paper.hover_cursor(egui::pos2(400.0, 200.0), chart, &scale),
             Some(egui::CursorIcon::NotAllowed),
             "both legs exist, so their own lines are the handles"
         );
@@ -4882,12 +4928,12 @@ mod tests {
         );
     }
 
-    /// The ✕ on a working order's chart tag is always painted — cancelling
-    /// from the chart must not depend on discovering a hover reveal — and
-    /// pressing it cancels the order.
+    /// The ✕ on a working order's chart tag: the hit is pure geometry from
+    /// the live scale — no hover, no prior paint, no cached rect that goes
+    /// stale while a live chart autoscales — it wins over the armed click
+    /// (which used to eat it), and it never reads as a drag on the line.
     #[test]
-    fn order_tags_offer_their_close_without_hover() {
-        let ctx = egui::Context::default();
+    fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
         let events = paper.sim.apply(Command::PlaceLimit {
@@ -4897,18 +4943,17 @@ mod tests {
             bracket: Bracket::none(),
         });
         paper.handle_events(events);
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            paper.draw_layer(&painter, chart, 760.0, 760.0, &scale, None, None);
+        // The trap that used to swallow every chart click.
+        paper.armed = Some(ArmedPlacement {
+            side: Side::Sell,
+            kind: EntryKind::Stop,
         });
-        let close = paper
-            .controls
-            .iter()
-            .find(|(control, _)| matches!(control, PaperControl::CancelOrder(_)))
-            .map(|(_, rect)| *rect)
-            .expect("the ✕ is painted with no pointer anywhere near");
-        let input = ChartInput {
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let close = close_button_rect(
+            chart.right(),
+            clamp_tag_center(scale.y(95.0), chart.top(), chart.bottom()),
+        );
+        let press = ChartInput {
             chart,
             scale: Some(&scale),
             pointer: Some(close.center()),
@@ -4916,53 +4961,43 @@ mod tests {
             primary_down: true,
             primary_released: false,
         };
-        assert!(paper.handle_chart_input(&input), "the ✕ owns the press");
-        assert!(paper.sim.orders().is_empty(), "and the order is gone");
+        assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
+        assert!(
+            paper.sim.orders().is_empty(),
+            "the order is gone and the armed click placed nothing"
+        );
+        assert!(
+            paper.armed.is_some(),
+            "the armed placement neither fired nor died"
+        );
+        assert_eq!(paper.drag, PaperDrag::None, "and nothing started dragging");
     }
 
-    /// Painted overlay controls (cached from the last paint pass) take the
-    /// press before the lines under them.
+    /// A bracket handle press starts the create-drag — its rect is the
+    /// hit-test's own geometry beside the entry tag, above the line for
+    /// the profit side and below it for the losing side.
     #[test]
-    fn painted_controls_take_the_press_before_the_lines() {
+    fn a_bracket_handle_press_starts_the_create_drag() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
-        let events = paper.sim.apply(Command::PlaceLimit {
-            side: Side::Buy,
-            quantity: Decimal::ONE,
-            price: Decimal::from(95),
-            bracket: Bracket::none(),
-        });
-        paper.handle_events(events);
-        let id = paper.sim.orders()[0].id;
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // A ✕ painted last frame at (700, 120) — far from any line.
-        let button = egui::Rect::from_center_size(egui::pos2(700.0, 120.0), egui::vec2(20.0, 20.0));
-        paper.controls = vec![(PaperControl::CancelOrder(id), button)];
-        let input = ChartInput {
-            chart,
-            scale: Some(&scale),
-            pointer: Some(egui::pos2(700.0, 120.0)),
-            primary_pressed: true,
-            primary_down: true,
-            primary_released: false,
-        };
-        assert!(paper.handle_chart_input(&input), "the ✕ owns the press");
-        assert!(paper.sim.orders().is_empty(), "and it cancelled the order");
-
-        // A bracket handle press starts the create-drag for its leg.
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let handle = egui::Rect::from_center_size(egui::pos2(700.0, 210.0), HANDLE_SIZE);
-        paper.controls = vec![(PaperControl::HandleStopLoss, handle)];
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // A long's SL handle sits below the entry line (above = false).
+        let entry_center = clamp_tag_center(scale.y(100.0), chart.top(), chart.bottom());
+        let handle = bracket_handle_rect(chart.right(), entry_center, false);
         let press = ChartInput {
             chart,
             scale: Some(&scale),
-            pointer: Some(egui::pos2(700.0, 210.0)),
+            pointer: Some(handle.center()),
             primary_pressed: true,
             primary_down: true,
             primary_released: false,
         };
-        assert!(paper.handle_chart_input(&press));
+        assert!(
+            paper.handle_chart_input(&press),
+            "the handle owns the press"
+        );
         assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
         assert_eq!(

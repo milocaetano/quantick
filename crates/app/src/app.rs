@@ -5427,6 +5427,62 @@ plot(close)
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Through the real frame pipeline — real pointer events, the pane's own
+    /// scale — a click on the ✕ of a working order's chart tag cancels the
+    /// order. It must never read as a drag on the order's line: the hit-test
+    /// is geometric at press time, because a cached pixel rect goes stale
+    /// the moment a live chart autoscales between paint and press.
+    #[test]
+    fn clicking_the_chart_tag_close_cancels_the_order() {
+        let ctx = egui::Context::default();
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![
+                trade(2),
+                trade(6),
+                trade(10),
+                trade(14),
+                trade(18),
+            ]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        // A resting buy limit in the middle of the backfilled price range,
+        // so its line and tag are on screen.
+        let price = Decimal::new(1005, 1);
+        app.active_tab_mut()
+            .paper
+            .apply_sim_command_for_tests(quantick_sim::Command::PlaceLimit {
+                side: quantick_engine::Side::Buy,
+                quantity: Decimal::ONE,
+                price,
+                bracket: quantick_sim::Bracket::none(),
+            });
+        assert_eq!(app.active_tab().paper.working_orders().len(), 1);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("the pane laid out");
+        let tag_right = app
+            .active_tab()
+            .flow_pane
+            .last_lane_divider_x
+            .unwrap_or(chart.right());
+        let y = price_y(&app, PaneSide::Flow, 100.5);
+        let close = crate::paper_trading::close_button_rect(
+            tag_right,
+            crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        );
+        drag_chart(&mut app, &ctx, close.center(), close.center());
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "the click cancelled the order instead of dragging it"
+        );
+    }
+
     /// The gesture itself: a right-click on the canvas opens the menu, and the
     /// primary button — which pans, zooms and places drawings — never does.
     ///
