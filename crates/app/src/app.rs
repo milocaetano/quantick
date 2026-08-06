@@ -24,6 +24,7 @@ use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{
     self, DeleteOutcome, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
+    PresetHost as _,
 };
 use crate::feed::{self, FeedCommand, FeedHandle};
 use crate::indicator_legend;
@@ -151,6 +152,26 @@ enum InspectorTab {
 
 /// What the inspector body asked for this frame. The caller owns every
 /// mutation, so the pinned panel and the floating window share one rule set.
+/// Which default-style button the Style tab was pressed on, so the caller can
+/// say out loud that something was remembered — a silent save leaves the
+/// trader wondering whether it took.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SavedDefault {
+    OneTool,
+    EveryTool,
+    Forgotten,
+}
+
+impl SavedDefault {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::OneTool => "Saved - new drawings of this tool open with this look.",
+            Self::EveryTool => "Saved - every new drawing opens with this look.",
+            Self::Forgotten => "Forgotten - this tool goes back to the built-in look.",
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct InspectorActions {
     toggle_hidden: bool,
@@ -161,6 +182,8 @@ struct InspectorActions {
     force_delete: bool,
     close: bool,
     edited: bool,
+    /// Which default-style button was pressed, if any.
+    saved_default: Option<SavedDefault>,
 }
 
 impl InspectorActions {
@@ -175,6 +198,7 @@ impl InspectorActions {
         self.force_delete |= other.force_delete;
         self.close |= other.close;
         self.edited |= other.edited;
+        self.saved_default = self.saved_default.or(other.saved_default);
     }
 }
 
@@ -2829,6 +2853,52 @@ impl QuantickApp {
                         )
                         .changed();
                 }
+
+                // Stop asking for the same look every single time. Every tool
+                // has a Style tab, so every tool gets this — the named-preset
+                // editor only ever existed on the Fib tab, which left fifteen
+                // tools with no way to remember anything.
+                //
+                // New objects only: a default that repainted the marks already
+                // on the chart would be a bulk edit nobody asked for.
+                ui.separator();
+                ui.label(egui::RichText::new("Default for new drawings").small());
+                ui.horizontal(|ui| {
+                    let style = drawing.style;
+                    if ui
+                        .button("This tool")
+                        .on_hover_text(format!(
+                            "New {} objects open with this colour, width and fill",
+                            tool.name().to_lowercase()
+                        ))
+                        .clicked()
+                    {
+                        drawing_presets.set_default_style(tool.id(), Some(style));
+                        actions.saved_default = Some(SavedDefault::OneTool);
+                    }
+                    if ui
+                        .button("All tools")
+                        .on_hover_text("Every new drawing opens with this colour, width and fill")
+                        .clicked()
+                    {
+                        for other in drawings::DRAWING_TOOLS {
+                            drawing_presets.set_default_style(other.id(), Some(style));
+                        }
+                        actions.saved_default = Some(SavedDefault::EveryTool);
+                    }
+                    if drawing_presets.default_style(tool.id()).is_some()
+                        && ui
+                            .button("Forget")
+                            .on_hover_text(format!(
+                                "New {} objects go back to the built-in look",
+                                tool.name().to_lowercase()
+                            ))
+                            .clicked()
+                    {
+                        drawing_presets.set_default_style(tool.id(), None);
+                        actions.saved_default = Some(SavedDefault::Forgotten);
+                    }
+                });
             }
             InspectorTab::Coordinates => {
                 // Geometry through numbers: bar index and price per anchor,
@@ -2963,6 +3033,14 @@ impl QuantickApp {
         if actions.close {
             self.focused_pane_mut().drawings.select(None);
             self.drawing_delete_confirm = false;
+        }
+        if let Some(saved) = actions.saved_default {
+            // Nothing to undo: this changed a preference, not the chart.
+            self.drawing_toast = Some(DrawingToast {
+                message: saved.message(),
+                shown_at: now,
+                offers_undo: false,
+            });
         }
     }
 
@@ -3465,7 +3543,10 @@ impl QuantickApp {
                 );
                 let completed =
                     pane.drawings
-                        .place_with(tool, point, drawings::DrawingTool::default_payload);
+                        .place_with(tool, point, |tool| drawings::NewDrawing {
+                            style: drawings::DrawingStyle::default(),
+                            payload: tool.default_payload(),
+                        });
                 // Placement selects what it completed, so this reaches the
                 // object just made — no separate index bookkeeping.
                 if completed
@@ -6209,6 +6290,71 @@ plot(close)
         }
     }
 
+    /// The chore this removes: re-picking the same colour on every object.
+    /// Saving a default must reach the *next* drawing and leave the ones
+    /// already on the chart exactly as the trader drew them.
+    #[test]
+    fn a_saved_default_style_reaches_the_next_drawing_and_only_that() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        app.drawing_presets = drawings::presets::PresetStore::load_from(std::env::temp_dir().join(
+            format!("quantick-default-style-{}.toml", std::process::id()),
+        ));
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+
+        let mine = egui::Color32::from_rgb(0xFF, 0xA0, 0x10);
+        {
+            let drawing = app
+                .active_tab_mut()
+                .flow_pane
+                .drawings
+                .selected_mut()
+                .expect("the placed line is selected");
+            drawing.style.color = mine;
+            drawing.style.width_px = 2.5;
+        }
+        let edited = app.active_tab().flow_pane.drawings.items()[0].style;
+        app.drawing_presets
+            .set_default_style(drawings::DRAWING_TOOLS[0].id(), Some(edited));
+        // Saving for one tool is saving for one tool.
+        app.drawing_presets
+            .set_default_style("horizontal-line", Some(edited));
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 380.0));
+        run_frame(&mut app, &ctx);
+
+        let items = app.active_tab().flow_pane.drawings.items();
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[1].style, edited,
+            "the next object opens with the saved look"
+        );
+        assert_eq!(
+            items[0].style, edited,
+            "the first object is the one that was edited, untouched by the save"
+        );
+
+        // A tool with no saved default still opens as it always did.
+        arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
+        click_chart(&mut app, &ctx, egui::pos2(760.0, 420.0));
+        click_chart(&mut app, &ctx, egui::pos2(860.0, 480.0));
+        run_frame(&mut app, &ctx);
+        let items = app.active_tab().flow_pane.drawings.items();
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[2].style,
+            drawings::DrawingStyle::default(),
+            "a default is per tool, not a global repaint"
+        );
+
+        let _ = std::fs::remove_file(app.drawing_presets.path());
+    }
+
     /// Selecting is not moving. Without a drag threshold on the move gesture,
     /// a couple of pixels of hand tremor during a click re-angled a channel
     /// or shifted a level — and recorded it as an undo step, so the trader's
@@ -6458,11 +6604,15 @@ plot(close)
             drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
         };
         let pane = &mut app.active_tab_mut().flow_pane;
-        assert!(pane.drawings.place_with(
-            drawing_tool("horizontal-line"),
-            anchored,
-            drawings::DrawingTool::default_payload,
-        ));
+        assert!(
+            pane.drawings
+                .place_with(drawing_tool("horizontal-line"), anchored, |tool| {
+                    drawings::NewDrawing {
+                        style: drawings::DrawingStyle::default(),
+                        payload: tool.default_payload(),
+                    }
+                },)
+        );
 
         let own_pane_only = drawing_strokes(&run_frame(&mut app, &ctx));
         assert!(
@@ -6507,11 +6657,13 @@ plot(close)
             drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
         };
         let pane = &mut app.active_tab_mut().flow_pane;
-        pane.drawings.place_with(
-            drawing_tool("horizontal-line"),
-            anchored,
-            drawings::DrawingTool::default_payload,
-        );
+        pane.drawings
+            .place_with(drawing_tool("horizontal-line"), anchored, |tool| {
+                drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                }
+            });
         app.active_tab_mut()
             .flow_pane
             .drawings
@@ -6586,6 +6738,26 @@ plot(close)
         );
     }
 
+    /// A canvas point at price-line `y` that is provably clear of the open
+    /// inspector.
+    ///
+    /// These proofs are about the canvas gesture, not about where the
+    /// placement rule currently puts the panel — so they ask the panel where
+    /// it is instead of encoding an answer that changes whenever the Style
+    /// tab grows a row.
+    fn canvas_point_clear_of_inspector(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        y: f32,
+    ) -> egui::Pos2 {
+        run_frame(app, ctx);
+        let clear = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .filter(|rect| rect.y_range().contains(y))
+            .map_or(400.0, |rect| rect.right() + 40.0);
+        egui::pos2(clear, y)
+    }
+
     #[test]
     fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
         let (mut app, _commands) = app_with_history(200);
@@ -6601,14 +6773,10 @@ plot(close)
             .flow_pane
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots());
-        // Left of the anchor: clear of the inspector, which opens to its
-        // right — the panel is opaque to presses by contract.
-        drag_chart(
-            &mut app,
-            &ctx,
-            egui::pos2(400.0, 300.0),
-            egui::pos2(440.0, 340.0),
-        );
+        // Clear of the inspector: the panel is opaque to presses by
+        // contract, so a proof about dragging must not start under it.
+        let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
+        drag_chart(&mut app, &ctx, start, start + egui::vec2(40.0, 40.0));
         let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
 
         assert!(
@@ -6696,7 +6864,7 @@ plot(close)
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("the inspector is open");
-        let start = egui::pos2(400.0, 300.0);
+        let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
         assert!(
             !inspector.contains(start),
             "the gesture must begin on the open canvas"
@@ -7484,8 +7652,8 @@ plot(close)
         );
 
         let before_drag = app.active_tab().flow_pane.drawings.items()[0].points[0];
-        // Left of the anchor, clear of the inspector that opened beside it.
-        let start = egui::pos2(400.0, 300.0);
+        // Clear of the inspector the selection opened.
+        let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -7494,10 +7662,13 @@ plot(close)
                 pointer_button(start, true),
             ],
         );
-        for step in [egui::pos2(410.0, 312.0), egui::pos2(425.0, 326.0)] {
+        for step in [
+            start + egui::vec2(10.0, 12.0),
+            start + egui::vec2(25.0, 26.0),
+        ] {
             run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(step)]);
         }
-        let end = egui::pos2(440.0, 340.0);
+        let end = start + egui::vec2(40.0, 40.0);
         run_frame_with_events(
             &mut app,
             &ctx,

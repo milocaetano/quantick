@@ -1276,13 +1276,16 @@ impl ChartPane {
         // one is set; existing objects are never touched by that choice.
         let presets = chrome.presets;
         let completed = self.drawings.place_with(tool, point, |tool| {
+            let style = presets
+                .default_style(tool.id())
+                .unwrap_or_else(drawings::DrawingStyle::default);
             let mut payload = tool.default_payload();
             if let Some(name) = presets.default_preset(tool.id())
                 && let Some(value) = presets.load_custom_preset(tool.id(), &name)
             {
                 payload.import_preset(&value);
             }
-            payload
+            drawings::NewDrawing { style, payload }
         });
         if completed {
             // One-shot by default; the toolbox repeat pin keeps the tool

@@ -116,6 +116,12 @@ pub trait PresetHost {
     fn delete_custom_preset(&mut self, tool_id: &str, name: &str);
     fn default_preset(&self, tool_id: &str) -> Option<String>;
     fn set_default_preset(&mut self, tool_id: &str, name: Option<String>);
+    /// The colour / width / fill new objects of this tool open with, when the
+    /// trader has saved one. Separate from the named presets above because it
+    /// answers a different question: not "apply this look now" but "stop
+    /// asking me for this look every single time".
+    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle>;
+    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>);
 }
 
 /// A host with no storage: custom presets are absent, saving reports success
@@ -146,6 +152,10 @@ impl PresetHost for NullPresetHost {
         None
     }
     fn set_default_preset(&mut self, _tool_id: &str, _name: Option<String>) {}
+    fn default_style(&self, _tool_id: &str) -> Option<DrawingStyle> {
+        None
+    }
+    fn set_default_style(&mut self, _tool_id: &str, _style: Option<DrawingStyle>) {}
 }
 
 /// Everything a tool may need beyond raw screen anchors when painting or
@@ -570,6 +580,15 @@ impl PartialEq for Drawing {
     }
 }
 
+/// The look a freshly placed object opens with: the trader's saved default
+/// for the tool when there is one, the built-in start otherwise. Both halves
+/// travel together because a saved look is one thing to a trader, not a style
+/// and a payload.
+pub struct NewDrawing {
+    pub style: DrawingStyle,
+    pub payload: Box<dyn DrawingPayload>,
+}
+
 /// What a delete request did. Locked objects demand an explicit `force`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteOutcome {
@@ -725,31 +744,36 @@ impl Drawings {
         true
     }
 
-    /// [`Self::place_with`] with the tool's stock payload — the test-side
+    /// [`Self::place_with`] with the tool's stock look — the test-side
     /// shorthand; the app always goes through `place_with` to honour the
-    /// user's default preset.
+    /// trader's saved defaults.
     #[cfg(test)]
     pub fn place(&mut self, tool: DrawingTool, point: ChartPoint) -> bool {
-        self.place_with(tool, point, DrawingTool::default_payload)
+        self.place_with(tool, point, |tool| NewDrawing {
+            style: DrawingStyle::default(),
+            payload: tool.default_payload(),
+        })
     }
 
-    /// [`Self::place`] with a caller-chosen payload for a new draft — how the
-    /// app applies the user's default preset to newly created objects only.
+    /// [`Self::place`] with a caller-chosen look for a new draft — how the
+    /// app applies the trader's saved defaults to newly created objects only.
+    /// Objects that already exist are never touched by a default changing.
     pub fn place_with(
         &mut self,
         tool: DrawingTool,
         point: ChartPoint,
-        new_payload: impl FnOnce(DrawingTool) -> Box<dyn DrawingPayload>,
+        new_drawing: impl FnOnce(DrawingTool) -> NewDrawing,
     ) -> bool {
         if self.draft.as_ref().is_none_or(|draft| draft.tool != tool) {
+            let fresh = new_drawing(tool);
             self.draft = Some(Drawing {
                 tool,
                 points: Vec::with_capacity(tool.required_points()),
-                style: DrawingStyle::default(),
+                style: fresh.style,
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
-                payload: new_payload(tool),
+                payload: fresh.payload,
             });
         }
         let draft = self.draft.as_mut().expect("draft was installed above");

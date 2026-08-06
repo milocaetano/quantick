@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::PresetHost;
+use super::{DrawingStyle, PresetHost};
 
 /// Environment override for the preset file location.
 pub const PRESETS_ENV: &str = "QUANTICK_DRAWING_PRESETS";
@@ -19,7 +19,48 @@ pub const PRESETS_FILE: &str = "quantick-drawing-presets.toml";
 /// Version this build writes and the only one it reads.
 const STORE_FORMAT_VERSION: u32 = 1;
 
-/// Per-tool slot: named presets plus the optional default-for-new choice.
+/// The common style, as it goes to disk. Written out field by field rather
+/// than deriving on `egui::Color32` so the file stays something a human can
+/// read and edit — the reason it is tracked at all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct StoredStyle {
+    /// `#rrggbb`, the notation every other config in this repo uses.
+    color: String,
+    width_px: f32,
+    fill_alpha: u8,
+}
+
+impl StoredStyle {
+    fn from_style(style: DrawingStyle) -> Self {
+        let [red, green, blue, _] = style.color.to_array();
+        Self {
+            color: format!("#{red:02x}{green:02x}{blue:02x}"),
+            width_px: style.width_px,
+            fill_alpha: style.fill_alpha,
+        }
+    }
+
+    /// A style the file could not express is no style at all: a hand-edited
+    /// colour that does not parse falls back to the built-in start rather
+    /// than to a silently different one.
+    fn to_style(&self) -> Option<DrawingStyle> {
+        let hex = self.color.strip_prefix('#')?;
+        if hex.len() != 6 {
+            return None;
+        }
+        let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+        Some(DrawingStyle {
+            color: super::egui::Color32::from_rgb(channel(0)?, channel(2)?, channel(4)?),
+            width_px: self
+                .width_px
+                .clamp(super::MIN_DRAWING_WIDTH_PX, super::MAX_DRAWING_WIDTH_PX),
+            fill_alpha: self.fill_alpha.min(super::MAX_DRAWING_FILL_ALPHA),
+        })
+    }
+}
+
+/// Per-tool slot: named presets, the optional default-for-new choice, and the
+/// colour/width/fill new objects of this tool open with.
 /// `BTreeMap` keeps the file diff-stable across saves.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct ToolPresets {
@@ -27,6 +68,12 @@ struct ToolPresets {
     presets: BTreeMap<String, toml::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default: Option<String>,
+    /// Added after the format shipped, so it is optional and absent by
+    /// default: a file written before it existed reads clean, and a build
+    /// without it ignores the key instead of refusing the file. That is why
+    /// the version does not move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    style: Option<StoredStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -164,6 +211,16 @@ impl PresetHost for PresetStore {
         slot.default = name;
         self.persist();
     }
+
+    fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
+        self.tools.get(tool_id)?.style.as_ref()?.to_style()
+    }
+
+    fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+        let slot = self.tools.entry(tool_id.to_owned()).or_default();
+        slot.style = style.map(StoredStyle::from_style);
+        self.persist();
+    }
 }
 
 #[cfg(test)]
@@ -240,6 +297,74 @@ mod tests {
         store.delete_custom_preset("fib-extension", "targets+");
         assert_eq!(store.default_preset("fib-extension"), None);
         assert!(store.custom_preset_names("fib-extension").is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The chore this removes: setting the colour on every single object.
+    #[test]
+    fn a_default_style_survives_a_restart() {
+        let path = scratch_path("default-style");
+        let mine = DrawingStyle {
+            color: super::super::egui::Color32::from_rgb(0xFF, 0xA0, 0x10),
+            width_px: 2.5,
+            fill_alpha: 40,
+        };
+        {
+            let mut store = PresetStore::load_from(&path);
+            assert_eq!(store.default_style("trend-line"), None);
+            store.set_default_style("trend-line", Some(mine));
+        }
+        let store = PresetStore::load_from(&path);
+        assert_eq!(store.default_style("trend-line"), Some(mine));
+        assert_eq!(
+            store.default_style("rectangle"),
+            None,
+            "the choice is per tool, not a global repaint"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The file is tracked so a human can read and edit it; a colour that
+    /// does not parse must fall back to the built-in start, never to a
+    /// silently different colour.
+    #[test]
+    fn a_hand_broken_colour_is_no_default_rather_than_a_wrong_one() {
+        let path = scratch_path("broken-colour");
+        std::fs::write(
+            &path,
+            "version = 1
+[tools.\"trend-line\".style]
+color = \"not-a-colour\"
+width_px = 1.0
+fill_alpha = 10
+",
+        )
+        .unwrap();
+        let store = PresetStore::load_from(&path);
+        assert_eq!(store.default_style("trend-line"), None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A width or opacity edited past the slider's range is clamped, not
+    /// trusted: the file is editable, and an out-of-range value must not
+    /// produce a drawing the UI cannot represent.
+    #[test]
+    fn hand_edited_values_are_clamped_to_what_the_sliders_allow() {
+        let path = scratch_path("clamp");
+        std::fs::write(
+            &path,
+            "version = 1
+[tools.\"rectangle\".style]
+color = \"#8ab4f8\"
+width_px = 99.0
+fill_alpha = 255
+",
+        )
+        .unwrap();
+        let store = PresetStore::load_from(&path);
+        let style = store.default_style("rectangle").expect("a readable style");
+        assert_eq!(style.width_px, super::super::MAX_DRAWING_WIDTH_PX);
+        assert_eq!(style.fill_alpha, super::super::MAX_DRAWING_FILL_ALPHA);
         let _ = std::fs::remove_file(&path);
     }
 
