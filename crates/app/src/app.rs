@@ -4067,7 +4067,10 @@ mod tests {
 
         // Room is not what is keeping it shut, so it stays shut.
         run_frame_at(&mut app, &ctx, TEST_WINDOW);
-        assert!(pane_slots(&app)[0].collapsed, "a hand-closed pane stays shut");
+        assert!(
+            pane_slots(&app)[0].collapsed,
+            "a hand-closed pane stays shut"
+        );
 
         let strip = pane_slots(&app)[0].rect;
         click_sized(&mut app, &ctx, TEST_WINDOW, strip.center());

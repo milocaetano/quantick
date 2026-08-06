@@ -25,6 +25,7 @@ is the source of truth, this table is the index):
 | --- | --- |
 | `QUANTICK_CONFIG=<toml>` | full feed/symbol config override (use a scratchpad toml; **never** edit the user's root `quantick.toml`) |
 | `QUANTICK_DEFAULT_FEED` / `QUANTICK_DEFAULT_SYMBOL` | startup feed/symbol |
+| `QUANTICK_WINDOW_SIZE=WxH` | the size the window opens at, floored at the app's own 900x560 minimum. Window size decides whether the indicator band has room for its panes and the time axis for its labels, so without this that whole class of defect is invisible to anything but a human dragging a corner. With it plus `QUANTICK_INDICATORS_AUTOSTART`, the collapsed-pane strip is reachable from a fresh launch. |
 | `QUANTICK_BOOK_AUTOSTART=1` | L2 heatmap layer |
 | `QUANTICK_LIVE_STRIP_AUTOSTART=1` | live strip |
 | `QUANTICK_BUBBLES_AUTOSTART=1` | aggression layer (bubbles + live-column footprint) |
