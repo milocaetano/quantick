@@ -6173,6 +6173,127 @@ plot(close)
         );
     }
 
+    /// Reported from the running app: "clico no desenho, abre a propriedade
+    /// e fecha rapidamente — como se eu tivesse clicado fora dele". Selecting
+    /// an object must survive the release that made it and every frame after.
+    #[test]
+    fn clicking_a_drawing_keeps_it_selected_after_the_release() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        let on_the_line = egui::pos2(700.0, 300.0);
+        click_chart(&mut app, &ctx, on_the_line);
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+
+        // Deselect the way the user would, then click the line again — this
+        // is the gesture that flickers.
+        app.active_tab_mut().flow_pane.drawings.select(None);
+        run_frame(&mut app, &ctx);
+
+        click_chart(&mut app, &ctx, egui::pos2(900.0, 300.0));
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(0),
+            "the click that selects must not also deselect"
+        );
+        for frame in 0..4 {
+            run_frame(&mut app, &ctx);
+            assert_eq!(
+                app.active_tab().flow_pane.drawings.selected(),
+                Some(0),
+                "the selection vanished {frame} frames after the click"
+            );
+        }
+    }
+
+    /// The reported flicker, reduced to its cause.
+    ///
+    /// The press selects on an anchor grab (12 px); the release used to
+    /// body-test only (10 px). Just past the end of a trend line those two
+    /// disagree: the handle is in reach and the stroke is not. So the press
+    /// opened the panel and the release closed it, over and over, with the
+    /// mouse standing still.
+    #[test]
+    fn grabbing_a_handle_off_the_stroke_selects_and_stays_selected() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        let start = egui::pos2(600.0, 400.0);
+        let end = egui::pos2(800.0, 400.0);
+        click_chart(&mut app, &ctx, start);
+        click_chart(&mut app, &ctx, end);
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+
+        app.active_tab_mut().flow_pane.drawings.select(None);
+        run_frame(&mut app, &ctx);
+
+        // 11 px past the far anchor, straight along the line: inside the
+        // anchor radius, outside the stroke radius.
+        let past_the_end = egui::pos2(end.x + 11.0, end.y);
+        click_chart(&mut app, &ctx, past_the_end);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(0),
+            "grabbing the handle is clicking the object"
+        );
+        for frame in 0..4 {
+            run_frame(&mut app, &ctx);
+            assert_eq!(
+                app.active_tab().flow_pane.drawings.selected(),
+                Some(0),
+                "the selection was wiped {frame} frames after the handle grab"
+            );
+        }
+    }
+
+    /// The same gesture on a crowded chart — the demo hook's seventeen
+    /// overlapping objects, which is what the report was looking at.
+    #[test]
+    fn clicking_a_drawing_on_a_crowded_chart_keeps_it_selected() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
+            arm_drawing_from_toolbox(&mut app, &ctx, tool.id());
+            for point in 0..tool.required_points() {
+                let offset = index as f32;
+                let step = point as f32;
+                click_chart(
+                    &mut app,
+                    &ctx,
+                    egui::pos2(
+                        560.0 + (offset % 4.0) * 50.0 + step * 70.0,
+                        250.0 + (offset % 3.0) * 70.0 + step * 50.0,
+                    ),
+                );
+            }
+        }
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().flow_pane.drawings.select(None);
+        run_frame(&mut app, &ctx);
+
+        // Press-release on a spot the objects cover.
+        let spot = egui::pos2(630.0, 320.0);
+        click_chart(&mut app, &ctx, spot);
+        let picked = app.active_tab().flow_pane.drawings.selected();
+        assert!(picked.is_some(), "the click found something to select");
+        for frame in 0..5 {
+            run_frame(&mut app, &ctx);
+            assert_eq!(
+                app.active_tab().flow_pane.drawings.selected(),
+                picked,
+                "the selection changed {frame} frames after the click"
+            );
+        }
+    }
+
     /// Marina's ask (`docs/ux/drawing-tools-2026-08.md` §D7): a level drawn on
     /// one chart of the tab shows on the other, at the same moment in market
     /// time — one version of the truth instead of two hand-drawn ones.

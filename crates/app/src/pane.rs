@@ -1560,6 +1560,15 @@ impl ChartPane {
             {
                 // Alt+click walks down the z-order through overlapping
                 // objects; a plain click selects the topmost hit.
+                //
+                // Anchors first, exactly as the press below does. The two
+                // paths *must* ask the same question: the press selects on an
+                // anchor grab within `DRAWING_ANCHOR_RADIUS_PX`, and if the
+                // release only body-tested at the tighter
+                // `DRAWING_SELECT_RADIUS_PX` it would find nothing there and
+                // wipe the selection the press had just made — the object's
+                // panel flickering open and shut under a stationary cursor.
+                // Grabbing a handle *is* clicking the object.
                 let selected = if ui.input(|input| input.modifiers.alt) {
                     self.drawing_below_selection(
                         position,
@@ -1569,7 +1578,11 @@ impl ChartPane {
                         &scale,
                     )
                 } else {
-                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                    self.drawing_anchor_at(position, history_right, total, &scale)
+                        .map(|(drawing_index, _)| drawing_index)
+                        .or_else(|| {
+                            self.drawing_at(position, areas.chart, history_right, total, &scale)
+                        })
                 };
                 self.drawings.select(selected);
             }
