@@ -23,6 +23,16 @@ default_symbol = "BTCUSDT"
 #                   applied whenever this feed is selected. Leave it out and
 #                   the panel keeps whatever preset is active. An unknown name
 #                   is reported and ignored.
+#   default_layout — optional: the canvas layout a tab on this feed opens
+#                   showing — "flow" (the default), "time" (a full-window
+#                   timeframe chart) or "time+flow" (the split). Startup-only:
+#                   it never overrides a layout chosen from View → Layout.
+#   default_bars  — optional: the bar spec a tab on this feed opens on, as
+#                   "kind:parameter" — time:1m, tick:50, volume:5,
+#                   dollar:500000, imbalance:100. Sets the flow pane's opening
+#                   spec; with a time-showing default_layout and a time spec,
+#                   the timeframe pane opens on that interval too. A spec that
+#                   does not parse is refused at load, like any config error.
 [[feeds]]
 id = "binance"
 name = "Binance"

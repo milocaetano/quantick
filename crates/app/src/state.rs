@@ -148,6 +148,88 @@ impl BarSpec {
             BarSpec::Imbalance(target) => format!("imbalance({target})"),
         }
     }
+
+    /// Parse a `kind:parameter` spec string, the form `default_bars` uses in
+    /// the feeds configuration: `tick:50`, `volume:5`, `dollar:500000`,
+    /// `imbalance:100`, `time:1m` (also `time:30s`, `time:1h`, `time:1500ms`
+    /// or a bare millisecond count).
+    ///
+    /// Every rule a UI control enforces holds here too — a positive
+    /// parameter, and a time interval inside
+    /// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] — so a config
+    /// cannot open a chart no control could have produced.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable message naming what is wrong, for the config
+    /// loader to surface verbatim.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let (kind, param) = text
+            .split_once(':')
+            .ok_or_else(|| format!("'{text}' is not a kind:parameter bar spec, like 'time:1m'"))?;
+        let (kind, param) = (kind.trim(), param.trim());
+        let positive_count = |what: &str| -> Result<u64, String> {
+            match param.parse::<u64>() {
+                Ok(n) if n > 0 => Ok(n),
+                _ => Err(format!(
+                    "{what} bars need a positive whole number, got '{param}'"
+                )),
+            }
+        };
+        let positive_decimal = |what: &str| -> Result<Decimal, String> {
+            match param.parse::<Decimal>() {
+                Ok(d) if d > Decimal::ZERO => Ok(d),
+                _ => Err(format!("{what} bars need a positive number, got '{param}'")),
+            }
+        };
+        match kind {
+            "tick" => Ok(BarSpec::Tick(positive_count("tick")?)),
+            "imbalance" => Ok(BarSpec::Imbalance(positive_count("imbalance")?)),
+            "volume" => Ok(BarSpec::Volume(positive_decimal("volume")?)),
+            "dollar" => Ok(BarSpec::Dollar(positive_decimal("dollar")?)),
+            "time" => {
+                let ms = parse_time_interval(param)?;
+                if !(MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) {
+                    return Err(format!(
+                        "time interval '{param}' is outside {}..={} — the domain both \
+                         time-bar controls accept",
+                        fmt_time_interval(MIN_TIME_INTERVAL_MS),
+                        fmt_time_interval(MAX_TIME_INTERVAL_MS),
+                    ));
+                }
+                Ok(BarSpec::Time(ms))
+            }
+            _ => Err(format!(
+                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance"
+            )),
+        }
+    }
+}
+
+/// Parse a time interval in the same vocabulary [`fmt_time_interval`] emits:
+/// `1h`, `5m`, `90s`, `1500ms`, or a bare millisecond count. The round trip is
+/// deliberate — whatever the status bar can say, a config can ask for.
+fn parse_time_interval(text: &str) -> Result<i64, String> {
+    let parse_scaled = |digits: &str, scale: i64| -> Result<i64, String> {
+        digits
+            .parse::<i64>()
+            .ok()
+            .and_then(|n| n.checked_mul(scale))
+            .filter(|ms| *ms > 0)
+            .ok_or_else(|| format!("'{text}' is not a time interval, like '1m' or '30s'"))
+    };
+    // `ms` before `m` and `s`: the longest suffix owns the string.
+    if let Some(digits) = text.strip_suffix("ms") {
+        parse_scaled(digits, 1)
+    } else if let Some(digits) = text.strip_suffix('h') {
+        parse_scaled(digits, 3_600_000)
+    } else if let Some(digits) = text.strip_suffix('m') {
+        parse_scaled(digits, 60_000)
+    } else if let Some(digits) = text.strip_suffix('s') {
+        parse_scaled(digits, 1_000)
+    } else {
+        parse_scaled(text, 1)
+    }
 }
 
 /// A time-bar interval for humans: `1m`, `5m`, `1h` for round units, `90s`
@@ -423,6 +505,74 @@ mod tests {
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
+    }
+
+    /// `default_bars` speaks the same vocabulary the UI does — every kind,
+    /// every interval suffix, padding tolerated.
+    #[test]
+    fn bar_specs_parse_in_the_config_vocabulary() {
+        assert_eq!(BarSpec::parse("tick:50"), Ok(BarSpec::Tick(50)));
+        assert_eq!(BarSpec::parse("imbalance:100"), Ok(BarSpec::Imbalance(100)));
+        assert_eq!(BarSpec::parse("volume:5"), Ok(BarSpec::Volume(dec("5"))));
+        assert_eq!(
+            BarSpec::parse("volume:0.5"),
+            Ok(BarSpec::Volume(dec("0.5")))
+        );
+        assert_eq!(
+            BarSpec::parse("dollar:500000"),
+            Ok(BarSpec::Dollar(dec("500000")))
+        );
+        assert_eq!(BarSpec::parse("time:1m"), Ok(BarSpec::Time(60_000)));
+        assert_eq!(BarSpec::parse("time:90s"), Ok(BarSpec::Time(90_000)));
+        assert_eq!(BarSpec::parse("time:1h"), Ok(BarSpec::Time(3_600_000)));
+        assert_eq!(BarSpec::parse("time:1500ms"), Ok(BarSpec::Time(1_500)));
+        assert_eq!(BarSpec::parse("time:60000"), Ok(BarSpec::Time(60_000)));
+        assert_eq!(BarSpec::parse(" time : 5m "), Ok(BarSpec::Time(300_000)));
+    }
+
+    /// Whatever the status bar can say, a config can ask for: the interval
+    /// formatter and the parser are inverses over the whole domain shape.
+    #[test]
+    fn time_interval_labels_round_trip_through_the_parser() {
+        for ms in [
+            MIN_TIME_INTERVAL_MS,
+            1_500,
+            60_000,
+            300_000,
+            3_600_000,
+            MAX_TIME_INTERVAL_MS,
+        ] {
+            let label = fmt_time_interval(ms);
+            assert_eq!(
+                BarSpec::parse(&format!("time:{label}")),
+                Ok(BarSpec::Time(ms)),
+                "{label}"
+            );
+        }
+    }
+
+    /// A spec no live control could produce must not come in through the
+    /// config either — its only symptom would be a chart nobody asked for.
+    #[test]
+    fn a_spec_no_control_could_produce_does_not_parse() {
+        for bad in [
+            "",
+            "tick",
+            "tick:",
+            "tick:0",
+            "tick:-5",
+            "volume:0",
+            "dollar:nope",
+            "imbalance:1.5",
+            "time:0",
+            "time:50ms",
+            "time:25h",
+            "time:1w",
+            "grid:1",
+        ] {
+            let error = BarSpec::parse(bad).expect_err(bad);
+            assert!(!error.is_empty(), "{bad} must explain itself");
+        }
     }
 
     fn trade(agg_id: u64) -> Trade {

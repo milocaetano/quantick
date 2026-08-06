@@ -393,6 +393,25 @@ impl MetaTraderSettings {
     }
 }
 
+/// The canvas layout a feed declares its tabs open on (`default_layout` in
+/// the TOML), named for what each layout shows.
+///
+/// A config-side twin of `crate::tab::CanvasLayout` rather than that enum
+/// itself, so the TOML vocabulary — part of the user-facing config contract —
+/// cannot drift when the canvas grows a layout a config should not name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum DeclaredLayout {
+    /// The flow pane alone — the factory default.
+    #[serde(rename = "flow")]
+    Flow,
+    /// A full-window timeframe chart.
+    #[serde(rename = "time")]
+    Time,
+    /// Timeframe left, flow right, on the draggable divider.
+    #[serde(rename = "time+flow")]
+    TimeAndFlow,
+}
+
 /// One selectable feed: a named backend and the symbols it offers.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FeedConfig {
@@ -415,6 +434,23 @@ pub struct FeedConfig {
     /// and ignored rather than silently altering the panel.
     #[serde(default)]
     pub bubble_preset: Option<String>,
+    /// The canvas layout a tab on this feed opens showing.
+    ///
+    /// Startup-scoped, like `default_feed`: it decides what a *new* tab looks
+    /// like and never overrides a layout the user has since chosen. Absent,
+    /// nothing changes — the factory default stays the flow pane, quantick's
+    /// identity (UX audit §3).
+    #[serde(default)]
+    pub default_layout: Option<DeclaredLayout>,
+    /// The bar spec a tab on this feed opens on, as `kind:parameter` —
+    /// `time:1m`, `tick:50`, `volume:5`, `dollar:500000`, `imbalance:100`
+    /// (see `crate::state::BarSpec::parse`). It sets the flow pane's opening
+    /// spec; when [`default_layout`](Self::default_layout) shows a time pane
+    /// and this names a time spec, that pane opens on its interval too.
+    /// Absent, the factory default spec applies, exactly as before the field
+    /// existed.
+    #[serde(default)]
+    pub default_bars: Option<String>,
 }
 
 /// Paper-trading options (`[paper]` in the TOML).
@@ -575,6 +611,33 @@ impl AppConfig {
         self.feed(id).map(|f| f.provider)
     }
 
+    /// The bar spec feed `id` declares its tabs open on, if it declares one.
+    ///
+    /// `validate` already proved the string parses, so `None` normally means
+    /// "nothing declared". A spec that stopped parsing anyway (a config
+    /// mutated in a test, say) is reported and treated as undeclared rather
+    /// than trusted half-way.
+    #[must_use]
+    pub fn startup_spec_for(&self, id: &str) -> Option<crate::state::BarSpec> {
+        let bars = self.feed(id)?.default_bars.as_deref()?;
+        match crate::state::BarSpec::parse(bars) {
+            Ok(spec) => Some(spec),
+            Err(message) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "DEFAULT_BARS_INVALID",
+                    feed = %id,
+                    spec = %bars,
+                    reason = %message,
+                    action = "open_factory_default_spec",
+                    "feed declares a default_bars that does not parse; ignoring"
+                );
+                None
+            }
+        }
+    }
+
     /// Data-honesty label for how feed `id` decides the aggressor side of a
     /// trade, or `None` when the venue reports true sides. Shown verbatim on
     /// the status bar; this sits next to the provider → code-path map because
@@ -683,6 +746,15 @@ impl AppConfig {
                 .is_some_and(|name| name.trim().is_empty())
             {
                 return Err(format!("feed '{}' names an empty bubble_preset", feed.id));
+            }
+            // The same live-control rules apply to a declared opening spec: a
+            // config must not open a chart no control could have produced,
+            // and the only symptom of a typo here would be a silently
+            // factory-default chart.
+            if let Some(bars) = &feed.default_bars {
+                crate::state::BarSpec::parse(bars).map_err(|message| {
+                    format!("feed '{}' has an invalid default_bars: {message}", feed.id)
+                })?;
             }
         }
         // Needs the catalog, so it waits until the catalog is known good.
@@ -1851,6 +1923,79 @@ mod tests {
             name = "X"
             provider = "kraken"
             symbols = ["Y"]
+        "#;
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+    }
+
+    /// The declared opening layout and bar spec are read from the feed entry,
+    /// in the same vocabulary the View menu and the BARS group speak.
+    #[test]
+    fn declared_layout_and_bars_are_read_and_resolved() {
+        let text = r#"
+            default_feed = "b"
+            default_symbol = "AAA"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["AAA"]
+            default_layout = "time+flow"
+            default_bars = "time:5m"
+        "#;
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
+        assert_eq!(
+            config.feeds[0].default_layout,
+            Some(DeclaredLayout::TimeAndFlow)
+        );
+        assert_eq!(
+            config.startup_spec_for("b"),
+            Some(crate::state::BarSpec::Time(300_000))
+        );
+        assert_eq!(config.startup_spec_for("nope"), None);
+
+        // Absent, both fields change nothing — the factory defaults stand,
+        // exactly as before the fields existed.
+        let (undeclared, _) = sample();
+        assert_eq!(undeclared.feeds[0].default_layout, None);
+        assert_eq!(undeclared.startup_spec_for("binance"), None);
+    }
+
+    /// A `default_bars` no control could produce is refused at load, naming
+    /// the feed — its only runtime symptom would be a silently
+    /// factory-default chart.
+    #[test]
+    fn an_invalid_default_bars_is_refused_at_load() {
+        for bad in ["time:0", "tick:0", "bananas:9", "time:25h", "50"] {
+            let text = format!(
+                r#"
+                default_feed = "b"
+                default_symbol = "AAA"
+                [[feeds]]
+                id = "b"
+                name = "B"
+                provider = "binance"
+                symbols = ["AAA"]
+                default_bars = "{bad}"
+            "#
+            );
+            let err =
+                parse(&text, ConfigSource::Embedded, &AddedSymbols::default()).expect_err(bad);
+            let message = err.to_string();
+            assert!(message.contains("default_bars"), "{message}");
+            assert!(message.contains("'b'"), "the feed is named: {message}");
+        }
+
+        // An unknown layout name is a parse error, like an unknown provider.
+        let text = r#"
+            default_feed = "b"
+            default_symbol = "AAA"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["AAA"]
+            default_layout = "grid"
         "#;
         let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
