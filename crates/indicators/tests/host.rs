@@ -563,3 +563,37 @@ fn an_empty_ladder_visits_nothing() {
     empty.walk_partial_prefixes(&[partial.expect("forming")], |_, _| visits += 1);
     assert_eq!(visits, 0, "no indicators, nothing to preview");
 }
+
+/// The ladder is a port, not a CVD feature: a second implementation exercises
+/// it, and one instance failing must not cost its neighbour its rungs. A
+/// failing indicator contributes nothing to the lane — the honest answer —
+/// while the healthy one is sampled as if nothing happened.
+#[test]
+fn a_failing_instance_drops_out_of_the_ladder_without_taking_its_neighbour() {
+    let (bars, partial) = bars_and_partial(5);
+    let partial = partial.expect("the fixture leaves a bar forming");
+
+    let mut host = IndicatorHost::new();
+    let healthy = host.add(Box::new(Cvd::new()));
+    let broken = host.add(Box::new(FailingAt::failing_preview()));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    let mut healthy_rungs = 0;
+    let mut broken_rungs = 0;
+    host.walk_partial_prefixes(&[partial.clone(), partial], |_, previews| {
+        if previews.get(healthy).is_some() {
+            healthy_rungs += 1;
+        }
+        if previews.get(broken).is_some() {
+            broken_rungs += 1;
+        }
+        assert_eq!(previews.iter().count(), 2, "both instances are visited");
+    });
+
+    assert_eq!(healthy_rungs, 2, "the healthy instance is sampled");
+    assert_eq!(broken_rungs, 0, "the failing one says nothing");
+    assert!(host.error(broken).is_some(), "and its failure is recorded");
+    assert!(host.error(healthy).is_none(), "the neighbour is untouched");
+}

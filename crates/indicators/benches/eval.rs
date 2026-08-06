@@ -119,10 +119,43 @@ fn bench_host(bars: &[Bar]) {
     );
 }
 
+/// The live lane's ladder: one walk is what a chart pays per drained worker
+/// batch to draw its panes across the tape, and it is a multiple of the
+/// preview above — `rungs` previews per indicator, not one.
+///
+/// Reported per *walk* rather than per rung, because a walk is the unit the
+/// chart actually pays. At 64 rungs (the renderer's ceiling, reached only by
+/// a very wide lane) it is 64x the preview cost, and the cadence consuming it
+/// is the worker's own coalesced drain, never the feed's print rate.
+fn bench_lane_ladder(bars: &[Bar]) {
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Ema::new(21, SourceId::Close)));
+    host.add(Box::new(Cvd::new()));
+    host.rebuild(bars, None);
+
+    let partial = bars.last().expect("bars are non-empty").clone();
+    for rungs in [8_usize, 64] {
+        let prefixes: Vec<Bar> = (0..rungs).map(|_| partial.clone()).collect();
+        let walks = 2_000;
+        let start = Instant::now();
+        for _ in 0..walks {
+            host.walk_partial_prefixes(black_box(&prefixes), |_, previews| {
+                black_box(previews.iter().count());
+            });
+        }
+        report(
+            &format!("lane walk x{rungs} (EMA+CVD)"),
+            walks,
+            start.elapsed(),
+        );
+    }
+}
+
 fn main() {
     let n = 100_000;
     println!("indicator eval benchmark: {n} deterministic bars\n");
     let bars = make_bars(n);
     bench_kernels(n);
     bench_host(&bars);
+    bench_lane_ladder(&bars);
 }

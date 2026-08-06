@@ -547,11 +547,11 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
         // The ladder is walked here, on the worker's own cadence, for the same
         // reason previews are: the cost is per drained batch, never per print
         // and never per frame, so a 50x replay cannot melt it.
-        let lane = lane_request
+        let mut lane = lane_request
             .map(|(run, rungs)| walk_lane(&mut host, &slots, &run, rungs))
             .unwrap_or_default();
 
-        publish_deltas(&host, &mut slots, events, rebuilt, &lane);
+        publish_deltas(&host, &mut slots, events, rebuilt, &mut lane);
         for ack in flushes {
             let _ = ack.send(());
         }
@@ -608,7 +608,7 @@ fn publish_deltas(
     slots: &mut BTreeMap<SlotId, SlotMirror>,
     events: &Sender<IndicatorEvent>,
     rebuilt: bool,
-    lane: &BTreeMap<SlotId, Vec<LaneSample>>,
+    lane: &mut BTreeMap<SlotId, Vec<LaneSample>>,
 ) {
     for (&slot, mirror) in slots.iter_mut() {
         let Some(host_id) = mirror.host_id else {
@@ -670,9 +670,11 @@ fn publish_deltas(
         // Sent on the same cadence as the preview, empty vector included: the
         // lane's curve is as transient as the forming bar it describes, and a
         // slot that has stopped producing rungs must stop drawing them.
+        // Taken, not cloned: each slot is visited once, and the rungs are
+        // already a fresh allocation from this batch's walk.
         let _ = events.send(IndicatorEvent::Lane {
             slot,
-            samples: lane.get(&slot).cloned().unwrap_or_default(),
+            samples: lane.remove(&slot).unwrap_or_default(),
         });
 
         if let Some(revision) = host.objects_revision(host_id)

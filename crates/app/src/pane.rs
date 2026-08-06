@@ -237,29 +237,53 @@ fn pane_pan_gesture(
     body: egui::Rect,
     view: &mut PriceView,
     auto: Option<(f64, f64)>,
-) -> egui::Response {
+) -> PaneGesture {
     let response = ui.interact(body, id, egui::Sense::click_and_drag());
     if response.double_clicked() {
         view.reset();
-    }
-    let Some(auto) = auto else {
-        return response;
-    };
-    if response.dragged() {
-        let height = body.height();
-        let delta = response.drag_delta().y;
-        if delta != 0.0 && height > 1.0 {
-            let (lo, hi) = view.resolve(auto);
-            let per_px = (hi - lo) / f64::from(height);
-            view.pan(f64::from(delta) * per_px, auto);
-        }
     }
     if response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
-    response
+
+    // The pane's own axis moves here; time is the candles' to move, and the
+    // caller applies it once for however many panes are stacked — panning
+    // three panes' worth of x would move the chart three times per drag.
+    let mut gesture = PaneGesture::default();
+    if response.dragged() {
+        gesture.pan_x = response.drag_delta().x;
+        if let Some(auto) = auto {
+            let height = body.height();
+            let delta = response.drag_delta().y;
+            if delta != 0.0 && height > 1.0 {
+                let (lo, hi) = view.resolve(auto);
+                let per_px = (hi - lo) / f64::from(height);
+                view.pan(f64::from(delta) * per_px, auto);
+            }
+        }
+    }
+    if response.hovered() {
+        gesture.scroll_y = ui.input(|input| input.raw_scroll_delta.y);
+    }
+    gesture
+}
+
+/// What a drag or scroll over a pane body owes the *chart* — the pane's own
+/// axis has already been moved by the time this is returned.
+///
+/// A pane is a band of the same time axis the candles draw, so the gestures
+/// that mean "time" there mean time here too: drag sideways to pan it, scroll
+/// to zoom it. Collected rather than applied on the spot because the viewport
+/// belongs to the pane's owner, and because every stacked pane would otherwise
+/// apply its own copy of the same drag.
+#[derive(Default)]
+struct PaneGesture {
+    /// Horizontal drag, in pixels.
+    pan_x: f32,
+    /// Wheel travel while hovering, in egui's scroll units.
+    scroll_y: f32,
 }
 
 /// The gesture that scales a vertical axis, wherever its numbers live: drag up
@@ -307,6 +331,13 @@ fn axis_zoom_gesture(
         }
     }
 }
+
+/// Wheel travel that doubles or halves what a time axis shows.
+///
+/// One number for the candles, the lane and every pane body, so a scroll means
+/// the same amount of zoom wherever the pointer happens to be resting. It was
+/// already one number — written out four times.
+const SCROLL_ZOOM_PX: f32 = 300.0;
 
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
@@ -1184,11 +1215,17 @@ impl ChartPane {
     /// worker then walks no ladder at all.
     fn partial_command(&self) -> IndicatorCommand {
         let partial = self.state.partial().cloned();
-        let run = partial.as_ref().map_or_else(Vec::new, |bar| {
-            let trades = self.state.trades();
-            let count = usize::try_from(bar.trade_count).unwrap_or(usize::MAX);
-            trades[trades.len().saturating_sub(count)..].to_vec()
-        });
+        // No lane, no run. The clone is proportional to the forming bar's
+        // trade count, and a chart with nowhere to draw the result would pay
+        // it on every drain for nothing.
+        let run = partial
+            .as_ref()
+            .filter(|_| self.lane_rungs > 0)
+            .map_or_else(Vec::new, |bar| {
+                let trades = self.state.trades();
+                let count = usize::try_from(bar.trade_count).unwrap_or(usize::MAX);
+                trades[trades.len().saturating_sub(count)..].to_vec()
+            });
         IndicatorCommand::PartialUpdated {
             partial,
             run,
@@ -1740,9 +1777,9 @@ impl ChartPane {
                 if let Some(orderflow) = self.orderflow.as_mut()
                     && chart.hover_pos().is_some_and(in_lane)
                 {
-                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 } else {
-                    self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                    self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 }
             }
         }
@@ -1796,7 +1833,7 @@ impl ChartPane {
         if time.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
             }
         }
         // Jump-to-live (audit F6): panned into history, the way back is one
@@ -1834,7 +1871,7 @@ impl ChartPane {
             if lane_time.hovered() {
                 let scroll = ui.input(|i| i.raw_scroll_delta.y);
                 if scroll.abs() > 0.0 {
-                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 }
             }
         }
@@ -1854,6 +1891,7 @@ impl ChartPane {
         // split's two charts can hold the same slot number and a slot-only id
         // would make one pane's axis answer for the other's.
         let pane_id = self.id;
+        let mut pane_time_gesture = PaneGesture::default();
         for ((view, gutter), body) in self
             .indicators
             .visible_panes_mut()
@@ -1870,13 +1908,26 @@ impl ChartPane {
             // The body moves the scale the gutter scales. Registered after it
             // so the two never fight over the same pixel: the gutter is a band
             // beside the pane, and egui gives an overlap to the later claim.
-            pane_pan_gesture(
+            let gesture = pane_pan_gesture(
                 ui,
                 egui::Id::new(("pane_pan", pane_id, view.slot)),
                 *body,
                 &mut view.scale,
                 view.last_auto,
             );
+            pane_time_gesture.pan_x += gesture.pan_x;
+            pane_time_gesture.scroll_y += gesture.scroll_y;
+        }
+        // Time, once, whichever pane the pointer was over: the panes share the
+        // candles' x axis, so a sideways drag or a scroll there has to move the
+        // same viewport the candles do — otherwise the same gesture would mean
+        // one thing over the bars and nothing one pane below them.
+        if total > 0 && pane_time_gesture.pan_x != 0.0 {
+            self.viewport.pan_pixels(pane_time_gesture.pan_x, total);
+        }
+        if pane_time_gesture.scroll_y.abs() > 0.0 {
+            self.viewport
+                .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }
     }
 
@@ -1935,11 +1986,15 @@ impl ChartPane {
         // every chart movement out of it: panning, zooming and dragging move
         // the candles beside the tape and never the tape itself, so the most
         // recent prints are on screen whatever the rest of the chart is doing.
-        let lane_width_px = self
+        // Band and live edge in one look at the published book: the panes need
+        // the instant the band's right edge stands for, and reading it again
+        // further down would put a second worker-mutex wait on the render
+        // thread for a number already in hand.
+        let live_lane = self
             .orderflow
             .as_mut()
-            .and_then(|orderflow| orderflow.live_lane_width_px(chart_rect.width()))
-            .unwrap_or(0.0);
+            .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
+        let lane_width_px = live_lane.map_or(0.0, |lane| lane.width_px);
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
         self.last_lane_divider_x =
@@ -2146,25 +2201,27 @@ impl ChartPane {
         // curve lands under the prints it was computed from.
         let lane_window = self
             .last_lane_divider_x
-            .and_then(|divider| Some((divider, self.orderflow.as_mut()?)))
-            .and_then(|(divider, orderflow)| {
-                let end_ms = orderflow.live_end_ms()?;
+            .zip(live_lane)
+            .and_then(|(divider, lane)| {
+                let orderflow = self.orderflow.as_ref()?;
                 let window = orderflow.live_lane_window_ms(visible_state).max(1);
-                Some((divider, end_ms.saturating_sub(window), end_ms))
+                Some((divider, lane.end_ms.saturating_sub(window), lane.end_ms))
             });
         let lane_steps: Vec<(i64, usize)> =
             lane_window.map_or_else(Vec::new, |(_, start_ms, _)| {
                 let first = prefix.len();
-                closed
+                // Walked back from the newest close and reversed in place: the
+                // window holds a handful of bars, and building it front to back
+                // would mean scanning every closed bar the chart has ever seen.
+                let mut steps: Vec<(i64, usize)> = closed
                     .iter()
                     .enumerate()
                     .rev()
                     .take_while(|(_, bar)| bar.close_time >= start_ms)
                     .map(|(index, bar)| (bar.close_time, first + index))
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect()
+                    .collect();
+                steps.reverse();
+                steps
             });
         for ((view, pane), gutter) in self
             .indicators
