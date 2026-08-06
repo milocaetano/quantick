@@ -16,12 +16,62 @@
 use std::collections::BTreeMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use quantick_engine::Bar;
+use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
     ObjectSnapshot, PreviewFrame, SourceId,
     native::{Cvd, Ema},
 };
+
+/// Most rungs a lane ladder is ever walked with.
+///
+/// The ceiling is a cost statement, not a resolution one: a rung is a full
+/// evaluation of every hosted indicator, so the count is what bounds a
+/// publish. Sixty-four rungs across a lane a few hundred pixels wide is finer
+/// than the band can show, and the renderer asks for fewer than this whenever
+/// the lane is narrower.
+pub(crate) const MAX_LANE_RUNGS: usize = 64;
+
+/// One rung of the lane ladder as the UI receives it: the instant on the
+/// tape, and what one slot's plots showed there.
+///
+/// The forming bar only — see [`IndicatorHost::walk_partial_prefixes`] for
+/// why the ladder cannot reach back past its open.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LaneSample {
+    /// Exchange timestamp of the last print in this rung's prefix.
+    pub close_time: i64,
+    /// One value per declared plot, in descriptor order; NaN = nothing to
+    /// draw, exactly as in a committed row.
+    pub values: Vec<f64>,
+}
+
+/// Fold `run` into forming-bar prefixes, at most `rungs` of them.
+///
+/// The trades are the forming bar's own, in occurrence order, so folding all
+/// of them reproduces the bar the chart is drawing — which is why the last
+/// print always gets a rung: the lane's right edge is the live edge, and
+/// stopping a sample short of it would draw the tape as if the newest prints
+/// had not happened.
+fn lane_prefixes(run: &[Trade], rungs: usize) -> Vec<Bar> {
+    if run.is_empty() || rungs == 0 {
+        return Vec::new();
+    }
+    let step = run.len().div_ceil(rungs.min(run.len())).max(1);
+    let mut prefixes = Vec::with_capacity(run.len().div_ceil(step) + 1);
+    let mut forming: Option<Bar> = None;
+    for (index, trade) in run.iter().enumerate() {
+        match &mut forming {
+            None => forming = Some(Bar::opened_by(trade)),
+            Some(bar) => bar.extend(trade),
+        }
+        let last = index + 1 == run.len();
+        if last || (index + 1) % step == 0 {
+            prefixes.push(forming.clone().expect("a trade opened the bar"));
+        }
+    }
+    prefixes
+}
 
 /// UI-side handle for one indicator slot. The UI allocates these (so it can
 /// track an indicator it just requested without waiting for the worker); the
@@ -107,7 +157,16 @@ pub(crate) enum IndicatorCommand {
     /// One live bar closed.
     BarClosed(Bar),
     /// The forming bar changed (or vanished). Latest-wins within a batch.
-    PartialUpdated(Option<Bar>),
+    PartialUpdated {
+        partial: Option<Bar>,
+        /// The forming bar's own trades, in occurrence order — the run the
+        /// lane ladder is folded from. Empty when nothing is forming.
+        run: Vec<Trade>,
+        /// How many rungs the chart's live lane can show. `0` means there is
+        /// no lane on screen and no ladder is walked at all: a chart without
+        /// a tape must not pay for one.
+        rungs: usize,
+    },
     /// Spec switch / prepended history / source reset: replay from scratch.
     Rebuild(Vec<Bar>, Option<Bar>),
     /// Instantiate `source` behind `slot` and catch it up over history.
@@ -163,6 +222,13 @@ pub(crate) enum IndicatorEvent {
     Preview {
         slot: SlotId,
         frame: Option<PreviewFrame>,
+    },
+    /// The forming bar sampled across the live lane's window for one slot,
+    /// oldest rung first. Empty when there is no lane or nothing is forming —
+    /// which is how a vanished lane clears the curve it was drawing.
+    Lane {
+        slot: SlotId,
+        samples: Vec<LaneSample>,
     },
     /// The slot's indicator failed and is disabled until rebuilt/replaced.
     Error { slot: SlotId, error: EvalError },
@@ -236,7 +302,7 @@ impl IndicatorWorker {
     /// is bounded by feed cadence).
     pub(crate) fn send(&self, command: IndicatorCommand) {
         #[cfg(test)]
-        if matches!(command, IndicatorCommand::PartialUpdated(_)) {
+        if matches!(command, IndicatorCommand::PartialUpdated { .. }) {
             self.partial_updates.set(self.partial_updates.get() + 1);
         }
         if self.commands.send(command).is_err() {
@@ -293,6 +359,11 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
         let mut flushes: Vec<Sender<()>> = Vec::new();
         // Latest-wins; `Some(None)` means "partial vanished" must be applied.
         let mut partial_update: Option<Option<Bar>> = None;
+        // The run and rung budget that came with the newest partial of the
+        // batch. Coalesced with it rather than separately: a ladder folded
+        // from one batch's trades and previewed against another's forming bar
+        // would draw a curve that never happened.
+        let mut lane_request: Option<(Vec<Trade>, usize)> = None;
         // After a rebuild every slot's full columns go out; appends would be
         // redundant (the snapshot is taken after the whole batch).
         let mut rebuilt = false;
@@ -304,14 +375,24 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     rebuilt = true;
                 }
                 IndicatorCommand::BarClosed(bar) => host.push_closed_bar(&bar),
-                IndicatorCommand::PartialUpdated(partial) => partial_update = Some(partial),
+                IndicatorCommand::PartialUpdated {
+                    partial,
+                    run,
+                    rungs,
+                } => {
+                    partial_update = Some(partial);
+                    lane_request = Some((run, rungs));
+                }
                 IndicatorCommand::Rebuild(bars, partial) => {
                     host.rebuild(&bars, partial.as_ref());
                     rebuilt = true;
                     // The rebuild already previewed this partial; a stale
                     // earlier PartialUpdated in the same batch must not
-                    // override it backwards.
+                    // override it backwards. Its ladder goes with it — the
+                    // run it was folded from belongs to the pre-rebuild
+                    // series.
                     partial_update = None;
+                    lane_request = None;
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
@@ -463,11 +544,60 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
             host.set_partial(partial.as_ref());
         }
 
-        publish_deltas(&host, &mut slots, events, rebuilt);
+        // The ladder is walked here, on the worker's own cadence, for the same
+        // reason previews are: the cost is per drained batch, never per print
+        // and never per frame, so a 50x replay cannot melt it.
+        let lane = lane_request
+            .map(|(run, rungs)| walk_lane(&mut host, &slots, &run, rungs))
+            .unwrap_or_default();
+
+        publish_deltas(&host, &mut slots, events, rebuilt, &lane);
         for ack in flushes {
             let _ = ack.send(());
         }
     }
+}
+
+/// Sample every slot's plots across the forming bar's run, oldest rung first.
+///
+/// Returns an empty map when there is no lane, no run, or nothing forming —
+/// the three ways a chart says "no curve on the tape", all of which must
+/// clear whatever the lane was drawing rather than leave it frozen.
+fn walk_lane(
+    host: &mut IndicatorHost,
+    slots: &BTreeMap<SlotId, SlotMirror>,
+    run: &[Trade],
+    rungs: usize,
+) -> BTreeMap<SlotId, Vec<LaneSample>> {
+    let mut lane: BTreeMap<SlotId, Vec<LaneSample>> = BTreeMap::new();
+    let prefixes = lane_prefixes(run, rungs.min(MAX_LANE_RUNGS));
+    if prefixes.is_empty() {
+        return lane;
+    }
+    for (&slot, mirror) in slots {
+        if mirror.host_id.is_some() {
+            lane.insert(slot, Vec::with_capacity(prefixes.len()));
+        }
+    }
+    host.walk_partial_prefixes(&prefixes, |prefix, previews| {
+        for (&slot, mirror) in slots {
+            let Some(host_id) = mirror.host_id else {
+                continue;
+            };
+            // A slot in its error state previews nothing, and nothing is
+            // exactly what the lane should show for it.
+            let Some(frame) = previews.get(host_id) else {
+                continue;
+            };
+            if let Some(samples) = lane.get_mut(&slot) {
+                samples.push(LaneSample {
+                    close_time: prefix.close_time,
+                    values: frame.values.clone(),
+                });
+            }
+        }
+    });
+    lane
 }
 
 /// Emit exactly the difference between what the UI has and what the host now
@@ -478,6 +608,7 @@ fn publish_deltas(
     slots: &mut BTreeMap<SlotId, SlotMirror>,
     events: &Sender<IndicatorEvent>,
     rebuilt: bool,
+    lane: &BTreeMap<SlotId, Vec<LaneSample>>,
 ) {
     for (&slot, mirror) in slots.iter_mut() {
         let Some(host_id) = mirror.host_id else {
@@ -534,6 +665,14 @@ fn publish_deltas(
         let _ = events.send(IndicatorEvent::Preview {
             slot,
             frame: host.preview(host_id).cloned(),
+        });
+
+        // Sent on the same cadence as the preview, empty vector included: the
+        // lane's curve is as transient as the forming bar it describes, and a
+        // slot that has stopped producing rungs must stop drawing them.
+        let _ = events.send(IndicatorEvent::Lane {
+            slot,
+            samples: lane.get(&slot).cloned().unwrap_or_default(),
         });
 
         if let Some(revision) = host.objects_revision(host_id)
@@ -600,7 +739,11 @@ mod tests {
         for bar in &bars[split..] {
             worker.send(IndicatorCommand::BarClosed(bar.clone()));
         }
-        worker.send(IndicatorCommand::PartialUpdated(partial.clone()));
+        worker.send(IndicatorCommand::PartialUpdated {
+            partial: partial.clone(),
+            run: Vec::new(),
+            rungs: 0,
+        });
         worker.flush();
         for event in worker.drain_events() {
             views.apply(event);
@@ -694,6 +837,160 @@ mod tests {
         assert_eq!(views.all().len(), 1);
         assert_eq!(views.all()[0].slot, survivor);
         assert_eq!(views.all()[0].rows(), 3, "the survivor saw the new bar");
+    }
+
+    /// The rung budget is a ceiling on cost, and the newest print is never the
+    /// one dropped to meet it: the lane's right edge is the live edge.
+    #[test]
+    fn a_ladder_respects_its_budget_and_always_reaches_the_newest_print() {
+        let run: Vec<Trade> = (1..=50).map(trade).collect();
+
+        for rungs in [1_usize, 3, 7, 64] {
+            let prefixes = lane_prefixes(&run, rungs);
+            assert!(
+                prefixes.len() <= rungs.max(1) + 1,
+                "{rungs} rungs asked for, {} produced",
+                prefixes.len()
+            );
+            let last = prefixes.last().expect("a non-empty run has rungs");
+            assert_eq!(
+                last.trade_count,
+                run.len() as u64,
+                "the last rung is the whole run"
+            );
+            assert_eq!(last.close_time, run[run.len() - 1].timestamp_ms);
+        }
+    }
+
+    /// A rung is a prefix of the run, folded exactly as a builder folds. The
+    /// last one must therefore *be* the forming bar the chart is drawing —
+    /// otherwise the lane's right edge and the candle beside it disagree.
+    #[test]
+    fn the_last_rung_is_the_forming_bar_itself() {
+        let (_, partial) = bars_and_partial(11, 4);
+        let partial = partial.expect("the fixture leaves a bar forming");
+        let run: Vec<Trade> = (1..=11)
+            .map(trade)
+            .filter(|t| t.timestamp_ms >= partial.open_time)
+            .collect();
+
+        let prefixes = lane_prefixes(&run, 8);
+        assert_eq!(prefixes.last(), Some(&partial));
+    }
+
+    /// No lane (`rungs == 0`) and no run are both "walk nothing": a chart
+    /// without a tape must not pay for a ladder it cannot draw.
+    #[test]
+    fn no_lane_and_no_run_both_produce_no_rungs() {
+        let run: Vec<Trade> = (1..=5).map(trade).collect();
+        assert!(lane_prefixes(&run, 0).is_empty());
+        assert!(lane_prefixes(&[], 16).is_empty());
+    }
+
+    /// End to end through the worker: a partial published with its run comes
+    /// back as lane samples whose last rung equals the slot's own preview.
+    /// The curve's live end and the pane's headline number are the same fact,
+    /// and this is what keeps them from drifting apart.
+    #[test]
+    fn the_lane_samples_end_where_the_preview_does() {
+        let (bars, partial) = bars_and_partial(11, 4);
+        let partial = partial.expect("the fixture leaves a bar forming");
+        let run: Vec<Trade> = (1..=11)
+            .map(trade)
+            .filter(|t| t.timestamp_ms >= partial.open_time)
+            .collect();
+
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::NativeCvd,
+        });
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        worker.send(IndicatorCommand::PartialUpdated {
+            partial: Some(partial),
+            run: run.clone(),
+            rungs: 8,
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+
+        let view = &views.all()[0];
+        assert!(
+            !view.lane.is_empty(),
+            "a run with a lane budget produces rungs"
+        );
+        assert_eq!(
+            view.lane.last().map(|sample| sample.close_time),
+            run.last().map(|t| t.timestamp_ms),
+            "the newest rung sits at the newest print"
+        );
+        assert_eq!(
+            view.lane
+                .last()
+                .map(|sample| format!("{:?}", sample.values)),
+            view.preview
+                .as_ref()
+                .map(|frame| format!("{:?}", frame.values)),
+            "the lane's live end is the preview"
+        );
+        assert!(
+            view.lane
+                .windows(2)
+                .all(|pair| pair[0].close_time <= pair[1].close_time),
+            "rungs are in occurrence order"
+        );
+    }
+
+    /// A publish with no lane budget clears whatever the lane was drawing.
+    /// Toggling the tape off must not leave a frozen curve behind.
+    #[test]
+    fn dropping_the_lane_clears_the_samples_already_published() {
+        let (bars, partial) = bars_and_partial(11, 4);
+        let partial = partial.expect("the fixture leaves a bar forming");
+        let run: Vec<Trade> = (1..=11)
+            .map(trade)
+            .filter(|t| t.timestamp_ms >= partial.open_time)
+            .collect();
+
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot();
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::NativeCvd,
+        });
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        worker.send(IndicatorCommand::PartialUpdated {
+            partial: Some(partial.clone()),
+            run,
+            rungs: 8,
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+        assert!(!views.all()[0].lane.is_empty(), "the fixture drew a lane");
+
+        worker.send(IndicatorCommand::PartialUpdated {
+            partial: Some(partial),
+            run: Vec::new(),
+            rungs: 0,
+        });
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+
+        let view = &views.all()[0];
+        assert!(view.lane.is_empty(), "no lane, no curve");
+        assert!(
+            view.preview.is_some(),
+            "and the forming bar still previews — the walk restored it"
+        );
     }
 }
 
