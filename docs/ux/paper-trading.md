@@ -213,11 +213,16 @@ Append-friendly, self-contained rows, torn tails reported not dropped. The
 the same replay run produces the same file name. Files are created lazily
 (no empty files), appended on each close, and never rewritten.
 
-**Where that folder is, is configuration**: `[paper] trades_dir` in
-`quantick.toml` (default `paper-trades`, relative to the working
-directory), overridden for one run by `QUANTICK_TRADES_DIR` — and the
-Trading tab's session strip says it out loud ("trades saved to: …", click
-to open). The folder is also the feature's **integration port**: the
+**Where that folder is, is configuration — and one click**: the Trading
+tab's session strip says it out loud ("trades saved to: …", click to
+open) and its folder button opens a picker; the choice applies to every
+tab at once, the next close opens a new session file under the new home
+(files already written stay put), and it is remembered across restarts in
+the `paper-state.toml` sidecar — the added-symbols pattern, so the app
+never rewrites the user's hand-commented `quantick.toml`. The shipped
+base stays `[paper] trades_dir` in `quantick.toml` (default
+`paper-trades`, relative to the working directory), and
+`QUANTICK_TRADES_DIR` still overrides everything for one run. The folder is also the feature's **integration port**: the
 `quantick-trades` CSV format in `quantick_sim::history` is the contract,
 so any producer that writes it there — the future bot runner, a converter,
 another tool — appears in the Trades ledger (`EARLIER SESSIONS`), the

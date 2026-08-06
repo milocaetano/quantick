@@ -150,8 +150,10 @@ US30 = 9103
 # `quantick-trades` format into this folder — a future bot runner, another
 # tool — shows up in the Trades ledger, the report and the export, no wiring
 # needed. Relative paths resolve against quantick's working directory; the
-# QUANTICK_TRADES_DIR environment variable overrides the setting for one run.
-# The section is optional; absent, trades save under `paper-trades`.
+# QUANTICK_TRADES_DIR environment variable overrides the setting for one run,
+# and the folder picker in the Trading tab (remembered in paper-state.toml)
+# wins over this base. The section is optional; absent, trades save under
+# `paper-trades`.
 #
 # [paper]
 # trades_dir = "paper-trades"

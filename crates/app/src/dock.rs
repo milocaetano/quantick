@@ -14,7 +14,9 @@ use quantick_engine::Side;
 
 use crate::feed::ReplayLink;
 use crate::orderflow_view::OrderflowView;
-use crate::paper_trading::{LedgerAction, PaperTrading, fmt_decimal, position_word};
+use crate::paper_trading::{
+    LedgerAction, PaperTrading, TradingTabAction, fmt_decimal, position_word,
+};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -121,6 +123,9 @@ pub struct DockResponse {
     /// The Trades tab asked to center the chart on a round trip
     /// (`opened_ms`, `closed_ms`).
     pub navigate_to_trade: Option<(i64, i64)>,
+    /// The Trading tab asked for the trades-folder picker — app-wide, so
+    /// the app owns the dialog and the fan-out to every tab.
+    pub pick_trades_dir: bool,
 }
 
 /// The dock's chrome state. Hidden, collapsed to the strip, or open on one
@@ -287,7 +292,13 @@ impl Dock {
                             // with no way to reach them.
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, true])
-                                .show(ui, |ui| env.paper.draw_trading_tab(ui));
+                                .show(ui, |ui| {
+                                    if let Some(TradingTabAction::PickTradesDir) =
+                                        env.paper.draw_trading_tab(ui)
+                                    {
+                                        response.pick_trades_dir = true;
+                                    }
+                                });
                         }
                         // The ledger manages its own scroll (a virtualised
                         // list with a pinned totals strip).

@@ -515,6 +515,13 @@ pub struct QuantickApp {
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
 
+    /// Where trades save this run — resolved once at boot (environment >
+    /// the user's stored pick > config) and updated by the panel's folder
+    /// picker; new tabs journal here too.
+    trades_dir: std::path::PathBuf,
+    /// The in-flight trades-folder dialog, if any. One at a time.
+    trades_dir_picker: Option<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
+
     frames: FrameStats,
     /// CPU time per frame (update + tessellation + paint, no vsync wait), from
     /// eframe. Separates "we are slow" from "we are waiting for the display".
@@ -562,6 +569,10 @@ impl QuantickApp {
         spec: BarSpec,
         feed: FeedHandle,
     ) -> Self {
+        let trades_dir = {
+            let stored = crate::paper_state::load(&crate::paper_state::default_path());
+            PaperTrading::resolve_trades_dir(&config.paper.trades_dir, stored.as_deref())
+        };
         let tab = Tab::new(
             FIRST_TAB_ID,
             pane_ids(FIRST_TAB_ID),
@@ -569,7 +580,7 @@ impl QuantickApp {
             symbol.into(),
             spec,
             feed,
-            PaperTrading::resolve_trades_dir(&config.paper.trades_dir),
+            trades_dir.clone(),
         );
         let mut app = Self {
             tabs: vec![tab],
@@ -630,6 +641,8 @@ impl QuantickApp {
             last_style_change: None,
             show_perf: true,
             tz: TzOffset::default(),
+            trades_dir,
+            trades_dir_picker: None,
             frames: FrameStats::new(120),
             cpu_frames: FrameStats::new(120),
             last_frame: None,
@@ -768,6 +781,51 @@ impl QuantickApp {
         app
     }
 
+    /// Ask the operating system for a trades folder, off the UI thread —
+    /// the panel's "choose where trades are saved". One dialog at a time.
+    fn open_trades_dir_picker(&mut self) {
+        if self.trades_dir_picker.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        // Start where trades actually go right now — under an env override
+        // that is the override's folder, not the stored base.
+        let start = self.active_tab().paper.trades_dir().to_path_buf();
+        std::thread::Builder::new()
+            .name("quantick-trades-dir-picker".into())
+            .spawn(move || {
+                let mut dialog = rfd::FileDialog::new().set_title("Choose where trades are saved");
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let _ = sender.send(dialog.pick_folder());
+            })
+            .expect("spawn trades-dir picker thread");
+        self.trades_dir_picker = Some(receiver);
+    }
+
+    /// Land the picked folder: every tab journals there from now on, and
+    /// the choice is remembered across restarts (`paper-state.toml`) —
+    /// files already written stay where they are.
+    fn poll_trades_dir_picker(&mut self) {
+        let Some(receiver) = &self.trades_dir_picker else {
+            return;
+        };
+        let Ok(choice) = receiver.try_recv() else {
+            return;
+        };
+        self.trades_dir_picker = None;
+        let Some(dir) = choice else { return };
+        crate::paper_state::save(
+            &crate::paper_state::default_path(),
+            &dir.display().to_string(),
+        );
+        self.trades_dir = dir;
+        for tab in &mut self.tabs {
+            tab.paper.set_trades_dir(self.trades_dir.clone());
+        }
+    }
+
     /// The active tab beside the config it reads.
     ///
     /// Split here, once, because almost every tab operation needs both and
@@ -857,7 +915,7 @@ impl QuantickApp {
             "opening a market in a new tab"
         );
         let spec = self.active_tab().flow_pane.state.spec().clone();
-        let trades_dir = PaperTrading::resolve_trades_dir(&self.config.paper.trades_dir);
+        let trades_dir = self.trades_dir.clone();
         self.tabs.push(Tab::new(
             id,
             pane_ids(id),
@@ -3343,6 +3401,10 @@ impl QuantickApp {
                 pane.viewport.center_on_bar(mid, area.width(), slots);
             }
         }
+        if dock_response.pick_trades_dir {
+            self.open_trades_dir_picker();
+        }
+        self.poll_trades_dir_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
         self.draw_drawing_inspector_panel(ctx, now);

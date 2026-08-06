@@ -307,6 +307,15 @@ struct LoadedHistory {
     problem_rows: usize,
 }
 
+/// What the Trading tab asked of its host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradingTabAction {
+    /// Open the folder picker for where trades are saved — the choice is
+    /// app-wide (every tab journals there) and remembered, so the app
+    /// owns the dialog and the fan-out.
+    PickTradesDir,
+}
+
 /// What the Trades ledger asked of its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedgerAction {
@@ -411,16 +420,18 @@ impl PaperTrading {
     /// through [`Self::with_trades_dir`] with the configured folder.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_trades_dir(Self::resolve_trades_dir(TRADES_DIR))
+        Self::with_trades_dir(Self::resolve_trades_dir(TRADES_DIR, None))
     }
 
     /// The journal folder for this run: the environment override wins (an
     /// env var is an explicit request for one run, like every autostart
-    /// hook), then `configured` — the `[paper] trades_dir` key, defaulting
-    /// to `paper-trades`.
+    /// hook), then `stored` — the folder the user last picked with the
+    /// panel's button — then `configured`, the `[paper] trades_dir` key,
+    /// defaulting to `paper-trades`.
     #[must_use]
-    pub fn resolve_trades_dir(configured: &str) -> PathBuf {
-        std::env::var_os(TRADES_DIR_ENV).map_or_else(|| PathBuf::from(configured), PathBuf::from)
+    pub fn resolve_trades_dir(configured: &str, stored: Option<&str>) -> PathBuf {
+        std::env::var_os(TRADES_DIR_ENV)
+            .map_or_else(|| chosen_trades_dir(configured, stored), PathBuf::from)
     }
 
     /// A host journaling to `dir`, already resolved from config and
@@ -462,6 +473,29 @@ impl PaperTrading {
     #[cfg(test)]
     pub(crate) fn redirect_history_dir(&mut self, dir: PathBuf) {
         self.dir = dir;
+    }
+
+    /// Where trades save right now.
+    #[must_use]
+    pub fn trades_dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Point the journal somewhere new, in-session — the panel's folder
+    /// picker. Files already written stay exactly where they are; the next
+    /// close opens a new session file under the new folder, and the ledger
+    /// and report re-read from the new home.
+    pub fn set_trades_dir(&mut self, dir: PathBuf) {
+        if self.dir == dir {
+            return;
+        }
+        self.dir = dir;
+        self.journal_path = None;
+        self.journal_warned = false;
+        self.history_cache = None;
+        self.report = None;
+        self.report_view = None;
+        self.show_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
     }
 
     /// Apply a raw simulator command through the normal event funnel
@@ -1446,7 +1480,7 @@ impl PaperTrading {
 
     /// The Trading dock tab: position, ticket, working orders, session
     /// strip. See `docs/ux/paper-trading.md` §3.
-    pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) {
+    pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         self.hovered_order = None;
         ui.label(
             egui::RichText::new("Simulated fills from the tape - no broker, points not currency.")
@@ -1466,7 +1500,7 @@ impl PaperTrading {
         ui.separator();
         self.draw_pending_orders(ui);
         ui.separator();
-        self.draw_session_summary(ui);
+        self.draw_session_summary(ui)
     }
 
     /// A quiet action button — the HUD's control grammar, sized to share a
@@ -1995,7 +2029,8 @@ impl PaperTrading {
         }
     }
 
-    fn draw_session_summary(&mut self, ui: &mut egui::Ui) {
+    fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
+        let mut action = None;
         ui.horizontal(|ui| {
             let realized = self.sim.realized_points();
             ui.label(
@@ -2022,31 +2057,45 @@ impl PaperTrading {
                 }
             });
         });
-        if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new(format!("trades saved to: {}", self.dir.display()))
-                        .color(theme::TEXT_MUTED)
-                        .small(),
+        ui.horizontal(|ui| {
+            if ui
+                .small_button(icons::FOLDER_OPEN)
+                .on_hover_text(
+                    "choose where trades are saved — applies to every tab and is \
+                     remembered across restarts",
                 )
-                .fill(theme::CONTROL)
-                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                .rounding(egui::Rounding::same(3.0))
-                .min_size(egui::vec2(ui.available_width(), 20.0)),
-            )
-            .on_hover_text(format!(
-                "click to open the folder — {}\nset it with [paper] trades_dir in \
-                 quantick.toml; QUANTICK_TRADES_DIR overrides it for one run. Anything \
-                 writing the quantick-trades format here (a future bot included) shows \
-                 up in the ledger, the report and the export.",
-                std::path::absolute(&self.dir)
-                    .unwrap_or_else(|_| self.dir.clone())
-                    .display()
-            ))
-            .clicked()
-        {
-            reveal_folder(&self.dir);
-        }
+                .clicked()
+            {
+                action = Some(TradingTabAction::PickTradesDir);
+            }
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("trades saved to: {}", self.dir.display()))
+                            .color(theme::TEXT_MUTED)
+                            .small(),
+                    )
+                    .fill(theme::CONTROL)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+                    .rounding(egui::Rounding::same(3.0))
+                    .min_size(egui::vec2(ui.available_width(), 20.0)),
+                )
+                .on_hover_text(format!(
+                    "click to open the folder — {}\nthe folder button beside this picks a \
+                     new one; [paper] trades_dir in quantick.toml sets the base and \
+                     QUANTICK_TRADES_DIR overrides it for one run. Anything writing the \
+                     quantick-trades format here (a future bot included) shows up in the \
+                     ledger, the report and the export.",
+                    std::path::absolute(&self.dir)
+                        .unwrap_or_else(|_| self.dir.clone())
+                        .display()
+                ))
+                .clicked()
+            {
+                reveal_folder(&self.dir);
+            }
+        });
+        action
     }
 
     // ------------------------------------------------------------------
@@ -4383,6 +4432,14 @@ fn elide_path(path: &Path) -> String {
     })
 }
 
+/// The trades folder before the environment has its say: the user's own
+/// in-app pick when one is stored, else the configured base.
+fn chosen_trades_dir(configured: &str, stored: Option<&str>) -> PathBuf {
+    stored
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(configured))
+}
+
 /// The symbol folders under the history dir, for the report's combo box.
 fn list_symbol_folders(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -4510,6 +4567,63 @@ mod tests {
             "the reset exit is a real, journaled trade"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_stored_pick_beats_the_configured_base() {
+        assert_eq!(
+            chosen_trades_dir("paper-trades", None),
+            PathBuf::from("paper-trades"),
+            "no pick falls back to the configured base"
+        );
+        assert_eq!(
+            chosen_trades_dir("paper-trades", Some("D:/journals")),
+            PathBuf::from("D:/journals"),
+            "the in-app pick wins over the configured base"
+        );
+    }
+
+    /// The panel's folder picker retargets everything downstream: the next
+    /// close opens a new session file under the new home, and the ledger
+    /// and report re-read from it. Files already written stay put.
+    #[test]
+    fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
+        let dir_a =
+            std::env::temp_dir().join(format!("quantick-paper-dir-a-{}", std::process::id()));
+        let dir_b =
+            std::env::temp_dir().join(format!("quantick-paper-dir-b-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir_a);
+        let _ = std::fs::remove_dir_all(&dir_b);
+        let mut paper = PaperTrading::new();
+        paper.dir.clone_from(&dir_a);
+        paper.set_symbol("SWITCHX");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 103));
+        assert!(paper.journal_path.is_some(), "the close journaled under A");
+        paper.reload_ledger();
+        assert!(paper.history_cache.is_some());
+
+        paper.set_trades_dir(dir_b.clone());
+        assert_eq!(paper.trades_dir(), dir_b.as_path());
+        assert!(
+            paper.journal_path.is_none(),
+            "the next close opens a new session file under B"
+        );
+        assert!(
+            paper.history_cache.is_none(),
+            "the ledger re-reads from the new home"
+        );
+        assert!(paper.toast.is_some(), "the switch is never silent");
+        assert!(
+            dir_a.join("SWITCHX").exists(),
+            "files already written stay where they are"
+        );
+        let _ = std::fs::remove_dir_all(&dir_a);
+        let _ = std::fs::remove_dir_all(&dir_b);
     }
 
     #[test]
