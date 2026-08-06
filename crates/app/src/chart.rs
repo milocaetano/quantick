@@ -340,6 +340,134 @@ const AXIS_LABEL_MIN_GAP_PX: f32 = 18.0;
 /// Same spellings as the aggression bubbles' own `format_quantity`: one chart,
 /// one way to write a thousand.
 const AXIS_UNITS: [(f64, &str); 3] = [(1e9, "B"), (1e6, "M"), (1e3, "K")];
+/// Least horizontal room between two time labels, in pixels.
+///
+/// The horizontal twin of [`AXIS_LABEL_MIN_GAP_PX`]. Smaller than it because a
+/// time label is read as one word and its neighbours are far apart in bars;
+/// the price column is read as a column and needs more air.
+const TIME_LABEL_MIN_GAP_PX: f32 = 12.0;
+/// Comfortable distance between two time labels, in pixels.
+///
+/// The ask, as [`AXIS_LABEL_SPACING_PX`] is for price: a label roughly this
+/// far apart reads as a scale rather than as a ribbon of numbers. It is a
+/// floor on the spacing, never a cap — the collision rule can only push
+/// labels further apart.
+const TIME_LABEL_SPACING_PX: f32 = 110.0;
+/// Fewest time labels a strip is worth writing at a given format. Below two
+/// there is no scale to read, only an instant floating in a band — and that is
+/// the signal to write the same axis in a shorter format instead.
+const TIME_MIN_LABELS: usize = 2;
+/// Time label font size, in pixels.
+pub const TIME_LABEL_FONT_PX: f32 = 10.0;
+
+/// How a time label is written, longest first.
+///
+/// Dropping seconds is the time axis' version of the price axis' `1.2M`: the
+/// same instant, written coarser, so the axis stays a scale on a strip too
+/// narrow for the full form. It is never the *labels* that are dropped to make
+/// room — thinning already guarantees they cannot collide; this is what keeps
+/// a narrow strip from being reduced to one lonely timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeLabelFormat {
+    /// `HH:MM:SS` — the full instant.
+    Full,
+    /// `HH:MM` — seconds dropped.
+    Short,
+}
+
+impl TimeLabelFormat {
+    /// Longest first: the axis takes the first one that fits.
+    pub const ALL: [Self; 2] = [Self::Full, Self::Short];
+
+    /// A representative string of this format's exact width. Monospace, so
+    /// every instant written this way measures the same — one measurement per
+    /// frame answers for every label on the strip.
+    #[must_use]
+    pub fn sample(self) -> &'static str {
+        match self {
+            Self::Full => "00:00:00",
+            Self::Short => "00:00",
+        }
+    }
+
+    /// Write `hours`, `minutes` and `seconds` in this format.
+    #[must_use]
+    pub fn write(self, hours: i64, minutes: i64, seconds: i64) -> String {
+        match self {
+            Self::Full => format!("{hours:02}:{minutes:02}:{seconds:02}"),
+            Self::Short => format!("{hours:02}:{minutes:02}"),
+        }
+    }
+}
+
+/// Bar slots to advance between two time labels so that neighbours can never
+/// touch, given how wide one candle and one label are on screen.
+///
+/// This is the time axis' [`thin_to_fit`]: the old rule asked for a fixed six
+/// labels however narrow the strip had become, and six `HH:MM:SS` need some
+/// 300 px of text — which the history strip stops having once the live lane
+/// takes its share of the chart. Counting labels cannot answer a question
+/// about pixels.
+///
+/// Returns at least 1: a stride of zero would be an infinite loop, and one
+/// label per bar is what a chart zoomed right in genuinely wants.
+#[must_use]
+pub fn time_label_stride(candle_width_px: f32, label_width_px: f32) -> usize {
+    if !candle_width_px.is_finite() || candle_width_px <= 0.0 {
+        return 1;
+    }
+    let label = if label_width_px.is_finite() {
+        label_width_px.max(0.0)
+    } else {
+        0.0
+    };
+    // Whichever is further apart: comfortable, or far enough not to collide.
+    let needed = (label + TIME_LABEL_MIN_GAP_PX).max(TIME_LABEL_SPACING_PX);
+    let stride = (needed / candle_width_px).ceil();
+    if stride.is_finite() && stride >= 1.0 {
+        // A strip narrower than one label asks for a stride wider than any
+        // chart has bars; saturating keeps that a very large number rather
+        // than an undefined cast.
+        stride as usize
+    } else {
+        1
+    }
+}
+
+/// Whether a label of this width, centred at `x`, fits wholly inside
+/// `[left, right]`.
+///
+/// Centre-only containment let the label at the strip's live end draw its
+/// right half over the price gutter. A label half in the gutter is not a
+/// smaller label, it is a smudge.
+#[must_use]
+pub fn label_fits(x: f32, label_width_px: f32, left: f32, right: f32) -> bool {
+    let half = label_width_px / 2.0;
+    x - half >= left && x + half <= right
+}
+
+/// The widest [`TimeLabelFormat`] that still writes [`TIME_MIN_LABELS`] labels
+/// across a strip this wide, given each format's measured width.
+///
+/// `measured` answers with the pixel width of a format's
+/// [`sample`](TimeLabelFormat::sample). Falls back to the shortest form when
+/// even that does not fit — something has to be written, and the coarser
+/// instant is still true.
+#[must_use]
+pub fn time_label_format(
+    strip_width_px: f32,
+    measured: impl Fn(TimeLabelFormat) -> f32,
+) -> TimeLabelFormat {
+    TimeLabelFormat::ALL
+        .into_iter()
+        .find(|format| {
+            let width = measured(*format);
+            let per_label = width + TIME_LABEL_MIN_GAP_PX;
+            per_label > 0.0 && strip_width_px >= per_label * TIME_MIN_LABELS as f32
+        })
+        .unwrap_or(TimeLabelFormat::Short)
+}
+
 /// Gap between the axis rule and a tick label, in pixels. Shared by the price
 /// gutter and every pane's, so the numbers form one column down the chart.
 pub const AXIS_LABEL_GAP_PX: f32 = 6.0;
@@ -912,5 +1040,90 @@ mod tests {
         assert!(geometry.body.bottom.is_finite());
         assert!(geometry.body.left <= geometry.body.right);
         assert!(geometry.body.top <= geometry.body.bottom);
+    }
+
+    /// The defect this rule exists for: the old axis asked for a fixed six
+    /// labels however narrow the strip was. Six `HH:MM:SS` need some 300 px of
+    /// text, and the history strip stops having that once the live lane takes
+    /// its share — so they overlapped. The stride now comes out of pixels, and
+    /// a narrower chart simply gets fewer labels.
+    #[test]
+    fn a_narrow_chart_gets_fewer_labels_rather_than_overlapping_ones() {
+        let label = 50.0; // an `HH:MM:SS` in monospace 10 px
+
+        // Wide candles: one label every few bars.
+        let wide = time_label_stride(40.0, label);
+        // Narrow candles: the same pixel distance costs many more bars.
+        let narrow = time_label_stride(4.0, label);
+        assert!(
+            narrow > wide,
+            "thinner candles must space labels further apart in bars:              {wide} vs {narrow}"
+        );
+
+        // Whatever the candle width, neighbouring labels clear their own width.
+        for candle in [0.5_f32, 1.0, 4.0, 13.0, 40.0, 120.0] {
+            let gap = time_label_stride(candle, label) as f32 * candle;
+            assert!(
+                gap >= label + TIME_LABEL_MIN_GAP_PX,
+                "candle {candle}: labels {gap} px apart cannot hold a {label} px label"
+            );
+        }
+    }
+
+    /// A stride of zero would be an infinite loop in the strip's own draw
+    /// loop, and a degenerate candle width is exactly what a chart with no
+    /// bars reports.
+    #[test]
+    fn the_stride_is_never_zero_however_degenerate_the_geometry() {
+        for candle in [0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(time_label_stride(candle, 50.0) >= 1, "candle {candle}");
+        }
+        assert!(time_label_stride(10.0, f32::NAN) >= 1);
+        assert!(time_label_stride(10.0, -5.0) >= 1);
+    }
+
+    /// Comfort is a floor on the spacing, never a cap: a chart zoomed so far in
+    /// that one bar is wider than a label still must not write one label per
+    /// bar, or the strip becomes a ribbon of numbers.
+    #[test]
+    fn very_wide_candles_still_leave_room_between_labels() {
+        assert!(
+            time_label_stride(60.0, 50.0) as f32 * 60.0 >= TIME_LABEL_SPACING_PX,
+            "labels stay at least a comfortable distance apart"
+        );
+    }
+
+    /// Seconds are dropped before labels are: a strip too narrow for two full
+    /// timestamps writes the same instants coarser rather than showing one
+    /// lonely label.
+    #[test]
+    fn a_strip_too_narrow_for_the_full_format_drops_the_seconds() {
+        let measured = |format: TimeLabelFormat| match format {
+            TimeLabelFormat::Full => 50.0,
+            TimeLabelFormat::Short => 31.0,
+        };
+        assert_eq!(time_label_format(400.0, measured), TimeLabelFormat::Full);
+        // 2 x (50 + 12) = 124: below that the full form stops fitting twice.
+        assert_eq!(time_label_format(123.0, measured), TimeLabelFormat::Short);
+        // Narrower than even the short form fits twice: it is still what gets
+        // written, because a coarser instant is true and a blank axis is not.
+        assert_eq!(time_label_format(10.0, measured), TimeLabelFormat::Short);
+    }
+
+    /// A label is placed by its centre but occupies its width. Containing only
+    /// the centre let the label at the live end draw its right half over the
+    /// price gutter.
+    #[test]
+    fn a_label_must_fit_whole_not_just_its_centre() {
+        assert!(label_fits(100.0, 50.0, 0.0, 200.0), "well inside");
+        assert!(
+            !label_fits(190.0, 50.0, 0.0, 200.0),
+            "right half in the gutter"
+        );
+        assert!(
+            !label_fits(10.0, 50.0, 0.0, 200.0),
+            "left half off the strip"
+        );
+        assert!(label_fits(25.0, 50.0, 0.0, 200.0), "exactly flush is fine");
     }
 }

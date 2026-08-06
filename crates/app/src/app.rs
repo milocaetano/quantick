@@ -181,17 +181,23 @@ const STYLE_LOG_DEBOUNCE: Duration = Duration::from_millis(350);
 /// `live_strip_width` of zero means the strip is off and the chart runs
 /// straight into the gutter, exactly as it did before the strip existed.
 ///
-/// `pane_count` is the number of *visible* pane indicators: the band they
-/// claim is carved here, once, rather than by each caller — a chart rect that
-/// two call sites disagree about is two price scales for the same pixels.
-pub fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) -> PlotAreas {
+/// `pane_sizing` carries one entry per *visible* pane indicator, top to
+/// bottom: the band they claim is carved here, once, rather than by each
+/// caller — a chart rect that two call sites disagree about is two price
+/// scales for the same pixels. Sizing rather than a count, because how tall a
+/// pane is and whether it has room to be drawn at all is the same decision.
+pub fn plot_split(
+    area: egui::Rect,
+    live_strip_width: f32,
+    pane_sizing: &[crate::indicators::PaneSizing],
+) -> PlotAreas {
     let plot = area.shrink(16.0);
     let strip_width = live_strip_width.max(0.0);
     let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
     let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
     let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
     let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
-    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_count);
+    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_sizing);
     // The gutter is banded exactly like the body it labels: the candles' price
     // scale owns the height of the candles and not a pixel more, so a drag
     // over a pane's numbers can only ever move that pane.
@@ -200,7 +206,7 @@ pub fn plot_split(area: egui::Rect, live_strip_width: f32, pane_count: usize) ->
     };
     let pane_gutters = indicator_panes
         .iter()
-        .map(|pane| band(pane.top(), pane.bottom()))
+        .map(|pane| band(pane.rect.top(), pane.rect.bottom()))
         .collect();
     PlotAreas {
         chart,
@@ -319,7 +325,7 @@ pub struct PlotAreas {
     pub chart: egui::Rect,
     /// Stacked indicator panes below the candles, top to bottom. Empty when
     /// no pane indicator is visible.
-    pub indicator_panes: Vec<egui::Rect>,
+    pub indicator_panes: Vec<crate::indicators::PaneSlot>,
     /// The gutter band beside each pane, in the same order: where that pane's
     /// value labels are drawn and where its own zoom gesture lives.
     pub pane_gutters: Vec<egui::Rect>,
@@ -358,10 +364,15 @@ pub fn fmt_window(milliseconds: i64) -> String {
 /// Format a UTC epoch-millisecond timestamp as `HH:MM:SS` in the display
 /// timezone `tz`, for the time axis.
 pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
+    fmt_time_as(ms, tz, crate::chart::TimeLabelFormat::Full)
+}
+
+/// The same instant written in a chosen [`TimeLabelFormat`] — what the time
+/// axis calls when the strip is too narrow for the full form.
+pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat) -> String {
     let local = ms.saturating_add(tz.offset_ms());
     let secs = local.div_euclid(1000).rem_euclid(86_400);
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    format!("{h:02}:{m:02}:{s:02}")
+    format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
 /// The quantick chart window.
@@ -3778,11 +3789,15 @@ mod tests {
     fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
 
-        let off = plot_split(area, 0.0, 0);
+        let off = plot_split(area, 0.0, &[crate::indicators::PaneSizing::Auto; 0]);
         assert!(off.live_strip.is_none());
         assert_eq!(off.chart.right(), off.price_gutter.left());
 
-        let on = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 0);
+        let on = plot_split(
+            area,
+            crate::live_strip::LIVE_STRIP_WIDTH_PX,
+            &[crate::indicators::PaneSizing::Auto; 0],
+        );
         let strip = on.live_strip.expect("strip rect");
         assert_eq!(on.chart.right(), strip.left());
         assert_eq!(strip.right(), on.price_gutter.left());
@@ -3806,10 +3821,10 @@ mod tests {
     fn the_pane_band_comes_out_of_every_callers_chart_rect() {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
 
-        let none = plot_split(area, 0.0, 0);
+        let none = plot_split(area, 0.0, &[crate::indicators::PaneSizing::Auto; 0]);
         assert!(none.indicator_panes.is_empty());
 
-        let one = plot_split(area, 0.0, 1);
+        let one = plot_split(area, 0.0, &[crate::indicators::PaneSizing::Auto; 1]);
         let pane = *one
             .indicator_panes
             .first()
@@ -3818,14 +3833,14 @@ mod tests {
             one.chart.height() < none.chart.height(),
             "the band is paid for out of the candles' pixels"
         );
-        assert_eq!(one.chart.bottom(), pane.top(), "no gap, no overlap");
-        assert_eq!(pane.bottom(), none.chart.bottom());
+        assert_eq!(one.chart.bottom(), pane.rect.top(), "no gap, no overlap");
+        assert_eq!(pane.rect.bottom(), none.chart.bottom());
         assert_eq!(one.chart.width(), none.chart.width());
         // The axes keep their column; the time strip is untouched.
         assert_eq!(one.price_gutter.x_range(), none.price_gutter.x_range());
         assert_eq!(one.time_strip, none.time_strip);
 
-        let three = plot_split(area, 0.0, 3);
+        let three = plot_split(area, 0.0, &[crate::indicators::PaneSizing::Auto; 3]);
         assert_eq!(three.indicator_panes.len(), 3);
         assert!(three.chart.height() < one.chart.height());
     }
@@ -3838,7 +3853,7 @@ mod tests {
     fn every_pane_owns_the_gutter_band_beside_it() {
         let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
 
-        let none = plot_split(area, 0.0, 0);
+        let none = plot_split(area, 0.0, &[crate::indicators::PaneSizing::Auto; 0]);
         assert!(none.pane_gutters.is_empty());
         assert_eq!(
             none.price_gutter.bottom(),
@@ -3846,7 +3861,7 @@ mod tests {
             "with no pane the gutter is the candles', top to bottom"
         );
 
-        let two = plot_split(area, 0.0, 2);
+        let two = plot_split(area, 0.0, &[crate::indicators::PaneSizing::Auto; 2]);
         assert_eq!(two.pane_gutters.len(), two.indicator_panes.len());
         assert_eq!(
             two.price_gutter.bottom(),
@@ -3854,7 +3869,11 @@ mod tests {
             "the candles' scale stops where the candles do"
         );
         for (pane, gutter) in two.indicator_panes.iter().zip(&two.pane_gutters) {
-            assert_eq!(gutter.y_range(), pane.y_range(), "band beside its pane");
+            assert_eq!(
+                gutter.y_range(),
+                pane.rect.y_range(),
+                "band beside its pane"
+            );
             assert_eq!(gutter.x_range(), two.price_gutter.x_range(), "one column");
         }
         // No pixel answers to two scales: the bands tile the gutter exactly.
@@ -3863,7 +3882,11 @@ mod tests {
 
         // The strip pays out of the candles, not the gutter: the pane bands
         // keep the same column when the tape is shown.
-        let with_strip = plot_split(area, crate::live_strip::LIVE_STRIP_WIDTH_PX, 2);
+        let with_strip = plot_split(
+            area,
+            crate::live_strip::LIVE_STRIP_WIDTH_PX,
+            &[crate::indicators::PaneSizing::Auto; 2],
+        );
         assert_eq!(with_strip.pane_gutters, two.pane_gutters);
     }
 
@@ -3939,9 +3962,157 @@ mod tests {
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(),
-            pane.indicators.visible_panes().count(),
+            &pane.indicators.pane_sizing(),
         );
         areas.pane_gutters[index]
+    }
+
+    /// The plot band of pane `index` — where its curve is drawn, as opposed to
+    /// the gutter where its numbers are.
+    fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
+        let pane = &app.active_tab().flow_pane;
+        let areas = plot_split(
+            pane.last_plot_area.expect("a frame has been drawn"),
+            pane.live_strip_width(),
+            &pane.indicators.pane_sizing(),
+        );
+        areas.indicator_panes[index].rect
+    }
+
+    /// The pane band as the last drawn frame carved it.
+    fn pane_slots(app: &QuantickApp) -> Vec<crate::indicators::PaneSlot> {
+        let pane = &app.active_tab().flow_pane;
+        plot_split(
+            pane.last_plot_area.expect("a frame has been drawn"),
+            pane.live_strip_width(),
+            &pane.indicators.pane_sizing(),
+        )
+        .indicator_panes
+    }
+
+    /// An app showing every pane it allows, drawn once at `size`.
+    fn app_with_full_pane_band(
+        ctx: &egui::Context,
+        size: egui::Vec2,
+    ) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+        let (mut app, cmd_rx) = app_with_history(200);
+        for index in 0..crate::indicators::MAX_PANES {
+            add_pane_indicator(
+                &mut app,
+                &format!("pane{index}"),
+                (0..200).map(f64::from).collect(),
+            );
+        }
+        run_frame_at(&mut app, ctx, size);
+        (app, cmd_rx)
+    }
+
+    /// The whole point of collapsing: a strip is not a dead band. One click on
+    /// it brings the curve back, and it must survive the frame after — the
+    /// automatic rule is what collapsed the pane, so handing the pane back to
+    /// it would undo the click immediately.
+    /// Three panes in the smallest window the app allows: the state the user
+    /// reported as unusable. Something must collapse — that is the point — and
+    /// nothing that stays open may be below the readable floor.
+    #[test]
+    fn the_smallest_window_collapses_rather_than_squeezing_every_pane() {
+        let ctx = egui::Context::default();
+        let (app, _cmd_rx) = app_with_full_pane_band(&ctx, MIN_WINDOW);
+
+        let panes = pane_slots(&app);
+        assert_eq!(panes.len(), crate::indicators::MAX_PANES);
+        assert!(
+            panes.iter().any(|pane| pane.collapsed),
+            "the smallest window cannot hold three readable panes: {panes:?}"
+        );
+        for pane in &panes {
+            assert!(
+                pane.collapsed || pane.rect.height() >= crate::indicators::MIN_PANE_HEIGHT_PX,
+                "an expanded pane below the readable floor: {pane:?}"
+            );
+        }
+    }
+
+    /// The same band in a roomy window: nothing collapses, so the floor never
+    /// costs a user with a big screen anything.
+    #[test]
+    fn a_roomy_window_draws_every_pane() {
+        let ctx = egui::Context::default();
+        let (app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
+        assert!(
+            pane_slots(&app).iter().all(|pane| !pane.collapsed),
+            "a tall window has room for all of them: {:?}",
+            pane_slots(&app)
+        );
+    }
+
+    /// The whole point of collapsing: a strip is not a dead band. One click on
+    /// it brings the curve back, and it must survive the frame after — the
+    /// automatic rule is what collapsed the pane, so handing the pane back to
+    /// it would undo the click immediately.
+    #[test]
+    fn clicking_a_collapsed_strip_opens_it_and_it_stays_open() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, MIN_WINDOW);
+
+        let collapsed = pane_slots(&app)
+            .iter()
+            .position(|pane| pane.collapsed)
+            .expect("the smallest window collapses at least one pane");
+
+        let strip = pane_slots(&app)[collapsed].rect;
+        click_sized(&mut app, &ctx, MIN_WINDOW, strip.center());
+        run_frame_at(&mut app, &ctx, MIN_WINDOW);
+        assert!(
+            !pane_slots(&app)[collapsed].collapsed,
+            "one click opens the strip"
+        );
+
+        run_frame_at(&mut app, &ctx, MIN_WINDOW);
+        assert!(
+            !pane_slots(&app)[collapsed].collapsed,
+            "and it is still open a frame later, not re-collapsed by the layout"
+        );
+    }
+
+    /// The other half of the disclosure. A control that only opens is half a
+    /// control: a trader who wants the candles back must be able to put a pane
+    /// away without deleting the indicator, and the value must survive it.
+    #[test]
+    fn the_disclosure_closes_a_pane_as_well_as_opening_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
+        assert!(
+            pane_slots(&app).iter().all(|pane| !pane.collapsed),
+            "the roomy window starts with every pane open"
+        );
+
+        let corner = crate::indicator_render::pane_disclosure_rect(pane_slots(&app)[0].rect, false);
+        click_sized(&mut app, &ctx, TEST_WINDOW, corner.center());
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        assert!(
+            pane_slots(&app)[0].collapsed,
+            "clicking the open disclosure puts the pane away"
+        );
+        assert!(
+            !pane_slots(&app)[1].collapsed,
+            "and only that pane: the click was over one corner"
+        );
+
+        // Room is not what is keeping it shut, so it stays shut.
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        assert!(
+            pane_slots(&app)[0].collapsed,
+            "a hand-closed pane stays shut"
+        );
+
+        let strip = pane_slots(&app)[0].rect;
+        click_sized(&mut app, &ctx, TEST_WINDOW, strip.center());
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        assert!(
+            !pane_slots(&app)[0].collapsed,
+            "and the same control brings it back"
+        );
     }
 
     /// The headline of this feature: a pane's numbers are its own axis. A drag
@@ -3998,7 +4169,7 @@ mod tests {
             plot_split(
                 pane.last_plot_area.expect("a frame has been drawn"),
                 pane.live_strip_width(),
-                1,
+                &pane.indicators.pane_sizing(),
             )
             .price_gutter
         };
@@ -5842,22 +6013,44 @@ plot(close)
         run_frame_with_modifiers(app, ctx, events, egui::Modifiers::NONE)
     }
 
+    /// The window every frame-driving test gets unless it asks for another:
+    /// roomy, so a test about something else is never accidentally a test
+    /// about a cramped layout.
+    const TEST_WINDOW: egui::Vec2 = egui::vec2(1400.0, 900.0);
+    /// The smallest window the app itself allows (`main.rs`
+    /// `with_min_inner_size`). The layout has to hold here, and this is where
+    /// the pane band is under real pressure.
+    const MIN_WINDOW: egui::Vec2 = egui::vec2(900.0, 560.0);
+
     fn run_frame_with_modifiers(
         app: &mut QuantickApp,
         ctx: &egui::Context,
         events: Vec<egui::Event>,
         modifiers: egui::Modifiers,
     ) -> egui::FullOutput {
+        run_frame_sized(app, ctx, TEST_WINDOW, events, modifiers)
+    }
+
+    /// A frame at a chosen window size — how a test reaches the layout a
+    /// smaller window produces without resizing anything global.
+    fn run_frame_sized(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+        modifiers: egui::Modifiers,
+    ) -> egui::FullOutput {
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::pos2(0.0, 0.0),
-                egui::vec2(1400.0, 900.0),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), size)),
             events,
             modifiers,
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    fn run_frame_at(app: &mut QuantickApp, ctx: &egui::Context, size: egui::Vec2) {
+        run_frame_sized(app, ctx, size, Vec::new(), egui::Modifiers::NONE);
     }
 
     fn pointer_button(position: egui::Pos2, pressed: bool) -> egui::Event {
@@ -6404,12 +6597,7 @@ plot(close)
         size: egui::Vec2,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-            events,
-            ..Default::default()
-        };
-        ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+        run_frame_sized(app, ctx, size, events, egui::Modifiers::NONE)
     }
 
     fn click_sized(

@@ -59,6 +59,13 @@ pub(crate) struct IndicatorView {
     /// with it, so a later pane can never inherit a range someone set for a
     /// different series.
     pub scale: PriceView,
+    /// How tall this pane asks to be: the layout's call until the user drags
+    /// its divider or collapses it by hand.
+    ///
+    /// Render-side state like `hidden` and `scale`, and on the view for the
+    /// same reason: a removed indicator takes its height with it, so a later
+    /// pane can never inherit a size someone set for a different series.
+    pub sizing: PaneSizing,
     /// The auto-fitted `(lo, hi)` the last frame drew this pane with.
     ///
     /// The gesture that zooms the pane runs before the frame that draws it,
@@ -149,6 +156,7 @@ impl IndicatorViews {
                         input_values: inputs,
                         stale,
                         scale: PriceView::new(),
+                        sizing: PaneSizing::Auto,
                         last_auto: None,
                     });
                 }
@@ -245,6 +253,13 @@ impl IndicatorViews {
             .take(MAX_PANES)
     }
 
+    /// What the layout needs to carve the pane band: one sizing per visible
+    /// pane, top to bottom. Handed over as a whole rather than pane by pane,
+    /// because how tall each one gets is one decision about all of them.
+    pub(crate) fn pane_sizing(&self) -> Vec<PaneSizing> {
+        self.visible_panes().map(|view| view.sizing).collect()
+    }
+
     /// The same panes, in the same order, mutable: the renderer records the
     /// range it fitted and the axis gesture moves the scale, both on the view
     /// the pane rect belongs to.
@@ -267,24 +282,137 @@ fn is_visible_pane(view: &IndicatorView) -> bool {
     !view.descriptor.overlay && !view.hidden && view.error.is_none()
 }
 
-/// Carve the pane band off the bottom of the chart rect: each pane takes
-/// [`PANE_HEIGHT_FRAC`] of the *original* height, the chart keeps the rest.
+/// Shortest a pane may be drawn and still be read.
+///
+/// Added up rather than guessed, from what a pane actually has to fit:
+///
+/// | Piece | Pixels |
+/// | --- | --- |
+/// | Title + live value row (`PANE_LABEL_FONT_PX` + its inset, top and bottom) | 28 |
+/// | Two axis labels: `AXIS_LABEL_MIN_GAP_PX` between, `AXIS_LABEL_EDGE_MARGIN_PX` clear of each edge | 32 |
+/// | Curve amplitude worth reading a shape from | 40 |
+///
+/// A hundred pixels. Below it the labels start dropping out and the trace has
+/// nowhere to move, so the pane is chrome with a squiggle in it — and the
+/// honest move is to stop drawing the curve and say so
+/// ([`PaneSlot::collapsed`]) rather than to draw something unreadable.
+///
+/// The number matters: at the smallest window the app allows, three panes come
+/// to about 81 px each, so a floor set below that would never bite and this
+/// whole rule would be dead code.
+pub(crate) const MIN_PANE_HEIGHT_PX: f32 = 100.0;
+/// Height of a collapsed pane: one row, enough for its name and its live
+/// value. Never zero — a pane that vanished would be an indicator the user
+/// added and the chart silently dropped.
+pub(crate) const COLLAPSED_PANE_HEIGHT_PX: f32 = 20.0;
+/// Shortest the candles may be squeezed to by the pane band. The candles are
+/// what the panes are *about*; a band that leaves them a sliver has inverted
+/// the chart.
+pub(crate) const MIN_CHART_HEIGHT_PX: f32 = 120.0;
+
+/// What decides one pane's height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum PaneSizing {
+    /// The layout decides: a share of the band, floored, collapsing when the
+    /// band cannot hold it.
+    Auto,
+    /// The user dragged this pane's divider to a height in pixels. Still
+    /// floored — a drag cannot produce a pane too short to read either.
+    Manual(f32),
+    /// The user collapsed it by hand. Stays collapsed however much room
+    /// appears, until they expand it again.
+    Collapsed,
+}
+
+impl PaneSizing {
+    /// Height this sizing asks for in a band `band_height_px` tall, before the
+    /// layout decides whether there is room for it.
+    fn desired(self, band_height_px: f32) -> f32 {
+        match self {
+            Self::Auto => (band_height_px * PANE_HEIGHT_FRAC).max(MIN_PANE_HEIGHT_PX),
+            Self::Manual(px) => px.max(MIN_PANE_HEIGHT_PX),
+            Self::Collapsed => COLLAPSED_PANE_HEIGHT_PX,
+        }
+    }
+}
+
+/// One pane's band, and whether it is showing its curve or only its name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PaneSlot {
+    pub rect: egui::Rect,
+    /// `true`: too little room to draw this pane legibly, so it is a labelled
+    /// strip instead. Collapsing hides the *curve*; the name and the live
+    /// value are still written, because those are what the user added the
+    /// indicator for.
+    pub collapsed: bool,
+}
+
+/// Carve the pane band off the bottom of the chart rect.
+///
+/// Two rules the old fraction-only split had neither of:
+///
+/// - **Nothing is drawn below the height at which it can be read.** A pane
+///   that cannot have [`MIN_PANE_HEIGHT_PX`] becomes a collapsed strip rather
+///   than a squeezed one. Three slivers are worth less than one readable pane
+///   and two labelled strips.
+/// - **The candles keep [`MIN_CHART_HEIGHT_PX`].** Panes are read against the
+///   bars; a band that eats the bars has inverted the chart.
+///
+/// Room is granted top-down, so the first pane — the one the user added first,
+/// and the one the eye lands on — is the last to lose its curve. Every pane
+/// always gets at least a strip: an indicator that is on must never be
+/// silently absent.
+///
 /// Pure, so the split is unit-testable without a display.
-pub(crate) fn split_panes(chart: egui::Rect, pane_count: usize) -> (egui::Rect, Vec<egui::Rect>) {
-    let count = pane_count.min(MAX_PANES);
+pub(crate) fn split_panes(chart: egui::Rect, sizing: &[PaneSizing]) -> (egui::Rect, Vec<PaneSlot>) {
+    let count = sizing.len().min(MAX_PANES);
     if count == 0 {
         return (chart, Vec::new());
     }
-    let pane_height = chart.height() * PANE_HEIGHT_FRAC;
-    let chart_bottom = chart.bottom() - pane_height * count as f32;
+    let band_height = chart.height().max(0.0);
+    // Strips are mandatory chrome; only the expansion above a strip has to be
+    // negotiated for.
+    let mandatory = COLLAPSED_PANE_HEIGHT_PX * count as f32;
+    let mut budget = (band_height - MIN_CHART_HEIGHT_PX - mandatory).max(0.0);
+
+    // Explicit choices are served first, in two passes over the same order:
+    // a pane the user dragged or expanded by hand must get its height even
+    // when the automatic ones above it would have spent the budget. Without
+    // this, clicking a collapsed strip open is a click that does nothing.
+    let mut heights = vec![COLLAPSED_PANE_HEIGHT_PX; count];
+    for explicit in [true, false] {
+        for (index, sizing) in sizing[..count].iter().enumerate() {
+            if matches!(sizing, PaneSizing::Manual(_)) != explicit {
+                continue;
+            }
+            if matches!(sizing, PaneSizing::Collapsed) {
+                continue;
+            }
+            let desired = sizing.desired(band_height);
+            let extra = desired - COLLAPSED_PANE_HEIGHT_PX;
+            if extra <= budget {
+                budget -= extra;
+                heights[index] = desired;
+            }
+        }
+    }
+
+    let total: f32 = heights.iter().sum();
+    let chart_bottom = (chart.bottom() - total).max(chart.top());
     let shrunk = egui::Rect::from_min_max(chart.min, egui::pos2(chart.right(), chart_bottom));
-    let panes = (0..count)
-        .map(|i| {
-            let top = chart_bottom + pane_height * i as f32;
-            egui::Rect::from_min_max(
+    let mut top = chart_bottom;
+    let panes = heights
+        .into_iter()
+        .map(|height| {
+            let rect = egui::Rect::from_min_max(
                 egui::pos2(chart.left(), top),
-                egui::pos2(chart.right(), top + pane_height),
-            )
+                egui::pos2(chart.right(), top + height),
+            );
+            top += height;
+            PaneSlot {
+                rect,
+                collapsed: height <= COLLAPSED_PANE_HEIGHT_PX,
+            }
         })
         .collect();
     (shrunk, panes)
@@ -449,21 +577,113 @@ mod tests {
         assert!(fresh.last_auto.is_none(), "and has not been drawn yet");
     }
 
+    fn band(height: f32) -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, height))
+    }
+
+    fn auto(n: usize) -> Vec<PaneSizing> {
+        vec![PaneSizing::Auto; n]
+    }
+
     #[test]
     fn pane_split_is_stacked_and_bounded() {
-        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
-        let (shrunk, panes) = split_panes(chart, 2);
-        assert_eq!(shrunk.height(), 60.0, "two panes take 2 x 20%");
+        let chart = band(1000.0);
+        let (shrunk, panes) = split_panes(chart, &auto(2));
+        assert_eq!(shrunk.height(), 600.0, "two panes take 2 x 20%");
         assert_eq!(panes.len(), 2);
-        assert_eq!(panes[0].top(), 60.0);
-        assert_eq!(panes[1].top(), 80.0);
-        assert_eq!(panes[1].bottom(), 100.0);
+        assert_eq!(panes[0].rect.top(), 600.0);
+        assert_eq!(panes[1].rect.top(), 800.0);
+        assert_eq!(panes[1].rect.bottom(), 1000.0);
+        assert!(panes.iter().all(|pane| !pane.collapsed), "there is room");
 
-        let (unchanged, none) = split_panes(chart, 0);
+        let (unchanged, none) = split_panes(chart, &auto(0));
         assert_eq!(unchanged, chart);
         assert!(none.is_empty());
 
-        let (_, capped) = split_panes(chart, 9);
+        let (_, capped) = split_panes(chart, &auto(9));
         assert_eq!(capped.len(), MAX_PANES);
+    }
+
+    /// The headline of this change: a band too short for three readable panes
+    /// gives room to the ones it can and collapses the rest, instead of
+    /// handing all three a sliver. Room goes top-down, so the pane the user
+    /// added first is the last to lose its curve.
+    #[test]
+    fn a_short_band_collapses_the_panes_it_cannot_draw_legibly() {
+        let (chart, panes) = split_panes(band(300.0), &auto(3));
+
+        assert_eq!(panes.len(), 3, "every pane is still present");
+        assert!(!panes[0].collapsed, "the first keeps its curve");
+        assert!(
+            panes[1].collapsed && panes[2].collapsed,
+            "300 px cannot hold two readable panes and the candles' own floor"
+        );
+        for pane in &panes {
+            assert!(
+                pane.rect.height() >= COLLAPSED_PANE_HEIGHT_PX,
+                "no pane is ever thinner than its own name"
+            );
+            assert!(
+                pane.collapsed || pane.rect.height() >= MIN_PANE_HEIGHT_PX,
+                "an expanded pane always clears the readable floor: {pane:?}"
+            );
+        }
+        assert!(
+            chart.height() >= MIN_CHART_HEIGHT_PX,
+            "and the candles keep their floor: {}",
+            chart.height()
+        );
+    }
+
+    /// The floor holds all the way down. At the smallest window the app
+    /// allows, three panes are three labelled strips and the candles are still
+    /// candles — the state the old split turned into three unreadable bands.
+    #[test]
+    fn the_floors_hold_at_every_band_height() {
+        for height in [0.0_f32, 60.0, 120.0, 200.0, 300.0, 560.0, 1000.0] {
+            let (chart, panes) = split_panes(band(height), &auto(MAX_PANES));
+            let total: f32 = panes.iter().map(|pane| pane.rect.height()).sum();
+            assert!(
+                (chart.height() + total - height.max(0.0)).abs() < 0.01 || chart.height() == 0.0,
+                "height {height}: the band and the chart must tile the space"
+            );
+            for pane in &panes {
+                assert!(
+                    pane.collapsed || pane.rect.height() >= MIN_PANE_HEIGHT_PX,
+                    "height {height}: an expanded pane below the floor: {pane:?}"
+                );
+            }
+            assert!(
+                panes
+                    .windows(2)
+                    .all(|pair| { (pair[0].rect.bottom() - pair[1].rect.top()).abs() < 0.01 }),
+                "height {height}: panes must not overlap or leave a seam"
+            );
+        }
+    }
+
+    /// A pane the user collapsed by hand stays collapsed however much room
+    /// appears — the automatic rule decides what *cannot* be shown, never what
+    /// the user decided not to show.
+    #[test]
+    fn a_hand_collapsed_pane_stays_collapsed_in_a_tall_band() {
+        let (_, panes) = split_panes(band(1000.0), &[PaneSizing::Collapsed, PaneSizing::Auto]);
+        assert!(panes[0].collapsed, "the user's choice survives the room");
+        assert!(!panes[1].collapsed);
+    }
+
+    /// A dragged height is honoured, and still cannot go below the floor: the
+    /// divider stops rather than producing a pane nobody can read.
+    #[test]
+    fn a_dragged_height_is_honoured_but_never_below_the_floor() {
+        let (_, tall) = split_panes(band(1000.0), &[PaneSizing::Manual(300.0)]);
+        assert!((tall[0].rect.height() - 300.0).abs() < 0.01);
+
+        let (_, squeezed) = split_panes(band(1000.0), &[PaneSizing::Manual(5.0)]);
+        assert!(
+            (squeezed[0].rect.height() - MIN_PANE_HEIGHT_PX).abs() < 0.01,
+            "the drag stops at the floor: {:?}",
+            squeezed[0]
+        );
     }
 }
