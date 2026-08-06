@@ -3512,6 +3512,12 @@ impl QuantickApp {
         }
         self.pending_drawing_demo = false;
         let share = std::env::var("QUANTICK_DRAWINGS_DEMO_SHARED").is_ok_and(|v| v == "1");
+        if share {
+            // A shared drawing has nothing to be shared *with* on a single
+            // pane, so the hook that asks for one opens the split too — the
+            // surface under test is the projection onto the other chart.
+            self.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        }
         let pane = &mut self.active_tab_mut().flow_pane;
         // Anchored inside the window the chart actually opens on, not at slot
         // zero: a demo whose objects sit 300 bars off the left edge shows a
@@ -6288,6 +6294,86 @@ plot(close)
                 "the selection vanished {frame} frames after the click"
             );
         }
+    }
+
+    /// A three-anchor tool that stops following the pointer reads as frozen —
+    /// reported from the running build after a drag left a channel sitting
+    /// there. It is waiting for a click, and it now says so beside the
+    /// cursor, not only in a badge on the far side of the screen.
+    #[test]
+    fn a_draft_says_what_the_next_click_will_do() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        // Drag the trend line, exactly the gesture that was reported.
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+        );
+        let hover = egui::pos2(820.0, 300.0);
+        let texts = painted_text(&run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(hover)],
+        ));
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            2,
+            "the drag placed the trend line and the object waits for its width"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("Click the channel width")),
+            "the draft must say what it is waiting for; painted: {texts:?}"
+        );
+    }
+
+    /// A tool with nothing specific to say still reports progress, because a
+    /// count beats an object that looks like it stopped responding.
+    #[test]
+    fn a_draft_without_a_hint_still_shows_its_progress() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        let fib = drawing_tool("fib-retracement");
+        assert_eq!(fib.placement_hint(1), None, "this tool has no words for it");
+        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
+        click_chart(&mut app, &ctx, egui::pos2(600.0, 400.0));
+        let hover = egui::pos2(700.0, 320.0);
+        let texts = painted_text(&run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(hover)],
+        ));
+        assert!(
+            texts.iter().any(|text| text == "1/2"),
+            "an unnamed next step still shows the count; painted: {texts:?}"
+        );
+    }
+
+    /// The control that shares a drawing across the tab's charts has to be
+    /// *findable*. It lives with the anchors, on the Coordinates tab, because
+    /// sharing is a statement about the anchors — and every tool has that tab.
+    #[test]
+    fn the_coordinates_tab_offers_sharing_across_charts() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        app.inspector_tab = InspectorTab::Coordinates;
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts.iter().any(|text| text.contains("Show on all charts")),
+            "the sharing control must be on screen, not folded away; painted: {texts:?}"
+        );
     }
 
     /// The chore this removes: re-picking the same colour on every object.

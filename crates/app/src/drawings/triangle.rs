@@ -27,6 +27,9 @@ impl DrawingToolImpl for Triangle {
     fn required_points(&self) -> usize {
         3
     }
+    fn placement_hint(&self, placed: usize) -> Option<&'static str> {
+        (placed == 2).then_some("Click the third corner")
+    }
     fn family(&self) -> Option<ToolFamily> {
         Some(SHAPES_FAMILY)
     }

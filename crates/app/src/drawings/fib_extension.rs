@@ -24,6 +24,9 @@ impl DrawingToolImpl for FibExtension {
     fn hover_text(&self) -> &'static str {
         "Fib extension - set the first leg, then click the projection origin (Shift+F)"
     }
+    fn placement_hint(&self, placed: usize) -> Option<&'static str> {
+        (placed == 2).then_some("Click where the retracement ended")
+    }
     fn required_points(&self) -> usize {
         FibKind::Extension.required_points()
     }

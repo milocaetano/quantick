@@ -223,6 +223,13 @@ impl DrawingToolImpl for ParallelChannel {
     fn required_points(&self) -> usize {
         3
     }
+    fn placement_hint(&self, placed: usize) -> Option<&'static str> {
+        match placed {
+            1 => Some("Click the end of the trend line"),
+            2 => Some("Click the channel width"),
+            _ => None,
+        }
+    }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
             key: egui::Key::C,

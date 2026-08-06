@@ -208,6 +208,17 @@ trait DrawingToolImpl: Sync {
     fn icon(&self) -> &'static str;
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
+    /// What the *next* click will do, with `placed` anchors already down.
+    ///
+    /// A multi-anchor tool that stops following the pointer looks broken:
+    /// the trader dragged, let go, and the object sat there waiting for a
+    /// click nobody told them about. The rail's `2/3` badge is true but it
+    /// is on the far side of the screen from where the eye is. A tool that
+    /// can say what it wants next says it here, and the draft prints it by
+    /// the cursor.
+    fn placement_hint(&self, _placed: usize) -> Option<&'static str> {
+        None
+    }
     /// The key that arms this tool from the chart, if it has one.
     fn shortcut(&self) -> Option<ToolShortcut> {
         None
@@ -338,6 +349,11 @@ impl DrawingTool {
     #[must_use]
     pub fn required_points(self) -> usize {
         self.0.required_points()
+    }
+
+    #[must_use]
+    pub fn placement_hint(self, placed: usize) -> Option<&'static str> {
+        self.0.placement_hint(placed)
     }
 
     /// Paint the object. Selection adds a halo *under* the geometry and, when
