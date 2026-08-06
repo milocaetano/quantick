@@ -41,6 +41,33 @@ struct Instance {
     preview: Option<PreviewFrame>,
 }
 
+/// What every hosted indicator previewed for one rung of a ladder walk.
+///
+/// Borrowed rather than collected: a rung is read and turned into whatever
+/// the caller is building (a lane sample, a row of a table) before the next
+/// prefix overwrites it, so a walk of sixty rungs allocates nothing here.
+pub struct PreviewsAt<'a> {
+    instances: &'a [Instance],
+}
+
+impl PreviewsAt<'_> {
+    /// The frame one instance previewed for this rung. `None` when the
+    /// instance is in its error state — a failed indicator has nothing to say
+    /// about this instant, and saying nothing is the honest answer.
+    #[must_use]
+    pub fn get(&self, id: InstanceId) -> Option<&PreviewFrame> {
+        self.instances
+            .iter()
+            .find(|i| i.id == id)
+            .and_then(|i| i.preview.as_ref())
+    }
+
+    /// Every instance's frame for this rung, in insertion (render) order.
+    pub fn iter(&self) -> impl Iterator<Item = (InstanceId, Option<&PreviewFrame>)> + '_ {
+        self.instances.iter().map(|i| (i.id, i.preview.as_ref()))
+    }
+}
+
 /// See the module docs.
 #[derive(Default)]
 pub struct IndicatorHost {
@@ -129,6 +156,76 @@ impl IndicatorHost {
         };
         let bar = IndicatorBar::from(bar);
         self.partial = Some(bar);
+        let bar_index = self.bars.len();
+        let staged_cvd = self.cvd.last().copied().unwrap_or(0.0) + bar.delta();
+        self.cvd.push(staged_cvd);
+        let cvd = &self.cvd;
+        for instance in &mut self.instances {
+            Self::preview_instance(instance, &bar, bar_index, cvd);
+        }
+        self.cvd.pop();
+    }
+
+    /// Walk a ladder of forming-bar prefixes, handing each rung's previews to
+    /// `visit`, and leave the host exactly as it was found.
+    ///
+    /// A preview stages the forming bar's cvd, runs, and pops it again — it
+    /// touches no committed state — so the same forming bar can be previewed
+    /// as many times as a caller likes. Handed the bar as it stood after the
+    /// 1st, 10th, 20th … print of the run, that turns into an honest answer
+    /// to "what was this indicator showing mid-bar?": every rung is a real
+    /// evaluation of a real prefix of the tape, never an interpolation
+    /// between two committed points.
+    ///
+    /// **The ladder reaches back only to the forming bar's open.** A closed
+    /// bar cannot be re-entered — committing is one-way, by design — so an
+    /// instant older than the current bar's open has no rung here, and a
+    /// caller that needs the value there reads the committed column instead.
+    /// That is the boundary of what the host can honestly answer.
+    ///
+    /// The prefixes are the caller's to choose ([`Bar::opened_by`] +
+    /// [`Bar::extend`] over the run's trades produces them); they are expected
+    /// in occurrence order, and nothing here requires them to be evenly
+    /// spaced.
+    pub fn walk_partial_prefixes(
+        &mut self,
+        prefixes: &[Bar],
+        mut visit: impl FnMut(&Bar, PreviewsAt<'_>),
+    ) {
+        if prefixes.is_empty() || self.instances.is_empty() {
+            return;
+        }
+        // Every rung overwrites the retained forming bar, so the real one is
+        // put aside first: without this the host would come out of the walk
+        // believing the last rung *is* the bar that is forming, and every
+        // later preview would run against a prefix of the tape instead of all
+        // of it.
+        let retained = self.partial;
+        for prefix in prefixes {
+            self.set_partial(Some(prefix));
+            visit(
+                prefix,
+                PreviewsAt {
+                    instances: &self.instances,
+                },
+            );
+        }
+        // The walk left every instance previewing the last rung. Put the real
+        // forming bar back: whoever reads `preview()` after this must see the
+        // bar as it actually stands, not wherever the ladder stopped.
+        self.partial = retained;
+        self.restore_retained_previews();
+    }
+
+    /// Re-run the retained forming bar's previews across every instance (or
+    /// clear them when no bar is forming) — the tail of a ladder walk.
+    fn restore_retained_previews(&mut self) {
+        let Some(bar) = self.partial else {
+            for instance in &mut self.instances {
+                instance.preview = None;
+            }
+            return;
+        };
         let bar_index = self.bars.len();
         let staged_cvd = self.cvd.last().copied().unwrap_or(0.0) + bar.delta();
         self.cvd.push(staged_cvd);

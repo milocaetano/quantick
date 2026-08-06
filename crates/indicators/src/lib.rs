@@ -54,7 +54,7 @@ mod objects;
 mod output;
 
 pub use bar::IndicatorBar;
-pub use host::{IndicatorHost, InstanceId};
+pub use host::{IndicatorHost, InstanceId, PreviewsAt};
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
 pub use input::{InputSpec, InputValue, SourceId};
 pub use objects::{

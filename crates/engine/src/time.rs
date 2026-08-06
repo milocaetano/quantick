@@ -23,7 +23,6 @@
 //! time (a bar's `open_time` bucket may be several intervals after the previous
 //! bar's), and that gap is the honest record that no trades happened in between.
 
-use crate::threshold::{extend_bar, open_bar};
 use rust_decimal::Decimal;
 
 use crate::{Bar, BarBuilder, BarProgress, Trade};
@@ -80,20 +79,20 @@ impl BarBuilder for TimeBarBuilder {
         match &mut self.current {
             // First trade: open the first bar; nothing closes yet.
             None => {
-                self.current = Some(open_bar(trade));
+                self.current = Some(Bar::opened_by(trade));
                 self.bucket_start = bucket;
                 None
             }
             // Same interval: fold the trade into the forming bar.
             Some(bar) if bucket == self.bucket_start => {
-                extend_bar(bar, trade);
+                bar.extend(trade);
                 None
             }
             // A later interval: close the current bar and open a fresh one for
             // this trade. Any intervening empty intervals are simply skipped.
             Some(_) => {
                 let closed = self.current.take();
-                self.current = Some(open_bar(trade));
+                self.current = Some(Bar::opened_by(trade));
                 self.bucket_start = bucket;
                 closed
             }

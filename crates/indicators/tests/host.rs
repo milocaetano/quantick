@@ -423,3 +423,143 @@ fn a_catch_up_failure_lands_in_the_newcomers_error_state() {
         2
     );
 }
+
+/// The ladder's core promise: every rung is a real evaluation of a real
+/// prefix, so a rung's values equal what a plain `set_partial` of that same
+/// prefix produces. If the walk ever interpolated, or leaked one rung's state
+/// into the next, this diverges.
+#[test]
+fn every_rung_equals_a_standalone_preview_of_the_same_prefix() {
+    let (bars, _) = bars_and_partial(5);
+    let trades = fixture::parse_trades(TRADES).expect("fixture parses");
+
+    // Prefixes of one run of trades, folded the way every builder folds.
+    let mut prefixes = Vec::new();
+    let mut forming: Option<Bar> = None;
+    for trade in trades.iter().take(6) {
+        match &mut forming {
+            None => forming = Some(Bar::opened_by(trade)),
+            Some(bar) => bar.extend(trade),
+        }
+        prefixes.push(forming.clone().expect("a bar is forming"));
+    }
+
+    let mut walked = IndicatorHost::new();
+    let walked_id = walked.add(Box::new(Cvd::new()));
+    for bar in &bars {
+        walked.push_closed_bar(bar);
+    }
+    let mut rungs = Vec::new();
+    walked.walk_partial_prefixes(&prefixes, |prefix, previews| {
+        rungs.push((
+            prefix.close_time,
+            previews
+                .get(walked_id)
+                .map(|frame| format!("{:?}", frame.values)),
+        ));
+    });
+
+    let mut one_at_a_time = IndicatorHost::new();
+    let solo_id = one_at_a_time.add(Box::new(Cvd::new()));
+    for bar in &bars {
+        one_at_a_time.push_closed_bar(bar);
+    }
+    let expected: Vec<_> = prefixes
+        .iter()
+        .map(|prefix| {
+            one_at_a_time.set_partial(Some(prefix));
+            (
+                prefix.close_time,
+                one_at_a_time
+                    .preview(solo_id)
+                    .map(|frame| format!("{:?}", frame.values)),
+            )
+        })
+        .collect();
+
+    assert_eq!(rungs, expected);
+    assert_eq!(rungs.len(), prefixes.len(), "one rung per prefix");
+}
+
+/// A walk is a read, not a write: it may not advance committed state, and it
+/// must hand the retained forming bar back to whoever reads `preview()` next.
+/// Otherwise the chart's headline value would be stuck wherever the ladder
+/// happened to stop.
+#[test]
+fn a_walk_leaves_committed_state_and_the_live_preview_untouched() {
+    let (bars, partial) = bars_and_partial(5);
+    let partial = partial.expect("the fixture leaves a bar forming");
+
+    let mut host = IndicatorHost::new();
+    let id = host.add(Box::new(Cvd::new()));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    host.set_partial(Some(&partial));
+
+    let committed = plot0(&host, id);
+    let live = host
+        .preview(id)
+        .map(|frame| format!("{:?}", frame.values))
+        .expect("the forming bar previews");
+
+    // A ladder that ends somewhere else entirely.
+    let mut halfway = partial.clone();
+    halfway.close_time -= 1;
+    halfway.buy_volume += rust_decimal::Decimal::from(1000);
+    host.walk_partial_prefixes(&[halfway], |_, _| {});
+
+    assert!(
+        same_column(&plot0(&host, id), &committed),
+        "a walk commits nothing"
+    );
+    assert_eq!(
+        host.preview(id).map(|frame| format!("{:?}", frame.values)),
+        Some(live),
+        "the retained forming bar is previewing again after the walk"
+    );
+    assert_eq!(host.bar_count(), bars.len());
+}
+
+/// With no bar forming, a walk still restores the truth: no preview at all.
+/// A leftover rung here would draw a forming value onto a chart that has none.
+#[test]
+fn a_walk_without_a_forming_bar_clears_the_previews_it_staged() {
+    let (bars, partial) = bars_and_partial(5);
+    let partial = partial.expect("the fixture leaves a bar forming");
+
+    let mut host = IndicatorHost::new();
+    let id = host.add(Box::new(Cvd::new()));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    host.set_partial(None);
+
+    host.walk_partial_prefixes(&[partial], |_, _| {});
+
+    assert!(
+        host.preview(id).is_none(),
+        "nothing is forming, so nothing previews"
+    );
+}
+
+/// An empty ladder is a no-op, and a walk over a host with no indicators
+/// visits nothing — the chart asks for a ladder every publish, including the
+/// publishes where there is nothing to ask about.
+#[test]
+fn an_empty_ladder_visits_nothing() {
+    let (bars, partial) = bars_and_partial(5);
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Cvd::new()));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    let mut visits = 0;
+    host.walk_partial_prefixes(&[], |_, _| visits += 1);
+    assert_eq!(visits, 0);
+
+    let mut empty = IndicatorHost::new();
+    empty.walk_partial_prefixes(&[partial.expect("forming")], |_, _| visits += 1);
+    assert_eq!(visits, 0, "no indicators, nothing to preview");
+}

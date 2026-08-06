@@ -2,6 +2,8 @@
 
 use rust_decimal::Decimal;
 
+use crate::{Side, Trade};
+
 /// A completed — or in-progress — alternative bar.
 ///
 /// A bar summarises the run of trades that fell into one sampling bucket,
@@ -43,6 +45,47 @@ pub struct Bar {
 }
 
 impl Bar {
+    /// Open a fresh one-trade bar on `trade`.
+    ///
+    /// This and [`extend`](Bar::extend) are how *every* builder accumulates —
+    /// the bucketing rule decides when a bar closes, never how it summarises.
+    /// They are public because the summary of a run of trades is a fact about
+    /// the trades, not a private detail of one builder: a consumer that needs
+    /// the bar a prefix of the tape would have formed (the chart's live lane
+    /// asking an indicator what it would have shown mid-bar) must reach the
+    /// same numbers the builder does, and a second implementation of this
+    /// fold is a second answer waiting to drift.
+    #[must_use]
+    pub fn opened_by(trade: &Trade) -> Self {
+        let (buy_volume, sell_volume) = split_volume(trade);
+        Self {
+            open_time: trade.timestamp_ms,
+            close_time: trade.timestamp_ms,
+            open: trade.price,
+            high: trade.price,
+            low: trade.price,
+            close: trade.price,
+            buy_volume,
+            sell_volume,
+            trade_count: 1,
+        }
+    }
+
+    /// Fold `trade` into this in-progress bar. See [`opened_by`](Bar::opened_by).
+    pub fn extend(&mut self, trade: &Trade) {
+        self.high = self.high.max(trade.price);
+        self.low = self.low.min(trade.price);
+        self.close = trade.price;
+        self.close_time = trade.timestamp_ms;
+        // Saturating for the same reason as a builder's accumulator: untrusted
+        // feed quantities must not panic if a running side total overflows.
+        match trade.side {
+            Side::Buy => self.buy_volume = self.buy_volume.saturating_add(trade.quantity),
+            Side::Sell => self.sell_volume = self.sell_volume.saturating_add(trade.quantity),
+        }
+        self.trade_count += 1;
+    }
+
     /// Total traded quantity: `buy_volume + sell_volume`.
     ///
     /// Saturates rather than panicking on the (physically impossible) overflow,
@@ -62,9 +105,18 @@ impl Bar {
     }
 }
 
+/// A trade contributes its quantity to exactly one side.
+fn split_volume(trade: &Trade) -> (Decimal, Decimal) {
+    match trade.side {
+        Side::Buy => (trade.quantity, Decimal::ZERO),
+        Side::Sell => (Decimal::ZERO, trade.quantity),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BarBuilder as _;
     use core::str::FromStr;
 
     fn dec(s: &str) -> Decimal {
@@ -86,5 +138,63 @@ mod tests {
         };
         assert_eq!(bar.volume(), dec("1.9"));
         assert_eq!(bar.delta(), dec("1.1"));
+    }
+
+    fn trade(agg_id: u64, price: &str, quantity: &str, side: Side) -> Trade {
+        Trade {
+            agg_id,
+            timestamp_ms: 1_700_000_000_000 + agg_id as i64 * 10,
+            price: dec(price),
+            quantity: dec(quantity),
+            side,
+        }
+    }
+
+    /// The public fold and the builders' own accumulation are the same fold.
+    ///
+    /// This is the guard behind [`Bar::opened_by`]'s promise: a consumer that
+    /// summarises a prefix of the tape itself must land on the numbers the
+    /// builder would have produced, bar type and all. Every builder folds
+    /// through these two methods, so the assertion is that no builder grew a
+    /// private variant of them.
+    #[test]
+    fn folding_trades_by_hand_reaches_the_builders_own_partial() {
+        let trades = [
+            trade(0, "36000.0", "1.0", Side::Buy),
+            trade(1, "36010.5", "0.25", Side::Sell),
+            trade(2, "35990.25", "2.5", Side::Buy),
+            trade(3, "36005.0", "0.75", Side::Sell),
+        ];
+
+        // A threshold high enough that nothing closes: the builder's partial
+        // is the whole run.
+        let mut builder = crate::TickBarBuilder::new(100);
+        for t in &trades {
+            assert!(
+                builder.push(t).is_none(),
+                "the fixture must not close a bar"
+            );
+        }
+
+        let mut folded: Option<Bar> = None;
+        for t in &trades {
+            match &mut folded {
+                None => folded = Some(Bar::opened_by(t)),
+                Some(bar) => bar.extend(t),
+            }
+        }
+
+        assert_eq!(folded.as_ref(), builder.partial());
+    }
+
+    /// Side totals saturate rather than panicking: the quantities come from an
+    /// untrusted feed, and the same rule the builders' accumulators follow.
+    #[test]
+    fn extending_saturates_instead_of_overflowing_a_side() {
+        let mut bar = Bar::opened_by(&trade(0, "1.0", "1.0", Side::Buy));
+        bar.buy_volume = Decimal::MAX;
+        bar.extend(&trade(1, "1.0", "1.0", Side::Buy));
+        assert_eq!(bar.buy_volume, Decimal::MAX);
+        assert_eq!(bar.trade_count, 2);
     }
 }
