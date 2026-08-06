@@ -1085,10 +1085,11 @@ impl ChartPane {
     /// This pane's regions inside `area`, carved once so the input handler and
     /// the renderer can never disagree about a boundary.
     fn plot_areas(&self, area: egui::Rect) -> PlotAreas {
+        let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
         plot_split(
             area,
             self.live_strip_width(),
-            &self.indicators.pane_sizing(),
+            self.indicators.pane_sizing(&mut sizing),
         )
     }
 

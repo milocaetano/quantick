@@ -273,8 +273,22 @@ impl IndicatorViews {
     /// What the layout needs to carve the pane band: one sizing per visible
     /// pane, top to bottom. Handed over as a whole rather than pane by pane,
     /// because how tall each one gets is one decision about all of them.
-    pub(crate) fn pane_sizing(&self) -> Vec<PaneSizing> {
-        self.visible_panes().map(|view| view.sizing).collect()
+    ///
+    /// Written into a caller-owned array rather than returned as a `Vec`:
+    /// [`plot_split`](crate::app::plot_split) runs more than once per frame,
+    /// and there is no reason for a chart to reach the allocator sixty times a
+    /// second for at most [`MAX_PANES`] copies of an eight-byte enum. Returns
+    /// the slice actually written.
+    pub(crate) fn pane_sizing<'a>(
+        &self,
+        buffer: &'a mut [PaneSizing; MAX_PANES],
+    ) -> &'a [PaneSizing] {
+        let mut count = 0;
+        for view in self.visible_panes() {
+            buffer[count] = view.sizing;
+            count += 1;
+        }
+        &buffer[..count]
     }
 
     /// The same panes, in the same order, mutable: the renderer records the

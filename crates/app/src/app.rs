@@ -3921,7 +3921,9 @@ mod tests {
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(),
-            &pane.indicators.pane_sizing(),
+            pane.indicators.pane_sizing(
+                &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
+            ),
         );
         areas.pane_gutters[index]
     }
@@ -3933,7 +3935,9 @@ mod tests {
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(),
-            &pane.indicators.pane_sizing(),
+            pane.indicators.pane_sizing(
+                &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
+            ),
         );
         areas.indicator_panes[index].rect
     }
@@ -3951,7 +3955,9 @@ mod tests {
         plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(),
-            &pane.indicators.pane_sizing(),
+            pane.indicators.pane_sizing(
+                &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
+            ),
         )
         .indicator_panes
     }
@@ -4340,7 +4346,9 @@ mod tests {
             plot_split(
                 pane.last_plot_area.expect("a frame has been drawn"),
                 pane.live_strip_width(),
-                &pane.indicators.pane_sizing(),
+                pane.indicators.pane_sizing(
+                    &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
+                ),
             )
             .price_gutter
         };
