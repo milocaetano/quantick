@@ -1,7 +1,11 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolShortcut, drawing_fill, drawing_stroke};
+use super::shape_core::SHAPES_FAMILY;
+use super::{
+    DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut, drawing_fill,
+    drawing_stroke,
+};
 
 pub(super) static TOOL: Rectangle = Rectangle;
 
@@ -31,6 +35,9 @@ impl DrawingToolImpl for Rectangle {
             key: egui::Key::R,
             shift: false,
         })
+    }
+    fn family(&self) -> Option<ToolFamily> {
+        Some(SHAPES_FAMILY)
     }
     fn supports_fill(&self) -> bool {
         true

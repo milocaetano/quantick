@@ -1665,6 +1665,13 @@ impl Tab {
             }
         }
 
+        // Drawings marked "show on all charts" cross here, after both panes
+        // have drawn and cached their projections. It happens outside the
+        // loop above because each pane paints the *other* pane's marks, and
+        // that needs both panes borrowed at once — immutably, which is also
+        // the guarantee that a foreign mark can only be looked at.
+        self.paint_shared_drawings(ui.painter());
+
         // The position HUD rides the pane that owns order entry (the focused
         // one). It draws here, after the pane loop, because its buttons need
         // the paper host mutably — inside the loop that borrow is pinned
@@ -1690,6 +1697,22 @@ impl Tab {
             ],
             egui::Stroke::new(FOCUS_RULE_PX, theme::ACCENT),
         );
+    }
+
+    /// Cross-pane drawings: each pane paints the shared marks of the other.
+    ///
+    /// Nothing happens on an unsplit tab — one pane has no other pane to
+    /// borrow marks from, and the drawing is already on the only chart there
+    /// is. Scope stops here, at the tab: the panes below hold one symbol on
+    /// one feed, which is what makes a price level mean the same thing on
+    /// both (`docs/ux/drawing-tools-2026-08.md` §D7).
+    fn paint_shared_drawings(&self, painter: &egui::Painter) {
+        let Some(time_pane) = self.time_pane.as_ref() else {
+            return;
+        };
+        let flow_pane = &self.flow_pane;
+        flow_pane.paint_shared_from(painter, time_pane);
+        time_pane.paint_shared_from(painter, flow_pane);
     }
 
     /// Clicking a pane focuses it (§11). Read from the raw pointer press

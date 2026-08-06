@@ -1,36 +1,36 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::line_core::{Axis, LINES_FAMILY, hit_axis, paint_axis};
+use super::line_core::{Extend, LINES_FAMILY, hit_line, paint_line};
 use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
 
-pub(super) static TOOL: HorizontalLine = HorizontalLine;
+pub(super) static TOOL: Ray = Ray;
 
-pub(super) struct HorizontalLine;
+pub(super) struct Ray;
 
-impl DrawingToolImpl for HorizontalLine {
+impl DrawingToolImpl for Ray {
     fn id(&self) -> &'static str {
-        "horizontal-line"
+        "ray"
     }
     fn name(&self) -> &'static str {
-        "Horizontal line"
+        "Ray"
     }
     fn settings_title(&self) -> &'static str {
-        "Horizontal line settings"
+        "Ray settings"
     }
     fn icon(&self) -> &'static str {
-        icons::MINUS
+        icons::ARROW_UP_RIGHT
     }
     fn hover_text(&self) -> &'static str {
-        "Horizontal line - click a price (H)"
+        "Ray - two points, then it runs on into the future (Shift+T)"
     }
     fn required_points(&self) -> usize {
-        1
+        2
     }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
-            key: egui::Key::H,
-            shift: false,
+            key: egui::Key::T,
+            shift: true,
         })
     }
     fn family(&self) -> Option<ToolFamily> {
@@ -44,7 +44,7 @@ impl DrawingToolImpl for HorizontalLine {
         points: &[egui::Pos2],
         _ctxt: &DrawContext<'_>,
     ) {
-        paint_axis(painter, chart_rect, style, points, Axis::Horizontal);
+        paint_line(painter, chart_rect, style, points, Extend::Forward, false);
     }
     fn hit_test(
         &self,
@@ -54,11 +54,14 @@ impl DrawingToolImpl for HorizontalLine {
         radius_px: f32,
         _ctxt: &DrawContext<'_>,
     ) -> bool {
-        hit_axis(chart_rect, points, position, radius_px, Axis::Horizontal)
+        hit_line(chart_rect, points, position, radius_px, Extend::Forward)
     }
 
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
-        (vec![egui::pos2(100.0, 120.0)], egui::pos2(450.0, 123.0))
+        (
+            vec![egui::pos2(100.0, 100.0), egui::pos2(300.0, 200.0)],
+            egui::pos2(200.0, 150.0),
+        )
     }
 }
