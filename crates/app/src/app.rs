@@ -2744,6 +2744,8 @@ impl QuantickApp {
         let tool = drawing.tool;
         let locked = drawing.locked;
         let hidden = drawing.hidden;
+        let shareable = drawing.shareable();
+        let mut shared = drawing.scope == drawings::DrawingScope::AllCharts;
         let show_confirm = self.drawing_delete_confirm && locked;
 
         // The always-visible textual actions (UX spec: never glyph-only,
@@ -2769,6 +2771,43 @@ impl QuantickApp {
                     .color(theme::TEXT_SUPPORT),
             );
         }
+        // Where the object appears. Always visible, never behind a tab.
+        //
+        // It used to live on the Coordinates tab, because sharing is a
+        // statement about the anchors — which is the implementer's mental
+        // model, not the trader's. Nobody hunting for "also show this on the
+        // other chart" opens a tab called Coordinates, and that is not even
+        // the tab the panel opens on. Reported as unfindable, and it was.
+        ui.separator();
+        let sharing = ui.add_enabled(
+            shareable,
+            egui::Checkbox::new(&mut shared, "Show on all charts"),
+        );
+        if sharing.changed()
+            && let Some(drawing) = self.focused_pane_mut().drawings.selected_mut()
+        {
+            drawing.scope = if shared {
+                drawings::DrawingScope::AllCharts
+            } else {
+                drawings::DrawingScope::ThisChart
+            };
+            actions.edited = true;
+        }
+        // A disabled control with no reason reads as a bug.
+        let sharing_hint = if shareable {
+            "The other chart of this tab draws it at the same moment in market time"
+        } else {
+            "This drawing has an anchor past the newest bar, so there is no market time to place              it by on another chart"
+        };
+        sharing.on_hover_text(sharing_hint);
+        if !shareable {
+            ui.label(
+                egui::RichText::new(sharing_hint)
+                    .small()
+                    .color(theme::TEXT_SUPPORT),
+            );
+        }
+
         if show_confirm {
             ui.separator();
             ui.label("Delete locked drawing?");
@@ -2926,37 +2965,6 @@ impl QuantickApp {
                     ui.label(
                         egui::RichText::new("Unlock the drawing to edit its coordinates.").small(),
                     );
-                }
-
-                // Where the object appears. It belongs on this tab and not
-                // with the style controls: sharing is a statement about the
-                // anchors, and the anchors are right here
-                // (`docs/ux/drawing-tools-2026-08.md` §D7).
-                ui.separator();
-                let shareable = drawing.shareable();
-                let mut shared = drawing.scope == drawings::DrawingScope::AllCharts;
-                let response = ui.add_enabled(
-                    shareable,
-                    egui::Checkbox::new(&mut shared, "Show on all charts"),
-                );
-                if response.changed() {
-                    drawing.scope = if shared {
-                        drawings::DrawingScope::AllCharts
-                    } else {
-                        drawings::DrawingScope::ThisChart
-                    };
-                    actions.edited = true;
-                }
-                // A disabled control with no reason reads as a bug (Duda).
-                let hint = if shareable {
-                    "The other chart of this tab shows it at the same moment in market time."
-                } else {
-                    "This drawing has an anchor past the newest bar, so there is no market time to \
-                     place it by on another chart."
-                };
-                response.on_hover_text(hint);
-                if !shareable {
-                    ui.label(egui::RichText::new(hint).small());
                 }
             }
         }
@@ -3204,6 +3212,19 @@ impl QuantickApp {
         } else {
             INSPECTOR_DEFAULT_WIDTH_PX
         };
+        // Bounded by the window and scrolled inside it. A tool's panel can be
+        // taller than the screen — the Fib level editor is — and an unbounded
+        // window simply gets cut at the edge with no way to reach the rest.
+        // Rows a trader cannot reach read as rows that do not exist, and the
+        // control that was out of reach here was the Fib's own "extend", the
+        // one that decides whether its targets project forward at all.
+        let max_height = (ctx.screen_rect().height()
+            - self
+                .focused_pane()
+                .last_chart_area
+                .map_or(0.0, |chart| chart.top())
+            - 2.0 * INSPECTOR_OBJECT_GAP_PX)
+            .max(INSPECTOR_FALLBACK_HEIGHT_PX);
         let mut window = egui::Window::new(before.tool.settings_title())
             .id(egui::Id::new("drawing_inspector"))
             .title_bar(false)
@@ -3211,6 +3232,7 @@ impl QuantickApp {
             .default_width(default_width)
             .min_width(INSPECTOR_MIN_WIDTH_PX)
             .max_width(INSPECTOR_MAX_WIDTH_PX)
+            .max_height(max_height)
             .movable(false)
             .interactable(true)
             .resizable(true);
@@ -3219,7 +3241,11 @@ impl QuantickApp {
         }
         let response = window.show(ctx, |ui| {
             let mut actions = self.draw_inspector_title_bar(ui, index, true);
-            actions.merge(self.drawing_inspector_body(ui, index));
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    actions.merge(self.drawing_inspector_body(ui, index));
+                });
             actions
         });
         self.inspector_size = response
@@ -6296,6 +6322,32 @@ plot(close)
         }
     }
 
+    /// A Fib level is something price is *going* to meet. Drawn only between
+    /// the anchors, an extension's targets sit to the left of the leg that
+    /// projects them — backwards on its face — and they disappear behind the
+    /// tape the moment the market moves on. Reported from the running build.
+    #[test]
+    fn fib_levels_project_forward_from_the_swing_by_default() {
+        use crate::drawings::fib::{Extend, FibPayload};
+        assert_eq!(
+            Extend::default(),
+            Extend::Forward,
+            "a level nobody can see at current price is not a level"
+        );
+        for tool in ["fib-retracement", "fib-extension"] {
+            let payload = drawing_tool(tool).default_payload();
+            let fib = payload
+                .as_any()
+                .downcast_ref::<FibPayload>()
+                .expect("the fib tools carry a fib payload");
+            assert_eq!(
+                fib.extend,
+                Extend::Forward,
+                "{tool} must open projecting forward from its last point"
+            );
+        }
+    }
+
     /// A three-anchor tool that stops following the pointer reads as frozen —
     /// reported from the running build after a drag left a channel sitting
     /// there. It is waiting for a click, and it now says so beside the
@@ -8174,8 +8226,33 @@ plot(close)
         );
 
         app.inspector_tab = InspectorTab::Extra;
-        let texts = painted_text(&run_frame(&mut app, &ctx));
-        for label in ["Preset", "Standard", "band opacity", "log scale"] {
+        run_frame(&mut app, &ctx);
+        // The level editor is taller than the window. Everything in it must
+        // still be *reachable* — which is what the panel's scroll is for, and
+        // what a silent cut at the window edge used to deny.
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is open");
+        let over = inspector.center();
+        let mut texts = painted_text(&run_frame(&mut app, &ctx));
+        for _ in 0..12 {
+            if texts.iter().any(|text| text.contains("log scale")) {
+                break;
+            }
+            texts = painted_text(&run_frame_with_events(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(over),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -120.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            ));
+        }
+        for label in ["band opacity", "log scale"] {
             assert!(
                 texts.iter().any(|text| text.contains(label)),
                 "the level editor must show {label:?}; painted: {texts:?}"

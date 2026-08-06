@@ -1183,10 +1183,30 @@ impl ChartPane {
             return None;
         }
         let slot = bar.floor() as usize;
-        if slot >= self.slots() {
+        let slots = self.slots();
+        if slot < slots {
+            return self.slot_open_time(slot);
+        }
+        // Past the newest bar. Traders draw here constantly — a channel or a
+        // trend line pointing into the empty space to the right of the tape
+        // is the normal way to say "if this continues". Refusing the whole
+        // gesture a time would block sharing exactly where it is most used.
+        //
+        // On a *time* chart that space has an exact clock: the bars are one
+        // fixed interval apart, so the slot after the last one is the last
+        // one plus that interval. Nothing is inferred.
+        //
+        // On a tick or volume chart it does not: the next bar happens when
+        // enough trades happen, and no elapsed time can be named for it. That
+        // stays `None` — an invented timestamp is worse than a control that
+        // says why it is off.
+        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
             return None;
         }
-        self.slot_open_time(slot)
+        let last = slots.checked_sub(1)?;
+        let ahead = i64::try_from(slot - last).ok()?;
+        self.slot_open_time(last)?
+            .checked_add(ahead.checked_mul(self.time_interval_ms)?)
     }
 
     /// Placement consumes clicks while a drawing tool is armed, preventing a
@@ -2640,6 +2660,24 @@ impl ChartPane {
         }
     }
 
+    /// Where an instant later than this pane's newest bar falls, as a
+    /// fractional slot past the end. `None` unless the pane's bars run on a
+    /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
+    /// answer here.
+    fn future_slot_at_time(&self, time: i64) -> Option<f32> {
+        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
+            return None;
+        }
+        let last = self.slots().checked_sub(1)?;
+        let last_open = self.slot_open_time(last)?;
+        let ahead = time.checked_sub(last_open)?;
+        if ahead < self.time_interval_ms {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        Some(last as f32 + ahead as f32 / self.time_interval_ms as f32)
+    }
+
     /// Re-express a foreign drawing's anchors in this pane's bar space.
     /// Returns the anchors and whether any of them had to be clamped to the
     /// end of this pane's series.
@@ -2662,6 +2700,15 @@ impl ChartPane {
                     0
                 }
             };
+            // A time chart can also place an instant *past* its newest bar,
+            // on the same fixed interval its bars already run on — which is
+            // where a trend line pointing into the future belongs. Without
+            // this the future end of a shared line would pile up on the right
+            // edge instead of running on.
+            if let Some(future) = self.future_slot_at_time(time) {
+                anchors.push(ChartPoint::at_time(future + 0.5, point.price, Some(time)));
+                continue;
+            }
             // The other clamp: a time past the end of this pane's series
             // lands on the newest slot because `slot_at_time` cannot go
             // further than the tape has. Only a *closed* bar can prove that,

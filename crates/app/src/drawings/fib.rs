@@ -112,20 +112,34 @@ impl LabelPosition {
 /// How far the level lines run horizontally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Extend {
-    #[default]
     Anchors,
+    /// The default: forward from the *last* anchor only.
+    ///
+    /// A Fib level is something price is going to meet, so it has to be drawn
+    /// where price is — to the right of the swing that defined it. Levels
+    /// that stop at the anchors vanish behind the tape the moment the market
+    /// moves on, and an extension whose targets sit to the *left* of the leg
+    /// they project is backwards on its face.
+    ///
+    /// Starting at the last anchor rather than the first also keeps the
+    /// projection off the leg it was measured from: the rays say "from here
+    /// on", which is what a target is.
+    #[default]
+    Forward,
+    /// The whole anchor span *and* the projection.
     Right,
     Both,
 }
 
 impl Extend {
-    const ALL: [Self; 3] = [Self::Anchors, Self::Right, Self::Both];
+    const ALL: [Self; 4] = [Self::Anchors, Self::Forward, Self::Right, Self::Both];
 
     #[must_use]
     fn describe(self) -> &'static str {
         match self {
             Self::Anchors => "Between anchors",
-            Self::Right => "To the right",
+            Self::Forward => "From the last point",
+            Self::Right => "Anchors + right",
             Self::Both => "Both sides",
         }
     }
@@ -493,6 +507,10 @@ fn level_span(points: &[egui::Pos2], chart_rect: egui::Rect, extend: Extend) -> 
         .fold(f32::NEG_INFINITY, f32::max);
     match extend {
         Extend::Anchors => (left, right),
+        // The newest anchor, not the last one placed: "forward" is a
+        // statement about the market's direction, and a Fib drawn
+        // right-to-left means the same thing as one drawn left-to-right.
+        Extend::Forward => (right, chart_rect.right()),
         Extend::Right => (left, chart_rect.right()),
         Extend::Both => (chart_rect.left(), chart_rect.right()),
     }
@@ -581,7 +599,18 @@ pub(super) fn paint(
         if let Some(labels) = &labels
             && let Some(text) = labels.labels.get(index)
         {
-            let (anchor, x) = match payload.label_position {
+            // A span that runs to the chart's edge has no "outside" left to
+            // put a label in — it would be painted past the clip and simply
+            // vanish, which is what projecting the levels forward would
+            // otherwise cost. Fall inside instead.
+            let position = if right >= chart_rect.right() - FIB_LABEL_OFFSET_PX
+                && payload.label_position == LabelPosition::RightOutside
+            {
+                LabelPosition::RightInside
+            } else {
+                payload.label_position
+            };
+            let (anchor, x) = match position {
                 LabelPosition::RightOutside => {
                     (egui::Align2::LEFT_BOTTOM, right + FIB_LABEL_OFFSET_PX)
                 }
