@@ -38,6 +38,9 @@ id = "binance"
 name = "Binance"
 provider = "binance"
 symbols = ["BTCUSDT", "ETHUSDT"]
+# The default open: timeframe context beside the flow chart, side by side
+# (user decision 2026-08-06). Remove the key to open on the flow pane alone.
+default_layout = "time+flow"
 
 # Hyperliquid perpetuals, over unauthenticated public REST/WebSocket endpoints.
 # These were the five largest non-delisted markets by 24h notional volume in

@@ -1401,6 +1401,14 @@ mod tests {
         assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(binance.bubble_preset, None);
+
+        // The default open is the split: timeframe context beside the flow
+        // chart (user decision 2026-08-06). The other feeds declare nothing
+        // and open on the factory flow pane.
+        assert_eq!(binance.default_layout, Some(DeclaredLayout::TimeAndFlow));
+        assert_eq!(hyperliquid.default_layout, None);
+        assert_eq!(tickmill.default_layout, None);
+        assert_eq!(b3.default_layout, None);
     }
 
     #[test]
