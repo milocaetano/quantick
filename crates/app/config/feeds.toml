@@ -140,3 +140,20 @@ bridge_command = ["python", "bridge/mt5/quantick_bridge.py"]
 XAUUSD = 9101
 US500 = 9102
 US30 = 9103
+
+# ---------------------------------------------------------------------------
+# Paper trading.
+#
+# Closed simulated trades are journaled the moment they close, one CSV per
+# session under a folder per symbol, and exports land beside them. This is
+# also the integration port for other producers: anything writing the
+# `quantick-trades` format into this folder — a future bot runner, another
+# tool — shows up in the Trades ledger, the report and the export, no wiring
+# needed. Relative paths resolve against quantick's working directory; the
+# QUANTICK_TRADES_DIR environment variable overrides the setting for one run,
+# and the folder picker in the Trading tab (remembered in paper-state.toml)
+# wins over this base. The section is optional; absent, trades save under
+# `paper-trades`.
+#
+# [paper]
+# trades_dir = "paper-trades"

@@ -1,6 +1,8 @@
 # Paper trading — UX specification
 
-Status: **design target** for the `feat/trade-sim` milestone. Companion of
+Status: shipped by the `feat/trade-sim` milestone, **extended by
+`feat/paper-trading-v2`** (drag-to-create brackets, the trades ledger,
+closed-trade marks, the filterable report, export). Companion of
 [quantick UI Design Model](ui-design-model.md) — this feature claims the
 zones the growth map already reserved for order/position surfaces; it invents
 no new chrome. The deterministic core lives in `crates/sim`
@@ -46,14 +48,19 @@ Non-negotiables, inherited from `CLAUDE.md` and the sim crate's contract:
 | Surface | Zone | Content |
 |---|---|---|
 | Toolbar | action group | `BUY` / `SELL` market buttons (with quantity), gated like every capability control |
-| Right dock | new tab **Trading** | the chart-trader panel: position card, order entry, pending orders, session history |
-| Canvas | own layer above drawings | entry / SL / TP / pending-order price lines with gutter chips, draggable |
+| Right dock | tab **Trading** | the chart-trader panel: position card, order ticket, working orders, session strip |
+| Right dock | tab **Trades** | the ledger: open position pinned, this session's closed trades, saved history, totals |
+| Canvas | own layer above drawings | entry / SL / TP / pending-order price lines with in-plot tags, draggable |
+| Canvas | own layer under the live lines | closed-trade marks and connectors (`closed trade marks` in the layer menu) |
 | Status bar | new cell | `SIM ±N pts` (realized + open), hidden when the simulator has never traded |
 | Floating window | `SettingsDialog` mold | the performance report, open–read–close |
 
-Explicitly **not** claimed: the chart's right-click gesture (reserved by the
-layer-visibility menu work) and the `AMBER` color (reserved by contract for
-provenance — replay/backfill/inferred data). Pending orders use `ACCENT`.
+The chart's right-click gesture belongs to the layer-visibility menu; paper
+trading joins that menu rather than competing with it — a **trade** section
+on top (anchored at the clicked price, on the pane that owns order entry),
+and the two paper layer switches among the others. `AMBER` stays reserved by
+contract for provenance (replay/backfill/inferred data); pending orders use
+`ACCENT`.
 
 ## 3. The Trading dock tab (chart trader)
 
@@ -61,25 +68,34 @@ Top to bottom, grouped by the §3.2 question each block answers:
 
 1. **Header** — "Paper trading — simulated fills from the tape". One line,
    always visible; the didactic anchor of the whole feature.
-2. **Position card** (only when a position is open) — side and quantity
-   (`LONG 2`), average entry, open P&L in points (live, colored
-   `BUY`/`SELL` by sign), SL and TP values with per-side *clear* buttons,
-   and `Close` / `Flatten` buttons. A hint line explains the difference the
-   first time both exist ("Close exits the position; Flatten also cancels
-   every pending order").
-3. **Order entry** — side toggle (Buy/Sell, colored), quantity drag-value
-   (default 1), order type (`Market` / `Limit` / `Stop`), optional SL/TP
-   offsets, and the action button:
-   - `Market` → the button reads `Buy 1 at market` and fires immediately.
-   - `Limit`/`Stop` → the button arms **click-to-place**: the crosshair
-     shows a price-tag hint ("click a price below the market to rest your
-     buy limit"), the next chart click places the order at that price,
-     `Esc` disarms. This teaches *where* each order type may sit, because
-     the simulator rejects wrong-side placements with advice (§5).
-4. **Pending orders** — one row per resting order (`#3 BUY LMT 2 @ 95`),
-   with cancel buttons, in the `toolbar.rs` indicator-menu row mold.
-5. **Session** — realized points, closed-trade count, and buttons
-   `Report…` and `History folder` (reveals the path).
+2. **Position block** — always present. Flat, it is one quiet row: `FLAT`
+   plus the session's realized points (the answer to "am I in?" costs
+   nothing). Open, it is the HUD card's sibling: the `SIM LONG 2` side
+   chip, average entry, live open points; a bracket grid showing each
+   leg's price and what it pays, with `×` to clear or `Set n pts` to place
+   the missing leg straight from the ticket's offset; the `R:R` read when
+   both legs exist; and the actions — `× Close`, `⇄ Reverse`, `Breakeven`
+   (disabled with its reason until the position is in profit — with no
+   fees simulated, break-even is the entry exactly), `Close 50%` (a
+   partial close; the rest keeps its average and brackets) and
+   `Flatten all`.
+3. **Order ticket** — quantity as free decimal text with `−`/`+` steppers
+   (`Shift` steps by ten; empty keeps meaning "fix me"), order type as
+   three pills (`market` / `limit` / `stop`), optional Stop/Target offsets
+   in points, then the entry pair: two full-width `BUY`/`SELL` chips,
+   taller than the toolbar's — this is the surface where you commit.
+   - `Market` → the buttons disclose consequences (`SELL 5 (reverses to
+     short 4)`) and fire at the next print.
+   - `Limit`/`Stop` → a press arms **click-to-place**; the armed side
+     inverts (quiet fill, its own colour as a ring, `Click a price…`) and
+     the other side disables with the reason. `Esc` disarms. The support
+     line under the pair narrates the mode.
+4. **Working orders** — one row per order: an `ACCENT` dash, `#id`, the
+   side in its colour, `LMT 2 @ 95`, and `×` to cancel. Hovering a row
+   lifts that order's line on the chart — one hover, two surfaces.
+5. **Session strip** — realized points and trade count, `Report…`, and the
+   history folder as a full-width quiet button that reveals the path in
+   the file manager.
 
 ## 4. The chart layer
 
@@ -89,27 +105,72 @@ lines span the chart width and end in a gutter chip (the third instance of
 the `draw_last_price` chip geometry, so prices never disagree about their
 pixel).
 
-| Line | Style | Chip label |
+The gutter chip carries **the price and nothing else** (still dodging the
+last-price row); the words and the controls live in a tag right-anchored
+*inside* the plot. The tag grammar is semantic: an order that will fire
+wears a solid chip; the position — a fact about the account, not an order —
+wears a card (`INSET` fill, hairline border, a side-colour rail).
+
+| Line | Style | In-plot tag |
 |---|---|---|
-| Position entry | solid, `BUY`/`SELL` by side | `SIM LONG 2 @ 103.2` |
-| Stop loss | solid, `SELL` red | `SL 97.0 −12.4 pts` |
-| Take profit | solid, `BUY` teal | `TP 110.0 +13.6 pts` |
-| Pending order | dashed, `ACCENT` | `#3 BUY LMT 2 @ 95.0` |
+| Position entry | solid 1.5 px, `BUY`/`SELL` by side | card: `SIM LONG 2` + live open pts, hover `×` closes |
+| Stop loss | solid 1 px, `SELL` | chip: `SL 97.0 −12.4 pts`, hover `×` clears |
+| Take profit | solid 1 px, `BUY` | chip: `TP 110.0 +13.6 pts`, hover `×` clears |
+| Pending order | dashed 1 px, `ACCENT` | chip: `#3 BUY LMT 2 @ 95.0`, hover `×` cancels |
 
 Interaction, reusing the drawing-drag grammar (`DrawingDrag` mechanics, same
 hit radius constants, raw-input reads, gesture-consumption flag so the chart
-never pans under a grabbed line):
+never pans under a grabbed line; hover thickens a line, a drag adds the
+drawings' halo):
 
 - SL, TP and pending-order lines are **draggable**; on release the new price
   is submitted as a command and the simulator answers — either the line
   settles at the new price or a rejection toast explains why it snapped
-  back ("a long's stop loss must sit below the price it protects…").
-- The position entry line is **not** draggable — an average entry is
-  history, not an order. Grabbing it is a no-op that still consumes the
-  gesture (the `Blocked` pattern).
+  back ("a long's stop loss must sit below the price it protects…"). While
+  an SL/TP drags, its tag reads the points distance and the live `R:R`
+  against the other leg — the read that turns a drag into a decision.
+- **Dragging away from the entry line creates the missing bracket leg** —
+  the TradingView gesture: pull to the profit side and a take profit is
+  born dashed under the pointer, pull to the losing side for the stop;
+  release submits it. Labelled `SL`/`TP` handles appear on hover beside
+  the position tag as the clickable alternative (the label removes the
+  long/short flip ambiguity). A side whose leg already exists stays
+  blocked — that leg's own line is its handle. The entry price itself
+  still never moves: with both legs placed, grabbing the line is the old
+  `Blocked` no-op.
 - Order state lives in the simulator, **not** in `Drawings` — a bar-spec
   change or history rebuild clears annotations, but simulated orders belong
   to the session, not to the bar series.
+
+### Closed-trade marks
+
+Every round trip closed *this session* paints on the chart, under the live
+lines: a filled triangle pointing the trade's way at the entry fill, a
+diamond at the exit, joined by a faint dotted connector — all in the
+**outcome's** colour (win/loss/scratch), direction carried by shape, each
+mark ringed in the canvas colour. Marks anchor to the fill price on the bar
+holding the fill's venue time. Only the session's trades paint — the tape
+on screen proves their fills; rows loaded from earlier sessions stay in the
+ledger. The paint caps at the 200 newest visible trades and says so out
+loud. Hovering a mark answers with the ledger row's own words; the ledger's
+selected trade gains the halo. The `closed trade marks` layer switches all
+of it off independently of `paper orders & position` — hiding history must
+never hide the position you are in.
+
+## 4b. The Trades ledger (dock tab **Trades**)
+
+The ledger of closed simulated trades: the open position pinned above the
+scroll with its live open points, `THIS SESSION` under it, `EARLIER
+SESSIONS` (read from the history folder, the live session's own file
+excluded) under that — newest first, in fixed-height two-line rows (side
+rail, `LONG 2`, `103.25 → 110.00`, signed points; close time · duration ·
+exit reason), virtualised so a long history costs nothing. A totals strip
+that never scrolls away sums what is listed. Scope pills switch this
+symbol / all symbols; a session row's click selects it (Esc clears) and
+highlights its round trip on the chart, and a hover control centers the
+chart on the trade. Rows from earlier sessions are display-only — their
+tape is not the one on screen. The header's download icon exports
+everything listed (§7).
 
 ## 5. Rejections are the curriculum
 
@@ -139,35 +200,94 @@ Timeline honesty on rebuilds:
 - Backfill and paged history only *seed* the last-seen price; they never
   fill orders — trading against the past would be look-ahead.
 
-## 7. History on disk
+## 7. History on disk, and the export
 
-Closed trades append to `paper-trades/<SYMBOL>/<session>.csv` (cwd-relative
-like every quantick path, `QUANTICK_TRADES_DIR` override), in the
-`quantick-trades 1` CSV format defined by `quantick_sim::history` —
-append-friendly, self-contained rows, torn tails reported not dropped. The
+Closed trades append to `<trades_dir>/<SYMBOL>/<session>.csv`, in the
+`quantick-trades 2` CSV format defined by `quantick_sim::history` — the
+first eight columns are exactly version 1's, then the tape-audit ids
+(`entry_agg_id`, `exit_agg_id`) and the excursions (`mae_points`,
+`mfe_points`). Version-1 files still load; their missing fields come back
+as *unknown* and re-export as empty cells — unknown is not zero.
+Append-friendly, self-contained rows, torn tails reported not dropped. The
 `<session>` name derives from the first closed trade's venue timestamp, so
 the same replay run produces the same file name. Files are created lazily
 (no empty files), appended on each close, and never rewritten.
 
+**Where that folder is, is configuration — and one click**: the Trading
+tab's session strip says it out loud ("trades saved to: …", click to
+open) and its folder button opens a picker; the choice applies to every
+tab at once, the next close opens a new session file under the new home
+(files already written stay put), and it is remembered across restarts in
+the `paper-state.toml` sidecar — the added-symbols pattern, so the app
+never rewrites the user's hand-commented `quantick.toml`. The shipped
+base stays `[paper] trades_dir` in `quantick.toml` (default
+`paper-trades`, relative to the working directory), and
+`QUANTICK_TRADES_DIR` still overrides everything for one run. The folder is also the feature's **integration port**: the
+`quantick-trades` CSV format in `quantick_sim::history` is the contract,
+so any producer that writes it there — the future bot runner, a converter,
+another tool — appears in the Trades ledger (`EARLIER SESSIONS`), the
+report and the export with no extra wiring. The sim crate itself is the
+shared engine: a bot embeds the same `Simulator` and emits the same
+`ClosedTrade`s, so its trades wear the same mould everywhere by
+construction (one engine, three consumers).
+
+The **export** (the Trades tab's download icon) is a different artifact:
+one merged, spreadsheet-facing CSV of everything the ledger lists, written
+off the UI thread to `paper-trades/export-<stamp>.csv` — human-readable
+UTC stamps beside the venue epochs, a running-equity column, decimals
+always with `.` (a pt-BR Excel would reinterpret a comma), symbols as a
+column so concatenation survives. The toast answers with the path or the
+failure; the journal stays the machine-readable source of truth.
+
 ## 8. The performance report
 
-An `egui::Window` in the `SettingsDialog` mold, titled **"Simulated
-performance"**, opened from the Trading tab (and Tools menu). Scope combo:
-current symbol / all symbols — both read the history folder fresh on open,
-so the report always reflects what is actually on disk, this session or any
-before it.
+A resizable, non-modal `egui::Window` titled **"Simulated performance"**,
+opened from the Trading tab (and the View menu). The filter row picks the
+symbol (any folder on disk, or all) and the period — `Today / 7d / 30d /
+90d / All` — **measured back from the newest saved trade in scope, never a
+wall clock**: the engine has none, and a replayed session's trades may be
+years old. The support line states the anchor out loud ("the last 7 days
+up to 2026-08-04 (newest saved trade, not the wall clock)").
 
-Content, from `quantick_sim::PerformanceReport`: net points, trade count,
-win rate, profit factor, max drawdown, gross profit/loss, averages and
-largest win/loss, long/short split — each metric with a one-line plain
-explanation under it (didactic first), and honest blanks: a ratio whose
-denominator doesn't exist shows `—`, never `∞`. Unreadable rows found while
-loading are counted and disclosed ("2 rows could not be read"), never
-silently skipped.
+Three headline tiles answer first — `NET` (the window's one coloured
+number), `WIN RATE`, `PROFIT FACTOR` — each with its denominator under it.
+Then the realized equity curve by **trade index** (the closing order that
+defines the drawdown; calling that axis "time" would misstate the plot):
+one quiet line, a diverging fill against the zero baseline, the deepest
+drawdown annotated with its own chip, hover snapped to the nearest trade in
+the ledger's vocabulary, drawing-only downsampling past a thousand points
+that says so. Under it, the metric grid — drawdown, run-up, recovery
+factor, gross and averages, payoff, expectancy, sample stddev, streaks
+(a scratch breaks both), durations, largest trades, and the excursion
+averages with their disclosed denominators ("over 12 of 14 winners") —
+plus long-vs-short and per-exit-reason tables. Honest blanks everywhere a
+denominator is missing; unreadable files and rows counted and disclosed;
+empty states name the filter that caused them and offer to clear it.
 
-## 9. Out of scope (this milestone)
+## 9. Trading hotkeys and the chart's trade menu
+
+`Shift+B` / `Shift+S` buy/sell at market with the ticket's quantity and
+offsets; `Shift+R` reverses; `Shift+F` flattens (close + cancel all);
+`Shift+X` cancels every working order without trading. All of them stand
+down while any text field owns the keyboard — a capital letter typed into
+a symbol box must never become an order.
+
+The pane's right-click menu (on the pane that owns order entry) opens with
+a **trade** section anchored at the clicked price: buy/sell at market, and
+the resting types that are valid on that side of the market — `Buy limit @
+p` below it, `Buy stop @ p` above it, mirrored for sells. The invalid two
+stay visible but disabled, wearing the sim core's own rejection text
+(disabled ≠ hidden; the curriculum again).
+
+## 10. Out of scope (recorded decisions)
 
 - Real order routing of any kind.
 - Fees, margin, multi-account, per-instrument currency P&L.
 - Automated strategies (the growth map's bot row remains future work).
-- Persisting open positions across restarts.
+- Persisting open positions across restarts. Deliberately kept out even in
+  v2: an honest restore would need the same feed and symbol back, a
+  `restored — not proven by the current tape` label until the first print,
+  and a flatten offer at startup — designed, recorded here, not built.
+- Shaded risk bands between entry and SL/TP: considered and rejected —
+  the line-and-tag grammar carries the same information without painting
+  over the candles.

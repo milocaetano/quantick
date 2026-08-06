@@ -14,9 +14,12 @@ use quantick_engine::Side;
 
 use crate::feed::ReplayLink;
 use crate::orderflow_view::OrderflowView;
-use crate::paper_trading::{PaperTrading, fmt_decimal, position_word};
+use crate::paper_trading::{
+    LedgerAction, PaperTrading, TradingTabAction, fmt_decimal, position_word,
+};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::theme;
+use crate::timezone::TzOffset;
 use crate::widgets::{IconButton, RAIL_ICON};
 
 /// Width of the always-visible tab strip, in pixels.
@@ -39,11 +42,19 @@ pub enum DockTab {
     Session,
     /// Paper trading: simulated position, order entry, pending orders.
     Trading,
+    /// The trade ledger: closed simulated trades, this session and saved.
+    Trades,
 }
 
 impl DockTab {
     /// Every tab, in strip order.
-    pub const ALL: [Self; 4] = [Self::L2, Self::Bubbles, Self::Session, Self::Trading];
+    pub const ALL: [Self; 5] = [
+        Self::L2,
+        Self::Bubbles,
+        Self::Session,
+        Self::Trading,
+        Self::Trades,
+    ];
 
     /// The Phosphor glyph on the strip.
     #[must_use]
@@ -53,6 +64,7 @@ impl DockTab {
             Self::Bubbles => icons::CIRCLES_THREE,
             Self::Session => icons::FILM_STRIP,
             Self::Trading => icons::TREND_UP,
+            Self::Trades => icons::RECEIPT,
         }
     }
 
@@ -64,6 +76,7 @@ impl DockTab {
             Self::Bubbles => "AGGRESSION BUBBLES",
             Self::Session => "SESSION",
             Self::Trading => "PAPER TRADING · SIM",
+            Self::Trades => "TRADES · SIM",
         }
     }
 
@@ -75,6 +88,7 @@ impl DockTab {
             Self::Bubbles => "Bubble settings — the layer toggle stays in the toolbar",
             Self::Session => "Market replay session",
             Self::Trading => "Paper trading — simulated orders, position and history",
+            Self::Trades => "Closed simulated trades — this session and the saved history",
         }
     }
 
@@ -93,8 +107,10 @@ pub struct DockEnv<'a> {
     pub replay_view: &'a mut ReplayView,
     /// The playing session, if any.
     pub replay: Option<&'a ReplayLink>,
-    /// The paper-trading host the Trading tab drives.
+    /// The paper-trading host the Trading and Trades tabs drive.
     pub paper: &'a mut PaperTrading,
+    /// The display timezone the ledger stamps its close times in.
+    pub tz: TzOffset,
 }
 
 /// What drawing the dock asked the app to do.
@@ -104,6 +120,12 @@ pub struct DockResponse {
     pub restart_book_capture: bool,
     /// The Session tab asked to close the replay.
     pub replay_action: Option<ReplayAction>,
+    /// The Trades tab asked to center the chart on a round trip
+    /// (`opened_ms`, `closed_ms`).
+    pub navigate_to_trade: Option<(i64, i64)>,
+    /// The Trading tab asked for the trades-folder picker — app-wide, so
+    /// the app owns the dialog and the fan-out to every tab.
+    pub pick_trades_dir: bool,
 }
 
 /// The dock's chrome state. Hidden, collapsed to the strip, or open on one
@@ -130,7 +152,7 @@ impl Dock {
             active: None,
             // Opening widths per tab, ordered as [`DockTab::ALL`]: the L2 tab
             // carries the densest controls, the Session tab the fewest.
-            widths: [340.0, 320.0, 300.0, 320.0],
+            widths: [340.0, 320.0, 300.0, 320.0, 320.0],
         }
     }
 
@@ -228,6 +250,7 @@ impl Dock {
             });
 
         if let Some(tab) = self.active {
+            let mut open_ticket = false;
             let panel = egui::SidePanel::right(egui::Id::new(("dock_body", tab.index())))
                 .resizable(true)
                 .default_width(self.widths[tab.index()])
@@ -238,7 +261,20 @@ impl Dock {
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
                 )
                 .show(ctx, |ui| {
-                    draw_tab_header(ui, tab, &mut self.active);
+                    let mut export = false;
+                    draw_tab_header(ui, tab, &mut self.active, |ui| {
+                        if tab == DockTab::Trades
+                            && ui
+                                .small_button(icons::DOWNLOAD_SIMPLE)
+                                .on_hover_text("export these trades to a CSV file")
+                                .clicked()
+                        {
+                            export = true;
+                        }
+                    });
+                    if export {
+                        env.paper.start_export();
+                    }
                     match tab {
                         DockTab::L2 => {
                             response.restart_book_capture |= env.orderflow.draw_l2_tab(ui);
@@ -256,18 +292,42 @@ impl Dock {
                             // with no way to reach them.
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, true])
-                                .show(ui, |ui| env.paper.draw_trading_tab(ui));
+                                .show(ui, |ui| {
+                                    if let Some(TradingTabAction::PickTradesDir) =
+                                        env.paper.draw_trading_tab(ui)
+                                    {
+                                        response.pick_trades_dir = true;
+                                    }
+                                });
                         }
+                        // The ledger manages its own scroll (a virtualised
+                        // list with a pinned totals strip).
+                        DockTab::Trades => match env.paper.draw_trades_tab(ui, env.tz) {
+                            Some(LedgerAction::Navigate(opened, closed)) => {
+                                response.navigate_to_trade = Some((opened, closed));
+                            }
+                            Some(LedgerAction::OpenTicket) => open_ticket = true,
+                            None => {}
+                        },
                     }
                 });
             self.remember_width(tab, panel.response.rect.width());
+            if open_ticket {
+                self.active = Some(DockTab::Trading);
+            }
         }
         response
     }
 }
 
-/// Title row shared by every tab, with the collapse affordance.
-fn draw_tab_header(ui: &mut egui::Ui, tab: DockTab, active: &mut Option<DockTab>) {
+/// Title row shared by every tab, with the collapse affordance and one
+/// optional action slot left of it (the Trades tab's export lives there).
+fn draw_tab_header(
+    ui: &mut egui::Ui,
+    tab: DockTab,
+    active: &mut Option<DockTab>,
+    actions: impl FnOnce(&mut egui::Ui),
+) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(tab.title())
@@ -284,6 +344,7 @@ fn draw_tab_header(ui: &mut egui::Ui, tab: DockTab, active: &mut Option<DockTab>
             {
                 *active = None;
             }
+            actions(ui);
         });
     });
     ui.separator();
@@ -410,6 +471,7 @@ mod tests {
                             replay_view: &mut replay_view,
                             replay: None,
                             paper: &mut paper,
+                            tz: TzOffset::default(),
                         },
                     );
                     assert!(
@@ -430,6 +492,7 @@ mod tests {
                     replay_view: &mut replay_view,
                     replay: None,
                     paper: &mut paper,
+                    tz: TzOffset::default(),
                 },
             );
             assert!(!response.restart_book_capture);
@@ -456,6 +519,7 @@ mod tests {
                             replay_view: &mut ReplayView::new(),
                             replay: None,
                             paper,
+                            tz: TzOffset::default(),
                         },
                     );
                 });

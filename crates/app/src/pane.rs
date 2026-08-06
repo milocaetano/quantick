@@ -488,6 +488,9 @@ pub struct ChartPane {
     /// the paper host is mutably reachable outside the chrome's shared
     /// borrow.
     paper_hud_anchor: Option<(egui::Rect, PriceScale)>,
+    /// Price under the right-click that opened the layer menu — the trade
+    /// section's anchor. Refreshed by every secondary click on the canvas.
+    context_menu_price: Option<f64>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -567,6 +570,7 @@ impl ChartPane {
             hover_pos: None,
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
+            context_menu_price: None,
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_press_position: None,
@@ -605,7 +609,8 @@ impl ChartPane {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
-            | ChartLayer::PaperTrading => !self.hidden_layers.contains(&layer),
+            | ChartLayer::PaperTrading
+            | ChartLayer::TradePaint => !self.hidden_layers.contains(&layer),
         }
     }
 
@@ -649,7 +654,8 @@ impl ChartPane {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
-            | ChartLayer::PaperTrading => {
+            | ChartLayer::PaperTrading
+            | ChartLayer::TradePaint => {
                 if visible {
                     self.hidden_layers.remove(&layer);
                 } else {
@@ -714,7 +720,8 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is a dozen entries, so the mask cannot outgrow `u16`.
+    /// detection. `ALL` is thirteen entries, so the mask cannot outgrow
+    /// `u16`.
     pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
         ChartLayer::ALL
             .into_iter()
@@ -760,6 +767,14 @@ impl ChartPane {
     /// state the toolbar's eye writes — so an indicator hidden here shows as
     /// hidden there, and the indicator state file remains its single home.
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        // The trade section rides on top, on the pane that owns order
+        // entry, anchored at the price the right-click landed on.
+        if chrome.paper_owns_input
+            && let Some(price) = self.context_menu_price
+        {
+            chrome.paper.context_trade_actions(ui, price);
+            ui.separator();
+        }
         ui.label(
             egui::RichText::new("chart layers")
                 .size(11.0)
@@ -1390,6 +1405,19 @@ impl ChartPane {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = chart.hover_pos();
+        let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
+            let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+            PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
+        });
+        // The price under a right-click, remembered before the menu eats
+        // the pointer: the trade section places orders at it.
+        if chart.secondary_clicked()
+            && let Some(position) = chart.interact_pointer_pos()
+            && areas.chart.contains(position)
+            && let Some(scale) = drawing_scale.as_ref()
+        {
+            self.context_menu_price = Some(scale.price_at(position.y));
+        }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
         // drawing tools — a pan that ends anywhere never opens it.
@@ -1399,10 +1427,6 @@ impl ChartPane {
         if chart.context_menu_opened() {
             self.hover_pos = None;
         }
-        let drawing_scale = auto.map(|(auto_lo, auto_hi)| {
-            let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
-            PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
-        });
         let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
         let drawing_area = egui::Rect::from_min_max(
             areas.chart.min,
@@ -1452,7 +1476,7 @@ impl ChartPane {
             && let Some(position) =
                 pointer_position.filter(|position| drawing_area.contains(*position))
             && let Some(scale) = drawing_scale.as_ref()
-            && let Some(cursor) = chrome.paper.hover_cursor(position, scale)
+            && let Some(cursor) = chrome.paper.hover_cursor(position, drawing_area, scale)
         {
             ui.ctx().set_cursor_icon(cursor);
         }
@@ -1761,7 +1785,7 @@ impl ChartPane {
         &mut self,
         painter: &egui::Painter,
         area: egui::Rect,
-        chrome: &PaneChrome<'_>,
+        chrome: &mut PaneChrome<'_>,
     ) {
         self.paper_hud_anchor = None;
         let canvas_background = background_color(chrome.style);
@@ -2072,6 +2096,28 @@ impl ChartPane {
         // not the screen, while the viewport moves beneath them.
         self.draw_drawings(painter, chart_rect, right, total, &scale);
 
+        // Closed-trade marks sit between the drawings and the live paper
+        // lines: history under the orders that are still working. Only the
+        // session's trades paint — the tape on screen proves their fills;
+        // rows loaded from earlier sessions stay in the ledger.
+        if self.layer_visible(ChartLayer::TradePaint, chrome.style) {
+            let frame = crate::trade_paint::TradePaintFrame {
+                painter,
+                chart_rect,
+                scale: &scale,
+                background: canvas_background,
+                pointer: self.hover_pos,
+                tz: chrome.tz,
+            };
+            crate::trade_paint::draw(
+                &frame,
+                chrome.paper.session_trades(),
+                chrome.paper.selected_trade_index(),
+                |ms| self.slot_at_time(ms),
+                |slot| self.viewport.x_center(slot, right, total),
+            );
+        }
+
         // Simulated orders and the position sit above the drawings: they are
         // operational state, read against the last price painted next. The
         // unclipped painter carries their chips into the gutter. Both panes
@@ -2095,9 +2141,27 @@ impl ChartPane {
             } else {
                 None
             };
-            chrome
-                .paper
-                .draw_layer(painter, chart_rect, axis_x, &scale, reserved_chip_y);
+            // Tags anchor inside the interactive plot (left of the live
+            // lane when one is up) — the same right edge the input pass
+            // hands to `handle_chart_input`, so a painted ✕ and its press
+            // agree about where it is.
+            let tag_right = self.last_lane_divider_x.unwrap_or(chart_rect.right());
+            // Hover affordances paint only on the pane whose pointer feeds
+            // the paper input; the other pane keeps display-only tags.
+            let paper_pointer = if chrome.paper_owns_input {
+                self.hover_pos
+            } else {
+                None
+            };
+            chrome.paper.draw_layer(
+                painter,
+                chart_rect,
+                tag_right,
+                axis_x,
+                &scale,
+                reserved_chip_y,
+                paper_pointer,
+            );
             if chrome.paper_owns_input {
                 self.paper_hud_anchor = Some((chart_rect, scale));
             }

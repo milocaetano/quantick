@@ -17,6 +17,17 @@ pub struct Position {
     pub avg_price: Decimal,
     /// Venue time of the print that opened the position.
     pub opened_ms: i64,
+    /// Aggregate id of the print that opened the position — the audit trail
+    /// back to the tape, carried into every [`ClosedTrade`] it produces.
+    ///
+    /// [`ClosedTrade`]: crate::ClosedTrade
+    pub opened_agg_id: u64,
+    /// Lowest price the position has been exposed to: its entry fills, every
+    /// mark while it was open, and its exit fills. Together with
+    /// `high_price` this yields the MAE/MFE recorded on close.
+    pub low_price: Decimal,
+    /// Highest price the position has been exposed to (see `low_price`).
+    pub high_price: Decimal,
     /// Protective stop price; exits the whole position at the print that
     /// trades at or through it.
     pub stop_loss: Option<Decimal>,
@@ -31,6 +42,33 @@ impl Position {
     #[must_use]
     pub fn open_points(&self, mark: Decimal) -> Decimal {
         signed_points(self.side, self.avg_price, mark, self.quantity)
+    }
+
+    /// Fold `price` into the exposure range the excursions are measured on.
+    pub(crate) fn observe(&mut self, price: Decimal) {
+        self.low_price = self.low_price.min(price);
+        self.high_price = self.high_price.max(price);
+    }
+
+    /// Per-unit excursions against the average entry once `exit` joins the
+    /// exposure range: `(adverse, favorable)`, both clamped at zero. The
+    /// adverse side is where the position loses (below entry for a long,
+    /// above it for a short); the favorable side is where it wins.
+    #[must_use]
+    pub(crate) fn excursions(&self, exit: Decimal) -> (Decimal, Decimal) {
+        let low = self.low_price.min(exit);
+        let high = self.high_price.max(exit);
+        let (adverse, favorable) = match self.side {
+            Side::Buy => (
+                self.avg_price.saturating_sub(low),
+                high.saturating_sub(self.avg_price),
+            ),
+            Side::Sell => (
+                high.saturating_sub(self.avg_price),
+                self.avg_price.saturating_sub(low),
+            ),
+        };
+        (adverse.max(Decimal::ZERO), favorable.max(Decimal::ZERO))
     }
 }
 

@@ -27,6 +27,23 @@ pub struct ClosedTrade {
     /// number the simulator cannot compute honestly is not shown.
     pub pnl_points: Decimal,
     pub exit_reason: ExitReason,
+    /// Aggregate id of the print that opened the position — the audit trail
+    /// back to the tape. `None` only on rows loaded from a version-1 history
+    /// file, which did not record it; the simulator always fills it.
+    pub entry_agg_id: Option<u64>,
+    /// Aggregate id of the print that closed this quantity (see
+    /// `entry_agg_id` for why it is optional).
+    pub exit_agg_id: Option<u64>,
+    /// Maximum adverse excursion in points (≥ 0): the worst the position ran
+    /// against its average entry over every price it was exposed to — entry
+    /// fills, marks while open, the exit fill — scaled by this trade's
+    /// closed quantity. Measured against the average entry at close time,
+    /// so a position that averaged in reports its excursion against the
+    /// final average. `None` only for version-1 history rows: unknown is
+    /// not zero.
+    pub mae_points: Option<Decimal>,
+    /// Maximum favorable excursion in points (≥ 0); see `mae_points`.
+    pub mfe_points: Option<Decimal>,
 }
 
 /// A user command, applied between prints. Commands and prints interleave
@@ -70,6 +87,13 @@ pub enum Command {
     /// own; the fill (or its quiet dissolution, if a bracket got there
     /// first) is the answer.
     ClosePosition,
+    /// Close up to `quantity` of the open position at the next print. Closes
+    /// at most what is open — a partial close never reverses — and the
+    /// remainder keeps its average entry price, protective prices and
+    /// opening time. Like [`Command::ClosePosition`] it emits no event of
+    /// its own and dissolves quietly if the position is gone by the time
+    /// the print arrives.
+    ClosePartial { quantity: Decimal },
     /// Cancel every pending order and close the position at the next print.
     Flatten,
 }
@@ -83,6 +107,9 @@ pub enum QueuedAction {
     /// arrives (a bracket fired first), the close dissolves — there is
     /// nothing left for it to close.
     Close,
+    /// A user partial close, clamped to the open quantity at fill time.
+    /// Dissolves like [`QueuedAction::Close`] when the position is gone.
+    ClosePartial { quantity: Decimal },
 }
 
 /// The last print seen — the only "now" the simulator knows.
@@ -129,6 +156,13 @@ impl Simulator {
     #[must_use]
     pub fn mark_price(&self) -> Option<Decimal> {
         self.mark.map(|mark| mark.price)
+    }
+
+    /// Venue time of the last print seen (live or seeded), if any — the
+    /// only "now" an open trade's age can honestly be measured against.
+    #[must_use]
+    pub fn mark_timestamp_ms(&self) -> Option<i64> {
+        self.mark.map(|mark| mark.timestamp_ms)
     }
 
     #[must_use]
@@ -229,6 +263,9 @@ impl Simulator {
                         );
                     }
                 }
+                QueuedAction::ClosePartial { quantity } => {
+                    self.close_partial_at(quantity, price, trade, &mut events);
+                }
             }
         }
 
@@ -255,7 +292,11 @@ impl Simulator {
         }
         self.resting = kept;
 
-        // 4) The mark updates last.
+        // 4) The mark updates last; a position that survived the print has
+        //    been exposed to its price, which the excursions must remember.
+        if let Some(position) = self.position.as_mut() {
+            position.observe(price);
+        }
         self.mark = Some(Mark {
             timestamp_ms: trade.timestamp_ms,
             agg_id: trade.agg_id,
@@ -287,33 +328,23 @@ impl Simulator {
         // A position can only exist after a print, so the mark is present
         // whenever the position is.
         if let (Some(position), Some(mark)) = (self.position.take(), self.mark) {
-            let exit_side = opposite(position.side);
             events.push(SimEvent::Filled(Fill {
                 timestamp_ms: mark.timestamp_ms,
                 agg_id: mark.agg_id,
-                side: exit_side,
+                side: opposite(position.side),
                 price: mark.price,
                 quantity: position.quantity,
                 role: FillRole::Reset,
             }));
-            let closed = ClosedTrade {
-                side: position.side,
-                quantity: position.quantity,
-                entry_price: position.avg_price,
-                exit_price: mark.price,
-                opened_ms: position.opened_ms,
-                closed_ms: mark.timestamp_ms,
-                pnl_points: signed_points(
-                    position.side,
-                    position.avg_price,
-                    mark.price,
-                    position.quantity,
-                ),
-                exit_reason: ExitReason::Reset,
-            };
-            self.realized_points = self.realized_points.saturating_add(closed.pnl_points);
-            events.push(SimEvent::Closed(closed.clone()));
-            self.closed.push(closed);
+            self.record_close(
+                &position,
+                position.quantity,
+                mark.price,
+                mark.timestamp_ms,
+                mark.agg_id,
+                ExitReason::Reset,
+                &mut events,
+            );
         }
         self.mark = None;
         events
@@ -454,6 +485,14 @@ impl Simulator {
                 self.queue.push(QueuedAction::Close);
                 Ok(Vec::new())
             }
+            Command::ClosePartial { quantity } => {
+                require_positive_quantity(quantity)?;
+                if self.position.is_none() {
+                    return Err(RejectReason::NoPosition);
+                }
+                self.queue.push(QueuedAction::ClosePartial { quantity });
+                Ok(Vec::new())
+            }
             Command::Flatten => {
                 let mut events = Vec::new();
                 for action in std::mem::take(&mut self.queue) {
@@ -564,14 +603,13 @@ impl Simulator {
         let bracket = Self::admissible_bracket(order.side, at, order.bracket, events);
         match self.position.take() {
             None => {
-                self.position = Some(Position {
-                    side: order.side,
-                    quantity: order.quantity,
-                    avg_price: at,
-                    opened_ms: print.timestamp_ms,
-                    stop_loss: bracket.stop_loss,
-                    take_profit: bracket.take_profit,
-                });
+                self.position = Some(opened_position(
+                    order.side,
+                    order.quantity,
+                    at,
+                    print,
+                    bracket,
+                ));
             }
             Some(mut position) if position.side == order.side => {
                 // Average in. The newest entry's bracket wins where it sets
@@ -585,6 +623,7 @@ impl Simulator {
                     position.avg_price = weighted / total;
                 }
                 position.quantity = total;
+                position.observe(at);
                 if bracket.stop_loss.is_some() {
                     position.stop_loss = bracket.stop_loss;
                 }
@@ -595,40 +634,27 @@ impl Simulator {
             }
             Some(mut position) => {
                 // Netting: the opposite entry closes quantity first, then
-                // opens the remainder as a new position.
+                // opens the remainder as a new position. No exit fill of its
+                // own — the entry execution above covers both legs.
                 let close_quantity = position.quantity.min(order.quantity);
-                let closed = ClosedTrade {
-                    side: position.side,
-                    quantity: close_quantity,
-                    entry_price: position.avg_price,
-                    exit_price: at,
-                    opened_ms: position.opened_ms,
-                    closed_ms: print.timestamp_ms,
-                    pnl_points: signed_points(
-                        position.side,
-                        position.avg_price,
-                        at,
-                        close_quantity,
-                    ),
-                    exit_reason: ExitReason::Reversal,
-                };
-                self.realized_points = self.realized_points.saturating_add(closed.pnl_points);
-                events.push(SimEvent::Closed(closed.clone()));
-                self.closed.push(closed);
+                self.record_close(
+                    &position,
+                    close_quantity,
+                    at,
+                    print.timestamp_ms,
+                    print.agg_id,
+                    ExitReason::Reversal,
+                    events,
+                );
                 if position.quantity > close_quantity {
                     position.quantity = position.quantity.saturating_sub(close_quantity);
+                    position.observe(at);
                     self.position = Some(position);
                 } else {
                     let remainder = order.quantity.saturating_sub(close_quantity);
                     if remainder > Decimal::ZERO {
-                        self.position = Some(Position {
-                            side: order.side,
-                            quantity: remainder,
-                            avg_price: at,
-                            opened_ms: print.timestamp_ms,
-                            stop_loss: bracket.stop_loss,
-                            take_profit: bracket.take_profit,
-                        });
+                        self.position =
+                            Some(opened_position(order.side, remainder, at, print, bracket));
                     }
                 }
             }
@@ -655,19 +681,113 @@ impl Simulator {
             quantity: position.quantity,
             role,
         }));
+        self.record_close(
+            &position,
+            position.quantity,
+            at,
+            print.timestamp_ms,
+            print.agg_id,
+            reason,
+            events,
+        );
+    }
+
+    /// Close up to `quantity` of the position at `at` against the print that
+    /// caused it, keeping the remainder (average entry, protective prices
+    /// and opening time untouched). Dissolves when there is no position.
+    fn close_partial_at(
+        &mut self,
+        quantity: Decimal,
+        at: Decimal,
+        print: &Trade,
+        events: &mut Vec<SimEvent>,
+    ) {
+        let Some(mut position) = self.position.take() else {
+            return;
+        };
+        let close_quantity = position.quantity.min(quantity);
+        events.push(SimEvent::Filled(Fill {
+            timestamp_ms: print.timestamp_ms,
+            agg_id: print.agg_id,
+            side: opposite(position.side),
+            price: at,
+            quantity: close_quantity,
+            role: FillRole::Close,
+        }));
+        self.record_close(
+            &position,
+            close_quantity,
+            at,
+            print.timestamp_ms,
+            print.agg_id,
+            ExitReason::Manual,
+            events,
+        );
+        if position.quantity > close_quantity {
+            position.quantity = position.quantity.saturating_sub(close_quantity);
+            position.observe(at);
+            self.position = Some(position);
+        }
+    }
+
+    /// Record `close_quantity` of `position` exiting at `at`: the
+    /// [`ClosedTrade`] with its excursion and tape-audit fields, the
+    /// realized-points total, and the `Closed` event. The caller owns the
+    /// fill event and whatever remains of the position.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one exit has one natural argument list; bundling it into a struct would name nothing"
+    )]
+    fn record_close(
+        &mut self,
+        position: &Position,
+        close_quantity: Decimal,
+        at: Decimal,
+        closed_ms: i64,
+        exit_agg_id: u64,
+        reason: ExitReason,
+        events: &mut Vec<SimEvent>,
+    ) {
+        let (adverse, favorable) = position.excursions(at);
         let closed = ClosedTrade {
             side: position.side,
-            quantity: position.quantity,
+            quantity: close_quantity,
             entry_price: position.avg_price,
             exit_price: at,
             opened_ms: position.opened_ms,
-            closed_ms: print.timestamp_ms,
-            pnl_points: signed_points(position.side, position.avg_price, at, position.quantity),
+            closed_ms,
+            pnl_points: signed_points(position.side, position.avg_price, at, close_quantity),
             exit_reason: reason,
+            entry_agg_id: Some(position.opened_agg_id),
+            exit_agg_id: Some(exit_agg_id),
+            mae_points: Some(adverse.saturating_mul(close_quantity)),
+            mfe_points: Some(favorable.saturating_mul(close_quantity)),
         };
         self.realized_points = self.realized_points.saturating_add(closed.pnl_points);
         events.push(SimEvent::Closed(closed.clone()));
         self.closed.push(closed);
+    }
+}
+
+/// A brand-new position opened by an entry fill at `at`: its exposure range
+/// starts at the fill price, and its audit trail starts at the causing print.
+fn opened_position(
+    side: Side,
+    quantity: Decimal,
+    at: Decimal,
+    print: &Trade,
+    bracket: Bracket,
+) -> Position {
+    Position {
+        side,
+        quantity,
+        avg_price: at,
+        opened_ms: print.timestamp_ms,
+        opened_agg_id: print.agg_id,
+        low_price: at,
+        high_price: at,
+        stop_loss: bracket.stop_loss,
+        take_profit: bracket.take_profit,
     }
 }
 
@@ -1360,6 +1480,193 @@ mod tests {
             events,
             vec![SimEvent::Rejected(RejectReason::PriceNotPositive)]
         );
+    }
+
+    #[test]
+    fn close_partial_keeps_the_remainder_and_its_average() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(5),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 100));
+        assert!(
+            sim.apply(Command::ClosePartial { quantity: dec(2) })
+                .is_empty()
+        );
+
+        let events = sim.on_trade(&print(2, 103));
+        let filled = fills(&events);
+        assert_eq!(filled.len(), 1);
+        assert_eq!(filled[0].role, FillRole::Close);
+        assert_eq!(filled[0].quantity, dec(2));
+        let closed = sim.closed_trades().last().expect("partial recorded");
+        assert_eq!(closed.quantity, dec(2));
+        assert_eq!(closed.pnl_points, dec(6), "(103 - 100) × 2");
+        assert_eq!(closed.exit_reason, ExitReason::Manual);
+        let position = sim.position().expect("3 remain");
+        assert_eq!(position.quantity, dec(3));
+        assert_eq!(position.avg_price, dec(100), "the average is untouched");
+        assert_eq!(position.opened_ms, 1000, "so is the opening time");
+        assert_eq!(sim.realized_points(), dec(6));
+    }
+
+    #[test]
+    fn close_partial_clamps_to_the_open_quantity_and_never_reverses() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(2),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 100));
+        sim.apply(Command::ClosePartial { quantity: dec(5) });
+        let events = sim.on_trade(&print(2, 101));
+        assert_eq!(
+            fills(&events)[0].quantity,
+            dec(2),
+            "clamped to what is open"
+        );
+        assert!(
+            sim.position().is_none(),
+            "closed, not reversed into a short"
+        );
+        assert_eq!(sim.closed_trades().last().expect("closed").quantity, dec(2));
+    }
+
+    #[test]
+    fn close_partial_dissolves_when_a_bracket_got_there_first() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(1),
+            bracket: Bracket {
+                stop_loss: Some(dec(98)),
+                take_profit: None,
+            },
+        });
+        sim.on_trade(&print(1, 100));
+        sim.apply(Command::ClosePartial { quantity: dec(1) });
+        let events = sim.on_trade(&print(2, 97));
+        let filled = fills(&events);
+        assert_eq!(
+            filled.len(),
+            1,
+            "the stop exit only — the partial dissolved"
+        );
+        assert_eq!(filled[0].role, FillRole::StopLoss);
+        assert_eq!(sim.closed_trades().len(), 1);
+    }
+
+    #[test]
+    fn close_partial_needs_a_position_and_a_positive_quantity() {
+        let mut sim = seeded(100);
+        let events = sim.apply(Command::ClosePartial { quantity: dec(1) });
+        assert_eq!(events, vec![SimEvent::Rejected(RejectReason::NoPosition)]);
+
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(1),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 100));
+        let events = sim.apply(Command::ClosePartial {
+            quantity: Decimal::ZERO,
+        });
+        assert_eq!(
+            events,
+            vec![SimEvent::Rejected(RejectReason::QuantityNotPositive)]
+        );
+    }
+
+    #[test]
+    fn excursions_and_agg_ids_come_from_the_tape() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(1),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 100));
+        sim.on_trade(&print(2, 96));
+        sim.on_trade(&print(3, 104));
+        sim.apply(Command::ClosePosition);
+        sim.on_trade(&print(4, 103));
+        let closed = sim.closed_trades().last().expect("closed");
+        assert_eq!(closed.entry_agg_id, Some(1), "the print that opened it");
+        assert_eq!(closed.exit_agg_id, Some(4), "the print that closed it");
+        assert_eq!(closed.mae_points, Some(dec(4)), "worst mark was 96");
+        assert_eq!(closed.mfe_points, Some(dec(4)), "best mark was 104");
+    }
+
+    #[test]
+    fn a_stop_gap_counts_toward_the_adverse_excursion() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(1),
+            bracket: Bracket {
+                stop_loss: Some(dec(98)),
+                take_profit: None,
+            },
+        });
+        sim.on_trade(&print(1, 100));
+        sim.on_trade(&print(2, 95));
+        let closed = sim.closed_trades().last().expect("stopped");
+        assert_eq!(
+            closed.mae_points,
+            Some(dec(5)),
+            "the gap fill at 95 is part of the excursion"
+        );
+        assert_eq!(closed.mfe_points, Some(dec(0)));
+        assert_eq!(closed.exit_agg_id, Some(2));
+    }
+
+    #[test]
+    fn averaging_in_measures_excursions_against_the_final_average() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(1),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 100));
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(1),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(2, 104));
+        sim.apply(Command::ClosePosition);
+        sim.on_trade(&print(3, 104));
+        let closed = sim.closed_trades().last().expect("closed");
+        assert_eq!(closed.entry_price, dec(102), "the volume-weighted average");
+        assert_eq!(closed.entry_agg_id, Some(1), "the print that opened it");
+        assert_eq!(
+            closed.mae_points,
+            Some(dec(4)),
+            "(102 - 100) per unit against the final average, × 2"
+        );
+        assert_eq!(closed.mfe_points, Some(dec(4)));
+    }
+
+    #[test]
+    fn reset_stamps_the_mark_as_the_exit_print() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(2),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 100));
+        sim.on_trade(&print(2, 104));
+        sim.reset();
+        let closed = sim.closed_trades().last().expect("reset closes");
+        assert_eq!(closed.entry_agg_id, Some(1));
+        assert_eq!(closed.exit_agg_id, Some(2), "the mark it flattened at");
+        assert_eq!(closed.mae_points, Some(dec(0)));
+        assert_eq!(closed.mfe_points, Some(dec(8)), "(104 - 100) × 2");
     }
 
     /// The determinism contract, exercised end to end: one fixed tape, one

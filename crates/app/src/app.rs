@@ -35,6 +35,7 @@ use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
+use crate::paper_trading::PaperTrading;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
 use crate::statusbar;
@@ -514,6 +515,13 @@ pub struct QuantickApp {
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
 
+    /// Where trades save this run — resolved once at boot (environment >
+    /// the user's stored pick > config) and updated by the panel's folder
+    /// picker; new tabs journal here too.
+    trades_dir: std::path::PathBuf,
+    /// The in-flight trades-folder dialog, if any. One at a time.
+    trades_dir_picker: Option<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
+
     frames: FrameStats,
     /// CPU time per frame (update + tessellation + paint, no vsync wait), from
     /// eframe. Separates "we are slow" from "we are waiting for the display".
@@ -561,6 +569,10 @@ impl QuantickApp {
         spec: BarSpec,
         feed: FeedHandle,
     ) -> Self {
+        let trades_dir = {
+            let stored = crate::paper_state::load(&crate::paper_state::default_path());
+            PaperTrading::resolve_trades_dir(&config.paper.trades_dir, stored.as_deref())
+        };
         let tab = Tab::new(
             FIRST_TAB_ID,
             pane_ids(FIRST_TAB_ID),
@@ -568,6 +580,7 @@ impl QuantickApp {
             symbol.into(),
             spec,
             feed,
+            trades_dir.clone(),
         );
         let mut app = Self {
             tabs: vec![tab],
@@ -628,6 +641,8 @@ impl QuantickApp {
             last_style_change: None,
             show_perf: true,
             tz: TzOffset::default(),
+            trades_dir,
+            trades_dir_picker: None,
             frames: FrameStats::new(120),
             cpu_frames: FrameStats::new(120),
             last_frame: None,
@@ -731,11 +746,84 @@ impl QuantickApp {
                 "market replay autostart"
             );
         }
+        // Same convenience for the dock: open a named tab, so a scripted
+        // validation run shows a panel without a click.
+        if let Ok(name) = std::env::var("QUANTICK_DOCK_TAB") {
+            let tab = match name.trim() {
+                "l2" => Some(DockTab::L2),
+                "bubbles" => Some(DockTab::Bubbles),
+                "session" => Some(DockTab::Session),
+                "trading" => Some(DockTab::Trading),
+                "trades" => Some(DockTab::Trades),
+                _ => None,
+            };
+            match tab {
+                Some(tab) => app.dock.open_tab(tab),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "DOCK_TAB_AUTOSTART_UNKNOWN",
+                    tab = %name,
+                    action = "dock_left_as_is",
+                    "QUANTICK_DOCK_TAB names no dock tab"
+                ),
+            }
+        }
+        // And for the performance report window — the Report… button's own
+        // path, so a scripted run can show it.
+        if std::env::var("QUANTICK_PAPER_REPORT_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.active_tab_mut().paper.autostart_report();
+        }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
         app.saved_layer_mask = app.layer_mask();
         app
+    }
+
+    /// Ask the operating system for a trades folder, off the UI thread —
+    /// the panel's "choose where trades are saved". One dialog at a time.
+    fn open_trades_dir_picker(&mut self) {
+        if self.trades_dir_picker.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        // Start where trades actually go right now — under an env override
+        // that is the override's folder, not the stored base.
+        let start = self.active_tab().paper.trades_dir().to_path_buf();
+        std::thread::Builder::new()
+            .name("quantick-trades-dir-picker".into())
+            .spawn(move || {
+                let mut dialog = rfd::FileDialog::new().set_title("Choose where trades are saved");
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let _ = sender.send(dialog.pick_folder());
+            })
+            .expect("spawn trades-dir picker thread");
+        self.trades_dir_picker = Some(receiver);
+    }
+
+    /// Land the picked folder: every tab journals there from now on, and
+    /// the choice is remembered across restarts (`paper-state.toml`) —
+    /// files already written stay where they are.
+    fn poll_trades_dir_picker(&mut self) {
+        let Some(receiver) = &self.trades_dir_picker else {
+            return;
+        };
+        let Ok(choice) = receiver.try_recv() else {
+            return;
+        };
+        self.trades_dir_picker = None;
+        let Some(dir) = choice else { return };
+        crate::paper_state::save(
+            &crate::paper_state::default_path(),
+            &dir.display().to_string(),
+        );
+        self.trades_dir = dir;
+        for tab in &mut self.tabs {
+            tab.paper.set_trades_dir(self.trades_dir.clone());
+        }
     }
 
     /// The active tab beside the config it reads.
@@ -827,8 +915,16 @@ impl QuantickApp {
             "opening a market in a new tab"
         );
         let spec = self.active_tab().flow_pane.state.spec().clone();
-        self.tabs
-            .push(Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed));
+        let trades_dir = self.trades_dir.clone();
+        self.tabs.push(Tab::new(
+            id,
+            pane_ids(id),
+            feed_id,
+            symbol,
+            spec,
+            feed,
+            trades_dir,
+        ));
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
         self.active_tab_mut().refresh_chip_label(&config);
@@ -1975,6 +2071,24 @@ const PREVIOUS_TAB_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::ne
     egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
     egui::Key::Tab,
 );
+/// Simulated buy at market (`docs/ux/paper-trading.md` §9). All the
+/// trading hotkeys are Shift+letter and stand down while any text field
+/// owns the keyboard — a capital letter typed into a symbol box must
+/// never become an order.
+const PAPER_BUY_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::B);
+/// Simulated sell at market.
+const PAPER_SELL_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::S);
+/// Reverse the simulated position.
+const PAPER_REVERSE_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::R);
+/// Flatten: close the position and cancel every working order.
+const PAPER_FLATTEN_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::F);
+/// Cancel every working order without trading.
+const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::X);
 /// Height of the menu bar, in pixels (§5 zone 1).
 const MENU_BAR_HEIGHT: f32 = 28.0;
 
@@ -1987,6 +2101,30 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        // Trading hotkeys, swallowed only while no text field owns the
+        // keyboard. Market entries use the ticket's quantity and offsets,
+        // exactly like the toolbar buttons they twin.
+        if !ctx.wants_keyboard_input() {
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_BUY_SHORTCUT)) {
+                self.active_tab_mut()
+                    .paper
+                    .market(quantick_engine::Side::Buy);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_SELL_SHORTCUT)) {
+                self.active_tab_mut()
+                    .paper
+                    .market(quantick_engine::Side::Sell);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_REVERSE_SHORTCUT)) {
+                self.active_tab_mut().paper.reverse_position();
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_FLATTEN_SHORTCUT)) {
+                self.active_tab_mut().paper.flatten();
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&PAPER_CANCEL_SHORTCUT)) {
+                self.active_tab_mut().paper.cancel_all_orders();
+            }
         }
 
         let mut tab_action = None;
@@ -2109,6 +2247,7 @@ impl QuantickApp {
                             (DockTab::Bubbles, "Bubble settings"),
                             (DockTab::Session, "Session"),
                             (DockTab::Trading, "Paper trading"),
+                            (DockTab::Trades, "Trades"),
                         ] {
                             if ui.button(label).clicked() {
                                 self.dock.open_tab(tab);
@@ -3215,6 +3354,7 @@ impl QuantickApp {
                 tabs,
                 active_tab,
                 replay_view,
+                tz,
                 ..
             } = self;
             // The Trading tab speaks for the market on screen: one tab, one
@@ -3237,6 +3377,7 @@ impl QuantickApp {
                     replay_view,
                     replay: replay.as_ref(),
                     paper,
+                    tz: *tz,
                 },
             )
         };
@@ -3246,6 +3387,24 @@ impl QuantickApp {
         if let Some(action) = dock_response.replay_action {
             self.apply_replay_action(action);
         }
+        // The ledger's jump-to-trade: center the flow pane on the round
+        // trip's midpoint, the object manager's own "select and centre".
+        if let Some((opened, closed)) = dock_response.navigate_to_trade {
+            let pane = &mut self.active_tab_mut().flow_pane;
+            if let (Some(entry), Some(exit), Some(area)) = (
+                pane.slot_at_time(opened),
+                pane.slot_at_time(closed),
+                pane.last_chart_area,
+            ) {
+                let slots = pane.slots();
+                let mid = (entry + exit) as f32 / 2.0;
+                pane.viewport.center_on_bar(mid, area.width(), slots);
+            }
+        }
+        if dock_response.pick_trades_dir {
+            self.open_trades_dir_picker();
+        }
+        self.poll_trades_dir_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
         self.draw_drawing_inspector_panel(ctx, now);
@@ -3987,6 +4146,7 @@ mod tests {
                 bubble_preset: None,
             }],
             metatrader: Default::default(),
+            paper: Default::default(),
         }
     }
 
@@ -4598,6 +4758,12 @@ plot(close)
     #[test]
     fn the_toolbar_close_action_exits_the_open_position() {
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        // The close journals; without this the test writes a real
+        // `paper-trades/` folder into the crate's source tree.
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-app-close-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.active_tab_mut().paper.redirect_history_dir(dir.clone());
         evt_tx
             .try_send(FeedEvent::Backfilled(vec![trade(2)]))
             .unwrap();
@@ -4625,6 +4791,7 @@ plot(close)
             app.active_tab().paper.close_button_label().is_none(),
             "flat removes the toolbar exit"
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A source reset (replay seek, feed switch) flattens the simulated
@@ -5256,6 +5423,126 @@ plot(close)
                 layer.id()
             );
         }
+    }
+
+    /// The closed-trade marks obey their own switch: a closed round trip
+    /// paints marks and a connector, `closed trade marks` off erases them,
+    /// and the live paper layer is untouched either way — hiding history
+    /// must never hide the position machinery.
+    #[test]
+    fn the_trade_paint_layer_switch_stops_the_marks() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        let dir =
+            std::env::temp_dir().join(format!("quantick-trade-paint-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperClose);
+        evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert_eq!(
+            app.active_tab().paper.session_trades().len(),
+            1,
+            "one closed round trip to paint"
+        );
+
+        let shapes = |app: &mut QuantickApp| -> usize {
+            with_flow_pane(app, |pane, chrome| {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let area = ui.available_rect_before_wrap();
+                            pane.draw_chart(ui.painter(), area, chrome);
+                        });
+                    },
+                );
+                output.shapes.len()
+            })
+        };
+        // One frame to settle the ranges a draw computes for the next one.
+        let _ = shapes(&mut app);
+        let marks_on = shapes(&mut app);
+        switch_layer(&mut app, ChartLayer::TradePaint, false);
+        let marks_off = shapes(&mut app);
+        assert!(
+            marks_off < marks_on,
+            "the marks kept painting with their layer off ({marks_off} vs {marks_on})"
+        );
+        assert!(
+            app.active_tab()
+                .flow_pane
+                .layer_visible(ChartLayer::PaperTrading, &app.style),
+            "hiding closed-trade history leaves the live paper layer alone"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Through the real frame pipeline — real pointer events, the pane's own
+    /// scale — a click on the ✕ of a working order's chart tag cancels the
+    /// order. It must never read as a drag on the order's line: the hit-test
+    /// is geometric at press time, because a cached pixel rect goes stale
+    /// the moment a live chart autoscales between paint and press.
+    #[test]
+    fn clicking_the_chart_tag_close_cancels_the_order() {
+        let ctx = egui::Context::default();
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![
+                trade(2),
+                trade(6),
+                trade(10),
+                trade(14),
+                trade(18),
+            ]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        // A resting buy limit in the middle of the backfilled price range,
+        // so its line and tag are on screen.
+        let price = Decimal::new(1005, 1);
+        app.active_tab_mut()
+            .paper
+            .apply_sim_command_for_tests(quantick_sim::Command::PlaceLimit {
+                side: quantick_engine::Side::Buy,
+                quantity: Decimal::ONE,
+                price,
+                bracket: quantick_sim::Bracket::none(),
+            });
+        assert_eq!(app.active_tab().paper.working_orders().len(), 1);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("the pane laid out");
+        let tag_right = app
+            .active_tab()
+            .flow_pane
+            .last_lane_divider_x
+            .unwrap_or(chart.right());
+        let y = price_y(&app, PaneSide::Flow, 100.5);
+        let close = crate::paper_trading::close_button_rect(
+            tag_right,
+            crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        );
+        drag_chart(&mut app, &ctx, close.center(), close.center());
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "the click cancelled the order instead of dragging it"
+        );
     }
 
     /// The gesture itself: a right-click on the canvas opens the menu, and the
@@ -7130,6 +7417,7 @@ plot(close)
                 },
             ],
             metatrader: Default::default(),
+            paper: Default::default(),
         };
         let mut app = QuantickApp::new(
             config,
@@ -7640,17 +7928,16 @@ plot(close)
         PriceScale::from_range(lo, hi, chart.top(), chart.bottom()).y(price)
     }
 
-    /// Order entry belongs to the flow pane. Both panes draw the simulated
-    /// lines — same instrument, same prices — but only the flow pane hands
-    /// the pointer to the simulator: the time pane is the context view, and a
-    /// press on its copy of a line is an ordinary chart gesture.
+    /// Order entry follows the focused pane — both charts are trading
+    /// surfaces, and the press that focuses a pane is the press that acts.
     ///
-    /// Proven through the consequence, not the flag: the position's entry line
-    /// consumes a press without moving (it is history, not an order), so a
-    /// vertical drag that starts on it pans nothing on the flow pane — and
-    /// pans normally on the time pane, where the simulator never sees it.
+    /// Proven through the consequence, not the flag: with a fully bracketed
+    /// position the entry line consumes a press without moving (it is
+    /// history, not an order), so a vertical drag that starts on it pans
+    /// nothing — on *either* pane, because the press itself moves the focus
+    /// (and with it the simulator's pointer) to the pane it landed in.
     #[test]
-    fn only_the_flow_pane_hands_the_pointer_to_the_simulator() {
+    fn the_focused_pane_hands_the_pointer_to_the_simulator() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         app.apply_toolbar_action(ToolbarAction::PaperBuy);
@@ -7661,10 +7948,18 @@ plot(close)
             app.active_tab().paper.status_cell().is_some(),
             "this proof needs an open simulated position to grab"
         );
+        // Both legs set, so the entry-line press blocks instead of starting
+        // a bracket-creating drag — the no-pan consequence stays provable.
+        app.active_tab_mut()
+            .paper
+            .apply_sim_command_for_tests(quantick_sim::Command::SetBracket {
+                stop_loss: Some(fill.price - rust_decimal::Decimal::from(10)),
+                take_profit: Some(fill.price + rust_decimal::Decimal::from(10)),
+            });
         let entry = rust_decimal::prelude::ToPrimitive::to_f64(&fill.price)
             .expect("the fill price is finite");
 
-        for (side, panned) in [(PaneSide::Time, true), (PaneSide::Flow, false)] {
+        for side in [PaneSide::Time, PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).price_view.reset();
             let chart = app
                 .active_tab()
@@ -7678,11 +7973,15 @@ plot(close)
             );
             drag_chart(&mut app, &ctx, start, start + egui::vec2(0.0, 40.0));
 
+            assert!(
+                app.active_tab().pane(side).price_view.is_auto(),
+                "{side:?}: the entry line owns the gesture on the pane the \
+                 press focused — the chart must not pan under it"
+            );
             assert_eq!(
-                !app.active_tab().pane(side).price_view.is_auto(),
-                panned,
-                "{side:?}: a drag on the entry line must {} pan this pane",
-                if panned { "" } else { "not " }
+                app.active_tab().focused_side(),
+                side,
+                "the press that traded is the press that focused"
             );
         }
     }
@@ -9550,6 +9849,7 @@ plot(close)
                 ports,
                 ..Default::default()
             },
+            paper: Default::default(),
         }
     }
 

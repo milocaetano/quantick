@@ -36,6 +36,7 @@ mod orderflow_view;
 mod orderflow_worker;
 mod pane;
 mod paper_hud;
+mod paper_state;
 mod paper_trading;
 mod price_view;
 mod replay_view;
@@ -51,6 +52,7 @@ mod time_header;
 mod timezone;
 mod toolbar;
 mod toolrail;
+mod trade_paint;
 mod viewport;
 mod widgets;
 
