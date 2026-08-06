@@ -3969,20 +3969,6 @@ mod tests {
         areas.pane_gutters[index]
     }
 
-    /// The plot band of pane `index` — where its curve is drawn, as opposed to
-    /// the gutter where its numbers are.
-    fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
-        let pane = &app.active_tab().flow_pane;
-        let areas = plot_split(
-            pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
-            pane.indicators.pane_sizing(
-                &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
-            ),
-        );
-        areas.indicator_panes[index].rect
-    }
-
     /// The pane band as the last drawn frame carved it.
     fn pane_slots(app: &QuantickApp) -> Vec<crate::indicators::PaneSlot> {
         let pane = &app.active_tab().flow_pane;
