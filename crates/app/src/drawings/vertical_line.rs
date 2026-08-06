@@ -4,32 +4,32 @@ use egui_phosphor::regular as icons;
 use super::line_core::{Axis, LINES_FAMILY, hit_axis, paint_axis};
 use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
 
-pub(super) static TOOL: HorizontalLine = HorizontalLine;
+pub(super) static TOOL: VerticalLine = VerticalLine;
 
-pub(super) struct HorizontalLine;
+pub(super) struct VerticalLine;
 
-impl DrawingToolImpl for HorizontalLine {
+impl DrawingToolImpl for VerticalLine {
     fn id(&self) -> &'static str {
-        "horizontal-line"
+        "vertical-line"
     }
     fn name(&self) -> &'static str {
-        "Horizontal line"
+        "Vertical line"
     }
     fn settings_title(&self) -> &'static str {
-        "Horizontal line settings"
+        "Vertical line settings"
     }
     fn icon(&self) -> &'static str {
-        icons::MINUS
+        icons::LINE_VERTICAL
     }
     fn hover_text(&self) -> &'static str {
-        "Horizontal line - click a price (H)"
+        "Vertical line - click a bar to mark the moment (V)"
     }
     fn required_points(&self) -> usize {
         1
     }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
-            key: egui::Key::H,
+            key: egui::Key::V,
             shift: false,
         })
     }
@@ -44,7 +44,7 @@ impl DrawingToolImpl for HorizontalLine {
         points: &[egui::Pos2],
         _ctxt: &DrawContext<'_>,
     ) {
-        paint_axis(painter, chart_rect, style, points, Axis::Horizontal);
+        paint_axis(painter, chart_rect, style, points, Axis::Vertical);
     }
     fn hit_test(
         &self,
@@ -54,11 +54,11 @@ impl DrawingToolImpl for HorizontalLine {
         radius_px: f32,
         _ctxt: &DrawContext<'_>,
     ) -> bool {
-        hit_axis(chart_rect, points, position, radius_px, Axis::Horizontal)
+        hit_axis(chart_rect, points, position, radius_px, Axis::Vertical)
     }
 
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
-        (vec![egui::pos2(100.0, 120.0)], egui::pos2(450.0, 123.0))
+        (vec![egui::pos2(200.0, 150.0)], egui::pos2(202.0, 300.0))
     }
 }

@@ -240,26 +240,67 @@ fn clamp_into_chart(position: egui::Pos2, size: egui::Vec2, chart: egui::Rect) -
     )
 }
 
-/// The inspector placement rule (`docs/drawing-toolbar-ux.md` §4.2): eight
-/// candidates — beside the object, then the chart corners — each clamped
-/// into the chart *before* scoring, then least `bbox` overlap wins. Ties
-/// break toward the greater centre distance, then candidate order, so the
-/// result is deterministic and, at zero overlap, keeps the classic
-/// right / left / below / above preference.
+/// The inspector placement rule (`docs/ux/drawing-tools-2026-08.md` §D3).
+///
+/// The old rule scored least overlap with the object's *bounding box*, and a
+/// small object has a small box: "beside it with a 12 px gap" scored zero and
+/// won, dropping the panel straight onto the price action the trader drew the
+/// line to read. The read is the neighbourhood of the object, not its box.
+///
+/// So the corners come first, and the winner is the **farthest** clear one:
+///
+/// 1. the two **top** corners first, inset by the gap. Top before bottom is
+///    structural, not taste: a panel is positioned by its top-left and grows
+///    downwards, so a top corner always has the whole pane to grow into. A
+///    bottom-anchored panel that turns out taller than the placement assumed
+///    runs off the window and loses its last rows — and rows a trader cannot
+///    reach read as rows that do not exist;
+/// 2. of the two, the one that clears `bbox` and whose centre is farthest
+///    from the object wins, so the panel walks away from the drawing across
+///    the chart. An exact tie (a centred object) takes the left one, so the
+///    panel appears in the same place every time;
+/// 3. only if neither top corner is free, the bottom two on the same rule;
+/// 4. and if every corner is fouled — a large object covering the chart —
+///    the beside-the-object candidates, least overlap first.
 fn inspector_placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
     let gap = INSPECTOR_OBJECT_GAP_PX;
-    let candidates = [
+    let top_corners = [
+        egui::pos2(chart.left() + gap, chart.top() + gap),
+        egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
+    ];
+    let bottom_corners = [
+        egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
+        egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
+    ];
+    let farthest_clear = |candidates: [egui::Pos2; 2]| {
+        let mut best: Option<(egui::Pos2, f32)> = None;
+        for candidate in candidates {
+            let position = clamp_into_chart(candidate, size, chart);
+            let rect = egui::Rect::from_min_size(position, size);
+            if rect.intersect(bbox).is_positive() {
+                continue;
+            }
+            let distance = rect.center().distance(bbox.center());
+            if best.is_none_or(|(_, best)| distance > best) {
+                best = Some((position, distance));
+            }
+        }
+        best.map(|(position, _)| position)
+    };
+    if let Some(position) = farthest_clear(top_corners).or_else(|| farthest_clear(bottom_corners)) {
+        return position;
+    }
+    let corners = [top_corners, bottom_corners].concat();
+
+    // Nothing clear anywhere: crowd the object as little as possible.
+    let fallbacks = [
         egui::pos2(bbox.right() + gap, bbox.top()),
         egui::pos2(bbox.left() - gap - size.x, bbox.top()),
         egui::pos2(bbox.left(), bbox.bottom() + gap),
         egui::pos2(bbox.left(), bbox.top() - gap - size.y),
-        egui::pos2(chart.left() + gap, chart.top() + gap),
-        egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
-        egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
-        egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
     ];
     let mut best: Option<(egui::Pos2, f32, f32)> = None;
-    for candidate in candidates {
+    for candidate in fallbacks.into_iter().chain(corners.iter().copied()) {
         let position = clamp_into_chart(candidate, size, chart);
         let rect = egui::Rect::from_min_size(position, size);
         let overlap = rect.intersect(bbox);
@@ -269,16 +310,11 @@ fn inspector_placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) ->
             0.0
         };
         let distance = rect.center().distance(bbox.center());
-        // A clear (zero-overlap) candidate wins on order alone, keeping the
-        // beside-the-object preference over the corners; among genuinely
-        // overlapping candidates the farther-away one crowds least.
         let wins = match &best {
             None => true,
             Some((_, best_area, best_distance)) => {
                 overlap_area < *best_area
-                    || (overlap_area == *best_area
-                        && overlap_area > 0.0
-                        && distance > *best_distance)
+                    || (overlap_area == *best_area && distance > *best_distance)
             }
         };
         if wins {
@@ -461,7 +497,15 @@ pub struct QuantickApp {
     // chart rectangle it is placed against belongs to the focused
     // [`ChartPane`], so a split window places against the pane the selection
     // lives on, not the window.
+    // Scripted-validation hook: place one of every registered drawing on the
+    // flow pane as soon as it has bars to anchor them to. Consumed once.
+    pending_drawing_demo: bool,
     inspector_pos: Option<egui::Pos2>,
+    // The floating panel's size as it was last actually drawn. Read back from
+    // the window response rather than from egui's area memory: the memory
+    // lookup is empty on the frame the panel is being laid out, which is
+    // exactly the frame the placement and the clamp need a size.
+    inspector_size: Option<egui::Vec2>,
     // Whether the user ever toggled the pin — the auto-pin width rule stops
     // firing once they have expressed a preference.
     inspector_pin_touched: bool,
@@ -615,7 +659,9 @@ impl QuantickApp {
             inspector_pinned: false,
             inspector_moved: false,
             inspector_last_selection: None,
+            pending_drawing_demo: false,
             inspector_pos: None,
+            inspector_size: None,
             inspector_pin_touched: false,
             inspector_settle_frame: false,
             drawing_manager_open: false,
@@ -673,6 +719,21 @@ impl QuantickApp {
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().flow_pane.live_strip_visible = true;
         }
+        // Drawing-toolbar hooks, so a validation run reaches every new
+        // surface without a click (`.claude/skills/ui-harness`).
+        if let Ok(id) = std::env::var("QUANTICK_DRAWING_TOOL")
+            && let Some(tool) = drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == id.trim())
+        {
+            app.toolrail.arm(Tool::Drawing(tool));
+        }
+        if std::env::var("QUANTICK_DRAWING_MAGNET").is_ok_and(|value| value == "1") {
+            app.toolrail.set_magnet(true);
+        }
+        app.pending_drawing_demo =
+            std::env::var("QUANTICK_DRAWINGS_DEMO").is_ok_and(|value| value == "1");
+
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
@@ -2764,6 +2825,37 @@ impl QuantickApp {
                         egui::RichText::new("Unlock the drawing to edit its coordinates.").small(),
                     );
                 }
+
+                // Where the object appears. It belongs on this tab and not
+                // with the style controls: sharing is a statement about the
+                // anchors, and the anchors are right here
+                // (`docs/ux/drawing-tools-2026-08.md` §D7).
+                ui.separator();
+                let shareable = drawing.shareable();
+                let mut shared = drawing.scope == drawings::DrawingScope::AllCharts;
+                let response = ui.add_enabled(
+                    shareable,
+                    egui::Checkbox::new(&mut shared, "Show on all charts"),
+                );
+                if response.changed() {
+                    drawing.scope = if shared {
+                        drawings::DrawingScope::AllCharts
+                    } else {
+                        drawings::DrawingScope::ThisChart
+                    };
+                    actions.edited = true;
+                }
+                // A disabled control with no reason reads as a bug (Duda).
+                let hint = if shareable {
+                    "The other chart of this tab shows it at the same moment in market time."
+                } else {
+                    "This drawing has an anchor past the newest bar, so there is no market time to \
+                     place it by on another chart."
+                };
+                response.on_hover_text(hint);
+                if !shareable {
+                    ui.label(egui::RichText::new(hint).small());
+                }
             }
         }
         actions
@@ -2842,24 +2934,29 @@ impl QuantickApp {
         }
     }
 
-    /// Where a freshly opened floating inspector should sit. Eight
-    /// candidates — four beside the object's bounding box, four in the
-    /// chart's corners — every one clamped into the chart pane *before*
-    /// scoring, then the least bbox overlap wins (ties: farther from the
-    /// object's centre, then candidate order). At zero overlap the order
-    /// tie-break keeps the right / left / below / above preference. The
-    /// chart pane already excludes both axes and the live lane, so the
-    /// popup can never cover them or leave the view.
+    /// Where a freshly opened floating inspector should sit: the farthest
+    /// chart corner that clears the object, bottom-left preferred, falling
+    /// back to beside-the-object only when no corner is free — see
+    /// [`inspector_placement`]. The chart pane already excludes both axes and
+    /// the live lane, so the popup can never cover them or leave the view.
     fn inspector_target_position(&self, ctx: &egui::Context, index: usize) -> Option<egui::Pos2> {
         let chart = self.focused_pane().last_chart_area?;
         let bbox = self.drawing_bbox_on_screen(chart, index)?;
-        let size = ctx
-            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-            .map_or(
-                egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
-                |rect| rect.size(),
-            );
-        Some(inspector_placement(chart, bbox, size))
+        Some(inspector_placement(chart, bbox, self.inspector_size(ctx)))
+    }
+
+    /// How big the floating inspector is, best answer available: the size it
+    /// was last drawn at, then egui's area memory, then the assumed default.
+    fn inspector_size(&self, ctx: &egui::Context) -> egui::Vec2 {
+        self.inspector_size
+            .or_else(|| {
+                ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                    .map(|rect| rect.size())
+            })
+            .unwrap_or(egui::vec2(
+                INSPECTOR_DEFAULT_WIDTH_PX,
+                INSPECTOR_FALLBACK_HEIGHT_PX,
+            ))
     }
 
     /// The selected object's screen bounding box, expanded by the anchor
@@ -2986,13 +3083,7 @@ impl QuantickApp {
         if let (Some(position), Some(chart)) =
             (self.inspector_pos, self.focused_pane().last_chart_area)
         {
-            let size = ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-                .map_or(
-                    egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
-                    |rect| rect.size(),
-                );
-            let clamped = clamp_into_chart(position, size, chart);
+            let clamped = clamp_into_chart(position, self.inspector_size(ctx), chart);
             if clamped != position {
                 self.inspector_pos = Some(clamped);
             }
@@ -3021,6 +3112,9 @@ impl QuantickApp {
             actions.merge(self.drawing_inspector_body(ui, index));
             actions
         });
+        self.inspector_size = response
+            .as_ref()
+            .map(|response| response.response.rect.size());
         let actions = response
             .and_then(|response| response.inner)
             .unwrap_or_default();
@@ -3098,6 +3192,7 @@ impl QuantickApp {
                         let selected = self.focused_pane().drawings.selected() == Some(index);
                         let locked = drawing.locked;
                         let hidden = drawing.hidden;
+                        let shared = drawing.scope == drawings::DrawingScope::AllCharts;
                         let name = drawing.tool.name();
                         ui.horizontal(|ui| {
                             let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
@@ -3112,6 +3207,15 @@ impl QuantickApp {
                             }
                             if hidden {
                                 ui.label(egui::RichText::new("hidden").small());
+                            }
+                            if shared {
+                                // Which marks are global is a question the
+                                // list must answer at a glance (Marina, §D7).
+                                ui.label(egui::RichText::new("all charts").small())
+                                    .on_hover_text(
+                                        "Also drawn on the other chart of this tab, at the same \
+                                         moment in market time",
+                                    );
                             }
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -3276,7 +3380,58 @@ impl eframe::App for QuantickApp {
     }
 }
 
-impl QuantickApp {}
+impl QuantickApp {
+    /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
+    /// the flow pane, spread across the visible bars, the last one selected
+    /// so the inspector is on screen too.
+    ///
+    /// Waits for bars: anchors are placed on real slots, so every anchor
+    /// carries a real market time and the shared-drawing path is exercised
+    /// rather than faked. Consumed once, whether or not it placed anything on
+    /// this attempt — an env var is a request for this run, and it must never
+    /// keep re-placing objects the user then deletes.
+    fn apply_drawing_demo(&mut self) {
+        if !self.pending_drawing_demo {
+            return;
+        }
+        let pane = &mut self.active_tab_mut().flow_pane;
+        let slots = pane.slots();
+        // Enough bars for every tool to get its own stretch of chart.
+        if slots < 8 * drawings::DRAWING_TOOLS.len() {
+            return;
+        }
+        self.pending_drawing_demo = false;
+        let share = std::env::var("QUANTICK_DRAWINGS_DEMO_SHARED").is_ok_and(|v| v == "1");
+        let pane = &mut self.active_tab_mut().flow_pane;
+        let base = pane
+            .closed_bar(slots / 2)
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+            .unwrap_or(1.0);
+        for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
+            for anchor in 0..tool.required_points() {
+                let slot = index * 8 + anchor * 3;
+                let point = drawings::ChartPoint::at_time(
+                    slot as f32 + 0.5,
+                    base * (1.0 + f64::from(anchor as i32) * 0.001
+                        - f64::from(index as i32 % 3) * 0.002),
+                    pane.slot_open_time(slot),
+                );
+                let completed =
+                    pane.drawings
+                        .place_with(tool, point, drawings::DrawingTool::default_payload);
+                // Placement selects what it completed, so this reaches the
+                // object just made — no separate index bookkeeping.
+                if completed
+                    && share
+                    && let Some(drawing) = pane.drawings.selected_mut()
+                    && drawing.shareable()
+                {
+                    drawing.scope = drawings::DrawingScope::AllCharts;
+                }
+            }
+        }
+    }
+}
 
 impl QuantickApp {
     /// One frame of the application: drain, lay out the chrome, draw the
@@ -3293,6 +3448,7 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
+        self.apply_drawing_demo();
         self.maybe_emit_summary(now);
 
         let bg = pane::background_color(&self.style);
@@ -4625,13 +4781,10 @@ plot(close)
         app.active_tab_mut().request_older_history();
         app.active_tab_mut().request_older_history();
         assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
-        app.active_tab_mut().flow_pane.drawings.place(
-            drawing_tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
 
         evt_tx.try_send(FeedEvent::Reset).unwrap();
         app.active_tab_mut().drain_feed();
@@ -4646,13 +4799,10 @@ plot(close)
     fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
         let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
         app.active_tab_mut().flow_pane.tick_n = 100;
-        app.active_tab_mut().flow_pane.drawings.place(
-            drawing_tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
 
         app.active_tab_mut().apply_spec_changes();
         assert!(app.active_tab().loading.is_active(LoadingTask::BarRebuild));
@@ -5919,42 +6069,25 @@ plot(close)
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
 
-        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
-        click_chart(&mut app, &ctx, egui::pos2(600.0, 250.0));
-
-        arm_drawing_from_toolbox(&mut app, &ctx, "rectangle");
-        drag_chart(
-            &mut app,
-            &ctx,
-            egui::pos2(620.0, 300.0),
-            egui::pos2(800.0, 450.0),
-        );
-
-        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
-        drag_chart(
-            &mut app,
-            &ctx,
-            egui::pos2(650.0, 500.0),
-            egui::pos2(820.0, 350.0),
-        );
-        click_chart(&mut app, &ctx, egui::pos2(900.0, 280.0));
-
-        arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
-        drag_chart(
-            &mut app,
-            &ctx,
-            egui::pos2(700.0, 620.0),
-            egui::pos2(950.0, 300.0),
-        );
-
-        arm_drawing_from_toolbox(&mut app, &ctx, "fib-extension");
-        drag_chart(
-            &mut app,
-            &ctx,
-            egui::pos2(620.0, 650.0),
-            egui::pos2(820.0, 500.0),
-        );
-        click_chart(&mut app, &ctx, egui::pos2(1_000.0, 350.0));
+        // Registry-driven, not a hand-written list: a tool added to
+        // `DRAWING_TOOLS` without a rail path (family flyout, shortcut,
+        // placement) fails here on the day it is registered, instead of
+        // shipping unreachable.
+        for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
+            arm_drawing_from_toolbox(&mut app, &ctx, tool.id());
+            for anchor in 0..tool.required_points() {
+                let offset = index as f32;
+                let step = anchor as f32;
+                click_chart(
+                    &mut app,
+                    &ctx,
+                    egui::pos2(
+                        560.0 + (offset % 4.0) * 50.0 + step * 70.0,
+                        250.0 + (offset % 3.0) * 70.0 + step * 50.0,
+                    ),
+                );
+            }
+        }
 
         let tools: Vec<_> = app
             .active_tab()
@@ -6039,12 +6172,22 @@ plot(close)
         click_chart(&mut app, &ctx, anchor);
         run_frame(&mut app, &ctx);
 
-        // The horizontal stroke crosses the whole pane, so a stroke pixel
-        // sits under the inspector. Press exactly there: the panel is opaque
-        // — the press is a style interaction, never a drawing drag.
+        // Automatic placement now sends the panel to a chart corner (§D3),
+        // deliberately clear of the object — so park it over the stroke by
+        // hand. What this proves is pointer routing over an opaque panel, not
+        // where the panel opens.
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("placing the selected line opens its inspector");
+        app.inspector_moved = true;
+        app.inspector_pos = Some(egui::pos2(
+            inspector.left(),
+            anchor.y - inspector.height() / 2.0,
+        ));
+        run_frame(&mut app, &ctx);
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is still open");
         let line_y = anchor.y;
         let start = egui::pos2(inspector.center().x, line_y);
         assert!(
@@ -6221,8 +6364,11 @@ plot(close)
         .map(|candidate| clamp_into_chart(candidate, size, chart))
     }
 
+    /// The session's complaint (`docs/ux/drawing-tools-2026-08.md` §F3): the
+    /// old rule put the panel 12 px beside a small object, right on top of
+    /// the price action the trader drew it to read. A corner must win.
     #[test]
-    fn placement_beside_a_centered_object_clears_it_and_prefers_the_right() {
+    fn placement_sends_the_panel_to_a_corner_not_beside_a_small_object() {
         let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
         let bbox = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
         let size = egui::vec2(320.0, 280.0);
@@ -6230,15 +6376,70 @@ plot(close)
         let rect = egui::Rect::from_min_size(position, size);
         assert!(!rect.intersects(bbox), "a clear candidate exists and wins");
         assert!(chart.contains_rect(rect));
-        assert_eq!(
+        assert_ne!(
             position,
             egui::pos2(bbox.right() + INSPECTOR_OBJECT_GAP_PX, bbox.top()),
-            "at zero overlap the order tie-break keeps the right-of-object preference"
+            "beside-the-object is exactly the placement this rule replaced"
+        );
+        assert!(
+            placement_candidates(chart, bbox, size)[4..].contains(&position),
+            "the winner is one of the four chart corners"
         );
         assert_eq!(
             position,
             inspector_placement(chart, bbox, size),
             "identical inputs give identical placements"
+        );
+    }
+
+    /// With the object centred, all four corners are equidistant, so the
+    /// order tie-break decides — and it must always decide the same way, or
+    /// the panel appears somewhere new every time (Duda, §D3).
+    #[test]
+    fn placement_prefers_the_top_left_corner_on_a_tie() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
+        let bbox = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
+        let size = egui::vec2(320.0, 280.0);
+        let gap = INSPECTOR_OBJECT_GAP_PX;
+        assert_eq!(
+            inspector_placement(chart, bbox, size),
+            egui::pos2(chart.left() + gap, chart.top() + gap)
+        );
+    }
+
+    /// A panel taller than the placement assumed must not be sent to a bottom
+    /// corner, where it would grow off the window and lose its last rows. The
+    /// top-first order is what guarantees that, so it is worth a test of its
+    /// own: whatever height the panel turns out to have, the chosen spot
+    /// leaves room for it below.
+    #[test]
+    fn placement_leaves_a_tall_panel_room_to_grow_downwards() {
+        let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(1_224.0, 744.0));
+        let bbox = egui::Rect::from_center_size(egui::pos2(700.0, 300.0), egui::vec2(40.0, 40.0));
+        // The height the placement believes in, and the height the panel
+        // turns out to want once its level editor is open.
+        let assumed = egui::vec2(360.0, 280.0);
+        let actual = 620.0;
+        let position = inspector_placement(chart, bbox, assumed);
+        assert!(
+            position.y + actual <= chart.bottom(),
+            "a panel that grows to {actual} px must still fit below {position:?}"
+        );
+    }
+
+    /// The farthest clear corner wins, so the panel walks away from the
+    /// object instead of hugging the nearest empty spot.
+    #[test]
+    fn placement_picks_the_corner_farthest_from_the_object() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
+        // Object parked in the bottom-left quadrant.
+        let bbox = egui::Rect::from_center_size(egui::pos2(260.0, 640.0), egui::vec2(40.0, 40.0));
+        let size = egui::vec2(320.0, 280.0);
+        let gap = INSPECTOR_OBJECT_GAP_PX;
+        assert_eq!(
+            inspector_placement(chart, bbox, size),
+            egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
+            "the opposite corner is the farthest clear one"
         );
     }
 
@@ -6476,6 +6677,17 @@ plot(close)
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("the inspector is open");
+        // Parked over the stroke by hand: automatic placement now clears the
+        // object on purpose (§D3), and this proof needs the overlap.
+        app.inspector_moved = true;
+        app.inspector_pos = Some(egui::pos2(
+            inspector.left(),
+            300.0 - inspector.height() / 2.0,
+        ));
+        run_frame(&mut app, &ctx);
+        let inspector = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the inspector is still open");
         // Over the inspector AND over the selected line's stroke: without
         // the chrome gate this hover would show a Move cursor.
         let hover = egui::pos2(inspector.center().x, 300.0);
@@ -6980,13 +7192,10 @@ plot(close)
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        app.active_tab_mut().flow_pane.drawings.place(
-            drawing_tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
 
         evt_tx.try_send(FeedEvent::Reset).unwrap();
         // Through the window's own drain: the tab drops the marks, and the

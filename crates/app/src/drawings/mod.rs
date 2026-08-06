@@ -10,6 +10,12 @@ pub mod action_bar;
 pub mod fib;
 pub mod presets;
 
+// Geometry shared by a family of tools. Not tools themselves, so they are not
+// in the registry — a family core exists so its members stay declarations.
+mod line_core;
+mod measure_core;
+mod shape_core;
+
 use std::any::Any;
 use std::fmt;
 
@@ -19,8 +25,12 @@ use crate::chart::PriceScale;
 use crate::theme;
 
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
-pub const DEFAULT_DRAWING_WIDTH_PX: f32 = 1.5;
-pub const DEFAULT_DRAWING_FILL_ALPHA: u8 = 24;
+/// A drawing is an annotation *on* the chart, never a second series: the
+/// stock stroke is a hairline, thinner than the candle bodies it sits over
+/// (`docs/ux/drawing-tools-2026-08.md` §D2). The width slider keeps its full
+/// range — this is the default, not the ceiling.
+pub const DEFAULT_DRAWING_WIDTH_PX: f32 = 1.0;
+pub const DEFAULT_DRAWING_FILL_ALPHA: u8 = 14;
 pub const MIN_DRAWING_WIDTH_PX: f32 = 0.5;
 pub const MAX_DRAWING_WIDTH_PX: f32 = 6.0;
 pub const MAX_DRAWING_FILL_ALPHA: u8 = 160;
@@ -28,15 +38,19 @@ pub const MAX_DRAWING_FILL_ALPHA: u8 = 160;
 /// slider gesture is one command), so this bounds memory without cutting a
 /// working session short.
 const UNDO_HISTORY_LIMIT: usize = 64;
-const SELECTED_ANCHOR_RADIUS_PX: f32 = 4.0;
-const SELECTED_ANCHOR_FILL: egui::Color32 = egui::Color32::WHITE;
-const SELECTED_ANCHOR_RING_WIDTH_PX: f32 = 1.5;
+const SELECTED_ANCHOR_RADIUS_PX: f32 = 3.5;
+/// Handles read as hollow rings, not solid discs: the core is the chart's own
+/// backdrop, so the handle marks the anchor without adding a bright blob over
+/// the candles (`docs/ux/drawing-tools-2026-08.md` §D2).
+const SELECTED_ANCHOR_FILL: egui::Color32 = theme::CANVAS;
+const SELECTED_ANCHOR_RING_WIDTH_PX: f32 = 1.25;
 /// Selection never repaints the object white: it keeps the configured colour
-/// and paints this soft halo underneath instead, plus white anchor handles.
-/// Premultiplied ~16% white, matching the UX spec's `.halo` treatment.
-const SELECTION_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
+/// and paints this soft halo underneath instead, plus ring anchor handles.
+/// Premultiplied ~11% white — enough to find the object under the pointer,
+/// not enough to double its visual weight.
+const SELECTION_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(28, 28, 28, 28);
 /// How much wider than the object's own stroke the halo pass paints.
-const SELECTION_HALO_EXTRA_WIDTH_PX: f32 = 3.5;
+const SELECTION_HALO_EXTRA_WIDTH_PX: f32 = 2.5;
 pub(super) const FIB_LABEL_OFFSET_PX: f32 = 3.0;
 pub(super) const FIB_LABEL_SIZE_PX: f32 = 10.0;
 
@@ -389,19 +403,80 @@ macro_rules! register_drawing_tools {
     };
 }
 
-// The extension port: a new tool is one implementation file plus one name here.
+// The extension port: a new tool is one implementation file plus one name
+// here. Order is rail order, and consecutive entries declaring the same
+// family fold into one rail slot — so the grouping below is the grouping the
+// trader sees, and adding a tool cannot silently reorder the rail.
 register_drawing_tools!(
+    // Lines
+    trend_line,
+    ray,
+    extended_line,
     horizontal_line,
-    rectangle,
+    horizontal_ray,
+    vertical_line,
+    arrow,
+    // Channels
     parallel_channel,
+    // Shapes
+    rectangle,
+    ellipse,
+    triangle,
+    // Fib
     fib_retracement,
     fib_extension,
+    // Measure
+    measure,
+    price_range,
+    date_range,
+    // Annotation
+    text,
 );
 
+/// One anchor of a drawing.
+///
+/// `bar` is the pane's own fractional slot — the coordinate the chart draws
+/// from, and the one pan, zoom and history prepends keep meaningful.
+/// `time_ms` is the same instant said in market time, captured when the
+/// anchor was placed. Two panes of one symbol disagree completely about bar
+/// indices and agree exactly about market time, which is what lets a drawing
+/// cross from the timeframe chart to the tick chart
+/// (`docs/ux/drawing-tools-2026-08.md` §D7).
+///
+/// It is an `Option` because a pane cannot always name the time: an anchor
+/// dropped past the newest bar, or on a pane with no bars yet, has no instant
+/// behind it. A drawing whose anchors have no time simply cannot be shared —
+/// it is never guessed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartPoint {
     pub bar: f32,
     pub price: f64,
+    pub time_ms: Option<i64>,
+}
+
+impl ChartPoint {
+    /// An anchor with no market time behind it. Test-only on purpose: every
+    /// production anchor comes from a pane, and a pane always knows whether
+    /// the slot under the pointer has an instant behind it. A production
+    /// caller reaching for this would be dropping that answer on the floor.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn at(bar: f32, price: f64) -> Self {
+        Self {
+            bar,
+            price,
+            time_ms: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn at_time(bar: f32, price: f64, time_ms: Option<i64>) -> Self {
+        Self {
+            bar,
+            price,
+            time_ms,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -421,6 +496,23 @@ impl Default for DrawingStyle {
     }
 }
 
+/// Which charts a drawing appears on
+/// (`docs/ux/drawing-tools-2026-08.md` §D7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DrawingScope {
+    /// The pane it was drawn on, and only that one. Today's behaviour, and
+    /// the default, so nothing that exists changes.
+    #[default]
+    ThisChart,
+    /// Every pane of the same tab — one symbol, one feed, two bar types. The
+    /// anchors are re-expressed through each pane's own market clock.
+    ///
+    /// Never across tabs: a price level drawn on BTC means nothing on a WIN
+    /// chart, and a mark that says otherwise is the data-honesty failure this
+    /// repo refuses.
+    AllCharts,
+}
+
 #[derive(Debug, Clone)]
 pub struct Drawing {
     pub tool: DrawingTool,
@@ -431,9 +523,28 @@ pub struct Drawing {
     pub locked: bool,
     /// A hidden drawing neither paints nor hit-tests, and stays recoverable.
     pub hidden: bool,
+    /// Whether the other panes of this tab show it too.
+    pub scope: DrawingScope,
     /// Tool-owned state (Fib levels, a future tool's own properties). The
     /// registry creates it; the shared envelope never learns its fields.
     pub payload: Box<dyn DrawingPayload>,
+}
+
+impl Drawing {
+    /// Whether this object *can* be shared: every anchor has to name a market
+    /// instant, because that is the only coordinate two panes agree on. An
+    /// anchor dropped past the newest bar has none, and no time is invented
+    /// to make the checkbox available.
+    #[must_use]
+    pub fn shareable(&self) -> bool {
+        !self.points.is_empty() && self.points.iter().all(|point| point.time_ms.is_some())
+    }
+
+    /// Whether the other panes of this tab paint it this frame.
+    #[must_use]
+    pub fn shared(&self) -> bool {
+        self.scope == DrawingScope::AllCharts && !self.hidden && self.shareable()
+    }
 }
 
 impl PartialEq for Drawing {
@@ -443,6 +554,7 @@ impl PartialEq for Drawing {
             && self.style == other.style
             && self.locked == other.locked
             && self.hidden == other.hidden
+            && self.scope == other.scope
             && self.payload.eq_dyn(other.payload.as_ref())
     }
 }
@@ -618,6 +730,7 @@ impl Drawings {
                 style: DrawingStyle::default(),
                 locked: false,
                 hidden: false,
+                scope: DrawingScope::default(),
                 payload: new_payload(tool),
             });
         }
@@ -906,13 +1019,7 @@ mod tests {
     #[test]
     fn horizontal_line_completes_with_one_point() {
         let mut drawings = Drawings::default();
-        assert!(drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 3.0,
-                price: 100.0
-            }
-        ));
+        assert!(drawings.place(tool("horizontal-line"), ChartPoint::at(3.0, 100.0)));
     }
 
     #[test]
@@ -920,48 +1027,21 @@ mod tests {
         let mut drawings = Drawings::default();
         let channel = tool("parallel-channel");
         for bar in [1.0, 2.0] {
-            assert!(!drawings.place(channel, ChartPoint { bar, price: 1.0 }));
+            assert!(!drawings.place(channel, ChartPoint::at(bar, 1.0)));
         }
-        assert!(drawings.place(
-            channel,
-            ChartPoint {
-                bar: 3.0,
-                price: 1.0
-            }
-        ));
+        assert!(drawings.place(channel, ChartPoint::at(3.0, 1.0)));
     }
 
     #[test]
     fn moving_a_selected_drawing_preserves_its_shape() {
         let mut drawings = Drawings::default();
         let rectangle = tool("rectangle");
-        drawings.place(
-            rectangle,
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
-        drawings.place(
-            rectangle,
-            ChartPoint {
-                bar: 3.0,
-                price: 110.0,
-            },
-        );
+        drawings.place(rectangle, ChartPoint::at(1.0, 100.0));
+        drawings.place(rectangle, ChartPoint::at(3.0, 110.0));
         drawings.translate_selected(2.0, -5.0);
         assert_eq!(
             drawings.items()[0].points,
-            [
-                ChartPoint {
-                    bar: 3.0,
-                    price: 95.0
-                },
-                ChartPoint {
-                    bar: 5.0,
-                    price: 105.0
-                }
-            ]
+            [ChartPoint::at(3.0, 95.0), ChartPoint::at(5.0, 105.0)]
         );
     }
 
@@ -969,25 +1049,10 @@ mod tests {
     fn moving_one_anchor_does_not_move_the_other_points() {
         let mut drawings = Drawings::default();
         let rectangle = tool("rectangle");
-        drawings.place(
-            rectangle,
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
-        drawings.place(
-            rectangle,
-            ChartPoint {
-                bar: 3.0,
-                price: 110.0,
-            },
-        );
+        drawings.place(rectangle, ChartPoint::at(1.0, 100.0));
+        drawings.place(rectangle, ChartPoint::at(3.0, 110.0));
         let opposite = drawings.items()[0].points[1];
-        let replacement = ChartPoint {
-            bar: 0.5,
-            price: 95.0,
-        };
+        let replacement = ChartPoint::at(0.5, 95.0);
 
         assert!(drawings.move_anchor(0, 0, replacement));
 
@@ -1001,13 +1066,7 @@ mod tests {
     fn deleting_the_selected_drawing_clears_both_object_and_selection() {
         let mut drawings = Drawings::default();
         let line = tool("horizontal-line");
-        assert!(drawings.place(
-            line,
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            }
-        ));
+        assert!(drawings.place(line, ChartPoint::at(1.0, 100.0)));
         assert_eq!(drawings.selected(), Some(0));
 
         assert_eq!(drawings.delete_selected(false), DeleteOutcome::Deleted);
@@ -1019,54 +1078,26 @@ mod tests {
     #[test]
     fn a_locked_drawing_ignores_geometry_edits_until_unlocked() {
         let mut drawings = Drawings::default();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 2.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(2.0, 100.0));
         drawings.set_selected_locked(true);
 
         drawings.translate_selected(3.0, 5.0);
-        assert!(!drawings.move_anchor(
-            0,
-            0,
-            ChartPoint {
-                bar: 9.0,
-                price: 50.0,
-            }
-        ));
+        assert!(!drawings.move_anchor(0, 0, ChartPoint::at(9.0, 50.0)));
         assert_eq!(
             drawings.items()[0].points[0],
-            ChartPoint {
-                bar: 2.0,
-                price: 100.0,
-            },
+            ChartPoint::at(2.0, 100.0),
             "locked geometry must not move"
         );
 
         drawings.set_selected_locked(false);
         drawings.translate_selected(3.0, 5.0);
-        assert_eq!(
-            drawings.items()[0].points[0],
-            ChartPoint {
-                bar: 5.0,
-                price: 105.0,
-            }
-        );
+        assert_eq!(drawings.items()[0].points[0], ChartPoint::at(5.0, 105.0));
     }
 
     #[test]
     fn deleting_a_locked_drawing_requires_explicit_force() {
         let mut drawings = Drawings::default();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
         drawings.set_selected_locked(true);
 
         assert_eq!(
@@ -1090,13 +1121,7 @@ mod tests {
     fn placing_a_drawing_releases_hide_all() {
         let mut drawings = Drawings::default();
         drawings.set_all_hidden(true);
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
         assert!(!drawings.all_hidden(), "the new mark is visible");
         assert!(drawings.undo(), "placement is one undoable step");
         assert!(drawings.items().is_empty());
@@ -1112,21 +1137,9 @@ mod tests {
     fn delete_all_takes_everything_in_one_undoable_step() {
         let mut drawings = Drawings::default();
         assert_eq!(drawings.delete_all(), 0, "an empty store deletes nothing");
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
         drawings.set_selected_locked(true);
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 2.0,
-                price: 105.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(2.0, 105.0));
         let undo_before = drawings.undo_depth();
 
         assert_eq!(drawings.delete_all(), 2, "locked and unlocked both go");
@@ -1149,20 +1162,8 @@ mod tests {
         let mut drawings = Drawings::default();
         let rectangle = tool("rectangle");
         // Creation: two anchors, one entry.
-        drawings.place(
-            rectangle,
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
-        drawings.place(
-            rectangle,
-            ChartPoint {
-                bar: 3.0,
-                price: 110.0,
-            },
-        );
+        drawings.place(rectangle, ChartPoint::at(1.0, 100.0));
+        drawings.place(rectangle, ChartPoint::at(3.0, 110.0));
         assert_eq!(drawings.undo_depth(), 1);
 
         // One drag over many frames: one entry.
@@ -1184,13 +1185,7 @@ mod tests {
         assert!(drawings.undo(), "undo the delete");
         assert_eq!(drawings.items().len(), 1);
         assert!(drawings.undo(), "undo the drag");
-        assert_eq!(
-            drawings.items()[0].points[0],
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            }
-        );
+        assert_eq!(drawings.items()[0].points[0], ChartPoint::at(1.0, 100.0));
         assert!(drawings.undo(), "undo the creation");
         assert!(drawings.items().is_empty());
         assert!(!drawings.undo(), "history is exhausted");
@@ -1199,26 +1194,14 @@ mod tests {
     #[test]
     fn redo_replays_an_undone_edit_until_a_new_command_clears_it() {
         let mut drawings = Drawings::default();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
         drawings.undo();
         assert!(drawings.items().is_empty());
         assert!(drawings.redo());
         assert_eq!(drawings.items().len(), 1);
 
         drawings.undo();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 4.0,
-                price: 90.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(4.0, 90.0));
         assert!(!drawings.redo(), "a new command clears the redo stack");
     }
 
@@ -1226,7 +1209,7 @@ mod tests {
     fn hide_all_is_a_layer_over_each_drawings_own_eye() {
         let mut drawings = Drawings::default();
         for price in [100.0, 105.0] {
-            drawings.place(tool("horizontal-line"), ChartPoint { bar: 1.0, price });
+            drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, price));
         }
         drawings.select(Some(0));
         drawings.set_selected_hidden(true);
@@ -1252,13 +1235,7 @@ mod tests {
     #[test]
     fn duplicate_lands_offset_unlocked_and_selected_as_one_entry() {
         let mut drawings = Drawings::default();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 4.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(4.0, 100.0));
         drawings.set_selected_locked(true);
         let depth = drawings.undo_depth();
 
@@ -1281,7 +1258,7 @@ mod tests {
         let mut drawings = Drawings::default();
         let channel = tool("parallel-channel");
         for bar in [1.0, 2.0] {
-            drawings.place(channel, ChartPoint { bar, price: 1.0 });
+            drawings.place(channel, ChartPoint::at(bar, 1.0));
         }
         assert_eq!(drawings.draft_len(), 2);
 
@@ -1336,7 +1313,7 @@ mod tests {
     fn lock_all_is_one_reversible_undo_entry_and_never_deletes() {
         let mut drawings = Drawings::default();
         for price in [100.0, 105.0] {
-            drawings.place(tool("horizontal-line"), ChartPoint { bar: 1.0, price });
+            drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, price));
         }
         let depth_before = drawings.undo_depth();
 
@@ -1353,13 +1330,7 @@ mod tests {
     #[test]
     fn undo_snapshots_shift_with_prepended_history() {
         let mut drawings = Drawings::default();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 2.0,
-                price: 100.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(2.0, 100.0));
         drawings.begin_gesture();
         drawings.translate_selected(1.0, 0.0);
         drawings.commit_gesture();
@@ -1391,10 +1362,7 @@ mod tests {
         };
         let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
         let payload = line.default_payload();
-        let anchors = [ChartPoint {
-            bar: 0.0,
-            price: scale.price_at(120.0),
-        }];
+        let anchors = [ChartPoint::at(0.0, scale.price_at(120.0))];
         let output = ctx.run(input, |ctx| {
             let painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
@@ -1419,14 +1387,14 @@ mod tests {
         });
 
         let mut kept_color = false;
-        let mut white_handle = false;
+        let mut ring_handle = false;
         for clipped in &output.shapes {
             match &clipped.shape {
                 egui::Shape::LineSegment { stroke, .. } => {
                     kept_color |= stroke.color == egui::epaint::ColorMode::Solid(color);
                 }
                 egui::Shape::Circle(circle) => {
-                    white_handle |= circle.fill == SELECTED_ANCHOR_FILL;
+                    ring_handle |= circle.fill == SELECTED_ANCHOR_FILL;
                 }
                 _ => {}
             }
@@ -1435,19 +1403,71 @@ mod tests {
             kept_color,
             "selection must keep painting the configured colour"
         );
-        assert!(white_handle, "selection must add white anchor handles");
+        assert!(ring_handle, "selection must add ring anchor handles");
+    }
+
+    /// Nothing that exists changes: every object still opens on the chart it
+    /// was drawn on, and sharing is something the trader asks for.
+    #[test]
+    fn a_new_drawing_belongs_to_the_chart_it_was_drawn_on() {
+        let mut drawings = Drawings::default();
+        assert!(drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0)));
+        assert_eq!(drawings.items()[0].scope, DrawingScope::ThisChart);
+        assert!(!drawings.items()[0].shared());
+    }
+
+    /// Market time is the only coordinate two panes agree on, so an anchor
+    /// without one cannot be re-expressed — and none is invented for it.
+    #[test]
+    fn an_anchor_without_a_market_time_cannot_be_shared() {
+        let mut untimed = Drawings::default();
+        assert!(untimed.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0)));
+        assert!(
+            !untimed.items()[0].shareable(),
+            "an anchor past the newest bar has no instant behind it"
+        );
+
+        let mut timed = Drawings::default();
+        assert!(timed.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(1.0, 100.0, Some(1_700_000_000_000))
+        ));
+        assert!(timed.items()[0].shareable());
+    }
+
+    /// A shared object that is switched off shows nowhere, including on the
+    /// other pane: one eye, one answer.
+    #[test]
+    fn hiding_a_shared_drawing_hides_it_everywhere() {
+        let mut drawings = Drawings::default();
+        assert!(drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(1.0, 100.0, Some(1_700_000_000_000))
+        ));
+        drawings.selected_mut().expect("just placed").scope = DrawingScope::AllCharts;
+        assert!(drawings.items()[0].shared());
+        drawings.set_hidden_at(0, true);
+        assert!(!drawings.items()[0].shared());
+    }
+
+    /// A multi-anchor object shares only when *every* anchor can be placed:
+    /// half a channel on the other chart would be a lie about where it is.
+    #[test]
+    fn one_untimed_anchor_blocks_sharing_the_whole_object() {
+        let mut drawings = Drawings::default();
+        let rectangle = tool("rectangle");
+        assert!(!drawings.place(
+            rectangle,
+            ChartPoint::at_time(1.0, 100.0, Some(1_700_000_000_000))
+        ));
+        assert!(drawings.place(rectangle, ChartPoint::at(4.0, 110.0)));
+        assert!(!drawings.items()[0].shareable());
     }
 
     #[test]
     fn clearing_drawings_also_discards_an_unfinished_draft() {
         let mut drawings = Drawings::default();
-        assert!(!drawings.place(
-            tool("rectangle"),
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            }
-        ));
+        assert!(!drawings.place(tool("rectangle"), ChartPoint::at(1.0, 100.0)));
         drawings.clear();
         assert!(drawings.items().is_empty());
         assert!(drawings.draft().is_none());
@@ -1457,20 +1477,8 @@ mod tests {
     #[test]
     fn prepending_history_shifts_completed_and_draft_bar_anchors() {
         let mut drawings = Drawings::default();
-        drawings.place(
-            tool("horizontal-line"),
-            ChartPoint {
-                bar: 2.5,
-                price: 100.0,
-            },
-        );
-        drawings.place(
-            tool("rectangle"),
-            ChartPoint {
-                bar: 4.0,
-                price: 101.0,
-            },
-        );
+        drawings.place(tool("horizontal-line"), ChartPoint::at(2.5, 100.0));
+        drawings.place(tool("rectangle"), ChartPoint::at(4.0, 101.0));
 
         drawings.shift_bars(3);
 
@@ -1487,10 +1495,7 @@ mod tests {
         points
             .iter()
             .enumerate()
-            .map(|(index, point)| ChartPoint {
-                bar: index as f32,
-                price: scale.price_at(point.y),
-            })
+            .map(|(index, point)| ChartPoint::at(index as f32, scale.price_at(point.y)))
             .collect()
     }
 
@@ -1672,13 +1677,7 @@ mod tests {
         let ray_tool = DrawingTool(&RAY);
 
         let mut drawings = Drawings::default();
-        assert!(drawings.place(
-            ray_tool,
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            }
-        ));
+        assert!(drawings.place(ray_tool, ChartPoint::at(1.0, 100.0)));
         // The unique property lives in the payload and rides the undo
         // history exactly like the shared fields do.
         drawings.begin_gesture();

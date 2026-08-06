@@ -1,37 +1,31 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::line_core::{Axis, LINES_FAMILY, hit_axis, paint_axis};
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
+use super::line_core::{Extend, LINES_FAMILY, hit_line, paint_line};
+use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily};
 
-pub(super) static TOOL: HorizontalLine = HorizontalLine;
+pub(super) static TOOL: ExtendedLine = ExtendedLine;
 
-pub(super) struct HorizontalLine;
+pub(super) struct ExtendedLine;
 
-impl DrawingToolImpl for HorizontalLine {
+impl DrawingToolImpl for ExtendedLine {
     fn id(&self) -> &'static str {
-        "horizontal-line"
+        "extended-line"
     }
     fn name(&self) -> &'static str {
-        "Horizontal line"
+        "Extended line"
     }
     fn settings_title(&self) -> &'static str {
-        "Horizontal line settings"
+        "Extended line settings"
     }
     fn icon(&self) -> &'static str {
-        icons::MINUS
+        icons::ARROWS_OUT_LINE_HORIZONTAL
     }
     fn hover_text(&self) -> &'static str {
-        "Horizontal line - click a price (H)"
+        "Extended line - two points, running to both chart edges"
     }
     fn required_points(&self) -> usize {
-        1
-    }
-    fn shortcut(&self) -> Option<ToolShortcut> {
-        Some(ToolShortcut {
-            key: egui::Key::H,
-            shift: false,
-        })
+        2
     }
     fn family(&self) -> Option<ToolFamily> {
         Some(LINES_FAMILY)
@@ -44,7 +38,7 @@ impl DrawingToolImpl for HorizontalLine {
         points: &[egui::Pos2],
         _ctxt: &DrawContext<'_>,
     ) {
-        paint_axis(painter, chart_rect, style, points, Axis::Horizontal);
+        paint_line(painter, chart_rect, style, points, Extend::Both, false);
     }
     fn hit_test(
         &self,
@@ -54,11 +48,14 @@ impl DrawingToolImpl for HorizontalLine {
         radius_px: f32,
         _ctxt: &DrawContext<'_>,
     ) -> bool {
-        hit_axis(chart_rect, points, position, radius_px, Axis::Horizontal)
+        hit_line(chart_rect, points, position, radius_px, Extend::Both)
     }
 
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
-        (vec![egui::pos2(100.0, 120.0)], egui::pos2(450.0, 123.0))
+        (
+            vec![egui::pos2(100.0, 100.0), egui::pos2(300.0, 200.0)],
+            egui::pos2(200.0, 150.0),
+        )
     }
 }
