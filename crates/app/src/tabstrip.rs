@@ -374,6 +374,8 @@ mod tests {
                 provider: ProviderKind::Binance,
                 symbols: vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()],
                 bubble_preset: None,
+                default_layout: None,
+                default_bars: None,
             }],
             metatrader: MetaTraderSettings::default(),
             paper: Default::default(),
