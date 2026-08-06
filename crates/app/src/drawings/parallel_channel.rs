@@ -127,6 +127,46 @@ fn channel_offset(points: &[egui::Pos2]) -> egui::Vec2 {
     to_width_anchor - baseline * (to_width_anchor.dot(baseline) / baseline_length_sq)
 }
 
+/// Everything a channel is made of.
+///
+/// **Open at both ends, on purpose.** An earlier version closed the corridor
+/// with cross-rail connectors at the anchors, and a closed parallelogram is
+/// the visual signature of a rectangle — the two tools became one mark. No
+/// professional platform caps a channel; where the trader anchored it is told
+/// by the selection handles, which is what handles are for.
+///
+/// One source of truth for the geometry, so paint and hit-test cannot come to
+/// disagree about what the object even is.
+struct Channel {
+    near: (egui::Pos2, egui::Pos2),
+    far: (egui::Pos2, egui::Pos2),
+    /// The line traders actually trade off, when it is on.
+    midline: Option<(egui::Pos2, egui::Pos2)>,
+}
+
+impl Channel {
+    fn new(chart_rect: egui::Rect, points: &[egui::Pos2], payload: ChannelPayload) -> Option<Self> {
+        if points.len() < 3 {
+            return None;
+        }
+        let offset = channel_offset(points);
+        let (start, end) = baseline(chart_rect, points, payload.extend());
+        let half = offset / 2.0;
+        Some(Self {
+            near: (start, end),
+            far: (start + offset, end + offset),
+            midline: payload.midline.then_some((start + half, end + half)),
+        })
+    }
+
+    /// Every stroke the object has, for hit-testing. The corridor's interior
+    /// is not one of them: a channel is grabbed by its lines, exactly like
+    /// the trend line it is built from.
+    fn segments(&self) -> impl Iterator<Item = (egui::Pos2, egui::Pos2)> + '_ {
+        [self.near, self.far].into_iter().chain(self.midline)
+    }
+}
+
 /// The baseline after extension. Rails are parallel, so extending this one
 /// and adding the offset extends all three by construction.
 fn baseline(
@@ -233,31 +273,30 @@ impl DrawingToolImpl for ParallelChannel {
         if points.len() != 3 {
             return;
         }
-        let payload = payload_of(ctxt);
-        let offset = channel_offset(points);
-        let (near_start, near_end) = baseline(chart_rect, points, payload.extend());
-        let (far_start, far_end) = (near_start + offset, near_end + offset);
+        let Some(channel) = Channel::new(chart_rect, points, payload_of(ctxt)) else {
+            return;
+        };
 
         if style.fill_alpha > 0 {
             painter.add(egui::Shape::convex_polygon(
-                vec![near_start, near_end, far_end, far_start],
+                vec![
+                    channel.near.0,
+                    channel.near.1,
+                    channel.far.1,
+                    channel.far.0,
+                ],
                 drawing_fill(style),
                 egui::Stroke::NONE,
             ));
         }
-        painter.line_segment([near_start, near_end], stroke);
-        painter.line_segment([far_start, far_end], stroke);
-        // The end caps stay on the anchors even when the rails run on: they
-        // mark where the trader actually placed the channel.
-        painter.line_segment([points[0], points[0] + offset], stroke);
-        painter.line_segment([points[1], points[1] + offset], stroke);
+        painter.line_segment([channel.near.0, channel.near.1], stroke);
+        painter.line_segment([channel.far.0, channel.far.1], stroke);
 
         // The halo pass is a widened copy of the stroke; a dashed line
         // widened underneath itself reads as a smear, so the midline is
         // geometry-only.
-        if payload.midline && !ctxt.halo {
-            let half = offset / 2.0;
-            dashed_segment(painter, near_start + half, near_end + half, stroke);
+        if let Some((from, to)) = channel.midline.filter(|_| !ctxt.halo) {
+            dashed_segment(painter, from, to, stroke);
         }
     }
     fn hit_test(
@@ -268,26 +307,11 @@ impl DrawingToolImpl for ParallelChannel {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool {
-        if points.len() != 3 {
-            return false;
-        }
-        let payload = payload_of(ctxt);
-        let offset = channel_offset(points);
-        let (near_start, near_end) = baseline(chart_rect, points, payload.extend());
-        let half = offset / 2.0;
-        let rails = [
-            (near_start, near_end),
-            (near_start + offset, near_end + offset),
-            (points[0], points[0] + offset),
-            (points[1], points[1] + offset),
-        ];
-        let midline = payload
-            .midline
-            .then_some((near_start + half, near_end + half));
-        rails
-            .into_iter()
-            .chain(midline)
-            .any(|(start, end)| distance_to_segment(position, start, end) <= radius_px)
+        Channel::new(chart_rect, points, payload_of(ctxt)).is_some_and(|channel| {
+            channel
+                .segments()
+                .any(|(start, end)| distance_to_segment(position, start, end) <= radius_px)
+        })
     }
 
     #[cfg(test)]
@@ -385,6 +409,62 @@ mod tests {
         assert_eq!(end.x, 800.0);
         assert_eq!(points[0], egui::pos2(100.0, 100.0));
         assert_eq!(points[1], egui::pos2(200.0, 100.0));
+    }
+
+    /// A channel is a corridor, not a box. Closing the ends with cross-rail
+    /// connectors made it read as a rectangle — the two tools became the same
+    /// mark on the chart. Nothing the object is made of may join one rail to
+    /// the other.
+    #[test]
+    fn a_channel_is_never_closed_at_its_ends() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 160.0),
+            egui::pos2(100.0, 200.0),
+        ];
+        let channel = Channel::new(chart, &points, ChannelPayload::default()).expect("three anchors");
+        let baseline_direction = (points[1] - points[0]).normalized();
+        for (start, end) in channel.segments() {
+            let direction = (end - start).normalized();
+            let along = direction.dot(baseline_direction).abs();
+            assert!(
+                (along - 1.0).abs() < 1e-3,
+                "every segment runs along the channel, never across it: {start:?} -> {end:?}"
+            );
+        }
+    }
+
+    /// Three strokes with the middle line, two without — and never a fourth.
+    #[test]
+    fn a_channel_is_two_rails_plus_the_middle_line() {
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 160.0),
+            egui::pos2(100.0, 200.0),
+        ];
+        assert_eq!(
+            Channel::new(chart, &points, ChannelPayload::default())
+                .expect("anchors")
+                .segments()
+                .count(),
+            3
+        );
+        assert_eq!(
+            Channel::new(
+                chart,
+                &points,
+                ChannelPayload {
+                    midline: false,
+                    ..ChannelPayload::default()
+                }
+            )
+            .expect("anchors")
+            .segments()
+            .count(),
+            2
+        );
     }
 
     #[test]

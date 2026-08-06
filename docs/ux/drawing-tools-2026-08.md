@@ -171,7 +171,28 @@ over.
 Consistency is a feature here, which is why the corner preference is
 ordered and deterministic rather than merely "the emptiest area".
 
-### D4 — The channel says what a trader calls it
+### D4 — The channel is a corridor, not a box
+
+Caught on the running build, after the first version shipped closed: the
+channel drew cross-rail connectors at its anchors, and **a closed
+parallelogram is the visual signature of a rectangle**. Two different tools
+became the same mark — a value zone and a trending corridor read alike at a
+glance, which is precisely the distinction a price-action trader is making.
+
+No professional platform caps a channel. TradingView and MetaTrader both
+draw two parallel lines and nothing else; where the trader anchored it is
+told by the selection handles, which is what handles are for. So the ends
+are open, and the object is exactly three strokes: two rails and the middle
+line.
+
+> **Rafa:** "at a glance I need to know whether that is a zone or a trend
+> with a slope. Closed, they are the same smear."
+
+The geometry now lives in one place (`Channel`) that paint and hit-test both
+read, so the shape and the thing you can click can no longer drift apart —
+the same class of defect as the press/release disagreement in §D8.
+
+### D4b — The channel says what a trader calls it
 
 `ParallelChannelPayload { midline, extend_left, extend_right }`, edited in
 a tool-owned inspector tab (`Channel`), exactly the way the Fib level
@@ -264,6 +285,34 @@ Honesty at the edges, since a timestamp can fall outside a pane's series:
   clamped edge slot, and the drawing is painted at reduced alpha with the
   clamp visible, rather than silently pretending the anchor is on-screen.
 - A pane with no bars yet paints no shared drawings — nothing to anchor to.
+
+### D8 — A click selects what the press grabbed
+
+Also caught on the running build, and the sharpest lesson of the pass.
+
+The pinned inspector is a side panel laid out *before* the central panel, so
+the frame a selection appears is the frame the canvas narrows by the panel's
+width — and with the newest bar pinned to the right edge, every drawing
+slides sideways with it. The press had hit the object on the wide canvas;
+the release re-hit-tested the same screen pixel on the narrow one, found
+empty chart, and deselected. The panel opened and shut in two frames,
+forever, with the mouse standing still.
+
+**Re-deciding on the release was the bug.** A click selects what the press
+resolved, on the geometry the user was looking at when they pressed. One
+resolver — handle first, then body — shared by both, so they cannot answer
+differently.
+
+The general rule this leaves behind: *no gesture may re-measure a world that
+the gesture itself moved.*
+
+### D9 — Selecting is not moving
+
+The move gesture had no drag threshold, so two pixels of hand tremor during
+a click re-angled a channel or shifted a level, and recorded it as an undo
+step. Placement already refused to read a twitch as a drag; moving refuses
+too now, measured from the press so that crossing the threshold hands the
+gesture its whole movement instead of trailing the cursor forever.
 
 ---
 

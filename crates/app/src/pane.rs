@@ -514,6 +514,15 @@ pub struct ChartPane {
     /// narrows by the panel's width and every drawing slides left with it.
     /// Re-hit-testing on the release would be asking a different chart.
     pub drawing_press_pick: Option<Option<usize>>,
+    /// Where a move/resize gesture pressed, while it is still under the drag
+    /// threshold. `None` once the threshold is passed — from then on the
+    /// object follows the pointer for the rest of the gesture.
+    ///
+    /// Without it, one pixel of hand tremor during a *click* re-angles a
+    /// channel or shifts a level the trader placed deliberately, and records
+    /// it as an undo step. Placement already refused to turn a twitch into a
+    /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
+    pub drawing_drag_pending_from: Option<egui::Pos2>,
     pub drawing_drag: DrawingDrag,
 }
 
@@ -590,6 +599,7 @@ impl ChartPane {
             drawing_press_position: None,
             drawing_press_started_empty: false,
             drawing_press_pick: None,
+            drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
         }
     }
@@ -1632,6 +1642,7 @@ impl ChartPane {
                 // actually looking at when they pressed.
                 self.drawing_press_pick =
                     Some(self.drawing_pick_at(position, areas.chart, history_right, total, &scale));
+                self.drawing_drag_pending_from = Some(position);
                 if let Some((drawing_index, point_index)) =
                     self.drawing_anchor_at(position, history_right, total, &scale)
                 {
@@ -1662,7 +1673,34 @@ impl ChartPane {
                 // click above, which already respects floating windows.
                 drawing_drag_started = self.drawing_drag.is_active();
             }
-            if primary_down && !drawing_drag_started {
+            // A held button is not yet a drag. Until the pointer has left the
+            // threshold the object does not move at all, so a click stays a
+            // click — the alternative is that selecting a channel re-angles
+            // it by two pixels of hand tremor, and the trader's level is
+            // quietly no longer where they put it.
+            //
+            // `travel` is measured from the press, not accumulated per frame,
+            // so crossing the threshold hands the gesture the *whole* movement
+            // and the object does not trail the cursor by 4 px forever.
+            let travel = match (self.drawing_drag_pending_from, pointer_position) {
+                (Some(origin), Some(position)) => {
+                    let travel = position - origin;
+                    if travel.length() < DRAWING_DRAG_THRESHOLD_PX {
+                        None
+                    } else {
+                        self.drawing_drag_pending_from = None;
+                        Some(travel)
+                    }
+                }
+                // No pending origin: the threshold was already passed earlier
+                // in this gesture, so this frame's own delta drives it.
+                (None, _) => Some(pointer_delta),
+                (Some(_), None) => None,
+            };
+            if primary_down
+                && !drawing_drag_started
+                && let Some(travel) = travel
+            {
                 match self.drawing_drag {
                     DrawingDrag::Anchor {
                         drawing_index,
@@ -1684,9 +1722,9 @@ impl ChartPane {
                     DrawingDrag::Translate => {
                         if let Some(scale) = drawing_scale {
                             let (lo, hi) = scale.range();
-                            let delta_bar = pointer_delta.x / self.viewport.candle_width();
+                            let delta_bar = travel.x / self.viewport.candle_width();
                             let delta_price =
-                                -f64::from(pointer_delta.y / areas.chart.height()) * (hi - lo);
+                                -f64::from(travel.y / areas.chart.height()) * (hi - lo);
                             self.drawings.translate_selected(delta_bar, delta_price);
                         }
                     }
@@ -1706,10 +1744,12 @@ impl ChartPane {
                 // click, which may be somewhere else entirely. The click path
                 // above already ran this frame and took it if it was a click.
                 self.drawing_press_pick = None;
+                self.drawing_drag_pending_from = None;
             }
         } else {
             self.drawing_drag = DrawingDrag::None;
             self.drawing_press_pick = None;
+            self.drawing_drag_pending_from = None;
         }
         // Where the press landed, not where the pointer is now: a pan that
         // started on the candles keeps working when it crosses the divider.

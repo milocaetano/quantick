@@ -6209,6 +6209,77 @@ plot(close)
         }
     }
 
+    /// Selecting is not moving. Without a drag threshold on the move gesture,
+    /// a couple of pixels of hand tremor during a click re-angled a channel
+    /// or shifted a level — and recorded it as an undo step, so the trader's
+    /// line was quietly no longer where they put it. Placement already
+    /// refused to read a twitch as a drag; moving refuses too now.
+    #[test]
+    fn a_twitch_while_clicking_does_not_move_the_drawing() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        click_chart(&mut app, &ctx, egui::pos2(600.0, 400.0));
+        click_chart(&mut app, &ctx, egui::pos2(900.0, 300.0));
+        run_frame(&mut app, &ctx);
+        let placed = app.active_tab().flow_pane.drawings.items()[0]
+            .points
+            .clone();
+
+        // Press on the stroke, wobble inside the threshold, release.
+        let grab = egui::pos2(750.0, 350.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+        );
+        // Ending *away* from the press, still inside the threshold: a wobble
+        // that returned to its origin would net to zero movement and prove
+        // nothing about the threshold.
+        let wobbled = grab + egui::vec2(3.0, 0.0);
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(wobbled)]);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(wobbled),
+                pointer_button(wobbled, false),
+            ],
+        );
+
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items()[0].points,
+            placed,
+            "a click that wobbled under the threshold must leave the geometry alone"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(0),
+            "and it is still a click, so it still selects"
+        );
+
+        // The same gesture past the threshold does move it.
+        let far = grab + egui::vec2(40.0, 0.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+        );
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(far)]);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(far), pointer_button(far, false)],
+        );
+        assert_ne!(
+            app.active_tab().flow_pane.drawings.items()[0].points,
+            placed,
+            "a real drag still moves it"
+        );
+    }
+
     /// The reported flicker, root cause.
     ///
     /// The pinned inspector is a `SidePanel::right` laid out *before* the
