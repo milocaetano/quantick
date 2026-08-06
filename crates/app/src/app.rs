@@ -4041,6 +4041,90 @@ mod tests {
         );
     }
 
+    /// Drag a pane's top edge and that pane resizes — the grammar the canvas
+    /// split and the live lane already use, on the one band in the app that
+    /// did not have it. Dragging up grows the pane into the chart.
+    #[test]
+    fn dragging_a_panes_top_edge_resizes_that_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
+
+        let before = pane_slots(&app)[0].rect.height();
+        let edge = pane_slots(&app)[0].rect.center_top();
+        drag_sized(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            edge,
+            edge - egui::vec2(0.0, 40.0),
+        );
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+
+        let after = pane_slots(&app)[0].rect.height();
+        assert!(
+            after > before,
+            "dragging the edge up grows the pane: {before} -> {after}"
+        );
+    }
+
+    /// The floor holds during a drag too: a divider stops rather than
+    /// producing a pane too short to read. Anything else would hand the user a
+    /// way to recreate exactly the state this branch exists to prevent.
+    #[test]
+    fn a_divider_cannot_be_dragged_past_the_readable_floor() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
+
+        let edge = pane_slots(&app)[0].rect.center_top();
+        drag_sized(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            edge,
+            edge + egui::vec2(0.0, 400.0),
+        );
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+
+        let pane = pane_slots(&app)[0];
+        assert!(
+            pane.collapsed || pane.rect.height() >= crate::indicators::MIN_PANE_HEIGHT_PX,
+            "a drag cannot squeeze a pane below the floor: {pane:?}"
+        );
+    }
+
+    /// Double click on a divider gives the pane back to the automatic layout —
+    /// the escape every other axis in the app offers on the same gesture.
+    #[test]
+    fn double_clicking_a_divider_returns_the_pane_to_automatic() {
+        let ctx = egui::Context::default();
+        let (mut app, _cmd_rx) = app_with_full_pane_band(&ctx, TEST_WINDOW);
+
+        let automatic = pane_slots(&app)[0].rect.height();
+        let edge = pane_slots(&app)[0].rect.center_top();
+        drag_sized(
+            &mut app,
+            &ctx,
+            TEST_WINDOW,
+            edge,
+            edge - egui::vec2(0.0, 60.0),
+        );
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        assert!(
+            (pane_slots(&app)[0].rect.height() - automatic).abs() > 1.0,
+            "the drag took manual control"
+        );
+
+        let edge = pane_slots(&app)[0].rect.center_top();
+        click_sized(&mut app, &ctx, TEST_WINDOW, edge);
+        click_sized(&mut app, &ctx, TEST_WINDOW, edge);
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        assert!(
+            (pane_slots(&app)[0].rect.height() - automatic).abs() < 1.0,
+            "and a double click hands it back: {} vs {automatic}",
+            pane_slots(&app)[0].rect.height()
+        );
+    }
+
     /// The other half of the disclosure. A control that only opens is half a
     /// control: a trader who wants the candles back must be able to put a pane
     /// away without deleting the indicator, and the value must survive it.
@@ -6132,6 +6216,40 @@ plot(close)
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    /// A press-drag-release in a window of `size`.
+    fn drag_sized(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        start: egui::Pos2,
+        end: egui::Pos2,
+    ) {
+        run_frame_sized(
+            app,
+            ctx,
+            size,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+            egui::Modifiers::NONE,
+        );
+        run_frame_sized(
+            app,
+            ctx,
+            size,
+            vec![egui::Event::PointerMoved(end)],
+            egui::Modifiers::NONE,
+        );
+        run_frame_sized(
+            app,
+            ctx,
+            size,
+            vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
+            egui::Modifiers::NONE,
+        );
     }
 
     fn run_frame_at(app: &mut QuantickApp, ctx: &egui::Context, size: egui::Vec2) {

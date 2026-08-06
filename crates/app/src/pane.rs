@@ -209,6 +209,15 @@ fn lane_rungs(lane_width_px: f32) -> usize {
     rungs.clamp(1, MAX_LANE_RUNGS)
 }
 
+/// Half-height of the grab band over a pane's top edge, in pixels.
+///
+/// The rule itself stays a hairline — a thick bar between a chart and its
+/// indicator reads as a wall in the data. The handle around it is what makes
+/// it catchable, and the resize cursor is the only thing that announces it:
+/// the same bargain the live lane's divider and the canvas split already
+/// strike.
+const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
+
 /// Pixels of drag on a vertical axis that change its span by a factor of `e`.
 ///
 /// One number for the price gutter and for every indicator pane's gutter: the
@@ -219,6 +228,49 @@ const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 /// reports far more units than a pointer travels in a frame, so each unit has
 /// to count for less — a larger divisor, not a smaller one.
 const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
+
+/// The divider along a pane's top edge, as a resize handle.
+///
+/// The band it opens is the pane *below* it, which is what a top edge means:
+/// drag it up and that pane grows into the chart, drag it down and it gives
+/// the room back. Double click hands the pane to the automatic layout again —
+/// the same escape the price axis and every pane's own scale offer.
+///
+/// Returns the sizing the pane should now have, or `None` when the divider was
+/// not touched this frame.
+fn pane_divider_gesture(
+    ui: &egui::Ui,
+    id: egui::Id,
+    slot: &crate::indicators::PaneSlot,
+    plot: egui::Rect,
+) -> Option<PaneSizing> {
+    let edge = slot.rect.top();
+    let handle = ui.interact(
+        egui::Rect::from_min_max(
+            egui::pos2(plot.left(), edge - PANE_DIVIDER_HANDLE_PX),
+            egui::pos2(plot.right(), edge + PANE_DIVIDER_HANDLE_PX),
+        ),
+        id,
+        egui::Sense::click_and_drag(),
+    );
+    if handle.hovered() || handle.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if handle.double_clicked() {
+        return Some(PaneSizing::Auto);
+    }
+    if handle.dragged() {
+        let delta = handle.drag_delta().y;
+        if delta != 0.0 {
+            // Dragging the top edge upwards makes the band below it taller.
+            // The floor is not applied here: `PaneSizing::desired` owns it, so
+            // a drag and the automatic layout cannot disagree about how short
+            // a pane may be.
+            return Some(PaneSizing::Manual(slot.rect.height() - delta));
+        }
+    }
+    None
+}
 
 /// The gesture that pans a pane's own scale: press inside the pane and drag it
 /// up or down, exactly as a press on the candles drags price.
@@ -1955,6 +2007,26 @@ impl ChartPane {
         if pane_time_gesture.scroll_y.abs() > 0.0 {
             self.viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
+        }
+
+        // The dividers last of all: registered after every pane body so the
+        // grab band takes the drag that would otherwise pan the pane behind
+        // it, exactly as the canvas split's divider is registered after both
+        // its panes and the lane's after the candles.
+        let plot = areas.chart;
+        for (view, slot) in self
+            .indicators
+            .visible_panes_mut()
+            .zip(&areas.indicator_panes)
+        {
+            if let Some(sizing) = pane_divider_gesture(
+                ui,
+                egui::Id::new(("pane_divider", pane_id, view.slot)),
+                slot,
+                plot,
+            ) {
+                view.sizing = sizing;
+            }
         }
     }
 
