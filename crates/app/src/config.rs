@@ -412,6 +412,23 @@ pub enum DeclaredLayout {
     TimeAndFlow,
 }
 
+impl DeclaredLayout {
+    /// Parse the same names the serde renames above accept, for callers
+    /// outside serde (the `QUANTICK_LAYOUT` env hook). One vocabulary, one
+    /// place: a name added here must be added to the renames, and the
+    /// `layout_names_agree_between_serde_and_parse` test holds the two
+    /// together.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim() {
+            "flow" => Some(DeclaredLayout::Flow),
+            "time" => Some(DeclaredLayout::Time),
+            "time+flow" => Some(DeclaredLayout::TimeAndFlow),
+            _ => None,
+        }
+    }
+}
+
 /// One selectable feed: a named backend and the symbols it offers.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FeedConfig {
@@ -1959,6 +1976,29 @@ mod tests {
         let (undeclared, _) = sample();
         assert_eq!(undeclared.feeds[0].default_layout, None);
         assert_eq!(undeclared.startup_spec_for("binance"), None);
+    }
+
+    /// The TOML names and [`DeclaredLayout::parse`] are one vocabulary: what
+    /// a config file may say, the `QUANTICK_LAYOUT` hook accepts, and
+    /// nothing else on either side.
+    #[test]
+    fn layout_names_agree_between_serde_and_parse() {
+        for (name, expected) in [
+            ("flow", DeclaredLayout::Flow),
+            ("time", DeclaredLayout::Time),
+            ("time+flow", DeclaredLayout::TimeAndFlow),
+        ] {
+            assert_eq!(DeclaredLayout::parse(name), Some(expected), "{name}");
+            let toml = format!("layout = \"{name}\"");
+            #[derive(Deserialize)]
+            struct Probe {
+                layout: DeclaredLayout,
+            }
+            let probe: Probe = toml::from_str(&toml).expect(name);
+            assert_eq!(probe.layout, expected, "{name}");
+        }
+        assert_eq!(DeclaredLayout::parse("grid"), None);
+        assert_eq!(DeclaredLayout::parse(" time "), Some(DeclaredLayout::Time));
     }
 
     /// A `default_bars` no control could produce is refused at load, naming

@@ -781,12 +781,7 @@ impl QuantickApp {
         // takes. An env var is an explicit request for this run, so it wins
         // over a feed's declared `default_layout`.
         if let Ok(name) = std::env::var("QUANTICK_LAYOUT") {
-            let layout = match name.trim() {
-                "flow" => Some(CanvasLayout::Single),
-                "time" => Some(CanvasLayout::Time),
-                "time+flow" => Some(CanvasLayout::TimeAndFlow),
-                _ => None,
-            };
+            let layout = crate::config::DeclaredLayout::parse(&name).map(CanvasLayout::from);
             match layout {
                 Some(layout) => app.active_tab_mut().set_layout(layout),
                 None => tracing::warn!(
