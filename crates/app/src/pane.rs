@@ -187,6 +187,15 @@ pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
 /// so.
 const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 
+/// Half-height of the grab band over a pane's top edge, in pixels.
+///
+/// The rule itself stays a hairline — a thick bar between a chart and its
+/// indicator reads as a wall in the data. The handle around it is what makes
+/// it catchable, and the resize cursor is the only thing that announces it:
+/// the same bargain the live lane's divider and the canvas split already
+/// strike.
+const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
+
 /// Pixels of drag on a vertical axis that change its span by a factor of `e`.
 ///
 /// One number for the price gutter and for every indicator pane's gutter: the
@@ -198,6 +207,60 @@ const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 /// to count for less — a larger divisor, not a smaller one.
 const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
 
+/// The divider along a pane's top edge, as a resize handle.
+///
+/// The band it opens is the pane *below* it, which is what a top edge means:
+/// drag it up and that pane grows into the chart, drag it down and it gives
+/// the room back. Double click hands the pane to the automatic layout again —
+/// the same escape the price axis and every pane's own scale offer.
+///
+/// Returns the sizing the pane should now have, or `None` when the divider was
+/// not touched this frame.
+fn pane_divider_gesture(
+    ui: &egui::Ui,
+    id: egui::Id,
+    slot: &crate::indicators::PaneSlot,
+    plot: egui::Rect,
+) -> Option<PaneSizing> {
+    let edge = slot.rect.top();
+    let handle = ui.interact(
+        egui::Rect::from_min_max(
+            egui::pos2(plot.left(), edge - PANE_DIVIDER_HANDLE_PX),
+            egui::pos2(plot.right(), edge + PANE_DIVIDER_HANDLE_PX),
+        ),
+        id,
+        egui::Sense::click_and_drag(),
+    );
+    if handle.hovered() || handle.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if handle.double_clicked() {
+        return Some(PaneSizing::Auto);
+    }
+    if handle.dragged() {
+        let delta = handle.drag_delta().y;
+        if delta != 0.0 {
+            // Dragging the top edge upwards makes the band below it taller.
+            // The floor is not applied here: `PaneSizing::desired` owns it, so
+            // a drag and the automatic layout cannot disagree about how short
+            // a pane may be.
+            return Some(PaneSizing::Manual(slot.rect.height() - delta));
+        }
+    }
+    None
+}
+
+/// The gesture that pans a pane's own scale: press inside the pane and drag it
+/// up or down, exactly as a press on the candles drags price.
+///
+/// Separate from [`axis_zoom_gesture`] because they are different verbs on the
+/// same axis — the gutter *scales* it, the body *moves* it — and the candles
+/// already split them that way. A pane whose body did nothing left the axis
+/// reachable only from the gutter at the far side of the chart, which is a
+/// long way to travel to move a curve out of its own way.
+///
+/// `auto` is the range the last frame fitted; without one there is nothing to
+/// take manual control *from*, and only the reset stays available.
 /// The gesture that scales a vertical axis, wherever its numbers live: drag up
 /// to compress the span, down to expand, scroll to zoom, double-click to hand
 /// the axis back to auto-fit.
@@ -1798,6 +1861,25 @@ impl ChartPane {
                 } else {
                     PaneSizing::Collapsed
                 };
+            }
+        }
+        // The dividers last of all: registered after every pane so the grab
+        // band takes the drag that would otherwise reach the pane behind it,
+        // exactly as the canvas split's divider is registered after both its
+        // panes and the lane's after the candles.
+        let plot = areas.chart;
+        for (view, slot) in self
+            .indicators
+            .visible_panes_mut()
+            .zip(&areas.indicator_panes)
+        {
+            if let Some(sizing) = pane_divider_gesture(
+                ui,
+                egui::Id::new(("pane_divider", pane_id, view.slot)),
+                slot,
+                plot,
+            ) {
+                view.sizing = sizing;
             }
         }
     }
