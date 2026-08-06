@@ -6060,6 +6060,125 @@ plot(close)
         drawing
     }
 
+    /// Count the line segments painted in the drawing colour — how many
+    /// strokes of *this* object are on screen, across every pane.
+    fn drawing_strokes(output: &egui::FullOutput) -> usize {
+        let color = egui::epaint::ColorMode::Solid(crate::drawings::DEFAULT_DRAWING_COLOR);
+        output
+            .shapes
+            .iter()
+            .filter(|clipped| match &clipped.shape {
+                egui::Shape::LineSegment { stroke, .. } => stroke.color == color,
+                _ => false,
+            })
+            .count()
+    }
+
+    /// Marina's ask (`docs/ux/drawing-tools-2026-08.md` §D7): a level drawn on
+    /// one chart of the tab shows on the other, at the same moment in market
+    /// time — one version of the truth instead of two hand-drawn ones.
+    #[test]
+    fn a_shared_drawing_is_painted_on_the_other_pane_of_the_tab() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        // One frame builds the time pane, the next lets both panes draw and
+        // cache the projection a foreign mark is re-expressed through.
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().time_pane.is_some(),
+            "the split is what this proof is about"
+        );
+
+        // Anchored on a real bar, so the anchor carries a real market time.
+        let slot = 100;
+        let anchored = {
+            let pane = &app.active_tab().flow_pane;
+            let time = pane.slot_open_time(slot).expect("a closed bar has a time");
+            let price = pane
+                .closed_bar(slot)
+                .map(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+                .flatten()
+                .expect("the bar has a close");
+            drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
+        };
+        let pane = &mut app.active_tab_mut().flow_pane;
+        assert!(pane.drawings.place_with(
+            drawing_tool("horizontal-line"),
+            anchored,
+            drawings::DrawingTool::default_payload,
+        ));
+
+        let own_pane_only = drawing_strokes(&run_frame(&mut app, &ctx));
+        assert!(
+            own_pane_only > 0,
+            "the object paints on the chart it was drawn on"
+        );
+
+        let drawing = app
+            .active_tab_mut()
+            .flow_pane
+            .drawings
+            .selected_mut()
+            .expect("placement selects what it completed");
+        assert!(drawing.shareable(), "an anchor on a real bar has a time");
+        drawing.scope = drawings::DrawingScope::AllCharts;
+
+        let both_panes = drawing_strokes(&run_frame(&mut app, &ctx));
+        assert!(
+            both_panes > own_pane_only,
+            "sharing must add strokes on the other pane: {own_pane_only} -> {both_panes}"
+        );
+    }
+
+    /// The reverse, so the test above cannot pass on a stroke that was always
+    /// there: switching sharing off takes the foreign copy away again.
+    #[test]
+    fn unsharing_removes_the_copy_from_the_other_pane() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let slot = 100;
+        let anchored = {
+            let pane = &app.active_tab().flow_pane;
+            let time = pane.slot_open_time(slot).expect("a closed bar has a time");
+            let price = pane
+                .closed_bar(slot)
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+                .expect("the bar has a close");
+            drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
+        };
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.drawings.place_with(
+            drawing_tool("horizontal-line"),
+            anchored,
+            drawings::DrawingTool::default_payload,
+        );
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .selected_mut()
+            .expect("selected")
+            .scope = drawings::DrawingScope::AllCharts;
+        let shared = drawing_strokes(&run_frame(&mut app, &ctx));
+
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .selected_mut()
+            .expect("selected")
+            .scope = drawings::DrawingScope::ThisChart;
+        let alone = drawing_strokes(&run_frame(&mut app, &ctx));
+        assert!(
+            alone < shared,
+            "unsharing must take the foreign copy away: {shared} -> {alone}"
+        );
+    }
+
     /// Full UI interaction proof: every registered drawing is placed through
     /// egui pointer events against the real chart frame. This catches the
     /// original regression where multi-point tools silently ignored drags.

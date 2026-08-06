@@ -2563,11 +2563,15 @@ impl ChartPane {
                     0
                 }
             };
-            clamped |= self.slot_open_time(slot).is_some_and(|open| {
-                // Landing on the newest bar for a time past it is the other
-                // clamp: `slot_at_time` cannot go further than the tape has.
-                slot + 1 == slots && open < time
-            });
+            // The other clamp: a time past the end of this pane's series
+            // lands on the newest slot because `slot_at_time` cannot go
+            // further than the tape has. Only a *closed* bar can prove that,
+            // by having ended before the anchor's instant — a time inside the
+            // forming bar is simply now, and fading it would be a lie in the
+            // other direction.
+            clamped |= self
+                .closed_bar(slot)
+                .is_some_and(|bar| bar.close_time < time);
             anchors.push(ChartPoint::at_time(
                 slot as f32 + 0.5,
                 point.price,
