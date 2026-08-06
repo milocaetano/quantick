@@ -413,6 +413,18 @@ pub fn log_scale_allowed(a: f64, b: f64, c: f64) -> bool {
 
 /// The price of one level. `c` is ignored by retracement; for extension it
 /// is the projection origin. Log demands positive prices — `None` otherwise.
+///
+/// **Retracement runs backwards along the move, not forwards.** A "61.8 %
+/// retracement" is a statement about how much of a move price has *given
+/// back*: 0 % sits at the end of the move (`b`), 100 % at where it started
+/// (`a`), and 61.8 % is 61.8 % of the way back from the end toward the start.
+/// Drawn top-down over a fall, that puts 61.8 % high on the chart, where a
+/// trader waits for the bounce to stall — the whole reason the level is
+/// drawn. Anchoring 0 % at `a` instead, as this did, mirrors every level
+/// through the middle of the move and names them all wrong.
+///
+/// Extension is the other question — where the *next* leg may reach — so it
+/// projects forward from `c` by the size of the `a`→`b` move, unchanged.
 #[must_use]
 pub fn level_price(
     kind: FibKind,
@@ -424,17 +436,19 @@ pub fn level_price(
 ) -> Option<f64> {
     if !log_scale {
         return Some(match kind {
-            FibKind::Retracement => a + (b - a) * ratio,
+            FibKind::Retracement => b + (a - b) * ratio,
             FibKind::Extension => c + (b - a) * ratio,
         });
     }
     if !log_scale_allowed(a, b, c) {
         return None;
     }
-    let log_move = (b / a).ln();
+    let move_log = (b / a).ln();
     Some(match kind {
-        FibKind::Retracement => a * (log_move * ratio).exp(),
-        FibKind::Extension => c * (log_move * ratio).exp(),
+        // `b * (a / b)^ratio`, written with the same log the extension uses:
+        // ln(a / b) is -ln(b / a).
+        FibKind::Retracement => b * (-move_log * ratio).exp(),
+        FibKind::Extension => c * (move_log * ratio).exp(),
     })
 }
 
@@ -1047,18 +1061,24 @@ mod tests {
         (left - right).abs() < EPS
     }
 
+    /// A retracement runs *backwards* along the move: 0 % at the end of it,
+    /// 100 % at where it started. So on a fall drawn top-down, 61.8 % is high
+    /// on the chart — that is what "price gave back 61.8 % of the drop"
+    /// means, and where the trader waits for the bounce to stall. It used to
+    /// be mirrored, putting 61.8 % near the low and naming every level wrong.
     #[test]
-    fn retracement_formula_is_exact_in_up_and_down_moves() {
+    fn retracement_measures_how_much_of_the_move_was_given_back() {
         // Down move: A above B (the prototype's 71,824.50 -> 69,111.50).
         let (a, b) = (71_824.50, 69_111.50);
+        let span = a - b;
         let golden = [
-            (0.0, 71_824.50),
-            (0.236, 71_184.232),
-            (0.382, 70_788.134),
-            (0.5, 70_468.0),
-            (0.618, 70_147.866),
-            (0.786, 69_692.082),
-            (1.0, 69_111.50),
+            (0.0, b),
+            (0.236, b + span * 0.236),
+            (0.382, b + span * 0.382),
+            (0.5, b + span * 0.5),
+            (0.618, b + span * 0.618),
+            (0.786, b + span * 0.786),
+            (1.0, a),
         ];
         for (ratio, expected) in golden {
             let price = level_price(FibKind::Retracement, false, a, b, b, ratio).unwrap();
@@ -1067,9 +1087,35 @@ mod tests {
                 "ratio {ratio}: {price} vs {expected}"
             );
         }
-        // Up move mirrors exactly.
+        assert!(
+            level_price(FibKind::Retracement, false, a, b, b, 0.618).unwrap() > (a + b) / 2.0,
+            "on a fall, the 61.8 % line sits in the upper half of the move"
+        );
+
+        // Up move mirrors exactly: 61.8 % given back of a 100 -> 200 rally is
+        // 200 - 0.618 * 100.
         let price = level_price(FibKind::Retracement, false, 100.0, 200.0, 200.0, 0.618).unwrap();
-        assert!(close(price, 161.8));
+        assert!(close(price, 138.2), "{price}");
+        assert!(
+            level_price(FibKind::Retracement, false, 100.0, 200.0, 200.0, 0.618).unwrap() < 150.0,
+            "on a rally, the 61.8 % line sits in the lower half of the move"
+        );
+    }
+
+    /// The log formulas must land on the same two ends as the linear ones,
+    /// or a trader switching the scale sees the levels renamed.
+    #[test]
+    fn the_log_retracement_shares_the_linear_ones_endpoints() {
+        let (a, b) = (71_824.50, 69_111.50);
+        let zero = level_price(FibKind::Retracement, true, a, b, b, 0.0).unwrap();
+        let one = level_price(FibKind::Retracement, true, a, b, b, 1.0).unwrap();
+        assert!(close(zero, b), "0 % is the end of the move: {zero}");
+        assert!(close(one, a), "100 % is where it started: {one}");
+        let middle = level_price(FibKind::Retracement, true, a, b, b, 0.618).unwrap();
+        assert!(
+            middle > (a + b) / 2.0,
+            "and 61.8 % is still high on a fall: {middle}"
+        );
     }
 
     #[test]

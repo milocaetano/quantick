@@ -1605,7 +1605,7 @@ impl ChartPane {
                             egui::CursorIcon::ResizeNwSe
                         });
                 } else if let Some(hovered) =
-                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                    self.drawing_at(position, drawing_area, history_right, total, &scale)
                 {
                     ui.ctx()
                         .set_cursor_icon(if self.drawings.items()[hovered].locked {
@@ -1636,7 +1636,7 @@ impl ChartPane {
                 let selected = if ui.input(|input| input.modifiers.alt) {
                     self.drawing_below_selection(
                         position,
-                        areas.chart,
+                        drawing_area,
                         history_right,
                         total,
                         &scale,
@@ -1645,7 +1645,7 @@ impl ChartPane {
                     self.drawing_press_pick.take().unwrap_or_else(|| {
                         // No press was recorded (it landed on chrome, or off
                         // the drawing area): fall back to asking now.
-                        self.drawing_pick_at(position, areas.chart, history_right, total, &scale)
+                        self.drawing_pick_at(position, drawing_area, history_right, total, &scale)
                     })
                 };
                 self.drawings.select(selected);
@@ -1663,8 +1663,13 @@ impl ChartPane {
             {
                 // One question, asked once, on the geometry the user was
                 // actually looking at when they pressed.
-                self.drawing_press_pick =
-                    Some(self.drawing_pick_at(position, areas.chart, history_right, total, &scale));
+                self.drawing_press_pick = Some(self.drawing_pick_at(
+                    position,
+                    drawing_area,
+                    history_right,
+                    total,
+                    &scale,
+                ));
                 self.drawing_drag_pending_from = Some(position);
                 if let Some((drawing_index, point_index)) =
                     self.drawing_anchor_at(position, history_right, total, &scale)
@@ -1680,7 +1685,7 @@ impl ChartPane {
                         }
                     };
                 } else if let Some(index) =
-                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                    self.drawing_at(position, drawing_area, history_right, total, &scale)
                 {
                     self.drawings.select(Some(index));
                     self.drawing_drag = if self.drawings.items()[index].locked {
@@ -2253,7 +2258,7 @@ impl ChartPane {
 
         // Drawings sit above market layers and remain anchored to chart space,
         // not the screen, while the viewport moves beneath them.
-        self.draw_drawings(painter, chart_rect, right, total, &scale);
+        self.draw_drawings(painter, self.drawing_area(chart_rect), right, total, &scale);
 
         // Closed-trade marks sit between the drawings and the live paper
         // lines: history under the orders that are still working. Only the
@@ -2577,6 +2582,21 @@ impl ChartPane {
     /// mark is real, its position on *this* chart is not exact.
     const SHARED_CLAMPED_OPACITY: f32 = 0.45;
 
+    /// The band drawings live in: the candles minus the live lane.
+    ///
+    /// The lane is the tape's own reserved strip at the right edge — a live
+    /// region, not a place for annotations, and a horizontal line running
+    /// across it was drawing over the flow. Placement already refused to put
+    /// an anchor there; paint, geometry and hit-test agree with it now, which
+    /// also keeps a line's painted end and its grabbable end the same pixel.
+    fn drawing_area(&self, chart: egui::Rect) -> egui::Rect {
+        let right = self
+            .last_lane_divider_x
+            .unwrap_or(chart.right())
+            .clamp(chart.left(), chart.right());
+        egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
+    }
+
     /// This pane's own projection, rebuilt from the geometry the last
     /// [`Self::draw_chart`] cached. `None` before the pane has drawn once, or
     /// while it has no price range to project against.
@@ -2591,7 +2611,7 @@ impl ChartPane {
             self.last_chart_top + self.last_chart_height,
         );
         let history_right = self.last_lane_divider_x.unwrap_or(chart.right());
-        Some((chart, history_right, self.slots(), scale))
+        Some((self.drawing_area(chart), history_right, self.slots(), scale))
     }
 
     /// Paint the shared drawings that live on `source`, re-expressed on this
@@ -3021,6 +3041,37 @@ fn magnet_price_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tape's lane is a live region, not a canvas. A drawing that ran
+    /// across it painted over the flow — and worse, the painted end and the
+    /// grabbable end were different pixels, because paint used the whole
+    /// chart while placement stopped at the divider.
+    #[test]
+    fn the_drawing_band_stops_at_the_live_lane() {
+        let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+
+        pane.last_lane_divider_x = None;
+        assert_eq!(
+            pane.drawing_area(chart),
+            chart,
+            "no lane, no carve — the whole chart is the canvas"
+        );
+
+        pane.last_lane_divider_x = Some(880.0);
+        let band = pane.drawing_area(chart);
+        assert_eq!(band.right(), 880.0, "the band ends where the lane begins");
+        assert_eq!(band.left(), chart.left());
+        assert_eq!(band.y_range(), chart.y_range());
+
+        // A divider reported outside the chart cannot make the band bigger
+        // than the chart or invert it.
+        pane.last_lane_divider_x = Some(5_000.0);
+        assert_eq!(pane.drawing_area(chart).right(), chart.right());
+        pane.last_lane_divider_x = Some(-40.0);
+        let degenerate = pane.drawing_area(chart);
+        assert!(degenerate.right() >= degenerate.left());
+    }
 
     /// A bar spanning 98 … 102, for the magnet.
     fn magnet_candle() -> quantick_engine::Bar {
