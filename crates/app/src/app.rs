@@ -1935,6 +1935,23 @@ impl QuantickApp {
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
             canvas_layout = ?self.active_tab().layout,
             time_pane_spec = self.active_tab().time_pane.as_ref().map(|pane| pane.state.spec().summary()),
+            // Drawings are a per-frame, O(objects) paint cost, and the shared
+            // ones are additionally reprojected on every other pane of the
+            // tab. Counting them here is what lets a frame-cost reading be
+            // attributed instead of guessed — and it is the only way a
+            // headless run can prove the drawing overlay is populated at all.
+            drawings = self.active_tab().flow_pane.drawings.items().len()
+                + self
+                    .active_tab()
+                    .time_pane
+                    .as_ref()
+                    .map_or(0, |pane| pane.drawings.items().len()),
+            shared_drawings = self.active_tab().flow_pane.drawings.shared_count()
+                + self
+                    .active_tab()
+                    .time_pane
+                    .as_ref()
+                    .map_or(0, |pane| pane.drawings.shared_count()),
             book_enabled = book.enabled,
             book_status = book.status,
             book_generation = book.generation,
@@ -6098,8 +6115,7 @@ plot(close)
             let time = pane.slot_open_time(slot).expect("a closed bar has a time");
             let price = pane
                 .closed_bar(slot)
-                .map(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
-                .flatten()
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
                 .expect("the bar has a close");
             drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
         };

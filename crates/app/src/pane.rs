@@ -2523,7 +2523,9 @@ impl ChartPane {
             } else {
                 drawing.style
             };
-            let points: Vec<egui::Pos2> = anchors
+            // Stack-allocated: this is a per-frame path, and every shipped
+            // tool has at most three anchors, so the heap is never touched.
+            let points: SmallVec<[egui::Pos2; 4]> = anchors
                 .iter()
                 .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
                 .collect();

@@ -81,22 +81,20 @@ impl DrawingPayload for TextPayload {
     }
 }
 
-fn payload_of(ctxt: &DrawContext<'_>) -> TextPayload {
-    ctxt.payload
-        .as_any()
-        .downcast_ref::<TextPayload>()
-        .cloned()
-        .unwrap_or_default()
+/// Borrowed, never cloned: paint and hit-test both run every frame, and a
+/// note's words can be a paragraph.
+fn payload_of<'a>(ctxt: &'a DrawContext<'_>) -> Option<&'a TextPayload> {
+    ctxt.payload.as_any().downcast_ref::<TextPayload>()
 }
 
 /// The words as painted, and the colour they are painted in — an empty note
 /// shows its placeholder muted, so it reads as "nothing typed yet" rather
 /// than as content.
-fn shown(payload: &TextPayload, style: DrawingStyle) -> (String, egui::Color32) {
+fn shown(payload: &TextPayload, style: DrawingStyle) -> (&str, egui::Color32) {
     if payload.text.trim().is_empty() {
-        (PLACEHOLDER.to_owned(), theme::TEXT_MUTED)
+        (PLACEHOLDER, theme::TEXT_MUTED)
     } else {
-        (payload.text.clone(), style.color)
+        (payload.text.as_str(), style.color)
     }
 }
 
@@ -178,12 +176,14 @@ impl DrawingToolImpl for Text {
         let Some(anchor) = points.first() else {
             return;
         };
-        let payload = payload_of(ctxt);
-        let (text, color) = shown(&payload, style);
+        let Some(payload) = payload_of(ctxt) else {
+            return;
+        };
+        let (text, color) = shown(payload, style);
         painter.text(
             *anchor - egui::vec2(0.0, TEXT_LIFT_PX),
             egui::Align2::LEFT_BOTTOM,
-            text,
+            text.to_owned(),
             egui::FontId::proportional(payload.size_px),
             color,
         );
@@ -199,8 +199,10 @@ impl DrawingToolImpl for Text {
         let Some(anchor) = points.first() else {
             return false;
         };
-        let payload = payload_of(ctxt);
-        let (text, _) = shown(&payload, ctxt.style);
+        let Some(payload) = payload_of(ctxt) else {
+            return false;
+        };
+        let (text, _) = shown(payload, ctxt.style);
         // Measured from the type size rather than laid out: hit-testing runs
         // per frame per object and must not build a galley to answer.
         let lines = text.lines().count().max(1) as f32;
@@ -233,7 +235,8 @@ mod tests {
 
     #[test]
     fn an_empty_note_still_shows_something_to_click() {
-        let (text, color) = shown(&TextPayload::default(), DrawingStyle::default());
+        let empty = TextPayload::default();
+        let (text, color) = shown(&empty, DrawingStyle::default());
         assert_eq!(text, PLACEHOLDER);
         assert_eq!(
             color,

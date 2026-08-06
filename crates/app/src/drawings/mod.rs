@@ -597,6 +597,13 @@ impl Drawings {
         &self.items
     }
 
+    /// How many objects are painted on the tab's other panes as well — the
+    /// per-frame reprojection cost, in the health summary.
+    #[must_use]
+    pub fn shared_count(&self) -> usize {
+        self.items.iter().filter(|item| item.shared()).count()
+    }
+
     #[must_use]
     pub fn selected(&self) -> Option<usize> {
         self.selected
