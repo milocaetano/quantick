@@ -734,6 +734,9 @@ impl QuantickApp {
         app.active_tab_mut().ensure_book_capture(&config);
         // A feed that declares its own look opens wearing it.
         app.active_tab_mut().apply_feed_bubble_preset(&config);
+        // Same for a declared opening layout: a feed the user reads by
+        // timeframe can open straight on the timeframe chart.
+        app.active_tab_mut().apply_feed_declared_layout(&config);
         // The map itself stays hidden until asked for — a layer nobody
         // requested must cost no projection. Capture is already running either
         // way, so this is a display choice and nothing else.
@@ -867,6 +870,23 @@ impl QuantickApp {
         if std::env::var("QUANTICK_PAPER_REPORT_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().paper.autostart_report();
         }
+        // Open on a named canvas layout, through the same path the View menu
+        // takes. An env var is an explicit request for this run, so it wins
+        // over a feed's declared `default_layout`.
+        if let Ok(name) = std::env::var("QUANTICK_LAYOUT") {
+            let layout = crate::config::DeclaredLayout::parse(&name).map(CanvasLayout::from);
+            match layout {
+                Some(layout) => app.active_tab_mut().set_layout(layout),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LAYOUT_AUTOSTART_UNKNOWN",
+                    layout = %name,
+                    action = "layout_left_as_is",
+                    "QUANTICK_LAYOUT names no canvas layout (flow, time, time+flow)"
+                ),
+            }
+        }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
@@ -992,7 +1012,10 @@ impl QuantickApp {
     ///
     /// The bar spec is inherited from the tab you were on: opening a second
     /// market to compare it against the first is the reason to do this, and
-    /// landing on a different aggregation would defeat that.
+    /// landing on a different aggregation would defeat that. A feed that
+    /// declares its own `default_bars`/`default_layout` overrides the
+    /// inheritance — the declaration exists because that market reads
+    /// differently, which is exactly when inheriting would mislead.
     fn adopt_tab(&mut self, feed_id: String, symbol: String, feed: FeedHandle) {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
@@ -1007,7 +1030,10 @@ impl QuantickApp {
             action = "activate_new_tab",
             "opening a market in a new tab"
         );
-        let spec = self.active_tab().flow_pane.state.spec().clone();
+        let spec = self
+            .config
+            .startup_spec_for(&feed_id)
+            .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone());
         let trades_dir = self.trades_dir.clone();
         self.tabs.push(Tab::new(
             id,
@@ -1023,6 +1049,7 @@ impl QuantickApp {
         self.active_tab_mut().refresh_chip_label(&config);
         self.active_tab_mut().ensure_book_capture(&config);
         self.active_tab_mut().apply_feed_bubble_preset(&config);
+        self.active_tab_mut().apply_feed_declared_layout(&config);
         // The new tab opens on the layers the user left showing, over the
         // preset it just put on: opening a second market is not a request to
         // bring back the chrome they switched off.
@@ -1168,10 +1195,19 @@ impl QuantickApp {
             .collect();
         let dock_visible = self.dock.visible();
         let show_style = self.show_style;
-        // The SOURCE and BARS groups write straight into the active tab: a
-        // feed or symbol change is that tab's market switch, and the bar spec
-        // is its flow pane's.
+        // The SOURCE group writes straight into the active tab: a feed or
+        // symbol change is that tab's market switch. The BARS group writes
+        // into the *focused pane* — the pane the status bar reads and every
+        // indicator command lands on (§11) — so the three chrome surfaces
+        // can never disagree about which chart a command describes, and in
+        // the Time layout the group governs the chart actually on screen.
         let tab = self.active_tab_mut();
+        let focused = tab.focused_side();
+        let live_strip_on = tab.flow_pane.live_strip_visible;
+        let pane = match focused {
+            PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
+            PaneSide::Flow => &mut tab.flow_pane,
+        };
         let mut model = toolbar::ToolbarModel {
             feeds,
             feed_id: &mut tab.feed_id,
@@ -1179,18 +1215,18 @@ impl QuantickApp {
             symbols,
             symbol: &mut tab.symbol,
             replay,
-            kind: &mut tab.flow_pane.kind,
-            tick_n: &mut tab.flow_pane.tick_n,
-            volume_units: &mut tab.flow_pane.volume_units,
-            dollar_notional: &mut tab.flow_pane.dollar_notional,
-            time_interval_ms: &mut tab.flow_pane.time_interval_ms,
-            imbalance_target: &mut tab.flow_pane.imbalance_target,
+            kind: &mut pane.kind,
+            tick_n: &mut pane.tick_n,
+            volume_units: &mut pane.volume_units,
+            dollar_notional: &mut pane.dollar_notional,
+            time_interval_ms: &mut pane.time_interval_ms,
+            imbalance_target: &mut pane.imbalance_target,
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
             capabilities,
             heatmap_on,
             bubbles_on,
-            live_strip_on: tab.flow_pane.live_strip_visible,
+            live_strip_on,
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
@@ -2274,21 +2310,6 @@ impl QuantickApp {
                             ui.close_menu();
                         }
                         ui.separator();
-                        ui.menu_button("Layout", |ui| {
-                            for (layout, label) in [
-                                (CanvasLayout::Single, "Single"),
-                                (CanvasLayout::TimeAndFlow, "Time + Flow"),
-                            ] {
-                                if ui
-                                    .selectable_label(self.active_tab().layout == layout, label)
-                                    .clicked()
-                                {
-                                    self.active_tab_mut().set_layout(layout);
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        ui.separator();
                         if ui
                             .add(
                                 egui::Button::new("Market Replay…")
@@ -2312,6 +2333,26 @@ impl QuantickApp {
                         }
                     });
                     ui.menu_button("View", |ui| {
+                        // What the canvas shows is a view concern, so the
+                        // switch lives here rather than under File, and each
+                        // entry names the charts it shows — "Timeframe", not
+                        // layout jargon (audit §3).
+                        ui.menu_button("Layout", |ui| {
+                            for (layout, label) in [
+                                (CanvasLayout::Single, "Flow"),
+                                (CanvasLayout::Time, "Timeframe"),
+                                (CanvasLayout::TimeAndFlow, "Timeframe + Flow"),
+                            ] {
+                                if ui
+                                    .selectable_label(self.active_tab().layout == layout, label)
+                                    .clicked()
+                                {
+                                    self.active_tab_mut().set_layout(layout);
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        ui.separator();
                         let panels_label = if self.dock.visible() {
                             "Hide panels"
                         } else {
@@ -4460,6 +4501,8 @@ mod tests {
                 provider: ProviderKind::Binance,
                 symbols: vec!["TESTUSDT".to_string(), "ETHUSDT".to_string()],
                 bubble_preset: None,
+                default_layout: None,
+                default_bars: None,
             }],
             metatrader: Default::default(),
             paper: Default::default(),
@@ -8423,6 +8466,8 @@ plot(close)
                     provider: ProviderKind::Binance,
                     symbols: vec!["AAA".to_string()],
                     bubble_preset: None,
+                    default_layout: None,
+                    default_bars: None,
                 },
                 FeedConfig {
                     id: "b".to_string(),
@@ -8430,6 +8475,8 @@ plot(close)
                     provider: ProviderKind::Binance,
                     symbols: vec!["BBB".to_string()],
                     bubble_preset: None,
+                    default_layout: None,
+                    default_bars: None,
                 },
             ],
             metatrader: Default::default(),
@@ -8534,6 +8581,8 @@ plot(close)
             provider: ProviderKind::MetaTrader,
             symbols: vec!["WINQ26".to_string()],
             bubble_preset: Some("live lane pie".to_string()),
+            default_layout: None,
+            default_bars: None,
         });
         let mut app = app_on(config, "binance", "TESTUSDT");
         let opened_with = app.active_tab().tape().active_preset_for_test().to_string();
@@ -9246,6 +9295,211 @@ plot(close)
             app.active_tab().flow_pane.state.spec(),
             &flow_spec,
             "and must leave the chart beside it alone"
+        );
+    }
+
+    /// The Time layout is the timeframe chart alone: built and seeded like
+    /// the split's pane, full window (no divider), header included, and the
+    /// chrome speaks for it.
+    #[test]
+    fn the_time_layout_shows_the_timeframe_chart_alone() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().set_layout(CanvasLayout::Time);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let tab = app.active_tab();
+        let time = tab.time_pane.as_ref().expect("the pane was built");
+        assert_eq!(
+            time.state.trades().len(),
+            200,
+            "and seeded, so it opens showing the market"
+        );
+        assert_eq!(
+            tab.focused_side(),
+            PaneSide::Time,
+            "the chrome speaks for the one visible chart"
+        );
+        assert!(
+            tab.canvas_divider_rect().is_none(),
+            "one pane, no divider to drag"
+        );
+        let chip = tab.time_header_chip(0).expect("chips recorded");
+        assert!(
+            chip.is_positive(),
+            "the header still offers its timeframes at full width"
+        );
+    }
+
+    /// Switching layouts focuses the pane the switch reveals, so the first
+    /// command after a switch already lands on the chart that just appeared
+    /// (audit: opening the split did not focus the pane it created).
+    #[test]
+    fn switching_layouts_focuses_the_pane_the_switch_reveals() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        run_frame(&mut app, &ctx);
+
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Time,
+            "coming from Single, the split reveals the time pane"
+        );
+
+        app.active_tab_mut().set_layout(CanvasLayout::Single);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
+
+        app.active_tab_mut().set_layout(CanvasLayout::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Flow,
+            "coming from Time, the split reveals the flow pane"
+        );
+    }
+
+    /// The BARS group edits the focused pane — the same pane the status bar
+    /// reads and indicator commands land on. In the Time layout that is the
+    /// timeframe chart on screen; the hidden flow pane is untouched.
+    #[test]
+    fn the_bars_selectors_govern_the_focused_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().set_layout(CanvasLayout::Time);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let flow_spec = app.active_tab().flow_pane.state.spec().clone();
+
+        // The exact selector fields the toolbar's BARS group borrows for the
+        // focused pane, written through the same deferred-spec path.
+        let pane = app.active_tab_mut().focused_pane_mut();
+        pane.kind = crate::state::BarKind::Time;
+        pane.time_interval_ms = 300_000;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+
+        assert_eq!(
+            app.active_tab()
+                .time_pane
+                .as_ref()
+                .expect("time pane")
+                .state
+                .spec(),
+            &BarSpec::Time(300_000),
+            "the change lands on the chart on screen"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.state.spec(),
+            &flow_spec,
+            "and not on the hidden one"
+        );
+    }
+
+    /// A feed declaring `default_layout` and `default_bars` opens wearing
+    /// them: the declared canvas, the declared spec on the flow pane, the
+    /// declared interval on the timeframe pane — and the venue asked for the
+    /// candle history the pane needs.
+    #[test]
+    fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
+        let ctx = egui::Context::default();
+        let (_evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let mut config = test_config();
+        config.feeds[0].default_layout = Some(crate::config::DeclaredLayout::Time);
+        config.feeds[0].default_bars = Some("time:5m".to_string());
+        // The declared spec reaches Tab::new the same way main.rs resolves it.
+        let spec = config.startup_spec_for("binance").expect("declared spec");
+        let mut app = QuantickApp::new(
+            config,
+            "binance",
+            "TESTUSDT",
+            spec,
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(FeedCapabilities {
+                    book_capture: false,
+                    history_paging: true,
+                    traded_volume: true,
+                    ohlcv_history: true,
+                    ohlcv_generation: 0,
+                }),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+
+        assert_eq!(app.active_tab().layout, CanvasLayout::Time);
+        assert_eq!(
+            app.active_tab().flow_pane.state.spec(),
+            &BarSpec::Time(300_000),
+            "the flow pane opened on the declared spec"
+        );
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab()
+                .time_pane
+                .as_ref()
+                .expect("built the frame after startup")
+                .state
+                .spec(),
+            &BarSpec::Time(300_000),
+            "the timeframe pane opens on the declared interval too"
+        );
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(
+            drain_ohlcv_requests(&mut cmd_rx),
+            1,
+            "the timeframe chart asked the venue for its history"
+        );
+    }
+
+    /// A new tab on a feed that declares its own defaults takes them; one on
+    /// a feed that declares nothing keeps inheriting from the tab you were on.
+    #[test]
+    fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
+        let mut config = test_config();
+        config.feeds.push(FeedConfig {
+            id: "mt".to_string(),
+            name: "MetaTrader 5".to_string(),
+            provider: ProviderKind::MetaTrader,
+            symbols: vec!["WINQ26".to_string()],
+            bubble_preset: None,
+            default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
+            default_bars: Some("tick:7".to_string()),
+        });
+        let mut app = app_on(config, "binance", "TESTUSDT");
+        assert_eq!(app.active_tab().layout, CanvasLayout::Single);
+
+        app.adopt_tab("mt".to_string(), "WINQ26".to_string(), stub_feed().0);
+        assert_eq!(
+            app.active_tab().flow_pane.state.spec(),
+            &BarSpec::Tick(7),
+            "the declaration wins over the inherited spec"
+        );
+        assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
+
+        app.adopt_tab("binance".to_string(), "ETHUSDT".to_string(), stub_feed().0);
+        assert_eq!(
+            app.active_tab().flow_pane.state.spec(),
+            &BarSpec::Tick(7),
+            "a feed declaring nothing still inherits from the tab you were on"
+        );
+        assert_eq!(
+            app.active_tab().layout,
+            CanvasLayout::Single,
+            "and opens on the factory canvas"
         );
     }
 
@@ -10852,6 +11106,8 @@ plot(close)
                     provider: ProviderKind::MetaTrader,
                     symbols: vec!["US500".to_string()],
                     bubble_preset: None,
+                    default_layout: None,
+                    default_bars: None,
                 },
                 FeedConfig {
                     id: "b3".to_string(),
@@ -10859,6 +11115,8 @@ plot(close)
                     provider: ProviderKind::MetaTrader,
                     symbols: vec!["WIN$N".to_string()],
                     bubble_preset: None,
+                    default_layout: None,
+                    default_bars: None,
                 },
             ],
             metatrader: crate::config::MetaTraderSettings {

@@ -44,14 +44,42 @@ const BOOK_DRAIN_BUDGET: usize = 2_048;
 /// pane's top edge, never a box drawn around market data).
 const FOCUS_RULE_PX: f32 = 1.0;
 
-/// How many charts a tab's canvas shows for its market (§11).
+/// How many charts a tab's canvas shows for its market (§11), and which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CanvasLayout {
     /// The flow pane alone — quantick's default and its identity.
     #[default]
     Single,
+    /// The time pane alone: a full-window timeframe chart, header included,
+    /// with no split. The flow pane keeps being fed off screen, exactly as
+    /// the time pane does while Single is showing.
+    Time,
     /// Time pane left, flow pane right, on a draggable divider.
     TimeAndFlow,
+}
+
+impl CanvasLayout {
+    /// Whether this layout draws the time pane at all.
+    #[must_use]
+    pub fn shows_time(self) -> bool {
+        matches!(self, CanvasLayout::Time | CanvasLayout::TimeAndFlow)
+    }
+
+    /// Whether this layout draws the flow pane at all.
+    #[must_use]
+    pub fn shows_flow(self) -> bool {
+        matches!(self, CanvasLayout::Single | CanvasLayout::TimeAndFlow)
+    }
+}
+
+impl From<crate::config::DeclaredLayout> for CanvasLayout {
+    fn from(declared: crate::config::DeclaredLayout) -> Self {
+        match declared {
+            crate::config::DeclaredLayout::Flow => CanvasLayout::Single,
+            crate::config::DeclaredLayout::Time => CanvasLayout::Time,
+            crate::config::DeclaredLayout::TimeAndFlow => CanvasLayout::TimeAndFlow,
+        }
+    }
 }
 
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
@@ -207,6 +235,11 @@ pub struct Tab {
     ohlcv_capable: bool,
     /// The id the time pane takes when this tab first shows the split.
     time_pane_id: u64,
+    /// The interval the time pane opens on when it is first built. The
+    /// header's default unless the feed declared one (`default_bars` with a
+    /// time-showing `default_layout`); once the pane exists, its own header
+    /// owns the interval and this is never read again.
+    time_pane_opening_interval_ms: i64,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by [`Self::apply_pending_layout`] on the following frame.
     pending_time_pane: bool,
@@ -279,6 +312,7 @@ impl Tab {
             ohlcv_capable: false,
             time_pane: None,
             time_pane_id: pane_ids.1,
+            time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             pending_time_pane: false,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
@@ -594,11 +628,13 @@ impl Tab {
     }
 
     /// The pane the chrome speaks for. Only a split canvas has a choice to
-    /// make; a Single canvas is the flow pane by definition, whatever the last
-    /// split left `focus` set to.
+    /// make: a single-pane layout *is* its one visible pane, whatever the
+    /// last split left `focus` set to. Time falls back to the flow pane for
+    /// the frame between asking for the layout and the pane being built.
     pub fn focused_side(&self) -> PaneSide {
         match (self.layout, self.time_pane.is_some()) {
             (CanvasLayout::TimeAndFlow, true) => self.focus,
+            (CanvasLayout::Time, true) => PaneSide::Time,
             _ => PaneSide::Flow,
         }
     }
@@ -656,16 +692,26 @@ impl Tab {
             .expect("the flow pane is built with a tape and never drops it")
     }
 
-    /// Show or hide the context chart (§11).
+    /// Switch which panes the canvas shows (§11).
     ///
-    /// The first Time + Flow builds the pane and seeds it from the trades the
-    /// flow pane already holds, so it opens showing the same market rather
-    /// than an empty chart waiting for the next print. Going back to Single
-    /// only stops drawing it: its indicators, drawings and bars survive, and
-    /// it keeps being fed, so re-showing it never has to catch up.
+    /// The first layout that needs the time pane builds it and seeds it from
+    /// the trades the flow pane already holds, so it opens showing the same
+    /// market rather than an empty chart waiting for the next print. Leaving
+    /// a layout only stops drawing its pane: indicators, drawings and bars
+    /// survive, and the pane keeps being fed, so re-showing it never has to
+    /// catch up.
+    ///
+    /// Focus follows what the switch reveals: the pane that just appeared is
+    /// the one the user asked to work on, so the chrome speaks for it without
+    /// a second click. A switch that reveals nothing new (Time + Flow from
+    /// Time + Flow) keeps the focus where it was.
     pub fn set_layout(&mut self, layout: CanvasLayout) {
+        let previous = self.layout;
+        if layout == previous {
+            return;
+        }
         self.layout = layout;
-        if layout == CanvasLayout::TimeAndFlow && self.time_pane.is_none() {
+        if layout.shows_time() && self.time_pane.is_none() {
             // Seeding replays every retained trade, which on a deep history
             // holds the render thread long enough to notice. Armed here and
             // done on the next frame, exactly as a bar-spec change is: the
@@ -675,9 +721,18 @@ impl Tab {
             self.pending_time_pane = true;
             self.loading.begin(LoadingTask::BarRebuild);
         }
-        if layout == CanvasLayout::Single {
-            self.focus = PaneSide::Flow;
-        }
+        self.focus = match layout {
+            CanvasLayout::Single => PaneSide::Flow,
+            CanvasLayout::Time => PaneSide::Time,
+            // The split reveals whichever pane the previous layout was not
+            // showing: the time pane coming from Single, the flow pane coming
+            // from Time.
+            CanvasLayout::TimeAndFlow => match previous {
+                CanvasLayout::Single => PaneSide::Time,
+                CanvasLayout::Time => PaneSide::Flow,
+                CanvasLayout::TimeAndFlow => self.focus,
+            },
+        };
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -702,7 +757,7 @@ impl Tab {
             return;
         }
         self.pending_time_pane = false;
-        let mut pane = ChartPane::time(self.time_pane_id, crate::time_header::DEFAULT_INTERVAL_MS);
+        let mut pane = ChartPane::time(self.time_pane_id, self.time_pane_opening_interval_ms);
         pane.seed_from(
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
@@ -1041,6 +1096,40 @@ impl Tab {
         }
     }
 
+    /// Open wearing the layout the feed declares, if it declares one.
+    ///
+    /// Startup-scoped, like `default_feed`: it decides what a tab on this
+    /// feed *opens* showing, and never touches a layout the user has since
+    /// chosen — the callers are tab creation, nothing else. A feed with no
+    /// `default_layout` changes nothing, so the factory default stays the
+    /// flow pane (the decision on record in the UX audit §3).
+    pub fn apply_feed_declared_layout(&mut self, config: &AppConfig) {
+        let Some(declared) = config
+            .feed(&self.feed_id)
+            .and_then(|feed| feed.default_layout)
+        else {
+            return;
+        };
+        let layout = CanvasLayout::from(declared);
+        // A declared time-bar spec names the interval the declared layout's
+        // time pane opens on; the pane's own header takes over from there.
+        if layout.shows_time()
+            && let Some(BarSpec::Time(ms)) = config.startup_spec_for(&self.feed_id)
+        {
+            self.time_pane_opening_interval_ms = ms;
+        }
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_DECLARED_LAYOUT",
+            feed = %self.feed_id,
+            layout = ?layout,
+            action = "open_declared_layout",
+            "feed declares an opening layout; applied"
+        );
+        self.set_layout(layout);
+    }
+
     /// Let every pane's selectors settle, then mirror the result onto the
     /// rebuild indicator: it is up while *any* pane has a rebuild pending.
     pub fn apply_spec_changes(&mut self) -> bool {
@@ -1069,8 +1158,8 @@ impl Tab {
     /// the rebuild to one per gesture.
     ///
     /// The two panes run this independently: the toolbar's BARS group governs
-    /// the flow pane and the time pane's own header governs the time pane
-    /// (§11), so a timeframe change must not rebuild the chart beside it.
+    /// the focused pane and the time pane's own header governs the time pane
+    /// (§11), so a change to one pane must not rebuild the chart beside it.
     fn apply_spec_change(&mut self, side: PaneSide) -> bool {
         let desired = self.pane(side).current_spec();
         let pane = self.pane_mut(side);
@@ -1495,20 +1584,31 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
-        let split = self.layout == CanvasLayout::TimeAndFlow && self.time_pane.is_some();
-        // Unsplit, the flow pane is handed the whole canvas and the rest of
-        // this reduces to nothing: no divider, no header, no focus rule.
+        let show_time = self.layout.shows_time() && self.time_pane.is_some();
+        // The flow pane also stands in for a time pane still being built, so
+        // the frame between asking for the Time layout and the pane existing
+        // shows the market rather than nothing.
+        let show_flow = self.layout.shows_flow() || !show_time;
+        let split = show_time && show_flow;
+        // One visible pane is handed the whole canvas and the rest of this
+        // reduces to nothing: no divider, no focus rule — though a lone time
+        // pane keeps its header.
         let (time_area, divider, flow_area) = if split {
             let areas = split_canvas(area, self.split_fraction);
             (Some(areas.time), Some(areas.divider), areas.flow)
+        } else if show_time {
+            (Some(area), None, area)
         } else {
             (None, None, area)
         };
 
         let time_chart = time_area.map(|time_area| {
             // Focus before input, so the click that focuses a pane is also the
-            // click that pane goes on to handle.
-            self.focus_from_pointer(ui, time_area, flow_area);
+            // click that pane goes on to handle. Only a split has focus to
+            // move: a single visible pane is the focused one by definition.
+            if split {
+                self.focus_from_pointer(ui, time_area, flow_area);
+            }
             let areas = split_time_pane(time_area);
             // The time pane's own timeframe selector (§11): its BARS group,
             // beside the toolbar's, which keeps governing the flow pane.
@@ -1552,11 +1652,8 @@ impl Tab {
             // loop with one entry in it.
             let time =
                 time_chart.and_then(|chart| Some((time_pane.as_mut()?, chart, PaneSide::Time)));
-            for (pane, rect, side) in time.into_iter().chain(std::iter::once((
-                &mut *flow_pane,
-                flow_area,
-                PaneSide::Flow,
-            ))) {
+            let flow = show_flow.then_some((&mut *flow_pane, flow_area, PaneSide::Flow));
+            for (pane, rect, side) in time.into_iter().chain(flow) {
                 // Order entry follows the focused pane (§11): both charts are
                 // trading surfaces — a level is as true on the time pane as on
                 // the flow pane — and focus lands on the press that acts, so
