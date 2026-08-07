@@ -33,6 +33,8 @@ is the source of truth, this table is the index):
 | `QUANTICK_REPLAY_DIR` + `QUANTICK_REPLAY_AUTOSTART=1` + `QUANTICK_REPLAY_SPEED` | recorded session playback (deterministic tape → deterministic screen) |
 | `QUANTICK_BUBBLES=<bubbles.toml>` | bubble preset override without touching tracked config |
 | `QUANTICK_CHART_LAYERS` | chart layer visibility set |
+| `QUANTICK_UI_STATE=<toml>` | the saved workspace — the tab strip, each tab's layout/split/focus/bar specs, the dock, the rail, the timezone, the window size. **Always point this at a scratchpad file.** Without it a validation run reads the user's real `ui-state.toml` and, on exit, overwrites it: the run both inherits yesterday's cockpit and destroys it. Point it at a path that does not exist to force the configured default; write one by hand to open on an exact arrangement. |
+| `QUANTICK_WORKSPACE_SAVE=1` | takes `Workspace → Save workspace` at startup, through the menu entry's own path — the save really happens, so the status-line confirmation is on screen to capture. Pair with `QUANTICK_UI_STATE` pointed at a scratchpad. |
 | `QUANTICK_BACKFILL` / `QUANTICK_BOOK_DEPTH` | history paging / depth size |
 | `QUANTICK_TRADES_DIR` | paper-trading journal location (point at scratch) |
 

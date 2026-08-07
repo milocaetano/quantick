@@ -167,6 +167,24 @@ impl Dock {
         self.visible = !self.visible;
     }
 
+    /// The open tab, or `None` while the dock is collapsed to its strip.
+    /// A collapsed dock is a state in its own right, not an absence.
+    #[must_use]
+    pub fn tab(&self) -> Option<DockTab> {
+        self.active
+    }
+
+    /// Restore the dock exactly as a workspace recorded it: shown or hidden,
+    /// with `tab` open or collapsed to the strip.
+    ///
+    /// Deliberately not [`Self::open_tab`] — that one *reveals* the dock, so
+    /// it could never restore "hidden, with Trading last open", which is a
+    /// cockpit a trader can arrange and would expect back.
+    pub fn restore(&mut self, visible: bool, tab: Option<DockTab>) {
+        self.visible = visible;
+        self.active = tab;
+    }
+
     /// Open `tab`, revealing the dock if it was hidden. Never touches the
     /// layer the tab configures.
     pub fn open_tab(&mut self, tab: DockTab) {

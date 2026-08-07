@@ -82,6 +82,22 @@ impl From<crate::config::DeclaredLayout> for CanvasLayout {
     }
 }
 
+/// The way back, for the saved workspace ([`crate::ui_state`]), which has to
+/// write a layout out in the vocabulary a config reads.
+///
+/// A canvas layout a config should not name would have to answer for itself
+/// here — which is the point of keeping the two enums apart, and the reason
+/// this conversion is total today and may not always be.
+impl From<CanvasLayout> for crate::config::DeclaredLayout {
+    fn from(layout: CanvasLayout) -> Self {
+        match layout {
+            CanvasLayout::Single => crate::config::DeclaredLayout::Flow,
+            CanvasLayout::Time => crate::config::DeclaredLayout::Time,
+            CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
+        }
+    }
+}
+
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
 pub struct CanvasChrome<'a> {
@@ -1128,6 +1144,52 @@ impl Tab {
             "feed declares an opening layout; applied"
         );
         self.set_layout(layout);
+        // Opening is not switching. [`Self::set_layout`] focuses whatever the
+        // switch revealed, which is right for a menu click — the trader asked
+        // for that pane. On a tab that has never been on screen there was no
+        // gesture and nothing was revealed, and leaving the focus there put a
+        // fresh window's BARS group and status line on the *context* chart:
+        // the first thing a trader touched changed the timeframe pane instead
+        // of the flow chart quantick exists to show. So the flow pane takes
+        // the focus whenever this layout draws it.
+        self.focus = if layout.shows_flow() {
+            PaneSide::Flow
+        } else {
+            PaneSide::Time
+        };
+    }
+
+    /// Put this tab's canvas back the way a saved workspace recorded it: the
+    /// layout, the divider, the focused pane, and the interval the time pane
+    /// opens on.
+    ///
+    /// One method rather than four public fields, because the order matters
+    /// and only the tab knows it. The opening interval has to be set *before*
+    /// [`Self::set_layout`] arms the time pane, or the pane is built on the
+    /// header default and the saved interval lands one frame too late. The
+    /// focus is applied *after*, because `set_layout` moves it to whatever the
+    /// switch reveals — right for a menu click, wrong for a restore, where the
+    /// saved focus is the answer.
+    ///
+    /// Startup-scoped, like [`Self::apply_feed_declared_layout`]: the only
+    /// caller is the app restoring a workspace into a tab it has just opened.
+    pub fn restore_canvas(
+        &mut self,
+        layout: CanvasLayout,
+        split_fraction: Option<f32>,
+        focus: Option<PaneSide>,
+        time_interval_ms: Option<i64>,
+    ) {
+        if let Some(ms) = time_interval_ms {
+            self.time_pane_opening_interval_ms = ms;
+        }
+        self.set_layout(layout);
+        if let Some(fraction) = split_fraction {
+            self.split_fraction = clamp_pane_fraction(fraction);
+        }
+        if let Some(side) = focus {
+            self.focus = side;
+        }
     }
 
     /// Let every pane's selectors settle, then mirror the result onto the

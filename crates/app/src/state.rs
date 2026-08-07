@@ -149,6 +149,25 @@ impl BarSpec {
         }
     }
 
+    /// This spec in the `kind:parameter` vocabulary [`Self::parse`] reads —
+    /// the form `default_bars` uses in the feeds configuration and the saved
+    /// workspace ([`crate::ui_state`]) writes.
+    ///
+    /// The round trip is the point: whatever a chart is showing, a config or a
+    /// workspace file can ask for by name, and the
+    /// `every_bar_spec_survives_the_config_round_trip` test holds the two
+    /// halves together.
+    #[must_use]
+    pub fn to_config_string(&self) -> String {
+        match self {
+            BarSpec::Tick(n) => format!("tick:{n}"),
+            BarSpec::Volume(units) => format!("volume:{units}"),
+            BarSpec::Dollar(notional) => format!("dollar:{notional}"),
+            BarSpec::Time(ms) => format!("time:{}", fmt_time_interval(*ms)),
+            BarSpec::Imbalance(target) => format!("imbalance:{target}"),
+        }
+    }
+
     /// Parse a `kind:parameter` spec string, the form `default_bars` uses in
     /// the feeds configuration: `tick:50`, `volume:5`, `dollar:500000`,
     /// `imbalance:100`, `time:1m` (also `time:30s`, `time:1h`, `time:1500ms`
@@ -505,6 +524,31 @@ mod tests {
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
+    }
+
+    /// Whatever a chart is showing, a config or a saved workspace can name —
+    /// and naming it gets that chart back. Both halves of the vocabulary live
+    /// in this file, and this is what stops one of them drifting.
+    #[test]
+    fn every_bar_spec_survives_the_config_round_trip() {
+        for spec in [
+            BarSpec::Tick(50),
+            BarSpec::Imbalance(100),
+            BarSpec::Volume(dec("5.25")),
+            BarSpec::Dollar(dec("500000")),
+            BarSpec::Time(60_000),
+            BarSpec::Time(3_600_000),
+            // A parameter with no round unit: the suffix ladder has to fall
+            // through to bare milliseconds rather than rounding it away.
+            BarSpec::Time(1_500),
+        ] {
+            let text = spec.to_config_string();
+            assert_eq!(
+                BarSpec::parse(&text),
+                Ok(spec.clone()),
+                "'{text}' did not come back as the spec that wrote it"
+            );
+        }
     }
 
     /// `default_bars` speaks the same vocabulary the UI does — every kind,

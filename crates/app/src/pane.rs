@@ -758,6 +758,34 @@ impl ChartPane {
         }
     }
 
+    /// Put this pane on `spec` outright, selectors included.
+    ///
+    /// Startup-scoped: the caller is a workspace restoring the bar rule this
+    /// pane was last read on, into a pane that has not drawn a frame yet. A
+    /// live change goes through `pending_spec` instead, so the frame carrying
+    /// it paints the loading overlay before the rebuild replays the tape —
+    /// there is no tape to replay here, and nothing to paint over.
+    ///
+    /// The selectors move with the spec, because the BARS group reads *them*:
+    /// setting the state alone would restore a chart whose own controls
+    /// disagreed with it, and the trader's first touch of the parameter would
+    /// snap the chart back to a rule they never chose.
+    pub fn set_spec(&mut self, spec: BarSpec) {
+        self.kind = spec.kind();
+        match &spec {
+            BarSpec::Tick(n) => self.tick_n = *n,
+            BarSpec::Volume(units) => {
+                self.volume_units = units.to_f64().unwrap_or(self.volume_units);
+            }
+            BarSpec::Dollar(notional) => {
+                self.dollar_notional = notional.to_f64().unwrap_or(self.dollar_notional);
+            }
+            BarSpec::Time(ms) => self.time_interval_ms = *ms,
+            BarSpec::Imbalance(target) => self.imbalance_target = *target,
+        }
+        self.state.set_spec(spec);
+    }
+
     /// An egui interaction id scoped to this pane.
     fn interaction_id(&self, name: &'static str) -> egui::Id {
         egui::Id::new((name, self.id))
