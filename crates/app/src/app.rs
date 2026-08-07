@@ -77,6 +77,10 @@ const DEMO_VISIBLE_SLOTS: usize = 90;
 /// far a multi-anchor object reaches. Four keeps a rectangle big enough to
 /// read while still leaving the tools distinguishable from each other.
 const DEMO_SPANS_PER_WINDOW: usize = 4;
+/// How far before the loaded history the re-cut demo anchors its off-series
+/// mark. Any distance the tab cannot possibly hold would do; an hour is
+/// unambiguous at every timeframe the chart offers.
+const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
@@ -4434,7 +4438,7 @@ impl QuantickApp {
                 .unwrap_or(1.0);
             pane.drawings.place_with(
                 drawings::DRAWING_TOOLS[0],
-                drawings::ChartPoint::at_time(0.5, base, Some(first - 3_600_000)),
+                drawings::ChartPoint::at_time(0.5, base, Some(first - DEMO_OFF_SERIES_LEAD_MS)),
                 |tool| drawings::NewDrawing {
                     style: drawings::DrawingStyle::default(),
                     payload: tool.default_payload(),
@@ -8216,6 +8220,43 @@ plot(close)
             app.active_tab().flow_pane.drawings.undo_depth(),
             undo_before + 1,
             "the whole drag is one undo entry on the store that holds it"
+        );
+    }
+
+    /// The other direction, and the regression this pass exists to hold:
+    /// moving a shared mark on the chart it *lives* on has to carry its
+    /// instants with it, or the twin on the other chart stays where it was.
+    /// `translate_selected` moved bar indices only, which made the two views
+    /// disagree the moment either was dragged.
+    #[test]
+    fn moving_a_shared_mark_on_its_own_chart_carries_its_instants() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands, _position) = split_with_a_shared_line(&ctx);
+        app.active_tab_mut().flow_pane.drawings.select(Some(0));
+        let before = app.active_tab().flow_pane.drawings.items()[0].points[0];
+
+        // Four bars to the right, through the same path a drag takes.
+        app.active_tab_mut().flow_pane.drawings.begin_gesture();
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .translate_selected(4.0, 0.0);
+        app.active_tab_mut().flow_pane.retime_selected();
+        app.active_tab_mut().flow_pane.drawings.commit_gesture();
+
+        let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        assert!(after.bar > before.bar, "the mark moved on its own chart");
+        assert_ne!(
+            after.time_ms, before.time_ms,
+            "and the instant behind it moved too, or the other chart still \
+             paints it at the old moment"
+        );
+        assert_eq!(
+            app.active_tab()
+                .flow_pane
+                .slot_at_time(after.time_ms.expect("a mark on a bar has an instant")),
+            Some(after.bar.floor() as usize),
+            "the bar and the instant say the same thing"
         );
     }
 

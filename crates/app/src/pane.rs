@@ -1401,11 +1401,20 @@ impl ChartPane {
     }
 
     /// Where a market instant sits on this pane's series, as a fractional
-    /// slot — the answer re-anchoring and the shared mirror both run on.
+    /// slot — the strict answer, behind re-anchoring and every edit arriving
+    /// from another pane.
     ///
-    /// Bar centres, not edges: an anchor is being asked which *bar* it
-    /// belongs to, and the middle of that bar is where it reads as being on
-    /// it. `None` means the series does not reach the instant at all.
+    /// Bar centres, not edges: an anchor is being asked which *bar* it belongs
+    /// to, and the middle of that bar is where it reads as being on it. `None`
+    /// means the series does not reach the instant at all.
+    ///
+    /// Deliberately not what [`Self::reproject`] uses. That one is answering a
+    /// different question — *where do I paint a mark whose instant may be off
+    /// my series?* — so it clamps to the nearest edge and reports the clamp,
+    /// which is what the fade is drawn from. This one is asked before the
+    /// store is written, where a clamp would silently move the trader's mark
+    /// onto data it has nothing to do with. Same lookup, opposite answer at
+    /// the edges, on purpose.
     fn slot_of_time(&self, time: i64) -> Option<f32> {
         // Past the newest bar first: on a time chart that space has an exact
         // clock, and asking `slot_at_time` there would clamp a future anchor
