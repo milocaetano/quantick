@@ -25,10 +25,11 @@ use smallvec::SmallVec;
 use crate::chart::PriceScale;
 use crate::theme;
 
-/// The screen-space grab points of one selected object. Four is every tool in
-/// the registry (a channel's two ends plus one handle per rail), so the
-/// handle pass of the selected object allocates nothing per frame.
-pub type Handles = SmallVec<[egui::Pos2; 4]>;
+/// The screen-space grab points of one selected object. Six covers every tool
+/// in the registry — the channel is the widest, with a corner and a centre on
+/// each of its two rails — so the handle pass of the selected object
+/// allocates nothing per frame.
+pub type Handles = SmallVec<[egui::Pos2; 6]>;
 
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
 /// A drawing is an annotation *on* the chart, never a second series: the
@@ -1829,7 +1830,11 @@ mod tests {
             };
             let handles = drawing_tool.handles(chart, &points, &ctxt);
             if drawing_tool.id() == "parallel-channel" {
-                assert_eq!(handles.len(), 4, "the channel adds a handle per rail");
+                assert_eq!(
+                    handles.len(),
+                    6,
+                    "the channel adds a corner and a centre per rail"
+                );
                 continue;
             }
             assert_eq!(
