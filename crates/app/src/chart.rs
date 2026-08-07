@@ -81,6 +81,23 @@ impl PriceScale {
         }
     }
 
+    /// Pixels per unit of price, computed from the f64 range directly.
+    ///
+    /// Never derive this by subtracting two `y()` values: `y` returns f32,
+    /// and at an index-future price the pixel position of price 0 sits a
+    /// million pixels off-screen, where f32's resolution is 0.0625px — the
+    /// difference of two such values is rounding noise, not a density
+    /// (`y(0) - y(0.01)` blinked between 0.000 and 0.062 with every pan,
+    /// and took the footprint's whole LOD ladder with it).
+    #[must_use]
+    pub fn px_per_price(&self) -> f64 {
+        let span = self.hi - self.lo;
+        if span.abs() < f64::EPSILON {
+            return 0.0;
+        }
+        f64::from(self.bottom - self.top) / span
+    }
+
     /// The y-pixel for `price`.
     #[must_use]
     pub fn y(&self, price: f64) -> f32 {

@@ -410,13 +410,45 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         .or(frame.partial)
         .map_or(Decimal::ONE, |fp| fp.group());
     let group_f = group.to_f64().unwrap_or(0.01).max(f64::EPSILON);
-    let base_row_px = (frame.scale.y(0.0) - frame.scale.y(group_f)).abs();
+    // From the scale's own f64 density — never y(0) - y(group), which is
+    // f32 rounding noise at index-future prices (see PriceScale::px_per_price).
+    let base_row_px = (frame.scale.px_per_price() * group_f) as f32;
     let level = lod.resolve(frame.candle_width, base_row_px, frame.config.profile_row_px);
+    // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
+    // the boundary bugs so far were all states the eye could not explain
+    // from the outside (wedged k, stale group), and the chart telling its
+    // own numbers beats a screenshot guessing game.
+    let debug = {
+        static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        (*DEBUG.get_or_init(|| {
+            std::env::var("QUANTICK_FOOTPRINT_DEBUG").is_ok_and(|value| value == "1")
+        }))
+        .then(|| {
+            format!(
+                " · [w{:.0} row{:.3} g{} lvl{:?} n{}]",
+                frame.candle_width,
+                base_row_px,
+                group,
+                level,
+                frame.footprints.len(),
+            )
+        })
+    };
 
     if level == DetailLevel::Off {
         // Nothing to compute and nothing to draw — but the legend still
         // explains the silence, or an enabled layer reads as broken.
-        draw_legend(frame, level, group, 1, false, false, false, Decimal::ZERO);
+        draw_legend(
+            frame,
+            level,
+            group,
+            1,
+            false,
+            false,
+            false,
+            Decimal::ZERO,
+            debug,
+        );
         return;
     }
 
@@ -548,6 +580,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         cells_left == 0,
         zones_dropped,
         min_qty,
+        debug,
     );
 }
 
@@ -1032,6 +1065,7 @@ fn draw_legend(
     capped: bool,
     zones_dropped: bool,
     min_qty: Decimal,
+    debug: Option<String>,
 ) {
     let mut text = String::from("footprint");
     match level {
@@ -1069,6 +1103,9 @@ fn draw_legend(
     }
     if zones_dropped {
         text.push_str(&format!(" · strongest {MAX_ZONE_MARKS} zones"));
+    }
+    if let Some(debug) = debug {
+        text.push_str(&debug);
     }
     // Bottom-left: the top-left is the bubbles legend's home, and that panel
     // paints an opaque background *after* this layer — a legend carrying the
