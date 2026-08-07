@@ -25,6 +25,7 @@ pub mod golden;
 mod bar;
 mod builder;
 mod dollar;
+mod footprint;
 mod imbalance;
 pub mod threshold;
 mod tick;
@@ -35,6 +36,10 @@ mod volume;
 pub use bar::Bar;
 pub use builder::{BarBuilder, BarProgress};
 pub use dollar::{DollarBarBuilder, DollarMeasure};
+pub use footprint::{
+    BarFootprint, DEFAULT_LEVEL_CAP, Extreme, FootprintBuilder, FootprintLevel, Imbalance,
+    StackedZone,
+};
 pub use imbalance::ImbalanceBarBuilder;
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
