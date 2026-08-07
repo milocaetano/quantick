@@ -74,10 +74,12 @@ const CELL_BUDGET: usize = 12_000;
 /// has stopped being a signal.
 const MAX_ZONE_MARKS: usize = 24;
 
-/// The smallest detail level with hysteresis applied, per pane.
+/// The smallest detail level — and the row multiple — with hysteresis
+/// applied, per pane.
 #[derive(Debug, Default)]
 pub struct FootprintLod {
     level: Option<DetailLevel>,
+    k: Option<i64>,
 }
 
 impl FootprintLod {
@@ -97,6 +99,35 @@ impl FootprintLod {
         };
         self.level = Some(level);
         level
+    }
+
+    /// The display multiple, with the same dead band the level has: the
+    /// price auto-fit breathes with every new high of the live bar, and a
+    /// ladder that restructures from 2-tick to 5-tick rows on one print and
+    /// back on the next is unreadable. The current `k` survives until it is
+    /// 15% past failing its floor, and a finer one is adopted only once it
+    /// clears the floor with 15% to spare.
+    fn resolve_multiple(&mut self, base_row_px: f32, min_row_px: f32) -> Option<i64> {
+        let strict = display_multiple(base_row_px, min_row_px);
+        let k = match (self.k, strict) {
+            (Some(current), Some(strict_k)) if strict_k > current => {
+                if base_row_px * current as f32 >= min_row_px / LEVEL_HYSTERESIS {
+                    current
+                } else {
+                    strict_k
+                }
+            }
+            (Some(current), Some(strict_k)) if strict_k < current => {
+                if base_row_px * strict_k as f32 >= min_row_px * LEVEL_HYSTERESIS {
+                    strict_k
+                } else {
+                    current
+                }
+            }
+            (_, strict) => strict?,
+        };
+        self.k = Some(k);
+        Some(k)
     }
 }
 
@@ -219,11 +250,16 @@ fn coalesce_zones(mut zones: Vec<(usize, StackedZone)>, cap: usize) -> (Vec<Zone
     (marks, dropped)
 }
 
+/// How many of the newest *closed* bars feed the adaptive imbalance floor.
+const ADAPTIVE_FLOOR_BARS: usize = 50;
+
 /// The adaptive imbalance quantity floor: the 60th percentile of per-row
-/// total volume across the ladders on screen. One fixed number cannot serve
+/// total volume over the newest closed bars. One fixed number cannot serve
 /// WIN contracts and BTC fractions at once (20 is right on one and absurd on
 /// the other); a percentile of what is actually printing adapts to the
-/// instrument and the regime, deterministically for a given screen. The
+/// instrument and the regime. Closed bars only, independent of what is on
+/// screen: a floor that moved with every live print or every pan would
+/// rewrite the highlights of history while the trader reads them. The
 /// config surface adds a manual override on top.
 fn adaptive_min_qty<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Decimal {
     let mut volumes: Vec<f64> = ladders
@@ -288,7 +324,9 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         DetailLevel::Compact => COMPACT_MIN_ROW,
         _ => PROFILE_MIN_ROW,
     };
-    let k = display_multiple(base_row_px, min_row).unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
+    let k = lod
+        .resolve_multiple(base_row_px, min_row)
+        .unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
     let row_group_f = group_f * k as f64;
 
     // The ladders on screen, each beside its global slot.
@@ -307,10 +345,9 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
             )
     };
 
-    let min_qty = frame
-        .config
-        .imbalance_min_qty
-        .unwrap_or_else(|| adaptive_min_qty(visible_ladders().map(|(_, fp)| fp)));
+    let min_qty = frame.config.imbalance_min_qty.unwrap_or_else(|| {
+        adaptive_min_qty(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS))
+    });
     let ratio = frame.config.imbalance_ratio;
 
     let mut cells_left = CELL_BUDGET;
@@ -338,7 +375,6 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
                     frame,
                     level,
                     &rows,
-                    fp,
                     row_group_f,
                     (frame.x_center)(slot),
                     ratio,
@@ -451,7 +487,6 @@ fn draw_bar(
     frame: &LayerFrame<'_>,
     level: DetailLevel,
     rows: &BTreeMap<i64, FootprintLevel>,
-    fp: &BarFootprint,
     row_group: f64,
     xc: f32,
     ratio: Decimal,
@@ -607,29 +642,40 @@ fn draw_bar(
     // beside the bar's low and high — the reference chart's "9.82 at the
     // low". One-sided extremes have no finite ratio and draw nothing rather
     // than an invented stand-in.
+    // The badge describes the row the trader can *see*: the ratio is
+    // computed on the display rows, not the finer capture grid — a "9.8x"
+    // beside a merged row must be that row's own number. The "x" suffix
+    // keeps it out of the price vocabulary.
     if level == DetailLevel::Detailed && frame.config.extreme_ratio_badge {
         for (extreme, align, offset) in [
             (Extreme::Low, egui::Align2::CENTER_TOP, 3.0),
             (Extreme::High, egui::Align2::CENTER_BOTTOM, -3.0),
         ] {
-            let Some(ratio_value) = fp.extreme_ratio(extreme) else {
+            let cell = match extreme {
+                Extreme::Low => rows.iter().next(),
+                Extreme::High => rows.iter().next_back(),
+            };
+            let Some((&row, cell)) = cell else { continue };
+            let (dominant, other) = if cell.buy >= cell.sell {
+                (cell.buy, cell.sell)
+            } else {
+                (cell.sell, cell.buy)
+            };
+            if other.is_zero() {
+                continue;
+            }
+            let Some(ratio_value) = dominant.checked_div(other) else {
                 continue;
             };
-            let bucket = match extreme {
-                Extreme::Low => fp.levels().keys().next(),
-                Extreme::High => fp.levels().keys().next_back(),
-            };
-            let Some(&bucket) = bucket else { continue };
-            let price = fp.bucket_price(bucket).to_f64().unwrap_or(0.0);
+            let low = row as f64 * row_group;
             let y = match extreme {
-                Extreme::Low => frame.scale.y(price) + offset,
-                Extreme::High => frame.scale.y(price + fp.group().to_f64().unwrap_or(0.0)) + offset,
+                Extreme::Low => frame.scale.y(low) + offset,
+                Extreme::High => frame.scale.y(low + row_group) + offset,
             };
-            let text = format!("{:.2}", ratio_value.to_f64().unwrap_or(0.0));
             painter.text(
                 egui::pos2(xc, y),
                 align,
-                text,
+                format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0)),
                 egui::FontId::monospace(10.0),
                 theme::TEXT_MUTED,
             );
@@ -737,7 +783,10 @@ mod tests {
 
     /// The zoom ceiling must reach the Detailed budget, or the most detailed
     /// level exists only in the code — the reason MAX_CANDLE_WIDTH rose.
+    /// A cross-constant guard on purpose: it fires when either constant
+    /// drifts under the other.
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn the_zoom_ceiling_reaches_the_detailed_level() {
         assert!(crate::viewport::MAX_CANDLE_WIDTH >= DETAILED_MIN_WIDTH);
     }

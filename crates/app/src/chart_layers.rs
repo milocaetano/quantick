@@ -164,8 +164,10 @@ impl ChartLayer {
             Self::Bubbles => "confirmed executions from the trade stream, drawn where they printed",
             Self::Footprint => {
                 "the buy/sell split at each price inside every candle. Detail follows zoom: \
-                 numbers close in, profile and highlight marks further out. The legend names \
-                 the rows' price width at all times"
+                 numbers close in, profile and highlight marks further out. The violet line \
+                 is the bar's point of control (the price with the most volume); an Nx badge \
+                 at a bar's extreme is its aggression ratio there. The legend names the rows' \
+                 price width at all times"
             }
             Self::LiveStrip => {
                 "the book's resting depth and the forming bar's aggression, beside the price axis"

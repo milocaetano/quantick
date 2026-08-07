@@ -587,9 +587,12 @@ pub struct ChartPane {
     /// The footprint's sticky detail level (hysteresis on zoom-out).
     footprint_lod: crate::footprint_render::FootprintLod,
     /// The forming bar's ladder as last snapshotted for drawing, with the
-    /// frame time it was taken. Refreshed at ~10 Hz, not per print: the eye
-    /// reads patterns, and a frozen layout cannot reflow under the pointer.
-    footprint_live: Option<(f64, quantick_engine::BarFootprint)>,
+    /// frame time it was taken and the slot it belongs to. Refreshed at
+    /// ~10 Hz, not per print — the eye reads patterns, and a frozen layout
+    /// cannot reflow under the pointer — but *immediately* when the slot
+    /// changes: at a bar close the previous bar's ladder must never linger
+    /// on the new bar, not even for one throttle interval.
+    footprint_live: Option<(f64, usize, quantick_engine::BarFootprint)>,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -2476,12 +2479,15 @@ impl ChartPane {
             let now = clip.ctx().input(|i| i.time);
             match self.state.partial_footprint() {
                 Some(partial) => {
-                    let stale = self
-                        .footprint_live
-                        .as_ref()
-                        .is_none_or(|(taken, _)| now - *taken >= LIVE_LADDER_REFRESH_S);
+                    let stale =
+                        self.footprint_live
+                            .as_ref()
+                            .is_none_or(|(taken, snapshot_slot, _)| {
+                                *snapshot_slot != closed_total
+                                    || now - *taken >= LIVE_LADDER_REFRESH_S
+                            });
                     if stale {
-                        self.footprint_live = Some((now, partial.clone()));
+                        self.footprint_live = Some((now, closed_total, partial.clone()));
                     }
                 }
                 None => self.footprint_live = None,
@@ -2497,7 +2503,7 @@ impl ChartPane {
                 partial: self
                     .footprint_live
                     .as_ref()
-                    .map(|(_, ladder)| ladder)
+                    .map(|(_, _, ladder)| ladder)
                     .filter(|_| partial_visible.is_some()),
                 partial_slot: closed_total,
                 x_center: &|slot| viewport.x_center(slot, right, total),

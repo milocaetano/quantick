@@ -10,9 +10,9 @@
 #imbalance_ratio = 3.0
 
 # Absolute floor on the imbalance difference. Unset (default), the floor is
-# adaptive — the 60th percentile of per-row volume on screen — because one
-# fixed number cannot serve WIN contracts and BTC fractions at once. Pin it
-# for an instrument you know better.
+# adaptive — the 60th percentile of per-row volume over the newest closed
+# bars — because one fixed number cannot serve WIN contracts and BTC
+# fractions at once. Pin it for an instrument you know better.
 #imbalance_min_qty = 20.0
 
 # Consecutive same-side imbalances that make a stacked zone (default 3).

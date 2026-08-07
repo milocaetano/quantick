@@ -30,7 +30,8 @@ pub struct FootprintConfig {
     /// diagonal neighbour. 3:1 is the industry's centre of gravity.
     pub imbalance_ratio: Decimal,
     /// Absolute floor on the imbalance difference. `None` (the default) means
-    /// adaptive — the 60th percentile of per-row volume on screen.
+    /// adaptive — the 60th percentile of per-row volume over the newest
+    /// closed bars.
     pub imbalance_min_qty: Option<Decimal>,
     /// Consecutive same-side imbalances that make a stacked zone.
     pub stacked_count: usize,

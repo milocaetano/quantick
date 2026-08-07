@@ -125,7 +125,7 @@ Shipped in v1 (`config/footprint.toml`):
 | Option | Default |
 | --- | --- |
 | `imbalance_ratio` | `3.0` |
-| `imbalance_min_qty` | adaptive: p60 of per-row volume on screen, disclosed in the legend; manual override pins it |
+| `imbalance_min_qty` | adaptive: p60 of per-row volume over the newest closed bars (stable under pan and live prints), disclosed in the legend; manual override pins it |
 | `stacked_count` | `3` |
 | `show_poc` | `on` |
 | `extreme_ratio_badge` | `on` |

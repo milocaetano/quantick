@@ -241,6 +241,7 @@ mod tests {
     /// The scripted width obeys the gesture's own clamp, and the ceiling it
     /// reaches is the footprint's Detailed budget — the reason it rose to 160.
     #[test]
+    #[allow(clippy::assertions_on_constants)] // the ceiling itself is the claim
     fn scripted_candle_width_shares_the_gestures_clamp() {
         let mut v = Viewport::new();
         v.set_candle_width(1000.0);
