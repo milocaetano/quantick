@@ -422,6 +422,11 @@ fn axis_zoom_gesture(
 /// already one number — written out four times.
 const SCROLL_ZOOM_PX: f32 = 300.0;
 
+/// How often the forming bar's footprint ladder is re-snapshotted for
+/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
+/// digits, and a layout that repaints per print reflows under the pointer.
+const LIVE_LADDER_REFRESH_S: f64 = 0.1;
+
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
 /// Matches the candles' own feel: dragging the time axis zooms it by
@@ -694,6 +699,17 @@ pub struct PaneChrome<'a> {
     /// layer this feed has no data for as disabled-with-a-reason rather than as
     /// a switch that would do nothing — the wording the toolbar already uses.
     pub capabilities: FeedCapabilities,
+    /// Whether the running feed *infers* the aggressor side (MT5 tick rule,
+    /// or a replay of such a session) instead of the venue reporting it. The
+    /// footprint layer's content is entirely buyer-vs-seller, so it carries
+    /// this label in its own legend — the status bar's note is not enough
+    /// there (data honesty).
+    pub side_inferred: bool,
+    /// The window's footprint setup — the last one the trader used anywhere
+    /// (env > `config/footprint.toml` > saved edits > defaults). A chart
+    /// configured on its own overrides it; see
+    /// [`ChartPane::footprint_config`].
+    pub footprint: &'a crate::footprint_config::FootprintConfig,
     /// Where the layer menu leaves the two switches the pane does not own.
     /// Drained by the app once the canvas is done (see [`LayerActions`]).
     pub layers: &'a mut LayerActions,
@@ -722,6 +738,27 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
+    /// Whether the candle footprint layer is on. Off by default: today's
+    /// rendering is pixel-identical until the user asks for the ladder.
+    pub footprint_visible: bool,
+    /// This chart's own footprint setup, once it has been configured here.
+    ///
+    /// `None` — the default — means "follow the window's last setup", which
+    /// keeps the common case (one chart, one taste) behaving like a global
+    /// setting. A split layout is two readings of the same market (a 90-day
+    /// context chart beside a 50-tick flow chart) and one set of thresholds
+    /// cannot serve both, so the moment a chart is configured on its own it
+    /// keeps its own.
+    pub footprint_override: Option<crate::footprint_config::FootprintConfig>,
+    /// The footprint's sticky detail level (hysteresis on zoom-out).
+    footprint_lod: crate::footprint_render::FootprintLod,
+    /// The forming bar's ladder as last snapshotted for drawing, with the
+    /// frame time it was taken and the slot it belongs to. Refreshed at
+    /// ~10 Hz, not per print — the eye reads patterns, and a frozen layout
+    /// cannot reflow under the pointer — but *immediately* when the slot
+    /// changes: at a bar close the previous bar's ladder must never linger
+    /// on the new bar, not even for one throttle interval.
+    footprint_live: Option<(f64, usize, quantick_engine::BarFootprint)>,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -902,6 +939,10 @@ impl ChartPane {
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             live_strip_visible: false,
+            footprint_visible: false,
+            footprint_override: None,
+            footprint_lod: crate::footprint_render::FootprintLod::default(),
+            footprint_live: None,
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
@@ -946,6 +987,15 @@ impl ChartPane {
         }
     }
 
+    /// The footprint setup this chart draws with: its own once configured
+    /// here, else the window's last one. See [`Self::footprint_override`].
+    pub fn footprint_config<'a>(
+        &'a self,
+        window: &'a crate::footprint_config::FootprintConfig,
+    ) -> &'a crate::footprint_config::FootprintConfig {
+        self.footprint_override.as_ref().unwrap_or(window)
+    }
+
     /// Put this pane on `spec` outright, selectors included.
     ///
     /// Startup-scoped: the caller is a workspace restoring the bar rule this
@@ -974,6 +1024,16 @@ impl ChartPane {
         self.state.set_spec(spec);
     }
 
+    #[cfg(test)]
+    /// Give this chart its own footprint setup, the way the settings window
+    /// does when a knob moves on it.
+    pub fn set_footprint_override(
+        &mut self,
+        config: Option<crate::footprint_config::FootprintConfig>,
+    ) {
+        self.footprint_override = config;
+    }
+
     /// An egui interaction id scoped to this pane.
     fn interaction_id(&self, name: &'static str) -> egui::Id {
         egui::Id::new((name, self.id))
@@ -993,6 +1053,9 @@ impl ChartPane {
         match layer {
             ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_visible),
             ChartLayer::Bubbles => tape.is_some_and(OrderflowView::bubbles_enabled),
+            // Footprint reads the pane's own retained trades, not the tape
+            // machinery, so it works on flow and time panes alike.
+            ChartLayer::Footprint => self.footprint_visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
             ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
@@ -1032,6 +1095,7 @@ impl ChartPane {
                     tape.set_bubbles_enabled(visible);
                 }
             }
+            ChartLayer::Footprint => self.footprint_visible = visible,
             ChartLayer::LiveStrip => self.live_strip_visible = visible,
             ChartLayer::LaneMarks => {
                 if let Some(tape) = self.orderflow.as_mut() {
@@ -1096,7 +1160,10 @@ impl ChartPane {
         match layer {
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
-            ChartLayer::Bubbles => (!capabilities.traded_volume)
+            // The footprint is the buy/sell split per price: on a source that
+            // prints no traded volume every cell would be an identical
+            // synthetic unit — the same reason the bubbles refuse.
+            ChartLayer::Bubbles | ChartLayer::Footprint => (!capabilities.traded_volume)
                 .then_some("this source quotes prices but prints no traded volume"),
             _ => None,
         }
@@ -1115,7 +1182,7 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is thirteen entries, so the mask cannot outgrow
+    /// detection. `ALL` is fourteen entries, so the mask cannot outgrow
     /// `u16`.
     pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
         ChartLayer::ALL
@@ -1192,6 +1259,25 @@ impl ChartPane {
                 response.on_disabled_hover_text(reason);
             } else if response.changed() {
                 self.set_layer_visible(layer, visible, chrome.layers);
+            }
+            // The footprint's knobs live in a window of their own (the
+            // Profitchart-style properties dialog, the boss's ask); the menu
+            // offers the door. Available with the layer off too — configuring
+            // before switching on is a legitimate order of operations.
+            if layer == ChartLayer::Footprint && blocked.is_none() {
+                ui.indent("footprint_configure", |ui| {
+                    if ui
+                        .button("configure footprint…")
+                        .on_hover_text(
+                            "style, band fineness, imbalance thresholds, POC and \
+                             badges — in their own window",
+                        )
+                        .clicked()
+                    {
+                        chrome.layers.open_footprint_settings = true;
+                        ui.close_menu();
+                    }
+                });
             }
         }
 
@@ -2692,15 +2778,18 @@ impl ChartPane {
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                // Scroll up (positive) zooms in. Over the tape that means less
-                // market time in the band; over the candles, wider candles.
-                if let Some(orderflow) = self.orderflow.as_mut()
-                    && chart.hover_pos().is_some_and(in_lane)
-                {
-                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
-                } else {
-                    self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
-                }
+                // Scroll up (positive) zooms in — the candles, wherever on the
+                // canvas the pointer rests, tape band included.
+                //
+                // The lane used to steal this wheel while the pointer was over
+                // it: one gesture, two meanings, and nothing on screen saying
+                // which one you were about to get, so crossing a hairline
+                // divider mid-scroll zoomed the tape instead of the chart. The
+                // lane's window still zooms — from the lane's own time strip
+                // below it (drag or scroll), which is the grammar every other
+                // axis here already follows: an axis zooms its axis, the canvas
+                // zooms the chart.
+                self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
             }
         }
         // The middle button pans, always — including mid-placement, which is
@@ -2942,6 +3031,27 @@ impl ChartPane {
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
+        // The ladders accumulate only while the layer is on somewhere: off,
+        // ingestion pays nothing and holds nothing; the first frame after a
+        // switch-on refolds the retained trades (declared cost, once). Then
+        // adopt the book engine's capture bucket as the row grid (the
+        // instrument's price_step where the feed declares one). Both before
+        // the frame borrows the bar slices; both no-ops every frame but the
+        // one where something changed.
+        let footprint_on = self.footprint_visible
+            && self
+                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
+                .is_none();
+        self.state.set_footprint_enabled(footprint_on);
+        if footprint_on
+            && let Some(base) = self
+                .orderflow
+                .as_ref()
+                .map(OrderflowView::base_capture_grouping)
+        {
+            self.state.set_footprint_group(base);
+        }
+
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
         let prefix = self.history_prefix.as_slice();
@@ -3047,6 +3157,22 @@ impl ChartPane {
         let half = (cw * chrome.style.candles.clamped_width_frac() / 2.0).max(0.5);
         let right = history_rect.right();
 
+        // With the footprint on, the candle cedes its interior to the ladder
+        // as the zoom crosses into detail: the body fill fades out and the
+        // outline steps in — the reference charts' outline-box candles. With
+        // the layer off the candles are untouched at any zoom.
+        let mut faded_candles = None;
+        if footprint_on {
+            let body = crate::footprint_render::candle_body_fade(cw);
+            if body < 1.0 {
+                let mut faded = chrome.style.candles;
+                faded.fill_opacity *= body;
+                faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
+                faded_candles = Some(faded);
+            }
+        }
+        let candles = faded_candles.as_ref().unwrap_or(&chrome.style.candles);
+
         // Resting liquidity is the bottom visual layer. Projection is pure with
         // respect to candles and uses the same bar-warped viewport coordinates.
         // The projection builds a lane exactly when the layout draws one. Tied
@@ -3124,19 +3250,63 @@ impl ChartPane {
         for (offset, bar) in visible_closed().enumerate() {
             let index = closed_start + offset;
             let xc = self.viewport.x_center(index, right, total);
-            draw_candle(&clip, xc, half, &scale, bar, false, &chrome.style.candles);
+            draw_candle(&clip, xc, half, &scale, bar, false, candles);
         }
         if let Some(partial) = partial_visible {
             let xc = self.viewport.x_center(closed_total, right, total);
-            draw_candle(
-                &clip,
-                xc,
+            draw_candle(&clip, xc, half, &scale, partial, true, candles);
+        }
+        // The footprint rides directly on the candles, before everything
+        // drawn over them: it is a representation of the bars themselves,
+        // not an annotation. Prefix (venue) candles carry no tape and draw
+        // no ladder — the layer starts where trade-built bars start.
+        if self.layer_visible(ChartLayer::Footprint, chrome.style)
+            && self
+                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
+                .is_none()
+        {
+            // Snapshot the forming bar's ladder at ~10 Hz rather than per
+            // print; between snapshots the drawn numbers hold still.
+            let now = clip.ctx().input(|i| i.time);
+            match self.state.partial_footprint() {
+                Some(partial) => {
+                    let stale =
+                        self.footprint_live
+                            .as_ref()
+                            .is_none_or(|(taken, snapshot_slot, _)| {
+                                *snapshot_slot != closed_total
+                                    || now - *taken >= LIVE_LADDER_REFRESH_S
+                            });
+                    if stale {
+                        self.footprint_live = Some((now, closed_total, partial.clone()));
+                    }
+                }
+                None => self.footprint_live = None,
+            }
+            let viewport = &self.viewport;
+            let frame = crate::footprint_render::LayerFrame {
+                painter: &clip,
+                chart_rect: history_rect,
+                scale: &scale,
+                footprints: self.state.bar_footprints(),
+                first_state_slot: prefix.len(),
+                visible: (start, end),
+                partial: self
+                    .footprint_live
+                    .as_ref()
+                    .map(|(_, _, ladder)| ladder)
+                    .filter(|_| partial_visible.is_some()),
+                partial_slot: closed_total,
+                x_center: &|slot| viewport.x_center(slot, right, total),
                 half,
-                &scale,
-                partial,
-                true,
-                &chrome.style.candles,
-            );
+                candle_width: cw,
+                side_inferred: chrome.side_inferred,
+                // Field access, not `self.footprint_config(..)`: the method
+                // borrows all of `self` and the draw below needs
+                // `self.footprint_lod` mutably. Same resolution rule.
+                config: self.footprint_override.as_ref().unwrap_or(chrome.footprint),
+            };
+            crate::footprint_render::draw_layer(&frame, &mut self.footprint_lod);
         }
         // Overlay indicator plots ride the candles' own clip, scale and
         // x-mapping — after candles, before aggression bubbles (the same
@@ -4448,6 +4618,36 @@ fn magnet_price_of(
 mod tests {
     use super::*;
     use crate::indicator_worker::IndicatorEvent;
+
+    /// A chart that has never been configured follows the window's setup —
+    /// which is what keeps one chart behaving like a global preference —
+    /// and a chart configured on its own ignores it, which is what a split
+    /// layout needs. Inverting this resolution would silently give both
+    /// charts one reading.
+    #[test]
+    fn a_chart_follows_the_window_until_it_is_configured_itself() {
+        use crate::footprint_config::{FootprintConfig, FootprintStyle};
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let window = FootprintConfig::default();
+        assert_eq!(pane.footprint_config(&window), &window, "virgin follows");
+
+        let own = FootprintConfig {
+            style: FootprintStyle::Ladder,
+            show_numbers: false,
+            ..FootprintConfig::default()
+        };
+        pane.set_footprint_override(Some(own.clone()));
+        assert_eq!(
+            pane.footprint_config(&window),
+            &own,
+            "configured keeps its own"
+        );
+        assert_ne!(pane.footprint_config(&window), &window);
+
+        // "follow the default again".
+        pane.set_footprint_override(None);
+        assert_eq!(pane.footprint_config(&window), &window);
+    }
 
     /// The tape's lane is a live region, not a canvas. A drawing that ran
     /// across it painted over the flow — and worse, the painted end and the

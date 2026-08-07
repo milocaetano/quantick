@@ -109,6 +109,11 @@ pub struct CanvasChrome<'a> {
     /// What the running source can produce, for the layer menu's disabled
     /// entries. Resolved once by the app rather than per pane, per entry.
     pub capabilities: FeedCapabilities,
+    /// Whether the source infers the aggressor side (see
+    /// [`PaneChrome::side_inferred`]). Resolved once, like `capabilities`.
+    pub side_inferred: bool,
+    /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
+    pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
     pub layers: &'a mut crate::chart_layers::LayerActions,
 }
@@ -1762,6 +1767,19 @@ impl Tab {
                 paper,
                 ..
             } = self;
+            // The time pane has no tape of its own (§11), so its footprint
+            // rows adopt the flow pane's capture bucket — the instrument's
+            // grid is a fact about the market, not about which pane shows it.
+            if let (Some(time), Some(base)) = (
+                time_pane.as_mut(),
+                flow_pane
+                    .orderflow
+                    .as_ref()
+                    .map(|tape| tape.base_capture_grouping()),
+            ) && time.footprint_visible
+            {
+                time.state.set_footprint_group(base);
+            }
             let mut chrome = PaneChrome {
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,
@@ -1773,6 +1791,8 @@ impl Tab {
                 shared_pick: None,
                 shared: SharedInteraction::default(),
                 capabilities: chrome.capabilities,
+                side_inferred: chrome.side_inferred,
+                footprint: chrome.footprint,
                 layers: chrome.layers,
             };
             // Time pane first, then flow. Both take the same two steps in the

@@ -20,3 +20,7 @@ __pycache__/
 # Which chart layers the app was last showing (the right-click layer menu)
 /chart-layers.toml
 crates/app/indicators-state.toml
+
+# Footprint settings the app writes at runtime (like chart-layers.toml).
+footprint-settings.toml
+footprint-presets.toml

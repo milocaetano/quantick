@@ -13,7 +13,12 @@
 /// Narrowest a candle slot can be, in pixels (max zoom-out).
 pub const MIN_CANDLE_WIDTH: f32 = 2.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
-pub const MAX_CANDLE_WIDTH: f32 = 64.0;
+///
+/// Sized for the footprint's Detailed level: a `sell × buy` ladder cell is
+/// only a number from ~72 px of candle, so the old 64 px ceiling kept the
+/// most detailed view of the tape permanently out of reach. 160 px shows a
+/// handful of bars with full ladders — the "read these five candles" zoom.
+pub const MAX_CANDLE_WIDTH: f32 = 160.0;
 /// How many empty bar-slots past the newest bar you may pan into.
 const FUTURE_MARGIN_BARS: f32 = 40.0;
 
@@ -65,6 +70,15 @@ impl Viewport {
         if factor > 0.0 && factor.is_finite() {
             self.candle_width =
                 (self.candle_width * factor).clamp(MIN_CANDLE_WIDTH, MAX_CANDLE_WIDTH);
+        }
+    }
+
+    /// Set the zoom directly to `px` per slot, clamped to the same bounds
+    /// the gesture obeys. This is the scripted entry (`QUANTICK_CANDLE_WIDTH`)
+    /// to the zoom the scroll gesture reaches — one clamp, two doors.
+    pub fn set_candle_width(&mut self, px: f32) {
+        if px.is_finite() && px > 0.0 {
+            self.candle_width = px.clamp(MIN_CANDLE_WIDTH, MAX_CANDLE_WIDTH);
         }
     }
 
@@ -222,6 +236,21 @@ mod tests {
         // Centring near the newest bar lands on the live edge and follows.
         v.center_on_bar(499.0, 800.0, 500);
         assert!(v.follows_live());
+    }
+
+    /// The scripted width obeys the gesture's own clamp, and the ceiling it
+    /// reaches is the footprint's Detailed budget — the reason it rose to 160.
+    #[test]
+    #[allow(clippy::assertions_on_constants)] // the ceiling itself is the claim
+    fn scripted_candle_width_shares_the_gestures_clamp() {
+        let mut v = Viewport::new();
+        v.set_candle_width(1000.0);
+        assert!((v.candle_width() - MAX_CANDLE_WIDTH).abs() < 0.001);
+        v.set_candle_width(0.5);
+        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        v.set_candle_width(f32::NAN);
+        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        assert!(MAX_CANDLE_WIDTH >= 160.0);
     }
 
     #[test]

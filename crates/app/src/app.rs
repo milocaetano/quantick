@@ -618,6 +618,25 @@ pub struct QuantickApp {
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
+    /// The footprint layer's signal tunables — resolved at boot (env >
+    /// `config/footprint.toml` preset > saved edits > defaults), edited live
+    /// by the layer menu's controls.
+    footprint_config: crate::footprint_config::FootprintConfig,
+    /// Where those edits persist (see `footprint_config::settings_path`).
+    footprint_settings_path: std::path::PathBuf,
+    /// Whether the footprint settings window is open (the layer menu's
+    /// "configure footprint…" entry opens it).
+    show_footprint_settings: bool,
+    /// Named tape-reading setups, and where they live.
+    footprint_presets: crate::footprint_presets::PresetStore,
+    footprint_presets_path: std::path::PathBuf,
+    /// The settings window's "save preset" field, kept across frames.
+    footprint_preset_draft: String,
+    /// The boot hooks' requests, kept so tabs opened later (replay
+    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART` and
+    /// `QUANTICK_CANDLE_WIDTH`.
+    scripted_footprint: bool,
+    scripted_candle_width: Option<f32>,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -761,6 +780,11 @@ impl QuantickApp {
             feed,
             trades_dir.clone(),
         );
+        // Resolved once: under test the settings path is a fresh scratch
+        // file per call, and the load must read the same file the saves
+        // will write.
+        let footprint_settings_path = crate::footprint_config::settings_path();
+        let footprint_presets_path = crate::footprint_presets::default_path();
         let mut app = Self {
             tabs: vec![tab],
             active_tab: 0,
@@ -815,6 +839,14 @@ impl QuantickApp {
             saved_layer_mask: 0,
             layer_defaults: std::collections::BTreeMap::new(),
             layer_actions: chart_layers::LayerActions::default(),
+            footprint_config: crate::footprint_config::load(&footprint_settings_path),
+            footprint_settings_path,
+            show_footprint_settings: false,
+            footprint_presets: crate::footprint_presets::PresetStore::load(&footprint_presets_path),
+            footprint_presets_path,
+            footprint_preset_draft: String::new(),
+            scripted_footprint: false,
+            scripted_candle_width: None,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -895,6 +927,27 @@ impl QuantickApp {
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
+        }
+        // Same convenience for the candle footprint — the same field the
+        // pane's layer menu writes, so a validation run sees exactly what a
+        // click would show.
+        if std::env::var("QUANTICK_FOOTPRINT_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.scripted_footprint = true;
+            app.active_tab_mut().flow_pane.footprint_visible = true;
+        }
+        // The settings window too — a validation run reaches every surface
+        // from env alone (ui-harness rule).
+        if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
+            app.show_footprint_settings = true;
+        }
+        // The zoom, scriptable: the footprint's detail levels are functions
+        // of candle width, and a validation run cannot drag a scroll wheel.
+        // Same clamp as the gesture (see Viewport::set_candle_width).
+        if let Ok(value) = std::env::var("QUANTICK_CANDLE_WIDTH")
+            && let Ok(px) = value.trim().parse::<f32>()
+        {
+            app.scripted_candle_width = Some(px);
+            app.active_tab_mut().flow_pane.viewport.set_candle_width(px);
         }
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
@@ -1214,6 +1267,18 @@ impl QuantickApp {
         self.active_tab_mut()
             .flow_pane
             .apply_layer_states(&defaults);
+        // The scripted footprint/zoom hooks reach tabs opened later too: the
+        // replay tab a validation run autostarts is the tab the run means,
+        // and it does not exist yet when the boot hooks fire.
+        if self.scripted_footprint {
+            self.active_tab_mut().flow_pane.footprint_visible = true;
+        }
+        if let Some(px) = self.scripted_candle_width {
+            self.active_tab_mut()
+                .flow_pane
+                .viewport
+                .set_candle_width(px);
+        }
     }
 
     /// Close the tab at `index`, activating a neighbour.
@@ -2036,6 +2101,65 @@ impl QuantickApp {
         }
         if actions.indicators_changed {
             self.mark_indicator_state_dirty();
+        }
+        if actions.footprint_changed {
+            crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
+        }
+        if actions.open_footprint_settings {
+            self.show_footprint_settings = true;
+        }
+    }
+
+    /// The footprint settings window, editing the **focused chart's** setup.
+    ///
+    /// A chart that has never been configured follows the window's last
+    /// setup, so the first edit anywhere reads like a global preference and
+    /// the second chart only diverges when the trader configures it too.
+    /// Whatever is edited also becomes the window default, which is what a
+    /// chart opened later inherits.
+    fn draw_footprint_settings(&mut self, ctx: &egui::Context) {
+        if !self.show_footprint_settings {
+            return;
+        }
+        let side = self.active_tab().focused_side();
+        let customized = self
+            .active_tab()
+            .focused_pane()
+            .footprint_override
+            .is_some();
+        let mut edited = self
+            .active_tab()
+            .focused_pane()
+            .footprint_config(&self.footprint_config)
+            .clone();
+        let outcome = crate::footprint_panel::draw(
+            ctx,
+            crate::footprint_panel::PanelInput {
+                open: &mut self.show_footprint_settings,
+                config: &mut edited,
+                presets: &mut self.footprint_presets,
+                presets_path: &self.footprint_presets_path,
+                name_draft: &mut self.footprint_preset_draft,
+                target: match side {
+                    PaneSide::Flow => "flow chart",
+                    PaneSide::Time => "time chart",
+                },
+                customized,
+            },
+        );
+        match outcome {
+            crate::footprint_panel::PanelOutcome::Untouched => {}
+            crate::footprint_panel::PanelOutcome::Changed => {
+                self.active_tab_mut().pane_mut(side).footprint_override = Some(edited.clone());
+                self.footprint_config = edited;
+                crate::footprint_config::save(
+                    &self.footprint_settings_path,
+                    &self.footprint_config,
+                );
+            }
+            crate::footprint_panel::PanelOutcome::ResetToDefault => {
+                self.active_tab_mut().pane_mut(side).footprint_override = None;
+            }
         }
     }
 
@@ -4759,6 +4883,7 @@ impl QuantickApp {
         }
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);
+        self.draw_footprint_settings(ctx);
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         let replay_loading = self.replay_view.is_loading();
@@ -4772,6 +4897,9 @@ impl QuantickApp {
         // The layer menu offers what this source can produce; resolved once
         // here rather than per pane, per entry, inside the canvas.
         let capabilities = self.active_tab().capabilities(&self.config);
+        // Same one-per-frame resolution for the side-honesty label the
+        // footprint legend carries.
+        let side_inferred = self.active_tab().side_note(&self.config).is_some();
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -4785,6 +4913,7 @@ impl QuantickApp {
                         style,
                         tz,
                         layer_actions,
+                        footprint_config,
                         ..
                     } = self;
                     let mut chrome = CanvasChrome {
@@ -4793,6 +4922,8 @@ impl QuantickApp {
                         style,
                         tz: *tz,
                         capabilities,
+                        side_inferred,
+                        footprint: footprint_config,
                         layers: layer_actions,
                     };
                     tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
@@ -6831,6 +6962,7 @@ plot(close)
         body: impl FnOnce(&mut ChartPane, &mut pane::PaneChrome<'_>) -> R,
     ) -> R {
         let capabilities = app.active_tab().capabilities(&app.config);
+        let side_inferred = app.active_tab().side_note(&app.config).is_some();
         let QuantickApp {
             tabs,
             active_tab,
@@ -6839,6 +6971,7 @@ plot(close)
             style,
             tz,
             layer_actions,
+            footprint_config,
             ..
         } = app;
         let tab = &mut tabs[*active_tab];
@@ -6855,6 +6988,8 @@ plot(close)
             shared_pick: None,
             shared: pane::SharedInteraction::default(),
             capabilities,
+            side_inferred,
+            footprint: footprint_config,
             layers: layer_actions,
         };
         body(&mut tab.flow_pane, &mut chrome)
@@ -6885,6 +7020,9 @@ plot(close)
         for (layer, expected) in [
             (ChartLayer::Heatmap, false),
             (ChartLayer::Bubbles, false),
+            // The footprint is opt-in like every market layer: the chart must
+            // open pixel-identical to the day before the layer existed.
+            (ChartLayer::Footprint, false),
             (ChartLayer::LiveStrip, false),
             (ChartLayer::LaneMarks, true),
             (ChartLayer::DepthGaps, true),

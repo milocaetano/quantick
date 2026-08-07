@@ -1,0 +1,46 @@
+# Footprint layer tunables (crates/app/src/footprint_config.rs).
+#
+# Every knob is optional: an absent one keeps the built-in default, and this
+# file's presence changes nothing by itself — the layer still opens off and
+# is switched in the pane's right-click layer menu. Override the file
+# location with QUANTICK_FOOTPRINT=<path>.
+
+# How the ladder is drawn (default "split"): "split" = volume profile on the
+# right, the winning side's delta bar on the left, yellow POC — the reference
+# look; "ladder" = the classic sell|buy number columns.
+#style = "split"
+
+# One side must be at least this many times its diagonal neighbour to count
+# as an imbalance (default 3.0, the industry's centre of gravity).
+#imbalance_ratio = 3.0
+
+# Absolute floor on the imbalance difference. Unset (default), the floor is
+# adaptive — the 60th percentile of per-row volume over the newest closed
+# bars — because one fixed number cannot serve WIN contracts and BTC
+# fractions at once. Pin it for an instrument you know better.
+#imbalance_min_qty = 20.0
+
+# Consecutive same-side imbalances that make a stacked zone (default 3).
+#stacked_count = 3
+
+# The thinnest a profile band may draw, in pixels (default 4.0, clamped
+# 2–10). Lower = more, finer bands per candle before rows merge.
+#profile_row_px = 4.0
+
+# The per-bar POC line (default true).
+#show_poc = true
+
+# The aggression ratio badges at a bar's extremes, Detailed level only
+# (default true).
+#extreme_ratio_badge = true
+
+# Hide badges below this ratio (default 2.0) — a "1.0x" badge is the
+# absence of aggression.
+#badge_min_ratio = 2.0
+
+# The per-row numbers inside the candles (default true). Off keeps the bars,
+# imbalance chips, POC and badges — the shape of the fight, no digits.
+#show_numbers = true
+
+# The per-bar delta chips along the chart's bottom edge (default true).
+#show_delta_totals = true
