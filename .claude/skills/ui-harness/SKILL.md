@@ -36,6 +36,17 @@ is the source of truth, this table is the index):
 | `QUANTICK_BACKFILL` / `QUANTICK_BOOK_DEPTH` | history paging / depth size |
 | `QUANTICK_TRADES_DIR` | paper-trading journal location (point at scratch) |
 
+Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_DRAWING_TOOL=<tool id>` | opens with that tool armed — any id in `DRAWING_TOOLS` (`trend-line`, `ray`, `measure`, `text`, …) |
+| `QUANTICK_DRAWING_MAGNET=1` | the magnet on (anchors snap to the bar's OHLC) |
+| `QUANTICK_DRAWINGS_DEMO=1` | one of every registered drawing placed on the flow pane once it has bars, the last one selected so the inspector is on screen too |
+| `QUANTICK_DRAWINGS_DEMO_SHARED=1` | those demo objects marked "show on all charts" — pair with a split layout to see the cross-pane projection |
+
+Once merged, move them into the table above.
+
 Landing with PR #127 (paper trading v2): `QUANTICK_DOCK_TAB`
 (`l2|bubbles|session|trading|trades`), `QUANTICK_PAPER_REPORT_AUTOSTART=1`,
 `QUANTICK_PAPER_DEMO=1` (scripted deterministic trade sequence). Once merged,

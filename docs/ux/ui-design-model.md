@@ -327,10 +327,12 @@ shell:
 Menus stay shallow; they exist for discoverability and shortcuts, never as
 the only path:
 
-- **File** — New Tab… (`Ctrl+T`), Close Tab (`Ctrl+W`), Layout ▸ Single /
-  Time + Flow (§11), Market Replay… (`Ctrl+R`), Close Replay, Exit.
-- **View** — dock show/hide (`Ctrl+B`), each dock tab, sub-pane
-  collapse-all, perf readings on/off, timezone.
+- **File** — New Tab… (`Ctrl+T`), Close Tab (`Ctrl+W`), Market Replay…
+  (`Ctrl+R`), Close Replay, Exit.
+- **View** — Layout ▸ Flow / Timeframe / Timeframe + Flow (§11; what the
+  canvas shows is a view concern, and the entries name the charts they
+  show), dock show/hide (`Ctrl+B`), each dock tab, sub-pane collapse-all,
+  perf readings on/off, timezone.
 - **Insert** — indicators (natives + library), drawing tools (§9).
 - **Tools** — appearance dialog, future: script library folder, alerts.
 - **Help** — replay file format…, future: Pine dialect reference,
@@ -392,17 +394,26 @@ budget is unchanged.
 
 ### Split view (per tab: zones 4–6 + 9 duplicate)
 
-`File → Layout → Time + Flow` (per-tab, remembered). The canvas splits on a
-draggable vertical divider — **time pane left, flow pane right**, 50/50
-default, 25% minimum each. The time pane is the *context* view; the flow
-pane keeps quantick's identity.
+`View → Layout` (per-tab, remembered) offers three canvases, each named for
+what it shows: **Flow** (the default), **Timeframe** (the time pane alone,
+full window, header included) and **Timeframe + Flow**. The split canvas
+divides on a draggable vertical divider — **time pane left, flow pane
+right**, 50/50 default, 25% minimum each. The time pane is the *context*
+view; the flow pane keeps quantick's identity. A feed may declare the canvas
+its tabs open on (`default_layout` / `default_bars` in `feeds.toml`,
+startup-scoped like `default_feed`); the factory default stays Flow.
 
 - **One engine, one tape.** Both panes are fed the same trades from the
   tab's feed; the time pane is a second `ChartState` with `BarSpec::Time`.
   No second bar-building path exists.
 - **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h`
   presets plus the existing custom interval drag. The toolbar's BARS group
-  keeps governing the flow pane only; two selectors, two panes, no modes.
+  governs the *focused* pane — the same pane the status bar reads and
+  indicator commands land on, so the chrome never disagrees with itself
+  about which chart a command describes.
+- **Focus follows the switch.** Changing layout focuses the pane the switch
+  reveals, so the first command after it already lands on the chart that
+  just appeared.
 - **Flow layers stay on the flow pane.** Heatmap, bubbles and the live strip
   never render on the time pane. Indicators and drawings work on both, each
   pane owning its slots and objects (anchors are bar-index + price and do

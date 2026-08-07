@@ -1,10 +1,10 @@
 //! The time pane's inline timeframe selector
 //! (`docs/ux/ui-design-model.md` §11).
 //!
-//! Two selectors, two panes, no modes: the toolbar's BARS group governs the
-//! flow pane and this row governs the time pane. It sits in a strip carved off
-//! the top of the pane rather than floating over it, so nothing is ever
-//! painted across market data.
+//! This row governs the time pane and nothing else, wherever focus sits; the
+//! toolbar's BARS group governs the *focused* pane, which may be the same
+//! one. It sits in a strip carved off the top of the pane rather than
+//! floating over it, so nothing is ever painted across market data.
 //!
 //! The presets are the four timeframes a context chart is actually read at;
 //! the drag beside them accepts the same interval domain the BARS group does

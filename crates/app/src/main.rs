@@ -136,6 +136,12 @@ fn main() -> eframe::Result {
         "starting quantick"
     );
 
+    // The bar type the chart opens on: the feed's declared `default_bars`
+    // when it names one, the factory tick spec otherwise.
+    let spec = config
+        .startup_spec_for(&feed_id)
+        .unwrap_or(BarSpec::Tick(INITIAL_TICK_SIZE));
+
     let feed = feed::spawn_live(provider, &symbol, &config);
 
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
@@ -162,11 +168,7 @@ fn main() -> eframe::Result {
             cc.egui_ctx.set_fonts(fonts);
             theme::apply(&cc.egui_ctx);
             Ok(Box::new(app::QuantickApp::new(
-                config,
-                feed_id,
-                symbol,
-                BarSpec::Tick(INITIAL_TICK_SIZE),
-                feed,
+                config, feed_id, symbol, spec, feed,
             )))
         }),
     )

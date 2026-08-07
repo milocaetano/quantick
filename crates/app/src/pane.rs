@@ -27,7 +27,7 @@ use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
 use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
-use crate::drawings::{self, ChartPoint, DrawContext, Drawings, PresetHost};
+use crate::drawings::{self, ChartPoint, DrawContext, Drawing, DrawingStyle, Drawings, PresetHost};
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
     IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
@@ -48,6 +48,10 @@ const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
 /// Hit radius for a selected drawing's editable anchor.
 pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// Minimum pointer travel that turns one press/release into drag placement.
+/// How near the pointer must be to a bar's open / high / low / close for
+/// the magnet to take the anchor. Generous enough to catch the swing you
+/// aimed at, tight enough to still draw a free diagonal between bars.
+const MAGNET_REACH_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 
 /// Alpha of the last-price line: legible at a glance without competing with a
@@ -653,6 +657,25 @@ pub struct ChartPane {
     pub drawing_hover: Option<ChartPoint>,
     pub drawing_press_position: Option<egui::Pos2>,
     pub drawing_press_started_empty: bool,
+    /// What the press resolved under the Pointer tool, held until the click
+    /// it belongs to completes. `Some(None)` is a real answer — a press on
+    /// empty canvas, the one that deselects.
+    ///
+    /// It exists because the canvas is not the same shape before and after a
+    /// selection: the pinned inspector is a side panel laid out *before* the
+    /// central panel, so the frame a selection appears is the frame the chart
+    /// narrows by the panel's width and every drawing slides left with it.
+    /// Re-hit-testing on the release would be asking a different chart.
+    pub drawing_press_pick: Option<Option<usize>>,
+    /// Where a move/resize gesture pressed, while it is still under the drag
+    /// threshold. `None` once the threshold is passed — from then on the
+    /// object follows the pointer for the rest of the gesture.
+    ///
+    /// Without it, one pixel of hand tremor during a *click* re-angles a
+    /// channel or shifts a level the trader placed deliberately, and records
+    /// it as an undo step. Placement already refused to turn a twitch into a
+    /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
+    pub drawing_drag_pending_from: Option<egui::Pos2>,
     pub drawing_drag: DrawingDrag,
 }
 
@@ -729,6 +752,8 @@ impl ChartPane {
             drawing_hover: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
+            drawing_press_pick: None,
+            drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
         }
     }
@@ -1294,6 +1319,7 @@ impl ChartPane {
         pos: egui::Pos2,
         history_right: f32,
         total: usize,
+        magnet: bool,
     ) -> Option<ChartPoint> {
         let (auto_lo, auto_hi) = self.last_auto_range?;
         if total == 0 || self.last_chart_height <= 1.0 {
@@ -1308,10 +1334,60 @@ impl ChartPane {
         );
         let bar = self.viewport.right_edge_bar(total) + 0.5
             - (history_right - pos.x) / self.viewport.candle_width();
-        Some(ChartPoint {
-            bar,
-            price: scale.price_at(pos.y),
-        })
+        let price = magnet
+            .then(|| self.magnet_price(bar, pos.y, &scale))
+            .flatten()
+            .unwrap_or_else(|| scale.price_at(pos.y));
+        Some(ChartPoint::at_time(bar, price, self.anchor_time(bar)))
+    }
+
+    /// The magnet, applied to the bar the pointer is over.
+    ///
+    /// Only that bar is considered: snapping to a neighbour would move the
+    /// anchor sideways, and the trader chose the bar by pointing at it.
+    fn magnet_price(&self, bar: f32, pointer_y: f32, scale: &PriceScale) -> Option<f64> {
+        if !bar.is_finite() || bar < 0.0 {
+            return None;
+        }
+        magnet_price_of(self.closed_bar(bar.floor() as usize)?, pointer_y, scale)
+    }
+
+    /// The market time behind a fractional bar slot, for anchors that may have
+    /// to be re-expressed on another pane (§D7 of the drawing-tools design).
+    ///
+    /// Only a slot that actually holds a bar has an instant behind it: the
+    /// empty space past the newest bar is future the tape has not written, and
+    /// naming a time there would be an invention. `None` is the honest answer
+    /// there, and it is what keeps such an anchor out of a shared drawing.
+    fn anchor_time(&self, bar: f32) -> Option<i64> {
+        if !bar.is_finite() || bar < 0.0 {
+            return None;
+        }
+        let slot = bar.floor() as usize;
+        let slots = self.slots();
+        if slot < slots {
+            return self.slot_open_time(slot);
+        }
+        // Past the newest bar. Traders draw here constantly — a channel or a
+        // trend line pointing into the empty space to the right of the tape
+        // is the normal way to say "if this continues". Refusing the whole
+        // gesture a time would block sharing exactly where it is most used.
+        //
+        // On a *time* chart that space has an exact clock: the bars are one
+        // fixed interval apart, so the slot after the last one is the last
+        // one plus that interval. Nothing is inferred.
+        //
+        // On a tick or volume chart it does not: the next bar happens when
+        // enough trades happen, and no elapsed time can be named for it. That
+        // stays `None` — an invented timestamp is worse than a control that
+        // says why it is off.
+        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
+            return None;
+        }
+        let last = slots.checked_sub(1)?;
+        let ahead = i64::try_from(slot - last).ok()?;
+        self.slot_open_time(last)?
+            .checked_add(ahead.checked_mul(self.time_interval_ms)?)
     }
 
     /// Placement consumes clicks while a drawing tool is armed, preventing a
@@ -1323,6 +1399,7 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) -> bool {
+        let magnet = chrome.toolrail.magnet();
         let Some(tool) = chrome.toolrail.tool().drawing_tool() else {
             self.drawings.cancel_draft();
             self.drawing_hover = None;
@@ -1342,9 +1419,9 @@ impl ChartPane {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = response.hover_pos();
-        self.drawing_hover = response
-            .hover_pos()
-            .and_then(|position| self.drawing_point_at(position, history_right, self.slots()));
+        self.drawing_hover = response.hover_pos().and_then(|position| {
+            self.drawing_point_at(position, history_right, self.slots(), magnet)
+        });
         if response.hovered() || response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
@@ -1357,7 +1434,8 @@ impl ChartPane {
                 .flatten()
         });
         if let Some(position) = pressed_position.filter(|position| history.contains(*position))
-            && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
+            && let Some(point) =
+                self.drawing_point_at(position, history_right, self.slots(), magnet)
         {
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
             self.drawing_press_position = Some(position);
@@ -1377,7 +1455,8 @@ impl ChartPane {
             && let Some(position) = released_position
             && history.contains(position)
             && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
-            && let Some(point) = self.drawing_point_at(position, history_right, self.slots())
+            && let Some(point) =
+                self.drawing_point_at(position, history_right, self.slots(), magnet)
         {
             self.place_drawing_point(tool, point, chrome);
         }
@@ -1398,13 +1477,16 @@ impl ChartPane {
         // one is set; existing objects are never touched by that choice.
         let presets = chrome.presets;
         let completed = self.drawings.place_with(tool, point, |tool| {
+            let style = presets
+                .default_style(tool.id())
+                .unwrap_or_else(drawings::DrawingStyle::default);
             let mut payload = tool.default_payload();
             if let Some(name) = presets.default_preset(tool.id())
                 && let Some(value) = presets.load_custom_preset(tool.id(), &name)
             {
                 payload.import_preset(&value);
             }
-            payload
+            drawings::NewDrawing { style, payload }
         });
         if completed {
             // One-shot by default; the toolbox repeat pin keeps the tool
@@ -1524,6 +1606,23 @@ impl ChartPane {
             .map(|(point_index, _)| point_index)
     }
 
+    /// What a pointer at `pos` is on: a drawing's handle first, then its
+    /// body. One function, so the press and the click that follows it can
+    /// never answer differently — grabbing a handle *is* clicking the object,
+    /// and the handle radius is the wider of the two.
+    fn drawing_pick_at(
+        &self,
+        pos: egui::Pos2,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> Option<usize> {
+        self.drawing_anchor_at(pos, history_right, total, scale)
+            .map(|(drawing_index, _)| drawing_index)
+            .or_else(|| self.drawing_at(pos, chart_rect, history_right, total, scale))
+    }
+
     fn drawing_anchor_at(
         &self,
         pos: egui::Pos2,
@@ -1565,6 +1664,10 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.unhide_layer_for_armed_tool(chrome);
+        // The magnet applies to every anchor gesture, placement and re-drag
+        // alike: a handle that snaps only while you first draw it would make
+        // the second edit undo the precision of the first.
+        let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_plot_area = Some(area);
@@ -1683,7 +1786,7 @@ impl ChartPane {
                             egui::CursorIcon::ResizeNwSe
                         });
                 } else if let Some(hovered) =
-                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                    self.drawing_at(position, drawing_area, history_right, total, &scale)
                 {
                     ui.ctx()
                         .set_cursor_icon(if self.drawings.items()[hovered].locked {
@@ -1699,16 +1802,32 @@ impl ChartPane {
             {
                 // Alt+click walks down the z-order through overlapping
                 // objects; a plain click selects the topmost hit.
+                //
+                // A click selects what the *press* grabbed. The release must
+                // not re-decide, because opening the panel moves the chart
+                // under the pointer (see `drawing_press_pick`) and the object
+                // the user pressed on is no longer at that pixel — the
+                // release would wipe the selection the press just made, and
+                // the panel would flicker open and shut with the mouse
+                // standing still.
+                //
+                // Alt+click keeps re-deciding on purpose: it walks down the
+                // z-order from the current selection, so it only ever runs
+                // while a selection already exists and the layout is settled.
                 let selected = if ui.input(|input| input.modifiers.alt) {
                     self.drawing_below_selection(
                         position,
-                        areas.chart,
+                        drawing_area,
                         history_right,
                         total,
                         &scale,
                     )
                 } else {
-                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                    self.drawing_press_pick.take().unwrap_or_else(|| {
+                        // No press was recorded (it landed on chrome, or off
+                        // the drawing area): fall back to asking now.
+                        self.drawing_pick_at(position, drawing_area, history_right, total, &scale)
+                    })
                 };
                 self.drawings.select(selected);
             }
@@ -1723,6 +1842,16 @@ impl ChartPane {
                     pointer_position.filter(|position| drawing_area.contains(*position))
                 && let Some(scale) = drawing_scale
             {
+                // One question, asked once, on the geometry the user was
+                // actually looking at when they pressed.
+                self.drawing_press_pick = Some(self.drawing_pick_at(
+                    position,
+                    drawing_area,
+                    history_right,
+                    total,
+                    &scale,
+                ));
+                self.drawing_drag_pending_from = Some(position);
                 if let Some((drawing_index, point_index)) =
                     self.drawing_anchor_at(position, history_right, total, &scale)
                 {
@@ -1737,7 +1866,7 @@ impl ChartPane {
                         }
                     };
                 } else if let Some(index) =
-                    self.drawing_at(position, areas.chart, history_right, total, &scale)
+                    self.drawing_at(position, drawing_area, history_right, total, &scale)
                 {
                     self.drawings.select(Some(index));
                     self.drawing_drag = if self.drawings.items()[index].locked {
@@ -1753,7 +1882,34 @@ impl ChartPane {
                 // click above, which already respects floating windows.
                 drawing_drag_started = self.drawing_drag.is_active();
             }
-            if primary_down && !drawing_drag_started {
+            // A held button is not yet a drag. Until the pointer has left the
+            // threshold the object does not move at all, so a click stays a
+            // click — the alternative is that selecting a channel re-angles
+            // it by two pixels of hand tremor, and the trader's level is
+            // quietly no longer where they put it.
+            //
+            // `travel` is measured from the press, not accumulated per frame,
+            // so crossing the threshold hands the gesture the *whole* movement
+            // and the object does not trail the cursor by 4 px forever.
+            let travel = match (self.drawing_drag_pending_from, pointer_position) {
+                (Some(origin), Some(position)) => {
+                    let travel = position - origin;
+                    if travel.length() < DRAWING_DRAG_THRESHOLD_PX {
+                        None
+                    } else {
+                        self.drawing_drag_pending_from = None;
+                        Some(travel)
+                    }
+                }
+                // No pending origin: the threshold was already passed earlier
+                // in this gesture, so this frame's own delta drives it.
+                (None, _) => Some(pointer_delta),
+                (Some(_), None) => None,
+            };
+            if primary_down
+                && !drawing_drag_started
+                && let Some(travel) = travel
+            {
                 match self.drawing_drag {
                     DrawingDrag::Anchor {
                         drawing_index,
@@ -1765,7 +1921,7 @@ impl ChartPane {
                                 position.y.clamp(areas.chart.top(), areas.chart.bottom()),
                             );
                             if let Some(point) =
-                                self.drawing_point_at(position, history_right, total)
+                                self.drawing_point_at(position, history_right, total, magnet)
                             {
                                 self.drawings.move_anchor(drawing_index, point_index, point);
                             }
@@ -1775,9 +1931,9 @@ impl ChartPane {
                     DrawingDrag::Translate => {
                         if let Some(scale) = drawing_scale {
                             let (lo, hi) = scale.range();
-                            let delta_bar = pointer_delta.x / self.viewport.candle_width();
+                            let delta_bar = travel.x / self.viewport.candle_width();
                             let delta_price =
-                                -f64::from(pointer_delta.y / areas.chart.height()) * (hi - lo);
+                                -f64::from(travel.y / areas.chart.height()) * (hi - lo);
                             self.drawings.translate_selected(delta_bar, delta_price);
                         }
                     }
@@ -1792,9 +1948,17 @@ impl ChartPane {
                 // One gesture, one undo entry — recorded only if it moved.
                 self.drawings.commit_gesture();
                 self.drawing_drag = DrawingDrag::None;
+                // A press that ended in a drag rather than a click leaves its
+                // answer unconsumed; it must not survive to decide the *next*
+                // click, which may be somewhere else entirely. The click path
+                // above already ran this frame and took it if it was a click.
+                self.drawing_press_pick = None;
+                self.drawing_drag_pending_from = None;
             }
         } else {
             self.drawing_drag = DrawingDrag::None;
+            self.drawing_press_pick = None;
+            self.drawing_drag_pending_from = None;
         }
         // Where the press landed, not where the pointer is now: a pan that
         // started on the candles keeps working when it crosses the divider.
@@ -2397,7 +2561,7 @@ impl ChartPane {
 
         // Drawings sit above market layers and remain anchored to chart space,
         // not the screen, while the viewport moves beneath them.
-        self.draw_drawings(painter, chart_rect, right, total, &scale);
+        self.draw_drawings(painter, self.drawing_area(chart_rect), right, total, &scale);
 
         // Closed-trade marks sit between the drawings and the live paper
         // lines: history under the orders that are still working. Only the
@@ -2736,6 +2900,176 @@ impl ChartPane {
         )
     }
 
+    /// Opacity a shared drawing is painted at on a pane whose series does not
+    /// reach its anchors. Faded, not hidden and not silently snapped: the
+    /// mark is real, its position on *this* chart is not exact.
+    const SHARED_CLAMPED_OPACITY: f32 = 0.45;
+
+    /// The band drawings live in: the candles minus the live lane.
+    ///
+    /// The lane is the tape's own reserved strip at the right edge — a live
+    /// region, not a place for annotations, and a horizontal line running
+    /// across it was drawing over the flow. Placement already refused to put
+    /// an anchor there; paint, geometry and hit-test agree with it now, which
+    /// also keeps a line's painted end and its grabbable end the same pixel.
+    fn drawing_area(&self, chart: egui::Rect) -> egui::Rect {
+        let right = self
+            .last_lane_divider_x
+            .unwrap_or(chart.right())
+            .clamp(chart.left(), chart.right());
+        egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
+    }
+
+    /// This pane's own projection, rebuilt from the geometry the last
+    /// [`Self::draw_chart`] cached. `None` before the pane has drawn once, or
+    /// while it has no price range to project against.
+    fn last_projection(&self) -> Option<(egui::Rect, f32, usize, PriceScale)> {
+        let chart = self.last_chart_area?;
+        let (auto_lo, auto_hi) = self.last_auto_range?;
+        let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
+        let scale = PriceScale::from_range(
+            lo,
+            hi,
+            self.last_chart_top,
+            self.last_chart_top + self.last_chart_height,
+        );
+        let history_right = self.last_lane_divider_x.unwrap_or(chart.right());
+        Some((self.drawing_area(chart), history_right, self.slots(), scale))
+    }
+
+    /// Paint the shared drawings that live on `source`, re-expressed on this
+    /// pane (`docs/ux/drawing-tools-2026-08.md` §D7).
+    ///
+    /// The two panes cut the same trades into different bars, so a bar index
+    /// means nothing across them — the market timestamp each anchor captured
+    /// at placement is the only coordinate they share. Every anchor goes back
+    /// through this pane's own `slot_at_time`.
+    ///
+    /// Read-only here, on purpose: selection, dragging and the inspector
+    /// belong to the pane the object was drawn on. A mark that could be
+    /// grabbed in two places would be two versions of one object, which is
+    /// exactly the confusion sharing exists to remove.
+    ///
+    /// Per-frame cost: nothing at all until a drawing is actually shared —
+    /// the loop below runs over `source.drawings` and does nothing for the
+    /// `ThisChart` default every object opens with.
+    pub fn paint_shared_from(&self, painter: &egui::Painter, source: &Self) {
+        if !source.drawings.items().iter().any(Drawing::shared) {
+            return;
+        }
+        let Some((chart, history_right, total, scale)) = self.last_projection() else {
+            return;
+        };
+        let clipped = painter.with_clip_rect(chart);
+        for (index, drawing) in source.drawings.items().iter().enumerate() {
+            if !drawing.shared() || !source.drawings.is_visible(index) {
+                continue;
+            }
+            let Some((anchors, clamped)) = self.reproject(drawing) else {
+                continue;
+            };
+            // A clamped anchor is an honest half-truth: the object really is
+            // off the end of this pane's series, and it says so by fading
+            // rather than by pretending to sit on the edge bar.
+            let style = if clamped {
+                DrawingStyle {
+                    color: drawing
+                        .style
+                        .color
+                        .gamma_multiply(Self::SHARED_CLAMPED_OPACITY),
+                    fill_alpha: 0,
+                    ..drawing.style
+                }
+            } else {
+                drawing.style
+            };
+            // Stack-allocated: this is a per-frame path, and every shipped
+            // tool has at most three anchors, so the heap is never touched.
+            let points: SmallVec<[egui::Pos2; 4]> = anchors
+                .iter()
+                .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
+                .collect();
+            let ctxt = DrawContext {
+                payload: drawing.payload.as_ref(),
+                anchors: &anchors,
+                scale: &scale,
+                style,
+                selected: false,
+                halo: false,
+            };
+            drawing
+                .tool
+                .paint(&clipped, chart, style, &points, &ctxt, false);
+        }
+    }
+
+    /// Where an instant later than this pane's newest bar falls, as a
+    /// fractional slot past the end. `None` unless the pane's bars run on a
+    /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
+    /// answer here.
+    fn future_slot_at_time(&self, time: i64) -> Option<f32> {
+        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
+            return None;
+        }
+        let last = self.slots().checked_sub(1)?;
+        let last_open = self.slot_open_time(last)?;
+        let ahead = time.checked_sub(last_open)?;
+        if ahead < self.time_interval_ms {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        Some(last as f32 + ahead as f32 / self.time_interval_ms as f32)
+    }
+
+    /// Re-express a foreign drawing's anchors in this pane's bar space.
+    /// Returns the anchors and whether any of them had to be clamped to the
+    /// end of this pane's series.
+    fn reproject(&self, drawing: &Drawing) -> Option<(SmallVec<[ChartPoint; 4]>, bool)> {
+        let slots = self.slots();
+        if slots == 0 {
+            return None;
+        }
+        let mut anchors = SmallVec::new();
+        let mut clamped = false;
+        for point in &drawing.points {
+            let time = point.time_ms?;
+            let slot = match self.slot_at_time(time) {
+                Some(slot) => slot.min(slots - 1),
+                // Before this pane's first bar: the series does not reach
+                // back that far, so the anchor sits on the oldest bar and is
+                // marked as clamped.
+                None => {
+                    clamped = true;
+                    0
+                }
+            };
+            // A time chart can also place an instant *past* its newest bar,
+            // on the same fixed interval its bars already run on — which is
+            // where a trend line pointing into the future belongs. Without
+            // this the future end of a shared line would pile up on the right
+            // edge instead of running on.
+            if let Some(future) = self.future_slot_at_time(time) {
+                anchors.push(ChartPoint::at_time(future + 0.5, point.price, Some(time)));
+                continue;
+            }
+            // The other clamp: a time past the end of this pane's series
+            // lands on the newest slot because `slot_at_time` cannot go
+            // further than the tape has. Only a *closed* bar can prove that,
+            // by having ended before the anchor's instant — a time inside the
+            // forming bar is simply now, and fading it would be a lie in the
+            // other direction.
+            clamped |= self
+                .closed_bar(slot)
+                .is_some_and(|bar| bar.close_time < time);
+            anchors.push(ChartPoint::at_time(
+                slot as f32 + 0.5,
+                point.price,
+                Some(time),
+            ));
+        }
+        Some((anchors, clamped))
+    }
+
     /// Paint the completed drawing objects. This runs once per frame and is
     /// O(number of drawings); it never touches the per-trade ingestion path.
     fn draw_drawings(
@@ -2803,6 +3137,13 @@ impl ChartPane {
             draft
                 .tool
                 .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);
+            // What the next click will do, printed where the eye already is.
+            // The rail's `n/N` badge says the same thing on the far side of
+            // the screen, which is why a trader who drags a three-anchor tool
+            // and lets go reads the waiting object as frozen.
+            if let Some(cursor) = points.last().copied() {
+                paint_placement_hint(&clipped, chart_rect, cursor, draft.tool, draft.points.len());
+            }
         }
     }
 
@@ -2944,9 +3285,179 @@ impl ChartPane {
     }
 }
 
+/// Chip metrics for the placement hint: it rides beside the cursor without
+/// sitting under it, and it is the same 10 px plate the ruler readout uses.
+const HINT_CURSOR_OFFSET_PX: egui::Vec2 = egui::vec2(14.0, 14.0);
+const HINT_TEXT_PX: f32 = 10.0;
+const HINT_PAD_X_PX: f32 = 5.0;
+const HINT_PAD_Y_PX: f32 = 3.0;
+const HINT_RADIUS_PX: f32 = 3.0;
+const HINT_PLATE: egui::Color32 = egui::Color32::from_rgba_premultiplied(14, 18, 26, 216);
+
+/// Tell the trader what the next click does, beside the cursor.
+///
+/// A tool that knows says so in words (`placement_hint`); one that does not
+/// still reports its progress, because "2/3" beats an object that appears to
+/// have stopped responding. Nothing is drawn once the last anchor is placed —
+/// there is no next click to describe.
+fn paint_placement_hint(
+    painter: &egui::Painter,
+    chart_rect: egui::Rect,
+    cursor: egui::Pos2,
+    tool: drawings::DrawingTool,
+    placed: usize,
+) {
+    let required = tool.required_points();
+    if required < 2 || placed == 0 || placed >= required {
+        return;
+    }
+    let text = tool
+        .placement_hint(placed)
+        .map_or_else(|| format!("{placed}/{required}"), str::to_owned);
+    let galley = painter.layout_no_wrap(
+        text,
+        egui::FontId::proportional(HINT_TEXT_PX),
+        theme::TEXT_PRIMARY,
+    );
+    let size = galley.size() + egui::vec2(2.0 * HINT_PAD_X_PX, 2.0 * HINT_PAD_Y_PX);
+    // Flip to the other side of the cursor rather than let the chip leave the
+    // chart: a hint half off-screen is worse than no hint.
+    let mut min = cursor + HINT_CURSOR_OFFSET_PX;
+    if min.x + size.x > chart_rect.right() {
+        min.x = cursor.x - HINT_CURSOR_OFFSET_PX.x - size.x;
+    }
+    if min.y + size.y > chart_rect.bottom() {
+        min.y = cursor.y - HINT_CURSOR_OFFSET_PX.y - size.y;
+    }
+    let plate = egui::Rect::from_min_size(min, size);
+    painter.rect_filled(plate, egui::Rounding::same(HINT_RADIUS_PX), HINT_PLATE);
+    painter.galley(
+        plate.min + egui::vec2(HINT_PAD_X_PX, HINT_PAD_Y_PX),
+        galley,
+        theme::TEXT_PRIMARY,
+    );
+}
+
+/// The open / high / low / close of `candle` nearest to the pointer on
+/// screen, when one is within reach.
+///
+/// This is the difference between a line that *looks* drawn off the swing
+/// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Nothing in
+/// reach returns `None` and the free price is used — a magnet that always
+/// snaps is a magnet you cannot draw a diagonal with.
+fn magnet_price_of(
+    candle: &quantick_engine::Bar,
+    pointer_y: f32,
+    scale: &PriceScale,
+) -> Option<f64> {
+    [candle.open, candle.high, candle.low, candle.close]
+        .into_iter()
+        .filter_map(|price| {
+            let price = price.to_f64()?;
+            let distance = (scale.y(price) - pointer_y).abs();
+            (distance <= MAGNET_REACH_PX).then_some((distance, price))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, price)| price)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tape's lane is a live region, not a canvas. A drawing that ran
+    /// across it painted over the flow — and worse, the painted end and the
+    /// grabbable end were different pixels, because paint used the whole
+    /// chart while placement stopped at the divider.
+    #[test]
+    fn the_drawing_band_stops_at_the_live_lane() {
+        let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+
+        pane.last_lane_divider_x = None;
+        assert_eq!(
+            pane.drawing_area(chart),
+            chart,
+            "no lane, no carve — the whole chart is the canvas"
+        );
+
+        pane.last_lane_divider_x = Some(880.0);
+        let band = pane.drawing_area(chart);
+        assert_eq!(band.right(), 880.0, "the band ends where the lane begins");
+        assert_eq!(band.left(), chart.left());
+        assert_eq!(band.y_range(), chart.y_range());
+
+        // A divider reported outside the chart cannot make the band bigger
+        // than the chart or invert it.
+        pane.last_lane_divider_x = Some(5_000.0);
+        assert_eq!(pane.drawing_area(chart).right(), chart.right());
+        pane.last_lane_divider_x = Some(-40.0);
+        let degenerate = pane.drawing_area(chart);
+        assert!(degenerate.right() >= degenerate.left());
+    }
+
+    /// A bar spanning 98 … 102, for the magnet.
+    fn magnet_candle() -> quantick_engine::Bar {
+        use rust_decimal::Decimal;
+        quantick_engine::Bar {
+            open_time: 0,
+            close_time: 59_999,
+            open: Decimal::from(100),
+            high: Decimal::from(102),
+            low: Decimal::from(98),
+            close: Decimal::from(101),
+            buy_volume: Decimal::ONE,
+            sell_volume: Decimal::ONE,
+            trade_count: 2,
+        }
+    }
+
+    /// Ten pixels per price unit over 90 … 110, so the bar's four levels are
+    /// far enough apart on screen for "nearest" to be unambiguous.
+    fn magnet_scale() -> PriceScale {
+        PriceScale::from_range(90.0, 110.0, 0.0, 200.0)
+    }
+
+    #[test]
+    fn the_magnet_takes_the_nearest_ohlc_within_reach() {
+        let candle = magnet_candle();
+        let scale = magnet_scale();
+        let high_y = scale.y(102.0);
+        assert_eq!(
+            magnet_price_of(&candle, high_y, &scale),
+            Some(102.0),
+            "exactly on the high"
+        );
+        assert_eq!(
+            magnet_price_of(&candle, high_y + 4.0, &scale),
+            Some(102.0),
+            "inside the reach, and still nearer the high than the close"
+        );
+    }
+
+    /// The point of the reach: away from every level the anchor stays free,
+    /// so a diagonal drawn through open space is still a diagonal.
+    #[test]
+    fn the_magnet_lets_go_outside_its_reach() {
+        let candle = magnet_candle();
+        let scale = magnet_scale();
+        assert_eq!(magnet_price_of(&candle, scale.y(105.0), &scale), None);
+    }
+
+    /// Near-ties resolve to the genuinely nearest level, never to the first
+    /// one in the list.
+    #[test]
+    fn the_magnet_picks_the_nearest_level_not_the_first() {
+        let candle = magnet_candle();
+        let scale = magnet_scale();
+        // Just under the low: 98 is nearer than the open at 100.
+        assert_eq!(magnet_price_of(&candle, scale.y(97.6), &scale), Some(98.0));
+        // Just over the close: 101 is nearer than the high at 102.
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(101.2), &scale),
+            Some(101.0)
+        );
+    }
 
     /// One geometry for the jump-to-live chip's click region and its paint
     /// (audit F6): right-aligned inside the strip, inset on every side, so

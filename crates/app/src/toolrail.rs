@@ -272,11 +272,11 @@ fn minimal_length() -> f32 {
         + TOOLRAIL_ICON.hit
 }
 
-/// The full trailing cluster: separator, repeat, hide-all, lock-all,
+/// The full trailing cluster: separator, magnet, repeat, hide-all, lock-all,
 /// separator, Objects.
 fn trailing_length() -> f32 {
     SEPARATOR_BLOCK_PX
-        + (3.0 * TOOLRAIL_ICON.hit + 2.0 * TOOLBOX_ITEM_GAP_PX)
+        + (4.0 * TOOLRAIL_ICON.hit + 3.0 * TOOLBOX_ITEM_GAP_PX)
         + SEPARATOR_BLOCK_PX
         + TOOLRAIL_ICON.hit
 }
@@ -302,6 +302,10 @@ pub struct ToolRail {
     /// The repeat pin: `true` keeps a drawing tool armed after it completes
     /// an object; the default is one-shot back to Pointer.
     repeat: bool,
+    /// The magnet: anchors snap to the nearest OHLC of the bar under the
+    /// pointer. Off by default — a magnet nobody asked for moves marks the
+    /// trader placed deliberately.
+    magnet: bool,
     /// Last-armed member of each tool family, keyed by family id.
     last_family_member: BTreeMap<&'static str, DrawingTool>,
     /// Currently-nearest drop edge while a grip drag is live.
@@ -314,6 +318,8 @@ pub struct ToolRail {
     button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
     #[cfg(test)]
     grip_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    magnet_rect: Option<egui::Rect>,
     #[cfg(test)]
     more_rect: Option<egui::Rect>,
     #[cfg(test)]
@@ -335,6 +341,7 @@ impl Default for ToolRail {
             visible: true,
             dock: ToolboxDock::Left,
             repeat: false,
+            magnet: false,
             last_family_member: BTreeMap::new(),
             drag_preview: None,
             dragging: false,
@@ -344,6 +351,8 @@ impl Default for ToolRail {
             button_rects: [None; TOOLBOX_BUTTON_COUNT],
             #[cfg(test)]
             grip_rect: None,
+            #[cfg(test)]
+            magnet_rect: None,
             #[cfg(test)]
             more_rect: None,
             #[cfg(test)]
@@ -418,6 +427,19 @@ impl ToolRail {
     #[cfg(test)]
     pub(crate) fn set_repeat(&mut self, repeat: bool) {
         self.repeat = repeat;
+    }
+
+    /// Whether placed anchors snap to the bar's open / high / low / close.
+    #[must_use]
+    pub fn magnet(&self) -> bool {
+        self.magnet
+    }
+
+    /// Arm the magnet without a click — the `QUANTICK_DRAWING_MAGNET` hook
+    /// and the tests both come through here, so neither can drift from what
+    /// the button does.
+    pub(crate) fn set_magnet(&mut self, magnet: bool) {
+        self.magnet = magnet;
     }
 
     #[cfg(test)]
@@ -524,6 +546,7 @@ impl ToolRail {
         {
             self.button_rects.fill(None);
             self.grip_rect = None;
+            self.magnet_rect = None;
             self.more_rect = None;
             self.hide_all_rect = None;
             self.lock_all_rect = None;
@@ -604,6 +627,7 @@ impl ToolRail {
             if stage != RailStage::Minimal {
                 self.draw_global_buttons(ui, drawings);
                 self.draw_repeat_button(ui);
+                self.draw_magnet_button(ui);
                 self.draw_separator(ui, vertical);
             }
         });
@@ -716,6 +740,24 @@ impl ToolRail {
         }
     }
 
+    /// The magnet: anchors land on the bar's open / high / low / close when
+    /// one is within reach of the pointer. A state, like the repeat pin, so
+    /// it reads off the rail without a menu.
+    fn draw_magnet_button(&mut self, ui: &mut egui::Ui) {
+        let response = IconButton::new(icons::MAGNET, TOOLRAIL_ICON)
+            .active(self.magnet)
+            .active_marker(self.dock.marker_edge())
+            .hover_text("Snap anchors to the bar's open / high / low / close")
+            .show(ui);
+        #[cfg(test)]
+        {
+            self.magnet_rect = Some(response.rect);
+        }
+        if response.clicked() {
+            self.magnet = !self.magnet;
+        }
+    }
+
     /// The More flyout of a collapsed rail: everything that lost its slot
     /// stays reachable by name with its shortcut, in registry order.
     fn draw_more_menu(&mut self, ui: &mut egui::Ui, drawings: &mut Drawings, stage: RailStage) {
@@ -737,6 +779,13 @@ impl ToolRail {
                     .clicked()
                 {
                     self.repeat = !self.repeat;
+                    ui.close_menu();
+                }
+                if ui
+                    .add(egui::Button::new("Snap anchors to OHLC").selected(self.magnet))
+                    .clicked()
+                {
+                    self.magnet = !self.magnet;
                     ui.close_menu();
                 }
                 let all_hidden = drawings.all_hidden();
@@ -1241,9 +1290,12 @@ mod tests {
     #[test]
     fn stage_lengths_match_the_spec_for_the_shipped_registry() {
         let slots = tool_slots().len();
-        assert_eq!(slots, 4, "fib family folds two registry entries into one");
-        assert_eq!(full_length(slots), 417.0);
-        assert_eq!(compact_length(), 345.0);
+        assert_eq!(
+            slots, 6,
+            "the registry folds into Lines, Channels, Shapes, Fib, Measure and Text"
+        );
+        assert_eq!(full_length(slots), 525.0);
+        assert_eq!(compact_length(), 381.0);
         assert_eq!(minimal_length(), 191.0);
     }
 
@@ -1587,18 +1639,51 @@ mod tests {
         );
     }
 
+    /// The magnet is a state, not a command: it reads off the rail and it
+    /// starts off, because a magnet nobody asked for moves marks the trader
+    /// placed deliberately (`docs/ux/drawing-tools-2026-08.md` §D6).
+    #[test]
+    fn the_magnet_is_a_rail_toggle_that_starts_off() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        assert!(!rail.magnet(), "the magnet opens off");
+
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        let button = rail
+            .magnet_rect
+            .expect("the magnet button rendered")
+            .center();
+        click_at(&mut rail, &mut drawings, &ctx, screen, button);
+        assert!(rail.magnet());
+        click_at(&mut rail, &mut drawings, &ctx, screen, button);
+        assert!(!rail.magnet(), "the same button turns it back off");
+    }
+
+    /// The scripted-validation hook (`QUANTICK_DRAWING_MAGNET`) sets the same
+    /// flag the button does; nothing may fork the two.
+    #[test]
+    fn the_hook_setter_moves_the_same_flag_the_button_does() {
+        let mut rail = ToolRail::new();
+        rail.set_magnet(true);
+        assert!(rail.magnet());
+        rail.set_magnet(false);
+        assert!(!rail.magnet());
+    }
+
     #[test]
     fn stages_are_pure_functions_of_extent() {
         let slots = tool_slots().len();
-        for extent in [100.0_f32, 200.0, 344.9, 345.0, 416.9, 417.0, 1000.0] {
+        for extent in [100.0_f32, 200.0, 380.9, 381.0, 524.9, 525.0, 1000.0] {
             let first = stage_for(extent, slots);
             let second = stage_for(extent, slots);
             assert_eq!(first, second);
         }
-        assert_eq!(stage_for(417.0, slots), RailStage::Full);
-        assert_eq!(stage_for(416.9, slots), RailStage::Compact);
-        assert_eq!(stage_for(345.0, slots), RailStage::Compact);
-        assert_eq!(stage_for(344.9, slots), RailStage::Minimal);
+        assert_eq!(stage_for(525.0, slots), RailStage::Full);
+        assert_eq!(stage_for(524.9, slots), RailStage::Compact);
+        assert_eq!(stage_for(381.0, slots), RailStage::Compact);
+        assert_eq!(stage_for(380.9, slots), RailStage::Minimal);
     }
 
     #[test]
@@ -1795,13 +1880,13 @@ mod tests {
         let ctx = egui::Context::default();
         let mut rail = ToolRail::new();
         let mut drawings = Drawings::default();
-        drawings.place(
-            DRAWING_TOOLS[0],
-            ChartPoint {
-                bar: 1.0,
-                price: 100.0,
-            },
-        );
+        // Registry-order-proof: place whatever the first tool needs rather
+        // than assuming it is a one-click tool.
+        let tool = DRAWING_TOOLS[0];
+        for anchor in 0..tool.required_points() {
+            drawings.place(tool, ChartPoint::at(anchor as f32, 100.0 + anchor as f64));
+        }
+        assert_eq!(drawings.items().len(), 1, "the object was placed");
         rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
 
         let eye = rail.hide_all_rect.expect("hide-all rendered").center();

@@ -24,6 +24,9 @@ impl DrawingToolImpl for FibExtension {
     fn hover_text(&self) -> &'static str {
         "Fib extension - set the first leg, then click the projection origin (Shift+F)"
     }
+    fn placement_hint(&self, placed: usize) -> Option<&'static str> {
+        (placed == 2).then_some("Click where the retracement ended")
+    }
     fn required_points(&self) -> usize {
         FibKind::Extension.required_points()
     }
@@ -80,7 +83,9 @@ impl DrawingToolImpl for FibExtension {
                 egui::pos2(200.0, 200.0),
                 egui::pos2(250.0, 150.0),
             ],
-            egui::pos2(175.0, 250.0),
+            // Right of the last anchor: the levels project forward from
+            // there now, so that is where the object can be grabbed.
+            egui::pos2(300.0, 250.0),
         )
     }
 }
