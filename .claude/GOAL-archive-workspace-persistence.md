@@ -1,4 +1,4 @@
-# Goal: the workspace persists — quantick reopens the screen you left
+# Goal: the workspace persists — DONE (PR #135 open)
 
 Give quantick a saved **workspace**: the arrangement the app opens on —
 which tabs, which canvas layout, which bar spec per pane, the split, the
