@@ -550,11 +550,11 @@ pub struct PaneChrome<'a> {
     /// this label in its own legend — the status bar's note is not enough
     /// there (data honesty).
     pub side_inferred: bool,
-    /// The footprint layer's signal tunables — resolved at boot by the app
-    /// (env > `config/footprint.toml` > saved edits > defaults) and edited
-    /// live by the layer menu's controls. Mutable here for the same reason
-    /// `layers` is: the menu writes, the app persists.
-    pub footprint: &'a mut crate::footprint_config::FootprintConfig,
+    /// The window's footprint setup — the last one the trader used anywhere
+    /// (env > `config/footprint.toml` > saved edits > defaults). A chart
+    /// configured on its own overrides it; see
+    /// [`ChartPane::footprint_config`].
+    pub footprint: &'a crate::footprint_config::FootprintConfig,
     /// Where the layer menu leaves the two switches the pane does not own.
     /// Drained by the app once the canvas is done (see [`LayerActions`]).
     pub layers: &'a mut LayerActions,
@@ -586,6 +586,15 @@ pub struct ChartPane {
     /// Whether the candle footprint layer is on. Off by default: today's
     /// rendering is pixel-identical until the user asks for the ladder.
     pub footprint_visible: bool,
+    /// This chart's own footprint setup, once it has been configured here.
+    ///
+    /// `None` — the default — means "follow the window's last setup", which
+    /// keeps the common case (one chart, one taste) behaving like a global
+    /// setting. A split layout is two readings of the same market (a 90-day
+    /// context chart beside a 50-tick flow chart) and one set of thresholds
+    /// cannot serve both, so the moment a chart is configured on its own it
+    /// keeps its own.
+    pub footprint_override: Option<crate::footprint_config::FootprintConfig>,
     /// The footprint's sticky detail level (hysteresis on zoom-out).
     footprint_lod: crate::footprint_render::FootprintLod,
     /// The forming bar's ladder as last snapshotted for drawing, with the
@@ -750,6 +759,7 @@ impl ChartPane {
             indicators: IndicatorViews::new(),
             live_strip_visible: false,
             footprint_visible: false,
+            footprint_override: None,
             footprint_lod: crate::footprint_render::FootprintLod::default(),
             footprint_live: None,
             // The backfill divider opens off: it is a full-height rule across
@@ -787,6 +797,15 @@ impl ChartPane {
             drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
         }
+    }
+
+    /// The footprint setup this chart draws with: its own once configured
+    /// here, else the window's last one. See [`Self::footprint_override`].
+    pub fn footprint_config<'a>(
+        &'a self,
+        window: &'a crate::footprint_config::FootprintConfig,
+    ) -> &'a crate::footprint_config::FootprintConfig {
+        self.footprint_override.as_ref().unwrap_or(window)
     }
 
     /// An egui interaction id scoped to this pane.
@@ -2046,15 +2065,18 @@ impl ChartPane {
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                // Scroll up (positive) zooms in. Over the tape that means less
-                // market time in the band; over the candles, wider candles.
-                if let Some(orderflow) = self.orderflow.as_mut()
-                    && chart.hover_pos().is_some_and(in_lane)
-                {
-                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
-                } else {
-                    self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
-                }
+                // Scroll up (positive) zooms in — the candles, wherever on the
+                // canvas the pointer rests, tape band included.
+                //
+                // The lane used to steal this wheel while the pointer was over
+                // it: one gesture, two meanings, and nothing on screen saying
+                // which one you were about to get, so crossing a hairline
+                // divider mid-scroll zoomed the tape instead of the chart. The
+                // lane's window still zooms — from the lane's own time strip
+                // below it (drag or scroll), which is the grammar every other
+                // axis here already follows: an axis zooms its axis, the canvas
+                // zooms the chart.
+                self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
             }
         }
 
@@ -2539,7 +2561,10 @@ impl ChartPane {
                 half,
                 candle_width: cw,
                 side_inferred: chrome.side_inferred,
-                config: &*chrome.footprint,
+                // Field access, not `self.footprint_config(..)`: the method
+                // borrows all of `self` and the draw below needs
+                // `self.footprint_lod` mutably. Same resolution rule.
+                config: self.footprint_override.as_ref().unwrap_or(chrome.footprint),
             };
             crate::footprint_render::draw_layer(&frame, &mut self.footprint_lod);
         }

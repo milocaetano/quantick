@@ -598,6 +598,11 @@ pub struct QuantickApp {
     /// Whether the footprint settings window is open (the layer menu's
     /// "configure footprint…" entry opens it).
     show_footprint_settings: bool,
+    /// Named tape-reading setups, and where they live.
+    footprint_presets: crate::footprint_presets::PresetStore,
+    footprint_presets_path: std::path::PathBuf,
+    /// The settings window's "save preset" field, kept across frames.
+    footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
     /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART` and
     /// `QUANTICK_CANDLE_WIDTH`.
@@ -687,6 +692,7 @@ impl QuantickApp {
         // file per call, and the load must read the same file the saves
         // will write.
         let footprint_settings_path = crate::footprint_config::settings_path();
+        let footprint_presets_path = crate::footprint_presets::default_path();
         let mut app = Self {
             tabs: vec![tab],
             active_tab: 0,
@@ -744,6 +750,9 @@ impl QuantickApp {
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
             show_footprint_settings: false,
+            footprint_presets: crate::footprint_presets::PresetStore::load(&footprint_presets_path),
+            footprint_presets_path,
+            footprint_preset_draft: String::new(),
             scripted_footprint: false,
             scripted_candle_width: None,
             style: ChartStyle::default(),
@@ -1944,6 +1953,59 @@ impl QuantickApp {
         }
         if actions.open_footprint_settings {
             self.show_footprint_settings = true;
+        }
+    }
+
+    /// The footprint settings window, editing the **focused chart's** setup.
+    ///
+    /// A chart that has never been configured follows the window's last
+    /// setup, so the first edit anywhere reads like a global preference and
+    /// the second chart only diverges when the trader configures it too.
+    /// Whatever is edited also becomes the window default, which is what a
+    /// chart opened later inherits.
+    fn draw_footprint_settings(&mut self, ctx: &egui::Context) {
+        if !self.show_footprint_settings {
+            return;
+        }
+        let side = self.active_tab().focused_side();
+        let customized = self
+            .active_tab()
+            .focused_pane()
+            .footprint_override
+            .is_some();
+        let mut edited = self
+            .active_tab()
+            .focused_pane()
+            .footprint_config(&self.footprint_config)
+            .clone();
+        let outcome = crate::footprint_panel::draw(
+            ctx,
+            crate::footprint_panel::PanelInput {
+                open: &mut self.show_footprint_settings,
+                config: &mut edited,
+                presets: &mut self.footprint_presets,
+                presets_path: &self.footprint_presets_path,
+                name_draft: &mut self.footprint_preset_draft,
+                target: match side {
+                    PaneSide::Flow => "flow chart",
+                    PaneSide::Time => "time chart",
+                },
+                customized,
+            },
+        );
+        match outcome {
+            crate::footprint_panel::PanelOutcome::Untouched => {}
+            crate::footprint_panel::PanelOutcome::Changed => {
+                self.active_tab_mut().pane_mut(side).footprint_override = Some(edited.clone());
+                self.footprint_config = edited;
+                crate::footprint_config::save(
+                    &self.footprint_settings_path,
+                    &self.footprint_config,
+                );
+            }
+            crate::footprint_panel::PanelOutcome::ResetToDefault => {
+                self.active_tab_mut().pane_mut(side).footprint_override = None;
+            }
         }
     }
 
@@ -3853,13 +3915,7 @@ impl QuantickApp {
             self.note_overlay_cleared(true);
         }
         self.draw_style_panel(ctx, now);
-        if crate::footprint_panel::draw(
-            ctx,
-            &mut self.show_footprint_settings,
-            &mut self.footprint_config,
-        ) {
-            crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
-        }
+        self.draw_footprint_settings(ctx);
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         let replay_loading = self.replay_view.is_loading();

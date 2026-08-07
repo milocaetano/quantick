@@ -1,17 +1,25 @@
 //! The footprint settings window — the Profitchart-style properties dialog,
 //! opened from the layer menu's "configure footprint…" entry.
 //!
-//! One window per app (the config is the window's: one set of thresholds,
-//! every pane), editing [`FootprintConfig`] live — the next frame draws with
-//! whatever moved — and reporting `true` so the app persists the change to
-//! the settings file. Every control carries a hover explaining itself in
-//! full: this window is where a newcomer learns what a POC or an imbalance
-//! is, without a manual.
+//! It edits the **focused chart's** knobs, not the window's: a split layout
+//! is two different readings of the same market (a 90-day context chart and
+//! a 50-tick flow chart), and one set of thresholds cannot serve both. The
+//! title says which chart is being edited, and a chart that has never been
+//! configured simply follows the last setup the trader used, so the common
+//! case — one chart, one taste — still behaves like a global setting.
+//!
+//! Named presets sit at the top: a reading stance (scalp / swing / numbers
+//! off) is worth one click, not five drags. Every control carries a hover
+//! explaining itself in full — this window is where a newcomer learns what a
+//! POC or a diagonal imbalance is, without a manual.
+
+use std::path::Path;
 
 use eframe::egui;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::footprint_config::{FootprintConfig, FootprintStyle, PROFILE_ROW_PX_RANGE};
+use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
 
 /// The number a pinned imbalance floor starts from when the trader unticks
@@ -19,18 +27,129 @@ use crate::theme;
 /// drag immediately tunes.
 const DEFAULT_PINNED_MIN_QTY: f64 = 20.0;
 
-/// Draw the window when `open`; returns whether any knob changed.
-pub fn draw(ctx: &egui::Context, open: &mut bool, config: &mut FootprintConfig) -> bool {
-    if !*open {
-        return false;
+/// Everything the window edits, borrowed for one frame.
+pub struct PanelInput<'a> {
+    pub open: &'a mut bool,
+    /// The focused chart's effective config (its own, or the window default
+    /// it still follows).
+    pub config: &'a mut FootprintConfig,
+    pub presets: &'a mut PresetStore,
+    pub presets_path: &'a Path,
+    /// The "save as" field's text, kept across frames by the app.
+    pub name_draft: &'a mut String,
+    /// Which chart these knobs belong to, for the title.
+    pub target: &'a str,
+    /// Whether this chart has already diverged from the window default.
+    pub customized: bool,
+}
+
+/// What the frame asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelOutcome {
+    /// Nothing moved.
+    Untouched,
+    /// A knob moved: `config` now holds this chart's setup.
+    Changed,
+    /// "follow the default again" — drop this chart's own copy.
+    ResetToDefault,
+}
+
+/// Draw the window when `open`; returns what the frame asked for.
+pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
+    if !*input.open {
+        return PanelOutcome::Untouched;
     }
+    let PanelInput {
+        open,
+        config,
+        presets,
+        presets_path,
+        name_draft,
+        target,
+        customized,
+    } = input;
+    let mut outcome = PanelOutcome::Untouched;
     let mut changed = false;
     let mut window_open = *open;
-    egui::Window::new("footprint settings")
+    egui::Window::new(format!("footprint settings — {target}"))
+        .id(egui::Id::new("footprint_settings"))
         .open(&mut window_open)
-        .default_width(330.0)
+        .default_width(340.0)
         .resizable(false)
         .show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new(if customized {
+                    "these knobs are this chart's own"
+                } else {
+                    "this chart follows your last setup"
+                })
+                .size(10.5)
+                .color(theme::TEXT_MUTED),
+            );
+
+            ui.separator();
+            ui.heading("Presets");
+            ui.horizontal_wrapped(|ui| {
+                let names: Vec<String> = presets.names().map(str::to_owned).collect();
+                if names.is_empty() {
+                    ui.label(
+                        egui::RichText::new("none saved yet")
+                            .size(11.0)
+                            .color(theme::TEXT_FAINT),
+                    );
+                }
+                for name in names {
+                    let selected = presets.get(&name) == Some(&*config);
+                    let response = ui
+                        .selectable_label(selected, &name)
+                        .on_hover_text("click to load · right-click to delete");
+                    if response.clicked()
+                        && let Some(preset) = presets.get(&name)
+                        && *config != *preset
+                    {
+                        *config = preset.clone();
+                        changed = true;
+                    }
+                    // Right-click deletes: a preset row with its own delete
+                    // button would double the width of every entry.
+                    if response.secondary_clicked() && presets.remove(&name) {
+                        presets.save(presets_path);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                let full = presets.is_full();
+                ui.add(
+                    egui::TextEdit::singleline(name_draft)
+                        .desired_width(150.0)
+                        .char_limit(MAX_NAME_LEN)
+                        .hint_text("name this setup"),
+                );
+                let can_save = !name_draft.trim().is_empty();
+                let save = ui.add_enabled(can_save, egui::Button::new("save preset"));
+                if save
+                    .on_hover_text(
+                        "store these knobs under that name; a name you already \
+                         used is overwritten",
+                    )
+                    .clicked()
+                {
+                    if presets.insert(name_draft, config) {
+                        presets.save(presets_path);
+                        name_draft.clear();
+                    } else if full {
+                        // The store refuses to evict someone else's stance;
+                        // say so rather than dropping the click silently.
+                        ui.label(
+                            egui::RichText::new("preset list is full")
+                                .size(10.5)
+                                .color(theme::WARN),
+                        );
+                    }
+                }
+            });
+
+            ui.separator();
             ui.heading("Style");
             ui.horizontal(|ui| {
                 for (style, label, hover) in [
@@ -71,6 +190,20 @@ pub fn draw(ctx: &egui::Context, open: &mut bool, config: &mut FootprintConfig) 
                      Lower = more, thinner bands per candle; the legend always names \
                      the price width one band stands for",
                 )
+                .changed();
+
+            ui.separator();
+            ui.heading("Numbers");
+            changed |= ui
+                .checkbox(&mut config.show_numbers, "numbers inside the candles")
+                .on_hover_text(
+                    "the per-row quantities. Off keeps the bars, imbalance chips, \
+                     POC and badges — the shape of the fight without the digits",
+                )
+                .changed();
+            changed |= ui
+                .checkbox(&mut config.show_delta_totals, "bar delta totals")
+                .on_hover_text("the per-bar delta chips along the chart's bottom edge")
                 .changed();
 
             ui.separator();
@@ -200,8 +333,22 @@ pub fn draw(ctx: &egui::Context, open: &mut bool, config: &mut FootprintConfig) 
                 });
             }
 
-            ui.small("Changes apply immediately and persist across restarts.");
+            ui.separator();
+            if ui
+                .add_enabled(customized, egui::Button::new("follow the default again"))
+                .on_hover_text(
+                    "drop this chart's own knobs and go back to following the last \
+                     setup used anywhere",
+                )
+                .clicked()
+            {
+                outcome = PanelOutcome::ResetToDefault;
+            }
+            ui.small("Changes apply to this chart immediately and persist across restarts.");
         });
     *open = window_open;
-    changed
+    if outcome == PanelOutcome::Untouched && changed {
+        outcome = PanelOutcome::Changed;
+    }
+    outcome
 }

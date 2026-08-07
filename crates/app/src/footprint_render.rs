@@ -533,6 +533,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // who won it overall. From Compact up: at Profile widths the chips
     // would overlap into noise.
     if level >= DetailLevel::Compact
+        && frame.config.show_delta_totals
         && frame.config.style == crate::footprint_config::FootprintStyle::Split
     {
         for (slot, fp) in visible_ladders() {
@@ -815,6 +816,7 @@ fn draw_bar(
             // so the column scans without reading (panel must-fix), width-
             // clamped so it never bleeds out.
             if level == DetailLevel::Detailed
+                && frame.config.show_numbers
                 && let Some(text) = delta_text
             {
                 let width_budget = (frame.half - 6.0) / 3.0;
@@ -885,6 +887,9 @@ fn draw_bar(
                 }
                 let mid = (top + bottom) / 2.0;
                 if level == DetailLevel::Compact {
+                    if !frame.config.show_numbers {
+                        continue;
+                    }
                     let delta = cell.delta();
                     let color = if delta >= Decimal::ZERO {
                         theme::BUY
@@ -935,6 +940,11 @@ fn draw_bar(
                                 egui::Rounding::same(2.0),
                                 side_color(side).gamma_multiply(0.35),
                             );
+                        }
+                        if !frame.config.show_numbers {
+                            // Numbers off leaves the imbalance pills above:
+                            // the shape of the fight without the digits.
+                            continue;
                         }
                         let color = if imbalanced {
                             side_color(side)

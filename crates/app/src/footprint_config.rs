@@ -30,8 +30,9 @@ const SETTINGS_ENV: &str = "QUANTICK_FOOTPRINT_SETTINGS";
 /// from `config/footprint.toml` on purpose: that file is a hand-written,
 /// commented preset the app must never rewrite; this one is app state.
 const SETTINGS_FILE: &str = "footprint-settings.toml";
-/// Bumped on breaking layout changes; unknown versions are ignored.
-const SETTINGS_VERSION: u32 = 1;
+/// Bumped on breaking layout changes; unknown versions are ignored. v2
+/// moved the knobs under a `[config]` table, the shape presets share.
+const SETTINGS_VERSION: u32 = 2;
 
 /// How a bar's ladder is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,12 @@ pub struct FootprintConfig {
     /// Badges below this ratio are suppressed: "1.0x" is the absence of
     /// aggression, and a badge that always appears is anti-signal.
     pub badge_min_ratio: Decimal,
+    /// The per-row numbers inside the candles. Off leaves the bars, chips,
+    /// POC and badges — the shape of the fight without the digits, which is
+    /// how some traders prefer to read a dense tape.
+    pub show_numbers: bool,
+    /// The per-bar delta totals along the chart's bottom edge.
+    pub show_delta_totals: bool,
 }
 
 impl Default for FootprintConfig {
@@ -103,6 +110,8 @@ impl Default for FootprintConfig {
             show_poc: true,
             extreme_ratio_badge: true,
             badge_min_ratio: Decimal::TWO,
+            show_numbers: true,
+            show_delta_totals: true,
         }
     }
 }
@@ -111,43 +120,59 @@ impl Default for FootprintConfig {
 /// the file guard and the settings window's slider.
 pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 
-/// The file's shape. Every field optional: an absent knob keeps its default,
-/// so a one-line file tuning the ratio changes exactly the ratio.
-#[derive(Debug, Default, Deserialize)]
-struct FootprintFile {
-    style: Option<String>,
-    imbalance_ratio: Option<f64>,
-    imbalance_min_qty: Option<f64>,
-    stacked_count: Option<usize>,
-    profile_row_px: Option<f64>,
-    show_poc: Option<bool>,
-    extreme_ratio_badge: Option<bool>,
-    badge_min_ratio: Option<f64>,
+/// The file's shape, and the canonical serde form of a config: the
+/// hand-written preset, each saved named preset and the settings file all
+/// speak it. Every field optional — an absent knob keeps its default, so a
+/// one-line file tuning the ratio changes exactly the ratio, and a file
+/// written by an older build still loads.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub(crate) struct FootprintFile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) imbalance_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) imbalance_min_qty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stacked_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) profile_row_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) show_poc: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) extreme_ratio_badge: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) badge_min_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) show_numbers: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) show_delta_totals: Option<bool>,
 }
 
-/// The persisted shape of the in-app edits. Every knob explicit: this file
-/// is written by the app, so "absent" would only ever mean a version skew.
+/// A config as the canonical serde shape — the inverse of [`resolve`], for
+/// whoever writes one down (the settings file, a named preset).
+#[must_use]
+pub(crate) fn to_file(config: &FootprintConfig) -> FootprintFile {
+    FootprintFile {
+        style: Some(config.style.id().to_owned()),
+        imbalance_ratio: config.imbalance_ratio.to_f64(),
+        imbalance_min_qty: config.imbalance_min_qty.and_then(|qty| qty.to_f64()),
+        stacked_count: Some(config.stacked_count),
+        profile_row_px: Some(f64::from(config.profile_row_px)),
+        show_poc: Some(config.show_poc),
+        extreme_ratio_badge: Some(config.extreme_ratio_badge),
+        badge_min_ratio: config.badge_min_ratio.to_f64(),
+        show_numbers: Some(config.show_numbers),
+        show_delta_totals: Some(config.show_delta_totals),
+    }
+}
+
+/// The persisted shape of the in-app edits: a version and the config in the
+/// same vocabulary every other footprint file speaks.
 #[derive(Debug, Serialize, Deserialize)]
 struct SettingsFile {
     version: u32,
-    style: String,
-    imbalance_ratio: f64,
-    imbalance_min_qty: Option<f64>,
-    stacked_count: usize,
-    #[serde(default = "default_profile_row_px")]
-    profile_row_px: f64,
-    show_poc: bool,
-    extreme_ratio_badge: bool,
-    #[serde(default = "default_badge_min_ratio")]
-    badge_min_ratio: f64,
-}
-
-fn default_profile_row_px() -> f64 {
-    4.0
-}
-
-fn default_badge_min_ratio() -> f64 {
-    2.0
+    config: FootprintFile,
 }
 
 /// Where this run persists in-app edits. Under test, a scratch file per app
@@ -178,16 +203,7 @@ pub fn load(settings: &Path) -> FootprintConfig {
         return base;
     };
     match toml::from_str::<SettingsFile>(&text) {
-        Ok(file) if file.version == SETTINGS_VERSION => resolve(FootprintFile {
-            style: Some(file.style),
-            imbalance_ratio: Some(file.imbalance_ratio),
-            imbalance_min_qty: file.imbalance_min_qty,
-            stacked_count: Some(file.stacked_count),
-            profile_row_px: Some(file.profile_row_px),
-            show_poc: Some(file.show_poc),
-            extreme_ratio_badge: Some(file.extreme_ratio_badge),
-            badge_min_ratio: Some(file.badge_min_ratio),
-        }),
+        Ok(file) if file.version == SETTINGS_VERSION => resolve(file.config),
         Ok(file) => {
             tracing::warn!(
                 target: "quantick::app",
@@ -220,14 +236,7 @@ pub fn load(settings: &Path) -> FootprintConfig {
 pub fn save(settings: &Path, config: &FootprintConfig) {
     let file = SettingsFile {
         version: SETTINGS_VERSION,
-        style: config.style.id().to_owned(),
-        imbalance_ratio: config.imbalance_ratio.to_f64().unwrap_or(3.0),
-        imbalance_min_qty: config.imbalance_min_qty.and_then(|qty| qty.to_f64()),
-        stacked_count: config.stacked_count,
-        profile_row_px: f64::from(config.profile_row_px),
-        show_poc: config.show_poc,
-        extreme_ratio_badge: config.extreme_ratio_badge,
-        badge_min_ratio: config.badge_min_ratio.to_f64().unwrap_or(2.0),
+        config: to_file(config),
     };
     let Ok(text) = toml::to_string_pretty(&file) else {
         return;
@@ -276,7 +285,7 @@ fn load_preset() -> FootprintConfig {
 /// Apply the file over the defaults, refusing values that would break the
 /// signals' meaning (a ratio under 1 inverts the test; a stack of 1 is not a
 /// stack) rather than letting them through to draw nonsense.
-fn resolve(file: FootprintFile) -> FootprintConfig {
+pub(crate) fn resolve(file: FootprintFile) -> FootprintConfig {
     let defaults = FootprintConfig::default();
     FootprintConfig {
         // An unknown style token (a file from a newer build) keeps the
@@ -313,6 +322,8 @@ fn resolve(file: FootprintFile) -> FootprintConfig {
             .and_then(Decimal::from_f64)
             .filter(|ratio| *ratio >= Decimal::ONE)
             .unwrap_or(defaults.badge_min_ratio),
+        show_numbers: file.show_numbers.unwrap_or(defaults.show_numbers),
+        show_delta_totals: file.show_delta_totals.unwrap_or(defaults.show_delta_totals),
     }
 }
 
@@ -355,6 +366,18 @@ mod tests {
 
     /// The split look is the default; the ladder round-trips as a choice;
     /// an unknown style token from a newer build keeps the default.
+    /// The numbers switch off and on through the file like every other
+    /// knob, and an absent entry keeps them on.
+    #[test]
+    fn the_number_switches_round_trip_and_default_on() {
+        assert!(FootprintConfig::default().show_numbers);
+        assert!(FootprintConfig::default().show_delta_totals);
+        let config =
+            resolve(toml::from_str("show_numbers = false\nshow_delta_totals = false").unwrap());
+        assert!(!config.show_numbers);
+        assert!(!config.show_delta_totals);
+    }
+
     #[test]
     fn style_defaults_to_split_and_round_trips() {
         assert_eq!(FootprintConfig::default().style, FootprintStyle::Split);
@@ -378,6 +401,8 @@ mod tests {
             show_poc: false,
             extreme_ratio_badge: false,
             badge_min_ratio: Decimal::from(3),
+            show_numbers: false,
+            show_delta_totals: false,
         };
         save(&path, &edited);
         assert_eq!(load(&path), edited);

@@ -37,3 +37,10 @@
 # Hide badges below this ratio (default 2.0) — a "1.0x" badge is the
 # absence of aggression.
 #badge_min_ratio = 2.0
+
+# The per-row numbers inside the candles (default true). Off keeps the bars,
+# imbalance chips, POC and badges — the shape of the fight, no digits.
+#show_numbers = true
+
+# The per-bar delta chips along the chart's bottom edge (default true).
+#show_delta_totals = true
