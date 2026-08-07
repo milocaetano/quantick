@@ -20,9 +20,16 @@ use std::any::Any;
 use std::fmt;
 
 use eframe::egui;
+use smallvec::SmallVec;
 
 use crate::chart::PriceScale;
 use crate::theme;
+
+/// The screen-space grab points of one selected object. Six covers every tool
+/// in the registry — the channel is the widest, with a corner and a centre on
+/// each of its two rails — so the handle pass of the selected object
+/// allocates nothing per frame.
+pub type Handles = SmallVec<[egui::Pos2; 6]>;
 
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
 /// A drawing is an annotation *on* the chart, never a second series: the
@@ -303,6 +310,41 @@ trait DrawingToolImpl: Sync {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool;
+    /// Where the trader grabs this object, in screen space. `None` — the
+    /// answer for almost every tool — means the raw anchors: the point you
+    /// clicked is the point you drag.
+    ///
+    /// A tool overrides this when its anchors are not where the gesture
+    /// belongs. A channel is the case that forced the port open: its third
+    /// anchor is a corner of the corridor, so the only way to widen one was
+    /// to find a lone dot off in the distance, and only ever that one edge.
+    /// The handle for a rail belongs at the centre of that rail, and there is
+    /// one per rail.
+    fn handles(
+        &self,
+        _chart_rect: egui::Rect,
+        _points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        None
+    }
+    /// Apply a drag of handle `handle` to screen position `to`, answering the
+    /// object's new screen anchors — the tool decides which anchors a handle
+    /// moves, and a handle may well move more than one.
+    ///
+    /// `None` (the default) means the plain anchor move the host already
+    /// does. A tool that overrides [`DrawingToolImpl::handles`] must override
+    /// this too: a handle that is not an anchor has no default meaning.
+    fn drag_handle(
+        &self,
+        _chart_rect: egui::Rect,
+        _points: &[egui::Pos2],
+        _handle: usize,
+        _to: egui::Pos2,
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        None
+    }
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2);
 }
@@ -433,11 +475,55 @@ impl DrawingTool {
         self.0.paint(painter, chart_rect, style, points, ctxt);
         if ctxt.selected && show_handles {
             let ring = egui::Stroke::new(SELECTED_ANCHOR_RING_WIDTH_PX, theme::ACCENT);
-            for point in points {
-                painter.circle_filled(*point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
-                painter.circle_stroke(*point, SELECTED_ANCHOR_RADIUS_PX, ring);
+            for point in self.handles(chart_rect, points, ctxt) {
+                painter.circle_filled(point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
+                painter.circle_stroke(point, SELECTED_ANCHOR_RADIUS_PX, ring);
             }
         }
+    }
+
+    /// The grab points of this object — the tool's own when it declares them,
+    /// the raw anchors otherwise. Paint, hit-test and drag all ask here, so
+    /// what the trader sees is exactly what they can grab.
+    #[must_use]
+    pub fn handles(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
+    ) -> Handles {
+        self.0
+            .handles(chart_rect, points, ctxt)
+            .unwrap_or_else(|| points.iter().copied().collect())
+    }
+
+    /// Whether this tool's handles *are* its anchors — true for almost every
+    /// tool. A host that can only express "move anchor N" (the cross-pane
+    /// shared edit) asks this before offering a handle at all, rather than
+    /// leaving a grab point that moves something other than what it sits on.
+    #[must_use]
+    pub fn handles_are_anchors(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
+    ) -> bool {
+        self.0.handles(chart_rect, points, ctxt).is_none()
+    }
+
+    /// New screen anchors after dragging `handle` to `to`, when the tool owns
+    /// the gesture. `None` means the host's plain "this handle is anchor
+    /// `handle`" move.
+    #[must_use]
+    pub fn drag_handle(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        handle: usize,
+        to: egui::Pos2,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        self.0.drag_handle(chart_rect, points, handle, to, ctxt)
     }
 
     #[must_use]
@@ -449,7 +535,7 @@ impl DrawingTool {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool {
-        points
+        self.handles(chart_rect, points, ctxt)
             .iter()
             .any(|point| point.distance_sq(position) <= radius_px * radius_px)
             || self
@@ -1252,6 +1338,23 @@ impl Drawings {
         *anchor = point;
         true
     }
+
+    /// Replace every anchor of one object at once — what a tool-owned handle
+    /// drag produces, because a handle that moves a rail moves the anchors
+    /// that define it together. Locked geometry stays put, and an anchor
+    /// count that does not match is refused rather than reshaping the object
+    /// into something the tool cannot paint.
+    pub fn set_points(&mut self, drawing_index: usize, points: &[ChartPoint]) -> bool {
+        let Some(drawing) = self.items.get_mut(drawing_index) else {
+            return false;
+        };
+        if drawing.locked || drawing.points.len() != points.len() {
+            return false;
+        }
+        drawing.points.clear();
+        drawing.points.extend_from_slice(points);
+        true
+    }
 }
 
 pub(super) fn drawing_stroke(style: DrawingStyle) -> egui::Stroke {
@@ -1967,6 +2070,198 @@ mod tests {
             halo: false,
         };
         assert!(line.hit_test(chart, &points, egui::pos2(450.0, 123.0), 5.0, &ctxt));
+    }
+
+    /// The handle port with a second implementation on it — one implementer
+    /// never proves a trait is a port. This fake's handle is nowhere near its
+    /// anchor, so every host path that must go through the tool shows up:
+    /// what gets painted, what can be grabbed, and what a grab does.
+    #[test]
+    fn a_tool_may_own_its_handles_and_the_host_paints_hits_and_drags_them() {
+        /// One anchor, one handle floating a fixed distance above it.
+        struct PivotTool;
+        const PIVOT_HANDLE_OFFSET_PX: f32 = 20.0;
+        impl DrawingToolImpl for PivotTool {
+            fn id(&self) -> &'static str {
+                "pivot"
+            }
+            fn name(&self) -> &'static str {
+                "Pivot"
+            }
+            fn settings_title(&self) -> &'static str {
+                "Pivot settings"
+            }
+            fn icon(&self) -> &'static str {
+                "P"
+            }
+            fn hover_text(&self) -> &'static str {
+                "A fake tool whose handle is not its anchor"
+            }
+            fn required_points(&self) -> usize {
+                1
+            }
+            fn paint(
+                &self,
+                _painter: &egui::Painter,
+                _chart_rect: egui::Rect,
+                _style: DrawingStyle,
+                _points: &[egui::Pos2],
+                _ctxt: &DrawContext<'_>,
+            ) {
+            }
+            fn hit_test(
+                &self,
+                _chart_rect: egui::Rect,
+                _points: &[egui::Pos2],
+                _position: egui::Pos2,
+                _radius_px: f32,
+                _ctxt: &DrawContext<'_>,
+            ) -> bool {
+                false
+            }
+            fn handles(
+                &self,
+                _chart_rect: egui::Rect,
+                points: &[egui::Pos2],
+                _ctxt: &DrawContext<'_>,
+            ) -> Option<Handles> {
+                Some(Handles::from_slice(&[
+                    points[0] - egui::vec2(0.0, PIVOT_HANDLE_OFFSET_PX)
+                ]))
+            }
+            fn drag_handle(
+                &self,
+                _chart_rect: egui::Rect,
+                _points: &[egui::Pos2],
+                _handle: usize,
+                to: egui::Pos2,
+                _ctxt: &DrawContext<'_>,
+            ) -> Option<Handles> {
+                Some(Handles::from_slice(&[
+                    to + egui::vec2(0.0, PIVOT_HANDLE_OFFSET_PX)
+                ]))
+            }
+            #[cfg(test)]
+            fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
+                (vec![egui::pos2(50.0, 50.0)], egui::pos2(50.0, 30.0))
+            }
+        }
+        static PIVOT: PivotTool = PivotTool;
+        let tool = DrawingTool(&PIVOT);
+
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 200.0));
+        let scale = PriceScale::from_range(0.0, 200.0, 0.0, 200.0);
+        let points = vec![egui::pos2(50.0, 50.0)];
+        let anchors = anchors_for(&points, &scale);
+        let payload = tool.default_payload();
+        let ctxt = DrawContext {
+            payload: payload.as_ref(),
+            anchors: &anchors,
+            scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: true,
+            halo: false,
+        };
+        let handle = egui::pos2(50.0, 30.0);
+        assert_eq!(tool.handles(chart, &points, &ctxt).as_slice(), &[handle]);
+        assert!(
+            tool.hit_test(chart, &points, handle, 4.0, &ctxt),
+            "the declared handle is what the trader grabs"
+        );
+        assert!(
+            !tool.hit_test(chart, &points, points[0], 4.0, &ctxt),
+            "the anchor is not a grab point unless the tool says so"
+        );
+        assert_eq!(
+            tool.drag_handle(chart, &points, 0, egui::pos2(80.0, 10.0), &ctxt)
+                .expect("the tool owns the drag")
+                .as_slice(),
+            &[egui::pos2(80.0, 30.0)],
+            "the tool decides which anchors a handle moves"
+        );
+
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(chart),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("pivot-handles"),
+            ));
+            tool.paint(
+                &painter,
+                chart,
+                DrawingStyle::default(),
+                &points,
+                &ctxt,
+                true,
+            );
+        });
+        let rings: Vec<egui::Pos2> = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Circle(circle) if circle.fill == SELECTED_ANCHOR_FILL => {
+                    Some(circle.center)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rings,
+            vec![handle],
+            "the ring the trader sees is the point they can grab, not the anchor"
+        );
+    }
+
+    /// The handle port is additive: a tool that does not declare handles is
+    /// grabbed by its raw anchors, exactly as before the port existed. Only
+    /// the channel opts out, and it opts out on purpose.
+    #[test]
+    fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
+        for drawing_tool in DRAWING_TOOLS {
+            let (points, _) = drawing_tool.test_geometry();
+            let payload = drawing_tool.default_payload();
+            let anchors = anchors_for(&points, &scale);
+            let ctxt = DrawContext {
+                payload: payload.as_ref(),
+                anchors: &anchors,
+                scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
+                style: DrawingStyle::default(),
+                selected: true,
+                halo: false,
+            };
+            let handles = drawing_tool.handles(chart, &points, &ctxt);
+            if drawing_tool.id() == "parallel-channel" {
+                assert_eq!(
+                    handles.len(),
+                    6,
+                    "the channel adds a corner and a centre per rail"
+                );
+                continue;
+            }
+            assert_eq!(
+                handles.as_slice(),
+                points.as_slice(),
+                "{} must keep being grabbed by its anchors",
+                drawing_tool.id()
+            );
+            assert!(
+                drawing_tool
+                    .drag_handle(chart, &points, 0, egui::pos2(1.0, 1.0), &ctxt)
+                    .is_none(),
+                "{} leaves the drag to the host",
+                drawing_tool.id()
+            );
+        }
     }
 
     #[test]
