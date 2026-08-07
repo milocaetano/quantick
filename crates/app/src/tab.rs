@@ -82,6 +82,22 @@ impl From<crate::config::DeclaredLayout> for CanvasLayout {
     }
 }
 
+/// The way back, for the saved workspace ([`crate::ui_state`]), which has to
+/// write a layout out in the vocabulary a config reads.
+///
+/// A canvas layout a config should not name would have to answer for itself
+/// here — which is the point of keeping the two enums apart, and the reason
+/// this conversion is total today and may not always be.
+impl From<CanvasLayout> for crate::config::DeclaredLayout {
+    fn from(layout: CanvasLayout) -> Self {
+        match layout {
+            CanvasLayout::Single => crate::config::DeclaredLayout::Flow,
+            CanvasLayout::Time => crate::config::DeclaredLayout::Time,
+            CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
+        }
+    }
+}
+
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.
 pub struct CanvasChrome<'a> {

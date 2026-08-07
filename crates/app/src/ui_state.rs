@@ -48,12 +48,6 @@ const UI_STATE_FILE: &str = "ui-state.toml";
 /// Bumped on breaking format changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 
-/// Widest a saved split may be, matching the divider's own clamp. A file edited
-/// by hand cannot ask for a pane the divider could not have produced.
-const MIN_SAVED_FRACTION: f32 = 0.1;
-/// Narrowest, same reason.
-const MAX_SAVED_FRACTION: f32 = 0.9;
-
 /// Which pane the chrome spoke for, in the file's vocabulary.
 ///
 /// A twin of [`crate::pane::PaneSide`] rather than that enum itself, for the
@@ -69,6 +63,29 @@ pub enum SavedFocus {
     Time,
 }
 
+// Each twin converts both ways here, beside the vocabulary it belongs to,
+// rather than in the app that happens to read it. It is the pattern
+// `DeclaredLayout` → `CanvasLayout` already set (`tab.rs`), and it is what
+// keeps adding a variant a one-file edit: the compiler then names every arm
+// that has to grow, in the module that owns the names.
+impl From<crate::pane::PaneSide> for SavedFocus {
+    fn from(side: crate::pane::PaneSide) -> Self {
+        match side {
+            crate::pane::PaneSide::Flow => Self::Flow,
+            crate::pane::PaneSide::Time => Self::Time,
+        }
+    }
+}
+
+impl From<SavedFocus> for crate::pane::PaneSide {
+    fn from(focus: SavedFocus) -> Self {
+        match focus {
+            SavedFocus::Flow => Self::Flow,
+            SavedFocus::Time => Self::Time,
+        }
+    }
+}
+
 /// Where the drawing rail was docked, in the file's vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,6 +94,28 @@ pub enum SavedRailDock {
     Right,
     Top,
     Bottom,
+}
+
+impl From<crate::toolrail::ToolboxDock> for SavedRailDock {
+    fn from(dock: crate::toolrail::ToolboxDock) -> Self {
+        match dock {
+            crate::toolrail::ToolboxDock::Left => Self::Left,
+            crate::toolrail::ToolboxDock::Right => Self::Right,
+            crate::toolrail::ToolboxDock::Top => Self::Top,
+            crate::toolrail::ToolboxDock::Bottom => Self::Bottom,
+        }
+    }
+}
+
+impl From<SavedRailDock> for crate::toolrail::ToolboxDock {
+    fn from(dock: SavedRailDock) -> Self {
+        match dock {
+            SavedRailDock::Left => Self::Left,
+            SavedRailDock::Right => Self::Right,
+            SavedRailDock::Top => Self::Top,
+            SavedRailDock::Bottom => Self::Bottom,
+        }
+    }
 }
 
 /// Which dock tab was open, in the file's vocabulary. Absent means the dock
@@ -89,6 +128,30 @@ pub enum SavedDockTab {
     Session,
     Trading,
     Trades,
+}
+
+impl From<crate::dock::DockTab> for SavedDockTab {
+    fn from(tab: crate::dock::DockTab) -> Self {
+        match tab {
+            crate::dock::DockTab::L2 => Self::L2,
+            crate::dock::DockTab::Bubbles => Self::Bubbles,
+            crate::dock::DockTab::Session => Self::Session,
+            crate::dock::DockTab::Trading => Self::Trading,
+            crate::dock::DockTab::Trades => Self::Trades,
+        }
+    }
+}
+
+impl From<SavedDockTab> for crate::dock::DockTab {
+    fn from(tab: SavedDockTab) -> Self {
+        match tab {
+            SavedDockTab::L2 => Self::L2,
+            SavedDockTab::Bubbles => Self::Bubbles,
+            SavedDockTab::Session => Self::Session,
+            SavedDockTab::Trading => Self::Trading,
+            SavedDockTab::Trades => Self::Trades,
+        }
+    }
 }
 
 /// One remembered market and how its canvas was arranged.
@@ -278,9 +341,10 @@ impl Workspace {
             );
         }
         for tab in &mut self.tabs {
-            tab.split_fraction = tab
-                .split_fraction
-                .map(|f| f.clamp(MIN_SAVED_FRACTION, MAX_SAVED_FRACTION));
+            // The divider's own clamp, not a second copy of its range: a
+            // hand-edited fraction must land exactly where a drag could have
+            // left it, and two constants for one domain is how they drift.
+            tab.split_fraction = tab.split_fraction.map(crate::pane::clamp_pane_fraction);
             // A time interval that no longer parses costs the pane its saved
             // interval, not the tab its market: the header's default is a
             // perfectly good chart, and dropping a whole market over the
@@ -586,8 +650,16 @@ mod tests {
         workspace.tabs[0].split_fraction = Some(0.99);
         workspace.tabs[1].split_fraction = Some(-3.0);
         let restored = workspace.restore(&catalogue());
-        assert_eq!(restored.tabs[0].split_fraction, Some(MAX_SAVED_FRACTION));
-        assert_eq!(restored.tabs[1].split_fraction, Some(MIN_SAVED_FRACTION));
+        // Exactly where the divider's own clamp would have left it — the
+        // file may not reach a split a drag could not produce.
+        assert_eq!(
+            restored.tabs[0].split_fraction,
+            Some(crate::pane::clamp_pane_fraction(0.99))
+        );
+        assert_eq!(
+            restored.tabs[1].split_fraction,
+            Some(crate::pane::clamp_pane_fraction(-3.0))
+        );
     }
 
     #[test]
