@@ -1,6 +1,0 @@
-version = 1
-style = "split"
-imbalance_ratio = 3.0
-stacked_count = 6
-show_poc = true
-extreme_ratio_badge = true
