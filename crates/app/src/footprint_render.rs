@@ -148,9 +148,12 @@ fn regroup(fp: &BarFootprint, k: i64) -> BTreeMap<i64, FootprintLevel> {
 fn fmt_qty(qty: Decimal) -> String {
     let value = qty.to_f64().unwrap_or(0.0);
     let magnitude = value.abs();
-    if magnitude >= 1_000_000.0 {
+    // Suffix thresholds sit at the value that *rounds* to the next unit:
+    // 999.96k would print "1000.0k" — seven glyphs where the cell budget
+    // assumes five — so it rolls to "1.0M" instead.
+    if magnitude >= 999_950.0 {
         format!("{:.1}M", value / 1_000_000.0)
-    } else if magnitude >= 1_000.0 {
+    } else if magnitude >= 999.95 {
         format!("{:.1}k", value / 1_000.0)
     } else if magnitude >= 100.0 {
         format!("{value:.0}")
@@ -807,6 +810,10 @@ mod tests {
         assert_eq!(fmt_qty(dec("736")), "736");
         assert_eq!(fmt_qty(dec("0.5234")), "0.52");
         assert_eq!(fmt_qty(dec("-1500")), "-1.5k");
+        // A value that rounds past its suffix rolls to the next one: never
+        // "1000.0k" — seven glyphs where the cell budget assumes five.
+        assert_eq!(fmt_qty(dec("999960")), "1.0M");
+        assert_eq!(fmt_qty(dec("999.96")), "1.0k");
     }
 
     #[test]
