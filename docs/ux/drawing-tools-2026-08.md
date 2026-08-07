@@ -381,6 +381,58 @@ step. Placement already refused to read a twitch as a drag; moving refuses
 too now, measured from the press so that crossing the threshold hands the
 gesture its whole movement instead of trailing the cursor forever.
 
+### D10 — Every band is a canvas
+
+A *band* is a region of one chart pane owning a value axis: the candles'
+price band, plus one per expanded indicator pane. Until now only the first
+accepted a drawing, so the CVD zero line — the most-drawn level on an order
+flow chart — had to be eyeballed against the pane's own zero rule.
+
+The rules, decided by the trader-UX pass of 2026-08-07:
+
+- **No tool is refused by identity.** Every registered tool works on every
+  band. Refusal is a property of the band's *state* — collapsed, still
+  warming up, the gutter, the live lane — and it is announced by the cursor
+  *before* the press, never by swallowing a click.
+- **One carve, one scale.** A band's drawings and its curve are projected
+  through the same `PriceScale`, built from the range the renderer actually
+  drew (`view.scale.resolve(last_auto)`, never the auto-fit alone). A level
+  that has drifted off the curve it annotates is a lie; sharing the object
+  is what makes the drift impossible rather than merely unlikely.
+- **A value never crosses a band.** A CVD level is not a price level. It
+  paints clipped to its band, hit-tests only there, and shares to the tab's
+  other chart only where the same indicator is on that chart.
+- **A time-only object belongs to no band, and therefore to all.** The
+  vertical line and the date range mark instants, so each is one object
+  painted as a clipped segment through every band: one manager row, one
+  style, one delete.
+- **A band is keyed by kind and ordinal, never by slot id.** Slot ids are a
+  monotonic counter, so removing an indicator and adding it back would
+  orphan every drawing on it. Between the two the objects are *parked* —
+  kept, unpainted, listed in amber in the manager — and re-adopted when that
+  indicator returns.
+- **Changing an indicator's inputs leaves its drawings alone, unmarked.**
+  The trader changed the series, not the meaning of the number. Amber is
+  reserved for provenance of market data; spending it on a period tweak is
+  how a trader learns to stop reading amber.
+- **A drawing tool consumes the primary button, not the chart.** Pan, wheel
+  zoom, the pane dividers and the collapse chevrons keep working while a
+  tool is armed. That is the fix for audit S2, and it is a prerequisite
+  here: without it, arming a tool would deafen every pane at once.
+- **The drawable band says so with one accent hairline** on its top edge —
+  the mark the split view already uses for pane focus. An object whose value
+  has left the band's range keeps that value and gets a caret at the edge it
+  went past, so "still there, off screen" never reads as "gone".
+- **A measurement on a band drops both price words.** `pts` names a price
+  unit and a percent of a signed cumulative series is false rather than
+  coarse — a move from −100 to +100 is not "−200%". The readout gives the
+  delta and the series it was measured on.
+
+What this deliberately does not do: persist drawings across a restart, or
+carry them through a symbol / bar-spec change. `clear_overlay` still wipes
+every band on a rebuild, by one rule — making pane objects more durable than
+price objects would be the app contradicting itself.
+
 ---
 
 ## 3. Acceptance, in persona terms
