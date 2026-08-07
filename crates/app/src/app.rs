@@ -4141,6 +4141,7 @@ impl QuantickApp {
                         let hidden = drawing.hidden;
                         let shared = drawing.scope == drawings::DrawingScope::AllCharts;
                         let off_series = drawing.off_series;
+                        let foreign_market = drawing.foreign_market;
                         let name = drawing.tool.name();
                         ui.horizontal(|ui| {
                             let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
@@ -4155,6 +4156,16 @@ impl QuantickApp {
                             }
                             if hidden {
                                 ui.label(egui::RichText::new("hidden").small());
+                            }
+                            if foreign_market {
+                                // The one state the chart alone cannot
+                                // explain: the mark resolves onto real bars,
+                                // at a price that belonged to another
+                                // instrument.
+                                ui.label(egui::RichText::new("other market").small())
+                                    .on_hover_text(
+                                        "Drawn while this tab showed a different instrument. The                                          moment still exists here; the price does not mean the                                          same thing",
+                                    );
                             }
                             if off_series {
                                 // The mark outlived the bars it was drawn on

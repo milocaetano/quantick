@@ -1088,6 +1088,14 @@ impl Tab {
             pane.reset_series();
         }
         self.drop_overlay_gestures();
+        // The marks stay — only the trader deletes a drawing — but they were
+        // drawn on the instrument that just left. Time survives a symbol
+        // switch and price does not, so without this a BTC level would paint
+        // at full strength over an index chart, at a number that means
+        // nothing there (§D7b).
+        for pane in self.panes_mut() {
+            pane.drawings.mark_market_changed();
+        }
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.

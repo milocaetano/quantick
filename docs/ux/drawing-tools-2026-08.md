@@ -338,6 +338,18 @@ in the goal that shipped this. The cross-*tab* boundary in §D7 stands for a
 different reason: nothing was ever drawn on the other tab's chart, so there
 is no object whose survival is in question.
 
+That call needs a second label, because the first one cannot carry it.
+Market time survives a symbol switch and price does not: BTC traded at the
+same instants the index did, so every anchor resolves onto a real bar and
+`off_series` stays false — while the level itself now sits at a number that
+means nothing on the chart under it. A mark left painting at full strength
+there is inferred data reading as fact, which is the failure this repo
+refuses hardest. So the switch flags every object present as
+`foreign_market`: same fade, and an "other market" badge in the object
+manager saying the moment still exists here and the price does not mean the
+same thing. Marks drawn after the switch belong to the market now showing
+and start clean.
+
 Out of scope, and a separate design: surviving a restart of the app. Nothing
 here is written to disk.
 

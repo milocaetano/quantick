@@ -3660,13 +3660,13 @@ impl ChartPane {
             }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
             let selected = self.drawings.selected() == Some(index);
-            // A mark whose anchors this series cannot reach — drawn before
-            // the history now loaded, or on the instrument this tab used to
-            // show. It survived the change, because only the trader deletes a
-            // drawing, and it says what it is by fading rather than by
-            // pretending to sit on the bar it was clamped to. Same opacity the
-            // mirrored marks use for the same reason.
-            let style = if drawing.off_series {
+            // A mark this chart's data does not back: its anchors are outside
+            // the loaded series, or it was drawn on the instrument this tab
+            // used to show. It survived the change, because only the trader
+            // deletes a drawing, and it says what it is by fading rather than
+            // by passing itself off as a level on this market. Same opacity
+            // the mirrored marks use for the same reason.
+            let style = if drawing.off_series || drawing.foreign_market {
                 DrawingStyle {
                     color: drawing.style.color.gamma_multiply(Self::CLAMPED_OPACITY),
                     fill_alpha: 0,

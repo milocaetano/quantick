@@ -562,6 +562,17 @@ pub struct Drawing {
     pub hidden: bool,
     /// Whether the other panes of this tab show it too.
     pub scope: DrawingScope,
+    /// Set when the tab changed the instrument under this mark.
+    ///
+    /// Time survives a symbol switch and price does not: BTC traded at the
+    /// same instants the index did, so the anchors resolve perfectly and the
+    /// level lands at a price that means nothing on the chart it is now over.
+    /// `off_series` cannot catch it — the series *does* reach those instants.
+    ///
+    /// Marks are never deleted by a state change, so this is what keeps that
+    /// honest: the object stays, and it says it belongs to another market
+    /// rather than pretending to be a level on this one.
+    pub foreign_market: bool,
     /// Set by [`Drawings::reanchor`] when this pane's series does not reach
     /// the market instant an anchor was placed at — the mark survived a
     /// re-cut, a rewind or a symbol switch, but it is no longer sitting on
@@ -799,6 +810,7 @@ impl Drawings {
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
+                foreign_market: false,
                 off_series: false,
                 payload: fresh.payload,
             });
@@ -917,6 +929,34 @@ impl Drawings {
         }
         if let Some(baseline) = &mut self.gesture_baseline {
             reanchor_all(&mut baseline.items);
+        }
+    }
+
+    /// Mark every object as belonging to a market this tab no longer shows.
+    ///
+    /// Called on the one transition that changes the instrument under the
+    /// marks. Everything present at that moment was drawn on the old market;
+    /// anything placed afterwards is on the new one and starts clean.
+    ///
+    /// The undo stacks travel with the live items, for the same reason
+    /// [`Self::reanchor`] moves them: undoing back to a state from before the
+    /// switch must not restore a mark that claims to be a level on this
+    /// instrument.
+    pub fn mark_market_changed(&mut self) {
+        let mark = |items: &mut [Drawing]| {
+            for drawing in items {
+                drawing.foreign_market = true;
+            }
+        };
+        mark(&mut self.items);
+        if let Some(draft) = self.draft.as_mut() {
+            mark(std::slice::from_mut(draft));
+        }
+        for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            mark(&mut entry.items);
+        }
+        if let Some(baseline) = &mut self.gesture_baseline {
+            mark(&mut baseline.items);
         }
     }
 
@@ -1740,6 +1780,56 @@ mod tests {
             times,
             [Some(1_700_000_003_000), Some(1_700_000_005_000)],
             "a moved mark carries its new instants, or its shared twin stays behind"
+        );
+    }
+
+    /// The honesty hole a symbol switch opens, and the one `off_series`
+    /// cannot close: both instruments traded at the same instants, so every
+    /// anchor resolves onto a real bar and only the *price* is meaningless.
+    /// A mark left painting at full strength there reads as a level on a
+    /// market it was never drawn on.
+    #[test]
+    fn a_market_change_marks_every_object_as_belonging_to_the_old_one() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 118_000.0, Some(1_700_000_006_000)),
+        );
+
+        drawings.mark_market_changed();
+
+        assert!(drawings.items()[0].foreign_market);
+        assert!(
+            !drawings.items()[0].off_series,
+            "the instants are still on this series - which is exactly why the \
+             time-based flag cannot catch this case"
+        );
+
+        // Anything drawn after the switch is on the market now showing.
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(7.0, 138_000.0, Some(1_700_000_007_000)),
+        );
+        assert!(!drawings.items()[1].foreign_market);
+    }
+
+    #[test]
+    fn undo_cannot_restore_a_mark_that_claims_the_new_market() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 118_000.0, Some(1_700_000_006_000)),
+        );
+        drawings.begin_gesture();
+        drawings.translate_selected(1.0, 0.0);
+        drawings.commit_gesture();
+
+        drawings.mark_market_changed();
+        drawings.undo();
+
+        assert!(
+            drawings.items()[0].foreign_market,
+            "stepping back through history must not undo the market change"
         );
     }
 
