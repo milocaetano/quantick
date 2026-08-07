@@ -203,7 +203,15 @@ pub fn paint_off_band_caret(
     }
     #[allow(clippy::cast_precision_loss)]
     let x = points.iter().map(|point| point.x).sum::<f32>() / points.len() as f32;
-    let x = x.clamp(band.left(), band.right());
+    // Inset by the caret's own half-width, not to the raw edge: an object
+    // whose anchor is off the left of the window clamps here, and clamping to
+    // the edge itself put half the triangle outside the band's clip — the
+    // mark then read as a smudge instead of a direction (seen in the visual
+    // QA pass of 2026-08-07).
+    let x = x.clamp(
+        band.left() + OFF_BAND_CARET_HALF_PX,
+        band.right() - OFF_BAND_CARET_HALF_PX,
+    );
     let (tip, base) = if above {
         (
             band.top() + 1.0,

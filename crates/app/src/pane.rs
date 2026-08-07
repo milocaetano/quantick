@@ -4159,6 +4159,53 @@ mod tests {
         );
     }
 
+    /// The caret that says "your object is off the top of this band" has to
+    /// be a caret. Clamped to the raw edge, half of it fell outside the
+    /// band's clip and it read as a smudge — which is worse than nothing,
+    /// because a smudge is not a direction.
+    #[test]
+    fn the_off_band_caret_stays_whole_inside_its_band() {
+        let band = egui::Rect::from_min_max(egui::pos2(60.0, 400.0), egui::pos2(900.0, 500.0));
+        let mut drawing = drawings::Drawings::default();
+        drawing.place_on(
+            drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == "horizontal-line")
+                .expect("registered"),
+            &DrawingBand::Indicator(drawings::PaneKey {
+                kind: std::sync::Arc::from("native.cvd"),
+                ordinal: 0,
+            }),
+            ChartPoint::at(1.0, 0.0),
+        );
+        let object = &drawing.items()[0];
+
+        // An anchor off the left of the window, at a value above the band.
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("caret-test"),
+            ));
+            bands::paint_off_band_caret(&painter, band, &[egui::pos2(-500.0, 100.0)], object);
+        });
+        let points: Vec<egui::Pos2> = output
+            .shapes
+            .iter()
+            .flat_map(|clipped| match &clipped.shape {
+                egui::Shape::Path(path) => path.points.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        assert_eq!(points.len(), 3, "the caret is one triangle");
+        for point in points {
+            assert!(
+                point.x >= band.left() && point.x <= band.right(),
+                "every corner is inside the band it marks: {point:?}"
+            );
+        }
+    }
+
     /// A bar spanning 98 … 102, for the magnet.
     fn magnet_candle() -> quantick_engine::Bar {
         use rust_decimal::Decimal;
