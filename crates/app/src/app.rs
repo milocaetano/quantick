@@ -795,6 +795,14 @@ impl QuantickApp {
         if std::env::var("QUANTICK_FOOTPRINT_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().flow_pane.footprint_visible = true;
         }
+        // The zoom, scriptable: the footprint's detail levels are functions
+        // of candle width, and a validation run cannot drag a scroll wheel.
+        // Same clamp as the gesture (see Viewport::set_candle_width).
+        if let Ok(value) = std::env::var("QUANTICK_CANDLE_WIDTH")
+            && let Ok(px) = value.trim().parse::<f32>()
+        {
+            app.active_tab_mut().flow_pane.viewport.set_candle_width(px);
+        }
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
         // menu takes, so a scripted validation run needs no clicks.

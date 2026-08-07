@@ -285,7 +285,10 @@ impl BarFootprint {
         if other.is_zero() {
             return None;
         }
-        Some(dominant / other)
+        // `checked_div` for the same reason the fold saturates: quantities
+        // come from an untrusted feed, and a ratio too large for `Decimal`
+        // must read as "no finite ratio", never as a panic.
+        dominant.checked_div(other)
     }
 
     fn fold(&mut self, trade: &Trade, level_cap: usize) {
@@ -377,7 +380,16 @@ impl FootprintBuilder {
 /// panic the fold. Zero-anchored: bars sharing a grouping share bucket
 /// boundaries, whatever their own price ranges.
 fn bucket_of(price: Decimal, group: Decimal) -> i64 {
-    let quotient = (price / group).floor();
+    // `checked_div`: a price near `Decimal::MAX` over a sub-unit group
+    // overflows the division, and a corrupt print must land in a saturated
+    // bucket, not panic the fold (same rule as the accumulation).
+    let Some(quotient) = price.checked_div(group).map(|q| q.floor()) else {
+        return if price.is_sign_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        };
+    };
     quotient
         .try_into()
         .unwrap_or(if quotient.is_sign_negative() {
@@ -585,6 +597,50 @@ mod tests {
         assert_eq!(fp.extreme_ratio(Extreme::Low), Some(dec("9.82")));
         // High level is buy-only: no finite ratio, and no invented stand-in.
         assert_eq!(fp.extreme_ratio(Extreme::High), None);
+    }
+
+    /// A corrupt print near `Decimal::MAX` over a sub-unit group overflows
+    /// the bucket division; it must land in a saturated bucket, and a
+    /// one-sided extreme whose ratio overflows must read as "no finite
+    /// ratio" — never a panic, on either path (feed input is untrusted).
+    #[test]
+    fn absurd_feed_values_saturate_instead_of_panicking() {
+        let mut builder = FootprintBuilder::new(dec("0.01"), DEFAULT_LEVEL_CAP);
+        builder.push(&Trade {
+            agg_id: 0,
+            timestamp_ms: 0,
+            price: Decimal::MAX,
+            quantity: dec("1"),
+            side: Side::Buy,
+        });
+        builder.push(&Trade {
+            agg_id: 1,
+            timestamp_ms: 1,
+            price: Decimal::MIN,
+            quantity: dec("1"),
+            side: Side::Sell,
+        });
+        let fp = builder.close().unwrap();
+        let buckets: Vec<i64> = fp.levels().keys().copied().collect();
+        assert_eq!(buckets, vec![i64::MIN, i64::MAX]);
+
+        // Ratio overflow: MAX over a tiny opposite side has no Decimal home.
+        let mut builder = FootprintBuilder::new(dec("1"), DEFAULT_LEVEL_CAP);
+        builder.push(&Trade {
+            agg_id: 0,
+            timestamp_ms: 0,
+            price: dec("100"),
+            quantity: Decimal::MAX,
+            side: Side::Sell,
+        });
+        builder.push(&Trade {
+            agg_id: 1,
+            timestamp_ms: 1,
+            price: dec("100"),
+            quantity: dec("0.0000000000000000000000000001"),
+            side: Side::Buy,
+        });
+        assert_eq!(builder.close().unwrap().extreme_ratio(Extreme::Low), None);
     }
 
     /// The doubled ladder equals the ladder a builder with the doubled base

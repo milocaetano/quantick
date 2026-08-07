@@ -1640,6 +1640,19 @@ impl Tab {
                 paper,
                 ..
             } = self;
+            // The time pane has no tape of its own (§11), so its footprint
+            // rows adopt the flow pane's capture bucket — the instrument's
+            // grid is a fact about the market, not about which pane shows it.
+            if let (Some(time), Some(base)) = (
+                time_pane.as_mut(),
+                flow_pane
+                    .orderflow
+                    .as_ref()
+                    .map(|tape| tape.base_capture_grouping()),
+            ) && time.footprint_visible
+            {
+                time.state.set_footprint_group(base);
+            }
             let mut chrome = PaneChrome {
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,

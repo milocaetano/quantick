@@ -395,6 +395,11 @@ fn axis_zoom_gesture(
 /// already one number — written out four times.
 const SCROLL_ZOOM_PX: f32 = 300.0;
 
+/// How often the forming bar's footprint ladder is re-snapshotted for
+/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
+/// digits, and a layout that repaints per print reflows under the pointer.
+const LIVE_LADDER_REFRESH_S: f64 = 0.1;
+
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
 /// Matches the candles' own feel: dragging the time axis zooms it by
@@ -2240,12 +2245,19 @@ impl ChartPane {
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
-        // Adopt the book engine's capture bucket as the footprint's row grid
-        // (the instrument's price_step where the feed declares one). Done
-        // before the frame borrows the bar slices; a no-op every frame but
-        // the rare one where the engine re-derives the bucket — that one
-        // replays the retained trades onto the new grid.
-        if self.footprint_visible
+        // The ladders accumulate only while the layer is on somewhere: off,
+        // ingestion pays nothing and holds nothing; the first frame after a
+        // switch-on refolds the retained trades (declared cost, once). Then
+        // adopt the book engine's capture bucket as the row grid (the
+        // instrument's price_step where the feed declares one). Both before
+        // the frame borrows the bar slices; both no-ops every frame but the
+        // one where something changed.
+        let footprint_on = self.footprint_visible
+            && self
+                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
+                .is_none();
+        self.state.set_footprint_enabled(footprint_on);
+        if footprint_on
             && let Some(base) = self
                 .orderflow
                 .as_ref()
@@ -2467,7 +2479,7 @@ impl ChartPane {
                     let stale = self
                         .footprint_live
                         .as_ref()
-                        .is_none_or(|(taken, _)| now - *taken >= 0.1);
+                        .is_none_or(|(taken, _)| now - *taken >= LIVE_LADDER_REFRESH_S);
                     if stale {
                         self.footprint_live = Some((now, partial.clone()));
                     }

@@ -273,6 +273,13 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     let base_row_px = (frame.scale.y(0.0) - frame.scale.y(group_f)).abs();
     let level = lod.resolve(frame.candle_width, base_row_px);
 
+    if level == DetailLevel::Off {
+        // Nothing to compute and nothing to draw — but the legend still
+        // explains the silence, or an enabled layer reads as broken.
+        draw_legend(frame, level, group, 1, false, false, false, Decimal::ZERO);
+        return;
+    }
+
     let min_row = match level {
         DetailLevel::Detailed => DETAILED_MIN_ROW,
         DetailLevel::Compact => COMPACT_MIN_ROW,
@@ -309,7 +316,14 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
 
     if level >= DetailLevel::Marks {
         for (slot, fp) in visible_ladders() {
-            aggregated_any |= fp.is_aggregated();
+            if fp.is_aggregated() {
+                // A cap-coarsened ladder lives on a doubled grid; drawing it
+                // with the frame's row geometry would put its rows at the
+                // wrong prices. Hiding it and saying so is the honest v1
+                // (the cap only trips on pathological bars).
+                aggregated_any = true;
+                continue;
+            }
             // Zones and the POC are computed on the display rows the eye
             // compares — the same rows the cells draw.
             let rows = regroup(fp, k);
@@ -349,6 +363,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         aggregated_any,
         cells_left == 0,
         zones_dropped,
+        min_qty,
     );
 }
 
@@ -498,7 +513,16 @@ fn draw_bar(
                 }
             }
             DetailLevel::Compact | DetailLevel::Detailed => {
-                let font = egui::FontId::monospace((row_height - 2.0).clamp(8.0, 13.0));
+                // The font answers to the row height AND the cell width: a
+                // five-glyph quantity ("58.1k") is ~3 em of monospace per
+                // side, and a number that outgrows its candle bleeds into
+                // the neighbour — worse than a smaller number.
+                let width_budget = match level {
+                    DetailLevel::Detailed => (frame.half - 6.0) / 3.0,
+                    _ => (2.0 * frame.half - 6.0) / 3.0,
+                };
+                let font =
+                    egui::FontId::monospace((row_height - 2.0).min(width_budget).clamp(8.0, 13.0));
                 if is_poc {
                     painter.rect_filled(
                         egui::Rect::from_min_max(
@@ -506,7 +530,7 @@ fn draw_bar(
                             egui::pos2(xc + frame.half, bottom),
                         ),
                         egui::Rounding::ZERO,
-                        POC_COLOR.gamma_multiply(0.18),
+                        theme::POC.gamma_multiply(0.18),
                     );
                     draw_poc_dot(frame, xc, row, row_group);
                 }
@@ -610,9 +634,6 @@ fn draw_bar(
     }
 }
 
-/// exocharts' red, the one saturated color the layer allows itself: the POC.
-const POC_COLOR: egui::Color32 = egui::Color32::from_rgb(0xE5, 0x39, 0x35);
-
 fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
     let (top, bottom) = row_band(frame, row, row_group);
     let y = (top + bottom) / 2.0;
@@ -621,7 +642,7 @@ fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
             egui::pos2(xc - frame.half, y),
             egui::pos2(xc + frame.half, y),
         ],
-        egui::Stroke::new(1.5_f32, POC_COLOR),
+        egui::Stroke::new(1.5_f32, theme::POC),
     );
 }
 
@@ -646,6 +667,7 @@ fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_legend(
     frame: &LayerFrame<'_>,
     level: DetailLevel,
@@ -654,6 +676,7 @@ fn draw_legend(
     aggregated_any: bool,
     capped: bool,
     zones_dropped: bool,
+    min_qty: Decimal,
 ) {
     let mut text = String::from("footprint");
     match level {
@@ -665,10 +688,15 @@ fn draw_legend(
     }
     // The effective grouping is always spoken: the number a row stands for
     // must never change meaning silently (data honesty).
-    let effective = group * Decimal::from(k);
+    let effective = group.saturating_mul(Decimal::from(k));
     text.push_str(&format!(" · rows {effective}"));
+    // The imbalance floor in force, spoken like the rows are: a highlight
+    // whose threshold is secret reads as arbitrary.
+    if level > DetailLevel::Off && !min_qty.is_zero() {
+        text.push_str(&format!(" · min qty {}", fmt_qty(min_qty)));
+    }
     if aggregated_any {
-        text.push_str(" (coarsened)");
+        text.push_str(" · coarsened bars hidden");
     }
     if frame.side_inferred {
         text.push_str(" · side inferred");
@@ -679,9 +707,15 @@ fn draw_legend(
     if zones_dropped {
         text.push_str(&format!(" · strongest {MAX_ZONE_MARKS} zones"));
     }
+    // Bottom-left: the top-left is the bubbles legend's home, and that panel
+    // paints an opaque background *after* this layer — a legend carrying the
+    // rows' meaning must not live under someone else's paint.
     frame.painter.text(
-        egui::pos2(frame.chart_rect.left() + 6.0, frame.chart_rect.top() + 34.0),
-        egui::Align2::LEFT_TOP,
+        egui::pos2(
+            frame.chart_rect.left() + 6.0,
+            frame.chart_rect.bottom() - 6.0,
+        ),
+        egui::Align2::LEFT_BOTTOM,
         text,
         egui::FontId::proportional(10.5),
         theme::TEXT_MUTED,
@@ -696,6 +730,13 @@ mod tests {
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
+    }
+
+    /// The zoom ceiling must reach the Detailed budget, or the most detailed
+    /// level exists only in the code — the reason MAX_CANDLE_WIDTH rose.
+    #[test]
+    fn the_zoom_ceiling_reaches_the_detailed_level() {
+        assert!(crate::viewport::MAX_CANDLE_WIDTH >= DETAILED_MIN_WIDTH);
     }
 
     #[test]

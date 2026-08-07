@@ -47,8 +47,10 @@ engine::footprint          app (ChartState)             app (render)
   boundaries).
 - **The app feeds it** from the same trade stream that builds bars
   (`ChartState`), never from the aggression store (30-min retention, only
-  populated while bubbles are on). Closed bars cache their ladder; the live
-  bar re-renders at ~10 Hz, not per print.
+  populated while bubbles are on). Accumulation is lazy: while the layer is
+  off — the default — ingestion pays nothing and holds nothing; switching it
+  on refolds the retained trades once. Closed bars cache their ladder; the
+  live bar re-renders at ~10 Hz, not per print.
 - **Capture vs display grouping are separate**, copying the heatmap precedent
   (`EffectiveGrouping`): the engine accumulates on a fixed base grid (the
   instrument tick where the feed reports `price_step`, else the configured
@@ -118,17 +120,22 @@ Config follows the versioned-preset pattern; the in-app surface is a small
 submenu of the layer entry (trader veto on big dialogs), the full set lives in
 the TOML.
 
+Shipped in v1 (`config/footprint.toml`):
+
 | Option | Default |
 | --- | --- |
-| `mode` | `auto` (LOD ladder; manual `detailed/compact/profile` still drops to off when unreadable) |
-| `cell_content` | `bid_ask` (`delta`, `volume`) |
-| `row_grouping` | `auto` (integer multiple of base grid; manual override) |
 | `imbalance_ratio` | `3.0` |
-| `imbalance_min_qty` | per-instrument: `max(feed floor, p60 of per-level volume over recent committed bars)` — deterministic, manual override |
+| `imbalance_min_qty` | adaptive: p60 of per-row volume on screen, disclosed in the legend; manual override pins it |
 | `stacked_count` | `3` |
 | `show_poc` | `on` |
 | `extreme_ratio_badge` | `on` |
-| `delta_color` | `off` (opt-in bar-delta tint; panel disagreement resolved: scalper wanted it, swing persona vetoed it as default) |
+
+Deferred (auto-only in v1, knobs when someone asks): `mode` (the LOD ladder
+always decides; `QUANTICK_CANDLE_WIDTH` scripts the zoom instead),
+`cell_content` (bid×ask at Detailed, delta at Compact), `row_grouping`
+(always the adaptive integer multiple), `delta_color` (not drawn — the
+panel's swing persona vetoed it as default and nobody has asked for the
+opt-in yet).
 
 A single min-qty number cannot be global: 20 contracts is right on WIN and
 absurd on BTCUSDT — hence the derived default.

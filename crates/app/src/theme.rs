@@ -38,6 +38,11 @@ pub const BUY: Color32 = Color32::from_rgb(0x26, 0xA6, 0x9A);
 /// (paper trading). Candles read their editable copy from [`crate::style`];
 /// the parity test below pins the two together.
 pub const SELL: Color32 = Color32::from_rgb(0xEF, 0x53, 0x50);
+/// `poc` — the footprint's point-of-control line. Deliberately *not* the
+/// exocharts red (red already means the sell side here, and the POC is a
+/// side-neutral fact) and not [`AMBER`] (that hue is reserved for data
+/// provenance). Violet carries no other meaning on this canvas.
+pub const POC: Color32 = Color32::from_rgb(0xCE, 0x93, 0xD8);
 /// `accent/overlay` — selection accent and the future first indicator plot.
 pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.

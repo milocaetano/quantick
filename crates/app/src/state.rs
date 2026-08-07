@@ -289,6 +289,11 @@ pub struct ChartState {
     /// Per-bar footprint ladders, index-aligned with `bars`; fed the same
     /// trades the bar builder folds (see [`FootprintSeries`]).
     footprints: FootprintSeries,
+    /// Whether the ladders are being accumulated at all. Off (the default)
+    /// costs nothing per trade and holds nothing per bar — a capability
+    /// nobody asked for must not tax every ingest. Enabling refolds the
+    /// retained trades, so nothing is lost by having been off.
+    footprint_enabled: bool,
 }
 
 impl ChartState {
@@ -307,6 +312,7 @@ impl ChartState {
             partial: None,
             backfill_boundary: None,
             footprints: FootprintSeries::new(footprint_series::default_group()),
+            footprint_enabled: false,
         }
     }
 
@@ -318,7 +324,9 @@ impl ChartState {
         self.backfill_done = true;
         for trade in trades {
             let closed = self.builder.push(trade);
-            self.footprints.observe(trade, closed.as_ref());
+            if self.footprint_enabled {
+                self.footprints.observe(trade, closed.as_ref());
+            }
             if let Some(bar) = closed {
                 self.bars.push(bar);
             }
@@ -356,7 +364,9 @@ impl ChartState {
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
         let closed = self.builder.push(trade);
-        self.footprints.observe(trade, closed.as_ref());
+        if self.footprint_enabled {
+            self.footprints.observe(trade, closed.as_ref());
+        }
         if let Some(bar) = closed {
             self.bars.push(bar);
         }
@@ -386,7 +396,9 @@ impl ChartState {
                 boundary = Some(bars.len());
             }
             let closed = builder.push(trade);
-            self.footprints.observe(trade, closed.as_ref());
+            if self.footprint_enabled {
+                self.footprints.observe(trade, closed.as_ref());
+            }
             if let Some(bar) = closed {
                 bars.push(bar);
             }
@@ -463,16 +475,44 @@ impl ChartState {
         self.footprints.base_group()
     }
 
+    /// Switch footprint accumulation on or off. Off is free; turning it on
+    /// refolds the retained trades so the ladders appear fully populated,
+    /// and turning it off drops them (the trades can always rebuild them).
+    /// A no-op when nothing changes.
+    pub fn set_footprint_enabled(&mut self, enabled: bool) {
+        if enabled == self.footprint_enabled {
+            return;
+        }
+        self.footprint_enabled = enabled;
+        if enabled {
+            self.refold_footprints(self.footprints.base_group());
+        } else {
+            self.footprints.reset(self.footprints.base_group());
+        }
+    }
+
     /// Re-capture the footprints at row width `group` (normally the
     /// instrument's `price_step` once the feed reports it), replaying the
     /// retained trades through a scratch builder of the current spec so the
     /// ladders re-align with the very same bar boundaries. The bars — and the
     /// timeline revision projections key on — are untouched. A no-op when the
-    /// group is unchanged or not positive.
+    /// group is unchanged or not positive; while accumulation is off only
+    /// the width is stored, for the refold that happens on enable.
     pub fn set_footprint_group(&mut self, group: Decimal) {
         if group <= Decimal::ZERO || group == self.footprints.base_group() {
             return;
         }
+        if self.footprint_enabled {
+            self.refold_footprints(group);
+        } else {
+            self.footprints.reset(group);
+        }
+    }
+
+    /// Replay every retained trade through a scratch builder of the current
+    /// spec, rebuilding the ladders on `group`-wide rows against the very
+    /// same bar boundaries the real builder produced.
+    fn refold_footprints(&mut self, group: Decimal) {
         self.footprints.reset(group);
         let mut builder = self.spec.build();
         for trade in &self.trades {

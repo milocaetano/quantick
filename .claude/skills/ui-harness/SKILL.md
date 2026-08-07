@@ -29,7 +29,8 @@ is the source of truth, this table is the index):
 | `QUANTICK_BOOK_AUTOSTART=1` | L2 heatmap layer |
 | `QUANTICK_LIVE_STRIP_AUTOSTART=1` | live strip |
 | `QUANTICK_BUBBLES_AUTOSTART=1` | aggression layer (bubbles + live-column footprint) |
-| `QUANTICK_FOOTPRINT_AUTOSTART=1` | candle footprint layer (per-price sell×buy ladder in the candles; detail follows zoom — pair with a deep zoom for the numbers, default zoom for profile/marks) |
+| `QUANTICK_FOOTPRINT_AUTOSTART=1` | candle footprint layer (per-price sell×buy ladder in the candles; detail follows zoom — pair with `QUANTICK_CANDLE_WIDTH` to reach each level) |
+| `QUANTICK_CANDLE_WIDTH=<px>` | the zoom, scripted: candle slot width in pixels, clamped to the gesture's own 2–160 bounds. Footprint LOD by width: ≥72 Detailed, 40–72 Compact, 18–40 Profile, 8–18 Marks, <8 Off |
 | `QUANTICK_INDICATORS_AUTOSTART` / `QUANTICK_INDICATOR_SCRIPTS_AUTOSTART` | indicator panes / pine scripts |
 | `QUANTICK_REPLAY_DIR` + `QUANTICK_REPLAY_AUTOSTART=1` + `QUANTICK_REPLAY_SPEED` | recorded session playback (deterministic tape → deterministic screen) |
 | `QUANTICK_BUBBLES=<bubbles.toml>` | bubble preset override without touching tracked config |

@@ -73,6 +73,15 @@ impl Viewport {
         }
     }
 
+    /// Set the zoom directly to `px` per slot, clamped to the same bounds
+    /// the gesture obeys. This is the scripted entry (`QUANTICK_CANDLE_WIDTH`)
+    /// to the zoom the scroll gesture reaches — one clamp, two doors.
+    pub fn set_candle_width(&mut self, px: f32) {
+        if px.is_finite() && px > 0.0 {
+            self.candle_width = px.clamp(MIN_CANDLE_WIDTH, MAX_CANDLE_WIDTH);
+        }
+    }
+
     /// The bar index at the right edge for a series of `total` bars.
     #[must_use]
     pub fn right_edge_bar(&self, total: usize) -> f32 {
@@ -227,6 +236,20 @@ mod tests {
         // Centring near the newest bar lands on the live edge and follows.
         v.center_on_bar(499.0, 800.0, 500);
         assert!(v.follows_live());
+    }
+
+    /// The scripted width obeys the gesture's own clamp, and the ceiling it
+    /// reaches is the footprint's Detailed budget — the reason it rose to 160.
+    #[test]
+    fn scripted_candle_width_shares_the_gestures_clamp() {
+        let mut v = Viewport::new();
+        v.set_candle_width(1000.0);
+        assert!((v.candle_width() - MAX_CANDLE_WIDTH).abs() < 0.001);
+        v.set_candle_width(0.5);
+        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        v.set_candle_width(f32::NAN);
+        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        assert!(MAX_CANDLE_WIDTH >= 160.0);
     }
 
     #[test]
