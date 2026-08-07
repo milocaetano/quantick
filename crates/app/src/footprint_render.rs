@@ -54,6 +54,9 @@ const MARKS_MIN_WIDTH: f32 = 8.0;
 /// text rows need a legible line.
 const DETAILED_MIN_ROW: f32 = 12.0;
 const COMPACT_MIN_ROW: f32 = 11.0;
+/// The Profile floor moved into config (`profile_row_px`, same default);
+/// the constant stays as the tests' reference value for that default.
+#[cfg(test)]
 const PROFILE_MIN_ROW: f32 = 4.0;
 /// The dead band on level *downgrades*: the current level survives until the
 /// zoom is 15% past its floor, so a trackpad hovering on a boundary cannot
@@ -62,8 +65,14 @@ const LEVEL_HYSTERESIS: f32 = 1.15;
 
 /// Display-grouping multiples, smallest first. Integer multiples of the
 /// capture grid keep row merges exact; round values keep the effective
-/// grouping a number a trader can say out loud.
-const GROUP_SNAP: [i64; 8] = [1, 2, 5, 10, 20, 25, 50, 100];
+/// grouping a number a trader can say out loud. The ladder runs to 10 000×
+/// deliberately: a feed that never reports its tick leaves the capture grid
+/// on the 0.01 fallback, and an index future at 180 000 needs a 200–500×
+/// merge before a row is even one visible pixel — capping at 100× silently
+/// locked those charts in Marks at every zoom.
+const GROUP_SNAP: [i64; 16] = [
+    1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10_000,
+];
 
 /// Hard cap of painted cells per frame, the heatmap's own budget: beyond it
 /// the layer stops and the legend says "capped" instead of eating the frame.
@@ -73,6 +82,38 @@ const CELL_BUDGET: usize = 12_000;
 /// survive and the legend discloses the filter — a mark that always appears
 /// has stopped being a signal.
 const MAX_ZONE_MARKS: usize = 24;
+
+/// The split style's volume-profile silhouette: neutral light, after the
+/// reference charts' white/gray histograms — color stays reserved for the
+/// fight (the delta side) and the POC.
+const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
+
+/// The least an imbalance chip spans, in pixels: enough to ring the number
+/// on a short bar without swallowing the whole half.
+const MIN_CHIP_PX: f32 = 14.0;
+
+/// How far above the chart's bottom edge the per-bar delta totals sit —
+/// clear of the legend line below them.
+const TOTALS_STRIP_OFFSET_Y: f32 = 22.0;
+
+/// The split style's per-bar backdrop: the canvas color at ~65% alpha, so
+/// the footprint owns its interior over the heatmap while the map stays
+/// fully visible between candles.
+const CANVAS_BACKDROP: egui::Color32 = egui::Color32::from_rgba_premultiplied(12, 15, 22, 166);
+
+/// How much of the candle body's fill survives at `candle_width`, `1.0`
+/// (untouched) through `0.0` (outline only).
+///
+/// The reference charts draw the candle as an outline box with the footprint
+/// living inside it. Rather than a hard switch, the body fades as the zoom
+/// crosses from "candles are the chart" (Marks) into "the inside is the
+/// chart" (Profile → Detailed): fully opaque up to the Profile floor, gone
+/// by the Detailed floor. Only applied while the layer is on — off, the
+/// candles are untouched at any zoom.
+pub fn candle_body_fade(candle_width: f32) -> f32 {
+    let span = DETAILED_MIN_WIDTH - PROFILE_MIN_WIDTH;
+    (1.0 - (candle_width - PROFILE_MIN_WIDTH) / span).clamp(0.0, 1.0)
+}
 
 /// The smallest detail level — and the row multiple — with hysteresis
 /// applied, per pane.
@@ -84,14 +125,21 @@ pub struct FootprintLod {
 
 impl FootprintLod {
     /// The level this zoom supports, sticky on the way down (see
-    /// [`LEVEL_HYSTERESIS`]).
-    pub fn resolve(&mut self, candle_width: f32, base_row_px: f32) -> DetailLevel {
-        let strict = level_for(candle_width, base_row_px);
+    /// [`LEVEL_HYSTERESIS`]). `profile_row_px` is the configured Profile
+    /// floor — the "how fine may the bands get" knob.
+    pub fn resolve(
+        &mut self,
+        candle_width: f32,
+        base_row_px: f32,
+        profile_row_px: f32,
+    ) -> DetailLevel {
+        let strict = level_for(candle_width, base_row_px, profile_row_px);
         let level = match self.level {
             Some(current) if strict < current => {
                 let relaxed = level_for(
                     candle_width * LEVEL_HYSTERESIS,
                     base_row_px * LEVEL_HYSTERESIS,
+                    profile_row_px,
                 );
                 if relaxed < current { strict } else { current }
             }
@@ -135,13 +183,13 @@ impl FootprintLod {
 /// is not a refusal — the display grouping can merge up to [`GROUP_SNAP`]'s
 /// largest multiple — so each level asks whether some multiple reaches its
 /// row floor.
-fn level_for(candle_width: f32, base_row_px: f32) -> DetailLevel {
+fn level_for(candle_width: f32, base_row_px: f32, profile_row_px: f32) -> DetailLevel {
     let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
     if candle_width >= DETAILED_MIN_WIDTH && row_reachable(DETAILED_MIN_ROW) {
         DetailLevel::Detailed
     } else if candle_width >= COMPACT_MIN_WIDTH && row_reachable(COMPACT_MIN_ROW) {
         DetailLevel::Compact
-    } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(PROFILE_MIN_ROW) {
+    } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(profile_row_px) {
         DetailLevel::Profile
     } else if candle_width >= MARKS_MIN_WIDTH {
         DetailLevel::Marks
@@ -174,7 +222,8 @@ fn regroup(fp: &BarFootprint, k: i64) -> BTreeMap<i64, FootprintLevel> {
 }
 
 /// Abbreviate a quantity for a fixed-width cell: `58.1k`, `1.2M`, `736`,
-/// `0.52`. Decimals only below 100, so a dense ladder's cells stay the same
+/// `0.523`. Three decimals below 1 (a 1-minute BTC row's delta usually
+/// lives there), two up to 100, so a dense ladder's cells stay the same
 /// visual weight.
 fn fmt_qty(qty: Decimal) -> String {
     let value = qty.to_f64().unwrap_or(0.0);
@@ -188,9 +237,27 @@ fn fmt_qty(qty: Decimal) -> String {
         format!("{:.1}k", value / 1_000.0)
     } else if magnitude >= 100.0 {
         format!("{value:.0}")
-    } else {
+    } else if magnitude >= 1.0 {
         format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
     }
+}
+
+/// A delta for display: a value that *rounds* to zero prints as an unsigned
+/// `"0"` — "-0.00" reads as broken software, and the sign on nothing is a
+/// wrong-side whisper. Returns `None` exactly when the row is balanced at
+/// display resolution, so callers can also skip the winner color.
+fn fmt_delta(delta: Decimal) -> Option<String> {
+    let text = fmt_qty(delta);
+    if text
+        .trim_start_matches('-')
+        .chars()
+        .all(|c| c == '0' || c == '.')
+    {
+        return None;
+    }
+    Some(text)
 }
 
 /// One stacked zone spanning one or more adjacent bars, in display buckets.
@@ -310,7 +377,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         .map_or(Decimal::ONE, |fp| fp.group());
     let group_f = group.to_f64().unwrap_or(0.01).max(f64::EPSILON);
     let base_row_px = (frame.scale.y(0.0) - frame.scale.y(group_f)).abs();
-    let level = lod.resolve(frame.candle_width, base_row_px);
+    let level = lod.resolve(frame.candle_width, base_row_px, frame.config.profile_row_px);
 
     if level == DetailLevel::Off {
         // Nothing to compute and nothing to draw — but the legend still
@@ -322,7 +389,8 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     let min_row = match level {
         DetailLevel::Detailed => DETAILED_MIN_ROW,
         DetailLevel::Compact => COMPACT_MIN_ROW,
-        _ => PROFILE_MIN_ROW,
+        // The configured band fineness: the boss's "more, thinner rows".
+        _ => frame.config.profile_row_px,
     };
     let k = lod
         .resolve_multiple(base_row_px, min_row)
@@ -392,6 +460,49 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     let (marks, zones_dropped) = coalesce_zones(zones, MAX_ZONE_MARKS);
     for mark in &marks {
         draw_zone_mark(frame, mark, row_group_f);
+    }
+
+    // The per-bar delta totals strip at the chart's bottom — the reference
+    // charts' footer chips: one signed, side-colored number per bar saying
+    // who won it overall. From Compact up: at Profile widths the chips
+    // would overlap into noise.
+    if level >= DetailLevel::Compact
+        && frame.config.style == crate::footprint_config::FootprintStyle::Split
+    {
+        for (slot, fp) in visible_ladders() {
+            let delta: Decimal = fp
+                .levels()
+                .values()
+                .fold(Decimal::ZERO, |sum, cell| sum.saturating_add(cell.delta()));
+            let Some(text) = fmt_delta(delta) else {
+                continue;
+            };
+            let side = if delta > Decimal::ZERO {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
+            let galley = frame.painter.layout_no_wrap(
+                text,
+                egui::FontId::monospace(10.0),
+                egui::Color32::WHITE,
+            );
+            let center = egui::pos2(
+                (frame.x_center)(slot),
+                frame.chart_rect.bottom() - TOTALS_STRIP_OFFSET_Y,
+            );
+            let rect = egui::Rect::from_center_size(center, galley.size() + egui::vec2(6.0, 3.0));
+            frame.painter.rect_filled(
+                rect,
+                egui::Rounding::same(2.0),
+                side_color(side).gamma_multiply(0.8),
+            );
+            frame.painter.galley(
+                rect.min + egui::vec2(3.0, 1.5),
+                galley,
+                egui::Color32::WHITE,
+            );
+        }
     }
 
     draw_legend(
@@ -500,6 +611,11 @@ fn draw_bar(
         .map(|level| level.volume().to_f64().unwrap_or(0.0))
         .fold(0.0_f64, f64::max)
         .max(f64::EPSILON);
+    let max_abs_delta = rows
+        .values()
+        .map(|level| level.delta().to_f64().unwrap_or(0.0).abs())
+        .fold(0.0_f64, f64::max)
+        .max(f64::EPSILON);
     let dominates = |qty: Decimal, other: Decimal| -> bool {
         qty >= ratio.saturating_mul(other) && qty.saturating_sub(other) >= min_qty
     };
@@ -511,6 +627,32 @@ fn draw_bar(
             })
             .unwrap_or(Decimal::ZERO)
     };
+
+    // Split style: the footprint owns the candle's interior. A backdrop in
+    // the canvas color keeps the heatmap from bleeding through the rows (it
+    // stays fully visible between candles), and a hairline spine at the
+    // central axis keeps the bar's midline readable after the candle body
+    // fades to outline — the reference charts' thin gray candle spine.
+    if frame.config.style == crate::footprint_config::FootprintStyle::Split
+        && level >= DetailLevel::Profile
+        && let (Some(&first), Some(&last)) = (rows.keys().next(), rows.keys().next_back())
+    {
+        let (_, bar_bottom) = row_band(frame, first, row_group);
+        let (bar_top, _) = row_band(frame, last, row_group);
+        let reach = (frame.half - 1.0).max(1.0);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(xc - reach, bar_top),
+                egui::pos2(xc + reach, bar_bottom),
+            ),
+            egui::Rounding::ZERO,
+            CANVAS_BACKDROP,
+        );
+        painter.line_segment(
+            [egui::pos2(xc, bar_top), egui::pos2(xc, bar_bottom)],
+            egui::Stroke::new(1.0_f32, theme::TEXT_FAINT.gamma_multiply(0.3)),
+        );
+    }
 
     for (&row, cell) in rows {
         if *cells_left == 0 {
@@ -525,6 +667,108 @@ fn draw_bar(
         let is_poc = poc == Some(row);
         let buy_imbalance = dominates(cell.buy, neighbour(row - 1, Side::Sell));
         let sell_imbalance = dominates(cell.sell, neighbour(row + 1, Side::Buy));
+
+        if frame.config.style == crate::footprint_config::FootprintStyle::Split
+            && level >= DetailLevel::Profile
+        {
+            // The reference look, inside the candle: a central axis at the
+            // candle's middle, the total-volume profile growing rightward in
+            // neutral light (the exocharts silhouette), and a delta bar per
+            // row growing leftward in the winner's color — "who won the
+            // fight" readable at a glance, the volume shape behind it.
+            let volume_frac = (cell.volume().to_f64().unwrap_or(0.0) / max_volume) as f32;
+            let delta = cell.delta();
+            let delta_frac = (delta.to_f64().unwrap_or(0.0).abs() / max_abs_delta) as f32;
+            let reach = (frame.half - 1.0).max(1.0);
+            let delta_text = fmt_delta(delta);
+            // A row balanced at display resolution has no winner: neutral
+            // sliver, no color, no number — a teal bar on a tie is a
+            // wrong-side read (panel must-fix).
+            let winner = delta_text.as_ref().map(|_| {
+                if delta > Decimal::ZERO {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                }
+            });
+            // The imbalance chip is colored by the side that IS imbalanced,
+            // never by the delta winner: a sell-imbalanced row boxed in teal
+            // because its own delta leans positive is the one thing a
+            // footprint must never say (panel must-fix). Both sides at once
+            // is contested — no chip rather than a coin flip.
+            let chip_side = match (buy_imbalance, sell_imbalance) {
+                (true, false) => Some(Side::Buy),
+                (false, true) => Some(Side::Sell),
+                _ => None,
+            };
+            // Right: the profile. The POC row is the brightest thing in the
+            // silhouette even before its yellow line lands on it.
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(xc, top + 0.5),
+                    egui::pos2(xc + reach * volume_frac, bottom - 0.5),
+                ),
+                egui::Rounding::ZERO,
+                PROFILE_COLOR.gamma_multiply(if is_poc { 0.95 } else { 0.60 }),
+            );
+            // Left: the fight.
+            let (left_from, left_color) = match winner {
+                Some(side) => (
+                    xc - reach * delta_frac.max(0.04),
+                    side_color(side).gamma_multiply(if chip_side.is_some() { 0.55 } else { 0.5 }),
+                ),
+                None => (xc - 2.0, theme::TEXT_FAINT.gamma_multiply(0.35)),
+            };
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(left_from, top + 0.5),
+                    egui::pos2(xc, bottom - 0.5),
+                ),
+                egui::Rounding::ZERO,
+                left_color,
+            );
+            if let Some(side) = chip_side
+                && row_height >= 4.0
+            {
+                // The chip hugs its own row's content — bar or number — and
+                // is inset vertically so neighbouring chips never fuse into
+                // one shouting rectangle (panel must-fix); the full-width
+                // multi-row box stays reserved for the stacked-zone mark.
+                let chip_reach = (reach * delta_frac).max(MIN_CHIP_PX).min(reach);
+                painter.rect_stroke(
+                    egui::Rect::from_min_max(
+                        egui::pos2(xc - chip_reach - 2.0, top + 1.5),
+                        egui::pos2(xc - 1.0, bottom - 1.5),
+                    ),
+                    egui::Rounding::ZERO,
+                    egui::Stroke::new(1.0_f32, side_color(side)),
+                );
+            }
+            // Deep zoom: the delta number over the left half, side-colored
+            // so the column scans without reading (panel must-fix), width-
+            // clamped so it never bleeds out.
+            if level == DetailLevel::Detailed
+                && let Some(text) = delta_text
+            {
+                let width_budget = (frame.half - 6.0) / 3.0;
+                let font =
+                    egui::FontId::monospace((row_height - 2.0).min(width_budget).clamp(8.0, 13.0));
+                painter.text(
+                    egui::pos2(xc - 3.0, (top + bottom) / 2.0),
+                    egui::Align2::RIGHT_CENTER,
+                    text,
+                    font,
+                    winner.map_or(theme::TEXT_MUTED, side_color),
+                );
+            }
+            if is_poc {
+                // Right half only in the split style: a full-width line
+                // would strike through the delta digits it shares the row
+                // with; the profile half alone carries it unambiguously.
+                draw_poc_line(frame, xc, xc + frame.half, row, row_group);
+            }
+            continue;
+        }
 
         match level {
             DetailLevel::Profile => {
@@ -667,32 +911,60 @@ fn draw_bar(
             let Some(ratio_value) = dominant.checked_div(other) else {
                 continue;
             };
+            // Below the threshold a badge is anti-signal ("1.0x" = nothing
+            // happened); survivors get a chip anchored in the dominant
+            // side's color, so the exhaustion cue registers as a marker
+            // instead of a stray number (panel should-fix).
+            if ratio_value < frame.config.badge_min_ratio {
+                continue;
+            }
+            let dominant_side = if cell.buy >= cell.sell {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
             let low = row as f64 * row_group;
             let y = match extreme {
                 Extreme::Low => frame.scale.y(low) + offset,
                 Extreme::High => frame.scale.y(low + row_group) + offset,
             };
-            painter.text(
-                egui::pos2(xc, y),
-                align,
-                format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0)),
-                egui::FontId::monospace(10.0),
-                theme::TEXT_MUTED,
+            let text = format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0));
+            let galley =
+                painter.layout_no_wrap(text, egui::FontId::monospace(10.0), theme::TEXT_PRIMARY);
+            let anchor = align.anchor_size(egui::pos2(xc, y), galley.size());
+            painter.rect_filled(
+                anchor.expand(2.0),
+                egui::Rounding::same(2.0),
+                CANVAS_BACKDROP,
             );
+            painter.rect_stroke(
+                anchor.expand(2.0),
+                egui::Rounding::same(2.0),
+                egui::Stroke::new(1.0_f32, side_color(dominant_side)),
+            );
+            painter.galley(anchor.min, galley, theme::TEXT_PRIMARY);
         }
     }
 }
 
-fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
+/// The POC line over `[x_from, x_to]`, with a background under-stroke so it
+/// registers against the candle outline it crosses at every level.
+fn draw_poc_line(frame: &LayerFrame<'_>, x_from: f32, x_to: f32, row: i64, row_group: f64) {
     let (top, bottom) = row_band(frame, row, row_group);
     let y = (top + bottom) / 2.0;
     frame.painter.line_segment(
-        [
-            egui::pos2(xc - frame.half, y),
-            egui::pos2(xc + frame.half, y),
-        ],
+        [egui::pos2(x_from, y), egui::pos2(x_to, y)],
+        egui::Stroke::new(3.5_f32, CANVAS_BACKDROP),
+    );
+    frame.painter.line_segment(
+        [egui::pos2(x_from, y), egui::pos2(x_to, y)],
         egui::Stroke::new(1.5_f32, theme::POC),
     );
+}
+
+/// Full-candle POC line, the non-split styles' and Marks level's shape.
+fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
+    draw_poc_line(frame, xc - frame.half, xc + frame.half, row, row_group);
 }
 
 fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
@@ -733,7 +1005,15 @@ fn draw_legend(
         DetailLevel::Marks => text.push_str(" · marks (zoom in for numbers)"),
         DetailLevel::Profile => text.push_str(" · profile"),
         DetailLevel::Compact => text.push_str(" · delta"),
-        DetailLevel::Detailed => text.push_str(" · sell|buy"),
+        // The legend names what the columns actually are — "sell|buy" over
+        // a delta ladder would misread every number (data honesty).
+        DetailLevel::Detailed => text.push_str(
+            if frame.config.style == crate::footprint_config::FootprintStyle::Split {
+                " · delta|volume"
+            } else {
+                " · sell|buy"
+            },
+        ),
     }
     // The effective grouping is always spoken: the number a row stands for
     // must never change meaning silently (data honesty).
@@ -794,31 +1074,72 @@ mod tests {
     #[test]
     fn levels_need_both_width_and_a_reachable_row_height() {
         // Wide candle, healthy rows: full detail.
-        assert_eq!(level_for(100.0, 12.0), DetailLevel::Detailed);
+        assert_eq!(
+            level_for(100.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
         // Wide candle, hairline base rows: grouping x100 still reaches 12px.
-        assert_eq!(level_for(100.0, 0.2), DetailLevel::Detailed);
-        // Wide candle, sub-hairline rows nothing can rescue: profile is the
-        // most text-free level whose floor (4px) is still reachable... and
-        // when even that fails, marks.
-        assert_eq!(level_for(100.0, 0.05), DetailLevel::Profile);
-        assert_eq!(level_for(100.0, 0.01), DetailLevel::Marks);
+        assert_eq!(
+            level_for(100.0, 0.2, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
+        // Wide candle, sub-hairline rows: the extended snap ladder rescues
+        // detail far deeper than 100× (an index future on the 0.01 fallback
+        // grid), so only truly hopeless rows drop to profile, then marks.
+        assert_eq!(
+            level_for(100.0, 0.05, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
+        assert_eq!(
+            level_for(100.0, 0.0006, PROFILE_MIN_ROW),
+            DetailLevel::Profile
+        );
+        assert_eq!(
+            level_for(100.0, 0.0003, PROFILE_MIN_ROW),
+            DetailLevel::Marks
+        );
         // Width floors gate exactly.
-        assert_eq!(level_for(60.0, 12.0), DetailLevel::Compact);
-        assert_eq!(level_for(30.0, 12.0), DetailLevel::Profile);
-        assert_eq!(level_for(10.0, 12.0), DetailLevel::Marks);
-        assert_eq!(level_for(6.0, 12.0), DetailLevel::Off);
+        assert_eq!(level_for(60.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Compact);
+        assert_eq!(level_for(30.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Profile);
+        assert_eq!(level_for(10.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Marks);
+        assert_eq!(level_for(6.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Off);
+    }
+
+    /// Full body up to the Profile floor, outline-only by the Detailed
+    /// floor, monotonic in between — and never outside [0, 1].
+    #[test]
+    fn candle_body_fade_spans_profile_to_detailed() {
+        assert_eq!(candle_body_fade(8.0), 1.0);
+        assert_eq!(candle_body_fade(PROFILE_MIN_WIDTH), 1.0);
+        assert_eq!(candle_body_fade(DETAILED_MIN_WIDTH), 0.0);
+        assert_eq!(candle_body_fade(160.0), 0.0);
+        let mid = candle_body_fade((PROFILE_MIN_WIDTH + DETAILED_MIN_WIDTH) / 2.0);
+        assert!(mid > 0.0 && mid < 1.0);
+        assert!(candle_body_fade(30.0) > candle_body_fade(50.0));
     }
 
     #[test]
     fn lod_downgrades_only_past_the_dead_band() {
         let mut lod = FootprintLod::default();
-        assert_eq!(lod.resolve(80.0, 12.0), DetailLevel::Detailed);
+        assert_eq!(
+            lod.resolve(80.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
         // Just under the floor: inside the 15% band, the level holds.
-        assert_eq!(lod.resolve(68.0, 12.0), DetailLevel::Detailed);
+        assert_eq!(
+            lod.resolve(68.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
         // 15% past the floor: the downgrade happens.
-        assert_eq!(lod.resolve(60.0, 12.0), DetailLevel::Compact);
+        assert_eq!(
+            lod.resolve(60.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Compact
+        );
         // Upgrades are immediate — there is no band on the way up.
-        assert_eq!(lod.resolve(80.0, 12.0), DetailLevel::Detailed);
+        assert_eq!(
+            lod.resolve(80.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
     }
 
     #[test]
@@ -826,8 +1147,14 @@ mod tests {
         assert_eq!(display_multiple(12.0, 11.0), Some(1));
         assert_eq!(display_multiple(6.0, 11.0), Some(2));
         assert_eq!(display_multiple(1.0, 11.0), Some(20));
-        assert_eq!(display_multiple(0.1, 11.0), None);
+        assert_eq!(display_multiple(0.1, 11.0), Some(200));
         assert_eq!(display_multiple(0.1, 4.0), Some(50));
+        // The fallback-grid regression: a 0.01 capture grid on an index
+        // future leaves base rows at ~0.026 px — the ladder must still
+        // reach a drawable row instead of locking the level at Marks.
+        assert_eq!(display_multiple(0.026, 4.0), Some(200));
+        assert_eq!(display_multiple(0.026, 12.0), Some(500));
+        assert_eq!(display_multiple(0.0001, 12.0), None);
     }
 
     #[test]
@@ -857,12 +1184,25 @@ mod tests {
         assert_eq!(fmt_qty(dec("58100")), "58.1k");
         assert_eq!(fmt_qty(dec("1230000")), "1.2M");
         assert_eq!(fmt_qty(dec("736")), "736");
-        assert_eq!(fmt_qty(dec("0.5234")), "0.52");
+        assert_eq!(fmt_qty(dec("0.5234")), "0.523");
+        assert_eq!(fmt_qty(dec("12.345")), "12.35");
         assert_eq!(fmt_qty(dec("-1500")), "-1.5k");
         // A value that rounds past its suffix rolls to the next one: never
         // "1000.0k" — seven glyphs where the cell budget assumes five.
         assert_eq!(fmt_qty(dec("999960")), "1.0M");
         assert_eq!(fmt_qty(dec("999.96")), "1.0k");
+    }
+
+    /// A delta that rounds to zero at display resolution has no sign and no
+    /// text at all: "-0.00" reads as broken software, and the minus on
+    /// nothing is a wrong-side whisper (panel must-fix).
+    #[test]
+    fn display_zero_deltas_are_never_signed() {
+        assert_eq!(fmt_delta(dec("-0.0004")), None);
+        assert_eq!(fmt_delta(dec("0.0003")), None);
+        assert_eq!(fmt_delta(dec("0")), None);
+        assert_eq!(fmt_delta(dec("-0.43")).as_deref(), Some("-0.430"));
+        assert_eq!(fmt_delta(dec("58100")).as_deref(), Some("58.1k"));
     }
 
     #[test]

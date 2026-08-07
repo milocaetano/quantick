@@ -237,6 +237,9 @@ pub(crate) struct LayerActions {
     /// config is the window's (one set of thresholds, every pane), so the
     /// write is the app's, same as the grid.
     pub(crate) footprint_changed: bool,
+    /// The menu asked for the footprint settings window; the window is the
+    /// app's, like every window.
+    pub(crate) open_footprint_settings: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

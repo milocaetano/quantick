@@ -595,6 +595,14 @@ pub struct QuantickApp {
     footprint_config: crate::footprint_config::FootprintConfig,
     /// Where those edits persist (see `footprint_config::settings_path`).
     footprint_settings_path: std::path::PathBuf,
+    /// Whether the footprint settings window is open (the layer menu's
+    /// "configure footprint…" entry opens it).
+    show_footprint_settings: bool,
+    /// The boot hooks' requests, kept so tabs opened later (replay
+    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART` and
+    /// `QUANTICK_CANDLE_WIDTH`.
+    scripted_footprint: bool,
+    scripted_candle_width: Option<f32>,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -735,6 +743,9 @@ impl QuantickApp {
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
+            show_footprint_settings: false,
+            scripted_footprint: false,
+            scripted_candle_width: None,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -801,7 +812,13 @@ impl QuantickApp {
         // pane's layer menu writes, so a validation run sees exactly what a
         // click would show.
         if std::env::var("QUANTICK_FOOTPRINT_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.scripted_footprint = true;
             app.active_tab_mut().flow_pane.footprint_visible = true;
+        }
+        // The settings window too — a validation run reaches every surface
+        // from env alone (ui-harness rule).
+        if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
+            app.show_footprint_settings = true;
         }
         // The zoom, scriptable: the footprint's detail levels are functions
         // of candle width, and a validation run cannot drag a scroll wheel.
@@ -809,6 +826,7 @@ impl QuantickApp {
         if let Ok(value) = std::env::var("QUANTICK_CANDLE_WIDTH")
             && let Ok(px) = value.trim().parse::<f32>()
         {
+            app.scripted_candle_width = Some(px);
             app.active_tab_mut().flow_pane.viewport.set_candle_width(px);
         }
         // Same convenience for indicators: open with the two M1 natives on
@@ -1094,6 +1112,18 @@ impl QuantickApp {
         self.active_tab_mut()
             .flow_pane
             .apply_layer_states(&defaults);
+        // The scripted footprint/zoom hooks reach tabs opened later too: the
+        // replay tab a validation run autostarts is the tab the run means,
+        // and it does not exist yet when the boot hooks fire.
+        if self.scripted_footprint {
+            self.active_tab_mut().flow_pane.footprint_visible = true;
+        }
+        if let Some(px) = self.scripted_candle_width {
+            self.active_tab_mut()
+                .flow_pane
+                .viewport
+                .set_candle_width(px);
+        }
     }
 
     /// Close the tab at `index`, activating a neighbour.
@@ -1911,6 +1941,9 @@ impl QuantickApp {
         }
         if actions.footprint_changed {
             crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
+        }
+        if actions.open_footprint_settings {
+            self.show_footprint_settings = true;
         }
     }
 
@@ -3820,6 +3853,13 @@ impl QuantickApp {
             self.note_overlay_cleared(true);
         }
         self.draw_style_panel(ctx, now);
+        if crate::footprint_panel::draw(
+            ctx,
+            &mut self.show_footprint_settings,
+            &mut self.footprint_config,
+        ) {
+            crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
+        }
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         let replay_loading = self.replay_view.is_loading();

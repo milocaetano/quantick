@@ -33,9 +33,42 @@ const SETTINGS_FILE: &str = "footprint-settings.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
 const SETTINGS_VERSION: u32 = 1;
 
+/// How a bar's ladder is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FootprintStyle {
+    /// The default, after the boss's reference charts: a two-sided display
+    /// inside the candle — total-volume profile on the right (neutral), a
+    /// delta bar per row on the left colored by the winning side, delta
+    /// numbers at deep zoom, yellow POC line.
+    Split,
+    /// The classic sell|buy ladder: two number columns per row.
+    Ladder,
+}
+
+impl FootprintStyle {
+    /// The token stored in files.
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Split => "split",
+            Self::Ladder => "ladder",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "split" => Some(Self::Split),
+            "ladder" => Some(Self::Ladder),
+            _ => None,
+        }
+    }
+}
+
 /// The resolved tunables the render layer reads every frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FootprintConfig {
+    /// How the ladder is drawn (see [`FootprintStyle`]).
+    pub style: FootprintStyle,
     /// Diagonal imbalance: one side must be at least this many times its
     /// diagonal neighbour. 3:1 is the industry's centre of gravity.
     pub imbalance_ratio: Decimal,
@@ -45,33 +78,51 @@ pub struct FootprintConfig {
     pub imbalance_min_qty: Option<Decimal>,
     /// Consecutive same-side imbalances that make a stacked zone.
     pub stacked_count: usize,
+    /// The thinnest a profile row may draw, in pixels. Lower = finer bands
+    /// (more rows per candle before the display grouping merges them);
+    /// clamped to 2–10 px — under 2 px a band is a moiré, over 10 the
+    /// profile is a staircase. Text levels keep their own legibility floors.
+    pub profile_row_px: f32,
     /// The POC line per bar.
     pub show_poc: bool,
     /// The aggression ratio badges at a bar's extremes (Detailed level only).
     pub extreme_ratio_badge: bool,
+    /// Badges below this ratio are suppressed: "1.0x" is the absence of
+    /// aggression, and a badge that always appears is anti-signal.
+    pub badge_min_ratio: Decimal,
 }
 
 impl Default for FootprintConfig {
     fn default() -> Self {
         Self {
+            style: FootprintStyle::Split,
             imbalance_ratio: Decimal::from(3),
             imbalance_min_qty: None,
             stacked_count: 3,
+            profile_row_px: 4.0,
             show_poc: true,
             extreme_ratio_badge: true,
+            badge_min_ratio: Decimal::TWO,
         }
     }
 }
+
+/// The bounds [`FootprintConfig::profile_row_px`] is clamped to, shared by
+/// the file guard and the settings window's slider.
+pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 
 /// The file's shape. Every field optional: an absent knob keeps its default,
 /// so a one-line file tuning the ratio changes exactly the ratio.
 #[derive(Debug, Default, Deserialize)]
 struct FootprintFile {
+    style: Option<String>,
     imbalance_ratio: Option<f64>,
     imbalance_min_qty: Option<f64>,
     stacked_count: Option<usize>,
+    profile_row_px: Option<f64>,
     show_poc: Option<bool>,
     extreme_ratio_badge: Option<bool>,
+    badge_min_ratio: Option<f64>,
 }
 
 /// The persisted shape of the in-app edits. Every knob explicit: this file
@@ -79,11 +130,24 @@ struct FootprintFile {
 #[derive(Debug, Serialize, Deserialize)]
 struct SettingsFile {
     version: u32,
+    style: String,
     imbalance_ratio: f64,
     imbalance_min_qty: Option<f64>,
     stacked_count: usize,
+    #[serde(default = "default_profile_row_px")]
+    profile_row_px: f64,
     show_poc: bool,
     extreme_ratio_badge: bool,
+    #[serde(default = "default_badge_min_ratio")]
+    badge_min_ratio: f64,
+}
+
+fn default_profile_row_px() -> f64 {
+    4.0
+}
+
+fn default_badge_min_ratio() -> f64 {
+    2.0
 }
 
 /// Where this run persists in-app edits. Under test, a scratch file per app
@@ -115,11 +179,14 @@ pub fn load(settings: &Path) -> FootprintConfig {
     };
     match toml::from_str::<SettingsFile>(&text) {
         Ok(file) if file.version == SETTINGS_VERSION => resolve(FootprintFile {
+            style: Some(file.style),
             imbalance_ratio: Some(file.imbalance_ratio),
             imbalance_min_qty: file.imbalance_min_qty,
             stacked_count: Some(file.stacked_count),
+            profile_row_px: Some(file.profile_row_px),
             show_poc: Some(file.show_poc),
             extreme_ratio_badge: Some(file.extreme_ratio_badge),
+            badge_min_ratio: Some(file.badge_min_ratio),
         }),
         Ok(file) => {
             tracing::warn!(
@@ -153,11 +220,14 @@ pub fn load(settings: &Path) -> FootprintConfig {
 pub fn save(settings: &Path, config: &FootprintConfig) {
     let file = SettingsFile {
         version: SETTINGS_VERSION,
+        style: config.style.id().to_owned(),
         imbalance_ratio: config.imbalance_ratio.to_f64().unwrap_or(3.0),
         imbalance_min_qty: config.imbalance_min_qty.and_then(|qty| qty.to_f64()),
         stacked_count: config.stacked_count,
+        profile_row_px: f64::from(config.profile_row_px),
         show_poc: config.show_poc,
         extreme_ratio_badge: config.extreme_ratio_badge,
+        badge_min_ratio: config.badge_min_ratio.to_f64().unwrap_or(2.0),
     };
     let Ok(text) = toml::to_string_pretty(&file) else {
         return;
@@ -209,6 +279,13 @@ fn load_preset() -> FootprintConfig {
 fn resolve(file: FootprintFile) -> FootprintConfig {
     let defaults = FootprintConfig::default();
     FootprintConfig {
+        // An unknown style token (a file from a newer build) keeps the
+        // default rather than failing the whole config.
+        style: file
+            .style
+            .as_deref()
+            .and_then(FootprintStyle::from_id)
+            .unwrap_or(defaults.style),
         imbalance_ratio: file
             .imbalance_ratio
             .and_then(Decimal::from_f64)
@@ -222,10 +299,20 @@ fn resolve(file: FootprintFile) -> FootprintConfig {
             .stacked_count
             .filter(|count| *count >= 2)
             .unwrap_or(defaults.stacked_count),
+        profile_row_px: file
+            .profile_row_px
+            .map(|px| (px as f32).clamp(*PROFILE_ROW_PX_RANGE.start(), *PROFILE_ROW_PX_RANGE.end()))
+            .filter(|px| px.is_finite())
+            .unwrap_or(defaults.profile_row_px),
         show_poc: file.show_poc.unwrap_or(defaults.show_poc),
         extreme_ratio_badge: file
             .extreme_ratio_badge
             .unwrap_or(defaults.extreme_ratio_badge),
+        badge_min_ratio: file
+            .badge_min_ratio
+            .and_then(Decimal::from_f64)
+            .filter(|ratio| *ratio >= Decimal::ONE)
+            .unwrap_or(defaults.badge_min_ratio),
     }
 }
 
@@ -266,17 +353,31 @@ mod tests {
         assert_eq!(config, FootprintConfig::default());
     }
 
+    /// The split look is the default; the ladder round-trips as a choice;
+    /// an unknown style token from a newer build keeps the default.
+    #[test]
+    fn style_defaults_to_split_and_round_trips() {
+        assert_eq!(FootprintConfig::default().style, FootprintStyle::Split);
+        let config = resolve(toml::from_str("style = \"ladder\"").unwrap());
+        assert_eq!(config.style, FootprintStyle::Ladder);
+        let config = resolve(toml::from_str("style = \"from_the_future\"").unwrap());
+        assert_eq!(config.style, FootprintStyle::Split);
+    }
+
     /// In-app edits round-trip through disk and win over the preset file's
     /// defaults on the next load.
     #[test]
     fn saved_settings_round_trip_and_overlay_the_preset() {
         let path = settings_path();
         let edited = FootprintConfig {
+            style: FootprintStyle::Ladder,
             imbalance_ratio: Decimal::from(5),
             imbalance_min_qty: Some(Decimal::from(40)),
             stacked_count: 4,
+            profile_row_px: 2.5,
             show_poc: false,
             extreme_ratio_badge: false,
+            badge_min_ratio: Decimal::from(3),
         };
         save(&path, &edited);
         assert_eq!(load(&path), edited);

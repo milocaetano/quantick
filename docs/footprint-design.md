@@ -91,6 +91,21 @@ The LOD ladder is also the performance strategy: Detailed can only exist when
 rectangles batched into meshes. Heavy projection follows the orderflow worker
 path, never `update()`.
 
+## The split style (default look)
+
+Adopted from the boss's reference charts (Trinitas/exocharts print and the
+Profitchart footprint): each bar draws around a central axis inside the
+candle — the **right** side is the total-volume profile in neutral light
+gray (the classic silhouette, POC row brightest), the **left** side is a
+delta bar per row in the winning side's color ("who won the fight"),
+boxed when the row is a diagonal imbalance. Detailed zoom adds the delta
+number over the left half. The POC line is **yellow** (user's call; red
+would collide with the sell side). The candle itself fades to an outline
+box as the zoom crosses from Profile toward Detailed
+(`candle_body_fade`): full body at Marks, outline-only at Detailed —
+the reference charts' candle-as-a-box, without a hard switch. The classic
+sell|buy ladder remains as `style = "ladder"`.
+
 ## Signals (v1)
 
 Chosen for real-world use by flow traders; all are context tools, none are
