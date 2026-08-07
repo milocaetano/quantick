@@ -143,6 +143,12 @@ impl FootprintLod {
     ) -> DetailLevel {
         let strict = level_for(candle_width, base_row_px, profile_row_px);
         let level = match self.level {
+            // The dead band defends exactly ONE step of boundary jitter.
+            // Further than that, the sticky state is not jitter — it is a
+            // leftover from another zoom era (the first frames' wild
+            // auto-fit spans) — and holding it is how "rows 100.00" wedges
+            // on a chart whose strict answer is Detailed.
+            Some(current) if (strict as i8 - current as i8).abs() > 1 => strict,
             Some(current) if strict < current => {
                 let relaxed = level_for(
                     candle_width * LEVEL_HYSTERESIS,
@@ -173,16 +179,28 @@ impl FootprintLod {
     /// clears the floor with 15% to spare.
     fn resolve_multiple(&mut self, base_row_px: f32, min_row_px: f32) -> Option<i64> {
         let strict = display_multiple(base_row_px, min_row_px);
+        let snap_position = |k: i64| GROUP_SNAP.iter().position(|snap| *snap == k);
         let k = match (self.k, strict) {
-            (Some(current), Some(strict_k)) if strict_k > current => {
-                if base_row_px * current as f32 >= min_row_px / LEVEL_HYSTERESIS {
-                    current
-                } else {
+            (Some(current), Some(strict_k)) if current != strict_k => {
+                // Same one-step rule as the level: the dead band defends
+                // boundary jitter, never a multiple wedged eras away (the
+                // snap quantization can leave the strict answer exactly on
+                // its floor, where the 15% adoption margin is unreachable —
+                // without this, a stale 10 000× from the first frames'
+                // auto-fit span holds forever).
+                let one_step_apart = matches!(
+                    (snap_position(current), snap_position(strict_k)),
+                    (Some(a), Some(b)) if a.abs_diff(b) <= 1
+                );
+                if !one_step_apart {
                     strict_k
-                }
-            }
-            (Some(current), Some(strict_k)) if strict_k < current => {
-                if base_row_px * strict_k as f32 >= min_row_px * LEVEL_HYSTERESIS {
+                } else if strict_k > current {
+                    if base_row_px * current as f32 >= min_row_px / LEVEL_HYSTERESIS {
+                        current
+                    } else {
+                        strict_k
+                    }
+                } else if base_row_px * strict_k as f32 >= min_row_px * LEVEL_HYSTERESIS {
                     strict_k
                 } else {
                     current
@@ -1172,6 +1190,30 @@ mod tests {
                 "width {width} blinked"
             );
         }
+    }
+
+    /// The dead band defends one step of jitter, never a wedged state: a
+    /// level locked in the first frames' wild auto-fit span must snap to
+    /// the strict answer the moment it is more than one step away.
+    #[test]
+    fn a_wedged_level_or_multiple_snaps_back_to_strict() {
+        let mut lod = FootprintLod::default();
+        // Locked at Marks by a startup-era span (rows unreachable)...
+        assert_eq!(
+            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW),
+            DetailLevel::Marks
+        );
+        // ...then the real span arrives: two steps away, no band, snap.
+        assert_eq!(
+            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Detailed
+        );
+
+        // Same for the row multiple: a 10 000x from a wild span must not
+        // hold once the strict answer is orders of magnitude finer.
+        let mut lod = FootprintLod::default();
+        assert_eq!(lod.resolve_multiple(0.0005, 4.0), Some(10_000));
+        assert_eq!(lod.resolve_multiple(0.09, 4.0), Some(50));
     }
 
     #[test]
