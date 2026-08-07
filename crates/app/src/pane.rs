@@ -21,7 +21,7 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use smallvec::SmallVec;
 
 use crate::app::{
-    PlotAreas, fmt_time, fmt_window, gesture_hits_lane, plot_split, split_time_strip,
+    PlotAreas, fmt_time_as, fmt_window, gesture_hits_lane, plot_split, split_time_strip,
 };
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
@@ -32,7 +32,7 @@ use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
     IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
 };
-use crate::indicators::IndicatorViews;
+use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::price_view::PriceView;
@@ -213,6 +213,15 @@ fn lane_rungs(lane_width_px: f32) -> usize {
     rungs.clamp(1, MAX_LANE_RUNGS)
 }
 
+/// Half-height of the grab band over a pane's top edge, in pixels.
+///
+/// The rule itself stays a hairline — a thick bar between a chart and its
+/// indicator reads as a wall in the data. The handle around it is what makes
+/// it catchable, and the resize cursor is the only thing that announces it:
+/// the same bargain the live lane's divider and the canvas split already
+/// strike.
+const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
+
 /// Pixels of drag on a vertical axis that change its span by a factor of `e`.
 ///
 /// One number for the price gutter and for every indicator pane's gutter: the
@@ -223,6 +232,49 @@ const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 /// reports far more units than a pointer travels in a frame, so each unit has
 /// to count for less — a larger divisor, not a smaller one.
 const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
+
+/// The divider along a pane's top edge, as a resize handle.
+///
+/// The band it opens is the pane *below* it, which is what a top edge means:
+/// drag it up and that pane grows into the chart, drag it down and it gives
+/// the room back. Double click hands the pane to the automatic layout again —
+/// the same escape the price axis and every pane's own scale offer.
+///
+/// Returns the sizing the pane should now have, or `None` when the divider was
+/// not touched this frame.
+fn pane_divider_gesture(
+    ui: &egui::Ui,
+    id: egui::Id,
+    slot: &crate::indicators::PaneSlot,
+    plot: egui::Rect,
+) -> Option<PaneSizing> {
+    let edge = slot.rect.top();
+    let handle = ui.interact(
+        egui::Rect::from_min_max(
+            egui::pos2(plot.left(), edge - PANE_DIVIDER_HANDLE_PX),
+            egui::pos2(plot.right(), edge + PANE_DIVIDER_HANDLE_PX),
+        ),
+        id,
+        egui::Sense::click_and_drag(),
+    );
+    if handle.hovered() || handle.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    if handle.double_clicked() {
+        return Some(PaneSizing::Auto);
+    }
+    if handle.dragged() {
+        let delta = handle.drag_delta().y;
+        if delta != 0.0 {
+            // Dragging the top edge upwards makes the band below it taller.
+            // The floor is not applied here: `PaneSizing::desired` owns it, so
+            // a drag and the automatic layout cannot disagree about how short
+            // a pane may be.
+            return Some(PaneSizing::Manual(slot.rect.height() - delta));
+        }
+    }
+    None
+}
 
 /// The gesture that pans a pane's own scale: press inside the pane and drag it
 /// up or down, exactly as a press on the candles drags price.
@@ -1058,10 +1110,11 @@ impl ChartPane {
     /// This pane's regions inside `area`, carved once so the input handler and
     /// the renderer can never disagree about a boundary.
     fn plot_areas(&self, area: egui::Rect) -> PlotAreas {
+        let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
         plot_split(
             area,
             self.live_strip_width(),
-            self.indicators.visible_panes().count(),
+            self.indicators.pane_sizing(&mut sizing),
         )
     }
 
@@ -2069,18 +2122,45 @@ impl ChartPane {
                 &mut view.scale,
                 view.last_auto,
             );
-            // The body moves the scale the gutter scales. Registered after it
-            // so the two never fight over the same pixel: the gutter is a band
-            // beside the pane, and egui gives an overlap to the later claim.
-            let gesture = pane_pan_gesture(
-                ui,
-                egui::Id::new(("pane_pan", pane_id, view.slot)),
-                *body,
-                &mut view.scale,
-                view.last_auto,
+            if !body.collapsed {
+                // The body moves the scale the gutter scales. Registered after
+                // the gutter so the two never fight over the same pixel: the
+                // gutter is a band beside the pane, and egui gives an overlap
+                // to the later claim.
+                let gesture = pane_pan_gesture(
+                    ui,
+                    egui::Id::new(("pane_pan", pane_id, view.slot)),
+                    body.rect,
+                    &mut view.scale,
+                    view.last_auto,
+                );
+                pane_time_gesture.pan_x += gesture.pan_x;
+                pane_time_gesture.scroll_y += gesture.scroll_y;
+            }
+            // The disclosure, in both directions: a control that only opens is
+            // half a control, so the square that brings a pane back is what
+            // puts it away. Registered *last* for the same reason the body is
+            // registered after the gutter — the later claim wins the overlap,
+            // and this corner has to beat the pan that covers the whole band.
+            let disclosure = ui.interact(
+                indicator_render::pane_disclosure_rect(body.rect, body.collapsed),
+                egui::Id::new(("pane_disclosure", pane_id, view.slot)),
+                egui::Sense::click(),
             );
-            pane_time_gesture.pan_x += gesture.pan_x;
-            pane_time_gesture.scroll_y += gesture.scroll_y;
+            if disclosure.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if disclosure.clicked() {
+                view.sizing = if body.collapsed {
+                    // Manual, not Auto: the automatic rule is what collapsed
+                    // it, so handing it back would undo the click on the very
+                    // next frame. An explicit height is served before the
+                    // automatic ones and therefore always fits.
+                    PaneSizing::Manual(MIN_PANE_HEIGHT_PX)
+                } else {
+                    PaneSizing::Collapsed
+                };
+            }
         }
         // Time, once, whichever pane the pointer was over: the panes share the
         // candles' x axis, so a sideways drag or a scroll there has to move the
@@ -2092,6 +2172,26 @@ impl ChartPane {
         if pane_time_gesture.scroll_y.abs() > 0.0 {
             self.viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
+        }
+
+        // The dividers last of all: registered after every pane body so the
+        // grab band takes the drag that would otherwise pan the pane behind
+        // it, exactly as the canvas split's divider is registered after both
+        // its panes and the lane's after the candles.
+        let plot = areas.chart;
+        for (view, slot) in self
+            .indicators
+            .visible_panes_mut()
+            .zip(&areas.indicator_panes)
+        {
+            if let Some(sizing) = pane_divider_gesture(
+                ui,
+                egui::Id::new(("pane_divider", pane_id, view.slot)),
+                slot,
+                plot,
+            ) {
+                view.sizing = sizing;
+            }
         }
     }
 
@@ -2397,13 +2497,13 @@ impl ChartPane {
             view.last_auto = auto;
             let frame = indicator_render::PaneFrame {
                 rect: egui::Rect::from_min_max(
-                    egui::pos2(history_rect.left(), pane.top()),
-                    egui::pos2(history_rect.right(), pane.bottom()),
+                    egui::pos2(history_rect.left(), pane.rect.top()),
+                    egui::pos2(history_rect.right(), pane.rect.bottom()),
                 ),
                 lane: lane_window.map(|(divider, start_ms, end_ms)| indicator_render::LaneFrame {
                     rect: egui::Rect::from_min_max(
-                        egui::pos2(divider, pane.top()),
-                        egui::pos2(chart_rect.right(), pane.bottom()),
+                        egui::pos2(divider, pane.rect.top()),
+                        egui::pos2(chart_rect.right(), pane.rect.bottom()),
                     ),
                     start_ms,
                     end_ms,
@@ -2412,6 +2512,7 @@ impl ChartPane {
                 gutter: *gutter,
                 background: canvas_background,
                 grid,
+                collapsed: pane.collapsed,
             };
             indicator_render::draw_pane(
                 painter,
@@ -2613,30 +2714,50 @@ impl ChartPane {
             ],
             egui::Stroke::new(1.0_f32, grid_color(chrome.style)),
         );
-        let font = egui::FontId::monospace(10.0);
+        let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
         let y = strip.center().y;
-        // Up to ~6 evenly-spaced labels across the visible closed bars.
         let visible = end.saturating_sub(start);
         if visible == 0 {
             return;
         }
         let (history_strip, _) = split_time_strip(strip, self.last_lane_divider_x);
-        let step = (visible / 6).max(1);
+
+        // Measured, not counted. One layout per format per frame — monospace,
+        // so a format's sample answers for every label written in it — and the
+        // stride comes out of pixels rather than out of a fixed label count
+        // that a narrower strip could not honour.
+        let width_of = |format: crate::chart::TimeLabelFormat| {
+            painter
+                .layout_no_wrap(format.sample().to_owned(), font.clone(), theme::TEXT_MUTED)
+                .size()
+                .x
+        };
+        let format = crate::chart::time_label_format(history_strip.width(), width_of);
+        let label_width = width_of(format);
+        let stride = crate::chart::time_label_stride(self.viewport.candle_width(), label_width);
+
         let mut index = start;
         while index < end {
             if let Some(bar) = self.closed_bar(index) {
                 let x = self.viewport.x_center(index, history_strip.right(), total);
-                if history_strip.x_range().contains(x) {
+                // The whole label, not just its centre: a label centred a few
+                // pixels from the end drew its other half over the gutter.
+                if crate::chart::label_fits(
+                    x,
+                    label_width,
+                    history_strip.left(),
+                    history_strip.right(),
+                ) {
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
-                        fmt_time(bar.open_time, chrome.tz),
+                        fmt_time_as(bar.open_time, chrome.tz, format),
                         font.clone(),
                         theme::TEXT_MUTED,
                     );
                 }
             }
-            index += step;
+            index = index.saturating_add(stride);
         }
     }
 

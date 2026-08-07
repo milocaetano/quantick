@@ -11,6 +11,7 @@
 
 use eframe::egui;
 use eframe::egui::{Color32, Pos2, Rect, Shape, Stroke, pos2};
+use egui_phosphor::regular as icons;
 use quantick_indicators::{PlotStyle, Rgba8};
 
 use crate::chart::PriceScale;
@@ -64,6 +65,38 @@ const PANE_MARKER_INSET_PX: f32 = MARKER_GAP_PX * 2.0;
 /// the pane's own edge: the frame hairline and the pane's title/headline live
 /// there, and a number crossing either reads as a smudge rather than a value.
 const AXIS_LABEL_EDGE_MARGIN_PX: f32 = 7.0;
+/// Marks a collapsed pane: a closed disclosure, pointing the way it opens.
+///
+/// From the bundled Phosphor font, like every other glyph in the chrome. The
+/// Unicode geometric triangles (`▸`, `▾`) are *not* in it and drew as
+/// tofu boxes — a visual capture caught it, which is exactly what one is for.
+const COLLAPSED_CHEVRON: &str = icons::CARET_RIGHT;
+/// Marks an expanded pane: an open disclosure, pointing the way it closes.
+const EXPANDED_CHEVRON: &str = icons::CARET_DOWN;
+/// Side of the square at a pane's top-left corner that toggles it open or
+/// shut. Bigger than the glyph it holds, because a control you have to aim at
+/// is a control a trader does not use mid-tape.
+const PANE_DISCLOSURE_PX: f32 = 18.0;
+
+/// The square at a pane's top-left that opens or closes it.
+///
+/// Shared by the paint and the input pass so the glyph and the thing you can
+/// click are the same square — a hit box computed twice is a hit box that
+/// drifts. For a collapsed pane the whole strip is the target instead: a
+/// one-row band has no room to aim inside, and it has nothing else to click.
+#[must_use]
+pub(crate) fn pane_disclosure_rect(band: Rect, collapsed: bool) -> Rect {
+    if collapsed {
+        return band;
+    }
+    Rect::from_min_size(
+        band.left_top(),
+        egui::vec2(
+            PANE_DISCLOSURE_PX.min(band.width()),
+            PANE_DISCLOSURE_PX.min(band.height()),
+        ),
+    )
+}
 
 fn color32(c: Rgba8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -185,6 +218,10 @@ pub(crate) struct PaneFrame<'a> {
     /// chart with no tape, and the pane then ends at `rect` exactly as it
     /// always has.
     pub lane: Option<LaneFrame<'a>>,
+    /// `true` when the band is too short to draw this pane legibly. The name
+    /// and the live value are still written; only the curve is dropped, and
+    /// the strip says how to get it back.
+    pub collapsed: bool,
     /// The gutter band beside `rect`, where this pane's value labels go. It
     /// is the same band the pane's zoom gesture is registered over, which is
     /// what makes the numbers the thing you grab.
@@ -255,6 +292,11 @@ pub(crate) fn draw_pane(
         Stroke::new(PANE_RULE_WIDTH_PX, frame.grid),
     );
 
+    if frame.collapsed {
+        draw_collapsed_pane(painter, band, view);
+        return;
+    }
+
     let Some((lo, hi)) = range else {
         painter.text(
             band.center(),
@@ -314,7 +356,7 @@ pub(crate) fn draw_pane(
     painter.text(
         pane.left_top() + PANE_LABEL_INSET_PX,
         egui::Align2::LEFT_TOP,
-        view.label(),
+        format!("{EXPANDED_CHEVRON} {}", view.label()),
         egui::FontId::proportional(PANE_LABEL_FONT_PX),
         theme::TEXT_MUTED,
     );
@@ -322,6 +364,34 @@ pub(crate) fn draw_pane(
         painter.text(
             band.right_top() + egui::vec2(-PANE_LABEL_INSET_PX.x, PANE_LABEL_INSET_PX.y),
             egui::Align2::RIGHT_TOP,
+            format_value(last),
+            egui::FontId::monospace(PANE_LABEL_FONT_PX),
+            theme::TEXT_MUTED,
+        );
+    }
+}
+
+/// A pane with no room for its curve: its name on the left, its live value on
+/// the right, and a chevron saying the curve is one click away.
+///
+/// The value is what the user added the indicator *for*, so it survives the
+/// collapse — a strip that hid the number too would be an indicator switched
+/// off without being asked. The chevron points right, the direction a closed
+/// disclosure points.
+fn draw_collapsed_pane(painter: &egui::Painter, band: Rect, view: &IndicatorView) {
+    let font = egui::FontId::proportional(PANE_LABEL_FONT_PX);
+    let y = band.center().y;
+    painter.text(
+        pos2(band.left() + PANE_LABEL_INSET_PX.x, y),
+        egui::Align2::LEFT_CENTER,
+        format!("{COLLAPSED_CHEVRON} {}", view.label()),
+        font,
+        theme::TEXT_MUTED,
+    );
+    if let Some(last) = last_value(view) {
+        painter.text(
+            pos2(band.right() - PANE_LABEL_INSET_PX.x, y),
+            egui::Align2::RIGHT_CENTER,
             format_value(last),
             egui::FontId::monospace(PANE_LABEL_FONT_PX),
             theme::TEXT_MUTED,
@@ -1046,6 +1116,7 @@ mod tests {
             error: None,
             hidden: false,
             scale: crate::price_view::PriceView::new(),
+            sizing: crate::indicators::PaneSizing::Auto,
             last_auto: None,
         }
     }
