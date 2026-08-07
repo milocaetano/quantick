@@ -266,8 +266,28 @@ timestamp through its own `slot_at_time`.**
 - Panes already answer `slot_at_time(ms) -> Option<usize>` across the
   history-prefix seam (`pane.rs`), so the projection is one existing call
   per anchor, not new machinery.
-- A shared drawing lives in a tab-level store every pane of that tab
-  renders; a `ThisChart` drawing stays exactly where it lives today.
+- A shared drawing lives in the store of the pane it was drawn on and every
+  pane of the tab renders it; a `ThisChart` drawing is one no other pane
+  asks for.
+- **It is one object, and it is worked from either chart it appears on.** A
+  press on the mirror selects, drags and deletes the original: the pane the
+  gesture happened on reports what it did in market time and price, and the
+  pane that holds the object resolves that back into its own bars
+  (`ChartPane::interact_shared` → `Tab::apply_shared_interactions` →
+  `ChartPane::apply_shared_edit`). Nothing is written to a copy, and a whole
+  drag lands on the owning store as one undo entry.
+
+  This replaces the rule that first shipped, which made the mirror
+  read-only so a mark could not be grabbed in two places. The reasoning was
+  sound and the result was not: a trader who can see a level on the tick
+  chart but has to walk back to the timeframe chart to nudge it is being
+  asked to remember which chart they drew on, which is the bookkeeping
+  sharing exists to remove. Two places to grab it, one selection tab-wide —
+  so only one of them is ever holding it.
+- Because the object outlives the pane the pointer is over, the inspector,
+  the keyboard and the object manager follow the *selection* rather than the
+  focus (`Tab::drawing_side`). Selecting a level on the time pane and
+  pressing Delete deletes that level.
 - Toggled from the inspector's **Coordinates** tab, where the anchors
   already are. The object manager marks shared objects so Marina can see at
   a glance which marks are global.
@@ -285,6 +305,41 @@ Honesty at the edges, since a timestamp can fall outside a pane's series:
   clamped edge slot, and the drawing is painted at reduced alpha with the
   clamp visible, rather than silently pretending the anchor is on-screen.
 - A pane with no bars yet paints no shared drawings — nothing to anchor to.
+
+### D7b — A drawing leaves when the trader deletes it, and not before
+
+The market timestamp §D7 put on every anchor answers a second question the
+first pass got wrong: what happens to a mark when the bars underneath it are
+re-cut.
+
+The original rule was that a bar index is meaningless across two cuts of the
+tape, so a timeframe switch, a bar-kind switch, a replay seek, a reconnect
+or a symbol change dropped every mark and raised a toast saying so. That is
+honest about the coordinate and wrong about the object. A trader who marks a
+swing high on the 5-minute chart and flips to the 1-minute to time the entry
+has not asked for the level to be forgotten — the level is *why* they
+flipped.
+
+**No state change deletes a drawing.** Every re-cut re-asks the same
+question §D7 already answers: where does this anchor's instant land on the
+series I hold now (`Drawings::reanchor`)? An anchor with no instant behind it
+— one dropped past the newest bar, where the tape has written nothing —
+keeps its distance past the end instead.
+
+Honesty moves from deleting to labelling. A mark whose instant the new
+series cannot reach (drawn before the loaded history, or on the instrument
+this tab used to show) is flagged `off_series`: it paints at the same
+reduced alpha a clamped shared mark uses, and it stays selectable and
+deletable. The trader is told the mark is no longer over its data; they are
+not told what to do about it.
+
+**This holds across a symbol or feed switch too** — an explicit call, made
+in the goal that shipped this. The cross-*tab* boundary in §D7 stands for a
+different reason: nothing was ever drawn on the other tab's chart, so there
+is no object whose survival is in question.
+
+Out of scope, and a separate design: surviving a restart of the app. Nothing
+here is written to disk.
 
 ### D8 — A click selects what the press grabbed
 
