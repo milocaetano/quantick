@@ -105,7 +105,7 @@ pub(super) fn hit_outline(
 mod tests {
     use super::*;
     use crate::chart::PriceScale;
-    use crate::drawings::NoPayload;
+    use crate::drawings::{NoPayload, ValueUnit};
 
     fn with_fill<R>(fill_alpha: u8, body: impl FnOnce(&DrawContext<'_>) -> R) -> R {
         let payload = NoPayload;
@@ -118,6 +118,7 @@ mod tests {
             payload: &payload,
             anchors: &[],
             scale: &scale,
+            unit: ValueUnit::Price,
             style,
             selected: false,
             halo: false,

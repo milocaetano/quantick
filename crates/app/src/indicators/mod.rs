@@ -29,6 +29,11 @@ pub(crate) const MAX_PANES: usize = 3;
 pub(crate) struct IndicatorView {
     /// The UI-allocated slot this instance answers to.
     pub slot: SlotId,
+    /// The constructor it was added through (`native.cvd`, `script.zigzag`),
+    /// durable across remove + re-add in a way the slot id is not — see
+    /// [`crate::indicator_worker::IndicatorSource::kind_id`]. Drawings
+    /// anchored to this pane are keyed on it.
+    pub kind: String,
     /// Descriptor as of the last rebuild (title, plots, overlay flag).
     pub descriptor: IndicatorDescriptor,
     /// Committed plot columns, one per descriptor plot, kept in lockstep
@@ -113,6 +118,11 @@ impl IndicatorView {
 pub(crate) struct IndicatorViews {
     views: Vec<IndicatorView>,
     next_slot: u64,
+    /// Kind of each slot whose first delta has not arrived yet. The view is
+    /// born from the worker's `Rebuilt` event, which knows nothing about the
+    /// constructor, so the add path parks the kind here and the view takes it
+    /// on birth.
+    pending_kinds: std::collections::BTreeMap<SlotId, String>,
 }
 
 impl IndicatorViews {
@@ -120,11 +130,31 @@ impl IndicatorViews {
         Self::default()
     }
 
-    /// Reserve a slot id for an add command about to be sent.
-    pub(crate) fn allocate_slot(&mut self) -> SlotId {
+    /// Reserve a slot id for an add command about to be sent, remembering
+    /// which constructor it answers to (see [`IndicatorView::kind`]).
+    pub(crate) fn allocate_slot(&mut self, kind: String) -> SlotId {
         let slot = SlotId(self.next_slot);
         self.next_slot += 1;
+        self.pending_kinds.insert(slot, kind);
         slot
+    }
+
+    /// Which pane a drawing keyed to `key` belongs to right now, if any.
+    ///
+    /// The ordinal counts *every* pane indicator of that kind in add order,
+    /// including hidden and collapsed ones: a key that shifted when the
+    /// trader clicked an eye would hand one pane's annotations to another.
+    pub(crate) fn pane_key(&self, view: &IndicatorView) -> crate::drawings::PaneKey {
+        let ordinal = self
+            .views
+            .iter()
+            .take_while(|other| other.slot != view.slot)
+            .filter(|other| other.kind == view.kind && !other.descriptor.overlay)
+            .count();
+        crate::drawings::PaneKey {
+            kind: view.kind.clone(),
+            ordinal: u8::try_from(ordinal).unwrap_or(u8::MAX),
+        }
     }
 
     /// Apply one worker delta. Events for slots the UI already removed are
@@ -154,6 +184,7 @@ impl IndicatorViews {
                 } else {
                     self.views.push(IndicatorView {
                         slot,
+                        kind: self.pending_kinds.remove(&slot).unwrap_or_default(),
                         descriptor,
                         columns,
                         preview: None,
@@ -220,6 +251,7 @@ impl IndicatorViews {
     /// Drop a slot UI-side (the worker gets the Remove command separately).
     pub(crate) fn remove(&mut self, slot: SlotId) {
         self.views.retain(|v| v.slot != slot);
+        self.pending_kinds.remove(&slot);
     }
 
     /// Prepend `added` unknown rows to every column, keeping the views
@@ -478,7 +510,7 @@ mod tests {
     #[test]
     fn deltas_reconstruct_the_columns() {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         views.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: descriptor(true, 2),
@@ -499,7 +531,7 @@ mod tests {
     #[test]
     fn appended_row_invalidates_the_preview() {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         views.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: descriptor(true, 1),
@@ -525,7 +557,7 @@ mod tests {
     #[test]
     fn events_for_removed_slots_are_dropped() {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         views.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: descriptor(true, 1),
@@ -550,7 +582,7 @@ mod tests {
             (false, false, false), // drawn pane
             (false, false, true),  // errored pane
         ] {
-            let slot = views.allocate_slot();
+            let slot = views.allocate_slot("test.indicator".to_owned());
             views.apply(IndicatorEvent::Rebuilt {
                 slot,
                 descriptor: descriptor(overlay, 1),
@@ -581,7 +613,7 @@ mod tests {
     #[test]
     fn a_removed_pane_takes_its_scale_with_it() {
         let mut views = IndicatorViews::new();
-        let first = views.allocate_slot();
+        let first = views.allocate_slot("test.indicator".to_owned());
         views.apply(IndicatorEvent::Rebuilt {
             slot: first,
             descriptor: descriptor(false, 1),
@@ -595,7 +627,7 @@ mod tests {
         assert!(!views.all()[0].scale.is_auto());
 
         views.remove(first);
-        let second = views.allocate_slot();
+        let second = views.allocate_slot("test.indicator".to_owned());
         views.apply(IndicatorEvent::Rebuilt {
             slot: second,
             descriptor: descriptor(false, 1),

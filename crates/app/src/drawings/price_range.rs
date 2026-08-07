@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::measure_core::{MEASURE_FAMILY, PRICE_ONLY, hit_measure, paint_measure};
+use super::measure_core::{Measured, MEASURE_FAMILY, PRICE_ONLY, hit_measure, paint_measure};
 use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily};
 
 pub(super) static TOOL: PriceRange = PriceRange;
@@ -46,9 +46,12 @@ impl DrawingToolImpl for PriceRange {
             chart_rect,
             style,
             points,
-            ctxt.anchors,
-            PRICE_ONLY,
-            ctxt.halo,
+            Measured {
+                anchors: ctxt.anchors,
+                axes: PRICE_ONLY,
+                unit: ctxt.unit,
+                halo: ctxt.halo,
+            },
         );
     }
     fn hit_test(

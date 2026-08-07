@@ -139,6 +139,25 @@ impl IndicatorSource {
         }
     }
 
+    /// The constructor this instance was added through, as a stable string.
+    ///
+    /// It is the durable half of a pane's identity: unlike the slot id (a
+    /// monotonic counter, so remove + add always yields a new one) and unlike
+    /// the title (which moves with the inputs), this is the same string
+    /// before and after the trader takes an indicator off the chart and puts
+    /// it back. Drawings anchored to a pane are keyed on it — see
+    /// [`crate::drawings::PaneKey`].
+    ///
+    /// Deliberately excludes the input values: changing a period changes the
+    /// series, not which pane the trader was annotating.
+    pub(crate) fn kind_id(&self) -> String {
+        match self {
+            IndicatorSource::NativeEma { .. } => "native.ema".to_owned(),
+            IndicatorSource::NativeCvd => "native.cvd".to_owned(),
+            IndicatorSource::Script { name, .. } => format!("script.{name}"),
+        }
+    }
+
     /// The display title used when the source cannot load (a healthy
     /// instance's title comes from its descriptor).
     fn fallback_title(&self) -> String {
@@ -729,7 +748,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeEma {
@@ -781,7 +800,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeCvd,
@@ -814,8 +833,8 @@ mod tests {
         let (bars, _) = bars_and_partial(8, 2);
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let doomed = views.allocate_slot();
-        let survivor = views.allocate_slot();
+        let doomed = views.allocate_slot("test.indicator".to_owned());
+        let survivor = views.allocate_slot("test.indicator".to_owned());
         for (slot, source) in [
             (doomed, IndicatorSource::NativeCvd),
             (survivor, IndicatorSource::NativeCvd),
@@ -904,7 +923,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeCvd,
@@ -960,7 +979,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeCvd,
@@ -1007,7 +1026,7 @@ mod script_load_tests {
     fn a_rejected_script_surfaces_its_error_with_line_and_code() {
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1042,7 +1061,7 @@ mod script_load_tests {
         let (name, text) = crate::indicators::library::EMBEDDED_SCRIPTS[0];
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1086,7 +1105,7 @@ mod object_event_tests {
             .expect("zigzag is embedded");
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1151,7 +1170,7 @@ mod set_inputs_tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1198,7 +1217,7 @@ plot(close * k)
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeEma {
@@ -1255,7 +1274,7 @@ mod reload_tests {
     ) {
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1369,7 +1388,7 @@ mod reload_tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator".to_owned());
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
