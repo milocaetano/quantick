@@ -12,6 +12,7 @@
 //! views of one. The two are orthogonal, and a tab carries its own layout.
 
 use eframe::egui;
+use smallvec::SmallVec;
 use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
@@ -25,7 +26,7 @@ use crate::metrics;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneSide,
-    clamp_pane_fraction, split_canvas, split_time_pane,
+    SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_canvas, split_time_pane,
 };
 use crate::paper_trading::PaperTrading;
 use crate::state::{BarKind, BarSpec};
@@ -141,6 +142,26 @@ fn trim_to_seam(
 }
 
 /// One open market. See the module docs for what does and does not live here.
+/// One frame's answer, for both panes, to "what shared mark of the *other*
+/// pane is the pointer over?".
+///
+/// A pair rather than a per-pane field because the question can only be asked
+/// while both panes are in hand, and it is asked once for the frame.
+#[derive(Debug, Clone, Copy, Default)]
+struct SharedPicks {
+    time: Option<SharedPick>,
+    flow: Option<SharedPick>,
+}
+
+impl SharedPicks {
+    const fn for_side(self, side: PaneSide) -> Option<SharedPick> {
+        match side {
+            PaneSide::Time => self.time,
+            PaneSide::Flow => self.flow,
+        }
+    }
+}
+
 pub struct Tab {
     /// Stable for as long as the tab is open, and never reused. The indicator
     /// state file names one of these (see `QuantickApp::persisted_tab`), and
@@ -370,31 +391,23 @@ impl Tab {
         self.book_channel_closed_reported = false;
     }
 
-    /// Clear the bar-anchored overlay on `side`, reporting whether anything
-    /// was actually lost.
+    /// Drop the transient pointer state of every pane's overlay, for a change
+    /// that re-cuts the bars under it — a spec switch, a source reset.
     ///
-    /// Bar indices are only meaningful for the market and spec that made them,
-    /// so a source or aggregation rebuild has to drop the marks rather than
-    /// silently reattach them to different data. The window turns the answer
-    /// into the toast that says so and the tool reset that follows — the marks
-    /// are the tab's, the chrome around them is not.
-    fn clear_overlay(&mut self, side: PaneSide) -> bool {
-        let pane = self.pane_mut(side);
-        let had_drawings = !pane.drawings.items().is_empty();
-        pane.drawings.clear();
-        pane.drawing_hover = None;
-        pane.drawing_press_position = None;
-        pane.drawing_press_started_empty = false;
-        pane.drawing_drag = DrawingDrag::None;
-        had_drawings
-    }
-
-    /// Every pane's overlay at once, for a change that invalidates them all —
-    /// a feed switch or a source reset re-cuts both charts.
-    fn clear_overlays(&mut self) -> bool {
-        let flow = self.clear_overlay(PaneSide::Flow);
-        let time = self.time_pane.is_some() && self.clear_overlay(PaneSide::Time);
-        flow || time
+    /// The *objects* survive: their anchors carry market time, so they are
+    /// re-expressed against the new series rather than discarded (`ChartPane::
+    /// reanchor_drawings`). A drawing belongs to the trader who placed it and
+    /// leaves when they delete it, not when the chart is re-cut underneath.
+    ///
+    /// What cannot survive is a gesture in flight: a half-finished drag is
+    /// holding pixel coordinates of bars that no longer exist there.
+    fn drop_overlay_gestures(&mut self) {
+        for pane in self.panes_mut() {
+            pane.drawing_hover = None;
+            pane.drawing_press_position = None;
+            pane.drawing_press_started_empty = false;
+            pane.drawing_drag = DrawingDrag::None;
+        }
     }
 
     /// Where the timeframe chips landed, in `crate::time_header::PRESETS` order.
@@ -680,6 +693,40 @@ impl Tab {
     /// See [`Self::focused_pane`].
     pub fn focused_pane_mut(&mut self) -> &mut ChartPane {
         self.pane_mut(self.focused_side())
+    }
+
+    /// The pane holding the drawing selection — which is not always the
+    /// focused one.
+    ///
+    /// A shared mark can be taken from either chart it appears on, and it
+    /// stays in the store of the pane it was drawn on. So the inspector, the
+    /// keyboard and the object manager follow the *object*, not the pane the
+    /// pointer happens to be over: selecting a level on the time pane and
+    /// pressing Delete has to delete that level, wherever it lives.
+    ///
+    /// Exactly one pane holds a selection at a time
+    /// ([`Self::apply_shared_interactions`] drops the other's), so this asks
+    /// the focused pane first and takes the answer it finds.
+    pub fn drawing_side(&self) -> PaneSide {
+        let focused = self.focused_side();
+        if self.pane(focused).drawings.selected().is_some() || self.time_pane.is_none() {
+            return focused;
+        }
+        let other = focused.other();
+        if self.pane(other).drawings.selected().is_some() {
+            return other;
+        }
+        focused
+    }
+
+    /// The pane every drawing surface reads from — see [`Self::drawing_side`].
+    pub fn drawing_pane(&self) -> &ChartPane {
+        self.pane(self.drawing_side())
+    }
+
+    /// See [`Self::drawing_pane`].
+    pub fn drawing_pane_mut(&mut self) -> &mut ChartPane {
+        self.pane_mut(self.drawing_side())
     }
 
     /// Every pane holding this market's bars, on screen or not. One tape, and
@@ -991,15 +1038,15 @@ impl Tab {
 
     /// Respawn the feed and reset the chart when the selected feed or symbol
     /// differs from what is currently streaming. A no-op otherwise.
-    pub fn maybe_switch_feed(&mut self, config: &AppConfig) -> bool {
+    pub fn maybe_switch_feed(&mut self, config: &AppConfig) {
         // A replay owns the chart until it is closed. The selectors are not
         // drawn while it plays, so nothing can diverge here — but a stale
         // selection must not respawn a live feed underneath the recording.
         if self.replay.is_some() {
-            return false;
+            return;
         }
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
-            return false;
+            return;
         }
         let previous_feed = self.active.0.clone();
         let Some(provider) = config.provider_of(&self.feed_id) else {
@@ -1010,7 +1057,7 @@ impl Tab {
             );
             // Snap the selection back to what is actually running.
             (self.feed_id, self.symbol) = self.active.clone();
-            return false;
+            return;
         };
         // The recorder follows the feed, not the toggle: a market that can
         // stream depth is recorded from the moment it starts streaming. Kept
@@ -1040,7 +1087,7 @@ impl Tab {
         for pane in self.panes_mut() {
             pane.reset_series();
         }
-        let cleared = self.clear_overlays();
+        self.drop_overlay_gestures();
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
@@ -1058,7 +1105,6 @@ impl Tab {
         self.refresh_chip_label(config);
         self.ensure_book_capture(config);
         self.apply_feed_bubble_preset_after_switch(config, &previous_feed);
-        cleared
     }
 
     /// Apply the arrived-at feed's declared preset — only when the switch
@@ -1194,10 +1240,10 @@ impl Tab {
 
     /// Let every pane's selectors settle, then mirror the result onto the
     /// rebuild indicator: it is up while *any* pane has a rebuild pending.
-    pub fn apply_spec_changes(&mut self) -> bool {
-        let mut cleared = self.apply_spec_change(PaneSide::Flow);
+    pub fn apply_spec_changes(&mut self) {
+        self.apply_spec_change(PaneSide::Flow);
         if self.time_pane.is_some() {
-            cleared |= self.apply_spec_change(PaneSide::Time);
+            self.apply_spec_change(PaneSide::Time);
         }
         let rebuilding = self.flow_pane.pending_spec.is_some()
             || self
@@ -1205,7 +1251,6 @@ impl Tab {
                 .as_ref()
                 .is_some_and(|pane| pane.pending_spec.is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
-        cleared
     }
 
     /// Apply one pane's bar-type/parameter change, a frame after its selectors
@@ -1222,26 +1267,20 @@ impl Tab {
     /// The two panes run this independently: the toolbar's BARS group governs
     /// the focused pane and the time pane's own header governs the time pane
     /// (§11), so a change to one pane must not rebuild the chart beside it.
-    fn apply_spec_change(&mut self, side: PaneSide) -> bool {
+    fn apply_spec_change(&mut self, side: PaneSide) {
         let desired = self.pane(side).current_spec();
         let pane = self.pane_mut(side);
         if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
             pane.pending_spec = None;
-            return false;
+            return;
         }
         match pane.pending_spec.take() {
             // The frame that changed the selector: arm the indicator, paint.
-            None => {
-                pane.pending_spec = Some(desired);
-                false
-            }
+            None => pane.pending_spec = Some(desired),
             // Still moving: wait for the selector to settle for a frame.
-            Some(pending) if pending != desired => {
-                pane.pending_spec = Some(desired);
-                false
-            }
+            Some(pending) if pending != desired => pane.pending_spec = Some(desired),
             // Settled since last frame: do the rebuild.
             Some(_) => {
                 // Where the user is looking, in market time — the one thing a
@@ -1250,6 +1289,11 @@ impl Tab {
                 // may not exist in it at all: keeping it would leave the
                 // window past the end of the data, drawing nothing.
                 let anchor = pane.right_edge_time();
+                // The series the drawings are still anchored to, captured
+                // before it is replaced: their bar indices are meaningless in
+                // the new cut and have to be re-derived from the market time
+                // each anchor carries.
+                let old_slots = pane.slots();
                 pane.state.set_spec(desired);
                 // The venue prefix folds to the new interval before the view
                 // is reanchored: the market time the user was looking at has
@@ -1270,26 +1314,29 @@ impl Tab {
                 let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
                 let slots = pane.slots();
                 pane.viewport.reanchor(slot, slots);
-                self.clear_overlay(side)
+                // The marks follow the view: same market time, this pane's
+                // new bar space. Nothing is lost, so there is nothing to
+                // announce.
+                pane.reanchor_drawings(old_slots);
+                self.drop_overlay_gestures();
             }
         }
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
     /// observed arrival latency and live-trade counts for the metrics.
-    pub fn drain_feed(&mut self) -> bool {
-        self.drain_feed_with_clock(metrics::wall_clock_ms)
+    pub fn drain_feed(&mut self) {
+        self.drain_feed_with_clock(metrics::wall_clock_ms);
     }
 
     /// Clock-injected drain used to prove that one UI cycle is one observation.
-    pub fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
+    pub fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
         // The journal follows this tab's symbol; synced before the drain so a
         // new feed's first trades are never attributed to the old symbol.
         // Every tab drains every frame, so every journal tracks its own market
         // whether or not that tab is the one on screen.
         let Self { paper, symbol, .. } = self;
         paper.set_symbol(symbol);
-        let mut cleared = false;
         let mut live = false;
         let mut received_at_ms = None;
         loop {
@@ -1337,7 +1384,7 @@ impl Tab {
                         live = true;
                     }
                 }
-                Ok(FeedEvent::Reset) => cleared |= self.reset_market_state(),
+                Ok(FeedEvent::Reset) => self.reset_market_state(),
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
@@ -1355,7 +1402,12 @@ impl Tab {
                 pane.publish_partial();
             }
         }
-        cleared
+        // A reset left the marks waiting for bars to anchor to, and this is
+        // the drain that may have just delivered them. One flag test per pane
+        // when nothing is owed.
+        for pane in self.panes_mut() {
+            pane.settle_pending_reanchor();
+        }
     }
 
     /// Take the newest feed notice, if the feed sent any this frame.
@@ -1405,7 +1457,7 @@ impl Tab {
     /// Sent by a source that rewound — seeking a replay, for instance. The
     /// chart is rebuilt from the history that follows rather than patched,
     /// because bars that already closed cannot be reopened.
-    pub fn reset_market_state(&mut self) -> bool {
+    pub fn reset_market_state(&mut self) {
         for pane in self.panes_mut() {
             pane.reset_series();
             // Indicators follow the chart into the empty state; the refill's
@@ -1414,7 +1466,7 @@ impl Tab {
             pane.send_indicator_rebuild();
             pane.last_lane_divider_x = None;
         }
-        let cleared = self.clear_overlays();
+        self.drop_overlay_gestures();
         self.history_trades = 0;
         self.latest_trade_latency_ms = None;
         self.latest_trade_ms = None;
@@ -1427,7 +1479,6 @@ impl Tab {
         // The simulator flattens at its last mark and says so — a position
         // cannot honestly survive into a rebuilt timeline.
         self.paper.on_timeline_reset();
-        cleared
     }
 
     /// Everything this tab must settle before it is dropped.
@@ -1548,7 +1599,7 @@ impl Tab {
     /// Make a recorded session the chart's source, replacing whatever feed is
     /// running. The live selection is untouched, so closing the replay comes
     /// back to exactly the feed and symbol that were streaming before.
-    pub fn open_replay(&mut self, config: &AppConfig, request: crate::feed::ReplayRequest) -> bool {
+    pub fn open_replay(&mut self, config: &AppConfig, request: crate::feed::ReplayRequest) {
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -1572,13 +1623,13 @@ impl Tab {
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
         self.tape_mut().set_enabled(false, generation);
-        self.reset_market_state()
+        self.reset_market_state();
     }
 
     /// Leave replay and put the live feed back.
-    pub fn close_replay(&mut self, config: &AppConfig) -> bool {
+    pub fn close_replay(&mut self, config: &AppConfig) {
         if self.replay.take().is_none() {
-            return false;
+            return;
         }
         let (feed_id, symbol) = self.active.clone();
         self.feed_id = feed_id;
@@ -1597,11 +1648,12 @@ impl Tab {
         let Some(provider) = config.provider_of(&self.feed_id) else {
             // The configuration changed under us; there is nothing to go back
             // to, so the chart stays as it is rather than dying.
-            return self.reset_market_state();
+            self.reset_market_state();
+            return;
         };
         let handle = feed::spawn_live(provider, &self.symbol, config);
         self.attach(handle);
-        self.reset_market_state()
+        self.reset_market_state();
     }
 
     /// Start the current feed over, from the card that asked the user to fix
@@ -1611,12 +1663,12 @@ impl Tab {
     /// terminal is opened or the package installed, the way back has to be one
     /// click, not a restart of quantick. A replay owns the chart while it
     /// plays and has nothing to retry.
-    pub fn restart_feed(&mut self, config: &AppConfig) -> bool {
+    pub fn restart_feed(&mut self, config: &AppConfig) {
         if self.replay.is_some() {
-            return false;
+            return;
         }
         let Some(provider) = config.provider_of(&self.feed_id) else {
-            return false;
+            return;
         };
         tracing::info!(
             target: "quantick::app",
@@ -1629,11 +1681,10 @@ impl Tab {
         );
         let handle = feed::spawn_live(provider, &self.symbol, config);
         self.attach(handle);
-        let cleared = self.reset_market_state();
+        self.reset_market_state();
         // The live market is back and it can stream depth again; start
         // recording immediately rather than waiting for the map to be opened.
         self.ensure_book_capture(config);
-        cleared
     }
     /// Lay the canvas out and run every visible pane through it (§11).
     ///
@@ -1688,6 +1739,12 @@ impl Tab {
             areas.chart
         });
 
+        // Which shared mark the pointer is over, on each pane, against the
+        // other pane's store. Answered here because answering it needs both
+        // panes at once, and the loop below holds them one at a time.
+        let picks = self.shared_picks(ui);
+
+        let mut edits: SmallVec<[(PaneSide, SharedInteraction); 2]> = SmallVec::new();
         {
             let focused = self.focused_side();
             let Self {
@@ -1705,6 +1762,8 @@ impl Tab {
                 symbol,
                 paper,
                 paper_owns_input: false,
+                shared_pick: None,
+                shared: SharedInteraction::default(),
                 capabilities: chrome.capabilities,
                 layers: chrome.layers,
             };
@@ -1722,10 +1781,19 @@ impl Tab {
                 // the first click already trades where the accent rule is.
                 // Unsplit, the flow pane is the only pane and nothing changes.
                 chrome.paper_owns_input = side == focused;
+                chrome.shared_pick = picks.for_side(side);
+                chrome.shared = SharedInteraction::default();
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &mut chrome);
+                // Whatever this pane did to the other's marks travels out of
+                // the loop: the store it belongs to is the pane that is not
+                // borrowed right now.
+                if chrome.shared != SharedInteraction::default() {
+                    edits.push((side, chrome.shared));
+                }
             }
         }
+        self.apply_shared_interactions(&edits);
 
         // Drawings marked "show on all charts" cross here, after both panes
         // have drawn and cached their projections. It happens outside the
@@ -1759,6 +1827,70 @@ impl Tab {
             ],
             egui::Stroke::new(FOCUS_RULE_PX, theme::ACCENT),
         );
+    }
+
+    /// What the pointer is over, on each pane, among the *other* pane's
+    /// shared marks.
+    ///
+    /// Resolved with both panes in hand and before either is borrowed for its
+    /// input pass, which is the only moment a pane can be asked about marks it
+    /// does not hold. Nothing to answer on an unsplit tab: one pane has no
+    /// other pane to mirror.
+    fn shared_picks(&self, ui: &egui::Ui) -> SharedPicks {
+        let Some(time_pane) = self.time_pane.as_ref() else {
+            return SharedPicks::default();
+        };
+        let Some(position) = ui.input(|input| input.pointer.latest_pos()) else {
+            return SharedPicks::default();
+        };
+        let pick = |pane: &ChartPane, source: &ChartPane| {
+            // Only the pane the pointer is actually over is asked. Besides
+            // halving the work, it is what stops a horizontal line — which
+            // spans a whole chart — from reporting a hit on the pane beside
+            // the one the pointer is in, at the same height.
+            if !pane
+                .last_chart_area
+                .is_some_and(|chart| chart.contains(position))
+            {
+                return None;
+            }
+            pane.shared_pick(source, position)
+                .map(|(index, anchor)| SharedPick {
+                    index,
+                    anchor,
+                    locked: source.drawings.items()[index].locked,
+                })
+        };
+        SharedPicks {
+            time: pick(time_pane, &self.flow_pane),
+            flow: pick(&self.flow_pane, time_pane),
+        }
+    }
+
+    /// Land what each pane did to the other's marks on the store that holds
+    /// them.
+    ///
+    /// The gesture brackets travel with the edits so a whole drag started on
+    /// the mirror lands as one undo entry on the owning store — the same
+    /// coalescing the object gets on its own chart, because it is the same
+    /// gesture on the same object. A selection taken on one pane is dropped on
+    /// the other, so the tab never holds two.
+    fn apply_shared_interactions(&mut self, edits: &[(PaneSide, SharedInteraction)]) {
+        for (side, interaction) in edits {
+            let owner = side.other();
+            if interaction.begin_gesture {
+                self.pane_mut(owner).drawings.begin_gesture();
+            }
+            if let Some(edit) = interaction.edit {
+                if matches!(edit, SharedEdit::Select(_)) {
+                    self.pane_mut(*side).drawings.select(None);
+                }
+                self.pane_mut(owner).apply_shared_edit(edit);
+            }
+            if interaction.commit_gesture {
+                self.pane_mut(owner).drawings.commit_gesture();
+            }
+        }
     }
 
     /// Cross-pane drawings: each pane paints the shared marks of the other.

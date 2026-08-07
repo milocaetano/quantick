@@ -116,6 +116,18 @@ pub enum PaneSide {
     Time,
 }
 
+impl PaneSide {
+    /// The other pane of the tab — the one that mirrors this one's shared
+    /// marks, and the one an edit made here has to be handed to.
+    #[must_use]
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Flow => Self::Time,
+            Self::Time => Self::Flow,
+        }
+    }
+}
+
 /// Width of the draggable divider between the two panes, in pixels.
 pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 /// Half-width of the divider's grab area, which reaches a little into both
@@ -505,6 +517,120 @@ impl DrawingDrag {
     }
 }
 
+/// What a pane resolved on *another* pane's shared marks this frame.
+///
+/// Said in market time and price, because those are the only coordinates two
+/// panes of a tab agree on — a bar index means nothing across two cuts of the
+/// same tape (`docs/ux/drawing-tools-2026-08.md` §D7). The pane that holds the
+/// object turns them back into its own bar space, so the trader edits the one
+/// object rather than a copy of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SharedEdit {
+    /// Take the selection, without moving anything.
+    Select(usize),
+    /// Put one anchor at this instant and price.
+    MoveAnchor {
+        index: usize,
+        anchor: usize,
+        time_ms: i64,
+        price: f64,
+    },
+    /// Shift every anchor of the object by this much time and price.
+    Translate {
+        index: usize,
+        delta_ms: i64,
+        delta_price: f64,
+    },
+}
+
+/// A shared mark under the pointer, as the tab resolved it for one pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedPick {
+    /// Its index in the owning pane's store.
+    pub index: usize,
+    /// Which handle was grabbed, or `None` for the body.
+    pub anchor: Option<usize>,
+    /// Locked geometry refuses to move, exactly as it does on its own pane.
+    pub locked: bool,
+}
+
+/// What a pane did to another pane's marks in one frame.
+///
+/// The gesture flags bracket the edits so a whole drag lands on the owning
+/// store as one undo entry — the same coalescing a drag on the object's own
+/// chart gets, because it is the same gesture on the same object.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SharedInteraction {
+    pub edit: Option<SharedEdit>,
+    pub begin_gesture: bool,
+    pub commit_gesture: bool,
+}
+
+/// What the pointer is doing this frame, as the shared-mark handler needs it.
+struct SharedPointer {
+    /// Where it is, wherever that is. The band below decides what counts.
+    position: Option<egui::Pos2>,
+    /// The band drawings live in on this pane, this frame.
+    ///
+    /// A press must land inside it. A drag already running is *clamped* into
+    /// it instead, exactly as a drag on this pane's own marks is: the canvas
+    /// narrows by the inspector's width on the very frame a press opens it
+    /// (§D8), and a gesture that stopped whenever the pointer left the
+    /// shrunken pane would die on the frame it was born.
+    area: egui::Rect,
+    /// Whether floating chrome — the inspector, the manager, a flyout — is
+    /// under it right now.
+    ///
+    /// Read at press time only, like every other pointer path here:
+    /// continuity, not priority. A drag that started on the canvas keeps
+    /// running while the pointer crosses a panel, which matters most here of
+    /// all — the press that selects a mark is what *opens* the inspector, and
+    /// the inspector opens over the chart the mark is on.
+    over_chrome: bool,
+    pressed: bool,
+    down: bool,
+    released: bool,
+    history_right: f32,
+    total: usize,
+    magnet: bool,
+}
+
+/// A gesture a pane is running on another pane's mark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SharedDrag {
+    #[default]
+    None,
+    /// Dragging the whole object.
+    Body { index: usize },
+    /// Dragging one handle.
+    Anchor { index: usize, anchor: usize },
+    /// The mark is locked: the gesture is ours (the chart must not pan under
+    /// it) but the geometry stays exactly where the trader left it.
+    Blocked,
+}
+
+impl SharedDrag {
+    const fn is_active(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+/// Which handle of a projected object `pos` grabs, if any.
+///
+/// The one handle rule, shared by a pane's own marks and the mirrored ones,
+/// so the two can never disagree about what a press landed on.
+fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
+    points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| (index, point.distance_sq(pos)))
+        .filter(|(_, distance_sq)| {
+            *distance_sq <= DRAWING_ANCHOR_RADIUS_PX * DRAWING_ANCHOR_RADIUS_PX
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(index, _)| index)
+}
+
 /// What a pane borrows from the window around it for one frame.
 ///
 /// All of it is single-instance chrome: there is one toolbox, one preset
@@ -535,6 +661,16 @@ pub struct PaneChrome<'a> {
     /// pane may drive them. Running both would let the second pane inherit a
     /// drag the first started and re-clamp it into the wrong rectangle.
     pub paper_owns_input: bool,
+    /// What the pointer grabs among the *other* pane's shared marks, and
+    /// whether that mark is locked.
+    ///
+    /// Resolved by the tab before the panes are borrowed one at a time, since
+    /// answering it needs both panes at once. `None` on an unsplit tab, and
+    /// on any tab where nothing is shared.
+    pub shared_pick: Option<SharedPick>,
+    /// What this pane did to a shared mark, for the tab to apply to the pane
+    /// that owns it.
+    pub shared: SharedInteraction,
     /// What the running source can actually produce. The layer menu offers a
     /// layer this feed has no data for as disabled-with-a-reason rather than as
     /// a switch that would do nothing — the wording the toolbar already uses.
@@ -677,6 +813,21 @@ pub struct ChartPane {
     /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
     pub drawing_drag_pending_from: Option<egui::Pos2>,
     pub drawing_drag: DrawingDrag,
+    /// A gesture this pane is running on a mark the other pane holds, and the
+    /// two pieces of pointer state it needs: where the press landed while the
+    /// drag threshold is still unmet, and the market instant and price the
+    /// pointer was last over — what a body drag sends its deltas against.
+    shared_drag: SharedDrag,
+    shared_drag_pending_from: Option<egui::Pos2>,
+    shared_pointer_mark: Option<(i64, f64)>,
+    /// A re-anchor owed to the drawings, holding the slot count of the series
+    /// they were last anchored to.
+    ///
+    /// A reset empties the pane, and an empty series cannot say where an
+    /// instant lands — so the answer is deferred to the first frame that has
+    /// bars again, rather than clamping every mark onto a series that is not
+    /// there yet.
+    pending_reanchor: Option<usize>,
 }
 
 impl ChartPane {
@@ -755,6 +906,10 @@ impl ChartPane {
             drawing_press_pick: None,
             drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
+            shared_drag: SharedDrag::None,
+            shared_drag_pending_from: None,
+            shared_pointer_mark: None,
+            pending_reanchor: None,
         }
     }
 
@@ -1245,13 +1400,98 @@ impl ChartPane {
         added
     }
 
-    /// Throw away this pane's bars and everything anchored to them, keeping
-    /// the spec its own selectors ask for.
+    /// Where a market instant sits on this pane's series, as a fractional
+    /// slot — the answer re-anchoring and the shared mirror both run on.
+    ///
+    /// Bar centres, not edges: an anchor is being asked which *bar* it
+    /// belongs to, and the middle of that bar is where it reads as being on
+    /// it. `None` means the series does not reach the instant at all.
+    fn slot_of_time(&self, time: i64) -> Option<f32> {
+        // Past the newest bar first: on a time chart that space has an exact
+        // clock, and asking `slot_at_time` there would clamp a future anchor
+        // onto the right edge instead of letting it run on.
+        if let Some(future) = self.future_slot_at_time(time) {
+            return Some(future + 0.5);
+        }
+        // Before the first bar this pane holds. `slot_at_time` answers slot 0
+        // there, which is a clamp and not a location — taking it would put the
+        // anchor on a bar it has nothing to do with and say nothing about it.
+        // `None` is what the off-series fade and the refused drag both read.
+        if self.slot_open_time(0).is_some_and(|first| time < first) {
+            return None;
+        }
+        let slots = self.slots();
+        let slot = self.slot_at_time(time)?.min(slots.checked_sub(1)?);
+        #[allow(clippy::cast_precision_loss)]
+        Some(slot as f32 + 0.5)
+    }
+
+    /// Re-express this pane's drawings against the series it holds now,
+    /// `old_slots` being the length of the series they were anchored to.
+    ///
+    /// The one call behind every re-cut — a timeframe switch, a bar-kind
+    /// switch, a rewind, a symbol change. Marks are never dropped by a state
+    /// change: the trader placed them and the trader removes them.
+    pub fn reanchor_drawings(&mut self, old_slots: usize) {
+        let new_slots = self.slots();
+        // Taken out of `self` for the call: the store has to be handed this
+        // pane's own time→slot answer, and a closure borrowing `&self` cannot
+        // coexist with a `&mut` borrow of one of its fields.
+        let mut drawings = std::mem::take(&mut self.drawings);
+        drawings.reanchor(old_slots, new_slots, |time| self.slot_of_time(time));
+        self.drawings = drawings;
+    }
+
+    /// Re-anchor as soon as there are bars to anchor to, after a reset left
+    /// the pane empty. Cheap enough to ask every frame: it is a flag test.
+    pub fn settle_pending_reanchor(&mut self) {
+        let Some(old_slots) = self.pending_reanchor else {
+            return;
+        };
+        if self.slots() == 0 {
+            return;
+        }
+        self.pending_reanchor = None;
+        self.reanchor_drawings(old_slots);
+    }
+
+    /// Rewrite the market instants behind the selected object's anchors after
+    /// a move that changed their bar positions (drag or keyboard nudge).
+    ///
+    /// Without this the mark moves on this chart and its shared twin stays
+    /// where it was: market time is what the other panes read, so a move that
+    /// does not update it has moved only half the object.
+    pub fn retime_selected(&mut self) {
+        let Some(index) = self.drawings.selected() else {
+            return;
+        };
+        let Some(drawing) = self.drawings.items().get(index) else {
+            return;
+        };
+        // Collected first so the immutable borrow of the store ends before
+        // the write; every shipped tool has at most four anchors.
+        let times: SmallVec<[Option<i64>; 4]> = drawing
+            .points
+            .iter()
+            .map(|point| self.anchor_time(point.bar))
+            .collect();
+        self.drawings.set_times(index, &times);
+    }
+
+    /// Throw away this pane's bars, keeping the spec its own selectors ask
+    /// for and the marks the trader drew.
     ///
     /// Called when the market underneath changes — a feed switch, a source
     /// reset — because a bar index means nothing across two streams. The
-    /// drawings are cleared by the window, which owns the notice saying so.
+    /// drawings survive it: their anchors carry market time, so they are
+    /// re-expressed against the refilled series rather than discarded
+    /// ([`Self::settle_pending_reanchor`]). The re-anchor waits for bars to
+    /// exist, because an empty series can answer nothing.
     pub fn reset_series(&mut self) {
+        // A second reset before the first settled must not overwrite the
+        // baseline with the empty series it is looking at now.
+        let slots = self.slots();
+        self.pending_reanchor.get_or_insert(slots);
         // The prefix is bar-indexed against a series that no longer exists,
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
@@ -1367,6 +1607,141 @@ impl ChartPane {
             .flatten()
             .unwrap_or_else(|| scale.price_at(pos.y));
         Some(ChartPoint::at_time(bar, price, self.anchor_time(bar)))
+    }
+
+    /// Work a shared mark that lives on the other pane, from this one.
+    ///
+    /// Every answer leaves in market time and price — the coordinates two cuts
+    /// of one tape agree on — so the tab can hand them to the pane that holds
+    /// the object without either pane learning the other's bar space.
+    ///
+    /// The pointer rules are the ones this pane already applies to its own
+    /// marks: a handle before a body, a locked object that takes the gesture
+    /// and refuses to move, and a drag threshold so a click never re-angles a
+    /// level by two pixels of hand tremor.
+    fn interact_shared(
+        &mut self,
+        ui: &egui::Ui,
+        chrome: &mut PaneChrome<'_>,
+        pointer: SharedPointer,
+    ) {
+        let mark = |pane: &Self, position: egui::Pos2| {
+            pane.drawing_point_at(
+                position,
+                pointer.history_right,
+                pointer.total,
+                pointer.magnet,
+            )
+            .and_then(|point| Some((point.time_ms?, point.price)))
+        };
+
+        if pointer.pressed
+            && !pointer.over_chrome
+            && let Some((position, pick)) = pointer
+                .position
+                .filter(|position| pointer.area.contains(*position))
+                .zip(chrome.shared_pick)
+        {
+            // Selecting is not moving (§D9): the press takes the object
+            // whether or not the drag that may follow is allowed.
+            chrome.shared.edit = Some(SharedEdit::Select(pick.index));
+            self.shared_drag_pending_from = Some(position);
+            self.shared_pointer_mark = mark(self, position);
+            self.shared_drag = if pick.locked {
+                SharedDrag::Blocked
+            } else {
+                chrome.shared.begin_gesture = true;
+                match pick.anchor {
+                    Some(anchor) => SharedDrag::Anchor {
+                        index: pick.index,
+                        anchor,
+                    },
+                    None => SharedDrag::Body { index: pick.index },
+                }
+            };
+            return;
+        }
+
+        if !self.shared_drag.is_active() {
+            // Hover feedback, so a mirrored mark does not feel deader than the
+            // object it is: the same three cursors its own pane shows.
+            if !pointer.over_chrome
+                && pointer
+                    .position
+                    .is_some_and(|position| pointer.area.contains(position))
+                && let Some(pick) = chrome.shared_pick
+            {
+                ui.ctx().set_cursor_icon(match (pick.locked, pick.anchor) {
+                    (true, _) => egui::CursorIcon::NotAllowed,
+                    (false, Some(_)) => egui::CursorIcon::ResizeNwSe,
+                    (false, None) => egui::CursorIcon::Move,
+                });
+            }
+            return;
+        }
+
+        if pointer.released {
+            chrome.shared.commit_gesture = true;
+            self.shared_drag = SharedDrag::None;
+            self.shared_drag_pending_from = None;
+            self.shared_pointer_mark = None;
+            return;
+        }
+        if !pointer.down {
+            return;
+        }
+        // Under the threshold the object does not move at all, so a click on
+        // the mirror stays a click.
+        if let Some(origin) = self.shared_drag_pending_from {
+            let travelled = pointer
+                .position
+                .is_some_and(|position| (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX);
+            if !travelled {
+                return;
+            }
+            self.shared_drag_pending_from = None;
+        }
+        // Clamped, not filtered: the gesture is already ours, and it keeps
+        // working while the pointer travels off the pane — over the inspector
+        // that this very press opened, most of all.
+        let Some(position) = pointer.position.map(|position| {
+            egui::pos2(
+                position.x.clamp(pointer.area.left(), pointer.area.right()),
+                position.y.clamp(pointer.area.top(), pointer.area.bottom()),
+            )
+        }) else {
+            return;
+        };
+        // A pointer over the empty space past the newest bar of a tick or
+        // volume chart names no instant, and none is invented: the mark holds
+        // still for that frame rather than jumping to a guess.
+        let Some((time_ms, price)) = mark(self, position) else {
+            return;
+        };
+        match self.shared_drag {
+            SharedDrag::Anchor { index, anchor } => {
+                chrome.shared.edit = Some(SharedEdit::MoveAnchor {
+                    index,
+                    anchor,
+                    time_ms,
+                    price,
+                });
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+            }
+            SharedDrag::Body { index } => {
+                if let Some((last_time, last_price)) = self.shared_pointer_mark {
+                    chrome.shared.edit = Some(SharedEdit::Translate {
+                        index,
+                        delta_ms: time_ms - last_time,
+                        delta_price: price - last_price,
+                    });
+                }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+            }
+            SharedDrag::Blocked => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
+            SharedDrag::None => {}
+        }
+        self.shared_pointer_mark = Some((time_ms, price));
     }
 
     /// The magnet, applied to the bar the pointer is over.
@@ -1623,15 +1998,10 @@ impl ChartPane {
             return None;
         }
         let drawing = self.drawings.items().get(drawing_index)?;
-        self.projected_drawing_points(drawing, history_right, total, scale)
-            .iter()
-            .enumerate()
-            .map(|(point_index, point)| (point_index, point.distance_sq(pos)))
-            .filter(|(_, distance_sq)| {
-                *distance_sq <= DRAWING_ANCHOR_RADIUS_PX * DRAWING_ANCHOR_RADIUS_PX
-            })
-            .min_by(|left, right| left.1.total_cmp(&right.1))
-            .map(|(point_index, _)| point_index)
+        anchor_hit(
+            &self.projected_drawing_points(drawing, history_right, total, scale),
+            pos,
+        )
     }
 
     /// What a pointer at `pos` is on: a drawing's handle first, then its
@@ -1963,6 +2333,11 @@ impl ChartPane {
                             let delta_price =
                                 -f64::from(travel.y / areas.chart.height()) * (hi - lo);
                             self.drawings.translate_selected(delta_bar, delta_price);
+                            // Market time is what every other pane reads the
+                            // object through; a move that left it behind
+                            // would drag the mark here and leave its shared
+                            // twin standing where it used to be.
+                            self.retime_selected();
                         }
                     }
                     DrawingDrag::Blocked => {
@@ -1971,7 +2346,36 @@ impl ChartPane {
                     DrawingDrag::None => {}
                 }
             }
-            drawing_drag_consumes_gesture = self.drawing_drag.is_active();
+            // Marks the *other* pane owns, worked from this one (§D7).
+            //
+            // A shared object is one object, so the trader may grab it on
+            // either chart it appears on — the alternative is a mark that can
+            // be seen here and only deleted over there, which is the split
+            // getting in the way of the work. This pane's own objects still
+            // win the press: the mirror is the second answer, never the first.
+            //
+            // Everything below is said in market time and price, and the tab
+            // hands it to the pane that holds the object. Nothing is written
+            // to a copy.
+            if !self.drawing_drag.is_active() {
+                self.interact_shared(
+                    ui,
+                    chrome,
+                    SharedPointer {
+                        position: pointer_position,
+                        area: drawing_area,
+                        over_chrome,
+                        pressed: primary_pressed,
+                        down: primary_down,
+                        released: primary_released,
+                        history_right,
+                        total,
+                        magnet,
+                    },
+                );
+            }
+            drawing_drag_consumes_gesture =
+                self.drawing_drag.is_active() || self.shared_drag.is_active();
             if primary_released {
                 // One gesture, one undo entry — recorded only if it moved.
                 self.drawings.commit_gesture();
@@ -1987,6 +2391,9 @@ impl ChartPane {
             self.drawing_drag = DrawingDrag::None;
             self.drawing_press_pick = None;
             self.drawing_drag_pending_from = None;
+            self.shared_drag = SharedDrag::None;
+            self.shared_drag_pending_from = None;
+            self.shared_pointer_mark = None;
         }
         // Where the press landed, not where the pointer is now: a pan that
         // started on the candles keeps working when it crosses the divider.
@@ -2928,10 +3335,12 @@ impl ChartPane {
         )
     }
 
-    /// Opacity a shared drawing is painted at on a pane whose series does not
-    /// reach its anchors. Faded, not hidden and not silently snapped: the
-    /// mark is real, its position on *this* chart is not exact.
-    const SHARED_CLAMPED_OPACITY: f32 = 0.45;
+    /// Opacity a drawing is painted at on a pane whose series does not reach
+    /// its anchors — a mirrored mark clamped to an edge, or one of this
+    /// pane's own that outlived the bars it was drawn on. Faded, not hidden
+    /// and not silently snapped: the mark is real, its position on *this*
+    /// chart is not exact.
+    const CLAMPED_OPACITY: f32 = 0.45;
 
     /// The band drawings live in: the candles minus the live lane.
     ///
@@ -2963,6 +3372,124 @@ impl ChartPane {
         );
         let history_right = self.last_lane_divider_x.unwrap_or(chart.right());
         Some((self.drawing_area(chart), history_right, self.slots(), scale))
+    }
+
+    /// What a pointer at `pos` grabs among `source`'s shared marks: a handle
+    /// anywhere first, then the topmost body — the same order, and the same
+    /// primitives, this pane uses on its own objects.
+    ///
+    /// Runs on the projection cached by the last frame, which is the geometry
+    /// the trader was looking at when they pressed (§D8: no gesture re-measures
+    /// a world it moved).
+    ///
+    /// Per-frame cost: nothing until a mark is actually shared, and bounded by
+    /// the handful of objects on the chart when one is.
+    pub fn shared_pick(&self, source: &Self, pos: egui::Pos2) -> Option<(usize, Option<usize>)> {
+        if !source.drawings.items().iter().any(Drawing::shared) {
+            return None;
+        }
+        let (chart, history_right, total, scale) = self.last_projection()?;
+        let mut body = None;
+        for (index, drawing) in source.drawings.items().iter().enumerate().rev() {
+            if !drawing.shared() || !source.drawings.is_visible(index) {
+                continue;
+            }
+            let Some((anchors, _)) = self.reproject(drawing) else {
+                continue;
+            };
+            let points: SmallVec<[egui::Pos2; 4]> = anchors
+                .iter()
+                .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
+                .collect();
+            if let Some(anchor) = anchor_hit(&points, pos) {
+                return Some((index, Some(anchor)));
+            }
+            if body.is_none() {
+                let ctxt = DrawContext {
+                    payload: drawing.payload.as_ref(),
+                    anchors: &anchors,
+                    scale: &scale,
+                    style: drawing.style,
+                    selected: source.drawings.selected() == Some(index),
+                    halo: false,
+                };
+                if drawing
+                    .tool
+                    .hit_test(chart, &points, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+                {
+                    body = Some((index, None));
+                }
+            }
+        }
+        body
+    }
+
+    /// Apply an edit another pane of this tab made to one of this pane's
+    /// shared marks, back in this pane's own bar space.
+    ///
+    /// The instants arrive as they were read off the other chart and are
+    /// resolved here, which is what makes the two views one object rather than
+    /// two copies of one.
+    pub fn apply_shared_edit(&mut self, edit: SharedEdit) {
+        match edit {
+            SharedEdit::Select(index) => self.drawings.select(Some(index)),
+            SharedEdit::MoveAnchor {
+                index,
+                anchor,
+                time_ms,
+                price,
+            } => {
+                let Some(bar) = self.slot_of_time(time_ms) else {
+                    return;
+                };
+                self.drawings.move_anchor(
+                    index,
+                    anchor,
+                    ChartPoint::at_time(bar, price, Some(time_ms)),
+                );
+            }
+            SharedEdit::Translate {
+                index,
+                delta_ms,
+                delta_price,
+            } => self.translate_shared(index, delta_ms, delta_price),
+        }
+    }
+
+    /// Move a whole shared object by an amount of market time and price.
+    ///
+    /// Time, not bars: the two panes cut the tape differently, so the same
+    /// drag is a different number of bars on each — and market time is what
+    /// both of them mean by it.
+    ///
+    /// Resolved in full before anything is written. A drag that would put part
+    /// of the object where this pane's series cannot reach moves nothing at
+    /// all, rather than leaving a shape with one end on a bar and the other on
+    /// an instant that has none.
+    fn translate_shared(&mut self, index: usize, delta_ms: i64, delta_price: f64) {
+        let Some(drawing) = self.drawings.items().get(index) else {
+            return;
+        };
+        if drawing.locked {
+            return;
+        }
+        let mut moved: SmallVec<[ChartPoint; 4]> = SmallVec::new();
+        for point in &drawing.points {
+            let Some(time) = point.time_ms.and_then(|time| time.checked_add(delta_ms)) else {
+                return;
+            };
+            let Some(bar) = self.slot_of_time(time) else {
+                return;
+            };
+            moved.push(ChartPoint::at_time(
+                bar,
+                point.price + delta_price,
+                Some(time),
+            ));
+        }
+        for (anchor, point) in moved.into_iter().enumerate() {
+            self.drawings.move_anchor(index, anchor, point);
+        }
     }
 
     /// Paint the shared drawings that live on `source`, re-expressed on this
@@ -3001,10 +3528,7 @@ impl ChartPane {
             // rather than by pretending to sit on the edge bar.
             let style = if clamped {
                 DrawingStyle {
-                    color: drawing
-                        .style
-                        .color
-                        .gamma_multiply(Self::SHARED_CLAMPED_OPACITY),
+                    color: drawing.style.color.gamma_multiply(Self::CLAMPED_OPACITY),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -3017,17 +3541,29 @@ impl ChartPane {
                 .iter()
                 .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
                 .collect();
+            // A mark selected here shows it here. The trader can now take and
+            // move it from this pane (`Self::interact_shared`), and a
+            // selection that painted only on the other chart would leave the
+            // gesture with no visible subject.
+            let selected = source.drawings.selected() == Some(index);
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
                 style,
-                selected: false,
+                selected,
                 halo: false,
             };
-            drawing
-                .tool
-                .paint(&clipped, chart, style, &points, &ctxt, false);
+            // Locked geometry shows no handles on either chart: they would
+            // advertise a drag that is refused.
+            drawing.tool.paint(
+                &clipped,
+                chart,
+                style,
+                &points,
+                &ctxt,
+                selected && !drawing.locked,
+            );
         }
     }
 
@@ -3115,11 +3651,26 @@ impl ChartPane {
             }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
             let selected = self.drawings.selected() == Some(index);
+            // A mark whose anchors this series cannot reach — drawn before
+            // the history now loaded, or on the instrument this tab used to
+            // show. It survived the change, because only the trader deletes a
+            // drawing, and it says what it is by fading rather than by
+            // pretending to sit on the bar it was clamped to. Same opacity the
+            // mirrored marks use for the same reason.
+            let style = if drawing.off_series {
+                DrawingStyle {
+                    color: drawing.style.color.gamma_multiply(Self::CLAMPED_OPACITY),
+                    fill_alpha: 0,
+                    ..drawing.style
+                }
+            } else {
+                drawing.style
+            };
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
-                style: drawing.style,
+                style,
                 selected,
                 halo: false,
             };
@@ -3128,7 +3679,7 @@ impl ChartPane {
             drawing.tool.paint(
                 &clipped,
                 chart_rect,
-                drawing.style,
+                style,
                 &points,
                 &ctxt,
                 selected && !drawing.locked,
@@ -3422,6 +3973,162 @@ mod tests {
         pane.last_lane_divider_x = Some(-40.0);
         let degenerate = pane.drawing_area(chart);
         assert!(degenerate.right() >= degenerate.left());
+    }
+
+    /// A pane cutting one bar per trade, with `count` bars a second apart —
+    /// so a market instant and a slot are the same statement, and a test can
+    /// say which bar it means by naming the moment.
+    fn pane_of_seconds(count: u64) -> ChartPane {
+        use rust_decimal::Decimal;
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(1), "TESTUSDT".to_owned());
+        let trades: Vec<_> = (0..count)
+            .map(|index| quantick_engine::Trade {
+                agg_id: index,
+                timestamp_ms: 1_700_000_000_000 + index as i64 * 1_000,
+                price: Decimal::from(100),
+                quantity: Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            })
+            .collect();
+        pane.ingest_backfill(&trades);
+        pane
+    }
+
+    /// A mark placed on the bar at `slot`, shared with the tab's other panes.
+    fn shared_mark_at(pane: &mut ChartPane, slot: usize, price: f64) {
+        let time = pane.slot_open_time(slot).expect("the slot holds a bar");
+        #[allow(clippy::cast_precision_loss)]
+        let point = ChartPoint::at_time(slot as f32 + 0.5, price, Some(time));
+        pane.drawings.place(
+            drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == "horizontal-line")
+                .expect("the horizontal line is registered"),
+            point,
+        );
+        pane.drawings
+            .selected_mut()
+            .expect("placement selects what it completed")
+            .scope = drawings::DrawingScope::AllCharts;
+    }
+
+    #[test]
+    fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
+        let mut pane = pane_of_seconds(20);
+        shared_mark_at(&mut pane, 4, 100.0);
+
+        // The other chart reports where it put the handle in market time; this
+        // pane is the one that knows which of *its* bars that is.
+        let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
+        pane.apply_shared_edit(SharedEdit::MoveAnchor {
+            index: 0,
+            anchor: 0,
+            time_ms: moved_to,
+            price: 101.5,
+        });
+
+        let point = pane.drawings.items()[0].points[0];
+        assert_eq!(point.time_ms, Some(moved_to));
+        assert_eq!(point.bar.floor() as usize, 11, "resolved into this pane");
+        assert!((point.price - 101.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_body_drag_from_the_other_pane_moves_every_anchor_by_the_same_time() {
+        let mut pane = pane_of_seconds(20);
+        shared_mark_at(&mut pane, 4, 100.0);
+        let before = pane.drawings.items()[0].points[0];
+
+        pane.apply_shared_edit(SharedEdit::Translate {
+            index: 0,
+            delta_ms: 3_000,
+            delta_price: 2.0,
+        });
+
+        let after = pane.drawings.items()[0].points[0];
+        assert_eq!(
+            after.time_ms,
+            before.time_ms.map(|time| time + 3_000),
+            "the drag is said in market time"
+        );
+        assert_eq!(
+            after.bar.floor() as usize,
+            7,
+            "and three seconds is three bars on a one-trade-per-bar cut"
+        );
+        assert!((after.price - 102.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_locked_mark_refuses_an_edit_from_the_other_pane_too() {
+        let mut pane = pane_of_seconds(20);
+        shared_mark_at(&mut pane, 4, 100.0);
+        pane.drawings
+            .selected_mut()
+            .expect("the mark is selected")
+            .locked = true;
+        let before = pane.drawings.items()[0].points.clone();
+
+        pane.apply_shared_edit(SharedEdit::Translate {
+            index: 0,
+            delta_ms: 3_000,
+            delta_price: 2.0,
+        });
+        let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
+        pane.apply_shared_edit(SharedEdit::MoveAnchor {
+            index: 0,
+            anchor: 0,
+            time_ms: moved_to,
+            price: 101.5,
+        });
+
+        assert_eq!(
+            pane.drawings.items()[0].points,
+            before,
+            "a lock protects the geometry from both charts, not just its own"
+        );
+    }
+
+    #[test]
+    fn a_drag_this_pane_cannot_place_moves_nothing_at_all() {
+        let mut pane = pane_of_seconds(20);
+        shared_mark_at(&mut pane, 4, 100.0);
+        let before = pane.drawings.items()[0].points.clone();
+
+        // Back past the first bar this pane holds: there is no slot for it,
+        // and half a shape on a bar and half on an instant is not an option.
+        pane.apply_shared_edit(SharedEdit::Translate {
+            index: 0,
+            delta_ms: -600_000,
+            delta_price: 0.0,
+        });
+
+        assert_eq!(pane.drawings.items()[0].points, before);
+    }
+
+    #[test]
+    fn a_recut_keeps_the_mark_on_its_own_instant() {
+        let mut pane = pane_of_seconds(20);
+        shared_mark_at(&mut pane, 6, 100.0);
+        let placed_at = pane.drawings.items()[0].points[0]
+            .time_ms
+            .expect("placed on a bar");
+        let old_slots = pane.slots();
+
+        // Two trades per bar: the same tape, half the bars.
+        pane.tick_n = 2;
+        let spec = pane.current_spec();
+        pane.state.set_spec(spec);
+        pane.reanchor_drawings(old_slots);
+
+        let point = pane.drawings.items()[0].points[0];
+        assert_eq!(point.time_ms, Some(placed_at), "the instant is untouched");
+        assert_eq!(
+            pane.slot_at_time(placed_at),
+            Some(point.bar.floor() as usize),
+            "the bar is that instant, re-asked of the new cut"
+        );
+        assert!(!pane.drawings.items()[0].off_series);
     }
 
     /// A bar spanning 98 … 102, for the magnet.
