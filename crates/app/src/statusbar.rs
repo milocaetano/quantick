@@ -152,13 +152,6 @@ pub struct StatusModel {
     /// Whether the perf readings (fps, frame time, trades) are shown
     /// (View → perf readings).
     pub show_perf: bool,
-    /// The Workspace menu's last answer, while it is still worth showing.
-    ///
-    /// It takes the front of the content section rather than a toast over the
-    /// chart: saving a workspace is a chrome action, and its answer belongs on
-    /// the line that already speaks for the chrome. It expires on its own —
-    /// see `WORKSPACE_NOTICE_LIFETIME`.
-    pub workspace_notice: Option<String>,
 }
 
 /// The tape cell: `arrival 123 ms` live, `stale 12 s` when the tape has gone
@@ -291,13 +284,6 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
 /// Returns whether the SIM cell was clicked.
 fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
     let mut sim_clicked = false;
-    // In front of the readings, in the accent the chrome uses for "quantick
-    // did what you asked": the trader clicked a menu entry and is looking for
-    // its answer, not hunting for it between the bar counts.
-    if let Some(notice) = &model.workspace_notice {
-        ui.label(egui::RichText::new(notice).monospace().color(theme::ACCENT));
-        ui.separator();
-    }
     ui.label(
         egui::RichText::new(&model.spec_summary)
             .monospace()
@@ -521,7 +507,6 @@ mod tests {
                 frame_avg_ms: Some(16.7),
                 frame_cpu_ms: Some(4.2),
                 show_perf: true,
-                workspace_notice: Some("Workspace saved".to_owned()),
             };
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -573,7 +558,6 @@ mod tests {
             frame_avg_ms: Some(16.7),
             frame_cpu_ms: Some(4.2),
             show_perf: false,
-            workspace_notice: None,
         };
         // Two passes: egui settles its layout on the second.
         let mut painted = String::new();
