@@ -1130,6 +1130,39 @@ impl Tab {
         self.set_layout(layout);
     }
 
+    /// Put this tab's canvas back the way a saved workspace recorded it: the
+    /// layout, the divider, the focused pane, and the interval the time pane
+    /// opens on.
+    ///
+    /// One method rather than four public fields, because the order matters
+    /// and only the tab knows it. The opening interval has to be set *before*
+    /// [`Self::set_layout`] arms the time pane, or the pane is built on the
+    /// header default and the saved interval lands one frame too late. The
+    /// focus is applied *after*, because `set_layout` moves it to whatever the
+    /// switch reveals — right for a menu click, wrong for a restore, where the
+    /// saved focus is the answer.
+    ///
+    /// Startup-scoped, like [`Self::apply_feed_declared_layout`]: the only
+    /// caller is the app restoring a workspace into a tab it has just opened.
+    pub fn restore_canvas(
+        &mut self,
+        layout: CanvasLayout,
+        split_fraction: Option<f32>,
+        focus: Option<PaneSide>,
+        time_interval_ms: Option<i64>,
+    ) {
+        if let Some(ms) = time_interval_ms {
+            self.time_pane_opening_interval_ms = ms;
+        }
+        self.set_layout(layout);
+        if let Some(fraction) = split_fraction {
+            self.split_fraction = clamp_pane_fraction(fraction);
+        }
+        if let Some(side) = focus {
+            self.focus = side;
+        }
+    }
+
     /// Let every pane's selectors settle, then mirror the result onto the
     /// rebuild indicator: it is up while *any* pane has a rebuild pending.
     pub fn apply_spec_changes(&mut self) -> bool {

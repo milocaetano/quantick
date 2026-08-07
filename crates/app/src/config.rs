@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::symbols_file::AddedSymbols;
 
@@ -399,7 +399,10 @@ impl MetaTraderSettings {
 /// A config-side twin of `crate::tab::CanvasLayout` rather than that enum
 /// itself, so the TOML vocabulary — part of the user-facing config contract —
 /// cannot drift when the canvas grows a layout a config should not name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// Serialized as well as deserialized: the saved workspace
+/// ([`crate::ui_state`]) writes a canvas layout back out, and it must speak
+/// the vocabulary the config reads — one name for one layout, in one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum DeclaredLayout {
     /// The flow pane alone — the factory default.
     #[serde(rename = "flow")]
@@ -960,6 +963,18 @@ pub fn apply_startup_selection_from_env(
     apply_startup_selection(config, feed.as_deref(), symbol.as_deref())
 }
 
+/// Whether either startup-selection env var named the market this run opens
+/// on.
+///
+/// The saved workspace ([`crate::ui_state`]) otherwise decides it, and this is
+/// how the two are ordered: an env var is an explicit request for this one
+/// run, so a validation run pinned to `QUANTICK_DEFAULT_SYMBOL` must not find
+/// itself on yesterday's cockpit instead.
+#[must_use]
+pub fn startup_selection_came_from_env() -> bool {
+    std::env::var_os(DEFAULT_FEED_ENV).is_some() || std::env::var_os(DEFAULT_SYMBOL_ENV).is_some()
+}
+
 /// Parse a config from a TOML string tagged with its `source`, fold in the
 /// user's added symbols, and validate the result.
 ///
@@ -1272,6 +1287,36 @@ mod tests {
             config.metatrader.endpoint_for("WIN$N").listen_addr,
             "127.0.0.1:9100",
             "while an unmapped symbol keeps the shared one"
+        );
+    }
+
+    /// The shipped default is two charts: a timeframe pane for context beside
+    /// a flow pane reading the tape by tick (user decision 2026-08-07).
+    ///
+    /// Asserted on the file rather than trusted to a comment in it, because
+    /// "what does quantick open on" is the first impression the product makes
+    /// and nothing else in the suite would notice it changing.
+    #[test]
+    fn the_shipped_default_opens_two_charts_with_the_flow_pane_on_tick_bars() {
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("the shipped config");
+        let opening = config
+            .feed(&config.default_feed)
+            .expect("default_feed is validated to exist");
+
+        assert_eq!(
+            opening.default_layout,
+            Some(DeclaredLayout::TimeAndFlow),
+            "the default open is the timeframe chart beside the flow chart"
+        );
+        assert_eq!(
+            config.startup_spec_for(&config.default_feed),
+            Some(crate::state::BarSpec::Tick(50)),
+            "and the flow chart reads the tape by tick, not by the clock"
         );
     }
 
