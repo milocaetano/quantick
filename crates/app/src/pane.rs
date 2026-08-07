@@ -1024,6 +1024,16 @@ impl ChartPane {
         self.state.set_spec(spec);
     }
 
+    #[cfg(test)]
+    /// Give this chart its own footprint setup, the way the settings window
+    /// does when a knob moves on it.
+    pub fn set_footprint_override(
+        &mut self,
+        config: Option<crate::footprint_config::FootprintConfig>,
+    ) {
+        self.footprint_override = config;
+    }
+
     /// An egui interaction id scoped to this pane.
     fn interaction_id(&self, name: &'static str) -> egui::Id {
         egui::Id::new((name, self.id))
@@ -4608,6 +4618,36 @@ fn magnet_price_of(
 mod tests {
     use super::*;
     use crate::indicator_worker::IndicatorEvent;
+
+    /// A chart that has never been configured follows the window's setup —
+    /// which is what keeps one chart behaving like a global preference —
+    /// and a chart configured on its own ignores it, which is what a split
+    /// layout needs. Inverting this resolution would silently give both
+    /// charts one reading.
+    #[test]
+    fn a_chart_follows_the_window_until_it_is_configured_itself() {
+        use crate::footprint_config::{FootprintConfig, FootprintStyle};
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let window = FootprintConfig::default();
+        assert_eq!(pane.footprint_config(&window), &window, "virgin follows");
+
+        let own = FootprintConfig {
+            style: FootprintStyle::Ladder,
+            show_numbers: false,
+            ..FootprintConfig::default()
+        };
+        pane.set_footprint_override(Some(own.clone()));
+        assert_eq!(
+            pane.footprint_config(&window),
+            &own,
+            "configured keeps its own"
+        );
+        assert_ne!(pane.footprint_config(&window), &window);
+
+        // "follow the default again".
+        pane.set_footprint_override(None);
+        assert_eq!(pane.footprint_config(&window), &window);
+    }
 
     /// The tape's lane is a live region, not a canvas. A drawing that ran
     /// across it painted over the flow — and worse, the painted end and the

@@ -96,10 +96,17 @@ const MIN_CHIP_PX: f32 = 14.0;
 /// clear of the legend line below them.
 const TOTALS_STRIP_OFFSET_Y: f32 = 22.0;
 
-/// The split style's per-bar backdrop: the canvas color at ~65% alpha, so
-/// the footprint owns its interior over the heatmap while the map stays
-/// fully visible between candles.
-const CANVAS_BACKDROP: egui::Color32 = egui::Color32::from_rgba_premultiplied(12, 15, 22, 166);
+/// How much of the canvas the split style's per-bar backdrop keeps: enough
+/// that the footprint owns its interior over the heatmap, little enough
+/// that the map stays visible between candles.
+const BACKDROP_ALPHA: f32 = 0.65;
+
+/// That backdrop, derived from the theme rather than hand-premultiplied —
+/// a canvas color copied by hand goes stale the day the theme moves, with
+/// no test to notice.
+fn canvas_backdrop() -> egui::Color32 {
+    theme::CANVAS.gamma_multiply(BACKDROP_ALPHA)
+}
 
 /// How much of the candle body's fill survives at `candle_width`, `1.0`
 /// (untouched) through `0.0` (outline only).
@@ -121,6 +128,9 @@ pub fn candle_body_fade(candle_width: f32) -> f32 {
 pub struct FootprintLod {
     level: Option<DetailLevel>,
     k: Option<i64>,
+    /// The adaptive imbalance floor and the state it was computed from:
+    /// `(closed bar count, capture group)`. See [`Self::adaptive_floor`].
+    floor: Option<(usize, Decimal, Decimal)>,
 }
 
 impl FootprintLod {
@@ -169,6 +179,31 @@ impl FootprintLod {
         };
         self.level = Some(level);
         level
+    }
+
+    /// The adaptive imbalance floor, recomputed only when the closed-bar
+    /// count or the capture grid changes.
+    ///
+    /// The value is a fact about the newest closed bars, not about the
+    /// frame — its own doc says so — but computing it per frame walked
+    /// every row of 50 ladders and sorted them, at 60 Hz, for a number that
+    /// changes once per bar. The cache key is what the answer depends on;
+    /// `bars` growing is exactly "a bar closed".
+    fn adaptive_floor(
+        &mut self,
+        bars: usize,
+        group: Decimal,
+        compute: impl FnOnce() -> Decimal,
+    ) -> Decimal {
+        if let Some((cached_bars, cached_group, floor)) = self.floor
+            && cached_bars == bars
+            && cached_group == group
+        {
+            return floor;
+        }
+        let floor = compute();
+        self.floor = Some((bars, group, floor));
+        floor
     }
 
     /// The display multiple, with the same dead band the level has: the
@@ -294,6 +329,14 @@ fn fmt_delta(delta: Decimal) -> Option<String> {
     Some(text)
 }
 
+/// A bar's whole-ladder delta: who won the bar. Saturating, like every
+/// other quantity fold here — a corrupt feed must not panic the paint.
+fn bar_delta(fp: &BarFootprint) -> Decimal {
+    fp.levels()
+        .values()
+        .fold(Decimal::ZERO, |sum, cell| sum.saturating_add(cell.delta()))
+}
+
 /// One stacked zone spanning one or more adjacent bars, in display buckets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZoneMark {
@@ -370,9 +413,12 @@ fn adaptive_min_qty<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Deci
     if volumes.is_empty() {
         return Decimal::ZERO;
     }
-    volumes.sort_by(f64::total_cmp);
-    let p60 = volumes[(volumes.len().saturating_sub(1)) * 60 / 100];
-    Decimal::from_f64(p60).unwrap_or(Decimal::ZERO)
+    // Only the p60 is read, so partition around it instead of ordering the
+    // whole vector: linear rather than n log n over up to a few thousand
+    // rows. See `FootprintLod::adaptive_floor` for why this runs rarely.
+    let index = (volumes.len().saturating_sub(1)) * 60 / 100;
+    let (_, p60, _) = volumes.select_nth_unstable_by(index, f64::total_cmp);
+    Decimal::from_f64(*p60).unwrap_or(Decimal::ZERO)
 }
 
 /// Everything one frame of the layer needs, borrowed from the pane's draw.
@@ -479,9 +525,12 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
             )
     };
 
-    let min_qty = frame.config.imbalance_min_qty.unwrap_or_else(|| {
-        adaptive_min_qty(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS))
-    });
+    let min_qty = match frame.config.imbalance_min_qty {
+        Some(pinned) => pinned,
+        None => lod.adaptive_floor(frame.footprints.len(), group, || {
+            adaptive_min_qty(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS))
+        }),
+    };
     let ratio = frame.config.imbalance_ratio;
 
     let mut cells_left = CELL_BUDGET;
@@ -531,16 +580,13 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // The per-bar delta totals strip at the chart's bottom — the reference
     // charts' footer chips: one signed, side-colored number per bar saying
     // who won it overall. From Compact up: at Profile widths the chips
-    // would overlap into noise.
+    // would overlap into noise. `bar_delta` is the tested fold.
     if level >= DetailLevel::Compact
         && frame.config.show_delta_totals
         && frame.config.style == crate::footprint_config::FootprintStyle::Split
     {
         for (slot, fp) in visible_ladders() {
-            let delta: Decimal = fp
-                .levels()
-                .values()
-                .fold(Decimal::ZERO, |sum, cell| sum.saturating_add(cell.delta()));
+            let delta = bar_delta(fp);
             let Some(text) = fmt_delta(delta) else {
                 continue;
             };
@@ -714,7 +760,7 @@ fn draw_bar(
                 egui::pos2(xc + reach, bar_bottom),
             ),
             egui::Rounding::ZERO,
-            CANVAS_BACKDROP,
+            canvas_backdrop(),
         );
         painter.line_segment(
             [egui::pos2(xc, bar_top), egui::pos2(xc, bar_bottom)],
@@ -726,11 +772,14 @@ fn draw_bar(
         if *cells_left == 0 {
             return;
         }
-        *cells_left -= 1;
         let (top, bottom) = row_band(frame, row, row_group);
         if bottom < frame.chart_rect.top() || top > frame.chart_rect.bottom() {
+            // Off-screen rows cost no budget: the cap exists to bound what
+            // is *painted*, and spending it on invisible rows would starve
+            // the visible bars of a tall ladder.
             continue;
         }
+        *cells_left -= 1;
         let row_height = (bottom - top).max(1.0);
         let is_poc = poc == Some(row);
         let buy_imbalance = dominates(cell.buy, neighbour(row - 1, Side::Sell));
@@ -1012,7 +1061,7 @@ fn draw_bar(
             painter.rect_filled(
                 anchor.expand(2.0),
                 egui::Rounding::same(2.0),
-                CANVAS_BACKDROP,
+                canvas_backdrop(),
             );
             painter.rect_stroke(
                 anchor.expand(2.0),
@@ -1031,7 +1080,7 @@ fn draw_poc_line(frame: &LayerFrame<'_>, x_from: f32, x_to: f32, row: i64, row_g
     let y = (top + bottom) / 2.0;
     frame.painter.line_segment(
         [egui::pos2(x_from, y), egui::pos2(x_to, y)],
-        egui::Stroke::new(3.5_f32, CANVAS_BACKDROP),
+        egui::Stroke::new(3.5_f32, canvas_backdrop()),
     );
     frame.painter.line_segment(
         [egui::pos2(x_from, y), egui::pos2(x_to, y)],
@@ -1407,5 +1456,67 @@ mod tests {
         // print does not drag the floor up to itself.
         assert_eq!(floor, dec("3"));
         assert_eq!(adaptive_min_qty(std::iter::empty()), Decimal::ZERO);
+    }
+
+    /// The floor is a fact about the closed bars, so it is computed once and
+    /// reused until a bar closes or the capture grid moves — the per-frame
+    /// version walked every row of 50 ladders at 60 Hz for a number that
+    /// changes once per bar.
+    #[test]
+    fn the_adaptive_floor_is_computed_once_per_bar_not_per_frame() {
+        let mut lod = FootprintLod::default();
+        let calls = std::cell::Cell::new(0);
+        let floor = |lod: &mut FootprintLod, bars: usize, group: Decimal| {
+            lod.adaptive_floor(bars, group, || {
+                calls.set(calls.get() + 1);
+                dec("7")
+            })
+        };
+        assert_eq!(floor(&mut lod, 50, dec("0.5")), dec("7"));
+        assert_eq!(floor(&mut lod, 50, dec("0.5")), dec("7"));
+        assert_eq!(floor(&mut lod, 50, dec("0.5")), dec("7"));
+        assert_eq!(calls.get(), 1, "frames must not recompute the floor");
+        floor(&mut lod, 51, dec("0.5"));
+        assert_eq!(calls.get(), 2, "a bar closed");
+        floor(&mut lod, 51, dec("5"));
+        assert_eq!(calls.get(), 3, "the capture grid moved");
+    }
+
+    /// The bar's delta is the sum of its rows', and a bar balanced at
+    /// display resolution prints no chip at all.
+    #[test]
+    fn a_bars_delta_is_the_sum_of_its_rows() {
+        let mut builder = FootprintBuilder::new(dec("1"), DEFAULT_LEVEL_CAP);
+        for (i, (price, qty, side)) in [
+            ("100", "3", Side::Buy),
+            ("101", "1", Side::Sell),
+            ("102", "0.5", Side::Buy),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            builder.push(&Trade {
+                agg_id: i as u64,
+                timestamp_ms: i as i64,
+                price: dec(price),
+                quantity: dec(qty),
+                side,
+            });
+        }
+        assert_eq!(bar_delta(&builder.close().unwrap()), dec("2.5"));
+
+        let mut builder = FootprintBuilder::new(dec("1"), DEFAULT_LEVEL_CAP);
+        for (i, side) in [Side::Buy, Side::Sell].into_iter().enumerate() {
+            builder.push(&Trade {
+                agg_id: i as u64,
+                timestamp_ms: i as i64,
+                price: dec("100"),
+                quantity: dec("2"),
+                side,
+            });
+        }
+        let flat = builder.close().unwrap();
+        assert_eq!(bar_delta(&flat), Decimal::ZERO);
+        assert_eq!(fmt_delta(bar_delta(&flat)), None, "no winner, no chip");
     }
 }
