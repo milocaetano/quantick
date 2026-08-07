@@ -873,6 +873,13 @@ impl QuantickApp {
         }
         app.pending_drawing_demo =
             std::env::var("QUANTICK_DRAWINGS_DEMO").is_ok_and(|value| value == "1");
+        // The object manager is where a mark that cannot be trusted says so —
+        // the "off series" and "other market" badges live there, and a mark
+        // clamped to an edge may be nowhere near the visible window, making
+        // the list the only place it can be found. Reachable from a launch,
+        // like every other surface, or it cannot be checked without a mouse.
+        app.drawing_manager_open =
+            std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1");
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -4447,14 +4454,24 @@ impl QuantickApp {
                 .closed_bar(0)
                 .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
                 .unwrap_or(1.0);
-            pane.drawings.place_with(
-                drawings::DRAWING_TOOLS[0],
-                drawings::ChartPoint::at_time(0.5, base, Some(first - DEMO_OFF_SERIES_LEAD_MS)),
-                |tool| drawings::NewDrawing {
-                    style: drawings::DrawingStyle::default(),
-                    payload: tool.default_payload(),
-                },
-            );
+            // A one-anchor tool by name, not `DRAWING_TOOLS[0]` — that is the
+            // trend line, which needs two, so a single `place_with` left a
+            // half-finished draft and no object at all. The whole point here
+            // is to produce one *completed* off-series mark.
+            let single_anchor = drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == "horizontal-line");
+            if let Some(tool) = single_anchor {
+                let placed = pane.drawings.place_with(
+                    tool,
+                    drawings::ChartPoint::at_time(0.5, base, Some(first - DEMO_OFF_SERIES_LEAD_MS)),
+                    |tool| drawings::NewDrawing {
+                        style: drawings::DrawingStyle::default(),
+                        payload: tool.default_payload(),
+                    },
+                );
+                debug_assert!(placed, "a horizontal line completes on one anchor");
+            }
         }
         // Half the bars, same trades — the plainest re-cut there is. Two
         // settle frames because a spec change waits for the selector to hold
