@@ -748,7 +748,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeEma {
@@ -800,7 +800,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeCvd,
@@ -833,8 +833,8 @@ mod tests {
         let (bars, _) = bars_and_partial(8, 2);
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let doomed = views.allocate_slot("test.indicator".to_owned());
-        let survivor = views.allocate_slot("test.indicator".to_owned());
+        let doomed = views.allocate_slot("test.indicator");
+        let survivor = views.allocate_slot("test.indicator");
         for (slot, source) in [
             (doomed, IndicatorSource::NativeCvd),
             (survivor, IndicatorSource::NativeCvd),
@@ -923,7 +923,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeCvd,
@@ -979,7 +979,7 @@ mod tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeCvd,
@@ -1026,7 +1026,7 @@ mod script_load_tests {
     fn a_rejected_script_surfaces_its_error_with_line_and_code() {
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1061,7 +1061,7 @@ mod script_load_tests {
         let (name, text) = crate::indicators::library::EMBEDDED_SCRIPTS[0];
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1105,7 +1105,7 @@ mod object_event_tests {
             .expect("zigzag is embedded");
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1170,7 +1170,7 @@ mod set_inputs_tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1217,7 +1217,7 @@ plot(close * k)
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::NativeEma {
@@ -1274,7 +1274,7 @@ mod reload_tests {
     ) {
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {
@@ -1388,7 +1388,7 @@ mod reload_tests {
 
         let worker = IndicatorWorker::spawn();
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
             source: IndicatorSource::Script {

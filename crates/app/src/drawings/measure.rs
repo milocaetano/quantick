@@ -57,6 +57,7 @@ impl DrawingToolImpl for Measure {
                 axes: BOTH_AXES,
                 unit: ctxt.unit,
                 halo: ctxt.halo,
+                primary_band: ctxt.primary_band,
             },
         );
     }

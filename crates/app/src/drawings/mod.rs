@@ -182,6 +182,11 @@ pub struct DrawContext<'a> {
     pub scale: &'a PriceScale,
     /// What `scale` measures on this band — see [`ValueUnit`].
     pub unit: ValueUnit<'a>,
+    /// Whether this is the first band painting an object that crosses all of
+    /// them. A vertical line's stroke belongs in every band; its readout
+    /// plate and its selection handles belong in one, or a date range's
+    /// "17 bars 4m 21s" is stamped three times down the screen.
+    pub primary_band: bool,
     /// The object's own style — hit-testing reads it too (an invisible fill
     /// takes no part in the interior hit-test).
     pub style: DrawingStyle,
@@ -605,7 +610,9 @@ pub enum DrawingScope {
 /// never re-adopt a drawing onto a *different* indicator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneKey {
-    pub kind: String,
+    /// Shared, not cloned: a key is copied on every band carve, which runs
+    /// twice per chart pane per frame.
+    pub kind: std::sync::Arc<str>,
     pub ordinal: u8,
 }
 
@@ -1439,6 +1446,7 @@ mod tests {
             anchors: &anchors,
             scale: &scale,
             unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
@@ -1526,6 +1534,7 @@ mod tests {
                 anchors: &anchors,
                 scale: &scale,
                 unit: ValueUnit::Price,
+                primary_band: true,
                 style,
                 selected: true,
                 halo: false,
@@ -1666,6 +1675,7 @@ mod tests {
             anchors: &anchors,
             scale: &scale,
             unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
@@ -1687,6 +1697,7 @@ mod tests {
                 anchors: &anchors,
                 scale: &scale,
                 unit: ValueUnit::Price,
+                primary_band: true,
                 style: DrawingStyle::default(),
                 selected: false,
                 halo: false,

@@ -23,19 +23,19 @@ use smallvec::SmallVec;
 use crate::app::{
     PlotAreas, fmt_time_as, fmt_window, gesture_hits_lane, plot_split, split_time_strip,
 };
+use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
 use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
 use crate::drawings::{
     self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings, PresetHost,
-    ValueUnit,
 };
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
     IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
 };
-use crate::indicators::{IndicatorView, IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
+use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::price_view::PriceView;
@@ -528,85 +528,6 @@ impl DrawingDrag {
 /// The input pass takes this by `&mut` because placing a drawing re-arms the
 /// tool; the draw pass takes it by `&`, which is what stops a paint from
 /// arming anything.
-/// What the price band is called where a band has to name itself.
-const PRICE_BAND_LABEL: &str = "price";
-/// Said by the cursor over a collapsed pane, which has 20 px of strip and no
-/// axis to place an anchor against.
-const COLLAPSED_BAND_REFUSAL: &str = "collapsed - click the chevron to draw here";
-/// Said by a pane that has no range yet. The pane already writes "warming up"
-/// across its own centre, so the cursor only has to stop pretending.
-const WARMING_BAND_REFUSAL: &str = "no values yet - this pane is still warming up";
-
-/// One value axis of this chart pane, carved once per frame.
-///
-/// A *band* is a region owning a value axis: the candles' price band, plus
-/// one per expanded indicator pane. Drawings are placed, projected, picked
-/// and painted band by band, so a CVD level is a CVD level everywhere it is
-/// touched.
-pub struct Band {
-    /// The identity an object anchored here stores.
-    pub key: DrawingBand,
-    /// The drawable rows: the band's own height, x-clipped at the live lane.
-    pub rect: egui::Rect,
-    /// The scale this band's curve was drawn with. `None` while the band has
-    /// nothing to project against, which is exactly when it refuses.
-    pub scale: Option<PriceScale>,
-    /// What the band is called, for readouts and the inspector title.
-    pub label: String,
-    /// Why the band refuses an anchor right now, if it does.
-    pub refusal: Option<&'static str>,
-}
-
-impl Band {
-    /// Whether an anchor may be placed here at all.
-    #[must_use]
-    pub fn drawable(&self) -> bool {
-        self.refusal.is_none() && self.scale.is_some()
-    }
-
-    /// What this band's second coordinate measures — the difference between
-    /// a ruler that says `pts` and one that says `CVD`.
-    #[must_use]
-    fn unit(&self) -> ValueUnit<'_> {
-        match self.key {
-            DrawingBand::Price => ValueUnit::Price,
-            _ => ValueUnit::Indicator(&self.label),
-        }
-    }
-}
-
-/// How the chrome names the band an object lives on.
-pub enum BandLabel {
-    /// The candles. Says nothing anywhere: it is where drawings have always
-    /// been, and a chip on every existing object would be noise.
-    Price,
-    /// A time-only object, which crosses every band.
-    AllBands,
-    /// One indicator pane, by the name that pane shows.
-    Indicator(String),
-    /// The indicator it annotates is not on this chart right now. The object
-    /// is kept, not deleted, and re-adopted when that indicator comes back.
-    Parked(String),
-}
-
-impl BandLabel {
-    /// The short word the manager and the inspector print, if any.
-    #[must_use]
-    pub fn chip(&self) -> Option<String> {
-        match self {
-            BandLabel::Price => None,
-            BandLabel::AllBands => Some("all bands".to_owned()),
-            BandLabel::Indicator(label) => Some(label.clone()),
-            // Named by kind, because the instance is gone: `native.cvd` reads
-            // as "cvd", a script as its file name.
-            BandLabel::Parked(kind) => Some(format!(
-                "not on chart - {}",
-                kind.rsplit('.').next().unwrap_or(kind)
-            )),
-        }
-    }
-}
-
 pub struct PaneChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
@@ -711,8 +632,11 @@ pub struct ChartPane {
     pub last_chart_area: Option<egui::Rect>,
     /// The bands the last [`Self::draw_chart`] painted, kept for the passes
     /// that run outside it: the tab's shared-drawing projection and the
-    /// inspector's "which band is this on".
-    last_bands: Vec<Band>,
+    /// inspector's "which band is this on". Reused every frame rather than
+    /// rebuilt, so the draw pass allocates no container.
+    last_bands: Bands,
+    /// The price band's label, shared into every carve instead of cloned.
+    price_band_label: std::sync::Arc<str>,
     // The raw canvas area the last frame split into chart, panes and gutters.
     // Kept so a caller that needs a band it does not otherwise see — the pane
     // axis tests aiming a drag at a pane's own gutter — asks `plot_split` for
@@ -845,7 +769,8 @@ impl ChartPane {
             last_chart_height: 1.0,
             last_chart_top: 0.0,
             last_chart_area: None,
-            last_bands: Vec::new(),
+            last_bands: Bands::new(),
+            price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             last_plot_area: None,
             hover_pos: None,
             history_prefix: Vec::new(),
@@ -1497,7 +1422,7 @@ impl ChartPane {
                 let view = self.indicators.visible_panes().find(|view| {
                     DrawingBand::Indicator(self.indicators.pane_key(view)) == band.key
                 })?;
-                magnet_value_of(view, row, pointer_y, scale)
+                bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
         }
     }
@@ -1571,9 +1496,19 @@ impl ChartPane {
             egui::Sense::click_and_drag(),
         );
         self.hover_pos = response.hover_pos();
+        // Floating chrome is opaque to the pointer here too: a press on the
+        // inspector must not drop an anchor on the canvas underneath it. The
+        // Pointer path has always honoured this; placement reads the raw
+        // pointer, so it has to ask the same question itself.
+        let over_chrome = |ui: &egui::Ui, position: egui::Pos2| {
+            ui.ctx()
+                .layer_id_at(position)
+                .is_some_and(|layer| layer != ui.layer_id())
+        };
         let hovered = response
             .hover_pos()
-            .and_then(|position| Self::band_at(bands, position));
+            .filter(|position| !over_chrome(ui, *position))
+            .and_then(|position| bands::band_at(bands, position));
         // The accent hairline the draw pass puts on the band about to receive
         // the anchor — the split view's own "your next command lands here".
         let over_pane_chrome = response
@@ -1582,10 +1517,13 @@ impl ChartPane {
         self.drawing_band_hint = hovered
             .filter(|band| band.drawable() && !over_pane_chrome)
             .map(|band| band.rect);
-        self.drawing_hover = response.hover_pos().and_then(|position| {
-            let (band, position) = self.placement_target(areas, bands, position)?;
-            self.drawing_point_at(position, history_right, self.slots(), magnet, band)
-        });
+        self.drawing_hover = response
+            .hover_pos()
+            .filter(|position| !over_chrome(ui, *position))
+            .and_then(|position| {
+                let (band, position) = self.placement_target(areas, bands, position)?;
+                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+            });
         if (response.hovered() || response.dragged()) && !over_pane_chrome {
             ui.ctx().set_cursor_icon(match hovered {
                 Some(band) if band.drawable() => egui::CursorIcon::Crosshair,
@@ -1605,7 +1543,8 @@ impl ChartPane {
                 .then(|| input.pointer.interact_pos())
                 .flatten()
         });
-        if let Some(position) = pressed_position.filter(|position| surface.contains(*position))
+        if let Some(position) = pressed_position
+            .filter(|position| surface.contains(*position) && !over_chrome(ui, *position))
             && let Some((band, position)) = self.placement_target(areas, bands, position)
             && let Some(point) =
                 self.drawing_point_at(position, history_right, self.slots(), magnet, band)
@@ -1667,7 +1606,7 @@ impl ChartPane {
             .and_then(|draft| bands.iter().find(|band| band.key == draft.band));
         let band = match pinned {
             Some(band) => band,
-            None => Self::band_at(bands, position)?,
+            None => bands::band_at(bands, position)?,
         };
         if !band.drawable() {
             return None;
@@ -1741,7 +1680,7 @@ impl ChartPane {
             .enumerate()
             .rev()
             .filter(|(index, drawing)| {
-                self.drawings.is_visible(*index) && Self::drawing_in_band(drawing, band)
+                self.drawings.is_visible(*index) && bands::drawing_in_band(drawing, band)
             })
             .find_map(|(index, drawing)| {
                 let projected = self.projected_drawing_points(drawing, history_right, total, scale);
@@ -1750,6 +1689,7 @@ impl ChartPane {
                     anchors: &drawing.points,
                     scale,
                     unit: band.unit(),
+                    primary_band: true,
                     style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
@@ -1775,7 +1715,7 @@ impl ChartPane {
         let hits: Vec<usize> = (0..self.drawings.items().len())
             .rev()
             .filter(|&index| self.drawings.is_visible(index))
-            .filter(|&index| Self::drawing_in_band(&self.drawings.items()[index], band))
+            .filter(|&index| bands::drawing_in_band(&self.drawings.items()[index], band))
             .filter(|&index| {
                 let drawing = &self.drawings.items()[index];
                 let projected = self.projected_drawing_points(drawing, history_right, total, scale);
@@ -1784,6 +1724,7 @@ impl ChartPane {
                     anchors: &drawing.points,
                     scale,
                     unit: band.unit(),
+                    primary_band: true,
                     style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
@@ -1819,7 +1760,7 @@ impl ChartPane {
             .drawings
             .items()
             .get(drawing_index)
-            .filter(|drawing| Self::drawing_in_band(drawing, band))?;
+            .filter(|drawing| bands::drawing_in_band(drawing, band))?;
         self.projected_drawing_points(drawing, history_right, total, scale)
             .iter()
             .enumerate()
@@ -1974,7 +1915,13 @@ impl ChartPane {
         // deliberately absent here — cancels live in the app's single escape
         // stack (`handle_drawing_keys`). Only the focused pane offers the
         // gesture, because the whole tab shares one simulator.
+        //
+        // Not while a drawing tool is armed: the button is the tool's, and it
+        // can only be handed out once. Without this gate a click meant to
+        // drop an anchor would *also* reach an order's ✕ and cancel it —
+        // the early return this replaced used to hide that.
         let paper_gesture = chrome.paper_owns_input
+            && !tool_armed
             && chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
                 scale: drawing_scale.as_ref(),
@@ -1989,6 +1936,7 @@ impl ChartPane {
         // band refuse a pan with no explanation at all.
         if chrome.paper_owns_input
             && !over_chrome
+            && !tool_armed
             && let Some(position) =
                 pointer_position.filter(|position| drawing_area.contains(*position))
             && let Some(scale) = drawing_scale.as_ref()
@@ -2005,7 +1953,7 @@ impl ChartPane {
             let pointer_band = pointer_position
                 .filter(|_| !over_chrome)
                 .filter(|position| !Self::pane_chrome_hit(&areas, *position))
-                .and_then(|position| Self::band_at(&bands, position))
+                .and_then(|position| bands::band_at(&bands, position))
                 .filter(|band| band.drawable());
             // Hover feedback: a resize cursor over a selected anchor, a move
             // cursor over any visible body, and not-allowed over locked
@@ -2157,7 +2105,7 @@ impl ChartPane {
                             .drawings
                             .items()
                             .get(drawing_index)
-                            .and_then(|drawing| Self::band_of(&bands, drawing));
+                            .and_then(|drawing| bands::band_of(&bands, drawing));
                         if let Some(band) = dragged
                             && let Some(position) = pointer_position
                         {
@@ -2178,7 +2126,7 @@ impl ChartPane {
                             .drawings
                             .selected()
                             .and_then(|index| self.drawings.items().get(index))
-                            .and_then(|drawing| Self::band_of(&bands, drawing));
+                            .and_then(|drawing| bands::band_of(&bands, drawing));
                         if let Some(band) = dragged
                             && let Some(scale) = band.scale
                         {
@@ -2217,8 +2165,13 @@ impl ChartPane {
         }
         // Whether the primary button is still the chart's this frame. An
         // armed tool, a drawing being dragged and a grabbed paper line each
-        // take the button — and only the button: the wheel, the axes, the
-        // dividers and the chevrons answer throughout.
+        // take it — and only it. Everything that is not the primary button
+        // keeps answering throughout: the wheel over the candles and over
+        // every pane, both axis gutters, the time strip, the lane and pane
+        // dividers, the collapse chevrons, and the middle-button pan added
+        // below. A primary *drag* with a tool armed is that tool's second
+        // anchor, so it cannot also pan — which is exactly why the middle
+        // button does.
         let primary_free = !tool_armed && !drawing_drag_consumes_gesture && !paper_gesture;
         // Where the press landed, not where the pointer is now: a pan that
         // started on the candles keeps working when it crosses the divider.
@@ -2255,6 +2208,32 @@ impl ChartPane {
                 } else {
                     self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 }
+            }
+        }
+        // The middle button pans, always — including mid-placement, which is
+        // the whole reason it exists. A drag with a tool armed is that tool's
+        // second anchor, so the primary button genuinely cannot pan then; a
+        // trader who drops one end of a trend line and finds the other end
+        // off screen would otherwise have to cancel the object to go look for
+        // it. Same axes, same feel, a button the tools never take.
+        if total > 0 {
+            let (middle_down, delta) =
+                ui.input(|input| (input.pointer.middle_down(), input.pointer.delta()));
+            if middle_down
+                && chart
+                    .hover_pos()
+                    .is_some_and(|position| areas.chart.contains(position) && !in_lane(position))
+            {
+                self.viewport.pan_pixels(delta.x, total);
+                if let Some(auto) = auto
+                    && delta.y != 0.0
+                    && height > 1.0
+                {
+                    let (lo, hi) = self.price_view.resolve(auto);
+                    let price_per_px = (hi - lo) / f64::from(height);
+                    self.price_view.pan(f64::from(delta.y) * price_per_px, auto);
+                }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
         }
 
@@ -2823,11 +2802,15 @@ impl ChartPane {
         // Carved *here*, after the panes drew: each band's scale is then the
         // one its own curve was just drawn with, which is the invariant this
         // whole feature rests on.
-        let bands = self.bands(&areas);
-        for band in &bands {
-            self.draw_drawings(painter, band, right, total);
+        // Carved into the pane's own buffer: same geometry as the input
+        // pass computed, no container allocated, and what the tab's shared
+        // projection reads afterwards.
+        let mut carved = std::mem::take(&mut self.last_bands);
+        self.carve_bands(&areas, &mut carved);
+        for (index, band) in carved.iter().enumerate() {
+            self.draw_drawings(painter, band, index, right, total);
         }
-        self.last_bands = bands.into_vec();
+        self.last_bands = carved;
         // Which band the next anchor lands in, said the way the split view
         // already says which pane has focus: one accent hairline on the top
         // edge. Painted after the drawings so a dense band cannot bury it.
@@ -3183,58 +3166,37 @@ impl ChartPane {
     /// mark is real, its position on *this* chart is not exact.
     const SHARED_CLAMPED_OPACITY: f32 = 0.45;
 
-    /// Every band of this pane, carved once and handed to placement,
-    /// hit-testing, dragging and painting alike.
+    /// Carve this pane into its bands, into a buffer the caller owns.
     ///
-    /// The invariant the whole feature rests on: a band's drawings and a
-    /// band's curve are projected through the *same* range. That is why the
-    /// indicator scale below is built from `view.scale.resolve(last_auto)` —
-    /// the range the renderer actually drew — and never from `last_auto`
-    /// alone, which is only the auto-fit before the trader's own zoom. If the
-    /// two could disagree they eventually would, and a level that has drifted
-    /// off the curve it annotates is a lie.
+    /// The geometry is per-frame by nature — rects and scales move with pan
+    /// and zoom — but the container is not: the caller hands the same buffer
+    /// back every frame, so after the first one this allocates nothing.
     ///
-    /// Per-frame cost: one pass over at most [`MAX_PANES`] panes, a handful
-    /// of `f32` and one short label clone each. Nothing here is on the
-    /// per-trade or per-depth path.
-    fn bands(&self, areas: &PlotAreas) -> SmallVec<[Band; 4]> {
+    /// See [`crate::bands`] for the invariant it upholds.
+    fn carve_bands(&self, areas: &PlotAreas, out: &mut Bands) {
         let history = self.drawing_area(areas.chart);
-        let mut bands: SmallVec<[Band; 4]> = SmallVec::new();
-        bands.push(Band {
-            key: DrawingBand::Price,
-            rect: history,
-            scale: self.last_auto_range.map(|auto| {
-                let (lo, hi) = self.price_view.resolve(auto);
-                PriceScale::from_range(lo, hi, areas.chart.top(), areas.chart.bottom())
-            }),
-            label: PRICE_BAND_LABEL.to_owned(),
-            refusal: None,
-        });
-        for (view, slot) in self.indicators.visible_panes().zip(&areas.indicator_panes) {
-            let rect = egui::Rect::from_min_max(
-                egui::pos2(history.left(), slot.rect.top()),
-                egui::pos2(history.right(), slot.rect.bottom()),
-            );
-            let range = view.last_auto.map(|auto| view.scale.resolve(auto));
-            bands.push(Band {
-                key: DrawingBand::Indicator(self.indicators.pane_key(view)),
-                rect,
-                scale: range
-                    .filter(|_| !slot.collapsed)
-                    .map(|(lo, hi)| PriceScale::from_range(lo, hi, rect.top(), rect.bottom())),
-                label: view.label().to_owned(),
-                // A band that cannot honestly place an anchor says so before
-                // the press, through the cursor — never by swallowing a click.
-                refusal: if slot.collapsed {
-                    Some(COLLAPSED_BAND_REFUSAL)
-                } else if range.is_none() {
-                    Some(WARMING_BAND_REFUSAL)
-                } else {
-                    None
-                },
-            });
-        }
-        bands
+        bands::carve(
+            out,
+            &bands::PriceBand {
+                rect: history,
+                range: self
+                    .last_auto_range
+                    .map(|auto| self.price_view.resolve(auto)),
+                top: areas.chart.top(),
+                bottom: areas.chart.bottom(),
+            },
+            &self.indicators,
+            areas,
+            &self.price_band_label,
+        );
+    }
+
+    /// The bands of this frame, in a fresh buffer — the input pass, which has
+    /// no buffer of its own to lend.
+    fn bands(&self, areas: &PlotAreas) -> Bands {
+        let mut out = Bands::new();
+        self.carve_bands(areas, &mut out);
+        out
     }
 
     /// What the chrome says about the band an object lives on.
@@ -3254,8 +3216,29 @@ impl ChartPane {
                 .filter(|view| !view.descriptor.overlay)
                 .find(|view| &self.indicators.pane_key(view) == key)
                 .map_or_else(
-                    || BandLabel::Parked(key.kind.clone()),
-                    |view| BandLabel::Indicator(view.label().to_owned()),
+                    || BandLabel::Parked(std::sync::Arc::clone(&key.kind)),
+                    |view| {
+                        // A band drawing can stop painting for four different
+                        // reasons, and only one of them is "the indicator is
+                        // gone". A mark that vanishes unexplained is what
+                        // teaches a trader to stop trusting the tool, so each
+                        // reason says its own name.
+                        match () {
+                            () if view.error.is_some() => BandLabel::Unpainted(
+                                view.label_shared(),
+                                "this indicator is in error, so its pane and everything drawn on                                  it are not being painted",
+                            ),
+                            () if view.hidden => BandLabel::Unpainted(
+                                view.label_shared(),
+                                "this indicator is hidden - show it again and the object comes                                  back with it",
+                            ),
+                            () if view.sizing == PaneSizing::Collapsed => BandLabel::Unpainted(
+                                view.label_shared(),
+                                "this pane is collapsed - open it with the chevron and the object                                  is there",
+                            ),
+                            () => BandLabel::Indicator(view.label_shared()),
+                        }
+                    },
                 ),
         }
     }
@@ -3299,31 +3282,19 @@ impl ChartPane {
         })
     }
 
-    /// The band under a pointer, drawable or not — a refusing band still owns
-    /// its pixels, which is what lets the cursor explain the refusal.
-    fn band_at(bands: &[Band], pos: egui::Pos2) -> Option<&Band> {
-        bands.iter().find(|band| band.rect.contains(pos))
-    }
-
-    /// The band an existing object is anchored to, when it is on the chart
-    /// right now. `None` is the parked case: the indicator it annotates is
-    /// not on this chart, so the object neither paints nor hit-tests — and it
-    /// is not deleted either (the manager still lists it).
-    fn band_of<'a>(bands: &'a [Band], drawing: &Drawing) -> Option<&'a Band> {
-        match &drawing.band {
-            // A time-only object has no value axis, so it has no home band;
-            // callers paint it in each band in turn.
-            DrawingBand::AllBands => bands.first(),
-            key => bands.iter().find(|band| &band.key == key),
-        }
-    }
-
-    /// Whether `drawing` takes part in `band`: its own band, or any band at
-    /// all when it is time-only. Hit-testing never crosses bands — a price
-    /// trend line and a CVD trend line can be one pixel apart on screen and
-    /// mean unrelated things.
-    fn drawing_in_band(drawing: &Drawing, band: &Band) -> bool {
-        drawing.band == DrawingBand::AllBands || drawing.band == band.key
+    /// How much of the selected object's own axis one pixel is worth.
+    ///
+    /// The keyboard nudge reads this instead of the candles' scale: a level
+    /// on a CVD band moved by a quantity of *price* is a wrong number
+    /// delivered through the one gesture that exists for precision, and every
+    /// press would record it as its own undo entry. `None` when nothing is
+    /// selected, when the object is parked, or before the first frame.
+    #[must_use]
+    pub fn selected_value_per_px(&self) -> Option<f64> {
+        let drawing = self.drawings.items().get(self.drawings.selected()?)?;
+        let band = bands::band_of(&self.last_bands, drawing)?;
+        let (lo, hi) = band.scale?.range();
+        Some((hi - lo) / f64::from(band.rect.height().max(1.0)))
     }
 
     /// The band drawings live in: the candles minus the live lane.
@@ -3411,8 +3382,8 @@ impl ChartPane {
             //
             // A time-only object is the case where sharing is most obviously
             // right: one instant, marked through every band of both charts.
-            for band in &self.last_bands {
-                if !Self::drawing_in_band(drawing, band) {
+            for (band_index, band) in self.last_bands.iter().enumerate() {
+                if !bands::drawing_in_band(drawing, band) {
                     continue;
                 }
                 let Some(scale) = band.scale else {
@@ -3430,6 +3401,7 @@ impl ChartPane {
                     anchors: &anchors,
                     scale: &scale,
                     unit: band.unit(),
+                    primary_band: drawing.band != DrawingBand::AllBands || band_index == 0,
                     style,
                     selected: false,
                     halo: false,
@@ -3518,6 +3490,7 @@ impl ChartPane {
         &self,
         painter: &egui::Painter,
         band: &Band,
+        band_index: usize,
         history_right: f32,
         total: usize,
     ) {
@@ -3527,16 +3500,21 @@ impl ChartPane {
         let chart_rect = band.rect;
         let clipped = painter.with_clip_rect(chart_rect);
         for (index, drawing) in self.drawings.items().iter().enumerate() {
-            if !self.drawings.is_visible(index) || !Self::drawing_in_band(drawing, band) {
+            if !self.drawings.is_visible(index) || !bands::drawing_in_band(drawing, band) {
                 continue;
             }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
             let selected = self.drawings.selected() == Some(index);
+            // An object that crosses every band draws its stroke in each and
+            // its readout and handles in the first: three copies of
+            // "17 bars 4m 21s" stacked down the screen is not three facts.
+            let primary_band = drawing.band != DrawingBand::AllBands || band_index == 0;
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
                 unit: band.unit(),
+                primary_band,
                 style: drawing.style,
                 selected,
                 halo: false,
@@ -3549,9 +3527,9 @@ impl ChartPane {
                 drawing.style,
                 &points,
                 &ctxt,
-                selected && !drawing.locked,
+                selected && !drawing.locked && primary_band,
             );
-            paint_off_band_caret(&clipped, chart_rect, &points, drawing);
+            bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
         }
 
         // With hide-all engaged the finished object would be invisible, so
@@ -3560,7 +3538,7 @@ impl ChartPane {
         if let Some(draft) = self
             .drawings
             .draft()
-            .filter(|draft| Self::drawing_in_band(draft, band))
+            .filter(|draft| bands::drawing_in_band(draft, band))
             .filter(|_| !self.drawings.all_hidden())
         {
             let mut points = self.projected_drawing_points(draft, history_right, total, scale);
@@ -3579,6 +3557,7 @@ impl ChartPane {
                 anchors: &anchors,
                 scale,
                 unit: band.unit(),
+                primary_band: draft.band != DrawingBand::AllBands || band_index == 0,
                 style: draft.style,
                 selected: false,
                 halo: false,
@@ -3787,55 +3766,6 @@ fn paint_placement_hint(
     );
 }
 
-/// Half-width of the marker that says an object is off the top or the bottom
-/// of its band.
-const OFF_BAND_CARET_HALF_PX: f32 = 3.0;
-
-/// Mark an object whose every anchor sits outside the band's current range.
-///
-/// Without it, "the drawing keeps its value and the band re-fits around it"
-/// is indistinguishable from "my line vanished". The caret is the paper HUD's
-/// own directional language, in the object's own colour, at the object's own
-/// x — so the trader reads *where* it went, not merely that something did.
-fn paint_off_band_caret(
-    painter: &egui::Painter,
-    band: egui::Rect,
-    points: &[egui::Pos2],
-    drawing: &Drawing,
-) {
-    // A time-only object has no value to be off the band by.
-    if points.is_empty() || drawing.band == DrawingBand::AllBands {
-        return;
-    }
-    let above = points.iter().all(|point| point.y < band.top());
-    let below = points.iter().all(|point| point.y > band.bottom());
-    if !above && !below {
-        return;
-    }
-    let x = points.iter().map(|point| point.x).sum::<f32>() / points.len() as f32;
-    let x = x.clamp(band.left(), band.right());
-    let (tip, base) = if above {
-        (
-            band.top() + 1.0,
-            band.top() + 1.0 + OFF_BAND_CARET_HALF_PX * 2.0,
-        )
-    } else {
-        (
-            band.bottom() - 1.0,
-            band.bottom() - 1.0 - OFF_BAND_CARET_HALF_PX * 2.0,
-        )
-    };
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            egui::pos2(x, tip),
-            egui::pos2(x - OFF_BAND_CARET_HALF_PX, base),
-            egui::pos2(x + OFF_BAND_CARET_HALF_PX, base),
-        ],
-        drawing.style.color,
-        egui::Stroke::NONE,
-    ));
-}
-
 /// The open / high / low / close of `candle` nearest to the pointer on
 /// screen, when one is within reach.
 ///
@@ -3843,32 +3773,6 @@ fn paint_off_band_caret(
 /// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Nothing in
 /// reach returns `None` and the free price is used — a magnet that always
 /// snaps is a magnet you cannot draw a diagonal with.
-/// The same reach, over an indicator pane's own numbers: every value it plots
-/// at this bar, plus zero.
-///
-/// Zero earns its place because so many pane series are signed — a CVD zero
-/// line is the single most-drawn level on the band, and eyeballing it against
-/// the pane's own zero rule is exactly the imprecision the magnet exists to
-/// remove. Out-of-reach candidates snap nothing, as on the candles.
-fn magnet_value_of(
-    view: &IndicatorView,
-    row: usize,
-    pointer_y: f32,
-    scale: &PriceScale,
-) -> Option<f64> {
-    view.columns
-        .iter()
-        .filter_map(|column| column.get(row).copied())
-        .chain(std::iter::once(0.0))
-        .filter(|value| value.is_finite())
-        .filter_map(|value| {
-            let distance = (scale.y(value) - pointer_y).abs();
-            (distance <= MAGNET_REACH_PX).then_some((distance, value))
-        })
-        .min_by(|left, right| left.0.total_cmp(&right.0))
-        .map(|(_, value)| value)
-}
-
 fn magnet_price_of(
     candle: &quantick_engine::Bar,
     pointer_y: f32,
@@ -3930,7 +3834,7 @@ mod tests {
     }
 
     fn add_indicator_view(pane: &mut ChartPane, kind: &str, columns: Vec<Vec<f64>>) -> SlotId {
-        let slot = pane.indicators.allocate_slot(kind.to_owned());
+        let slot = pane.indicators.allocate_slot(kind);
         pane.indicators.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: quantick_indicators::IndicatorDescriptor {
@@ -4081,7 +3985,7 @@ mod tests {
         assert_eq!(pane.drawings.items()[0].band, DrawingBand::AllBands);
         for band in &bands {
             assert!(
-                ChartPane::drawing_in_band(&pane.drawings.items()[0], band),
+                bands::drawing_in_band(&pane.drawings.items()[0], band),
                 "every band paints its own clipped segment"
             );
         }
@@ -4133,6 +4037,84 @@ mod tests {
         assert_ne!(before, other);
     }
 
+    /// Removing one pane must not renumber the ones that outlive it.
+    ///
+    /// With a positional ordinal, removing the first of two CVD panes turns
+    /// the survivor into `{cvd, 0}` — the removed pane's key — so it starts
+    /// painting the *other* pane's annotations on its own axis while its own
+    /// go parked. That is one pane's marks shown on another's value scale.
+    #[test]
+    fn removing_a_pane_does_not_renumber_the_one_that_outlives_it() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let first = add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
+        add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
+        let survivor = pane
+            .indicators
+            .pane_key(pane.indicators.all().last().expect("two views"));
+        pane.indicators.remove(first);
+        assert_eq!(
+            pane.indicators
+                .pane_key(pane.indicators.all().first().expect("one view left")),
+            survivor,
+            "the surviving pane keeps the key its drawings were placed with"
+        );
+
+        // And the ordinal the removed pane left behind is what a re-added one
+        // takes, so *its* drawings come home instead of piling onto the
+        // survivor's.
+        add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
+        let readded = pane
+            .indicators
+            .pane_key(pane.indicators.all().last().expect("two views"));
+        assert_ne!(readded, survivor);
+        assert_eq!(readded.ordinal, 0);
+    }
+
+    /// A drawing whose indicator is off the chart is parked: kept, but not
+    /// painted and not pickable. `band_of` answering `None` is what every
+    /// caller reads to mean that.
+    #[test]
+    fn a_parked_drawing_belongs_to_no_band_on_screen() {
+        let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 1.0]]);
+        pane.indicators
+            .visible_panes_mut()
+            .next()
+            .expect("one pane")
+            .last_auto = Some((-10.0, 10.0));
+        pane.last_auto_range = Some((100.0, 110.0));
+        let areas = test_areas(&pane, TEST_PLOT);
+        let carved = pane.bands(&areas);
+        let key = carved[1].key.clone();
+        pane.drawings.place_on(
+            drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == "horizontal-line")
+                .expect("registered"),
+            &key,
+            ChartPoint::at(1.0, 0.0),
+        );
+
+        // The indicator goes away; the object does not.
+        let slot = pane.indicators.all().first().expect("one view").slot;
+        pane.indicators.remove(slot);
+        let areas = test_areas(&pane, TEST_PLOT);
+        let carved = pane.bands(&areas);
+        assert_eq!(carved.len(), 1, "only the price band is left");
+        assert_eq!(pane.drawings.items().len(), 1, "the object is kept");
+        assert!(
+            bands::band_of(&carved, &pane.drawings.items()[0]).is_none(),
+            "parked: no band on screen owns it, so nothing paints or picks it"
+        );
+        assert!(
+            !bands::drawing_in_band(&pane.drawings.items()[0], &carved[0]),
+            "and it certainly does not fall back onto the price band"
+        );
+        assert!(matches!(
+            pane.band_label(&pane.drawings.items()[0]),
+            BandLabel::Parked(_)
+        ));
+    }
+
     /// Two instances of one kind are told apart by ordinal, in add order.
     #[test]
     fn two_panes_of_the_same_kind_get_different_keys() {
@@ -4161,17 +4143,17 @@ mod tests {
             .expect("one pane");
         let scale = PriceScale::from_range(-100.0, 100.0, 0.0, 200.0);
         assert_eq!(
-            magnet_value_of(view, 0, scale.y(40.0) + 2.0, &scale),
+            bands::magnet_value_of(view, 0, scale.y(40.0) + 2.0, &scale, MAGNET_REACH_PX),
             Some(40.0),
             "the plotted value nearest the pointer"
         );
         assert_eq!(
-            magnet_value_of(view, 0, scale.y(0.0) - 1.0, &scale),
+            bands::magnet_value_of(view, 0, scale.y(0.0) - 1.0, &scale, MAGNET_REACH_PX),
             Some(0.0),
             "zero is always a candidate"
         );
         assert_eq!(
-            magnet_value_of(view, 0, scale.y(80.0), &scale),
+            bands::magnet_value_of(view, 0, scale.y(80.0), &scale, MAGNET_REACH_PX),
             None,
             "out of reach snaps nothing, so a free diagonal stays free"
         );

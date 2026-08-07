@@ -15,6 +15,8 @@ use quantick_indicators::{
     EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame,
 };
 
+use std::sync::Arc;
+
 use crate::indicator_worker::{IndicatorEvent, LaneSample, SlotId};
 use crate::price_view::PriceView;
 
@@ -33,9 +35,23 @@ pub(crate) struct IndicatorView {
     /// durable across remove + re-add in a way the slot id is not — see
     /// [`crate::indicator_worker::IndicatorSource::kind_id`]. Drawings
     /// anchored to this pane are keyed on it.
-    pub kind: String,
+    ///
+    /// Shared rather than cloned: it is copied into a [`crate::drawings::PaneKey`]
+    /// on every band carve, which runs twice per pane per frame.
+    pub kind: Arc<str>,
+    /// Which instance of that kind this is, assigned **once, at birth** as
+    /// the lowest ordinal no live view of the kind is using.
+    ///
+    /// Deliberately not a position in `views`: a positional ordinal would be
+    /// renumbered by removing an earlier pane of the same kind, and the
+    /// survivor would inherit the removed pane's annotations — one pane's
+    /// marks painted on another's axis, which is the data-honesty failure
+    /// this key exists to prevent.
+    pub ordinal: u8,
     /// Descriptor as of the last rebuild (title, plots, overlay flag).
     pub descriptor: IndicatorDescriptor,
+    /// The descriptor's display name, shareable and kept in step with it.
+    pub label: Arc<str>,
     /// Committed plot columns, one per descriptor plot, kept in lockstep
     /// with the worker via Rebuilt/Appended deltas.
     pub columns: Vec<Vec<f64>>,
@@ -106,10 +122,23 @@ impl IndicatorView {
 
     /// The label the UI shows for this indicator.
     pub(crate) fn label(&self) -> &str {
-        self.descriptor
-            .short_title
-            .as_deref()
-            .unwrap_or(&self.descriptor.title)
+        &self.label
+    }
+
+    /// The same label, shareable. The band carve runs twice per pane per
+    /// frame and would otherwise clone this string every time.
+    pub(crate) fn label_shared(&self) -> Arc<str> {
+        Arc::clone(&self.label)
+    }
+
+    /// What a descriptor calls itself: the short title when it has one.
+    fn label_of(descriptor: &IndicatorDescriptor) -> Arc<str> {
+        Arc::from(
+            descriptor
+                .short_title
+                .as_deref()
+                .unwrap_or(&descriptor.title),
+        )
     }
 }
 
@@ -122,7 +151,7 @@ pub(crate) struct IndicatorViews {
     /// born from the worker's `Rebuilt` event, which knows nothing about the
     /// constructor, so the add path parks the kind here and the view takes it
     /// on birth.
-    pending_kinds: std::collections::BTreeMap<SlotId, String>,
+    pending_kinds: std::collections::BTreeMap<SlotId, Arc<str>>,
 }
 
 impl IndicatorViews {
@@ -132,29 +161,48 @@ impl IndicatorViews {
 
     /// Reserve a slot id for an add command about to be sent, remembering
     /// which constructor it answers to (see [`IndicatorView::kind`]).
-    pub(crate) fn allocate_slot(&mut self, kind: String) -> SlotId {
+    pub(crate) fn allocate_slot(&mut self, kind: impl AsRef<str>) -> SlotId {
         let slot = SlotId(self.next_slot);
         self.next_slot += 1;
-        self.pending_kinds.insert(slot, kind);
+        self.pending_kinds.insert(slot, Arc::from(kind.as_ref()));
         slot
     }
 
-    /// Which pane a drawing keyed to `key` belongs to right now, if any.
+    /// The durable identity of the pane `view` draws in.
     ///
-    /// The ordinal counts *every* pane indicator of that kind in add order,
-    /// including hidden and collapsed ones: a key that shifted when the
-    /// trader clicked an eye would hand one pane's annotations to another.
+    /// Both halves are fixed at birth, so nothing a trader does to the *other*
+    /// indicators — hiding one, collapsing one, removing one — can move a
+    /// drawing from the pane it was placed on.
     pub(crate) fn pane_key(&self, view: &IndicatorView) -> crate::drawings::PaneKey {
-        let ordinal = self
+        crate::drawings::PaneKey {
+            kind: Arc::clone(&view.kind),
+            ordinal: view.ordinal,
+        }
+    }
+
+    /// The lowest ordinal no live view of `kind` is using.
+    ///
+    /// Counting instances would reuse an ordinal that a *later* view already
+    /// holds; the free-slot rule cannot, so two live panes of one kind never
+    /// share a key and a re-added pane lands back on the ordinal the removed
+    /// one left behind — which is what makes its drawings come home.
+    fn free_ordinal(&self, kind: &str) -> u8 {
+        let mut taken: Vec<u8> = self
             .views
             .iter()
-            .take_while(|other| other.slot != view.slot)
-            .filter(|other| other.kind == view.kind && !other.descriptor.overlay)
-            .count();
-        crate::drawings::PaneKey {
-            kind: view.kind.clone(),
-            ordinal: u8::try_from(ordinal).unwrap_or(u8::MAX),
+            .filter(|view| &*view.kind == kind)
+            .map(|view| view.ordinal)
+            .collect();
+        taken.sort_unstable();
+        let mut ordinal = 0u8;
+        for used in taken {
+            if used == ordinal {
+                ordinal = ordinal.saturating_add(1);
+            } else if used > ordinal {
+                break;
+            }
         }
+        ordinal
     }
 
     /// Apply one worker delta. Events for slots the UI already removed are
@@ -170,6 +218,7 @@ impl IndicatorViews {
                 stale,
             } => {
                 if let Some(view) = self.view_mut(slot) {
+                    view.label = IndicatorView::label_of(&descriptor);
                     view.descriptor = descriptor;
                     view.columns = columns;
                     view.input_values = inputs;
@@ -182,9 +231,21 @@ impl IndicatorViews {
                     // while the pre-edit code was still what ran.
                     view.stale = stale;
                 } else {
+                    // A view born without a parked kind cannot be given the
+                    // empty string: two of them would share a key and adopt
+                    // each other's drawings. No production path reaches this
+                    // — the add path always parks a kind — and the fallback
+                    // is unique rather than silently colliding.
+                    let kind: Arc<str> = self
+                        .pending_kinds
+                        .remove(&slot)
+                        .unwrap_or_else(|| Arc::from(format!("unknown.{}", slot.0).as_str()));
+                    let ordinal = self.free_ordinal(&kind);
                     self.views.push(IndicatorView {
                         slot,
-                        kind: self.pending_kinds.remove(&slot).unwrap_or_default(),
+                        kind,
+                        ordinal,
+                        label: IndicatorView::label_of(&descriptor),
                         descriptor,
                         columns,
                         preview: None,
@@ -510,7 +571,7 @@ mod tests {
     #[test]
     fn deltas_reconstruct_the_columns() {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         views.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: descriptor(true, 2),
@@ -531,7 +592,7 @@ mod tests {
     #[test]
     fn appended_row_invalidates_the_preview() {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         views.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: descriptor(true, 1),
@@ -557,7 +618,7 @@ mod tests {
     #[test]
     fn events_for_removed_slots_are_dropped() {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot("test.indicator".to_owned());
+        let slot = views.allocate_slot("test.indicator");
         views.apply(IndicatorEvent::Rebuilt {
             slot,
             descriptor: descriptor(true, 1),
@@ -582,7 +643,7 @@ mod tests {
             (false, false, false), // drawn pane
             (false, false, true),  // errored pane
         ] {
-            let slot = views.allocate_slot("test.indicator".to_owned());
+            let slot = views.allocate_slot("test.indicator");
             views.apply(IndicatorEvent::Rebuilt {
                 slot,
                 descriptor: descriptor(overlay, 1),
@@ -613,7 +674,7 @@ mod tests {
     #[test]
     fn a_removed_pane_takes_its_scale_with_it() {
         let mut views = IndicatorViews::new();
-        let first = views.allocate_slot("test.indicator".to_owned());
+        let first = views.allocate_slot("test.indicator");
         views.apply(IndicatorEvent::Rebuilt {
             slot: first,
             descriptor: descriptor(false, 1),
@@ -627,7 +688,7 @@ mod tests {
         assert!(!views.all()[0].scale.is_auto());
 
         views.remove(first);
-        let second = views.allocate_slot("test.indicator".to_owned());
+        let second = views.allocate_slot("test.indicator");
         views.apply(IndicatorEvent::Rebuilt {
             slot: second,
             descriptor: descriptor(false, 1),

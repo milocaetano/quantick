@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 use crate::state::BarSpec;
 
 mod app;
+mod bands;
 mod bubble_presets;
 mod candle_view;
 mod chart;

@@ -1089,7 +1089,9 @@ mod tests {
     fn view(columns: Vec<Vec<f64>>, preview: Option<Vec<f64>>) -> IndicatorView {
         IndicatorView {
             slot: SlotId(0),
-            kind: "test.indicator".to_owned(),
+            kind: std::sync::Arc::from("test.indicator"),
+            ordinal: 0,
+            label: std::sync::Arc::from("test"),
             descriptor: IndicatorDescriptor {
                 title: "test".to_owned(),
                 short_title: None,

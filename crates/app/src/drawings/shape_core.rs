@@ -119,6 +119,7 @@ mod tests {
             anchors: &[],
             scale: &scale,
             unit: ValueUnit::Price,
+            primary_band: true,
             style,
             selected: false,
             halo: false,

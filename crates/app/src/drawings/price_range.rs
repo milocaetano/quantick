@@ -51,6 +51,7 @@ impl DrawingToolImpl for PriceRange {
                 axes: PRICE_ONLY,
                 unit: ctxt.unit,
                 halo: ctxt.halo,
+                primary_band: ctxt.primary_band,
             },
         );
     }

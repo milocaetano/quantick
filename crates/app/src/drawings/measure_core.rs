@@ -172,6 +172,9 @@ pub(super) struct Measured<'a> {
     pub axes: Axes,
     pub unit: ValueUnit<'a>,
     pub halo: bool,
+    /// Whether this is the band that prints the readout — see
+    /// [`crate::drawings::DrawContext::primary_band`].
+    pub primary_band: bool,
 }
 
 /// Paint the measured area, its leg and the readout plate.
@@ -191,6 +194,7 @@ pub(super) fn paint_measure(
         axes,
         unit,
         halo,
+        primary_band,
     } = measured;
     let [from, to, ..] = points else {
         return;
@@ -204,7 +208,10 @@ pub(super) fn paint_measure(
     }
     painter.rect_stroke(area, egui::Rounding::ZERO, stroke);
     painter.line_segment([*from, *to], stroke);
-    if halo {
+    // The stroke crosses every band a time-only measurement passes through;
+    // the plate is stamped once. Three copies of "17 bars 4m 21s" down the
+    // screen are not three facts.
+    if halo || !primary_band {
         return;
     }
 

@@ -3353,12 +3353,12 @@ impl QuantickApp {
             && self.focused_pane().drawings.selected().is_some()
         {
             // Arrows write the same honest chart coordinates a drag does:
-            // one bar per horizontal step, one pixel's worth of price per
-            // vertical step. Each press lands as one undo entry.
-            let price_per_px = self.focused_pane().last_auto_range.map_or(0.0, |auto| {
-                let (lo, hi) = self.focused_pane().price_view.resolve(auto);
-                (hi - lo) / f64::from(self.focused_pane().last_chart_height.max(1.0))
-            });
+            // one bar per horizontal step, one pixel's worth of *that
+            // object's own axis* per vertical step. Reading the candles'
+            // scale for an object on an indicator band would nudge a CVD
+            // level by a quantity of price — a wrong number arriving through
+            // the one gesture that exists for precision.
+            let price_per_px = self.focused_pane().selected_value_per_px().unwrap_or(0.0);
             self.focused_pane_mut().drawings.begin_gesture();
             self.focused_pane_mut()
                 .drawings
@@ -4156,7 +4156,7 @@ impl QuantickApp {
                         // Read out with the rest of the row's facts, so the
                         // row closure holds no borrow of the pane.
                         let band = self.focused_pane().band_label(drawing);
-                        let parked = matches!(band, crate::pane::BandLabel::Parked(_));
+                        let band_hint = band.hint();
                         let band_chip = band.chip();
                         ui.horizontal(|ui| {
                             let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
@@ -4173,20 +4173,20 @@ impl QuantickApp {
                                 ui.label(egui::RichText::new("hidden").small());
                             }
                             // Which band an object is on, for the objects that
-                            // are not on the candles. A parked one — its
-                            // indicator no longer on the chart — is listed in
-                            // amber: it still exists, it simply has nowhere to
-                            // paint, and it comes back when that indicator
-                            // does. Deleting it stays the trader's call.
+                            // are not on the candles. An object nothing on
+                            // screen is showing — its indicator removed,
+                            // hidden, collapsed or errored — is listed in
+                            // amber and says which of those it is. It still
+                            // exists; deleting it stays the trader's call.
                             if let Some(chip) = band_chip {
                                 let text = egui::RichText::new(chip).small();
-                                if parked {
-                                    ui.label(text.color(theme::AMBER)).on_hover_text(
-                                        "The indicator this was drawn on is not on the chart. \
-                                         Add it back and the object returns at the same value.",
-                                    );
-                                } else {
-                                    ui.label(text);
+                                match band_hint {
+                                    Some(hint) => {
+                                        ui.label(text.color(theme::AMBER)).on_hover_text(hint);
+                                    }
+                                    None => {
+                                        ui.label(text);
+                                    }
                                 }
                             }
                             if shared {
@@ -5061,7 +5061,7 @@ mod tests {
             .active_tab_mut()
             .flow_pane
             .indicators
-            .allocate_slot("test.indicator".to_owned());
+            .allocate_slot("test.indicator");
         rebuild_pane_indicator(app, slot, title, values);
         slot
     }
@@ -7256,6 +7256,65 @@ plot(close)
         assert!(
             app.active_tab().paper.working_orders().is_empty(),
             "the click cancelled the order instead of dragging it"
+        );
+    }
+
+    /// The same ✕, with a drawing tool armed: the button is the tool's, and
+    /// it can only be handed out once.
+    ///
+    /// The armed tool used to return early from the whole navigation pass,
+    /// which is what kept the paper layer from also seeing the press. Fixing
+    /// that (audit S2) without gating the paper gesture would mean one click
+    /// dropping an anchor *and* cancelling a working order.
+    #[test]
+    fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![
+                trade(2),
+                trade(6),
+                trade(10),
+                trade(14),
+                trade(18),
+            ]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        let price = Decimal::new(1005, 1);
+        app.active_tab_mut()
+            .paper
+            .apply_sim_command_for_tests(quantick_sim::Command::PlaceLimit {
+                side: quantick_engine::Side::Buy,
+                quantity: Decimal::ONE,
+                price,
+                bracket: quantick_sim::Bracket::none(),
+            });
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("the pane laid out");
+        let tag_right = app
+            .active_tab()
+            .flow_pane
+            .last_lane_divider_x
+            .unwrap_or(chart.right());
+        let y = price_y(&app, PaneSide::Flow, 100.5);
+        let close = crate::paper_trading::close_button_rect(
+            tag_right,
+            crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        );
+        drag_chart(&mut app, &ctx, close.center(), close.center());
+
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            1,
+            "an armed tool must not hand the same click to the order tag"
         );
     }
 
@@ -9776,13 +9835,15 @@ plot(close)
         let preset_path = store.path().to_path_buf();
         app.drawing_presets = store;
 
-        // Second fib starts from the default preset...
+        // Second fib starts from the default preset. Drawn clear of the
+        // inspector the first fib opened (x >= 410): the panel is opaque to
+        // the pointer, so a press behind it drops no anchor.
         arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
         drag_chart(
             &mut app,
             &ctx,
-            egui::pos2(400.0, 250.0),
-            egui::pos2(550.0, 400.0),
+            egui::pos2(500.0, 250.0),
+            egui::pos2(650.0, 400.0),
         );
         let new_levels = app.active_tab().flow_pane.drawings.items()[1]
             .payload
