@@ -226,6 +226,68 @@ pub struct Workspace {
     /// The chrome around them.
     #[serde(default)]
     pub chrome: Option<SavedChrome>,
+    /// Arrangements the trader named and kept, newest last.
+    ///
+    /// Bookmarks, not startup settings: naming one never changes what the app
+    /// opens on. The two are separate because the reason to name an
+    /// arrangement is usually to have somewhere to come back *to*, and a
+    /// "save this so I can return to it" that silently redefined the startup
+    /// screen would be the opposite of a safety net.
+    ///
+    /// Absent in files written before named workspaces existed, which is why
+    /// it defaults rather than bumping the format version — an older file is
+    /// a workspace with no bookmarks, not an unreadable one.
+    #[serde(default)]
+    pub saved: Vec<NamedArrangement>,
+}
+
+/// One named arrangement: everything a workspace records about the window,
+/// under a name the trader chose.
+///
+/// The same shape as the startup arrangement above, deliberately — one thing
+/// is being described either way, and `capture`/`apply` in the app run the
+/// same code for both. `save_on_exit` is not here: it governs the *file*, not
+/// any one arrangement in it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NamedArrangement {
+    /// What the trader called it. Unique within the file — saving over an
+    /// existing name replaces it, which is what "save as" means everywhere
+    /// else and spares the menu a list of five things called "scalp".
+    pub name: String,
+    /// The window's inner size in points.
+    #[serde(default)]
+    pub window: Option<[f32; 2]>,
+    /// Which tab was on screen.
+    #[serde(default)]
+    pub active_tab: usize,
+    /// The open markets, left to right.
+    #[serde(default)]
+    pub tabs: Vec<SavedTab>,
+    /// The chrome around them.
+    #[serde(default)]
+    pub chrome: Option<SavedChrome>,
+}
+
+/// Longest a workspace name may be.
+///
+/// The names sit in a menu, and a name wider than the menu is a name the
+/// trader cannot read back — which defeats the point of naming it. Generous
+/// enough for "scalp WIN manhã" and short enough to stay one line.
+pub const MAX_WORKSPACE_NAME: usize = 40;
+
+/// Clean up a name typed into the Save-as box: trimmed, collapsed whitespace,
+/// truncated at [`MAX_WORKSPACE_NAME`]. `None` when nothing is left.
+///
+/// Whitespace is collapsed rather than rejected so " scalp  win " and
+/// "scalp win" are the same bookmark; a trader who typed two spaces did not
+/// mean to create a second one.
+#[must_use]
+pub fn clean_workspace_name(raw: &str) -> Option<String> {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    Some(collapsed.chars().take(MAX_WORKSPACE_NAME).collect())
 }
 
 /// serde's default for [`Workspace::save_on_exit`] — a file written before the
@@ -243,6 +305,7 @@ impl Default for Workspace {
             active_tab: 0,
             tabs: Vec::new(),
             chrome: None,
+            saved: Vec::new(),
         }
     }
 }
@@ -268,7 +331,31 @@ impl Workspace {
             active_tab,
             tabs,
             chrome,
+            saved: Vec::new(),
         }
+    }
+
+    /// The same, carrying `saved` bookmarks through.
+    ///
+    /// A separate constructor rather than a sixth parameter on the one above:
+    /// every caller that captures the live window has no bookmarks to give
+    /// (they come off disk, not off the screen), and threading an empty vec
+    /// through all of them would only invite passing the wrong thing.
+    #[must_use]
+    pub fn with_saved(mut self, saved: Vec<NamedArrangement>) -> Self {
+        self.saved = saved;
+        self
+    }
+
+    /// The named arrangement called `name`, if the file has one.
+    ///
+    /// The app searches its own in-memory copy of the list, so this exists for
+    /// the tests that assert what actually reached the disk — which is the one
+    /// question a unit test on a persistence layer should be asking.
+    #[cfg(test)]
+    #[must_use]
+    pub fn named(&self, name: &str) -> Option<&NamedArrangement> {
+        self.saved.iter().find(|entry| entry.name == name)
     }
 
     /// Whether this workspace has a cockpit to restore at all.
@@ -294,71 +381,31 @@ impl Workspace {
     /// like any shipped one.
     #[must_use]
     pub fn restore(mut self, config: &AppConfig) -> Self {
-        let before = self.tabs.len();
-        self.tabs.retain(|tab| {
-            let known = config
-                .feed(&tab.feed)
-                .is_some_and(|feed| feed.symbols.contains(&tab.symbol));
-            if !known {
+        self.active_tab = filter_tabs(&mut self.tabs, self.active_tab, config);
+        // Bookmarks go through exactly the same gate. A named arrangement is
+        // reopened months after it was saved, so it is *more* likely than the
+        // startup one to name a market that has since left the config — and a
+        // bookmark that resurrects a dead feed on click would be worse than
+        // one that quietly comes back one tab lighter and says so in the log.
+        for entry in &mut self.saved {
+            entry.active_tab = filter_tabs(&mut entry.tabs, entry.active_tab, config);
+        }
+        // A bookmark with nothing left to open is not a bookmark. Dropping it
+        // keeps the menu honest: every name in it opens something.
+        self.saved.retain(|entry| {
+            if entry.tabs.is_empty() {
                 tracing::info!(
                     target: "quantick::app",
                     schema_version = 1_u8,
-                    event_code = "UI_STATE_TAB_DROPPED",
-                    feed = %tab.feed,
-                    symbol = %tab.symbol,
-                    action = "skip_tab",
-                    "saved workspace names a market the configuration no longer offers"
-                );
-                return false;
-            }
-            if let Err(error) = BarSpec::parse(&tab.flow_bars) {
-                tracing::info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "UI_STATE_TAB_DROPPED",
-                    feed = %tab.feed,
-                    symbol = %tab.symbol,
-                    spec = %tab.flow_bars,
-                    %error,
-                    action = "skip_tab",
-                    "saved workspace names a bar spec no control could produce"
+                    event_code = "UI_STATE_NAMED_DROPPED",
+                    name = %entry.name,
+                    action = "forget_bookmark",
+                    "a named workspace has no market the configuration still offers"
                 );
                 return false;
             }
             true
         });
-        if self.tabs.len() != before {
-            // A dropped tab shifts the strip under the saved index, and the
-            // clamp below is what keeps it pointing at a tab that exists.
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "UI_STATE_RESTORED_PARTIAL",
-                saved = before,
-                restored = self.tabs.len(),
-                action = "open_surviving_tabs",
-                "part of the saved workspace could not be restored"
-            );
-        }
-        for tab in &mut self.tabs {
-            // The divider's own clamp, not a second copy of its range: a
-            // hand-edited fraction must land exactly where a drag could have
-            // left it, and two constants for one domain is how they drift.
-            tab.split_fraction = tab.split_fraction.map(crate::pane::clamp_pane_fraction);
-            // A time interval that no longer parses costs the pane its saved
-            // interval, not the tab its market: the header's default is a
-            // perfectly good chart, and dropping a whole market over the
-            // second pane's parameter would be out of proportion.
-            if let Some(spec) = &tab.time_bars
-                && !matches!(BarSpec::parse(spec), Ok(BarSpec::Time(_)))
-            {
-                tab.time_bars = None;
-            }
-        }
-        self.active_tab = self
-            .active_tab
-            .min(self.tabs.len().saturating_sub(1))
-            .min(self.tabs.len());
         self
     }
 
@@ -374,6 +421,77 @@ impl Workspace {
             .first()
             .map(|tab| (tab.feed.as_str(), tab.symbol.as_str()))
     }
+}
+
+/// Drop every tab `config` can no longer open, bring the survivors' values
+/// back inside the domains their controls enforce, and return an active-tab
+/// index that still points at one of them.
+///
+/// Shared by the startup arrangement and every named one, so a bookmark can
+/// never be restored under looser rules than the screen the app opens on.
+fn filter_tabs(tabs: &mut Vec<SavedTab>, active_tab: usize, config: &AppConfig) -> usize {
+    let before = tabs.len();
+    tabs.retain(|tab| {
+        let known = config
+            .feed(&tab.feed)
+            .is_some_and(|feed| feed.symbols.contains(&tab.symbol));
+        if !known {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_TAB_DROPPED",
+                feed = %tab.feed,
+                symbol = %tab.symbol,
+                action = "skip_tab",
+                "saved workspace names a market the configuration no longer offers"
+            );
+            return false;
+        }
+        if let Err(error) = BarSpec::parse(&tab.flow_bars) {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_TAB_DROPPED",
+                feed = %tab.feed,
+                symbol = %tab.symbol,
+                spec = %tab.flow_bars,
+                %error,
+                action = "skip_tab",
+                "saved workspace names a bar spec no control could produce"
+            );
+            return false;
+        }
+        true
+    });
+    if tabs.len() != before {
+        // A dropped tab shifts the strip under the saved index, and the clamp
+        // below is what keeps it pointing at a tab that exists.
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_RESTORED_PARTIAL",
+            saved = before,
+            restored = tabs.len(),
+            action = "open_surviving_tabs",
+            "part of a saved arrangement could not be restored"
+        );
+    }
+    for tab in tabs.iter_mut() {
+        // The divider's own clamp, not a second copy of its range: a
+        // hand-edited fraction must land exactly where a drag could have left
+        // it, and two constants for one domain is how they drift.
+        tab.split_fraction = tab.split_fraction.map(crate::pane::clamp_pane_fraction);
+        // A time interval that no longer parses costs the pane its saved
+        // interval, not the tab its market: the header's default is a
+        // perfectly good chart, and dropping a whole market over the second
+        // pane's parameter would be out of proportion.
+        if let Some(spec) = &tab.time_bars
+            && !matches!(BarSpec::parse(spec), Ok(BarSpec::Time(_)))
+        {
+            tab.time_bars = None;
+        }
+    }
+    active_tab.min(tabs.len().saturating_sub(1))
 }
 
 /// The workspace file the app opens with and writes back to.
@@ -528,6 +646,7 @@ mod tests {
                 rail_dock: SavedRailDock::Left,
                 perf_readings: true,
             }),
+            saved: Vec::new(),
         }
     }
 
@@ -694,6 +813,108 @@ mod tests {
             !load(&path).save_on_exit,
             "the setting lives in the file it governs and must survive it"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_name_is_trimmed_collapsed_and_bounded() {
+        assert_eq!(
+            clean_workspace_name("  scalp  win "),
+            Some("scalp win".into())
+        );
+        assert_eq!(
+            clean_workspace_name("scalp\t\twin"),
+            Some("scalp win".into())
+        );
+        assert_eq!(clean_workspace_name("   "), None);
+        assert_eq!(clean_workspace_name(""), None);
+        let long = "x".repeat(MAX_WORKSPACE_NAME + 20);
+        assert_eq!(
+            clean_workspace_name(&long).map(|name| name.chars().count()),
+            Some(MAX_WORKSPACE_NAME),
+            "a name wider than the menu is a name the trader cannot read back"
+        );
+    }
+
+    #[test]
+    fn a_bookmark_goes_through_the_same_gate_as_the_startup_screen() {
+        let mut workspace = sample();
+        workspace.saved.push(NamedArrangement {
+            name: "mixed".to_owned(),
+            window: None,
+            active_tab: 1,
+            tabs: vec![
+                SavedTab {
+                    feed: "gone".to_owned(),
+                    symbol: "BTCUSDT".to_owned(),
+                    layout: DeclaredLayout::Flow,
+                    split_fraction: None,
+                    focus: None,
+                    flow_bars: "tick:50".to_owned(),
+                    time_bars: None,
+                },
+                SavedTab {
+                    feed: "binance".to_owned(),
+                    symbol: "ETHUSDT".to_owned(),
+                    layout: DeclaredLayout::Flow,
+                    split_fraction: None,
+                    focus: None,
+                    flow_bars: "tick:50".to_owned(),
+                    time_bars: None,
+                },
+            ],
+            chrome: None,
+        });
+        let restored = workspace.restore(&catalogue());
+        let entry = restored.named("mixed").expect("the bookmark survives");
+        assert_eq!(entry.tabs.len(), 1, "its dead market is dropped too");
+        assert_eq!(
+            entry.active_tab, 0,
+            "and its active index follows what survived"
+        );
+    }
+
+    #[test]
+    fn a_bookmark_with_nothing_left_to_open_is_forgotten() {
+        let mut workspace = sample();
+        workspace.saved.push(NamedArrangement {
+            name: "all-gone".to_owned(),
+            window: None,
+            active_tab: 0,
+            tabs: vec![SavedTab {
+                feed: "gone".to_owned(),
+                symbol: "BTCUSDT".to_owned(),
+                layout: DeclaredLayout::Flow,
+                split_fraction: None,
+                focus: None,
+                flow_bars: "tick:50".to_owned(),
+                time_bars: None,
+            }],
+            chrome: None,
+        });
+        let restored = workspace.restore(&catalogue());
+        assert!(
+            restored.named("all-gone").is_none(),
+            "every name in the menu has to open something"
+        );
+    }
+
+    /// Named workspaces arrived after the format shipped, so a file written
+    /// without them still has to load — the field defaults rather than the
+    /// version bumping.
+    #[test]
+    fn a_file_written_before_bookmarks_existed_still_loads() {
+        let path = temp_path("no-bookmarks");
+        std::fs::write(
+            &path,
+            "version = 1\nsave_on_exit = true\nactive_tab = 0\n\n\
+             [[tabs]]\nfeed = \"binance\"\nsymbol = \"BTCUSDT\"\n\
+             layout = \"flow\"\nflow_bars = \"tick:50\"\n",
+        )
+        .unwrap();
+        let loaded = load(&path);
+        assert_eq!(loaded.tabs.len(), 1, "the arrangement still reads");
+        assert!(loaded.saved.is_empty(), "and it simply has no bookmarks");
         let _ = std::fs::remove_file(&path);
     }
 
