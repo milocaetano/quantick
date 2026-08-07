@@ -11,10 +11,12 @@
 //! unit-tested in CI.
 
 use quantick_engine::{
-    Bar, BarBuilder, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, TickBarBuilder,
-    TimeBarBuilder, Trade, VolumeBarBuilder,
+    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder,
+    TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
+
+use crate::footprint_series::{self, FootprintSeries};
 
 /// Which alternative bar type the chart is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +286,9 @@ pub struct ChartState {
     bars: Vec<Bar>,
     partial: Option<Bar>,
     backfill_boundary: Option<usize>,
+    /// Per-bar footprint ladders, index-aligned with `bars`; fed the same
+    /// trades the bar builder folds (see [`FootprintSeries`]).
+    footprints: FootprintSeries,
 }
 
 impl ChartState {
@@ -301,6 +306,7 @@ impl ChartState {
             bars: Vec::new(),
             partial: None,
             backfill_boundary: None,
+            footprints: FootprintSeries::new(footprint_series::default_group()),
         }
     }
 
@@ -311,7 +317,9 @@ impl ChartState {
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
         for trade in trades {
-            if let Some(bar) = self.builder.push(trade) {
+            let closed = self.builder.push(trade);
+            self.footprints.observe(trade, closed.as_ref());
+            if let Some(bar) = closed {
                 self.bars.push(bar);
             }
         }
@@ -347,7 +355,9 @@ impl ChartState {
     /// Ingest one live trade, incrementally (no full rebuild).
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
-        if let Some(bar) = self.builder.push(trade) {
+        let closed = self.builder.push(trade);
+        self.footprints.observe(trade, closed.as_ref());
+        if let Some(bar) = closed {
             self.bars.push(bar);
         }
         self.refresh_partial();
@@ -370,11 +380,14 @@ impl ChartState {
         let mut builder = self.spec.build();
         let mut bars = Vec::new();
         let mut boundary = None;
+        self.footprints.reset(self.footprints.base_group());
         for (i, trade) in self.trades.iter().enumerate() {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
             }
-            if let Some(bar) = builder.push(trade) {
+            let closed = builder.push(trade);
+            self.footprints.observe(trade, closed.as_ref());
+            if let Some(bar) = closed {
                 bars.push(bar);
             }
         }
@@ -426,6 +439,43 @@ impl ChartState {
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
+    }
+
+    /// One footprint ladder per closed bar, same indices as [`Self::bars`].
+    #[must_use]
+    pub fn bar_footprints(&self) -> &[BarFootprint] {
+        self.footprints.closed()
+    }
+
+    /// The forming bar's footprint ladder, the counterpart of
+    /// [`Self::partial`].
+    #[must_use]
+    pub fn partial_footprint(&self) -> Option<&BarFootprint> {
+        self.footprints.partial()
+    }
+
+    /// The row width footprints are captured at.
+    #[must_use]
+    pub fn footprint_group(&self) -> Decimal {
+        self.footprints.base_group()
+    }
+
+    /// Re-capture the footprints at row width `group` (normally the
+    /// instrument's `price_step` once the feed reports it), replaying the
+    /// retained trades through a scratch builder of the current spec so the
+    /// ladders re-align with the very same bar boundaries. The bars — and the
+    /// timeline revision projections key on — are untouched. A no-op when the
+    /// group is unchanged or not positive.
+    pub fn set_footprint_group(&mut self, group: Decimal) {
+        if group <= Decimal::ZERO || group == self.footprints.base_group() {
+            return;
+        }
+        self.footprints.reset(group);
+        let mut builder = self.spec.build();
+        for trade in &self.trades {
+            let closed = builder.push(trade);
+            self.footprints.observe(trade, closed.as_ref());
+        }
     }
 
     /// Every trade this chart still holds, oldest first — what a rebuild
