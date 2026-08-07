@@ -175,18 +175,40 @@ fn channel_drag(points: &[egui::Pos2], handle: usize, to: egui::Pos2) -> Option<
         0 => Handles::from_slice(&[to, points[1], points[2]]),
         1 => Handles::from_slice(&[points[0], to, points[2]]),
         HANDLE_NEAR_CENTRE => {
-            // The far rail is pinned: it stays at today's far point, which is
-            // exactly the anchor the width is measured to.
-            let far_anchor = points[0] + channel_offset(points);
+            // The far rail is pinned: it stays where it is, and the trend
+            // line slides across to it.
+            let far = points[0] + channel_offset(points);
             let shift = across_baseline(baseline, to - centre);
-            Handles::from_slice(&[points[0] + shift, points[1] + shift, far_anchor])
+            Handles::from_slice(&[
+                points[0] + shift,
+                points[1] + shift,
+                width_anchor_on(far, baseline, points[2]),
+            ])
         }
         HANDLE_FAR_CENTRE => {
-            let offset = across_baseline(baseline, to - centre);
-            Handles::from_slice(&[points[0], points[1], points[0] + offset])
+            let far = points[0] + across_baseline(baseline, to - centre);
+            Handles::from_slice(&[
+                points[0],
+                points[1],
+                width_anchor_on(far, baseline, points[2]),
+            ])
         }
         _ => return None,
     })
+}
+
+/// Where to park the width anchor on a rail that runs through `on_rail`.
+///
+/// Any point of the rail encodes the same channel — only the offset across
+/// the baseline is geometry. So keep the bar the trader originally put the
+/// anchor on: the Coordinates tab shows this anchor by number, and a width
+/// drag that silently rewrote its *bar* would look like the object moved
+/// sideways when nothing of the kind happened.
+fn width_anchor_on(on_rail: egui::Pos2, baseline: egui::Vec2, previous: egui::Pos2) -> egui::Pos2 {
+    if baseline.x.abs() <= f32::EPSILON {
+        return on_rail;
+    }
+    on_rail + baseline * ((previous.x - on_rail.x) / baseline.x)
 }
 
 /// Everything a channel is made of.
@@ -678,6 +700,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A width drag changes the width, and says so honestly in the numbers:
+    /// the Coordinates tab shows the width anchor by bar and price, so the
+    /// bar it sits on must survive a gesture that never moved it sideways.
+    #[test]
+    fn a_width_drag_leaves_the_width_anchors_bar_alone() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 160.0),
+            egui::pos2(220.0, 220.0),
+        ];
+        let handles = channel_handles(&points).expect("three anchors");
+        for handle in [HANDLE_NEAR_CENTRE, HANDLE_FAR_CENTRE] {
+            let moved = channel_drag(&points, handle, handles[handle] + egui::vec2(0.0, 40.0))
+                .expect("a rail moves");
+            assert!(
+                (moved[2].x - points[2].x).abs() < 1e-3,
+                "handle {handle} moved the width anchor's bar: {:?} -> {:?}",
+                points[2],
+                moved[2]
+            );
+        }
+    }
+
+    /// A channel whose trend line is vertical — both ends on one bar. There
+    /// is no bar to preserve then, so the width anchor simply lands on the
+    /// rail, and the geometry must still come out as the trader dragged it.
+    #[test]
+    fn a_vertical_channel_still_widens_from_either_rail() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(100.0, 300.0),
+            egui::pos2(160.0, 200.0),
+        ];
+        let handles = channel_handles(&points).expect("three anchors");
+        assert_eq!(handles[HANDLE_NEAR_CENTRE], egui::pos2(100.0, 200.0));
+        assert_eq!(handles[HANDLE_FAR_CENTRE], egui::pos2(160.0, 200.0));
+
+        let widened = channel_drag(&points, HANDLE_FAR_CENTRE, egui::pos2(200.0, 240.0))
+            .expect("the far rail moves");
+        assert_eq!(widened[0], points[0], "the trend line is untouched");
+        assert_eq!(channel_offset(&widened), egui::vec2(100.0, 0.0));
+
+        let far_before = points[0] + channel_offset(&points);
+        let grown = channel_drag(&points, HANDLE_NEAR_CENTRE, egui::pos2(60.0, 200.0))
+            .expect("the near rail moves");
+        assert_eq!(grown[0], egui::pos2(60.0, 100.0));
+        assert_eq!(
+            grown[0] + channel_offset(&grown),
+            far_before,
+            "the far rail is pinned"
+        );
     }
 
     /// The end handles are still the anchors they always were.

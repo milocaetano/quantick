@@ -76,6 +76,15 @@ const DEMO_VISIBLE_SLOTS: usize = 90;
 /// far a multi-anchor object reaches. Four keeps a rectangle big enough to
 /// read while still leaving the tools distinguishable from each other.
 const DEMO_SPANS_PER_WINDOW: usize = 4;
+/// How far apart, as a fraction of the visible price band, the demo places
+/// the successive anchors of one object and the successive rows of objects.
+/// Both are small enough that the widest object still lands inside the band
+/// the chart is showing.
+const DEMO_ANCHOR_BAND_STEP: f64 = 0.12;
+const DEMO_ROW_BAND_STEP: f64 = 0.22;
+/// The band to spread across before the pane has an auto-range to read (no
+/// bars yet): a fraction of price, since there is nothing better to ask.
+const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
@@ -3617,18 +3626,30 @@ impl QuantickApp {
         // a tidy row.
         let stride = (visible / drawings::DRAWING_TOOLS.len()).max(1);
         let span = (visible / DEMO_SPANS_PER_WINDOW).max(2);
-        let base = pane
+        let close = pane
             .closed_bar(slots.saturating_sub(1))
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
+        // Spread the objects across the band the chart is actually showing,
+        // never across a fixed percentage of price. A tick chart's window is
+        // a few tenths of a percent tall, so a fixed ±0.2 % dropped a third
+        // of the demo below the visible range — objects placed off screen
+        // photograph as an empty chart, which is the one failure this hook
+        // exists to prevent.
+        let (centre, band) = pane
+            .last_auto_range
+            .filter(|(lo, hi)| hi > lo)
+            .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
+                ((lo + hi) / 2.0, hi - lo)
+            });
         let mut requested_selection = None;
         for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
             for anchor in 0..tool.required_points() {
                 let slot = (first + index * stride + anchor * span).min(slots.saturating_sub(1));
                 let point = drawings::ChartPoint::at_time(
                     slot as f32 + 0.5,
-                    base * (1.0 + f64::from(anchor as i32) * 0.001
-                        - f64::from(index as i32 % 3) * 0.002),
+                    centre + (f64::from(anchor as i32) - 1.0) * band * DEMO_ANCHOR_BAND_STEP
+                        - (f64::from(index as i32 % 3) - 1.0) * band * DEMO_ROW_BAND_STEP,
                     pane.slot_open_time(slot),
                 );
                 let completed =
@@ -3651,8 +3672,20 @@ impl QuantickApp {
                 }
             }
         }
-        if requested_selection.is_some() {
-            pane.drawings.select(requested_selection);
+        if let Some(index) = requested_selection {
+            pane.drawings.select(Some(index));
+            // Selecting an object the viewport is not looking at proves
+            // nothing: the handles are on screen or they are not photographed
+            // at all. Centre on the object's bar span, the object manager's
+            // own "select and centre".
+            if let Some(chart) = pane.last_chart_area {
+                let points = &pane.drawings.items()[index].points;
+                if !points.is_empty() {
+                    let mid =
+                        points.iter().map(|point| point.bar).sum::<f32>() / points.len() as f32;
+                    pane.viewport.center_on_bar(mid, chart.width(), slots);
+                }
+            }
         }
     }
 }
