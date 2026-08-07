@@ -36,6 +36,12 @@ impl DrawingToolImpl for VerticalLine {
     fn family(&self) -> Option<ToolFamily> {
         Some(LINES_FAMILY)
     }
+    /// A moment, not a level: the anchor's second coordinate is whatever
+    /// pixel the click landed on. So the line belongs to no band and runs
+    /// through all of them, as one object.
+    fn value_axis(&self) -> bool {
+        false
+    }
     fn paint(
         &self,
         painter: &egui::Painter,

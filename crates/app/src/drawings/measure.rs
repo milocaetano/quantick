@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::measure_core::{BOTH_AXES, MEASURE_FAMILY, hit_measure, paint_measure};
+use super::measure_core::{BOTH_AXES, MEASURE_FAMILY, Measured, hit_measure, paint_measure};
 use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
 
 pub(super) static TOOL: Measure = Measure;
@@ -52,9 +52,13 @@ impl DrawingToolImpl for Measure {
             chart_rect,
             style,
             points,
-            ctxt.anchors,
-            BOTH_AXES,
-            ctxt.halo,
+            Measured {
+                anchors: ctxt.anchors,
+                axes: BOTH_AXES,
+                unit: ctxt.unit,
+                halo: ctxt.halo,
+                primary_band: ctxt.primary_band,
+            },
         );
     }
     fn hit_test(

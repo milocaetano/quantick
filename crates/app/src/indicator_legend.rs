@@ -216,7 +216,7 @@ mod tests {
 
     fn views_with(build: impl FnOnce(&mut IndicatorViews, SlotId)) -> IndicatorViews {
         let mut views = IndicatorViews::new();
-        let slot = views.allocate_slot();
+        let slot = views.allocate_slot("test.indicator");
         build(&mut views, slot);
         views
     }

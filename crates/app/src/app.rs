@@ -880,13 +880,14 @@ impl QuantickApp {
         if std::env::var("QUANTICK_DRAWING_MAGNET").is_ok_and(|value| value == "1") {
             app.toolrail.set_magnet(true);
         }
-        app.pending_drawing_demo =
-            std::env::var("QUANTICK_DRAWINGS_DEMO").is_ok_and(|value| value == "1");
+        app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
+            .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
         // The object manager is where a mark that cannot be trusted says so —
-        // the "off series" and "other market" badges live there, and a mark
-        // clamped to an edge may be nowhere near the visible window, making
-        // the list the only place it can be found. Reachable from a launch,
-        // like every other surface, or it cannot be checked without a mouse.
+        // the "off series", "other market" and band badges live there, and a
+        // mark clamped to an edge may be nowhere near the visible window,
+        // making the list the only place it can be found. Reachable from a
+        // launch, like every other surface, or it cannot be checked without a
+        // mouse.
         app.drawing_manager_open =
             std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1");
 
@@ -1675,7 +1676,10 @@ impl QuantickApp {
                 // the UI thread, so the error slot is built here, from the
                 // same two events the worker would have sent.
                 let pane = self.focused_pane_mut();
-                let slot = pane.indicators.allocate_slot();
+                // The same kind string the healthy path derives from its
+                // source, so an error slot the trader fixes and reloads keeps
+                // whatever they had drawn on its pane.
+                let slot = pane.indicators.allocate_slot(format!("script.{name}"));
                 pane.indicators.apply(IndicatorEvent::Rebuilt {
                     slot,
                     descriptor: quantick_indicators::IndicatorDescriptor {
@@ -3361,12 +3365,14 @@ impl QuantickApp {
             && self.drawing_pane().drawings.selected().is_some()
         {
             // Arrows write the same honest chart coordinates a drag does:
-            // one bar per horizontal step, one pixel's worth of price per
-            // vertical step. Each press lands as one undo entry.
-            let price_per_px = self.drawing_pane().last_auto_range.map_or(0.0, |auto| {
-                let (lo, hi) = self.drawing_pane().price_view.resolve(auto);
-                (hi - lo) / f64::from(self.drawing_pane().last_chart_height.max(1.0))
-            });
+            // one bar per horizontal step, one pixel's worth of *that
+            // object's own axis* per vertical step. Each press lands as one
+            // undo entry. Reading the candles' scale for an object on an
+            // indicator band would nudge a CVD level by a quantity of price —
+            // a wrong number arriving through the one gesture that exists for
+            // precision. Asked of the pane that owns the mark, which for a
+            // shared one is not always the focused pane.
+            let price_per_px = self.drawing_pane().selected_value_per_px().unwrap_or(0.0);
             self.drawing_pane_mut().drawings.begin_gesture();
             self.drawing_pane_mut()
                 .drawings
@@ -3463,7 +3469,14 @@ impl QuantickApp {
         let mut actions = InspectorActions::default();
         let drawing = &self.drawing_pane().drawings.items()[index];
         let hidden = drawing.hidden;
-        let title = drawing.tool.settings_title();
+        // The band belongs in the title, because that is where "which of
+        // these two trend lines am I editing" is actually asked. Nothing is
+        // added on the price band: it is where drawings have always lived,
+        // and a suffix on every object would be noise.
+        let title = match self.focused_pane().band_label(drawing).chip() {
+            Some(band) => format!("{} · {band}", drawing.tool.settings_title()),
+            None => drawing.tool.settings_title().to_owned(),
+        };
         let sense = if floating {
             egui::Sense::click_and_drag()
         } else {
@@ -4159,6 +4172,11 @@ impl QuantickApp {
                         let off_series = drawing.off_series;
                         let foreign_market = drawing.foreign_market;
                         let name = drawing.tool.name();
+                        // Read out with the rest of the row's facts, so the
+                        // row closure holds no borrow of the pane.
+                        let band = self.focused_pane().band_label(drawing);
+                        let band_hint = band.hint();
+                        let band_chip = band.chip();
                         ui.horizontal(|ui| {
                             let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
                             if hidden {
@@ -4172,6 +4190,23 @@ impl QuantickApp {
                             }
                             if hidden {
                                 ui.label(egui::RichText::new("hidden").small());
+                            }
+                            // Which band an object is on, for the objects that
+                            // are not on the candles. An object nothing on
+                            // screen is showing — its indicator removed,
+                            // hidden, collapsed or errored — is listed in
+                            // amber and says which of those it is. It still
+                            // exists; deleting it stays the trader's call.
+                            if let Some(chip) = band_chip {
+                                let text = egui::RichText::new(chip).small();
+                                match band_hint {
+                                    Some(hint) => {
+                                        ui.label(text.color(theme::AMBER)).on_hover_text(hint);
+                                    }
+                                    None => {
+                                        ui.label(text);
+                                    }
+                                }
                             }
                             if foreign_market {
                                 // The one state the chart alone cannot
@@ -4191,9 +4226,7 @@ impl QuantickApp {
                                 // window the trader is looking at.
                                 ui.label(egui::RichText::new("off series").small())
                                     .on_hover_text(
-                                        "Drawn at a moment this chart's bars do not cover. It is \
-                                         shown at the nearest edge, faded, until you move or \
-                                         delete it",
+                                        "Drawn at a moment this chart's bars do not cover. It is                                          shown at the nearest edge, faded, until you move or                                          delete it",
                                     );
                             }
                             if shared {
@@ -4393,6 +4426,9 @@ impl QuantickApp {
         // no screenshot could answer while only the last-placed tool was ever
         // selected.
         let select_tool = std::env::var("QUANTICK_DRAWINGS_DEMO_SELECT").ok();
+        // `=bands` adds a set on every indicator pane; `=1` stays exactly
+        // what it was, so every screenshot taken of the old hook still is.
+        let bands = std::env::var("QUANTICK_DRAWINGS_DEMO").is_ok_and(|v| v == "bands");
         if share {
             // A shared drawing has nothing to be shared *with* on a single
             // pane, so the hook that asks for one opens the split too — the
@@ -4443,9 +4479,11 @@ impl QuantickApp {
                 );
                 let completed =
                     pane.drawings
-                        .place_with(tool, point, |tool| drawings::NewDrawing {
-                            style: drawings::DrawingStyle::default(),
-                            payload: tool.default_payload(),
+                        .place_with(tool, &drawings::DrawingBand::Price, point, |tool| {
+                            drawings::NewDrawing {
+                                style: drawings::DrawingStyle::default(),
+                                payload: tool.default_payload(),
+                            }
                         });
                 // Placement selects what it completed, so this reaches the
                 // object just made — no separate index bookkeeping.
@@ -4476,7 +4514,55 @@ impl QuantickApp {
                 }
             }
         }
+        if bands {
+            Self::seed_band_demo(pane, first, visible, slots);
+        }
         self.apply_drawing_demo_recut();
+    }
+
+    /// The `bands` half of the demo hook: on every indicator pane, a level on
+    /// the band's own value and a diagonal across it.
+    ///
+    /// Two objects, not seventeen: a pane is a fifth of the chart's height,
+    /// and a screenshot of every tool stacked in one would prove nothing
+    /// about the projection it exists to check. The level is placed *at a
+    /// value the series actually holds*, so a drawing that has drifted off
+    /// its curve is visible at a glance.
+    fn seed_band_demo(pane: &mut ChartPane, first: usize, visible: usize, slots: usize) {
+        let level_slot = (first + visible / 2).min(slots.saturating_sub(1));
+        let (left, right) = (
+            (first + visible / 8).min(slots.saturating_sub(1)),
+            (first + visible * 3 / 4).min(slots.saturating_sub(1)),
+        );
+        for (band, value) in pane.indicator_band_samples(level_slot) {
+            for tool in drawings::DRAWING_TOOLS {
+                let anchors: &[(usize, f64)] = match tool.id() {
+                    "horizontal-line" => &[(0, 0.0)],
+                    "trend-line" => &[(1, 0.0), (2, 0.0)],
+                    _ => continue,
+                };
+                for (which, _) in anchors {
+                    let (slot, value) = match which {
+                        // The level sits on the sampled value itself.
+                        0 => (level_slot, value),
+                        // The diagonal spans the window around it, so its
+                        // ends are inside the band without being on the curve.
+                        1 => (left, value * 0.5),
+                        _ => (right, value * 1.5),
+                    };
+                    let point = drawings::ChartPoint::at_time(
+                        slot as f32 + 0.5,
+                        value,
+                        pane.slot_open_time(slot),
+                    );
+                    pane.drawings
+                        .place_with(tool, &band, point, |tool| drawings::NewDrawing {
+                            style: drawings::DrawingStyle::default(),
+                            payload: tool.default_payload(),
+                        });
+                }
+            }
+        }
     }
 
     /// The `QUANTICK_DRAWINGS_DEMO_RECUT` hook: re-cut the bars under the demo
@@ -4509,6 +4595,7 @@ impl QuantickApp {
             if let Some(tool) = single_anchor {
                 let placed = pane.drawings.place_with(
                     tool,
+                    &drawings::DrawingBand::Price,
                     drawings::ChartPoint::at_time(0.5, base, Some(first - DEMO_OFF_SERIES_LEAD_MS)),
                     |tool| drawings::NewDrawing {
                         style: drawings::DrawingStyle::default(),
@@ -5079,7 +5166,11 @@ mod tests {
     /// A pane indicator with `values` as its single plot, delivered the way
     /// the worker delivers one.
     fn add_pane_indicator(app: &mut QuantickApp, title: &str, values: Vec<f64>) -> SlotId {
-        let slot = app.active_tab_mut().flow_pane.indicators.allocate_slot();
+        let slot = app
+            .active_tab_mut()
+            .flow_pane
+            .indicators
+            .allocate_slot("test.indicator");
         rebuild_pane_indicator(app, slot, title, values);
         slot
     }
@@ -5596,6 +5687,123 @@ mod tests {
             "and the pane never felt it"
         );
         assert!(pane_is_auto(&app, flow));
+    }
+
+    /// A drawing tool takes the *primary button*, never the chart.
+    ///
+    /// Arming one used to return early from the whole navigation pass, so the
+    /// trader could not zoom, pan or resize anything while annotating (audit
+    /// S2) — and carrying that shape into the panes would have multiplied it
+    /// by every pane on screen.
+    #[test]
+    fn an_armed_tool_leaves_the_chart_navigable() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+
+        // The wheel over the pane's own axis still zooms that axis.
+        let (lo, hi) = pane_range(&app, flow);
+        let over = pane_gutter(&app, 0).center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(over),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 120.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let (zoomed_lo, zoomed_hi) = pane_range(&app, flow);
+        assert!(
+            zoomed_hi - zoomed_lo < hi - lo,
+            "an armed tool must not deafen the pane's axis: {lo}..{hi} -> \
+             {zoomed_lo}..{zoomed_hi}"
+        );
+
+        // And the wheel over the candles still zooms time.
+        let width = app.active_tab().flow_pane.viewport.candle_width();
+        let over_candles = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("a frame has been drawn")
+            .center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(over_candles),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 120.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(
+            app.active_tab().flow_pane.viewport.candle_width() > width,
+            "the candles still zoom while a tool is armed"
+        );
+    }
+
+    /// An anchor dropped in an indicator pane belongs to that pane.
+    #[test]
+    fn a_click_in_an_indicator_pane_draws_on_that_band() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+
+        let inside = pane_body(&app, 0).center();
+        click_chart(&mut app, &ctx, inside);
+
+        let placed = &app.active_tab().flow_pane.drawings;
+        assert_eq!(placed.items().len(), 1, "the click placed one object");
+        assert!(
+            matches!(placed.items()[0].band, drawings::DrawingBand::Indicator(_)),
+            "an anchor dropped in the CVD pane is a CVD level, not a price"
+        );
+    }
+
+    /// The chevron that collapses a pane still beats an armed tool. egui hands
+    /// an overlap to the last registrant and the chevron registers last — but
+    /// the drawing path reads the raw pointer, so it has to honour that order
+    /// itself or arming a tool silently kills the control.
+    #[test]
+    fn the_pane_chevron_still_wins_its_pixels_with_a_tool_armed() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+
+        let body = pane_body(&app, 0);
+        let chevron = crate::indicator_render::pane_disclosure_rect(body, false).center();
+        click_chart(&mut app, &ctx, chevron);
+
+        let sizing = app
+            .active_tab()
+            .flow_pane
+            .indicators
+            .all()
+            .iter()
+            .find(|view| view.slot == flow)
+            .expect("the pane is still there")
+            .sizing;
+        assert_eq!(sizing, crate::indicators::PaneSizing::Collapsed);
+        assert!(
+            app.active_tab().flow_pane.drawings.items().is_empty(),
+            "the chevron is chrome, not canvas"
+        );
     }
 
     /// Scroll is the same gesture with a wheel: it zooms the pane under the
@@ -7166,6 +7374,65 @@ plot(close)
         );
     }
 
+    /// The same ✕, with a drawing tool armed: the button is the tool's, and
+    /// it can only be handed out once.
+    ///
+    /// The armed tool used to return early from the whole navigation pass,
+    /// which is what kept the paper layer from also seeing the press. Fixing
+    /// that (audit S2) without gating the paper gesture would mean one click
+    /// dropping an anchor *and* cancelling a working order.
+    #[test]
+    fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![
+                trade(2),
+                trade(6),
+                trade(10),
+                trade(14),
+                trade(18),
+            ]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        let price = Decimal::new(1005, 1);
+        app.active_tab_mut()
+            .paper
+            .apply_sim_command_for_tests(quantick_sim::Command::PlaceLimit {
+                side: quantick_engine::Side::Buy,
+                quantity: Decimal::ONE,
+                price,
+                bracket: quantick_sim::Bracket::none(),
+            });
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("the pane laid out");
+        let tag_right = app
+            .active_tab()
+            .flow_pane
+            .last_lane_divider_x
+            .unwrap_or(chart.right());
+        let y = price_y(&app, PaneSide::Flow, 100.5);
+        let close = crate::paper_trading::close_button_rect(
+            tag_right,
+            crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+        );
+        drag_chart(&mut app, &ctx, close.center(), close.center());
+
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            1,
+            "an armed tool must not hand the same click to the order tag"
+        );
+    }
+
     /// The gesture itself: a right-click on the canvas opens the menu, and the
     /// primary button — which pans, zooms and places drawings — never does.
     ///
@@ -8109,15 +8376,17 @@ plot(close)
             drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
         };
         let pane = &mut app.active_tab_mut().flow_pane;
-        assert!(
-            pane.drawings
-                .place_with(drawing_tool("horizontal-line"), anchored, |tool| {
-                    drawings::NewDrawing {
-                        style: drawings::DrawingStyle::default(),
-                        payload: tool.default_payload(),
-                    }
-                },)
-        );
+        assert!(pane.drawings.place_with(
+            drawing_tool("horizontal-line"),
+            &drawings::DrawingBand::Price,
+            anchored,
+            |tool| {
+                drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                }
+            },
+        ));
 
         let own_pane_only = drawing_strokes(&run_frame(&mut app, &ctx));
         assert!(
@@ -8196,6 +8465,7 @@ plot(close)
             .expect("a closed bar has a time");
         app.active_tab_mut().flow_pane.drawings.place_with(
             drawing_tool("horizontal-line"),
+            &drawings::DrawingBand::Price,
             drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time)),
             |tool| drawings::NewDrawing {
                 style: drawings::DrawingStyle::default(),
@@ -8384,13 +8654,15 @@ plot(close)
             drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time))
         };
         let pane = &mut app.active_tab_mut().flow_pane;
-        pane.drawings
-            .place_with(drawing_tool("horizontal-line"), anchored, |tool| {
-                drawings::NewDrawing {
-                    style: drawings::DrawingStyle::default(),
-                    payload: tool.default_payload(),
-                }
-            });
+        pane.drawings.place_with(
+            drawing_tool("horizontal-line"),
+            &drawings::DrawingBand::Price,
+            anchored,
+            |tool| drawings::NewDrawing {
+                style: drawings::DrawingStyle::default(),
+                payload: tool.default_payload(),
+            },
+        );
         app.active_tab_mut()
             .flow_pane
             .drawings
@@ -9927,13 +10199,15 @@ plot(close)
         let preset_path = store.path().to_path_buf();
         app.drawing_presets = store;
 
-        // Second fib starts from the default preset...
+        // Second fib starts from the default preset. Drawn clear of the
+        // inspector the first fib opened (x >= 410): the panel is opaque to
+        // the pointer, so a press behind it drops no anchor.
         arm_drawing_from_toolbox(&mut app, &ctx, "fib-retracement");
         drag_chart(
             &mut app,
             &ctx,
-            egui::pos2(400.0, 250.0),
-            egui::pos2(550.0, 400.0),
+            egui::pos2(500.0, 250.0),
+            egui::pos2(650.0, 400.0),
         );
         let new_levels = app.active_tab().flow_pane.drawings.items()[1]
             .payload

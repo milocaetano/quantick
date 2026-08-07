@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::measure_core::{MEASURE_FAMILY, TIME_ONLY, hit_measure, paint_measure};
+use super::measure_core::{Measured, MEASURE_FAMILY, TIME_ONLY, hit_measure, paint_measure};
 use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily};
 
 pub(super) static TOOL: DateRange = DateRange;
@@ -33,6 +33,11 @@ impl DrawingToolImpl for DateRange {
     fn supports_fill(&self) -> bool {
         true
     }
+    /// It reads in bars and elapsed time and says nothing about a value:
+    /// `TIME_ONLY` is the same statement one layer down. No band owns it.
+    fn value_axis(&self) -> bool {
+        false
+    }
     fn paint(
         &self,
         painter: &egui::Painter,
@@ -46,9 +51,13 @@ impl DrawingToolImpl for DateRange {
             chart_rect,
             style,
             points,
-            ctxt.anchors,
-            TIME_ONLY,
-            ctxt.halo,
+            Measured {
+                anchors: ctxt.anchors,
+                axes: TIME_ONLY,
+                unit: ctxt.unit,
+                halo: ctxt.halo,
+                primary_band: ctxt.primary_band,
+            },
         );
     }
     fn hit_test(

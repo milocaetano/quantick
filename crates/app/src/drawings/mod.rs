@@ -165,6 +165,20 @@ impl PresetHost for NullPresetHost {
     fn set_default_style(&mut self, _tool_id: &str, _style: Option<DrawingStyle>) {}
 }
 
+/// What an anchor's second coordinate means in the band being painted.
+///
+/// A tool that only projects never asks; a tool that *reads a number back to
+/// the trader* has to, because `pts` and `%` are price words. A percent over
+/// a signed cumulative series is not a smaller truth, it is a false one: a
+/// move from -100 to +100 is not "-200%".
+#[derive(Clone, Copy)]
+pub enum ValueUnit<'a> {
+    /// The instrument's price.
+    Price,
+    /// An indicator's own value, named by that pane's label.
+    Indicator(&'a str),
+}
+
 /// Everything a tool may need beyond raw screen anchors when painting or
 /// hit-testing: its own payload, the chart-space anchors and the price scale
 /// that projected them (log-scaled tools compute prices, then project).
@@ -173,6 +187,13 @@ pub struct DrawContext<'a> {
     pub payload: &'a dyn DrawingPayload,
     pub anchors: &'a [ChartPoint],
     pub scale: &'a PriceScale,
+    /// What `scale` measures on this band — see [`ValueUnit`].
+    pub unit: ValueUnit<'a>,
+    /// Whether this is the first band painting an object that crosses all of
+    /// them. A vertical line's stroke belongs in every band; its readout
+    /// plate and its selection handles belong in one, or a date range's
+    /// "17 bars 4m 21s" is stamped three times down the screen.
+    pub primary_band: bool,
     /// The object's own style — hit-testing reads it too (an invisible fill
     /// takes no part in the interior hit-test).
     pub style: DrawingStyle,
@@ -238,6 +259,16 @@ trait DrawingToolImpl: Sync {
     /// Whether the tool paints an interior that the fill controls affect.
     fn supports_fill(&self) -> bool {
         false
+    }
+    /// Whether this tool's anchors carry a meaningful *value*.
+    ///
+    /// Almost every tool's second coordinate means something on the axis it
+    /// was drawn against, which is what binds it to one band. A vertical line
+    /// and a date range mark instants: they belong to no band, so they are
+    /// placed as [`DrawingBand::AllBands`] and painted through every band as
+    /// one object (`docs/ux/drawing-tools-2026-08.md` §D10).
+    fn value_axis(&self) -> bool {
+        true
     }
     /// Whether the tool paints a stroke the width control affects. Almost
     /// every tool does; a text note has glyphs and no stroke at all, and a
@@ -346,6 +377,24 @@ impl DrawingTool {
     #[must_use]
     pub fn supports_stroke_width(self) -> bool {
         self.0.supports_stroke_width()
+    }
+
+    #[must_use]
+    pub fn value_axis(self) -> bool {
+        self.0.value_axis()
+    }
+
+    /// The band a fresh object of this tool is placed on when the pointer is
+    /// over `band`. A time-only tool ignores the band it was drawn in — it
+    /// crosses all of them, and a band picker on it would be a control with
+    /// one correct setting.
+    #[must_use]
+    pub fn band_for(self, band: &DrawingBand) -> DrawingBand {
+        if self.value_axis() {
+            band.clone()
+        } else {
+            DrawingBand::AllBands
+        }
     }
 
     #[must_use]
@@ -636,10 +685,50 @@ pub enum DrawingScope {
     AllCharts,
 }
 
+/// Durable identity of one indicator pane inside a chart pane.
+///
+/// `kind` is the constructor the indicator was added through (`native.cvd`,
+/// `script.zigzag.pine`), `ordinal` distinguishes two instances of the same
+/// kind in add order. Deliberately *not* the `SlotId`: slots are a monotonic
+/// counter, so removing an indicator and adding it back always yields a new
+/// one, and every drawing on that pane would orphan on the most common
+/// indicator action there is. Ordinal-within-kind is also why the key can
+/// never re-adopt a drawing onto a *different* indicator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneKey {
+    /// Shared, not cloned: a key is copied on every band carve, which runs
+    /// twice per chart pane per frame.
+    pub kind: std::sync::Arc<str>,
+    pub ordinal: u8,
+}
+
+/// Which value axis of the chart pane an object's anchors live on.
+///
+/// A *band* is a region of one chart pane owning a value axis: the candles'
+/// price band, plus one per expanded indicator pane. A drawing belongs to
+/// exactly one band, or — for the time-only tools — to none of them and
+/// therefore to all.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum DrawingBand {
+    /// The candles' price axis. Today's behaviour, and the default, so
+    /// nothing that exists changes.
+    #[default]
+    Price,
+    /// One indicator pane's own value axis. Painted, hit-tested and dragged
+    /// only there: a CVD level drawn through the candles would read as a
+    /// price, which is the data-honesty failure this repo refuses.
+    Indicator(PaneKey),
+    /// No value axis at all: the object marks an instant, so it paints as a
+    /// clipped segment in every band while remaining one object.
+    AllBands,
+}
+
 #[derive(Debug, Clone)]
 pub struct Drawing {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
+    /// The value axis the anchors were placed against.
+    pub band: DrawingBand,
     pub style: DrawingStyle,
     /// A locked drawing keeps rejecting geometry edits and unforced deletes;
     /// its style stays editable.
@@ -695,6 +784,7 @@ impl PartialEq for Drawing {
     fn eq(&self, other: &Self) -> bool {
         self.tool == other.tool
             && self.points == other.points
+            && self.band == other.band
             && self.style == other.style
             && self.locked == other.locked
             && self.hidden == other.hidden
@@ -872,7 +962,13 @@ impl Drawings {
     /// trader's saved defaults.
     #[cfg(test)]
     pub fn place(&mut self, tool: DrawingTool, point: ChartPoint) -> bool {
-        self.place_with(tool, point, |tool| NewDrawing {
+        self.place_on(tool, &DrawingBand::Price, point)
+    }
+
+    /// [`Self::place`] on a named band.
+    #[cfg(test)]
+    pub fn place_on(&mut self, tool: DrawingTool, band: &DrawingBand, point: ChartPoint) -> bool {
+        self.place_with(tool, band, point, |tool| NewDrawing {
             style: DrawingStyle::default(),
             payload: tool.default_payload(),
         })
@@ -884,6 +980,7 @@ impl Drawings {
     pub fn place_with(
         &mut self,
         tool: DrawingTool,
+        band: &DrawingBand,
         point: ChartPoint,
         new_drawing: impl FnOnce(DrawingTool) -> NewDrawing,
     ) -> bool {
@@ -892,6 +989,10 @@ impl Drawings {
             self.draft = Some(Drawing {
                 tool,
                 points: Vec::with_capacity(tool.required_points()),
+                // The band the *first* anchor landed in owns the whole
+                // object: an in-flight draft that changed axis halfway
+                // through would have anchors in two value spaces.
+                band: tool.band_for(band),
                 style: fresh.style,
                 locked: false,
                 hidden: false,
@@ -1574,6 +1675,8 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
@@ -1660,6 +1763,8 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
                 style,
                 selected: true,
                 halo: false,
@@ -1958,6 +2063,8 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
@@ -2051,6 +2158,8 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: true,
             halo: false,
@@ -2124,6 +2233,8 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
                 style: DrawingStyle::default(),
                 selected: true,
                 halo: false,
@@ -2166,6 +2277,8 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
                 style: DrawingStyle::default(),
                 selected: false,
                 halo: false,
