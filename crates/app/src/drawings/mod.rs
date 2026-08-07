@@ -562,6 +562,16 @@ pub struct Drawing {
     pub hidden: bool,
     /// Whether the other panes of this tab show it too.
     pub scope: DrawingScope,
+    /// Set by [`Drawings::reanchor`] when this pane's series does not reach
+    /// the market instant an anchor was placed at — the mark survived a
+    /// re-cut, a rewind or a symbol switch, but it is no longer sitting on
+    /// the data it was drawn against.
+    ///
+    /// Derived state, never edited: it is what the honesty fade and the
+    /// object manager's off-series badge read, and it is deliberately absent
+    /// from [`PartialEq`] so re-anchoring can never look like a user edit to
+    /// the undo history.
+    pub off_series: bool,
     /// Tool-owned state (Fib levels, a future tool's own properties). The
     /// registry creates it; the shared envelope never learns its fields.
     pub payload: Box<dyn DrawingPayload>,
@@ -789,6 +799,7 @@ impl Drawings {
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
+                off_series: false,
                 payload: fresh.payload,
             });
         }
@@ -844,18 +855,94 @@ impl Drawings {
         self.record(before);
     }
 
-    /// Honest reset: the anchors cannot survive a source or bar-spec change,
-    /// and neither can a history that would resurrect them onto different
-    /// market data.
-    pub fn clear(&mut self) {
-        self.items.clear();
-        self.draft = None;
-        self.selected = None;
-        self.all_hidden = false;
-        self.undo.clear();
-        self.redo.clear();
-        self.gesture_baseline = None;
+    /// Re-express every anchor against a series that was cut again — a
+    /// timeframe or bar-kind switch, a replay seek, a reconnect, a symbol
+    /// change.
+    ///
+    /// A bar index means nothing across two cuts of the tape; the market
+    /// instant each anchor captured at placement does, and it is the same
+    /// coordinate that already carries a drawing between the panes of a tab
+    /// (`docs/ux/drawing-tools-2026-08.md` §D7). So the object is not
+    /// discarded and not left pointing at a stale index: it is asked where
+    /// its own timestamps landed.
+    ///
+    /// `slot_of` answers where a market instant sits on the new series, or
+    /// `None` when the series does not reach it — before its first bar, or on
+    /// an instrument that never traded at that moment. Those anchors clamp to
+    /// the nearest edge and the object is flagged [`Drawing::off_series`], so
+    /// it fades and says so rather than pretending to sit on data.
+    ///
+    /// An anchor with no timestamp at all is one dropped past the newest bar,
+    /// where the tape has written nothing (see `ChartPoint::time_ms`). It has
+    /// no instant to look up, so it keeps its distance past the end of the
+    /// series instead — which is exactly where the trader put it.
+    ///
+    /// Rate: once per re-cut, never per frame or per trade, over a handful of
+    /// objects. The undo stacks travel with the live items for the same
+    /// reason [`Self::shift_bars`] moves them — undoing later must not
+    /// resurrect coordinates from a series that no longer exists.
+    pub fn reanchor(
+        &mut self,
+        old_slots: usize,
+        new_slots: usize,
+        slot_of: impl Fn(i64) -> Option<f32>,
+    ) {
+        #[allow(clippy::cast_precision_loss)]
+        let past_end = new_slots as f32 - old_slots as f32;
+        let reanchor_all = |items: &mut [Drawing]| {
+            for drawing in items {
+                let mut off_series = false;
+                for point in &mut drawing.points {
+                    let Some(time) = point.time_ms else {
+                        point.bar += past_end;
+                        continue;
+                    };
+                    match slot_of(time) {
+                        Some(slot) => point.bar = slot,
+                        None => {
+                            off_series = true;
+                            point.bar = 0.0;
+                        }
+                    }
+                }
+                drawing.off_series = off_series;
+            }
+        };
+        reanchor_all(&mut self.items);
+        if let Some(draft) = self.draft.as_mut() {
+            reanchor_all(std::slice::from_mut(draft));
+        }
+        for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            reanchor_all(&mut entry.items);
+        }
+        if let Some(baseline) = &mut self.gesture_baseline {
+            reanchor_all(&mut baseline.items);
+        }
     }
+
+    /// Rewrite the market instants behind one object's anchors, after a move
+    /// that changed their bar positions.
+    ///
+    /// [`Self::translate_selected`] and the keyboard nudge shift bar indices
+    /// directly; the timestamp behind each anchor is what every *other* pane
+    /// reads, so leaving it stale would drag a mark on one chart and leave
+    /// its shared twin standing where it used to be. Only the pane knows how
+    /// to name the instant under a slot, so it hands the answers back here.
+    pub fn set_times(&mut self, index: usize, times: &[Option<i64>]) {
+        let Some(drawing) = self.items.get_mut(index) else {
+            return;
+        };
+        for (point, time) in drawing.points.iter_mut().zip(times) {
+            point.time_ms = *time;
+        }
+    }
+
+    // There is deliberately no `clear`. A re-cut of the bars used to wipe the
+    // store, on the reasoning that a bar index cannot survive one; the anchors
+    // carry market time, so they are re-expressed instead
+    // ([`Self::reanchor`]). The only way a drawing leaves is the trader
+    // removing it — [`Self::delete_selected`] or [`Self::delete_all`], both of
+    // which are undoable.
 
     pub fn shift_bars(&mut self, delta: isize) {
         if delta == 0 {
@@ -1522,14 +1609,23 @@ mod tests {
         assert!(!drawings.items()[0].shareable());
     }
 
+    /// A re-cut used to throw the whole store away, draft included. Nothing is
+    /// thrown away now, and a half-placed object is no exception: its first
+    /// anchor moves onto the new bars like any other, so the trader finishes
+    /// the shape they started rather than starting over.
     #[test]
-    fn clearing_drawings_also_discards_an_unfinished_draft() {
+    fn reanchoring_carries_an_unfinished_draft_too() {
         let mut drawings = Drawings::default();
-        assert!(!drawings.place(tool("rectangle"), ChartPoint::at(1.0, 100.0)));
-        drawings.clear();
-        assert!(drawings.items().is_empty());
-        assert!(drawings.draft().is_none());
-        assert_eq!(drawings.selected(), None);
+        assert!(!drawings.place(
+            tool("rectangle"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000))
+        ));
+
+        drawings.reanchor(10, 5, halved);
+
+        let draft = drawings.draft().expect("the draft survives the re-cut");
+        assert_eq!(draft.points[0].bar, 3.0);
+        assert_eq!(draft.points[0].time_ms, Some(1_700_000_006_000));
     }
 
     #[test]
@@ -1544,6 +1640,106 @@ mod tests {
         assert_eq!(
             drawings.draft().expect("rectangle draft").points[0].bar,
             7.0
+        );
+    }
+
+    /// A series re-cut so that every instant lands on half its old slot —
+    /// what doubling a timeframe does to the bars under a drawing.
+    fn halved(time: i64) -> Option<f32> {
+        Some((time - 1_700_000_000_000) as f32 / 2_000.0)
+    }
+
+    #[test]
+    fn reanchoring_puts_an_anchor_on_the_slot_its_timestamp_now_lands_on() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+        );
+
+        drawings.reanchor(10, 5, halved);
+
+        assert_eq!(drawings.items()[0].points[0].bar, 3.0);
+        assert_eq!(drawings.items()[0].points[0].price, 100.0);
+        assert!(!drawings.items()[0].off_series);
+    }
+
+    #[test]
+    fn reanchoring_keeps_an_undated_anchor_past_the_end_of_the_new_series() {
+        let mut drawings = Drawings::default();
+        // Two bars past the newest of a ten-bar series, where the tape has
+        // written nothing and there is no instant to look up.
+        drawings.place(tool("horizontal-line"), ChartPoint::at(12.0, 100.0));
+
+        drawings.reanchor(10, 5, halved);
+
+        // Still two bars past the newest, now that the newest is bar 5.
+        assert_eq!(drawings.items()[0].points[0].bar, 7.0);
+    }
+
+    #[test]
+    fn reanchoring_flags_an_anchor_the_new_series_cannot_reach() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+        );
+
+        // A symbol switch: the new instrument's series does not cover the
+        // instant this mark was drawn at.
+        drawings.reanchor(10, 5, |_| None);
+
+        assert!(drawings.items()[0].off_series, "the mark must say so");
+        assert_eq!(
+            drawings.items()[0].points[0].time_ms,
+            Some(1_700_000_006_000),
+            "the instant it was placed at is never rewritten"
+        );
+    }
+
+    #[test]
+    fn reanchoring_travels_with_the_undo_history() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+        );
+        drawings.begin_gesture();
+        drawings.translate_selected(4.0, 0.0);
+        drawings.commit_gesture();
+
+        drawings.reanchor(10, 5, halved);
+        drawings.undo();
+
+        // Undo must not resurrect a coordinate from the series that is gone.
+        assert_eq!(drawings.items()[0].points[0].bar, 3.0);
+    }
+
+    #[test]
+    fn setting_times_rewrites_the_instants_behind_the_anchors() {
+        let mut drawings = Drawings::default();
+        let rectangle = tool("rectangle");
+        drawings.place(
+            rectangle,
+            ChartPoint::at_time(1.0, 100.0, Some(1_700_000_001_000)),
+        );
+        drawings.place(
+            rectangle,
+            ChartPoint::at_time(3.0, 110.0, Some(1_700_000_003_000)),
+        );
+
+        drawings.translate_selected(2.0, 0.0);
+        drawings.set_times(0, &[Some(1_700_000_003_000), Some(1_700_000_005_000)]);
+
+        let times: Vec<_> = drawings.items()[0]
+            .points
+            .iter()
+            .map(|point| point.time_ms)
+            .collect();
+        assert_eq!(
+            times,
+            [Some(1_700_000_003_000), Some(1_700_000_005_000)],
+            "a moved mark carries its new instants, or its shared twin stays behind"
         );
     }
 
