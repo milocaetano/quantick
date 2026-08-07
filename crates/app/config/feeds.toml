@@ -41,6 +41,12 @@ symbols = ["BTCUSDT", "ETHUSDT"]
 # The default open: timeframe context beside the flow chart, side by side
 # (user decision 2026-08-06). Remove the key to open on the flow pane alone.
 default_layout = "time+flow"
+# ...and the flow chart beside it reads the tape by tick (user decision
+# 2026-08-07): two charts, one measuring the clock and one measuring the tape,
+# which is the comparison quantick exists to make. The timeframe pane keeps its
+# own 1m default — `default_bars` names a time pane's interval only when it is
+# itself a time spec.
+default_bars = "tick:50"
 
 # Hyperliquid perpetuals, over unauthenticated public REST/WebSocket endpoints.
 # These were the five largest non-delisted markets by 24h notional volume in

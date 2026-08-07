@@ -395,6 +395,15 @@ impl ToolRail {
         self.dock = dock;
     }
 
+    /// Show or hide the rail outright, for a saved workspace restoring the
+    /// state it recorded rather than toggling from whatever this launch
+    /// happens to be in.
+    pub fn set_visible(&mut self, visible: bool) {
+        if self.visible != visible {
+            self.toggle_visible();
+        }
+    }
+
     /// Whether a grip drag is live this frame — the app's escape stack must
     /// yield Esc to the drag while it is.
     #[must_use]

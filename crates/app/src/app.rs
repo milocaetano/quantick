@@ -48,6 +48,7 @@ use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail, ToolboxDock};
+use crate::ui_state;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
@@ -85,6 +86,10 @@ const DEMO_ROW_BAND_STEP: f64 = 0.22;
 /// The band to spread across before the pane has an auto-range to read (no
 /// bars yet): a fraction of price, since there is nothing better to ask.
 const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
+/// How far before the loaded history the re-cut demo anchors its off-series
+/// mark. Any distance the tab cannot possibly hold would do; an hour is
+/// unambiguous at every timeframe the chart offers.
+const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
 /// Initial position of the selected-drawing inspector.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
@@ -134,17 +139,32 @@ const TOAST_UNDO_MS: u64 = 8_000;
 const DUPLICATE_OFFSET_BARS: f32 = 2.0;
 /// Vertical clearance between the toast and the bottom chrome.
 const TOAST_BOTTOM_MARGIN_PX: f32 = 44.0;
+/// Width of the Save-as box, in pixels. Wide enough that a name at the
+/// [`ui_state::MAX_WORKSPACE_NAME`] limit reads in one line.
+const WORKSPACE_NAME_BOX_WIDTH_PX: f32 = 280.0;
 
-/// Transient confirmation of a destructive drawing command, with its escape
-/// hatch. Undo works from the button for [`TOAST_UNDO_MS`] and from Ctrl+Z
-/// for as long as the history holds.
+/// Transient confirmation that the window did what was asked, with an escape
+/// hatch when the act has one. Undo works from the button for
+/// [`TOAST_UNDO_MS`] and from Ctrl+Z for as long as the history holds.
+///
+/// This is the window's one acknowledgement channel, not the drawings'. It
+/// floats over the chart's bottom edge instead of taking a cell on the status
+/// line, and that is the reason: the status bar's readings live at fixed
+/// positions Rafa's eye returns to without looking, and a cell that appears
+/// for eight seconds and then leaves would slide `bars` and `arrival`
+/// sideways twice per acknowledgement (`statusbar.rs`: "the layout never
+/// moves").
 #[derive(Debug)]
-struct DrawingToast {
-    message: &'static str,
+struct Toast {
+    /// Borrowed for the fixed messages, owned when the act has a count to
+    /// report. Acknowledgements are event-driven and rare — never a frame
+    /// path — so an allocation here costs nothing anyone can see.
+    message: std::borrow::Cow<'static, str>,
     shown_at: Instant,
     /// Whether the toast offers Undo. A delete does; the honest clear after
     /// a bar rebuild does not — its history is gone with the drawings, and
-    /// a dead Undo button would lie.
+    /// a dead Undo button would lie. Neither does a workspace save: the file
+    /// it replaced is gone, and `Reset startup layout` is the real way back.
     offers_undo: bool,
 }
 
@@ -536,7 +556,7 @@ pub struct QuantickApp {
     // (slider/color/coordinate drag) is in flight; committed as one undo
     // entry once pointer and keyboard let go.
     inspector_edit_baseline: Option<InspectorEdit>,
-    drawing_toast: Option<DrawingToast>,
+    toast: Option<Toast>,
     // Inspector chrome state: open tab, dock pin, whether the user moved the
     // floating window this session (manual position wins over placement),
     // and the selection the last placement was computed for.
@@ -618,6 +638,32 @@ pub struct QuantickApp {
     /// The in-flight trades-folder dialog, if any. One at a time.
     trades_dir_picker: Option<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
 
+    // The saved workspace (§14, `ui-state.toml`): what the window opens on.
+    // See [`crate::ui_state`] for what this file owns and what it deliberately
+    // leaves to the sibling stores.
+    /// Where the workspace persists.
+    ui_state_path: std::path::PathBuf,
+    /// Whether closing the window writes it. Read from the file at startup and
+    /// toggled from the Workspace menu.
+    save_on_exit: bool,
+    /// The arrangements the trader named and kept, in the order the file lists
+    /// them.
+    ///
+    /// Held here because every write of the workspace file rewrites the whole
+    /// file: capturing the live window and saving it would drop the bookmarks
+    /// on the floor if the app did not carry them between load and save.
+    bookmarks: Vec<ui_state::NamedArrangement>,
+    /// The Save-as box, while it is open: what has been typed so far.
+    workspace_name_entry: Option<String>,
+    /// Whether a workspace is on disk, so the menu can disable Reset without
+    /// asking the filesystem. The menu body runs every frame it is open, and a
+    /// `Path::exists` there is a syscall at 60 Hz for an answer that changes
+    /// only when this app saves or forgets — the two places that update it.
+    workspace_saved: bool,
+    /// The window's inner size as of the last frame, in points — captured here
+    /// because the size a workspace records is the one the user last saw, and
+    /// by exit time the viewport has already been asked to close.
+    window_size: Option<[f32; 2]>,
     frames: FrameStats,
     /// CPU time per frame (update + tessellation + paint, no vsync wait), from
     /// eframe. Separates "we are slow" from "we are waiting for the display".
@@ -656,7 +702,13 @@ struct TabSlot {
 
 impl QuantickApp {
     /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
-    /// (already streaming through `feed`) and bar `spec`.
+    /// (already streaming through `feed`) and bar `spec`, with no saved
+    /// workspace to restore.
+    ///
+    /// The window itself always has one (`main` reads the file before it
+    /// spawns a feed), so this is the tests' entry point: a case about the
+    /// chart is not a case about what the last session left on disk.
+    #[cfg(test)]
     #[must_use]
     pub fn new(
         config: AppConfig,
@@ -664,6 +716,37 @@ impl QuantickApp {
         symbol: impl Into<String>,
         spec: BarSpec,
         feed: FeedHandle,
+    ) -> Self {
+        Self::new_with_workspace(
+            config,
+            feed_id,
+            symbol,
+            spec,
+            feed,
+            ui_state::Workspace::default(),
+        )
+    }
+
+    /// The same, restoring `workspace` over the configured defaults.
+    ///
+    /// The first tab is already streaming when this is called — `main` spawns
+    /// it, because a window with no feed has nothing to show while it waits —
+    /// so the caller is expected to have picked its market from
+    /// [`Workspace::first_market`]. Everything else the workspace remembers is
+    /// applied here.
+    ///
+    /// `workspace` must already have been through
+    /// [`Workspace::restore`](ui_state::Workspace::restore): this function
+    /// opens what it is given, and a market the config no longer offers is not
+    /// its to discover.
+    #[must_use]
+    pub fn new_with_workspace(
+        config: AppConfig,
+        feed_id: impl Into<String>,
+        symbol: impl Into<String>,
+        spec: BarSpec,
+        feed: FeedHandle,
+        workspace: ui_state::Workspace,
     ) -> Self {
         let trades_dir = {
             let stored = crate::paper_state::load(&crate::paper_state::default_path());
@@ -706,7 +789,7 @@ impl QuantickApp {
             toolrail: ToolRail::new(),
             drawing_delete_confirm: false,
             inspector_edit_baseline: None,
-            drawing_toast: None,
+            toast: None,
             inspector_tab: InspectorTab::default(),
             inspector_pinned: false,
             inspector_moved: false,
@@ -741,6 +824,12 @@ impl QuantickApp {
             tz: TzOffset::default(),
             trades_dir,
             trades_dir_picker: None,
+            ui_state_path: ui_state::default_path(),
+            save_on_exit: true,
+            bookmarks: Vec::new(),
+            workspace_name_entry: None,
+            workspace_saved: false,
+            window_size: None,
             frames: FrameStats::new(120),
             cpu_frames: FrameStats::new(120),
             last_frame: None,
@@ -765,6 +854,11 @@ impl QuantickApp {
         // under the autostart hooks below: an env var is an explicit request
         // for this run and must still win (see `restore_chart_layers`).
         app.restore_chart_layers();
+        // And the workspace itself — the tab strip, each tab's canvas, and the
+        // chrome around them. After the config defaults (a saved cockpit is
+        // the user's own answer to what a feed declares) and before the
+        // autostart hooks, which are explicit requests for this one run.
+        app.restore_workspace(workspace);
         // Dev/ops can open the map without a click.
         if std::env::var("QUANTICK_BOOK_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().tape_mut().set_depth_visible(true);
@@ -788,6 +882,13 @@ impl QuantickApp {
         }
         app.pending_drawing_demo =
             std::env::var("QUANTICK_DRAWINGS_DEMO").is_ok_and(|value| value == "1");
+        // The object manager is where a mark that cannot be trusted says so —
+        // the "off series" and "other market" badges live there, and a mark
+        // clamped to an edge may be nowhere near the visible window, making
+        // the list the only place it can be found. Reachable from a launch,
+        // like every other surface, or it cannot be checked without a mouse.
+        app.drawing_manager_open =
+            std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1");
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -907,6 +1008,15 @@ impl QuantickApp {
                 ),
             }
         }
+        // The Workspace menu's own path, so a validation run can see the save
+        // confirmation without a click. A menu entry cannot be reached by an
+        // env var, but the state it produces has to be
+        // (`.claude/skills/ui-harness`). This writes the file for real,
+        // exactly as the entry does — a hook that fakes its surface proves
+        // nothing — so point `QUANTICK_UI_STATE` at a scratchpad first.
+        if std::env::var("QUANTICK_WORKSPACE_SAVE").is_ok_and(|value| value == "1") {
+            app.save_workspace("autostart");
+        }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
@@ -987,6 +1097,22 @@ impl QuantickApp {
         self.active_tab_mut().focused_pane_mut()
     }
 
+    /// The pane every drawing surface speaks for: the one holding the
+    /// selection, which is the focused pane unless a shared mark was taken
+    /// from the chart it is mirrored on (see [`Tab::drawing_side`]).
+    ///
+    /// The inspector, the keyboard, the object manager and the toast all read
+    /// through here, so an object selected on either of its two charts is
+    /// edited and deleted from either of them.
+    fn drawing_pane(&self) -> &ChartPane {
+        self.active_tab().drawing_pane()
+    }
+
+    /// See [`Self::drawing_pane`].
+    fn drawing_pane_mut(&mut self) -> &mut ChartPane {
+        self.active_tab_mut().drawing_pane_mut()
+    }
+
     /// The slot a command from the chrome addresses: the active tab, its
     /// focused pane, that slot.
     fn target_slot(&self, slot: SlotId) -> TabSlot {
@@ -1004,7 +1130,7 @@ impl QuantickApp {
     /// listeners on one port, and the second one loses the bind: that tab
     /// shows the bridge's own bind-failure notice, which is the honest answer
     /// and the reason `[metatrader.ports]` maps a port per symbol.
-    fn open_tab(&mut self, feed_id: String, symbol: String) {
+    fn open_tab(&mut self, feed_id: String, symbol: String, spec: Option<BarSpec>) {
         let Some(provider) = self.config.provider_of(&feed_id) else {
             tracing::warn!(
                 target: "quantick::app",
@@ -1024,7 +1150,7 @@ impl QuantickApp {
         // shows the feed's own MT5_BIND_FAILED notice, which is the honest
         // answer rather than a silently dead chart.
         let handle = feed::spawn_live(provider, &symbol, &self.config);
-        self.adopt_tab(feed_id, symbol, handle);
+        self.adopt_tab(feed_id, symbol, handle, spec);
     }
 
     /// Take a market that is already streaming as a new tab, and make it the
@@ -1036,7 +1162,16 @@ impl QuantickApp {
     /// declares its own `default_bars`/`default_layout` overrides the
     /// inheritance — the declaration exists because that market reads
     /// differently, which is exactly when inheriting would mislead.
-    fn adopt_tab(&mut self, feed_id: String, symbol: String, feed: FeedHandle) {
+    /// `spec` overrides both, and exists for the one caller that already knows
+    /// the answer: a workspace restoring the bar rule this market was last
+    /// read on. Inheriting there would quietly discard what the user saved.
+    fn adopt_tab(
+        &mut self,
+        feed_id: String,
+        symbol: String,
+        feed: FeedHandle,
+        spec: Option<BarSpec>,
+    ) {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
         tracing::info!(
@@ -1050,10 +1185,11 @@ impl QuantickApp {
             action = "activate_new_tab",
             "opening a market in a new tab"
         );
-        let spec = self
-            .config
-            .startup_spec_for(&feed_id)
-            .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone());
+        let spec = spec.unwrap_or_else(|| {
+            self.config
+                .startup_spec_for(&feed_id)
+                .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone())
+        });
         let trades_dir = self.trades_dir.clone();
         self.tabs.push(Tab::new(
             id,
@@ -1787,14 +1923,19 @@ impl QuantickApp {
     /// Apply restored-hidden flags once their views exist, then write the
     /// state file when a change has settled (debounced off the frame path).
     ///
-    /// The file records one workspace: the flow pane of the tab opened from
-    /// the config defaults at startup, which is what the app opens with and
-    /// therefore all it can restore into. Slots on a time pane, or on a tab
-    /// the user opened later, are in-session — a restored entry for either
+    /// The file records the flow pane of the *first* tab — the one the window
+    /// opens with, whether its market came from the config defaults or from
+    /// the saved workspace ([`crate::ui_state`]). Slots on a time pane, or on
+    /// a tab opened after it, stay in-session: a restored entry for either
     /// would have nowhere to land, and would then be quietly dropped by the
-    /// next save. Persisting the tab strip and the layout (§14,
-    /// `ui-state.toml`) is what unlocks persisting their indicators, and they
-    /// land together or not at all.
+    /// next save.
+    ///
+    /// The tab strip now persists, which was the precondition this comment
+    /// used to name — but the indicators of tabs 2..n did not follow it in the
+    /// same change. That is the honest state: a restored workspace brings back
+    /// every tab's *market and canvas*, and every tab but the first opens with
+    /// no indicators. Extending the state file to key its entries by
+    /// (tab, pane) is the increment that closes it.
     fn maintain_indicator_state(&mut self) {
         if !self.pending_hidden.is_empty()
             && let Some(index) = self
@@ -1962,25 +2103,517 @@ impl QuantickApp {
         }
     }
 
-    /// Every pane's overlay at once, for a change that invalidates them all —
-    /// a feed switch or a source reset re-cuts both charts.
-    /// Bar-index anchors are meaningful only for the market/spec that created
-    /// them. Clear them on a source or aggregation rebuild rather than
-    /// silently attaching a mark to different market data — and say so.
+    /// The window as it stands, in the form the workspace file records.
     ///
-    /// Scoped to one pane: the panes cut the same trades into different bars,
-    /// so re-cutting one of them leaves the other's anchors exactly as valid
-    /// as they were.
-    fn note_overlay_cleared(&mut self, had_drawings: bool) {
-        self.toolrail.arm(Tool::Pointer);
-        self.drawing_delete_confirm = false;
-        self.inspector_edit_baseline = None;
-        self.inspector_last_selection = None;
-        // The cleared history cannot resurrect anything, so this toast
-        // offers no Undo — a dead button would lie. But losing the marks is
-        // never silent.
-        self.drawing_toast = had_drawings.then(|| DrawingToast {
-            message: "Drawings cleared - the bars were rebuilt under them.",
+    /// Read off the live state rather than accumulated as it changes: the
+    /// arrangement is a dozen fields spread over the tabs and the chrome, and
+    /// a second copy maintained by every control that moves one of them would
+    /// be a dozen chances to forget. Saving is rare and event-driven, so
+    /// reading them all at once costs nothing anyone can see.
+    fn capture_workspace(&self) -> ui_state::Workspace {
+        let (tabs, chrome) = self.capture_arrangement();
+        ui_state::Workspace::new(
+            self.save_on_exit,
+            self.window_size,
+            self.active_tab,
+            tabs,
+            Some(chrome),
+        )
+        // Every write rewrites the whole file, so the bookmarks have to ride
+        // along or saving the startup screen would silently delete them.
+        .with_saved(self.bookmarks.clone())
+    }
+
+    /// The tabs and the chrome as they stand — the part a startup workspace
+    /// and a named one describe identically, so both capture through here.
+    fn capture_arrangement(&self) -> (Vec<ui_state::SavedTab>, ui_state::SavedChrome) {
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| ui_state::SavedTab {
+                feed: tab.feed_id.clone(),
+                symbol: tab.symbol.clone(),
+                layout: tab.layout.into(),
+                split_fraction: Some(tab.split_fraction),
+                focus: Some(tab.focused_side().into()),
+                flow_bars: tab.flow_pane.state.spec().to_config_string(),
+                // Only a pane that exists has an interval worth recording; a
+                // tab that never showed the split restores on the default,
+                // which is what it had.
+                time_bars: tab
+                    .time_pane
+                    .as_ref()
+                    .map(|pane| pane.state.spec().to_config_string()),
+            })
+            .collect();
+        let chrome = ui_state::SavedChrome {
+            timezone_minutes: self.tz.minutes(),
+            dock_visible: self.dock.visible(),
+            dock_tab: self.dock.tab().map(Into::into),
+            rail_visible: self.toolrail.visible(),
+            rail_dock: self.toolrail.dock().into(),
+            perf_readings: self.show_perf,
+        };
+        (tabs, chrome)
+    }
+
+    /// Open the saved workspace over the configured defaults.
+    ///
+    /// The first tab already exists and is already streaming the market
+    /// `main` picked from this same workspace, so it is *arranged* here rather
+    /// than opened; the rest are opened outright, each on its own feed. A tab
+    /// carries its bar rule explicitly (see [`Self::adopt_tab`]) — inheriting
+    /// would replace what the user saved with what the tab beside it happens
+    /// to show.
+    ///
+    /// `save_on_exit` is taken from the file even when the file has no tabs:
+    /// a trader who switched autosave off and then reset their layout must not
+    /// find it switched back on at the next launch.
+    fn restore_workspace(&mut self, workspace: ui_state::Workspace) {
+        self.save_on_exit = workspace.save_on_exit;
+        self.bookmarks = workspace.saved.clone();
+        // One stat at boot, so the Reset entry can gate on a field instead of
+        // the filesystem for the rest of the session. A file with no tabs
+        // still counts: it carries the autosave setting, and Reset is how the
+        // trader gets rid of it.
+        self.workspace_saved = self.ui_state_path.exists();
+        if let Some(chrome) = &workspace.chrome {
+            self.tz = TzOffset::new(chrome.timezone_minutes);
+            self.dock
+                .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
+            self.toolrail.set_dock(chrome.rail_dock.into());
+            self.toolrail.set_visible(chrome.rail_visible);
+            self.show_perf = chrome.perf_readings;
+        }
+        if workspace.is_empty() {
+            return;
+        }
+        for (index, saved) in workspace.tabs.iter().enumerate() {
+            // `restore` has already dropped anything unparseable, so a spec
+            // reaching here is one a control could have produced.
+            let flow = BarSpec::parse(&saved.flow_bars).ok();
+            if index == 0 {
+                // Tab zero is the one `main` spawned. Its market matches this
+                // entry (that is where `main` read it from), so only its bar
+                // rule can still differ — `main` prefers a feed's declared
+                // `default_bars` when the workspace names none.
+                if let Some(spec) = flow {
+                    self.tabs[0].flow_pane.set_spec(spec);
+                }
+            } else {
+                self.open_tab(saved.feed.clone(), saved.symbol.clone(), flow);
+            }
+            let time_interval =
+                saved
+                    .time_bars
+                    .as_deref()
+                    .and_then(|text| match BarSpec::parse(text) {
+                        Ok(BarSpec::Time(ms)) => Some(ms),
+                        _ => None,
+                    });
+            let focus = saved.focus.map(Into::into);
+            // `open_tab` activates what it opened, so the tab just arranged is
+            // always the last one — index zero on the first pass.
+            let target = if index == 0 { 0 } else { self.tabs.len() - 1 };
+            self.tabs[target].restore_canvas(
+                CanvasLayout::from(saved.layout),
+                saved.split_fraction,
+                focus,
+                time_interval,
+            );
+        }
+        self.active_tab = workspace.active_tab.min(self.tabs.len() - 1);
+        let config = self.config.clone();
+        self.active_tab_mut().refresh_chip_label(&config);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_RESTORED",
+            path = %self.ui_state_path.display(),
+            tabs = self.tabs.len(),
+            active = self.active_tab,
+            save_on_exit = self.save_on_exit,
+            "workspace restored"
+        );
+    }
+
+    /// Write the workspace and say so on the status bar.
+    ///
+    /// The notice is the point of the explicit action: a trader who arranges a
+    /// cockpit and clicks Save wants to know it is kept, and "it looks the
+    /// same" is not an answer. A failed write says *that* instead — being told
+    /// "saved" and finding out at the next launch is the one outcome worth
+    /// engineering against.
+    fn save_workspace(&mut self, reason: &'static str) {
+        let workspace = self.capture_workspace();
+        let saved = ui_state::save(&self.ui_state_path, &workspace);
+        self.workspace_saved |= saved;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_SAVED",
+            path = %self.ui_state_path.display(),
+            tabs = workspace.tabs.len(),
+            saved,
+            reason,
+            action = if saved { "workspace_written" } else { "workspace_not_written" },
+            "workspace save"
+        );
+        self.note_workspace(if saved {
+            format!(
+                "Workspace saved — quantick opens on {} {}",
+                workspace.tabs.len(),
+                if workspace.tabs.len() == 1 {
+                    "chart tab"
+                } else {
+                    "chart tabs"
+                }
+            )
+        } else {
+            "Workspace could not be saved — see the log".to_owned()
+        });
+    }
+
+    /// The Save-as box: one text field, Save and Cancel.
+    ///
+    /// A window rather than an inline menu field, because a menu closes the
+    /// moment focus moves and a name is several keystrokes long. Enter saves,
+    /// Escape cancels, and the field takes the keyboard on the frame it opens
+    /// so the trader can type without clicking into it first.
+    fn draw_workspace_name_box(&mut self, ctx: &egui::Context) {
+        let Some(mut entry) = self.workspace_name_entry.take() else {
+            return;
+        };
+        let mut save = false;
+        let mut cancel = false;
+        let mut open = true;
+        egui::Window::new("Save workspace as")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(WORKSPACE_NAME_BOX_WIDTH_PX);
+                ui.label("A name you will recognise later.");
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut entry)
+                        .hint_text("scalp WIN")
+                        .char_limit(ui_state::MAX_WORKSPACE_NAME)
+                        .desired_width(f32::INFINITY),
+                );
+                field.request_focus();
+                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    save = true;
+                }
+                // A name already in use replaces that bookmark. Saying so
+                // before the click is the difference between "save as" and
+                // "lose the arrangement I meant to keep".
+                if let Some(clean) = ui_state::clean_workspace_name(&entry)
+                    && self.bookmarks.iter().any(|held| held.name == clean)
+                {
+                    ui.label(
+                        egui::RichText::new(format!("Replaces the saved \"{clean}\"."))
+                            .color(theme::AMBER),
+                    );
+                }
+                ui.horizontal(|ui| {
+                    let named = ui_state::clean_workspace_name(&entry).is_some();
+                    if ui
+                        .add_enabled(named, egui::Button::new("Save"))
+                        .on_disabled_hover_text("Type a name first")
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        if save {
+            self.save_named_workspace(&entry);
+        } else if !cancel && open {
+            // Neither settled: keep what has been typed for the next frame.
+            self.workspace_name_entry = Some(entry);
+        }
+    }
+
+    /// Write the bookmarks without disturbing the startup arrangement.
+    ///
+    /// Reads the file back and swaps only the named entries, rather than
+    /// capturing the live window: saving a bookmark must not redefine what the
+    /// app opens on, and `capture_workspace` describes the screen *now*, which
+    /// is exactly what the startup arrangement must not become.
+    fn write_bookmarks(&mut self) -> bool {
+        let mut file = ui_state::load(&self.ui_state_path);
+        // The one live setting that belongs to the file rather than to either
+        // arrangement.
+        file.save_on_exit = self.save_on_exit;
+        file.saved = self.bookmarks.clone();
+        let written = ui_state::save(&self.ui_state_path, &file);
+        self.workspace_saved |= written;
+        written
+    }
+
+    /// Keep the window as it stands under `name`.
+    ///
+    /// A bookmark, not a startup setting: what the app opens on is untouched.
+    /// The reason to name an arrangement is usually to have somewhere to come
+    /// back *to*, and a "save this so I can return to it" that also redefined
+    /// the opening screen would be the opposite of a safety net.
+    ///
+    /// An existing name is replaced rather than duplicated — that is what
+    /// "save as" means everywhere else, and it spares the menu a list of five
+    /// entries called "scalp".
+    fn save_named_workspace(&mut self, name: &str) {
+        let Some(name) = ui_state::clean_workspace_name(name) else {
+            self.note_workspace("A workspace needs a name".to_owned());
+            return;
+        };
+        let (tabs, chrome) = self.capture_arrangement();
+        let entry = ui_state::NamedArrangement {
+            name: name.clone(),
+            window: self.window_size,
+            active_tab: self.active_tab,
+            tabs,
+            chrome: Some(chrome),
+        };
+        let replaced = match self.bookmarks.iter_mut().find(|held| held.name == name) {
+            Some(held) => {
+                *held = entry;
+                true
+            }
+            None => {
+                self.bookmarks.push(entry);
+                false
+            }
+        };
+        let written = self.write_bookmarks();
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_NAMED_SAVED",
+            name = %name,
+            replaced,
+            saved = self.bookmarks.len(),
+            written,
+            action = if written { "bookmark_written" } else { "bookmark_not_written" },
+            "named workspace saved"
+        );
+        self.note_workspace(if written {
+            let verb = if replaced { "replaced" } else { "saved" };
+            format!("Workspace \"{name}\" {verb} — reopen it from Workspace → Open")
+        } else {
+            format!("\"{name}\" could not be saved — see the log")
+        });
+    }
+
+    /// Put the window back the way the bookmark called `name` recorded it.
+    ///
+    /// The saved markets are opened as new tabs and the tabs that were on
+    /// screen are closed afterwards, rather than the reverse: `close_tab`
+    /// refuses to close the last tab — a window with no market has nothing to
+    /// draw — so growing before shrinking is what lets the whole strip be
+    /// replaced. Closing goes through the same path a `Ctrl+W` takes, so a
+    /// simulated position ends in the labeled, journaled flatten the
+    /// paper-trading contract promises instead of vanishing with its tab.
+    ///
+    /// The startup workspace is left alone. Opening a bookmark is a thing you
+    /// do to *this session*; making it the opening screen is `Save workspace`,
+    /// one entry above.
+    fn open_named_workspace(&mut self, name: &str) {
+        let Some(entry) = self
+            .bookmarks
+            .iter()
+            .find(|held| held.name == name)
+            .cloned()
+        else {
+            self.note_workspace(format!("No workspace called \"{name}\""));
+            return;
+        };
+        if entry.tabs.is_empty() {
+            // `restore` drops empty bookmarks at load, so this is only
+            // reachable from a file edited under a running app.
+            self.note_workspace(format!("\"{name}\" has no market left to open"));
+            return;
+        }
+        let replaced = self.tabs.len();
+        for saved in &entry.tabs {
+            self.open_tab(
+                saved.feed.clone(),
+                saved.symbol.clone(),
+                BarSpec::parse(&saved.flow_bars).ok(),
+            );
+            let time_interval =
+                saved
+                    .time_bars
+                    .as_deref()
+                    .and_then(|text| match BarSpec::parse(text) {
+                        Ok(BarSpec::Time(ms)) => Some(ms),
+                        _ => None,
+                    });
+            let opened = self.tabs.len() - 1;
+            self.tabs[opened].restore_canvas(
+                CanvasLayout::from(saved.layout),
+                saved.split_fraction,
+                saved.focus.map(Into::into),
+                time_interval,
+            );
+        }
+        for _ in 0..replaced {
+            self.close_tab(0);
+        }
+        if let Some(chrome) = &entry.chrome {
+            self.tz = TzOffset::new(chrome.timezone_minutes);
+            self.dock
+                .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
+            self.toolrail.set_dock(chrome.rail_dock.into());
+            self.toolrail.set_visible(chrome.rail_visible);
+            self.show_perf = chrome.perf_readings;
+        }
+        self.active_tab = entry.active_tab.min(self.tabs.len().saturating_sub(1));
+        let config = self.config.clone();
+        self.active_tab_mut().refresh_chip_label(&config);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_NAMED_OPENED",
+            name = %name,
+            tabs = self.tabs.len(),
+            closed = replaced,
+            active = self.active_tab,
+            action = "replace_tab_strip",
+            "named workspace opened"
+        );
+        self.note_workspace(format!(
+            "Opened \"{name}\" — {} {}",
+            self.tabs.len(),
+            if self.tabs.len() == 1 {
+                "chart tab"
+            } else {
+                "chart tabs"
+            }
+        ));
+    }
+
+    /// Forget the bookmark called `name`. The window on screen is untouched —
+    /// deleting a bookmark throws away a way back, not the place you are.
+    fn delete_named_workspace(&mut self, name: &str) {
+        let before = self.bookmarks.len();
+        self.bookmarks.retain(|held| held.name != name);
+        if self.bookmarks.len() == before {
+            return;
+        }
+        let written = self.write_bookmarks();
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_NAMED_DELETED",
+            name = %name,
+            remaining = self.bookmarks.len(),
+            written,
+            action = if written { "bookmark_forgotten" } else { "file_not_written" },
+            "named workspace deleted"
+        );
+        self.note_workspace(if written {
+            format!("Workspace \"{name}\" deleted")
+        } else {
+            format!("\"{name}\" could not be deleted — see the log")
+        });
+    }
+
+    /// Forget the saved workspace: the next launch opens on the configured
+    /// defaults. The window on screen is deliberately left alone — a trader
+    /// resetting their *startup* layout mid-session has not asked to have the
+    /// charts they are reading rearranged under them.
+    fn forget_workspace(&mut self) {
+        // Reset clears the *startup* arrangement. The bookmarks survive it,
+        // because coming back after a reset is the whole reason to name one:
+        // deleting the safety net as part of the act it exists to undo would
+        // be the single worst thing this menu could do.
+        let kept = !self.bookmarks.is_empty();
+        let forgotten = if kept {
+            let mut file = ui_state::Workspace::default().with_saved(self.bookmarks.clone());
+            file.save_on_exit = self.save_on_exit;
+            ui_state::save(&self.ui_state_path, &file)
+        } else {
+            ui_state::forget(&self.ui_state_path)
+        };
+        // The file still exists while it holds bookmarks, so Reset stays
+        // available — it is now a no-op for the startup screen and the entry
+        // says as much.
+        self.workspace_saved = kept && forgotten;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_FORGOTTEN",
+            path = %self.ui_state_path.display(),
+            forgotten,
+            bookmarks_kept = self.bookmarks.len(),
+            action = if forgotten { "open_on_config_defaults" } else { "workspace_kept" },
+            "workspace reset"
+        );
+        self.note_workspace(match (forgotten, kept) {
+            (true, true) => format!(
+                "Startup layout reset — the next launch opens on the configured default. \
+                 {} saved {} kept.",
+                self.bookmarks.len(),
+                if self.bookmarks.len() == 1 {
+                    "workspace"
+                } else {
+                    "workspaces"
+                }
+            ),
+            (true, false) => {
+                "Startup layout reset — the next launch opens on the configured default".to_owned()
+            }
+            (false, _) => "Workspace could not be reset — see the log".to_owned(),
+        });
+    }
+
+    /// Keep the window size the workspace would record, and take the exit
+    /// save when the window is closing.
+    ///
+    /// **Per-frame cost**: two reads off the frame's own input state and a
+    /// float compare. The save itself is not on this path — it happens on the
+    /// one frame the close is requested, and the window is going away anyway.
+    ///
+    /// The size is tracked here rather than read at exit because by then the
+    /// viewport has already been asked to close: what a workspace should
+    /// remember is the window the trader was working in, not whatever the
+    /// platform reports on the way out.
+    fn maintain_workspace(&mut self, ctx: &egui::Context) {
+        let (size, closing) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport
+                    .inner_rect
+                    .map(|rect| [rect.width(), rect.height()]),
+                viewport.close_requested(),
+            )
+        });
+        if let Some(size) = size
+            && size[0] > 0.0
+            && size[1] > 0.0
+        {
+            self.window_size = Some(size);
+        }
+        if closing && self.save_on_exit {
+            self.save_workspace("exit");
+        }
+    }
+
+    /// Post a Workspace-menu answer through the window's one acknowledgement
+    /// channel ([`Toast`]).
+    ///
+    /// No Undo: the file it replaced is gone, and `Reset startup layout` is
+    /// the honest way back rather than a button that pretends otherwise.
+    fn note_workspace(&mut self, message: String) {
+        self.toast = Some(Toast {
+            message: message.into(),
             shown_at: Instant::now(),
             offers_undo: false,
         });
@@ -2222,6 +2855,16 @@ const REPLAY_SHORTCUT: egui::KeyboardShortcut =
 /// Shows/hides the panels dock (§10).
 const DOCK_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
+/// Saves the workspace — the arrangement the next launch opens on.
+///
+/// Ctrl+Shift+S rather than the Ctrl+S every editor uses, deliberately: a
+/// chart has no document, and a trader who reaches for Ctrl+S out of habit
+/// mid-session should hit nothing rather than silently redefine what their
+/// platform opens on.
+const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+    egui::Key::S,
+);
 /// Opens the source picker for a new tab (§10).
 const NEW_TAB_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::T);
@@ -2267,6 +2910,9 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&SAVE_WORKSPACE_SHORTCUT)) {
+            self.save_workspace("shortcut");
         }
         // Trading hotkeys, swallowed only while no text field owns the
         // keyboard. Market entries use the ticket's quantity and offsets,
@@ -2343,8 +2989,7 @@ impl QuantickApp {
                         if self.active_tab().replay.is_some() && ui.button("Close Replay").clicked()
                         {
                             let (tab, config) = self.active_with_config();
-                            let cleared = tab.close_replay(config);
-                            self.note_overlay_cleared(cleared);
+                            tab.close_replay(config);
                             ui.close_menu();
                         }
                         ui.separator();
@@ -2443,6 +3088,118 @@ impl QuantickApp {
                                 });
                         });
                     });
+                    // The workspace is its own menu, not a File entry: "what
+                    // does quantick open on" is a question a trader asks about
+                    // their cockpit, not about a document, and burying it
+                    // under File is how a platform ends up with traders who
+                    // rebuild their screen every morning without knowing they
+                    // never had to (audit §6).
+                    ui.menu_button("Workspace", |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new("Save workspace").shortcut_text(
+                                    ui.ctx().format_shortcut(&SAVE_WORKSPACE_SHORTCUT),
+                                ),
+                            )
+                            .on_hover_text(
+                                "Remember this arrangement — the tabs, the charts on each, the \
+                                 panels, the timezone and the window — as what quantick opens on",
+                            )
+                            .clicked()
+                        {
+                            self.save_workspace("menu");
+                            ui.close_menu();
+                        }
+                        // Enabled only when there is something on disk to go
+                        // back to: an entry that would forget nothing is a
+                        // question the trader should not have to answer by
+                        // clicking it.
+                        if ui
+                            .add_enabled(
+                                self.workspace_saved,
+                                egui::Button::new("Reset startup layout"),
+                            )
+                            .on_hover_text(
+                                "Forget the saved workspace; the next launch opens on the \
+                                 configured default. The charts on screen are left alone.",
+                            )
+                            .on_disabled_hover_text(
+                                "Nothing saved yet — quantick already opens on the configured \
+                                 default",
+                            )
+                            .clicked()
+                        {
+                            self.forget_workspace();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        // Bookmarks. Named apart from the two entries above on
+                        // purpose: those govern what the app *opens on*, these
+                        // are places to come back to. The wording carries the
+                        // distinction so the menu does not need a paragraph.
+                        if ui
+                            .button("Save as…")
+                            .on_hover_text(
+                                "Keep this arrangement under a name you can reopen later. It \
+                                 does not change what quantick opens on.",
+                            )
+                            .clicked()
+                        {
+                            self.workspace_name_entry = Some(String::new());
+                            ui.close_menu();
+                        }
+                        let mut open: Option<String> = None;
+                        let mut delete: Option<String> = None;
+                        ui.add_enabled_ui(!self.bookmarks.is_empty(), |ui| {
+                            ui.menu_button("Open", |ui| {
+                                for entry in &self.bookmarks {
+                                    let tabs = entry.tabs.len();
+                                    if ui
+                                        .button(&entry.name)
+                                        .on_hover_text(format!(
+                                            "{tabs} chart {} — replaces what is on screen",
+                                            if tabs == 1 { "tab" } else { "tabs" }
+                                        ))
+                                        .clicked()
+                                    {
+                                        open = Some(entry.name.clone());
+                                        ui.close_menu();
+                                    }
+                                }
+                            })
+                            .response
+                            .on_disabled_hover_text("Nothing saved under a name yet");
+                            ui.menu_button("Delete", |ui| {
+                                for entry in &self.bookmarks {
+                                    if ui.button(&entry.name).clicked() {
+                                        delete = Some(entry.name.clone());
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        });
+                        if let Some(name) = open {
+                            self.open_named_workspace(&name);
+                        }
+                        if let Some(name) = delete {
+                            self.delete_named_workspace(&name);
+                        }
+                        ui.separator();
+                        if ui
+                            .checkbox(&mut self.save_on_exit, "Save on exit")
+                            .on_hover_text(
+                                "Keep the arrangement automatically when the window closes. Off, \
+                                 only Save workspace changes what quantick opens on.",
+                            )
+                            .changed()
+                        {
+                            // The setting lives in the file it governs, so
+                            // switching it has to reach the disk now — not at
+                            // the next exit, which is exactly the exit it may
+                            // have just switched off.
+                            self.save_workspace("save_on_exit_toggled");
+                        }
+                    });
                     ui.menu_button("Tools", |ui| {
                         if ui.button("Appearance…").clicked() {
                             self.show_style = true;
@@ -2484,11 +3241,11 @@ impl QuantickApp {
     /// manager). A locked object raises the confirmation next to the trigger
     /// instead of deleting; a landed delete raises the Undo toast.
     fn request_delete_selected(&mut self, now: Instant) {
-        match self.focused_pane_mut().drawings.delete_selected(false) {
+        match self.drawing_pane_mut().drawings.delete_selected(false) {
             DeleteOutcome::Deleted => {
                 self.drawing_delete_confirm = false;
-                self.drawing_toast = Some(DrawingToast {
-                    message: "Drawing deleted.",
+                self.toast = Some(Toast {
+                    message: "Drawing deleted.".into(),
                     shown_at: now,
                     offers_undo: true,
                 });
@@ -2555,66 +3312,69 @@ impl QuantickApp {
                 // no pointer over it to arm or grab with.
             } else if self.drawing_delete_confirm {
                 self.drawing_delete_confirm = false;
-            } else if self.focused_pane().drawings.draft().is_some() {
-                self.focused_pane_mut().drawings.cancel_draft();
+            } else if self.drawing_pane().drawings.draft().is_some() {
+                self.drawing_pane_mut().drawings.cancel_draft();
                 self.toolrail.arm(Tool::Pointer);
-            } else if self.focused_pane().drawings.selected().is_some() {
-                self.focused_pane_mut().drawings.select(None);
+            } else if self.drawing_pane().drawings.selected().is_some() {
+                self.drawing_pane_mut().drawings.select(None);
             } else {
                 self.toolrail.arm(Tool::Pointer);
             }
         }
-        if self.focused_pane().drawings.draft().is_some() {
+        if self.drawing_pane().drawings.draft().is_some() {
             // During placement the delete keys belong to the draft workflow:
             // Backspace steps back one anchor.
             if keys.backspace {
-                self.focused_pane_mut().drawings.remove_last_draft_anchor();
+                self.drawing_pane_mut().drawings.remove_last_draft_anchor();
             }
         } else if keys.delete || keys.backspace {
             self.request_delete_selected(now);
         }
         if keys.undo {
-            self.focused_pane_mut().drawings.undo();
+            self.drawing_pane_mut().drawings.undo();
         }
         if keys.redo {
-            self.focused_pane_mut().drawings.redo();
+            self.drawing_pane_mut().drawings.redo();
         }
         if keys.lock
-            && let Some(index) = self.focused_pane().drawings.selected()
+            && let Some(index) = self.drawing_pane().drawings.selected()
         {
-            let locked = self.focused_pane().drawings.items()[index].locked;
-            self.focused_pane_mut()
+            let locked = self.drawing_pane().drawings.items()[index].locked;
+            self.drawing_pane_mut()
                 .drawings
                 .set_selected_locked(!locked);
         }
         if keys.hide
-            && let Some(index) = self.focused_pane().drawings.selected()
+            && let Some(index) = self.drawing_pane().drawings.selected()
         {
-            let hidden = self.focused_pane().drawings.items()[index].hidden;
-            self.focused_pane_mut()
+            let hidden = self.drawing_pane().drawings.items()[index].hidden;
+            self.drawing_pane_mut()
                 .drawings
                 .set_selected_hidden(!hidden);
         }
         if keys.duplicate {
-            self.focused_pane_mut()
+            self.drawing_pane_mut()
                 .drawings
                 .duplicate_selected(DUPLICATE_OFFSET_BARS);
         }
         if (keys.nudge_bars != 0.0 || keys.nudge_px != 0.0)
-            && self.focused_pane().drawings.selected().is_some()
+            && self.drawing_pane().drawings.selected().is_some()
         {
             // Arrows write the same honest chart coordinates a drag does:
             // one bar per horizontal step, one pixel's worth of price per
             // vertical step. Each press lands as one undo entry.
-            let price_per_px = self.focused_pane().last_auto_range.map_or(0.0, |auto| {
-                let (lo, hi) = self.focused_pane().price_view.resolve(auto);
-                (hi - lo) / f64::from(self.focused_pane().last_chart_height.max(1.0))
+            let price_per_px = self.drawing_pane().last_auto_range.map_or(0.0, |auto| {
+                let (lo, hi) = self.drawing_pane().price_view.resolve(auto);
+                (hi - lo) / f64::from(self.drawing_pane().last_chart_height.max(1.0))
             });
-            self.focused_pane_mut().drawings.begin_gesture();
-            self.focused_pane_mut()
+            self.drawing_pane_mut().drawings.begin_gesture();
+            self.drawing_pane_mut()
                 .drawings
                 .translate_selected(keys.nudge_bars, f64::from(keys.nudge_px) * price_per_px);
-            self.focused_pane_mut().drawings.commit_gesture();
+            // Same rule as the drag: the instants behind the anchors move
+            // with them, or the object's shared twin stays behind.
+            self.drawing_pane_mut().retime_selected();
+            self.drawing_pane_mut().drawings.commit_gesture();
         }
     }
 
@@ -2634,20 +3394,26 @@ impl QuantickApp {
 
     /// The delete toast: visible for [`TOAST_UNDO_MS`], with an Undo button
     /// driving the same history as Ctrl+Z.
-    fn draw_drawing_toast(&mut self, ctx: &egui::Context, now: Instant) {
-        let Some(toast) = &self.drawing_toast else {
+    fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
+        // Expire first, so the borrow taken below is only ever of a toast that
+        // is still on screen.
+        if self.toast.as_ref().is_some_and(|toast| {
+            now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_UNDO_MS)
+        }) {
+            self.toast = None;
+        }
+        let Some(toast) = &self.toast else {
             return;
         };
-        if now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_UNDO_MS) {
-            self.drawing_toast = None;
-            return;
-        }
-        let message = toast.message;
+        // Borrowed, never cloned: the toast is painted on every frame of its
+        // eight seconds, and an owned message copied per frame would be ~500
+        // allocations for a string that never changes.
+        let message: &str = &toast.message;
         let offers_undo = toast.offers_undo;
         let mut undo_clicked = false;
         #[cfg(test)]
         let mut undo_rect = None;
-        egui::Area::new(egui::Id::new("drawing_toast"))
+        egui::Area::new(egui::Id::new("toast"))
             .anchor(
                 egui::Align2::CENTER_BOTTOM,
                 egui::vec2(0.0, -TOAST_BOTTOM_MARGIN_PX),
@@ -2678,8 +3444,8 @@ impl QuantickApp {
             self.toast_undo_rect = undo_rect;
         }
         if undo_clicked {
-            self.focused_pane_mut().drawings.undo();
-            self.drawing_toast = None;
+            self.drawing_pane_mut().drawings.undo();
+            self.toast = None;
         }
     }
 
@@ -2695,7 +3461,7 @@ impl QuantickApp {
         floating: bool,
     ) -> InspectorActions {
         let mut actions = InspectorActions::default();
-        let drawing = &self.focused_pane().drawings.items()[index];
+        let drawing = &self.drawing_pane().drawings.items()[index];
         let hidden = drawing.hidden;
         let title = drawing.tool.settings_title();
         let sense = if floating {
@@ -2801,7 +3567,7 @@ impl QuantickApp {
     /// tool's capabilities — an unsupported property is absent, not disabled.
     fn drawing_inspector_body(&mut self, ui: &mut egui::Ui, index: usize) -> InspectorActions {
         let mut actions = InspectorActions::default();
-        let drawing = &self.focused_pane().drawings.items()[index];
+        let drawing = &self.drawing_pane().drawings.items()[index];
         let tool = drawing.tool;
         let locked = drawing.locked;
         let hidden = drawing.hidden;
@@ -2845,7 +3611,7 @@ impl QuantickApp {
             egui::Checkbox::new(&mut shared, "Show on all charts"),
         );
         if sharing.changed()
-            && let Some(drawing) = self.focused_pane_mut().drawings.selected_mut()
+            && let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut()
         {
             drawing.scope = if shared {
                 drawings::DrawingScope::AllCharts
@@ -2903,10 +3669,10 @@ impl QuantickApp {
         ui.separator();
 
         let tab = self.inspector_tab;
-        let price_speed = self.focused_pane().last_auto_range.map_or(1.0, |(lo, hi)| {
+        let price_speed = self.drawing_pane().last_auto_range.map_or(1.0, |(lo, hi)| {
             ((hi - lo) / PRICE_DRAG_STEPS).abs().max(1e-9)
         });
-        let side = self.active_tab().focused_side();
+        let side = self.active_tab().drawing_side();
         let Self {
             tabs,
             active_tab,
@@ -3057,14 +3823,14 @@ impl QuantickApp {
             self.commit_inspector_gesture();
         }
         if actions.toggle_hidden {
-            let hidden = self.focused_pane().drawings.items()[index].hidden;
-            self.focused_pane_mut()
+            let hidden = self.drawing_pane().drawings.items()[index].hidden;
+            self.drawing_pane_mut()
                 .drawings
                 .set_selected_hidden(!hidden);
         }
         if actions.toggle_lock {
-            let locked = self.focused_pane().drawings.items()[index].locked;
-            self.focused_pane_mut()
+            let locked = self.drawing_pane().drawings.items()[index].locked;
+            self.drawing_pane_mut()
                 .drawings
                 .set_selected_locked(!locked);
             self.drawing_delete_confirm = false;
@@ -3091,22 +3857,22 @@ impl QuantickApp {
         }
         if actions.force_delete {
             self.drawing_delete_confirm = false;
-            if self.focused_pane_mut().drawings.delete_selected(true) == DeleteOutcome::Deleted {
-                self.drawing_toast = Some(DrawingToast {
-                    message: "Drawing deleted.",
+            if self.drawing_pane_mut().drawings.delete_selected(true) == DeleteOutcome::Deleted {
+                self.toast = Some(Toast {
+                    message: "Drawing deleted.".into(),
                     shown_at: now,
                     offers_undo: true,
                 });
             }
         }
         if actions.close {
-            self.focused_pane_mut().drawings.select(None);
+            self.drawing_pane_mut().drawings.select(None);
             self.drawing_delete_confirm = false;
         }
         if let Some(saved) = actions.saved_default {
             // Nothing to undo: this changed a preference, not the chart.
-            self.drawing_toast = Some(DrawingToast {
-                message: saved.message(),
+            self.toast = Some(Toast {
+                message: saved.message().into(),
                 shown_at: now,
                 offers_undo: false,
             });
@@ -3119,7 +3885,7 @@ impl QuantickApp {
     /// [`inspector_placement`]. The chart pane already excludes both axes and
     /// the live lane, so the popup can never cover them or leave the view.
     fn inspector_target_position(&self, ctx: &egui::Context, index: usize) -> Option<egui::Pos2> {
-        let chart = self.focused_pane().last_chart_area?;
+        let chart = self.drawing_pane().last_chart_area?;
         let bbox = self.drawing_bbox_on_screen(chart, index)?;
         Some(inspector_placement(chart, bbox, self.inspector_size(ctx)))
     }
@@ -3142,22 +3908,22 @@ impl QuantickApp {
     /// radius — the rectangle the inspector must not cover. Projected on the
     /// focused pane, which is where the selection lives.
     fn drawing_bbox_on_screen(&self, chart: egui::Rect, index: usize) -> Option<egui::Rect> {
-        let total = self.focused_pane().slots();
-        let (auto_lo, auto_hi) = self.focused_pane().last_auto_range?;
-        let (lo, hi) = self.focused_pane().price_view.resolve((auto_lo, auto_hi));
+        let total = self.drawing_pane().slots();
+        let (auto_lo, auto_hi) = self.drawing_pane().last_auto_range?;
+        let (lo, hi) = self.drawing_pane().price_view.resolve((auto_lo, auto_hi));
         let scale = PriceScale::from_range(
             lo,
             hi,
-            self.focused_pane().last_chart_top,
-            self.focused_pane().last_chart_top + self.focused_pane().last_chart_height,
+            self.drawing_pane().last_chart_top,
+            self.drawing_pane().last_chart_top + self.drawing_pane().last_chart_height,
         );
         let history_right = self
-            .focused_pane()
+            .drawing_pane()
             .last_lane_divider_x
             .unwrap_or(chart.right());
-        let drawing = self.focused_pane().drawings.items().get(index)?;
+        let drawing = self.drawing_pane().drawings.items().get(index)?;
         let points =
-            self.focused_pane()
+            self.drawing_pane()
                 .projected_drawing_points(drawing, history_right, total, &scale);
         let first = points.first()?;
         let mut bbox = egui::Rect::from_min_max(*first, *first);
@@ -3170,7 +3936,7 @@ impl QuantickApp {
     /// Shared prologue of both inspector hosts. Returns the selection and its
     /// pre-frame copy, or cleans up when nothing is selected.
     fn inspector_selection(&mut self) -> Option<(usize, drawings::Drawing)> {
-        let Some(index) = self.focused_pane().drawings.selected() else {
+        let Some(index) = self.drawing_pane().drawings.selected() else {
             self.drawing_delete_confirm = false;
             self.commit_inspector_gesture();
             self.inspector_last_selection = None;
@@ -3184,7 +3950,7 @@ impl QuantickApp {
         {
             self.commit_inspector_gesture();
         }
-        Some((index, self.focused_pane().drawings.items()[index].clone()))
+        Some((index, self.drawing_pane().drawings.items()[index].clone()))
     }
 
     /// The pinned inspector: a dock panel at the chart's side. Declared with
@@ -3241,7 +4007,7 @@ impl QuantickApp {
         if selection_changed
             && !self.inspector_pin_touched
             && self
-                .focused_pane()
+                .drawing_pane()
                 .last_chart_area
                 .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX)
         {
@@ -3260,7 +4026,7 @@ impl QuantickApp {
         // Repair, never override: a position that no longer fits the chart
         // pane is clamped back in, and `inspector_moved` survives.
         if let (Some(position), Some(chart)) =
-            (self.inspector_pos, self.focused_pane().last_chart_area)
+            (self.inspector_pos, self.drawing_pane().last_chart_area)
         {
             let clamped = clamp_into_chart(position, self.inspector_size(ctx), chart);
             if clamped != position {
@@ -3281,7 +4047,7 @@ impl QuantickApp {
         // one that decides whether its targets project forward at all.
         let max_height = (ctx.screen_rect().height()
             - self
-                .focused_pane()
+                .drawing_pane()
                 .last_chart_area
                 .map_or(0.0, |chart| chart.top())
             - 2.0 * INSPECTOR_OBJECT_GAP_PX)
@@ -3375,7 +4141,7 @@ impl QuantickApp {
             window = window.current_pos(position);
         }
         window.show(ctx, |ui| {
-            let count = self.focused_pane().drawings.items().len();
+            let count = self.drawing_pane().drawings.items().len();
             if count == 0 {
                 ui.label("No drawings yet.");
             }
@@ -3385,11 +4151,13 @@ impl QuantickApp {
                     // Walked in reverse: the manager lists top-most first, the
                     // same order hit-testing resolves overlap.
                     for index in (0..count).rev() {
-                        let drawing = &self.focused_pane().drawings.items()[index];
-                        let selected = self.focused_pane().drawings.selected() == Some(index);
+                        let drawing = &self.drawing_pane().drawings.items()[index];
+                        let selected = self.drawing_pane().drawings.selected() == Some(index);
                         let locked = drawing.locked;
                         let hidden = drawing.hidden;
                         let shared = drawing.scope == drawings::DrawingScope::AllCharts;
+                        let off_series = drawing.off_series;
+                        let foreign_market = drawing.foreign_market;
                         let name = drawing.tool.name();
                         ui.horizontal(|ui| {
                             let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
@@ -3404,6 +4172,29 @@ impl QuantickApp {
                             }
                             if hidden {
                                 ui.label(egui::RichText::new("hidden").small());
+                            }
+                            if foreign_market {
+                                // The one state the chart alone cannot
+                                // explain: the mark resolves onto real bars,
+                                // at a price that belonged to another
+                                // instrument.
+                                ui.label(egui::RichText::new("other market").small())
+                                    .on_hover_text(
+                                        "Drawn while this tab showed a different instrument. The                                          moment still exists here; the price does not mean the                                          same thing",
+                                    );
+                            }
+                            if off_series {
+                                // The mark outlived the bars it was drawn on
+                                // and the chart fades it (§D7b). The list is
+                                // where it can be found and removed, since a
+                                // clamped object may be nowhere near the
+                                // window the trader is looking at.
+                                ui.label(egui::RichText::new("off series").small())
+                                    .on_hover_text(
+                                        "Drawn at a moment this chart's bars do not cover. It is \
+                                         shown at the nearest edge, faded, until you move or \
+                                         delete it",
+                                    );
                             }
                             if shared {
                                 // Which marks are global is a question the
@@ -3480,57 +4271,57 @@ impl QuantickApp {
         });
         self.drawing_manager_open = open;
         if delete_all {
-            let deleted = self.focused_pane_mut().drawings.delete_all();
+            let deleted = self.drawing_pane_mut().drawings.delete_all();
             if deleted > 0 {
-                self.drawing_toast = Some(DrawingToast {
-                    message: "All drawings deleted.",
+                self.toast = Some(Toast {
+                    message: "All drawings deleted.".into(),
                     shown_at: now,
                     offers_undo: true,
                 });
             }
         }
         if let Some(index) = select_row {
-            self.focused_pane_mut().drawings.select(Some(index));
+            self.drawing_pane_mut().drawings.select(Some(index));
             // Centre the viewport on the object's bar span.
-            let slots = self.focused_pane().slots();
-            if let Some(chart) = self.focused_pane().last_chart_area {
-                let points = &self.focused_pane().drawings.items()[index].points;
+            let slots = self.drawing_pane().slots();
+            if let Some(chart) = self.drawing_pane().last_chart_area {
+                let points = &self.drawing_pane().drawings.items()[index].points;
                 if !points.is_empty() {
                     let mid =
                         points.iter().map(|point| point.bar).sum::<f32>() / points.len() as f32;
-                    self.focused_pane_mut()
+                    self.drawing_pane_mut()
                         .viewport
                         .center_on_bar(mid, chart.width(), slots);
                 }
             }
         }
         if let Some(index) = eye_row {
-            let hidden = self.focused_pane().drawings.items()[index].hidden;
-            self.focused_pane_mut()
+            let hidden = self.drawing_pane().drawings.items()[index].hidden;
+            self.drawing_pane_mut()
                 .drawings
                 .set_hidden_at(index, !hidden);
         }
         if let Some(index) = lock_row {
-            let locked = self.focused_pane().drawings.items()[index].locked;
-            self.focused_pane_mut()
+            let locked = self.drawing_pane().drawings.items()[index].locked;
+            self.drawing_pane_mut()
                 .drawings
                 .set_locked_at(index, !locked);
         }
         if let Some(index) = front_row {
-            self.focused_pane_mut().drawings.bring_to_front(index);
+            self.drawing_pane_mut().drawings.bring_to_front(index);
         }
         if let Some(index) = delete_row {
             // The exact same command path as the inspector button and the
             // keyboard: select, then request. Locked rows raise the same
             // confirmation in the inspector.
-            self.focused_pane_mut().drawings.select(Some(index));
+            self.drawing_pane_mut().drawings.select(Some(index));
             self.request_delete_selected(now);
         }
         if show_all {
-            self.focused_pane_mut().drawings.set_all_hidden(false);
+            self.drawing_pane_mut().drawings.set_all_hidden(false);
         }
         if unlock_all {
-            self.focused_pane_mut().drawings.set_all_locked(false);
+            self.drawing_pane_mut().drawings.set_all_locked(false);
         }
     }
 
@@ -3539,13 +4330,11 @@ impl QuantickApp {
         match action {
             ReplayAction::Open(request) => {
                 let (tab, config) = self.active_with_config();
-                let cleared = tab.open_replay(config, *request);
-                self.note_overlay_cleared(cleared);
+                tab.open_replay(config, *request);
             }
             ReplayAction::Close => {
                 let (tab, config) = self.active_with_config();
-                let cleared = tab.close_replay(config);
-                self.note_overlay_cleared(cleared);
+                tab.close_replay(config);
             }
             ReplayAction::Control(control) => {
                 // A dropped transport click is not worth a retry queue: the
@@ -3687,6 +4476,54 @@ impl QuantickApp {
                 }
             }
         }
+        self.apply_drawing_demo_recut();
+    }
+
+    /// The `QUANTICK_DRAWINGS_DEMO_RECUT` hook: re-cut the bars under the demo
+    /// objects, so a screenshot shows what a timeframe switch does to them.
+    ///
+    /// It is the only way to reach the two surfaces this behaviour added
+    /// without a human touching the BARS selector: marks that survived a
+    /// re-cut and are still on their own instants, and a mark the new series
+    /// cannot reach, faded and labelled off-series. One extra object is placed
+    /// an hour before the first bar to produce the second.
+    fn apply_drawing_demo_recut(&mut self) {
+        if !std::env::var("QUANTICK_DRAWINGS_DEMO_RECUT").is_ok_and(|value| value == "1") {
+            return;
+        }
+        let pane = &mut self.active_tab_mut().flow_pane;
+        // An anchor before anything the tab has loaded: honest input for the
+        // off-series path, not a flag set by hand.
+        if let Some(first) = pane.slot_open_time(0) {
+            let base = pane
+                .closed_bar(0)
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+                .unwrap_or(1.0);
+            // A one-anchor tool by name, not `DRAWING_TOOLS[0]` — that is the
+            // trend line, which needs two, so a single `place_with` left a
+            // half-finished draft and no object at all. The whole point here
+            // is to produce one *completed* off-series mark.
+            let single_anchor = drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == "horizontal-line");
+            if let Some(tool) = single_anchor {
+                let placed = pane.drawings.place_with(
+                    tool,
+                    drawings::ChartPoint::at_time(0.5, base, Some(first - DEMO_OFF_SERIES_LEAD_MS)),
+                    |tool| drawings::NewDrawing {
+                        style: drawings::DrawingStyle::default(),
+                        payload: tool.default_payload(),
+                    },
+                );
+                debug_assert!(placed, "a horizontal line completes on one anchor");
+            }
+        }
+        // Half the bars, same trades — the plainest re-cut there is. Two
+        // settle frames because a spec change waits for the selector to hold
+        // still for one (`Tab::apply_spec_change`).
+        pane.tick_n = pane.tick_n.saturating_mul(2).max(2);
+        self.active_tab_mut().apply_spec_changes();
+        self.active_tab_mut().apply_spec_changes();
     }
 }
 
@@ -3707,6 +4544,7 @@ impl QuantickApp {
         self.drain_tabs();
         self.apply_drawing_demo();
         self.maybe_emit_summary(now);
+        self.maintain_workspace(ctx);
 
         let bg = pane::background_color(&self.style);
         // Rail shortcuts first: Esc/1/2 must be read before any widget can
@@ -3721,6 +4559,7 @@ impl QuantickApp {
         self.draw_menu_bar(ctx);
         self.draw_toolbar(ctx);
         self.draw_source_picker(ctx);
+        self.draw_workspace_name_box(ctx);
         self.draw_indicator_settings(ctx);
         self.draw_indicator_legends(ctx);
         self.poll_script_files();
@@ -3824,17 +4663,14 @@ impl QuantickApp {
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         let (tab, config) = self.active_with_config();
-        let mut cleared = tab.maybe_switch_feed(config);
+        tab.maybe_switch_feed(config);
         // Both deferrals settle here, a frame after the click that armed
         // them, so the frame carrying the change paints its overlay first.
         let Self { tabs, config, .. } = self;
         for tab in tabs.iter_mut() {
             tab.apply_pending_layout(config);
         }
-        cleared |= self.active_tab_mut().apply_spec_changes();
-        if cleared {
-            self.note_overlay_cleared(true);
-        }
+        self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
@@ -3887,15 +4723,14 @@ impl QuantickApp {
         // central canvas so they stay in front of the chart.
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
-        self.draw_drawing_toast(ctx, now);
+        self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
         self.active_tab_mut().paper.draw_report_window(ctx);
         self.active_tab_mut().paper.draw_toast(ctx, now);
         if notice_action == notice_card::NoticeAction::Retry {
             let (tab, config) = self.active_with_config();
-            let cleared = tab.restart_feed(config);
-            self.note_overlay_cleared(cleared);
+            tab.restart_feed(config);
         }
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -3909,12 +4744,11 @@ impl QuantickApp {
     /// indicator workers are fed on the same pass, so a tab brought forward is
     /// already current rather than rebuilding on the frame it appears.
     fn drain_tabs(&mut self) {
-        let mut cleared_active = false;
         let config = &self.config;
         let mut trades = 0_u64;
-        for (index, tab) in self.tabs.iter_mut().enumerate() {
+        for tab in &mut self.tabs {
             let before = tab.live_trades;
-            let cleared = tab.drain_feed();
+            tab.drain_feed();
             for pane in tab.panes_mut() {
                 pane.apply_indicator_events();
             }
@@ -3933,18 +4767,9 @@ impl QuantickApp {
             // answer can be a real one.
             tab.poll_ohlcv_capability(config);
             trades += tab.live_trades - before;
-            if cleared && index == self.active_tab {
-                cleared_active = true;
-            }
         }
         // What the window ingested, across every market it is holding.
         self.trades_since_summary += trades;
-        // Only the active tab's overlay chrome is on screen to react; a
-        // background tab that lost its marks says so when it comes forward,
-        // through the same empty overlay.
-        if cleared_active {
-            self.note_overlay_cleared(true);
-        }
     }
 
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.
@@ -4005,12 +4830,12 @@ impl QuantickApp {
             PickerOutcome::Cancel => self.source_picker = None,
             PickerOutcome::Chosen(feed_id, symbol) => {
                 self.source_picker = None;
-                self.open_tab(feed_id, symbol);
+                self.open_tab(feed_id, symbol, None);
             }
             PickerOutcome::Added { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
                 Ok(()) => {
                     self.source_picker = None;
-                    self.open_tab(feed_id, symbol);
+                    self.open_tab(feed_id, symbol, None);
                 }
                 // The dialog stays open carrying the reason: the user is one
                 // keystroke from a symbol that does fit, and closing would
@@ -5428,9 +6253,10 @@ plot(close)
         evt_tx.try_send(FeedEvent::Reset).unwrap();
         app.active_tab_mut().drain_feed();
         assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
-        assert!(
-            app.active_tab().flow_pane.drawings.items().is_empty(),
-            "bar-index drawings cannot survive a source reset honestly"
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "a rewind rebuilds the bars, not the trader's marks (§D7b)"
         );
     }
 
@@ -5453,9 +6279,10 @@ plot(close)
 
         app.active_tab_mut().apply_spec_changes();
         assert_eq!(app.active_tab().flow_pane.state.spec(), &BarSpec::Tick(100));
-        assert!(
-            app.active_tab().flow_pane.drawings.items().is_empty(),
-            "a new bar partition must not inherit old bar-index anchors"
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "a new bar partition re-anchors the marks, it does not drop them"
         );
         assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
     }
@@ -5815,6 +6642,10 @@ plot(close)
             symbol: &tab.symbol,
             paper: &mut tab.paper,
             paper_owns_input: true,
+            // One pane in hand and no tab around it: there is no other pane
+            // whose shared marks could be under the pointer.
+            shared_pick: None,
+            shared: pane::SharedInteraction::default(),
             capabilities,
             layers: layer_actions,
         };
@@ -6009,6 +6840,7 @@ plot(close)
                 commands: cmd_tx,
                 replay: None,
             },
+            None,
         );
         assert_eq!(restored.tabs.len(), 2, "the second market opened");
         assert!(
@@ -7309,6 +8141,228 @@ plot(close)
         );
     }
 
+    /// A tab split in two, with one shared horizontal line drawn on the flow
+    /// pane, and the screen position that line occupies on the *time* pane.
+    ///
+    /// The mark is anchored on a real flow bar (so it carries a real market
+    /// instant) at the price sitting in the middle of the time pane's window
+    /// (so a drag has room to move in either direction without leaving the
+    /// chart). Its y is computed through the time pane's own price scale,
+    /// which is the whole point: the two panes agree on the price and on
+    /// nothing else.
+    fn split_with_a_shared_line(
+        ctx: &egui::Context,
+    ) -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Pos2) {
+        let (mut app, commands) = app_with_history(200);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        // The layout is deferred a frame, so the time pane does not exist yet
+        // on the line above — hence these frames before it is configured.
+        run_frame(&mut app, ctx);
+        run_frame(&mut app, ctx);
+        // One-second bars, so this fixture's 20 seconds of tape is 20 bars on
+        // the time pane against 200 on the flow pane. That difference is what
+        // §D7 is about — the two panes agree on market time and on nothing
+        // else — and without it the time pane holds a single bar, most of its
+        // chart is empty space no instant can be named in, and every gesture
+        // below silently does nothing.
+        let pane = app
+            .active_tab_mut()
+            .time_pane
+            .as_mut()
+            .expect("two frames is enough for the deferred layout to build it");
+        pane.kind = crate::state::BarKind::Time;
+        pane.time_interval_ms = 1_000;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        run_frame(&mut app, ctx);
+        run_frame(&mut app, ctx);
+        assert!(
+            app.active_tab()
+                .time_pane
+                .as_ref()
+                .is_some_and(|pane| pane.slots() > 5),
+            "the time pane must hold a real series, or these tests pass on a              gesture that never reached a bar"
+        );
+
+        let (chart, scale) = time_pane_projection(&app);
+        // Mid-window price, and an x near the newest bar: both panes can name
+        // an instant there, and a drag has room above and below.
+        let price = scale.price_at(chart.center().y);
+        let slot = 100;
+        let time = app
+            .active_tab()
+            .flow_pane
+            .slot_open_time(slot)
+            .expect("a closed bar has a time");
+        app.active_tab_mut().flow_pane.drawings.place_with(
+            drawing_tool("horizontal-line"),
+            drawings::ChartPoint::at_time(slot as f32 + 0.5, price, Some(time)),
+            |tool| drawings::NewDrawing {
+                style: drawings::DrawingStyle::default(),
+                payload: tool.default_payload(),
+            },
+        );
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .selected_mut()
+            .expect("placement selects what it completed")
+            .scope = drawings::DrawingScope::AllCharts;
+        // Nothing selected to start with, so the assertions cannot pass on the
+        // selection placement left behind.
+        app.active_tab_mut().flow_pane.drawings.select(None);
+        run_frame(&mut app, ctx);
+
+        let (chart, scale) = time_pane_projection(&app);
+        (
+            app,
+            commands,
+            egui::pos2(chart.right() - 30.0, scale.y(price)),
+        )
+    }
+
+    /// The time pane's chart rect and price scale, as it last drew them.
+    fn time_pane_projection(app: &QuantickApp) -> (egui::Rect, PriceScale) {
+        let time_pane = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split built a time pane");
+        let chart = time_pane.last_chart_area.expect("the time pane drew");
+        let (lo, hi) = time_pane
+            .price_view
+            .resolve(time_pane.last_auto_range.expect("the pane has a range"));
+        let scale = PriceScale::from_range(
+            lo,
+            hi,
+            time_pane.last_chart_top,
+            time_pane.last_chart_top + time_pane.last_chart_height,
+        );
+        (chart, scale)
+    }
+
+    #[test]
+    fn a_shared_mark_is_selected_and_deleted_from_the_other_chart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
+
+        click_chart(&mut app, &ctx, on_the_time_pane);
+
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(0),
+            "pressing the mirrored copy takes the one object it mirrors"
+        );
+        assert_eq!(
+            app.active_tab().drawing_side(),
+            PaneSide::Flow,
+            "and the chrome follows the object, not the pane under the pointer"
+        );
+
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+        assert!(
+            app.active_tab().flow_pane.drawings.items().is_empty(),
+            "Delete on the chart the mark was seen on deletes the mark"
+        );
+    }
+
+    #[test]
+    fn a_shared_mark_is_dragged_from_the_other_chart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
+        let before = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
+
+        // Straight up: a horizontal line has one anchor and price is the
+        // coordinate both panes read the same way.
+        drag_chart(
+            &mut app,
+            &ctx,
+            on_the_time_pane,
+            on_the_time_pane - egui::vec2(0.0, 60.0),
+        );
+
+        let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        assert!(
+            after.price > before.price,
+            "dragging the mirror up moves the object up: {} -> {}",
+            before.price,
+            after.price
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.undo_depth(),
+            undo_before + 1,
+            "the whole drag is one undo entry on the store that holds it"
+        );
+    }
+
+    /// The other direction, and the regression this pass exists to hold:
+    /// moving a shared mark on the chart it *lives* on has to carry its
+    /// instants with it, or the twin on the other chart stays where it was.
+    /// `translate_selected` moved bar indices only, which made the two views
+    /// disagree the moment either was dragged.
+    #[test]
+    fn moving_a_shared_mark_on_its_own_chart_carries_its_instants() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands, _position) = split_with_a_shared_line(&ctx);
+        app.active_tab_mut().flow_pane.drawings.select(Some(0));
+        let before = app.active_tab().flow_pane.drawings.items()[0].points[0];
+
+        // Four bars to the right, through the same path a drag takes.
+        app.active_tab_mut().flow_pane.drawings.begin_gesture();
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .translate_selected(4.0, 0.0);
+        app.active_tab_mut().flow_pane.retime_selected();
+        app.active_tab_mut().flow_pane.drawings.commit_gesture();
+
+        let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        assert!(after.bar > before.bar, "the mark moved on its own chart");
+        assert_ne!(
+            after.time_ms, before.time_ms,
+            "and the instant behind it moved too, or the other chart still \
+             paints it at the old moment"
+        );
+        assert_eq!(
+            app.active_tab()
+                .flow_pane
+                .slot_at_time(after.time_ms.expect("a mark on a bar has an instant")),
+            Some(after.bar.floor() as usize),
+            "the bar and the instant say the same thing"
+        );
+    }
+
+    #[test]
+    fn a_drag_on_a_mirrored_mark_does_not_also_pan_the_chart_under_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
+        let time_pane = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split built a time pane");
+        let before = time_pane.viewport.right_edge_bar(time_pane.slots());
+
+        drag_chart(
+            &mut app,
+            &ctx,
+            on_the_time_pane,
+            on_the_time_pane - egui::vec2(80.0, 40.0),
+        );
+
+        let time_pane = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split built a time pane");
+        assert_eq!(
+            time_pane.viewport.right_edge_bar(time_pane.slots()),
+            before,
+            "the gesture belongs to the mark, so the chart behind it holds still"
+        );
+    }
+
     /// The reverse, so the test above cannot pass on a stroke that was always
     /// there: switching sharing off takes the foreign copy away again.
     #[test]
@@ -8072,7 +9126,7 @@ plot(close)
             "the manager's Delete lands the same command"
         );
         assert!(
-            app.drawing_toast.is_some(),
+            app.toast.is_some(),
             "the manager delete raises the same Undo toast as the keyboard"
         );
         run_frame_with_modifiers(
@@ -8500,36 +9554,59 @@ plot(close)
     }
 
     #[test]
-    fn a_bar_rebuild_clears_drawings_with_an_explicit_notice_and_no_dead_undo() {
+    fn a_source_reset_keeps_the_marks_and_re_anchors_them_by_market_time() {
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
         let ctx = egui::Context::default();
+        app.active_tab_mut().flow_pane.tick_n = 1;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
         run_frame(&mut app, &ctx);
-        app.active_tab_mut()
-            .flow_pane
-            .drawings
-            .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
-
-        evt_tx.try_send(FeedEvent::Reset).unwrap();
-        // Through the window's own drain: the tab drops the marks, and the
-        // window is what turns that into the toast.
+        // One bar per trade, so the anchor placed on bar 3 is the trade at
+        // that instant — and the rewind below refills with half as many bars
+        // per trade, moving where that instant lives.
+        let trades: Vec<_> = (1..=8).map(trade).collect();
+        let anchor_time = trades[3].timestamp_ms;
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
         app.drain_tabs();
-        assert!(app.active_tab().flow_pane.drawings.items().is_empty());
-        assert!(
-            app.drawing_toast.is_some(),
-            "the clear must raise the notice toast"
+        app.active_tab_mut().flow_pane.drawings.place(
+            drawing_tool("horizontal-line"),
+            ChartPoint::at_time(3.5, 100.0, Some(anchor_time)),
         );
 
-        // A fresh egui Area sizes itself on its first frame; the text is
-        // on screen from the second one.
+        // A rewind: the source throws the timeline away and refills it.
+        evt_tx.try_send(FeedEvent::Reset).unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "a rebuilt timeline never deletes what the trader drew"
+        );
+        evt_tx
+            .try_send(FeedEvent::Backfilled((1..=8).map(trade).collect()))
+            .unwrap();
+        app.drain_tabs();
+
+        let point = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        assert_eq!(
+            point.time_ms,
+            Some(anchor_time),
+            "the instant it was placed at is what survives"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.slot_at_time(anchor_time),
+            Some(point.bar.floor() as usize),
+            "and the bar it sits on is that instant, re-asked of the new series"
+        );
+        assert!(
+            !app.active_tab().flow_pane.drawings.items()[0].off_series,
+            "the refilled series does reach the anchor, so nothing is faded"
+        );
+
         run_frame(&mut app, &ctx);
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
-            texts.iter().any(|text| text.contains("Drawings cleared")),
-            "losing the marks is never silent; painted: {texts:?}"
-        );
-        assert!(
-            !texts.iter().any(|text| text == "Undo"),
-            "the clear toast must not offer an Undo it cannot honour"
+            !texts.iter().any(|text| text.contains("Drawings cleared")),
+            "there is no loss left to announce; painted: {texts:?}"
         );
     }
 
@@ -9820,6 +10897,539 @@ plot(close)
         );
     }
 
+    /// A scratch workspace path, so a test never writes the real cockpit.
+    fn scratch_ui_state(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "quantick-app-ui-state-{name}-{}-{:?}.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    /// What the window is showing is what the file records — the arrangement
+    /// is read off the live state at save time, so nothing can be arranged
+    /// through a path that forgot to mark it.
+    #[test]
+    fn the_saved_workspace_describes_the_window_that_saved_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("capture");
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().split_fraction = 0.35;
+        app.active_tab_mut().focus = PaneSide::Flow;
+        app.tz = TzOffset::new(-180);
+        app.dock.open_tab(DockTab::Trading);
+        app.toolrail.set_dock(ToolboxDock::Right);
+        app.show_perf = false;
+
+        let workspace = app.capture_workspace();
+
+        assert_eq!(workspace.tabs.len(), 1);
+        let tab = &workspace.tabs[0];
+        assert_eq!(tab.layout, crate::config::DeclaredLayout::TimeAndFlow);
+        assert_eq!(tab.split_fraction, Some(0.35));
+        assert_eq!(tab.focus, Some(ui_state::SavedFocus::Flow));
+        assert_eq!(
+            tab.flow_bars,
+            app.active_tab().flow_pane.state.spec().to_config_string(),
+            "the recorded rule is the one the pane is actually on"
+        );
+        assert!(
+            tab.time_bars.is_some(),
+            "a tab showing the split records the interval its time pane is on"
+        );
+        let chrome = workspace.chrome.expect("the chrome is part of a workspace");
+        assert_eq!(chrome.timezone_minutes, -180);
+        assert_eq!(chrome.dock_tab, Some(ui_state::SavedDockTab::Trading));
+        assert_eq!(chrome.rail_dock, ui_state::SavedRailDock::Right);
+        assert!(!chrome.perf_readings);
+    }
+
+    /// And restoring it puts the window back. The pair is the whole feature:
+    /// a capture nothing can reopen is a file, not a workspace.
+    #[test]
+    fn a_restored_workspace_puts_the_window_back() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::TimeAndFlow,
+                split_fraction: Some(0.4),
+                focus: Some(ui_state::SavedFocus::Flow),
+                flow_bars: "dollar:250000".to_owned(),
+                time_bars: Some("time:5m".to_owned()),
+            }],
+            Some(ui_state::SavedChrome {
+                timezone_minutes: 330,
+                dock_visible: false,
+                dock_tab: Some(ui_state::SavedDockTab::Trades),
+                rail_visible: false,
+                rail_dock: ui_state::SavedRailDock::Bottom,
+                perf_readings: false,
+            }),
+        ));
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let tab = app.active_tab();
+        assert_eq!(tab.layout, CanvasLayout::TimeAndFlow);
+        assert!((tab.split_fraction - 0.4).abs() < f32::EPSILON);
+        assert_eq!(
+            tab.focused_side(),
+            PaneSide::Flow,
+            "the saved focus wins over the pane the layout switch revealed"
+        );
+        assert_eq!(
+            tab.flow_pane.state.spec(),
+            &BarSpec::Dollar(rust_decimal::Decimal::from(250_000)),
+            "the flow pane opens on the rule the workspace recorded"
+        );
+        assert_eq!(
+            tab.time_pane.as_ref().map(|pane| pane.state.spec().clone()),
+            Some(BarSpec::Time(300_000)),
+            "and the time pane on its saved interval, not the header default"
+        );
+        assert_eq!(app.tz.minutes(), 330);
+        assert!(
+            !app.dock.visible(),
+            "a dock the trader hid stays hidden, tab remembered underneath"
+        );
+        assert_eq!(app.dock.tab(), Some(DockTab::Trades));
+        assert!(!app.toolrail.visible());
+        assert_eq!(app.toolrail.dock(), ToolboxDock::Bottom);
+        assert!(!app.show_perf);
+    }
+
+    /// The BARS selectors read the pane's own fields, so restoring the state
+    /// without them would give the trader a chart whose controls disagree with
+    /// it — and snap it back to a rule they never chose on first touch.
+    #[test]
+    fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
+        let (mut app, _commands) = app_with_history(50);
+        app.restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::Flow,
+                split_fraction: None,
+                focus: None,
+                flow_bars: "tick:377".to_owned(),
+                time_bars: None,
+            }],
+            None,
+        ));
+        let pane = &app.active_tab().flow_pane;
+        assert_eq!(pane.state.spec(), &BarSpec::Tick(377));
+        assert_eq!(pane.tick_n, 377, "the selector moved with the rule");
+        assert_eq!(pane.kind, crate::state::BarKind::Tick);
+    }
+
+    /// Saving says so. A trader who arranges a cockpit and clicks Save has no
+    /// other way to tell it worked than restarting — and it says so through
+    /// the acknowledgement channel the window already has, rather than by
+    /// pushing a cell onto the status line and sliding the readings sideways
+    /// for eight seconds.
+    #[test]
+    fn saving_the_workspace_acknowledges_itself() {
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("notice");
+        assert!(app.toast.is_none());
+
+        app.save_workspace("test");
+
+        let toast = app.toast.as_ref().expect("the save reports itself");
+        assert!(
+            toast.message.contains("saved"),
+            "the answer has to say what happened, got '{}'",
+            toast.message
+        );
+        assert!(
+            !toast.offers_undo,
+            "the file it replaced is gone; an Undo button here would lie"
+        );
+        assert!(
+            app.ui_state_path.exists(),
+            "and the file it claims to have written is on disk"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Resetting forgets the file without rearranging the charts the trader is
+    /// reading: the entry governs the *startup* layout, not this session.
+    #[test]
+    fn resetting_the_startup_layout_leaves_this_session_alone() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("reset");
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        app.save_workspace("test");
+        assert!(app.ui_state_path.exists());
+
+        app.forget_workspace();
+
+        assert!(
+            !app.ui_state_path.exists(),
+            "the next launch opens on config"
+        );
+        assert_eq!(
+            app.active_tab().layout,
+            CanvasLayout::TimeAndFlow,
+            "the charts on screen are not the trader's startup preference"
+        );
+    }
+
+    /// A window that opens on the split focuses the flow chart, not the
+    /// context beside it.
+    ///
+    /// Caught by looking at the shipped default on screen: the BARS group and
+    /// the status line were speaking for the timeframe pane, so the first
+    /// thing a trader touched on a fresh launch would have re-cut the context
+    /// chart instead of quantick's own. `set_layout` focusing what it reveals
+    /// is right for a menu click and wrong for an opening.
+    #[test]
+    fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut config = test_config();
+        config.feeds[0].default_layout = Some(crate::config::DeclaredLayout::TimeAndFlow);
+        let mut app = QuantickApp::new(
+            config,
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let _ends = (evt_tx, book_tx);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Flow,
+            "a fresh window's controls speak for the chart quantick is built around"
+        );
+        assert_eq!(
+            app.status_model().spec_summary,
+            "tick(50)",
+            "and so does the status line"
+        );
+    }
+
+    /// The one layout that has no flow pane to focus still focuses something.
+    #[test]
+    fn a_window_that_opens_on_the_timeframe_alone_focuses_it() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut config = test_config();
+        config.feeds[0].default_layout = Some(crate::config::DeclaredLayout::Time);
+        let mut app = QuantickApp::new(
+            config,
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let _ends = (evt_tx, book_tx);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+    }
+
+    /// Naming an arrangement keeps it without touching what the app opens on.
+    /// The two are separate settings, and a trader saving a way back must not
+    /// discover they also redefined their opening screen.
+    #[test]
+    fn naming_an_arrangement_does_not_change_what_opens() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("named-startup");
+        app.active_tab_mut().set_layout(CanvasLayout::Single);
+        run_frame(&mut app, &ctx);
+        app.save_workspace("test");
+        let startup_before = ui_state::load(&app.ui_state_path).tabs;
+
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.save_named_workspace("scalp");
+
+        let file = ui_state::load(&app.ui_state_path);
+        assert_eq!(
+            file.tabs, startup_before,
+            "the startup arrangement is untouched by a bookmark"
+        );
+        let saved = file.named("scalp").expect("the bookmark is in the file");
+        assert_eq!(
+            saved.tabs.first().map(|tab| tab.layout),
+            Some(crate::config::DeclaredLayout::TimeAndFlow),
+            "and the bookmark holds the arrangement that was on screen"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Saving the startup screen must not throw the bookmarks away: every
+    /// write rewrites the whole file.
+    #[test]
+    fn saving_the_startup_screen_keeps_the_bookmarks() {
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("bookmarks-survive");
+        app.save_named_workspace("scalp");
+
+        app.save_workspace("test");
+
+        assert!(
+            ui_state::load(&app.ui_state_path).named("scalp").is_some(),
+            "a bookmark cannot be collateral damage of saving the startup screen"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// The same name twice replaces, so the menu never grows five entries
+    /// called "scalp".
+    #[test]
+    fn saving_over_a_name_replaces_that_bookmark() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("replace");
+        app.active_tab_mut().set_layout(CanvasLayout::Single);
+        run_frame(&mut app, &ctx);
+        app.save_named_workspace("scalp");
+
+        app.active_tab_mut().set_layout(CanvasLayout::Time);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.save_named_workspace("  scalp  ");
+
+        let file = ui_state::load(&app.ui_state_path);
+        assert_eq!(file.saved.len(), 1, "one name, one bookmark");
+        assert_eq!(
+            file.named("scalp")
+                .and_then(|e| e.tabs.first())
+                .map(|t| t.layout),
+            Some(crate::config::DeclaredLayout::Time),
+            "and it holds the newer arrangement"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Opening a bookmark replaces the whole tab strip — which is only
+    /// possible by growing before shrinking, since the last tab cannot close.
+    #[test]
+    fn opening_a_bookmark_replaces_what_is_on_screen() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("open");
+        app.active_tab_mut().set_layout(CanvasLayout::Time);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.tz = TzOffset::new(0);
+        app.save_named_workspace("context");
+
+        // Drift away from it, then come back.
+        app.active_tab_mut().set_layout(CanvasLayout::Single);
+        app.tz = TzOffset::new(-180);
+        run_frame(&mut app, &ctx);
+
+        app.open_named_workspace("context");
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(app.tabs.len(), 1, "the strip is replaced, not appended to");
+        assert_eq!(app.active_tab().layout, CanvasLayout::Time);
+        assert_eq!(app.tz.minutes(), 0, "the chrome comes back with it");
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Deleting a bookmark throws away a way back, not the place you are.
+    #[test]
+    fn deleting_a_bookmark_leaves_the_window_alone() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("delete");
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.save_named_workspace("scalp");
+
+        app.delete_named_workspace("scalp");
+
+        assert!(ui_state::load(&app.ui_state_path).named("scalp").is_none());
+        assert_eq!(
+            app.active_tab().layout,
+            CanvasLayout::TimeAndFlow,
+            "the charts on screen are not what was deleted"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// The reason the user asked for named workspaces: a way back after a
+    /// reset. Reset deleting the bookmarks would break the feature at exactly
+    /// the moment it exists for.
+    #[test]
+    fn resetting_the_startup_layout_keeps_the_bookmarks() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("reset-keeps");
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.save_named_workspace("before the mess");
+        app.save_workspace("test");
+
+        app.forget_workspace();
+
+        let file = ui_state::load(&app.ui_state_path);
+        assert!(
+            file.tabs.is_empty(),
+            "the startup arrangement is what Reset clears"
+        );
+        assert!(
+            file.named("before the mess").is_some(),
+            "the way back survives the reset it exists for"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// With nothing named, Reset still removes the file outright.
+    #[test]
+    fn resetting_with_no_bookmarks_removes_the_file() {
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("reset-removes");
+        app.save_workspace("test");
+        assert!(app.ui_state_path.exists());
+
+        app.forget_workspace();
+
+        assert!(!app.ui_state_path.exists());
+    }
+
+    /// A name that is only whitespace is not a name.
+    #[test]
+    fn a_blank_name_saves_nothing_and_says_so() {
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("blank");
+
+        app.save_named_workspace("   ");
+
+        assert!(app.bookmarks.is_empty());
+        assert!(
+            !app.ui_state_path.exists(),
+            "a refused save must not write the file either"
+        );
+        assert!(
+            app.toast
+                .as_ref()
+                .is_some_and(|toast| toast.message.contains("needs a name")),
+            "and the trader is told why nothing happened"
+        );
+    }
+
+    /// A frame carrying the window's close request, which is the only signal
+    /// the exit save has to work from.
+    fn close_requested_frame(app: &mut QuantickApp, ctx: &egui::Context) {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW)),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .events
+            .push(egui::ViewportEvent::Close);
+        let _ = ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()));
+    }
+
+    /// The automatic tier: a trader who never opens the Workspace menu still
+    /// reopens where they left off. Without this the feature is only the
+    /// explicit half, and the half most people would never find.
+    #[test]
+    fn closing_the_window_keeps_the_arrangement_when_autosave_is_on() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("exit-save");
+        app.save_on_exit = true;
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+
+        close_requested_frame(&mut app, &ctx);
+
+        let saved = ui_state::load(&app.ui_state_path);
+        assert_eq!(
+            saved.tabs.first().map(|tab| tab.layout),
+            Some(crate::config::DeclaredLayout::TimeAndFlow),
+            "the window that closed is the window that reopens"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// And switching it off means exactly that: the trader who curates their
+    /// startup layout by hand must not have it overwritten by whatever their
+    /// last session drifted into.
+    #[test]
+    fn closing_the_window_writes_nothing_when_autosave_is_off() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("exit-no-save");
+        app.save_on_exit = false;
+        run_frame(&mut app, &ctx);
+
+        close_requested_frame(&mut app, &ctx);
+
+        assert!(
+            !app.ui_state_path.exists(),
+            "autosave off must leave the saved workspace untouched"
+        );
+    }
+
+    /// Autosave is a property of the file it governs, so switching it has to
+    /// reach the disk on the spot — waiting for the exit would mean waiting
+    /// for the exit it may have just switched off.
+    #[test]
+    fn switching_autosave_off_is_itself_saved() {
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("autosave");
+        app.save_on_exit = false;
+        app.save_workspace("save_on_exit_toggled");
+
+        assert!(
+            !ui_state::load(&app.ui_state_path).save_on_exit,
+            "a trader who switched autosave off must not find it back on"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
     /// Switching layouts focuses the pane the switch reveals, so the first
     /// command after a switch already lands on the chart that just appeared
     /// (audit: opening the split did not focus the pane it created).
@@ -9969,7 +11579,7 @@ plot(close)
         let mut app = app_on(config, "binance", "TESTUSDT");
         assert_eq!(app.active_tab().layout, CanvasLayout::Single);
 
-        app.adopt_tab("mt".to_string(), "WINQ26".to_string(), stub_feed().0);
+        app.adopt_tab("mt".to_string(), "WINQ26".to_string(), stub_feed().0, None);
         assert_eq!(
             app.active_tab().flow_pane.state.spec(),
             &BarSpec::Tick(7),
@@ -9977,7 +11587,12 @@ plot(close)
         );
         assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
 
-        app.adopt_tab("binance".to_string(), "ETHUSDT".to_string(), stub_feed().0);
+        app.adopt_tab(
+            "binance".to_string(),
+            "ETHUSDT".to_string(),
+            stub_feed().0,
+            None,
+        );
         assert_eq!(
             app.active_tab().flow_pane.state.spec(),
             &BarSpec::Tick(7),
@@ -10272,7 +11887,12 @@ plot(close)
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         // A second market, split as well, so both tabs register a divider.
-        app.adopt_tab("binance".to_owned(), "ETHUSDT".to_owned(), stub_feed().0);
+        app.adopt_tab(
+            "binance".to_owned(),
+            "ETHUSDT".to_owned(),
+            stub_feed().0,
+            None,
+        );
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
@@ -10536,6 +12156,7 @@ plot(close)
                 commands: cmd_tx,
                 replay: None,
             },
+            None,
         );
         run_frame(app, ctx);
         TabEnds {
@@ -11866,7 +13487,12 @@ plot(close)
         app.symbols_path = path.clone();
         app.add_symbol("binance", "WINQ26")
             .expect("the catalog takes a symbol that fits");
-        app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
+        app.adopt_tab(
+            "binance".to_owned(),
+            "WINQ26".to_owned(),
+            stub_feed().0,
+            None,
+        );
         run_frame(&mut app, &ctx);
         let open_tabs = app.tabs.len();
 
@@ -11921,7 +13547,12 @@ plot(close)
         let _ = std::fs::remove_file(&app.symbols_path);
         app.add_symbol("binance", "WINQ26")
             .expect("the catalog takes a symbol that fits");
-        app.adopt_tab("binance".to_owned(), "WINQ26".to_owned(), stub_feed().0);
+        app.adopt_tab(
+            "binance".to_owned(),
+            "WINQ26".to_owned(),
+            stub_feed().0,
+            None,
+        );
         run_frame(&mut app, &ctx);
 
         // What the picker is handed, and what it does with it.
