@@ -124,9 +124,17 @@ pub struct FootprintLod {
 }
 
 impl FootprintLod {
-    /// The level this zoom supports, sticky on the way down (see
+    /// The level this zoom supports, sticky in BOTH directions (see
     /// [`LEVEL_HYSTERESIS`]). `profile_row_px` is the configured Profile
     /// floor — the "how fine may the bands get" knob.
+    ///
+    /// The dead band is two-sided on purpose: the price auto-fit breathes
+    /// with every pan and print, so the row height crosses a floor and
+    /// crosses back with a centimetre of mouse travel. With instant
+    /// upgrades against banded downgrades, the boundary blinks — up at
+    /// once, down 15% later, up at once again. A change in either
+    /// direction now has to clear the floor with 15% to spare before the
+    /// level moves; only the very first frame takes the strict answer.
     pub fn resolve(
         &mut self,
         candle_width: f32,
@@ -142,6 +150,14 @@ impl FootprintLod {
                     profile_row_px,
                 );
                 if relaxed < current { strict } else { current }
+            }
+            Some(current) if strict > current => {
+                let confirmed = level_for(
+                    candle_width / LEVEL_HYSTERESIS,
+                    base_row_px / LEVEL_HYSTERESIS,
+                    profile_row_px,
+                );
+                if confirmed >= strict { strict } else { current }
             }
             _ => strict,
         };
@@ -1119,8 +1135,9 @@ mod tests {
     }
 
     #[test]
-    fn lod_downgrades_only_past_the_dead_band() {
+    fn lod_changes_only_past_the_dead_band_in_both_directions() {
         let mut lod = FootprintLod::default();
+        // The first frame takes the strict answer.
         assert_eq!(
             lod.resolve(80.0, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Detailed
@@ -1135,11 +1152,26 @@ mod tests {
             lod.resolve(60.0, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Compact
         );
-        // Upgrades are immediate — there is no band on the way up.
+        // Upgrades need the same clearance: 80px is over the 72px floor but
+        // not 15% over, so the level holds — an instant upgrade against a
+        // banded downgrade is a blinker at the boundary.
         assert_eq!(
             lod.resolve(80.0, 12.0, PROFILE_MIN_ROW),
+            DetailLevel::Compact
+        );
+        assert_eq!(
+            lod.resolve(90.0, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Detailed
         );
+        // The blinker scenario itself: oscillating across the floor by a
+        // hair must not change the level once settled.
+        for width in [73.0, 71.0, 73.0, 71.0, 73.0] {
+            assert_eq!(
+                lod.resolve(width, 12.0, PROFILE_MIN_ROW),
+                DetailLevel::Detailed,
+                "width {width} blinked"
+            );
+        }
     }
 
     #[test]
