@@ -507,9 +507,18 @@ indicator plan.
 
 ## 14. Open questions
 
-- **Persistence of chrome state** (dock width, active tab, rail tool,
-  sub-pane heights): piggyback on the indicator plan's
-  `indicators-state.toml` or a sibling `ui-state.toml`. Decide at phase 4.
+- **Persistence of chrome state** — *answered*: a sibling `ui-state.toml`,
+  not a section of `indicators-state.toml`. Each store owns what nothing
+  else owns (one field, one file), and this one owns the *arrangement*: the
+  tab strip, each tab's canvas layout, divider, focus and bar specs, the
+  dock, the rail, the timezone and the window size. Two tiers reach it —
+  `Workspace → Save workspace` (Ctrl+Shift+S) on demand, and `Save on exit`,
+  on by default. Restoring is filtered against the live config: a market it
+  no longer offers is dropped, never resurrected. See
+  `crates/app/src/ui_state.rs`.
+  Still open inside it: dock body widths and sub-pane heights stay
+  in-session. They are read back off egui's layout rather than owned as
+  state, so giving them a home is a separate increment.
 - **Multi-chart** is now specified in §11 (tabs + one split). Grid layouts
   (2×2 and beyond) and per-pane toolbars remain unspecified until a real
   need exists.

@@ -36,6 +36,8 @@ is the source of truth, this table is the index):
 | `QUANTICK_REPLAY_DIR` + `QUANTICK_REPLAY_AUTOSTART=1` + `QUANTICK_REPLAY_SPEED` | recorded session playback (deterministic tape → deterministic screen) |
 | `QUANTICK_BUBBLES=<bubbles.toml>` | bubble preset override without touching tracked config |
 | `QUANTICK_CHART_LAYERS` | chart layer visibility set |
+| `QUANTICK_UI_STATE=<toml>` | the saved workspace — the tab strip, each tab's layout/split/focus/bar specs, the dock, the rail, the timezone, the window size. **Always point this at a scratchpad file.** Without it a validation run reads the user's real `ui-state.toml` and, on exit, overwrites it: the run both inherits yesterday's cockpit and destroys it. Point it at a path that does not exist to force the configured default; write one by hand to open on an exact arrangement. |
+| `QUANTICK_WORKSPACE_SAVE=1` | takes `Workspace → Save workspace` at startup, through the menu entry's own path — the save really happens, so the status-line confirmation is on screen to capture. Pair with `QUANTICK_UI_STATE` pointed at a scratchpad. |
 | `QUANTICK_BACKFILL` / `QUANTICK_BOOK_DEPTH` | history paging / depth size |
 | `QUANTICK_TRADES_DIR` | paper-trading journal location (point at scratch) |
 
@@ -46,7 +48,11 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_DRAWING_TOOL=<tool id>` | opens with that tool armed — any id in `DRAWING_TOOLS` (`trend-line`, `ray`, `measure`, `text`, …) |
 | `QUANTICK_DRAWING_MAGNET=1` | the magnet on (anchors snap to the bar's OHLC) |
 | `QUANTICK_DRAWINGS_DEMO=1` | one of every registered drawing placed on the flow pane once it has bars, the last one selected so the inspector is on screen too |
-| `QUANTICK_DRAWINGS_DEMO_SHARED=1` | those demo objects marked "show on all charts" — pair with a split layout to see the cross-pane projection |
+| `QUANTICK_DRAWINGS_DEMO=bands` | the same set, plus a level on each indicator pane's own value and a diagonal across it — the band projection under test. Pair with `QUANTICK_INDICATORS_AUTOSTART=1` |
+| `QUANTICK_DRAWINGS_DEMO_SHARED=1` | those demo objects marked "show on all charts" — pair with a split layout to see the cross-pane projection (which is now also where they can be grabbed, moved and deleted) |
+| `QUANTICK_DRAWINGS_DEMO_RECUT=1` | re-cuts the bars under the demo objects after placing them, and adds one mark anchored before the loaded history — the two states a timeframe switch produces: every mark re-anchored onto the new bars, and one faded "off series" |
+| `QUANTICK_DRAWINGS_MANAGER=1` | opens the object manager, which is where the "off series" and "other market" badges are read — and the only place a mark clamped off the visible window can be found at all |
+| `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>` | selects that tool's demo object and centres the viewport on it. Selection is what puts an object's handles on screen, so this is the only way to photograph the grab points of a tool that is not last in the registry (`parallel-channel` for its corner and rail handles) |
 
 Once merged, move them into the table above.
 

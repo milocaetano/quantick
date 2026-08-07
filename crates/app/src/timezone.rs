@@ -20,6 +20,13 @@ impl TzOffset {
         Self { minutes }
     }
 
+    /// The offset in whole minutes east of UTC — how a saved workspace records
+    /// it, in the unit [`Self::new`] takes back.
+    #[must_use]
+    pub const fn minutes(self) -> i32 {
+        self.minutes
+    }
+
     /// The offset in milliseconds, to add to a UTC epoch-ms timestamp before
     /// extracting the local time-of-day.
     #[must_use]

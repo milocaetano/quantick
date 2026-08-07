@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 use crate::state::BarSpec;
 
 mod app;
+mod bands;
 mod bubble_presets;
 mod candle_view;
 mod chart;
@@ -58,6 +59,7 @@ mod timezone;
 mod toolbar;
 mod toolrail;
 mod trade_paint;
+mod ui_state;
 mod viewport;
 mod widgets;
 
@@ -124,6 +126,21 @@ fn main() -> eframe::Result {
         std::process::exit(1);
     }
 
+    // The saved workspace, read before anything opens: the market its first
+    // tab was on is the market this window has to spawn, because a feed is
+    // started here and handed to the app already streaming.
+    //
+    // Filtered against the config that was just loaded, so a feed or symbol
+    // that has since left it cannot decide what opens. `QUANTICK_DEFAULT_FEED`
+    // and `QUANTICK_DEFAULT_SYMBOL` were applied to the config above and win
+    // over the file — an env var is an explicit request for this one run.
+    let workspace = ui_state::load(&ui_state::default_path()).restore(&config);
+    let env_chose_market = config::startup_selection_came_from_env();
+    if !env_chose_market && let Some((feed, symbol)) = workspace.first_market() {
+        config.default_feed = feed.to_owned();
+        config.default_symbol = symbol.to_owned();
+    }
+
     let feed_id = config.default_feed.clone();
     let symbol = config.default_symbol.clone();
     let provider = config
@@ -141,10 +158,17 @@ fn main() -> eframe::Result {
         "starting quantick"
     );
 
-    // The bar type the chart opens on: the feed's declared `default_bars`
-    // when it names one, the factory tick spec otherwise.
-    let spec = config
-        .startup_spec_for(&feed_id)
+    // The bar type the chart opens on: the rule the saved workspace last read
+    // this market on, else the feed's declared `default_bars`, else the
+    // factory tick spec. The workspace comes first because it is the user's
+    // own answer; `default_bars` is what a feed suggests to a tab that has
+    // none.
+    let spec = workspace
+        .tabs
+        .first()
+        .filter(|_| !env_chose_market)
+        .and_then(|tab| BarSpec::parse(&tab.flow_bars).ok())
+        .or_else(|| config.startup_spec_for(&feed_id))
         .unwrap_or(BarSpec::Tick(INITIAL_TICK_SIZE));
 
     let feed = feed::spawn_live(provider, &symbol, &config);
@@ -154,7 +178,7 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size(window_size())
+            .with_inner_size(window_size(workspace.window))
             .with_min_inner_size(MIN_WINDOW_PX)
             .with_title("quantick")
             .with_icon(icon),
@@ -172,8 +196,8 @@ fn main() -> eframe::Result {
             egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
             cc.egui_ctx.set_fonts(fonts);
             theme::apply(&cc.egui_ctx);
-            Ok(Box::new(app::QuantickApp::new(
-                config, feed_id, symbol, spec, feed,
+            Ok(Box::new(app::QuantickApp::new_with_workspace(
+                config, feed_id, symbol, spec, feed, workspace,
             )))
         }),
     )
@@ -186,8 +210,13 @@ const DEFAULT_WINDOW_PX: [f32; 2] = [1100.0, 650.0];
 /// clip chrome instead of collapsing it.
 const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
 
-/// Size the window opens at: [`DEFAULT_WINDOW_PX`] unless
-/// `QUANTICK_WINDOW_SIZE=WxH` says otherwise.
+/// Size the window opens at: `QUANTICK_WINDOW_SIZE=WxH` when it is set, else
+/// the `saved` size from the workspace, else [`DEFAULT_WINDOW_PX`].
+///
+/// The env var wins over the saved size for the same reason it wins over the
+/// saved market: it is an explicit request for this one run, and a validation
+/// run asking for a small window must get one whatever the last session left
+/// behind.
 ///
 /// The hook exists because window size is not decoration here — it is what
 /// decides whether the indicator band has room for its panes and whether the
@@ -199,9 +228,15 @@ const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
 /// reach the smallest real layout and no smaller. A value that does not parse
 /// is ignored with a warning rather than failing the launch: a malformed
 /// env var must not stand between the user and their chart.
-fn window_size() -> [f32; 2] {
+fn window_size(saved: Option<[f32; 2]>) -> [f32; 2] {
+    // A saved size is clamped to the same minimum the hook and the window
+    // itself enforce: a workspace written on a larger screen must not open a
+    // window below the layout floor on a smaller one.
+    let fallback = saved.map_or(DEFAULT_WINDOW_PX, |[width, height]| {
+        [width.max(MIN_WINDOW_PX[0]), height.max(MIN_WINDOW_PX[1])]
+    });
     let Ok(raw) = std::env::var("QUANTICK_WINDOW_SIZE") else {
-        return DEFAULT_WINDOW_PX;
+        return fallback;
     };
     match parse_window_size(&raw) {
         Some(size) => {
@@ -224,7 +259,7 @@ fn window_size() -> [f32; 2] {
                 action = "using_default",
                 "QUANTICK_WINDOW_SIZE is not WIDTHxHEIGHT"
             );
-            DEFAULT_WINDOW_PX
+            fallback
         }
     }
 }

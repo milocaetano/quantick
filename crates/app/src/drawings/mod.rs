@@ -20,9 +20,16 @@ use std::any::Any;
 use std::fmt;
 
 use eframe::egui;
+use smallvec::SmallVec;
 
 use crate::chart::PriceScale;
 use crate::theme;
+
+/// The screen-space grab points of one selected object. Six covers every tool
+/// in the registry — the channel is the widest, with a corner and a centre on
+/// each of its two rails — so the handle pass of the selected object
+/// allocates nothing per frame.
+pub type Handles = SmallVec<[egui::Pos2; 6]>;
 
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
 /// A drawing is an annotation *on* the chart, never a second series: the
@@ -158,6 +165,20 @@ impl PresetHost for NullPresetHost {
     fn set_default_style(&mut self, _tool_id: &str, _style: Option<DrawingStyle>) {}
 }
 
+/// What an anchor's second coordinate means in the band being painted.
+///
+/// A tool that only projects never asks; a tool that *reads a number back to
+/// the trader* has to, because `pts` and `%` are price words. A percent over
+/// a signed cumulative series is not a smaller truth, it is a false one: a
+/// move from -100 to +100 is not "-200%".
+#[derive(Clone, Copy)]
+pub enum ValueUnit<'a> {
+    /// The instrument's price.
+    Price,
+    /// An indicator's own value, named by that pane's label.
+    Indicator(&'a str),
+}
+
 /// Everything a tool may need beyond raw screen anchors when painting or
 /// hit-testing: its own payload, the chart-space anchors and the price scale
 /// that projected them (log-scaled tools compute prices, then project).
@@ -166,6 +187,13 @@ pub struct DrawContext<'a> {
     pub payload: &'a dyn DrawingPayload,
     pub anchors: &'a [ChartPoint],
     pub scale: &'a PriceScale,
+    /// What `scale` measures on this band — see [`ValueUnit`].
+    pub unit: ValueUnit<'a>,
+    /// Whether this is the first band painting an object that crosses all of
+    /// them. A vertical line's stroke belongs in every band; its readout
+    /// plate and its selection handles belong in one, or a date range's
+    /// "17 bars 4m 21s" is stamped three times down the screen.
+    pub primary_band: bool,
     /// The object's own style — hit-testing reads it too (an invisible fill
     /// takes no part in the interior hit-test).
     pub style: DrawingStyle,
@@ -232,6 +260,16 @@ trait DrawingToolImpl: Sync {
     fn supports_fill(&self) -> bool {
         false
     }
+    /// Whether this tool's anchors carry a meaningful *value*.
+    ///
+    /// Almost every tool's second coordinate means something on the axis it
+    /// was drawn against, which is what binds it to one band. A vertical line
+    /// and a date range mark instants: they belong to no band, so they are
+    /// placed as [`DrawingBand::AllBands`] and painted through every band as
+    /// one object (`docs/ux/drawing-tools-2026-08.md` §D10).
+    fn value_axis(&self) -> bool {
+        true
+    }
     /// Whether the tool paints a stroke the width control affects. Almost
     /// every tool does; a text note has glyphs and no stroke at all, and a
     /// width slider on its Style tab would move nothing.
@@ -272,6 +310,41 @@ trait DrawingToolImpl: Sync {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool;
+    /// Where the trader grabs this object, in screen space. `None` — the
+    /// answer for almost every tool — means the raw anchors: the point you
+    /// clicked is the point you drag.
+    ///
+    /// A tool overrides this when its anchors are not where the gesture
+    /// belongs. A channel is the case that forced the port open: its third
+    /// anchor is a corner of the corridor, so the only way to widen one was
+    /// to find a lone dot off in the distance, and only ever that one edge.
+    /// The handle for a rail belongs at the centre of that rail, and there is
+    /// one per rail.
+    fn handles(
+        &self,
+        _chart_rect: egui::Rect,
+        _points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        None
+    }
+    /// Apply a drag of handle `handle` to screen position `to`, answering the
+    /// object's new screen anchors — the tool decides which anchors a handle
+    /// moves, and a handle may well move more than one.
+    ///
+    /// `None` (the default) means the plain anchor move the host already
+    /// does. A tool that overrides [`DrawingToolImpl::handles`] must override
+    /// this too: a handle that is not an anchor has no default meaning.
+    fn drag_handle(
+        &self,
+        _chart_rect: egui::Rect,
+        _points: &[egui::Pos2],
+        _handle: usize,
+        _to: egui::Pos2,
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        None
+    }
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2);
 }
@@ -304,6 +377,24 @@ impl DrawingTool {
     #[must_use]
     pub fn supports_stroke_width(self) -> bool {
         self.0.supports_stroke_width()
+    }
+
+    #[must_use]
+    pub fn value_axis(self) -> bool {
+        self.0.value_axis()
+    }
+
+    /// The band a fresh object of this tool is placed on when the pointer is
+    /// over `band`. A time-only tool ignores the band it was drawn in — it
+    /// crosses all of them, and a band picker on it would be a control with
+    /// one correct setting.
+    #[must_use]
+    pub fn band_for(self, band: &DrawingBand) -> DrawingBand {
+        if self.value_axis() {
+            band.clone()
+        } else {
+            DrawingBand::AllBands
+        }
     }
 
     #[must_use]
@@ -384,11 +475,55 @@ impl DrawingTool {
         self.0.paint(painter, chart_rect, style, points, ctxt);
         if ctxt.selected && show_handles {
             let ring = egui::Stroke::new(SELECTED_ANCHOR_RING_WIDTH_PX, theme::ACCENT);
-            for point in points {
-                painter.circle_filled(*point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
-                painter.circle_stroke(*point, SELECTED_ANCHOR_RADIUS_PX, ring);
+            for point in self.handles(chart_rect, points, ctxt) {
+                painter.circle_filled(point, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_FILL);
+                painter.circle_stroke(point, SELECTED_ANCHOR_RADIUS_PX, ring);
             }
         }
+    }
+
+    /// The grab points of this object — the tool's own when it declares them,
+    /// the raw anchors otherwise. Paint, hit-test and drag all ask here, so
+    /// what the trader sees is exactly what they can grab.
+    #[must_use]
+    pub fn handles(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
+    ) -> Handles {
+        self.0
+            .handles(chart_rect, points, ctxt)
+            .unwrap_or_else(|| points.iter().copied().collect())
+    }
+
+    /// Whether this tool's handles *are* its anchors — true for almost every
+    /// tool. A host that can only express "move anchor N" (the cross-pane
+    /// shared edit) asks this before offering a handle at all, rather than
+    /// leaving a grab point that moves something other than what it sits on.
+    #[must_use]
+    pub fn handles_are_anchors(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
+    ) -> bool {
+        self.0.handles(chart_rect, points, ctxt).is_none()
+    }
+
+    /// New screen anchors after dragging `handle` to `to`, when the tool owns
+    /// the gesture. `None` means the host's plain "this handle is anchor
+    /// `handle`" move.
+    #[must_use]
+    pub fn drag_handle(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        handle: usize,
+        to: egui::Pos2,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        self.0.drag_handle(chart_rect, points, handle, to, ctxt)
     }
 
     #[must_use]
@@ -400,7 +535,7 @@ impl DrawingTool {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool {
-        points
+        self.handles(chart_rect, points, ctxt)
             .iter()
             .any(|point| point.distance_sq(position) <= radius_px * radius_px)
             || self
@@ -550,10 +685,50 @@ pub enum DrawingScope {
     AllCharts,
 }
 
+/// Durable identity of one indicator pane inside a chart pane.
+///
+/// `kind` is the constructor the indicator was added through (`native.cvd`,
+/// `script.zigzag.pine`), `ordinal` distinguishes two instances of the same
+/// kind in add order. Deliberately *not* the `SlotId`: slots are a monotonic
+/// counter, so removing an indicator and adding it back always yields a new
+/// one, and every drawing on that pane would orphan on the most common
+/// indicator action there is. Ordinal-within-kind is also why the key can
+/// never re-adopt a drawing onto a *different* indicator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneKey {
+    /// Shared, not cloned: a key is copied on every band carve, which runs
+    /// twice per chart pane per frame.
+    pub kind: std::sync::Arc<str>,
+    pub ordinal: u8,
+}
+
+/// Which value axis of the chart pane an object's anchors live on.
+///
+/// A *band* is a region of one chart pane owning a value axis: the candles'
+/// price band, plus one per expanded indicator pane. A drawing belongs to
+/// exactly one band, or — for the time-only tools — to none of them and
+/// therefore to all.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum DrawingBand {
+    /// The candles' price axis. Today's behaviour, and the default, so
+    /// nothing that exists changes.
+    #[default]
+    Price,
+    /// One indicator pane's own value axis. Painted, hit-tested and dragged
+    /// only there: a CVD level drawn through the candles would read as a
+    /// price, which is the data-honesty failure this repo refuses.
+    Indicator(PaneKey),
+    /// No value axis at all: the object marks an instant, so it paints as a
+    /// clipped segment in every band while remaining one object.
+    AllBands,
+}
+
 #[derive(Debug, Clone)]
 pub struct Drawing {
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
+    /// The value axis the anchors were placed against.
+    pub band: DrawingBand,
     pub style: DrawingStyle,
     /// A locked drawing keeps rejecting geometry edits and unforced deletes;
     /// its style stays editable.
@@ -562,6 +737,27 @@ pub struct Drawing {
     pub hidden: bool,
     /// Whether the other panes of this tab show it too.
     pub scope: DrawingScope,
+    /// Set when the tab changed the instrument under this mark.
+    ///
+    /// Time survives a symbol switch and price does not: BTC traded at the
+    /// same instants the index did, so the anchors resolve perfectly and the
+    /// level lands at a price that means nothing on the chart it is now over.
+    /// `off_series` cannot catch it — the series *does* reach those instants.
+    ///
+    /// Marks are never deleted by a state change, so this is what keeps that
+    /// honest: the object stays, and it says it belongs to another market
+    /// rather than pretending to be a level on this one.
+    pub foreign_market: bool,
+    /// Set by [`Drawings::reanchor`] when this pane's series does not reach
+    /// the market instant an anchor was placed at — the mark survived a
+    /// re-cut, a rewind or a symbol switch, but it is no longer sitting on
+    /// the data it was drawn against.
+    ///
+    /// Derived state, never edited: it is what the honesty fade and the
+    /// object manager's off-series badge read, and it is deliberately absent
+    /// from [`PartialEq`] so re-anchoring can never look like a user edit to
+    /// the undo history.
+    pub off_series: bool,
     /// Tool-owned state (Fib levels, a future tool's own properties). The
     /// registry creates it; the shared envelope never learns its fields.
     pub payload: Box<dyn DrawingPayload>,
@@ -588,6 +784,7 @@ impl PartialEq for Drawing {
     fn eq(&self, other: &Self) -> bool {
         self.tool == other.tool
             && self.points == other.points
+            && self.band == other.band
             && self.style == other.style
             && self.locked == other.locked
             && self.hidden == other.hidden
@@ -765,7 +962,13 @@ impl Drawings {
     /// trader's saved defaults.
     #[cfg(test)]
     pub fn place(&mut self, tool: DrawingTool, point: ChartPoint) -> bool {
-        self.place_with(tool, point, |tool| NewDrawing {
+        self.place_on(tool, &DrawingBand::Price, point)
+    }
+
+    /// [`Self::place`] on a named band.
+    #[cfg(test)]
+    pub fn place_on(&mut self, tool: DrawingTool, band: &DrawingBand, point: ChartPoint) -> bool {
+        self.place_with(tool, band, point, |tool| NewDrawing {
             style: DrawingStyle::default(),
             payload: tool.default_payload(),
         })
@@ -777,6 +980,7 @@ impl Drawings {
     pub fn place_with(
         &mut self,
         tool: DrawingTool,
+        band: &DrawingBand,
         point: ChartPoint,
         new_drawing: impl FnOnce(DrawingTool) -> NewDrawing,
     ) -> bool {
@@ -785,10 +989,16 @@ impl Drawings {
             self.draft = Some(Drawing {
                 tool,
                 points: Vec::with_capacity(tool.required_points()),
+                // The band the *first* anchor landed in owns the whole
+                // object: an in-flight draft that changed axis halfway
+                // through would have anchors in two value spaces.
+                band: tool.band_for(band),
                 style: fresh.style,
                 locked: false,
                 hidden: false,
                 scope: DrawingScope::default(),
+                foreign_market: false,
+                off_series: false,
                 payload: fresh.payload,
             });
         }
@@ -844,18 +1054,122 @@ impl Drawings {
         self.record(before);
     }
 
-    /// Honest reset: the anchors cannot survive a source or bar-spec change,
-    /// and neither can a history that would resurrect them onto different
-    /// market data.
-    pub fn clear(&mut self) {
-        self.items.clear();
-        self.draft = None;
-        self.selected = None;
-        self.all_hidden = false;
-        self.undo.clear();
-        self.redo.clear();
-        self.gesture_baseline = None;
+    /// Re-express every anchor against a series that was cut again — a
+    /// timeframe or bar-kind switch, a replay seek, a reconnect, a symbol
+    /// change.
+    ///
+    /// A bar index means nothing across two cuts of the tape; the market
+    /// instant each anchor captured at placement does, and it is the same
+    /// coordinate that already carries a drawing between the panes of a tab
+    /// (`docs/ux/drawing-tools-2026-08.md` §D7). So the object is not
+    /// discarded and not left pointing at a stale index: it is asked where
+    /// its own timestamps landed.
+    ///
+    /// `slot_of` answers where a market instant sits on the new series, or
+    /// `None` when the series does not reach it — before its first bar, or on
+    /// an instrument that never traded at that moment. Those anchors clamp to
+    /// the nearest edge and the object is flagged [`Drawing::off_series`], so
+    /// it fades and says so rather than pretending to sit on data.
+    ///
+    /// An anchor with no timestamp at all is one dropped past the newest bar,
+    /// where the tape has written nothing (see `ChartPoint::time_ms`). It has
+    /// no instant to look up, so it keeps its distance past the end of the
+    /// series instead — which is exactly where the trader put it.
+    ///
+    /// Rate: once per re-cut, never per frame or per trade, over a handful of
+    /// objects. The undo stacks travel with the live items for the same
+    /// reason [`Self::shift_bars`] moves them — undoing later must not
+    /// resurrect coordinates from a series that no longer exists.
+    pub fn reanchor(
+        &mut self,
+        old_slots: usize,
+        new_slots: usize,
+        slot_of: impl Fn(i64) -> Option<f32>,
+    ) {
+        #[allow(clippy::cast_precision_loss)]
+        let past_end = new_slots as f32 - old_slots as f32;
+        let reanchor_all = |items: &mut [Drawing]| {
+            for drawing in items {
+                let mut off_series = false;
+                for point in &mut drawing.points {
+                    let Some(time) = point.time_ms else {
+                        point.bar += past_end;
+                        continue;
+                    };
+                    match slot_of(time) {
+                        Some(slot) => point.bar = slot,
+                        None => {
+                            off_series = true;
+                            point.bar = 0.0;
+                        }
+                    }
+                }
+                drawing.off_series = off_series;
+            }
+        };
+        reanchor_all(&mut self.items);
+        if let Some(draft) = self.draft.as_mut() {
+            reanchor_all(std::slice::from_mut(draft));
+        }
+        for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            reanchor_all(&mut entry.items);
+        }
+        if let Some(baseline) = &mut self.gesture_baseline {
+            reanchor_all(&mut baseline.items);
+        }
     }
+
+    /// Mark every object as belonging to a market this tab no longer shows.
+    ///
+    /// Called on the one transition that changes the instrument under the
+    /// marks. Everything present at that moment was drawn on the old market;
+    /// anything placed afterwards is on the new one and starts clean.
+    ///
+    /// The undo stacks travel with the live items, for the same reason
+    /// [`Self::reanchor`] moves them: undoing back to a state from before the
+    /// switch must not restore a mark that claims to be a level on this
+    /// instrument.
+    pub fn mark_market_changed(&mut self) {
+        let mark = |items: &mut [Drawing]| {
+            for drawing in items {
+                drawing.foreign_market = true;
+            }
+        };
+        mark(&mut self.items);
+        if let Some(draft) = self.draft.as_mut() {
+            mark(std::slice::from_mut(draft));
+        }
+        for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            mark(&mut entry.items);
+        }
+        if let Some(baseline) = &mut self.gesture_baseline {
+            mark(&mut baseline.items);
+        }
+    }
+
+    /// Rewrite the market instants behind one object's anchors, after a move
+    /// that changed their bar positions.
+    ///
+    /// [`Self::translate_selected`] and the keyboard nudge shift bar indices
+    /// directly; the timestamp behind each anchor is what every *other* pane
+    /// reads, so leaving it stale would drag a mark on one chart and leave
+    /// its shared twin standing where it used to be. Only the pane knows how
+    /// to name the instant under a slot, so it hands the answers back here.
+    pub fn set_times(&mut self, index: usize, times: &[Option<i64>]) {
+        let Some(drawing) = self.items.get_mut(index) else {
+            return;
+        };
+        for (point, time) in drawing.points.iter_mut().zip(times) {
+            point.time_ms = *time;
+        }
+    }
+
+    // There is deliberately no `clear`. A re-cut of the bars used to wipe the
+    // store, on the reasoning that a bar index cannot survive one; the anchors
+    // carry market time, so they are re-expressed instead
+    // ([`Self::reanchor`]). The only way a drawing leaves is the trader
+    // removing it — [`Self::delete_selected`] or [`Self::delete_all`], both of
+    // which are undoable.
 
     pub fn shift_bars(&mut self, delta: isize) {
         if delta == 0 {
@@ -1022,6 +1336,23 @@ impl Drawings {
             return false;
         };
         *anchor = point;
+        true
+    }
+
+    /// Replace every anchor of one object at once — what a tool-owned handle
+    /// drag produces, because a handle that moves a rail moves the anchors
+    /// that define it together. Locked geometry stays put, and an anchor
+    /// count that does not match is refused rather than reshaping the object
+    /// into something the tool cannot paint.
+    pub fn set_points(&mut self, drawing_index: usize, points: &[ChartPoint]) -> bool {
+        let Some(drawing) = self.items.get_mut(drawing_index) else {
+            return false;
+        };
+        if drawing.locked || drawing.points.len() != points.len() {
+            return false;
+        }
+        drawing.points.clear();
+        drawing.points.extend_from_slice(points);
         true
     }
 }
@@ -1344,6 +1675,8 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
@@ -1430,6 +1763,8 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
                 style,
                 selected: true,
                 halo: false,
@@ -1522,14 +1857,23 @@ mod tests {
         assert!(!drawings.items()[0].shareable());
     }
 
+    /// A re-cut used to throw the whole store away, draft included. Nothing is
+    /// thrown away now, and a half-placed object is no exception: its first
+    /// anchor moves onto the new bars like any other, so the trader finishes
+    /// the shape they started rather than starting over.
     #[test]
-    fn clearing_drawings_also_discards_an_unfinished_draft() {
+    fn reanchoring_carries_an_unfinished_draft_too() {
         let mut drawings = Drawings::default();
-        assert!(!drawings.place(tool("rectangle"), ChartPoint::at(1.0, 100.0)));
-        drawings.clear();
-        assert!(drawings.items().is_empty());
-        assert!(drawings.draft().is_none());
-        assert_eq!(drawings.selected(), None);
+        assert!(!drawings.place(
+            tool("rectangle"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000))
+        ));
+
+        drawings.reanchor(10, 5, halved);
+
+        let draft = drawings.draft().expect("the draft survives the re-cut");
+        assert_eq!(draft.points[0].bar, 3.0);
+        assert_eq!(draft.points[0].time_ms, Some(1_700_000_006_000));
     }
 
     #[test]
@@ -1544,6 +1888,156 @@ mod tests {
         assert_eq!(
             drawings.draft().expect("rectangle draft").points[0].bar,
             7.0
+        );
+    }
+
+    /// A series re-cut so that every instant lands on half its old slot —
+    /// what doubling a timeframe does to the bars under a drawing.
+    fn halved(time: i64) -> Option<f32> {
+        Some((time - 1_700_000_000_000) as f32 / 2_000.0)
+    }
+
+    #[test]
+    fn reanchoring_puts_an_anchor_on_the_slot_its_timestamp_now_lands_on() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+        );
+
+        drawings.reanchor(10, 5, halved);
+
+        assert_eq!(drawings.items()[0].points[0].bar, 3.0);
+        assert_eq!(drawings.items()[0].points[0].price, 100.0);
+        assert!(!drawings.items()[0].off_series);
+    }
+
+    #[test]
+    fn reanchoring_keeps_an_undated_anchor_past_the_end_of_the_new_series() {
+        let mut drawings = Drawings::default();
+        // Two bars past the newest of a ten-bar series, where the tape has
+        // written nothing and there is no instant to look up.
+        drawings.place(tool("horizontal-line"), ChartPoint::at(12.0, 100.0));
+
+        drawings.reanchor(10, 5, halved);
+
+        // Still two bars past the newest, now that the newest is bar 5.
+        assert_eq!(drawings.items()[0].points[0].bar, 7.0);
+    }
+
+    #[test]
+    fn reanchoring_flags_an_anchor_the_new_series_cannot_reach() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+        );
+
+        // A symbol switch: the new instrument's series does not cover the
+        // instant this mark was drawn at.
+        drawings.reanchor(10, 5, |_| None);
+
+        assert!(drawings.items()[0].off_series, "the mark must say so");
+        assert_eq!(
+            drawings.items()[0].points[0].time_ms,
+            Some(1_700_000_006_000),
+            "the instant it was placed at is never rewritten"
+        );
+    }
+
+    #[test]
+    fn reanchoring_travels_with_the_undo_history() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+        );
+        drawings.begin_gesture();
+        drawings.translate_selected(4.0, 0.0);
+        drawings.commit_gesture();
+
+        drawings.reanchor(10, 5, halved);
+        drawings.undo();
+
+        // Undo must not resurrect a coordinate from the series that is gone.
+        assert_eq!(drawings.items()[0].points[0].bar, 3.0);
+    }
+
+    #[test]
+    fn setting_times_rewrites_the_instants_behind_the_anchors() {
+        let mut drawings = Drawings::default();
+        let rectangle = tool("rectangle");
+        drawings.place(
+            rectangle,
+            ChartPoint::at_time(1.0, 100.0, Some(1_700_000_001_000)),
+        );
+        drawings.place(
+            rectangle,
+            ChartPoint::at_time(3.0, 110.0, Some(1_700_000_003_000)),
+        );
+
+        drawings.translate_selected(2.0, 0.0);
+        drawings.set_times(0, &[Some(1_700_000_003_000), Some(1_700_000_005_000)]);
+
+        let times: Vec<_> = drawings.items()[0]
+            .points
+            .iter()
+            .map(|point| point.time_ms)
+            .collect();
+        assert_eq!(
+            times,
+            [Some(1_700_000_003_000), Some(1_700_000_005_000)],
+            "a moved mark carries its new instants, or its shared twin stays behind"
+        );
+    }
+
+    /// The honesty hole a symbol switch opens, and the one `off_series`
+    /// cannot close: both instruments traded at the same instants, so every
+    /// anchor resolves onto a real bar and only the *price* is meaningless.
+    /// A mark left painting at full strength there reads as a level on a
+    /// market it was never drawn on.
+    #[test]
+    fn a_market_change_marks_every_object_as_belonging_to_the_old_one() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 118_000.0, Some(1_700_000_006_000)),
+        );
+
+        drawings.mark_market_changed();
+
+        assert!(drawings.items()[0].foreign_market);
+        assert!(
+            !drawings.items()[0].off_series,
+            "the instants are still on this series - which is exactly why the \
+             time-based flag cannot catch this case"
+        );
+
+        // Anything drawn after the switch is on the market now showing.
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(7.0, 138_000.0, Some(1_700_000_007_000)),
+        );
+        assert!(!drawings.items()[1].foreign_market);
+    }
+
+    #[test]
+    fn undo_cannot_restore_a_mark_that_claims_the_new_market() {
+        let mut drawings = Drawings::default();
+        drawings.place(
+            tool("horizontal-line"),
+            ChartPoint::at_time(6.0, 118_000.0, Some(1_700_000_006_000)),
+        );
+        drawings.begin_gesture();
+        drawings.translate_selected(1.0, 0.0);
+        drawings.commit_gesture();
+
+        drawings.mark_market_changed();
+        drawings.undo();
+
+        assert!(
+            drawings.items()[0].foreign_market,
+            "stepping back through history must not undo the market change"
         );
     }
 
@@ -1569,11 +2063,205 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
         };
         assert!(line.hit_test(chart, &points, egui::pos2(450.0, 123.0), 5.0, &ctxt));
+    }
+
+    /// The handle port with a second implementation on it — one implementer
+    /// never proves a trait is a port. This fake's handle is nowhere near its
+    /// anchor, so every host path that must go through the tool shows up:
+    /// what gets painted, what can be grabbed, and what a grab does.
+    #[test]
+    fn a_tool_may_own_its_handles_and_the_host_paints_hits_and_drags_them() {
+        /// One anchor, one handle floating a fixed distance above it.
+        struct PivotTool;
+        const PIVOT_HANDLE_OFFSET_PX: f32 = 20.0;
+        impl DrawingToolImpl for PivotTool {
+            fn id(&self) -> &'static str {
+                "pivot"
+            }
+            fn name(&self) -> &'static str {
+                "Pivot"
+            }
+            fn settings_title(&self) -> &'static str {
+                "Pivot settings"
+            }
+            fn icon(&self) -> &'static str {
+                "P"
+            }
+            fn hover_text(&self) -> &'static str {
+                "A fake tool whose handle is not its anchor"
+            }
+            fn required_points(&self) -> usize {
+                1
+            }
+            fn paint(
+                &self,
+                _painter: &egui::Painter,
+                _chart_rect: egui::Rect,
+                _style: DrawingStyle,
+                _points: &[egui::Pos2],
+                _ctxt: &DrawContext<'_>,
+            ) {
+            }
+            fn hit_test(
+                &self,
+                _chart_rect: egui::Rect,
+                _points: &[egui::Pos2],
+                _position: egui::Pos2,
+                _radius_px: f32,
+                _ctxt: &DrawContext<'_>,
+            ) -> bool {
+                false
+            }
+            fn handles(
+                &self,
+                _chart_rect: egui::Rect,
+                points: &[egui::Pos2],
+                _ctxt: &DrawContext<'_>,
+            ) -> Option<Handles> {
+                Some(Handles::from_slice(&[
+                    points[0] - egui::vec2(0.0, PIVOT_HANDLE_OFFSET_PX)
+                ]))
+            }
+            fn drag_handle(
+                &self,
+                _chart_rect: egui::Rect,
+                _points: &[egui::Pos2],
+                _handle: usize,
+                to: egui::Pos2,
+                _ctxt: &DrawContext<'_>,
+            ) -> Option<Handles> {
+                Some(Handles::from_slice(&[
+                    to + egui::vec2(0.0, PIVOT_HANDLE_OFFSET_PX)
+                ]))
+            }
+            #[cfg(test)]
+            fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
+                (vec![egui::pos2(50.0, 50.0)], egui::pos2(50.0, 30.0))
+            }
+        }
+        static PIVOT: PivotTool = PivotTool;
+        let tool = DrawingTool(&PIVOT);
+
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 200.0));
+        let scale = PriceScale::from_range(0.0, 200.0, 0.0, 200.0);
+        let points = vec![egui::pos2(50.0, 50.0)];
+        let anchors = anchors_for(&points, &scale);
+        let payload = tool.default_payload();
+        let ctxt = DrawContext {
+            payload: payload.as_ref(),
+            anchors: &anchors,
+            scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: true,
+            halo: false,
+        };
+        let handle = egui::pos2(50.0, 30.0);
+        assert_eq!(tool.handles(chart, &points, &ctxt).as_slice(), &[handle]);
+        assert!(
+            tool.hit_test(chart, &points, handle, 4.0, &ctxt),
+            "the declared handle is what the trader grabs"
+        );
+        assert!(
+            !tool.hit_test(chart, &points, points[0], 4.0, &ctxt),
+            "the anchor is not a grab point unless the tool says so"
+        );
+        assert_eq!(
+            tool.drag_handle(chart, &points, 0, egui::pos2(80.0, 10.0), &ctxt)
+                .expect("the tool owns the drag")
+                .as_slice(),
+            &[egui::pos2(80.0, 30.0)],
+            "the tool decides which anchors a handle moves"
+        );
+
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(chart),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("pivot-handles"),
+            ));
+            tool.paint(
+                &painter,
+                chart,
+                DrawingStyle::default(),
+                &points,
+                &ctxt,
+                true,
+            );
+        });
+        let rings: Vec<egui::Pos2> = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Circle(circle) if circle.fill == SELECTED_ANCHOR_FILL => {
+                    Some(circle.center)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rings,
+            vec![handle],
+            "the ring the trader sees is the point they can grab, not the anchor"
+        );
+    }
+
+    /// The handle port is additive: a tool that does not declare handles is
+    /// grabbed by its raw anchors, exactly as before the port existed. Only
+    /// the channel opts out, and it opts out on purpose.
+    #[test]
+    fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
+        for drawing_tool in DRAWING_TOOLS {
+            let (points, _) = drawing_tool.test_geometry();
+            let payload = drawing_tool.default_payload();
+            let anchors = anchors_for(&points, &scale);
+            let ctxt = DrawContext {
+                payload: payload.as_ref(),
+                anchors: &anchors,
+                scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
+                style: DrawingStyle::default(),
+                selected: true,
+                halo: false,
+            };
+            let handles = drawing_tool.handles(chart, &points, &ctxt);
+            if drawing_tool.id() == "parallel-channel" {
+                assert_eq!(
+                    handles.len(),
+                    6,
+                    "the channel adds a corner and a centre per rail"
+                );
+                continue;
+            }
+            assert_eq!(
+                handles.as_slice(),
+                points.as_slice(),
+                "{} must keep being grabbed by its anchors",
+                drawing_tool.id()
+            );
+            assert!(
+                drawing_tool
+                    .drag_handle(chart, &points, 0, egui::pos2(1.0, 1.0), &ctxt)
+                    .is_none(),
+                "{} leaves the drag to the host",
+                drawing_tool.id()
+            );
+        }
     }
 
     #[test]
@@ -1589,6 +2277,8 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                unit: ValueUnit::Price,
+                primary_band: true,
                 style: DrawingStyle::default(),
                 selected: false,
                 halo: false,

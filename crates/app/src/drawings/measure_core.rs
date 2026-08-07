@@ -13,7 +13,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{ChartPoint, DrawingStyle, ToolFamily, drawing_fill, drawing_stroke};
+use super::{ChartPoint, DrawingStyle, ToolFamily, ValueUnit, drawing_fill, drawing_stroke};
 use crate::theme;
 
 /// The one rail family every measurement tool declares.
@@ -106,7 +106,7 @@ fn format_elapsed(ms: i64) -> String {
 
 /// Word the move between two anchors.
 #[must_use]
-pub(super) fn readout(anchors: &[ChartPoint], axes: Axes) -> Option<Readout> {
+pub(super) fn readout(anchors: &[ChartPoint], axes: Axes, unit: ValueUnit<'_>) -> Option<Readout> {
     let [from, to, ..] = anchors else {
         return None;
     };
@@ -117,9 +117,21 @@ pub(super) fn readout(anchors: &[ChartPoint], axes: Axes) -> Option<Readout> {
         let delta = to.price - from.price;
         rising = (delta != 0.0).then_some(delta > 0.0);
         let mut price_line = format_points(delta);
-        price_line.push_str(" pts");
-        if let Some(percent) = percent_move(from.price, to.price) {
-            price_line.push_str(&format!("   {percent:+.2}%"));
+        match unit {
+            ValueUnit::Price => {
+                price_line.push_str(" pts");
+                if let Some(percent) = percent_move(from.price, to.price) {
+                    price_line.push_str(&format!("   {percent:+.2}%"));
+                }
+            }
+            // On an indicator's own axis both price words are wrong. `pts`
+            // names a price unit, and a percent of a signed cumulative series
+            // is a false number rather than a coarse one — a move from -100
+            // to +100 is not "-200%". The delta and the series it was
+            // measured on are the whole honest answer.
+            ValueUnit::Indicator(label) => {
+                price_line.push_str(&format!("  ·  {label}"));
+            }
         }
         lines.push(price_line);
     }
@@ -150,6 +162,21 @@ pub(super) fn readout_color(readout: &Readout, style: DrawingStyle) -> egui::Col
     }
 }
 
+/// What is being measured, as opposed to where it is painted: the anchors,
+/// which axes take part, what the value axis means, and whether this is the
+/// halo pass. One bundle because they always travel together — a tool that
+/// knew its axes but not its unit could word a CVD move in points.
+#[derive(Clone, Copy)]
+pub(super) struct Measured<'a> {
+    pub anchors: &'a [ChartPoint],
+    pub axes: Axes,
+    pub unit: ValueUnit<'a>,
+    pub halo: bool,
+    /// Whether this is the band that prints the readout — see
+    /// [`crate::drawings::DrawContext::primary_band`].
+    pub primary_band: bool,
+}
+
 /// Paint the measured area, its leg and the readout plate.
 ///
 /// `points` are the two screen anchors. The plate is centred on the leg and
@@ -160,10 +187,15 @@ pub(super) fn paint_measure(
     chart_rect: egui::Rect,
     style: DrawingStyle,
     points: &[egui::Pos2],
-    anchors: &[ChartPoint],
-    axes: Axes,
-    halo: bool,
+    measured: Measured<'_>,
 ) {
+    let Measured {
+        anchors,
+        axes,
+        unit,
+        halo,
+        primary_band,
+    } = measured;
     let [from, to, ..] = points else {
         return;
     };
@@ -176,11 +208,14 @@ pub(super) fn paint_measure(
     }
     painter.rect_stroke(area, egui::Rounding::ZERO, stroke);
     painter.line_segment([*from, *to], stroke);
-    if halo {
+    // The stroke crosses every band a time-only measurement passes through;
+    // the plate is stamped once. Three copies of "17 bars 4m 21s" down the
+    // screen are not three facts.
+    if halo || !primary_band {
         return;
     }
 
-    let Some(readout) = readout(anchors, axes) else {
+    let Some(readout) = readout(anchors, axes, unit) else {
         return;
     };
     paint_plate(
@@ -293,6 +328,7 @@ mod tests {
         let readout = readout(
             &anchors((0.0, 100.0, 0), (17.0, 101.83, 261_000)),
             BOTH_AXES,
+            ValueUnit::Price,
         )
         .expect("two anchors");
         assert_eq!(readout.lines[0], "+1.83 pts   +1.83%");
@@ -300,10 +336,33 @@ mod tests {
         assert_eq!(readout.rising, Some(true));
     }
 
+    /// Measured on an indicator's own axis, the same gesture must not speak
+    /// price. `pts` is a price unit and a percent of a signed cumulative
+    /// series is false, not coarse — a move from -100 to +100 is not "-200%".
+    #[test]
+    fn a_measurement_on_a_band_names_the_series_instead_of_points_and_percent() {
+        let readout = readout(
+            &anchors((0.0, -100.0, 0), (17.0, 312.0, 261_000)),
+            BOTH_AXES,
+            ValueUnit::Indicator("CVD"),
+        )
+        .expect("two anchors");
+        assert_eq!(readout.lines[0], "+412.00  ·  CVD");
+        assert!(!readout.lines[0].contains("pts"));
+        assert!(!readout.lines[0].contains('%'));
+        // The time line is the same sentence on every band.
+        assert_eq!(readout.lines[1], "17 bars   4m 21s");
+        assert_eq!(readout.rising, Some(true));
+    }
+
     #[test]
     fn a_fall_is_signed_and_reads_as_a_fall() {
-        let readout = readout(&anchors((0.0, 200.0, 0), (4.0, 180.0, 60_000)), BOTH_AXES)
-            .expect("two anchors");
+        let readout = readout(
+            &anchors((0.0, 200.0, 0), (4.0, 180.0, 60_000)),
+            BOTH_AXES,
+            ValueUnit::Price,
+        )
+        .expect("two anchors");
         assert_eq!(readout.lines[0], "-20.00 pts   -10.00%");
         assert_eq!(readout.rising, Some(false));
     }
@@ -326,8 +385,12 @@ mod tests {
     fn a_non_positive_start_price_reports_no_percent() {
         assert_eq!(percent_move(0.0, 10.0), None);
         assert_eq!(percent_move(-5.0, 10.0), None);
-        let readout =
-            readout(&anchors((0.0, 0.0, 0), (2.0, 10.0, 1_000)), BOTH_AXES).expect("two anchors");
+        let readout = readout(
+            &anchors((0.0, 0.0, 0), (2.0, 10.0, 1_000)),
+            BOTH_AXES,
+            ValueUnit::Price,
+        )
+        .expect("two anchors");
         assert!(!readout.lines[0].contains('%'));
         assert!(readout.lines[0].contains("pts"));
     }
@@ -340,24 +403,28 @@ mod tests {
             ChartPoint::at_time(0.0, 100.0, Some(0)),
             ChartPoint::at(9.0, 110.0),
         ];
-        let readout = readout(&anchors, BOTH_AXES).expect("two anchors");
+        let readout = readout(&anchors, BOTH_AXES, ValueUnit::Price).expect("two anchors");
         assert_eq!(readout.lines[1], "9 bars");
     }
 
     #[test]
     fn a_flat_move_claims_no_direction() {
-        let readout =
-            readout(&anchors((0.0, 100.0, 0), (3.0, 100.0, 5_000)), BOTH_AXES).expect("anchors");
+        let readout = readout(
+            &anchors((0.0, 100.0, 0), (3.0, 100.0, 5_000)),
+            BOTH_AXES,
+            ValueUnit::Price,
+        )
+        .expect("anchors");
         assert_eq!(readout.rising, None);
     }
 
     #[test]
     fn price_range_and_date_range_suppress_the_other_axis() {
         let anchors = anchors((0.0, 100.0, 0), (17.0, 110.0, 261_000));
-        let price = readout(&anchors, PRICE_ONLY).expect("anchors");
+        let price = readout(&anchors, PRICE_ONLY, ValueUnit::Price).expect("anchors");
         assert_eq!(price.lines.len(), 1);
         assert!(price.lines[0].contains('%'));
-        let time = readout(&anchors, TIME_ONLY).expect("anchors");
+        let time = readout(&anchors, TIME_ONLY, ValueUnit::Price).expect("anchors");
         assert_eq!(time.lines.len(), 1);
         assert!(time.lines[0].contains("bars"));
     }
@@ -374,15 +441,23 @@ mod tests {
 
     #[test]
     fn one_bar_is_not_pluralised() {
-        let readout =
-            readout(&anchors((0.0, 100.0, 0), (1.0, 100.5, 1_000)), TIME_ONLY).expect("anchors");
+        let readout = readout(
+            &anchors((0.0, 100.0, 0), (1.0, 100.5, 1_000)),
+            TIME_ONLY,
+            ValueUnit::Price,
+        )
+        .expect("anchors");
         assert!(readout.lines[0].starts_with("1 bar "));
     }
 
     #[test]
     fn a_sub_unit_move_keeps_the_digits_that_matter() {
-        let readout =
-            readout(&anchors((0.0, 0.5, 0), (2.0, 0.500_12, 1_000)), PRICE_ONLY).expect("anchors");
+        let readout = readout(
+            &anchors((0.0, 0.5, 0), (2.0, 0.500_12, 1_000)),
+            PRICE_ONLY,
+            ValueUnit::Price,
+        )
+        .expect("anchors");
         assert!(
             readout.lines[0].starts_with("+0.000120"),
             "a crypto-sized move must not round to +0.00: {}",

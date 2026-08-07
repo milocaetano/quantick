@@ -1,0 +1,12 @@
+version = 1
+
+[presets.MiloFlow]
+style = "split"
+imbalance_ratio = 3.0
+stacked_count = 3
+profile_row_px = 4.0
+show_poc = true
+extreme_ratio_badge = true
+badge_min_ratio = 2.0
+show_numbers = false
+show_delta_totals = true
