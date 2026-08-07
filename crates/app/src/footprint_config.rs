@@ -14,14 +14,24 @@
 //! never switches the layer on — and an unreadable one is logged and
 //! ignored, never fatal.
 
+use std::path::{Path, PathBuf};
+
 use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive as _;
-use serde::Deserialize;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use serde::{Deserialize, Serialize};
 
 /// Environment override for the footprint config location.
 const FOOTPRINT_ENV: &str = "QUANTICK_FOOTPRINT";
 /// Default file, next to the working directory's config.
 const FOOTPRINT_FILE: &str = "config/footprint.toml";
+/// Environment override for where the in-app edits persist.
+const SETTINGS_ENV: &str = "QUANTICK_FOOTPRINT_SETTINGS";
+/// Where the in-app edits persist, next to the chart-layers file. Separate
+/// from `config/footprint.toml` on purpose: that file is a hand-written,
+/// commented preset the app must never rewrite; this one is app state.
+const SETTINGS_FILE: &str = "footprint-settings.toml";
+/// Bumped on breaking layout changes; unknown versions are ignored.
+const SETTINGS_VERSION: u32 = 1;
 
 /// The resolved tunables the render layer reads every frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,12 +74,115 @@ struct FootprintFile {
     extreme_ratio_badge: Option<bool>,
 }
 
-/// Resolve the config for this run. See the [module docs](self).
+/// The persisted shape of the in-app edits. Every knob explicit: this file
+/// is written by the app, so "absent" would only ever mean a version skew.
+#[derive(Debug, Serialize, Deserialize)]
+struct SettingsFile {
+    version: u32,
+    imbalance_ratio: f64,
+    imbalance_min_qty: Option<f64>,
+    stacked_count: usize,
+    show_poc: bool,
+    extreme_ratio_badge: bool,
+}
+
+/// Where this run persists in-app edits. Under test, a scratch file per app
+/// for the same reason the chart-layers store does it: many test apps in one
+/// process must not restore one another's knobs.
 #[must_use]
-pub fn load() -> FootprintConfig {
+pub fn settings_path() -> PathBuf {
+    if cfg!(test) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        return std::env::temp_dir().join(format!(
+            "quantick-footprint-settings-{}-{}.toml",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+    }
+    std::env::var_os(SETTINGS_ENV).map_or_else(|| PathBuf::from(SETTINGS_FILE), PathBuf::from)
+}
+
+/// Resolve the config for this run: the preset file (env >
+/// `config/footprint.toml` > defaults), then whatever the user last set in
+/// the app on top — a knob touched in the menu outlives the restart, exactly
+/// like a layer switch does. See the [module docs](self).
+#[must_use]
+pub fn load(settings: &Path) -> FootprintConfig {
+    let base = load_preset();
+    let Ok(text) = std::fs::read_to_string(settings) else {
+        return base;
+    };
+    match toml::from_str::<SettingsFile>(&text) {
+        Ok(file) if file.version == SETTINGS_VERSION => resolve(FootprintFile {
+            imbalance_ratio: Some(file.imbalance_ratio),
+            imbalance_min_qty: file.imbalance_min_qty,
+            stacked_count: Some(file.stacked_count),
+            show_poc: Some(file.show_poc),
+            extreme_ratio_badge: Some(file.extreme_ratio_badge),
+        }),
+        Ok(file) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "FOOTPRINT_SETTINGS_VERSION",
+                path = %settings.display(),
+                version = file.version,
+                action = "keeping_preset_config",
+                "footprint settings file is from an unknown version"
+            );
+            base
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "FOOTPRINT_SETTINGS_UNREADABLE",
+                path = %settings.display(),
+                %error,
+                action = "keeping_preset_config",
+                "footprint settings file is unreadable"
+            );
+            base
+        }
+    }
+}
+
+/// Persist the in-app edits. Temp sibling + rename, the store discipline
+/// every state file here follows.
+pub fn save(settings: &Path, config: &FootprintConfig) {
+    let file = SettingsFile {
+        version: SETTINGS_VERSION,
+        imbalance_ratio: config.imbalance_ratio.to_f64().unwrap_or(3.0),
+        imbalance_min_qty: config.imbalance_min_qty.and_then(|qty| qty.to_f64()),
+        stacked_count: config.stacked_count,
+        show_poc: config.show_poc,
+        extreme_ratio_badge: config.extreme_ratio_badge,
+    };
+    let Ok(text) = toml::to_string_pretty(&file) else {
+        return;
+    };
+    let temp = settings.with_extension("toml.tmp");
+    if let Err(error) = std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, settings))
+    {
+        let _ = std::fs::remove_file(&temp);
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FOOTPRINT_SETTINGS_WRITE_FAILED",
+            path = %settings.display(),
+            %error,
+            action = "settings_not_saved",
+            "could not save the footprint settings"
+        );
+    }
+}
+
+/// The preset half of [`load`]: env > file > defaults, tolerant.
+fn load_preset() -> FootprintConfig {
     let path = std::env::var_os(FOOTPRINT_ENV)
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(FOOTPRINT_FILE));
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(FOOTPRINT_FILE));
     let Ok(text) = std::fs::read_to_string(&path) else {
         return FootprintConfig::default();
     };
@@ -151,5 +264,52 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(config, FootprintConfig::default());
+    }
+
+    /// In-app edits round-trip through disk and win over the preset file's
+    /// defaults on the next load.
+    #[test]
+    fn saved_settings_round_trip_and_overlay_the_preset() {
+        let path = settings_path();
+        let edited = FootprintConfig {
+            imbalance_ratio: Decimal::from(5),
+            imbalance_min_qty: Some(Decimal::from(40)),
+            stacked_count: 4,
+            show_poc: false,
+            extreme_ratio_badge: false,
+        };
+        save(&path, &edited);
+        assert_eq!(load(&path), edited);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A missing settings file keeps the preset resolution; an unknown
+    /// version or garbage degrades to it instead of failing.
+    #[test]
+    fn settings_degrade_to_the_preset_instead_of_failing() {
+        let missing = settings_path();
+        assert_eq!(load(&missing), FootprintConfig::default());
+
+        let path = settings_path();
+        std::fs::write(&path, "version = 99\nimbalance_ratio = 9.0\nstacked_count = 2\nshow_poc = false\nextreme_ratio_badge = false\n").unwrap();
+        assert_eq!(load(&path), FootprintConfig::default());
+        std::fs::write(&path, "not even toml [").unwrap();
+        assert_eq!(load(&path), FootprintConfig::default());
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The saved file still refuses meaning-breaking values on the way back
+    /// in — hand-edits to the settings file get the same guard the preset
+    /// has.
+    #[test]
+    fn saved_settings_are_validated_on_load() {
+        let path = settings_path();
+        std::fs::write(
+            &path,
+            "version = 1\nimbalance_ratio = 0.2\nstacked_count = 1\nshow_poc = true\nextreme_ratio_badge = true\n",
+        )
+        .unwrap();
+        assert_eq!(load(&path), FootprintConfig::default());
+        std::fs::remove_file(&path).ok();
     }
 }

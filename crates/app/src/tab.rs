@@ -96,7 +96,7 @@ pub struct CanvasChrome<'a> {
     /// [`PaneChrome::side_inferred`]). Resolved once, like `capabilities`.
     pub side_inferred: bool,
     /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
-    pub footprint: &'a crate::footprint_config::FootprintConfig,
+    pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
     pub layers: &'a mut crate::chart_layers::LayerActions,
 }

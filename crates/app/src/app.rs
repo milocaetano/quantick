@@ -589,9 +589,12 @@ pub struct QuantickApp {
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
-    /// The footprint layer's signal tunables, resolved once at boot
-    /// (env > `config/footprint.toml` > defaults).
+    /// The footprint layer's signal tunables — resolved at boot (env >
+    /// `config/footprint.toml` preset > saved edits > defaults), edited live
+    /// by the layer menu's controls.
     footprint_config: crate::footprint_config::FootprintConfig,
+    /// Where those edits persist (see `footprint_config::settings_path`).
+    footprint_settings_path: std::path::PathBuf,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -672,6 +675,10 @@ impl QuantickApp {
             feed,
             trades_dir.clone(),
         );
+        // Resolved once: under test the settings path is a fresh scratch
+        // file per call, and the load must read the same file the saves
+        // will write.
+        let footprint_settings_path = crate::footprint_config::settings_path();
         let mut app = Self {
             tabs: vec![tab],
             active_tab: 0,
@@ -726,7 +733,8 @@ impl QuantickApp {
             saved_layer_mask: 0,
             layer_defaults: std::collections::BTreeMap::new(),
             layer_actions: chart_layers::LayerActions::default(),
-            footprint_config: crate::footprint_config::load(),
+            footprint_config: crate::footprint_config::load(&footprint_settings_path),
+            footprint_settings_path,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -1900,6 +1908,9 @@ impl QuantickApp {
         }
         if actions.indicators_changed {
             self.mark_indicator_state_dirty();
+        }
+        if actions.footprint_changed {
+            crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
         }
     }
 

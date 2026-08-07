@@ -400,6 +400,113 @@ const SCROLL_ZOOM_PX: f32 = 300.0;
 /// digits, and a layout that repaints per print reflows under the pointer.
 const LIVE_LADDER_REFRESH_S: f64 = 0.1;
 
+/// The number a pinned imbalance floor starts from when the trader unticks
+/// "auto" — the Profitchart reference's own default, a sane opening bid for
+/// index futures that the drag immediately tunes.
+const DEFAULT_PINNED_MIN_QTY: f64 = 20.0;
+
+/// The footprint's knobs, drawn under its layer-menu entry. Edits land on
+/// the window's config immediately — the very next frame draws with them —
+/// and are flagged for the app to persist (see `LayerActions`).
+fn footprint_controls(ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+    use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+    let config = &mut *chrome.footprint;
+    let mut changed = false;
+    ui.indent("footprint_controls", |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("imbalance ≥")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            let mut ratio = config.imbalance_ratio.to_f64().unwrap_or(3.0);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut ratio)
+                        .range(1.0..=10.0)
+                        .speed(0.1)
+                        .suffix("x"),
+                )
+                .on_hover_text(
+                    "one side must be at least this many times its diagonal \
+                     neighbour to highlight as an imbalance",
+                )
+                .changed()
+                && let Some(decimal) =
+                    rust_decimal::Decimal::from_f64((ratio * 10.0).round() / 10.0)
+            {
+                config.imbalance_ratio = decimal;
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            let mut auto = config.imbalance_min_qty.is_none();
+            if ui
+                .checkbox(&mut auto, "auto qty floor")
+                .on_hover_text(
+                    "the minimum size difference an imbalance needs. Auto reads the \
+                     tape itself (p60 of per-row volume over the newest closed bars, \
+                     shown in the layer legend); untick to pin a number",
+                )
+                .changed()
+            {
+                config.imbalance_min_qty = (!auto)
+                    .then(|| rust_decimal::Decimal::from_f64(DEFAULT_PINNED_MIN_QTY))
+                    .flatten();
+                changed = true;
+            }
+            if let Some(current) = config.imbalance_min_qty {
+                let mut qty = current.to_f64().unwrap_or(DEFAULT_PINNED_MIN_QTY);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut qty)
+                            .range(0.0..=1_000_000.0)
+                            .speed(1.0),
+                    )
+                    .changed()
+                    && let Some(decimal) = rust_decimal::Decimal::from_f64(qty)
+                {
+                    config.imbalance_min_qty = Some(decimal);
+                    changed = true;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("stacked run")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            let mut stacked = config.stacked_count as u64;
+            if ui
+                .add(egui::DragValue::new(&mut stacked).range(2..=6))
+                .on_hover_text(
+                    "consecutive same-side imbalances that make a zone worth \
+                     remembering",
+                )
+                .changed()
+            {
+                config.stacked_count = stacked as usize;
+                changed = true;
+            }
+        });
+        changed |= ui
+            .checkbox(&mut config.show_poc, "POC line")
+            .on_hover_text("Point of Control — the price with the most volume in each bar")
+            .changed();
+        changed |= ui
+            .checkbox(&mut config.extreme_ratio_badge, "extreme ratio badge")
+            .on_hover_text(
+                "the Nx aggression ratio beside a bar's high and low, at the \
+                 detailed zoom — the classic exhaustion cue",
+            )
+            .changed();
+    });
+    if changed {
+        chrome.layers.footprint_changed = true;
+    }
+}
+
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
 /// Matches the candles' own feel: dragging the time axis zooms it by
@@ -550,9 +657,11 @@ pub struct PaneChrome<'a> {
     /// this label in its own legend — the status bar's note is not enough
     /// there (data honesty).
     pub side_inferred: bool,
-    /// The footprint layer's signal tunables, resolved once at boot by the
-    /// app (env > `config/footprint.toml` > defaults).
-    pub footprint: &'a crate::footprint_config::FootprintConfig,
+    /// The footprint layer's signal tunables — resolved at boot by the app
+    /// (env > `config/footprint.toml` > saved edits > defaults) and edited
+    /// live by the layer menu's controls. Mutable here for the same reason
+    /// `layers` is: the menu writes, the app persists.
+    pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where the layer menu leaves the two switches the pane does not own.
     /// Drained by the app once the canvas is done (see [`LayerActions`]).
     pub layers: &'a mut LayerActions,
@@ -1012,6 +1121,16 @@ impl ChartPane {
                 response.on_disabled_hover_text(reason);
             } else if response.changed() {
                 self.set_layer_visible(layer, visible, chrome.layers);
+            }
+            // The footprint's knobs, indented under its own switch — the
+            // Profitchart-style properties dialog folded into the menu the
+            // layer already lives in (the persona panel's verdict: a small
+            // surface behind one click, never a 12-field dialog).
+            if layer == ChartLayer::Footprint
+                && blocked.is_none()
+                && self.layer_visible(layer, chrome.style)
+            {
+                footprint_controls(ui, chrome);
             }
         }
 
@@ -2510,7 +2629,7 @@ impl ChartPane {
                 half,
                 candle_width: cw,
                 side_inferred: chrome.side_inferred,
-                config: chrome.footprint,
+                config: &*chrome.footprint,
             };
             crate::footprint_render::draw_layer(&frame, &mut self.footprint_lod);
         }

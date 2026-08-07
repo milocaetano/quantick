@@ -233,6 +233,10 @@ pub(crate) struct LayerActions {
     pub(crate) grid: Option<bool>,
     /// An indicator was hidden or shown, so the indicator state needs saving.
     pub(crate) indicators_changed: bool,
+    /// A footprint knob moved, so the footprint settings need saving — the
+    /// config is the window's (one set of thresholds, every pane), so the
+    /// write is the app's, same as the grid.
+    pub(crate) footprint_changed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
