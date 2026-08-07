@@ -27,7 +27,7 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, BarProgress, Side, Trade};
+use crate::{Bar, BarBuilder, BarProgress, Trade};
 
 /// How much one trade contributes toward closing a bar.
 ///
@@ -86,8 +86,8 @@ impl<M: Measure> ThresholdBarBuilder<M> {
 impl<M: Measure> BarBuilder for ThresholdBarBuilder<M> {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         match &mut self.current {
-            None => self.current = Some(open_bar(trade)),
-            Some(bar) => extend_bar(bar, trade),
+            None => self.current = Some(Bar::opened_by(trade)),
+            Some(bar) => bar.extend(trade),
         }
         // Saturating: the measure comes from untrusted feed data and must never
         // panic the builder on overflow. A saturated accumulator is `>= threshold`
@@ -118,48 +118,10 @@ impl<M: Measure> BarBuilder for ThresholdBarBuilder<M> {
     }
 }
 
-/// Start a fresh one-trade bar from `trade`.
-pub(crate) fn open_bar(trade: &Trade) -> Bar {
-    let (buy_volume, sell_volume) = split_volume(trade);
-    Bar {
-        open_time: trade.timestamp_ms,
-        close_time: trade.timestamp_ms,
-        open: trade.price,
-        high: trade.price,
-        low: trade.price,
-        close: trade.price,
-        buy_volume,
-        sell_volume,
-        trade_count: 1,
-    }
-}
-
-/// Fold `trade` into the in-progress `bar`.
-pub(crate) fn extend_bar(bar: &mut Bar, trade: &Trade) {
-    bar.high = bar.high.max(trade.price);
-    bar.low = bar.low.min(trade.price);
-    bar.close = trade.price;
-    bar.close_time = trade.timestamp_ms;
-    // Saturating for the same reason as the accumulator: untrusted feed
-    // quantities must not panic the builder if a running side total overflows.
-    match trade.side {
-        Side::Buy => bar.buy_volume = bar.buy_volume.saturating_add(trade.quantity),
-        Side::Sell => bar.sell_volume = bar.sell_volume.saturating_add(trade.quantity),
-    }
-    bar.trade_count += 1;
-}
-
-/// A trade contributes its quantity to exactly one side.
-fn split_volume(trade: &Trade) -> (Decimal, Decimal) {
-    match trade.side {
-        Side::Buy => (trade.quantity, Decimal::ZERO),
-        Side::Sell => (Decimal::ZERO, trade.quantity),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Side;
     use std::str::FromStr as _;
 
     /// Test measure: accumulate traded quantity (a stand-in for volume bars,

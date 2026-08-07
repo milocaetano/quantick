@@ -15,7 +15,7 @@ use quantick_indicators::{
     EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame,
 };
 
-use crate::indicator_worker::{IndicatorEvent, SlotId};
+use crate::indicator_worker::{IndicatorEvent, LaneSample, SlotId};
 use crate::price_view::PriceView;
 
 /// Fraction of the chart's height each indicator pane takes (plan §4.3:
@@ -36,6 +36,12 @@ pub(crate) struct IndicatorView {
     pub columns: Vec<Vec<f64>>,
     /// Latest forming-bar frame, if a bar is forming.
     pub preview: Option<PreviewFrame>,
+    /// The forming bar sampled across the live lane's window, oldest rung
+    /// first — what this indicator showed at each instant on the tape.
+    ///
+    /// Transient like `preview`, and for the same reason: it describes a bar
+    /// that has not closed. Empty whenever the chart has no lane.
+    pub lane: Vec<LaneSample>,
     /// Error state (indicator disabled worker-side until rebuilt).
     pub error: Option<EvalError>,
     /// Eye toggle: hidden is render-side only — no recompute, state keeps
@@ -131,6 +137,7 @@ impl IndicatorViews {
                     view.columns = columns;
                     view.input_values = inputs;
                     view.preview = None;
+                    view.lane.clear();
                     view.error = None;
                     // Mirrored from the worker, not cleared: `hidden` and
                     // `errored` both survive a rebuild, and this used to be
@@ -143,6 +150,7 @@ impl IndicatorViews {
                         descriptor,
                         columns,
                         preview: None,
+                        lane: Vec::new(),
                         error: None,
                         hidden: false,
                         objects: ObjectSnapshot::default(),
@@ -162,6 +170,9 @@ impl IndicatorViews {
                     // drawing it one slot further right would be a lie. The
                     // next Preview event replaces it within the same batch.
                     view.preview = None;
+                    // Same for the rungs: they are prefixes of a bar that is
+                    // no longer forming.
+                    view.lane.clear();
                 }
             }
             IndicatorEvent::Preview { slot, frame } => {
@@ -169,10 +180,16 @@ impl IndicatorViews {
                     view.preview = frame;
                 }
             }
+            IndicatorEvent::Lane { slot, samples } => {
+                if let Some(view) = self.view_mut(slot) {
+                    view.lane = samples;
+                }
+            }
             IndicatorEvent::Error { slot, error } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.error = Some(error);
                     view.preview = None;
+                    view.lane.clear();
                 }
             }
             IndicatorEvent::Objects { slot, objects } => {

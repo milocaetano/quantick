@@ -29,7 +29,9 @@ use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
 use crate::drawings::{self, ChartPoint, DrawContext, Drawing, DrawingStyle, Drawings, PresetHost};
 use crate::indicator_render::{self, PlotX};
-use crate::indicator_worker::{IndicatorCommand, IndicatorSource, IndicatorWorker, SlotId};
+use crate::indicator_worker::{
+    IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
+};
 use crate::indicators::IndicatorViews;
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
@@ -191,6 +193,26 @@ pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
 /// so.
 const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
 
+/// Pixels of lane the ladder spends one rung on.
+///
+/// A rung is a full evaluation of every hosted indicator, so this is the knob
+/// that trades cost against smoothness. Six pixels draws a curve that reads as
+/// continuous at the sizes the lane is ever given, and keeps a wide lane well
+/// under [`MAX_LANE_RUNGS`].
+const LANE_RUNG_PX: f32 = 6.0;
+
+/// How many rungs a lane this wide is worth sampling at.
+///
+/// Zero for a chart with no lane — the signal that no ladder is walked at all.
+fn lane_rungs(lane_width_px: f32) -> usize {
+    if !lane_width_px.is_finite() || lane_width_px <= 0.0 {
+        return 0;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let rungs = (lane_width_px / LANE_RUNG_PX) as usize;
+    rungs.clamp(1, MAX_LANE_RUNGS)
+}
+
 /// Pixels of drag on a vertical axis that change its span by a factor of `e`.
 ///
 /// One number for the price gutter and for every indicator pane's gutter: the
@@ -201,6 +223,72 @@ const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 /// reports far more units than a pointer travels in a frame, so each unit has
 /// to count for less — a larger divisor, not a smaller one.
 const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
+
+/// The gesture that pans a pane's own scale: press inside the pane and drag it
+/// up or down, exactly as a press on the candles drags price.
+///
+/// Separate from [`axis_zoom_gesture`] because they are different verbs on the
+/// same axis — the gutter *scales* it, the body *moves* it — and the candles
+/// already split them that way. A pane whose body did nothing left the axis
+/// reachable only from the gutter at the far side of the chart, which is a
+/// long way to travel to move a curve out of its own way.
+///
+/// `auto` is the range the last frame fitted; without one there is nothing to
+/// take manual control *from*, and only the reset stays available.
+fn pane_pan_gesture(
+    ui: &egui::Ui,
+    id: egui::Id,
+    body: egui::Rect,
+    view: &mut PriceView,
+    auto: Option<(f64, f64)>,
+) -> PaneGesture {
+    let response = ui.interact(body, id, egui::Sense::click_and_drag());
+    if response.double_clicked() {
+        view.reset();
+    }
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+
+    // The pane's own axis moves here; time is the candles' to move, and the
+    // caller applies it once for however many panes are stacked — panning
+    // three panes' worth of x would move the chart three times per drag.
+    let mut gesture = PaneGesture::default();
+    if response.dragged() {
+        gesture.pan_x = response.drag_delta().x;
+        if let Some(auto) = auto {
+            let height = body.height();
+            let delta = response.drag_delta().y;
+            if delta != 0.0 && height > 1.0 {
+                let (lo, hi) = view.resolve(auto);
+                let per_px = (hi - lo) / f64::from(height);
+                view.pan(f64::from(delta) * per_px, auto);
+            }
+        }
+    }
+    if response.hovered() {
+        gesture.scroll_y = ui.input(|input| input.raw_scroll_delta.y);
+    }
+    gesture
+}
+
+/// What a drag or scroll over a pane body owes the *chart* — the pane's own
+/// axis has already been moved by the time this is returned.
+///
+/// A pane is a band of the same time axis the candles draw, so the gestures
+/// that mean "time" there mean time here too: drag sideways to pan it, scroll
+/// to zoom it. Collected rather than applied on the spot because the viewport
+/// belongs to the pane's owner, and because every stacked pane would otherwise
+/// apply its own copy of the same drag.
+#[derive(Default)]
+struct PaneGesture {
+    /// Horizontal drag, in pixels.
+    pan_x: f32,
+    /// Wheel travel while hovering, in egui's scroll units.
+    scroll_y: f32,
+}
 
 /// The gesture that scales a vertical axis, wherever its numbers live: drag up
 /// to compress the span, down to expand, scroll to zoom, double-click to hand
@@ -247,6 +335,13 @@ fn axis_zoom_gesture(
         }
     }
 }
+
+/// Wheel travel that doubles or halves what a time axis shows.
+///
+/// One number for the candles, the lane and every pane body, so a scroll means
+/// the same amount of zoom wherever the pointer happens to be resting. It was
+/// already one number — written out four times.
+const SCROLL_ZOOM_PX: f32 = 300.0;
 
 /// Pixels of drag on the lane's own time strip that double or halve its window.
 ///
@@ -452,6 +547,12 @@ pub struct ChartPane {
     // Where the history pane ended last frame — the lane's divider, and the
     // handle that resizes it. The input pass runs before the draw computes it.
     pub last_lane_divider_x: Option<f32>,
+    // How many rungs the lane was wide enough for at the last draw, and so
+    // how finely the next publish samples the forming bar across it. `0` when
+    // there is no lane: the worker then walks no ladder and the panes draw
+    // nothing on the tape, which is the whole cost of this feature on a chart
+    // that has no tape to draw on.
+    lane_rungs: usize,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     pub price_view: PriceView,
     // Last frame's auto-fit price range and chart height, for pixel↔price maths
@@ -584,6 +685,7 @@ impl ChartPane {
             imbalance_target,
             viewport: Viewport::new(),
             last_lane_divider_x: None,
+            lane_rungs: 0,
             price_view: PriceView::new(),
             last_auto_range: None,
             last_chart_height: 1.0,
@@ -1042,9 +1144,8 @@ impl ChartPane {
         self.state.ingest_backfill(trades);
         self.indicator_worker
             .send(IndicatorCommand::Backfilled(self.closed_bars()));
-        self.indicator_worker.send(IndicatorCommand::PartialUpdated(
-            self.state.partial().cloned(),
-        ));
+        let partial = self.partial_command();
+        self.indicator_worker.send(partial);
     }
 
     /// Prepend older trades and shift everything anchored to a bar index by the
@@ -1125,9 +1226,36 @@ impl ChartPane {
     /// Sent once per drain that took in live trades — see
     /// [`Self::ingest_live_trade`] for why it is not sent per trade.
     pub fn publish_partial(&mut self) {
-        self.indicator_worker.send(IndicatorCommand::PartialUpdated(
-            self.state.partial().cloned(),
-        ));
+        let command = self.partial_command();
+        self.indicator_worker.send(command);
+    }
+
+    /// The forming bar, the run of trades behind it, and how many rungs the
+    /// lane can show — everything the worker needs to preview the bar and to
+    /// sample it across the tape.
+    ///
+    /// The run is a slice of trades the pane already owns, cloned once per
+    /// drain rather than per print. The rung budget comes from the lane's
+    /// width at the last draw: a chart with no lane asks for none, and the
+    /// worker then walks no ladder at all.
+    fn partial_command(&self) -> IndicatorCommand {
+        let partial = self.state.partial().cloned();
+        // No lane, no run. The clone is proportional to the forming bar's
+        // trade count, and a chart with nowhere to draw the result would pay
+        // it on every drain for nothing.
+        let run = partial
+            .as_ref()
+            .filter(|_| self.lane_rungs > 0)
+            .map_or_else(Vec::new, |bar| {
+                let trades = self.state.trades();
+                let count = usize::try_from(bar.trade_count).unwrap_or(usize::MAX);
+                trades[trades.len().saturating_sub(count)..].to_vec()
+            });
+        IndicatorCommand::PartialUpdated {
+            partial,
+            run,
+            rungs: self.lane_rungs,
+        }
     }
 
     /// Convert a chart pixel into an overlay anchor. The x coordinate is a
@@ -1813,9 +1941,9 @@ impl ChartPane {
                 if let Some(orderflow) = self.orderflow.as_mut()
                     && chart.hover_pos().is_some_and(in_lane)
                 {
-                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 } else {
-                    self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                    self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 }
             }
         }
@@ -1869,7 +1997,7 @@ impl ChartPane {
         if time.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                self.viewport.zoom(2.0_f32.powf(scroll / 300.0));
+                self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
             }
         }
         // Jump-to-live (audit F6): panned into history, the way back is one
@@ -1907,7 +2035,7 @@ impl ChartPane {
             if lane_time.hovered() {
                 let scroll = ui.input(|i| i.raw_scroll_delta.y);
                 if scroll.abs() > 0.0 {
-                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / 300.0));
+                    orderflow.zoom_live_lane(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
                 }
             }
         }
@@ -1927,7 +2055,13 @@ impl ChartPane {
         // split's two charts can hold the same slot number and a slot-only id
         // would make one pane's axis answer for the other's.
         let pane_id = self.id;
-        for (view, gutter) in self.indicators.visible_panes_mut().zip(&areas.pane_gutters) {
+        let mut pane_time_gesture = PaneGesture::default();
+        for ((view, gutter), body) in self
+            .indicators
+            .visible_panes_mut()
+            .zip(&areas.pane_gutters)
+            .zip(&areas.indicator_panes)
+        {
             axis_zoom_gesture(
                 ui,
                 egui::Id::new(("pane_price_nav", pane_id, view.slot)),
@@ -1935,6 +2069,29 @@ impl ChartPane {
                 &mut view.scale,
                 view.last_auto,
             );
+            // The body moves the scale the gutter scales. Registered after it
+            // so the two never fight over the same pixel: the gutter is a band
+            // beside the pane, and egui gives an overlap to the later claim.
+            let gesture = pane_pan_gesture(
+                ui,
+                egui::Id::new(("pane_pan", pane_id, view.slot)),
+                *body,
+                &mut view.scale,
+                view.last_auto,
+            );
+            pane_time_gesture.pan_x += gesture.pan_x;
+            pane_time_gesture.scroll_y += gesture.scroll_y;
+        }
+        // Time, once, whichever pane the pointer was over: the panes share the
+        // candles' x axis, so a sideways drag or a scroll there has to move the
+        // same viewport the candles do — otherwise the same gesture would mean
+        // one thing over the bars and nothing one pane below them.
+        if total > 0 && pane_time_gesture.pan_x != 0.0 {
+            self.viewport.pan_pixels(pane_time_gesture.pan_x, total);
+        }
+        if pane_time_gesture.scroll_y.abs() > 0.0 {
+            self.viewport
+                .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }
     }
 
@@ -1993,15 +2150,23 @@ impl ChartPane {
         // every chart movement out of it: panning, zooming and dragging move
         // the candles beside the tape and never the tape itself, so the most
         // recent prints are on screen whatever the rest of the chart is doing.
-        let lane_width_px = self
+        // Band and live edge in one look at the published book: the panes need
+        // the instant the band's right edge stands for, and reading it again
+        // further down would put a second worker-mutex wait on the render
+        // thread for a number already in hand.
+        let live_lane = self
             .orderflow
             .as_mut()
-            .and_then(|orderflow| orderflow.live_lane_width_px(chart_rect.width()))
-            .unwrap_or(0.0);
+            .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
+        let lane_width_px = live_lane.map_or(0.0, |lane| lane.width_px);
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
         self.last_lane_divider_x =
             crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        self.lane_rungs = lane_rungs(
+            self.last_lane_divider_x
+                .map_or(0.0, |divider| chart_rect.right() - divider),
+        );
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
             egui::pos2(
@@ -2194,6 +2359,34 @@ impl ChartPane {
         // pane records the range it auto-fitted to, so the gesture over its
         // axis zooms the very range this frame drew.
         let grid = grid_color(chrome.style);
+        // The lane's window of tape time, and the closes inside it. Both are
+        // the same for every pane, so they are resolved once here rather than
+        // per pane — and both come from the tape's own numbers, so a pane's
+        // curve lands under the prints it was computed from.
+        let lane_window = self
+            .last_lane_divider_x
+            .zip(live_lane)
+            .and_then(|(divider, lane)| {
+                let orderflow = self.orderflow.as_ref()?;
+                let window = orderflow.live_lane_window_ms(visible_state).max(1);
+                Some((divider, lane.end_ms.saturating_sub(window), lane.end_ms))
+            });
+        let lane_steps: Vec<(i64, usize)> =
+            lane_window.map_or_else(Vec::new, |(_, start_ms, _)| {
+                let first = prefix.len();
+                // Walked back from the newest close and reversed in place: the
+                // window holds a handful of bars, and building it front to back
+                // would mean scanning every closed bar the chart has ever seen.
+                let mut steps: Vec<(i64, usize)> = closed
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .take_while(|(_, bar)| bar.close_time >= start_ms)
+                    .map(|(index, bar)| (bar.close_time, first + index))
+                    .collect();
+                steps.reverse();
+                steps
+            });
         for ((view, pane), gutter) in self
             .indicators
             .visible_panes_mut()
@@ -2207,6 +2400,15 @@ impl ChartPane {
                     egui::pos2(history_rect.left(), pane.top()),
                     egui::pos2(history_rect.right(), pane.bottom()),
                 ),
+                lane: lane_window.map(|(divider, start_ms, end_ms)| indicator_render::LaneFrame {
+                    rect: egui::Rect::from_min_max(
+                        egui::pos2(divider, pane.top()),
+                        egui::pos2(chart_rect.right(), pane.bottom()),
+                    ),
+                    start_ms,
+                    end_ms,
+                    steps: &lane_steps,
+                }),
                 gutter: *gutter,
                 background: canvas_background,
                 grid,
@@ -3220,5 +3422,27 @@ mod tests {
         );
         assert_eq!(areas.chart.bottom(), area.bottom());
         assert_eq!(areas.header.width(), area.width());
+    }
+
+    /// The rung budget is the lane's width in pixels, not a constant: a lane
+    /// narrow enough to be a sliver is not worth sixty evaluations, and a
+    /// chart with no lane at all is worth none.
+    #[test]
+    fn the_rung_budget_follows_the_lane_and_is_zero_without_one() {
+        assert_eq!(lane_rungs(0.0), 0, "no lane, no ladder");
+        assert_eq!(lane_rungs(-5.0), 0);
+        assert_eq!(lane_rungs(f32::NAN), 0);
+
+        assert_eq!(lane_rungs(60.0), 10);
+        assert_eq!(
+            lane_rungs(1.0),
+            1,
+            "a sliver of a lane still gets its live edge"
+        );
+        assert_eq!(
+            lane_rungs(100_000.0),
+            MAX_LANE_RUNGS,
+            "the ceiling is a cost statement and holds at any width"
+        );
     }
 }

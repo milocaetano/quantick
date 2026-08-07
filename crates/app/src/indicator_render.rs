@@ -137,14 +137,54 @@ pub(crate) fn draw_overlays<'a>(
     }
 }
 
+/// The slice of the live lane a pane draws on, and the window of tape time it
+/// stands for.
+///
+/// The lane is a band of *time*, mapped linearly from `start_ms` at its left
+/// edge to `end_ms` (the live edge) at its right — the tape's own mapping, so
+/// a pane's curve lands under the prints it was computed from. The candles'
+/// bar-slot x-mapping says nothing here, which is why this travels separately
+/// from [`PlotX`].
+pub(crate) struct LaneFrame<'a> {
+    /// The band right of the divider, at this pane's height.
+    pub rect: Rect,
+    /// Tape instant at the band's left edge.
+    pub start_ms: i64,
+    /// Tape instant at the band's right edge: the live edge.
+    pub end_ms: i64,
+    /// `(close time, committed row)` for every bar that closed inside the
+    /// window, oldest first — the same for every pane, so the chart computes
+    /// it once.
+    ///
+    /// These are the lane's *committed* resolution. A closed bar cannot be
+    /// re-entered, so what it did print by print is not recoverable and is not
+    /// invented: its value holds flat across the band and steps at its close,
+    /// which is exactly what "the indicator committed this at that instant"
+    /// looks like.
+    pub steps: &'a [(i64, usize)],
+}
+
+impl LaneFrame<'_> {
+    /// Screen x of a tape instant, clamped to the band.
+    fn x(&self, ms: i64) -> f32 {
+        let span = (self.end_ms - self.start_ms).max(1) as f64;
+        let fraction = ((ms - self.start_ms) as f64 / span).clamp(0.0, 1.0) as f32;
+        self.rect.left() + fraction * self.rect.width()
+    }
+}
+
 /// Where one pane paints, and in what colours.
 ///
 /// A pane spans two rects that the chart's own layout keeps apart — the plot
 /// area and the slice of the right-hand gutter beside it — so they travel
 /// together rather than as two more positional arguments no caller can read.
-pub(crate) struct PaneFrame {
+pub(crate) struct PaneFrame<'a> {
     /// The pane's plot area: the candles' x-range, the live lane excluded.
     pub rect: Rect,
+    /// The lane band beside `rect`, when the chart draws one. `None` is a
+    /// chart with no tape, and the pane then ends at `rect` exactly as it
+    /// always has.
+    pub lane: Option<LaneFrame<'a>>,
     /// The gutter band beside `rect`, where this pane's value labels go. It
     /// is the same band the pane's zoom gesture is registered over, which is
     /// what makes the numbers the thing you grab.
@@ -179,7 +219,7 @@ pub(crate) fn pane_auto_range(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_pane(
     painter: &egui::Painter,
-    frame: &PaneFrame,
+    frame: &PaneFrame<'_>,
     view: &IndicatorView,
     x: &PlotX<'_>,
     range: Option<(f64, f64)>,
@@ -188,9 +228,17 @@ pub(crate) fn draw_pane(
     partial_slot: Option<usize>,
 ) {
     let pane = frame.rect;
-    painter.rect_filled(pane, egui::Rounding::ZERO, frame.background);
+    // The pane is the plot area *and* the lane band beside it: one strip of
+    // canvas from the chart's left edge to its gutter. Anything less leaves a
+    // band of bare canvas between a pane's curve and the numbers that describe
+    // it, which is what this whole frame exists to close.
+    let band = frame
+        .lane
+        .as_ref()
+        .map_or(pane, |lane| pane.union(lane.rect));
+    painter.rect_filled(band, egui::Rounding::ZERO, frame.background);
     painter.line_segment(
-        [pane.left_top(), pane.right_top()],
+        [band.left_top(), band.right_top()],
         Stroke::new(
             PANE_RULE_WIDTH_PX,
             theme::TEXT_MUTED.gamma_multiply(PANE_FRAME_ALPHA),
@@ -209,7 +257,7 @@ pub(crate) fn draw_pane(
 
     let Some((lo, hi)) = range else {
         painter.text(
-            pane.center(),
+            band.center(),
             egui::Align2::CENTER_CENTER,
             format!("{} — warming up", view.label()),
             egui::FontId::proportional(PANE_LABEL_FONT_PX),
@@ -219,15 +267,15 @@ pub(crate) fn draw_pane(
     };
     let scale = PriceScale::from_range(lo, hi, pane.top(), pane.bottom());
 
-    let clipped = painter.with_clip_rect(pane);
+    let clipped = painter.with_clip_rect(band);
     // The axis first, so its grid sits behind the plots rather than over them
     // — the price axis' own paint order.
-    draw_pane_axis(painter, &clipped, frame, &scale);
+    draw_pane_axis(painter, &clipped, frame, &scale, band);
     // A zero line anchors flow panes (cvd, delta) visually.
     if lo < 0.0 && hi > 0.0 {
         let y = scale.y(0.0);
         clipped.line_segment(
-            [pos2(pane.left(), y), pos2(pane.right(), y)],
+            [pos2(band.left(), y), pos2(band.right(), y)],
             Stroke::new(
                 PANE_RULE_WIDTH_PX,
                 theme::TEXT_MUTED.gamma_multiply(ZERO_LINE_ALPHA),
@@ -251,6 +299,9 @@ pub(crate) fn draw_pane(
         partial_slot,
         &pane_extents,
     );
+    if let Some(lane) = &frame.lane {
+        draw_lane_plots(&clipped, view, lane, &|v| scale.y(v));
+    }
     draw_objects(
         &clipped,
         view.render_objects(),
@@ -269,12 +320,87 @@ pub(crate) fn draw_pane(
     );
     if let Some(last) = last_value(view) {
         painter.text(
-            pane.right_top() + egui::vec2(-PANE_LABEL_INSET_PX.x, PANE_LABEL_INSET_PX.y),
+            band.right_top() + egui::vec2(-PANE_LABEL_INSET_PX.x, PANE_LABEL_INSET_PX.y),
             egui::Align2::RIGHT_TOP,
             format_value(last),
             egui::FontId::monospace(PANE_LABEL_FONT_PX),
             theme::TEXT_MUTED,
         );
+    }
+}
+
+/// A pane's line-shaped plots across the live lane: the committed steps of
+/// the bars that closed inside the window, then the forming bar rung by rung.
+///
+/// Only line-shaped plots are drawn here. A histogram or a marker is a
+/// statement about *a bar* — one column, one bar, at the bar's own width —
+/// and the lane is a time axis with no bar widths in it; drawing them here
+/// would have to invent a width the tape cannot justify. Those plots keep to
+/// the history pane, where their slot is real.
+fn draw_lane_plots(
+    painter: &egui::Painter,
+    view: &IndicatorView,
+    lane: &LaneFrame<'_>,
+    y_of: &impl Fn(f64) -> f32,
+) {
+    for (index, spec) in view.descriptor.plots.iter().enumerate() {
+        if spec.marker.is_some()
+            || !matches!(
+                spec.style,
+                PlotStyle::Line | PlotStyle::StepLine | PlotStyle::Area
+            )
+        {
+            continue;
+        }
+        let Some(column) = view.columns.get(index) else {
+            continue;
+        };
+        let stroke = Stroke::new(spec.width, color32(spec.base_color));
+        let mut segment: Vec<Pos2> = Vec::new();
+        // The value a closed bar committed holds until the next close: the
+        // horizontal-then-vertical corner is the shape of "this was the value
+        // for that whole stretch", and a straight line between two closes
+        // would draw an intra-bar path nobody recorded.
+        let mut held: Option<f32> = None;
+        for &(close_ms, row) in lane.steps {
+            let Some(value) = column.get(row).copied().filter(|v| !v.is_nan()) else {
+                flush_segment(painter, &mut segment, stroke);
+                held = None;
+                continue;
+            };
+            let point = pos2(lane.x(close_ms), y_of(value));
+            if let Some(previous) = held {
+                segment.push(pos2(point.x, previous));
+            }
+            segment.push(point);
+            held = Some(point.y);
+        }
+        // The rungs: real evaluations of real prefixes, so they join point to
+        // point like any other line.
+        let mut first_rung = true;
+        for sample in &view.lane {
+            let Some(value) = sample.values.get(index).copied().filter(|v| !v.is_nan()) else {
+                flush_segment(painter, &mut segment, stroke);
+                held = None;
+                first_rung = false;
+                continue;
+            };
+            let point = pos2(lane.x(sample.close_time), y_of(value));
+            // The last committed value holds right up to the forming bar's
+            // first print — the bar had not opened yet, and the indicator had
+            // not moved.
+            if first_rung && let Some(previous) = held.take() {
+                segment.push(pos2(point.x, previous));
+            }
+            segment.push(point);
+            first_rung = false;
+        }
+        // Nothing forming: the last committed value is still the value, and it
+        // holds out to the live edge.
+        if let Some(previous) = held {
+            segment.push(pos2(lane.rect.right(), previous));
+        }
+        flush_segment(painter, &mut segment, stroke);
     }
 }
 
@@ -286,8 +412,9 @@ pub(crate) fn draw_pane(
 fn draw_pane_axis(
     painter: &egui::Painter,
     clipped: &egui::Painter,
-    frame: &PaneFrame,
+    frame: &PaneFrame<'_>,
     scale: &PriceScale,
+    band: Rect,
 ) {
     let pane = frame.rect;
     let (lo, hi) = scale.range();
@@ -295,7 +422,7 @@ fn draw_pane_axis(
     for (tick, label) in crate::chart::axis_labels(lo, hi, pane.height()) {
         let y = scale.y(tick);
         clipped.line_segment(
-            [pos2(pane.left(), y), pos2(pane.right(), y)],
+            [pos2(band.left(), y), pos2(band.right(), y)],
             Stroke::new(PANE_RULE_WIDTH_PX, frame.grid),
         );
         // A label centred on the pane's own edge would be sliced in half by
@@ -912,6 +1039,7 @@ mod tests {
             },
             columns,
             preview: preview.map(PreviewFrame::new),
+            lane: Vec::new(),
             objects: quantick_indicators::ObjectSnapshot::default(),
             input_values: Vec::new(),
             stale: None,
@@ -1017,5 +1145,138 @@ mod tests {
         assert_eq!(format_value(1234.5678), "1234.6");
         assert_eq!(format_value(0.12345), "0.1235");
         assert_eq!(format_value(-9999.99), "-10000.0");
+    }
+
+    fn painted(draw: impl Fn(&egui::Painter)) -> String {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            draw(&ctx.layer_painter(egui::LayerId::background()));
+        });
+        format!("{:?}", output.shapes)
+    }
+
+    fn lane_of(steps: &[(i64, usize)]) -> LaneFrame<'_> {
+        LaneFrame {
+            rect: Rect::from_min_max(pos2(100.0, 0.0), pos2(200.0, 50.0)),
+            start_ms: 1_000,
+            end_ms: 2_000,
+            steps,
+        }
+    }
+
+    /// The lane is a linear map of tape time onto its band — the tape's own
+    /// mapping, which is the whole reason a pane's curve can be trusted to
+    /// sit under the prints it was computed from. Instants outside the window
+    /// clamp to the edges rather than escaping the band.
+    #[test]
+    fn a_lane_maps_tape_time_linearly_and_clamps_outside_its_window() {
+        let lane = lane_of(&[]);
+        assert!((lane.x(1_000) - 100.0).abs() < 1e-3, "the window's start");
+        assert!((lane.x(2_000) - 200.0).abs() < 1e-3, "the live edge");
+        assert!((lane.x(1_500) - 150.0).abs() < 1e-3, "halfway is halfway");
+        assert!((lane.x(0) - 100.0).abs() < 1e-3, "older than the window");
+        assert!((lane.x(9_999) - 200.0).abs() < 1e-3, "past the live edge");
+    }
+
+    /// A degenerate window (start == end, which a stalled feed can produce)
+    /// must not divide by zero or paint at NaN.
+    #[test]
+    fn a_zero_width_window_still_maps_to_a_finite_x() {
+        let lane = LaneFrame {
+            rect: Rect::from_min_max(pos2(100.0, 0.0), pos2(200.0, 50.0)),
+            start_ms: 5_000,
+            end_ms: 5_000,
+            steps: &[],
+        };
+        assert!(lane.x(5_000).is_finite());
+        assert!(lane.x(1).is_finite());
+    }
+
+    /// The rungs are drawn as a line across the band: with a lane, a pane
+    /// paints more than it does without one, and the extra ink lands inside
+    /// the lane's own rect.
+    #[test]
+    fn the_rungs_are_drawn_across_the_lane_band() {
+        let mut with_lane = view(vec![vec![1.0, 2.0]], Some(vec![3.0]));
+        with_lane.lane = vec![
+            crate::indicator_worker::LaneSample {
+                close_time: 1_200,
+                values: vec![2.2],
+            },
+            crate::indicator_worker::LaneSample {
+                close_time: 1_600,
+                values: vec![2.8],
+            },
+            crate::indicator_worker::LaneSample {
+                close_time: 2_000,
+                values: vec![3.0],
+            },
+        ];
+
+        let shapes = painted(|painter| {
+            draw_lane_plots(painter, &with_lane, &lane_of(&[]), &|v| 50.0 - v as f32);
+        });
+        assert!(
+            shapes.contains("Path"),
+            "the rungs are a polyline: {shapes}"
+        );
+        // 1_200, 1_600 and 2_000 ms across a 1_000 ms window on a 100 px band.
+        assert!(
+            shapes.contains("120.0") && shapes.contains("160.0") && shapes.contains("200.0"),
+            "each rung lands at its own instant on the tape: {shapes}"
+        );
+
+        let bare = view(vec![vec![1.0, 2.0]], Some(vec![3.0]));
+        let nothing = painted(|painter| {
+            draw_lane_plots(painter, &bare, &lane_of(&[]), &|v| 50.0 - v as f32);
+        });
+        assert!(!nothing.contains("Path"), "no rungs, no curve: {nothing}");
+    }
+
+    /// A committed value holds until the next close and then steps. Drawing a
+    /// slanted line between two closes would claim an intra-bar path nobody
+    /// recorded — so the corner has to be there, and the test is that the
+    /// polyline visits the corner's x twice.
+    #[test]
+    fn committed_values_step_across_the_lane_instead_of_interpolating() {
+        let pane = view(vec![vec![10.0, 20.0]], None);
+        let shapes = painted(|painter| {
+            draw_lane_plots(painter, &pane, &lane_of(&[(1_200, 0), (1_600, 1)]), &|v| {
+                100.0 - v as f32
+            });
+        });
+        // Rows 0 and 1 sit at y 90 and 80; the hold means y 90 appears at the
+        // second close's x before the step down to 80.
+        assert!(
+            shapes.contains("90.0") && shapes.contains("80.0"),
+            "{shapes}"
+        );
+        assert_eq!(
+            shapes.matches("90.0").count(),
+            2,
+            "the earlier value is held to the next close: {shapes}"
+        );
+    }
+
+    /// Histograms and markers keep to the history pane: a column is a
+    /// statement about one bar at that bar's width, and the lane has no bar
+    /// widths in it to honour.
+    #[test]
+    fn bar_shaped_plots_stay_out_of_the_lane() {
+        let mut pane = view(vec![vec![1.0, 2.0]], None);
+        pane.descriptor.plots[0].style = PlotStyle::Histogram;
+        pane.lane = vec![crate::indicator_worker::LaneSample {
+            close_time: 1_500,
+            values: vec![2.5],
+        }];
+        let shapes = painted(|painter| {
+            draw_lane_plots(painter, &pane, &lane_of(&[(1_200, 0)]), &|v| {
+                50.0 - v as f32
+            });
+        });
+        assert_eq!(
+            shapes, "[]",
+            "nothing drawn for a bar-shaped plot: {shapes}"
+        );
     }
 }

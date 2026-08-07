@@ -51,7 +51,6 @@
 
 use rust_decimal::Decimal;
 
-use crate::threshold::{extend_bar, open_bar};
 use crate::{Bar, BarBuilder, Side, Trade};
 
 /// EWMA weight for the expected-trades-per-bar update, applied once per
@@ -163,8 +162,8 @@ impl ImbalanceBarBuilder {
 impl BarBuilder for ImbalanceBarBuilder {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         match &mut self.current {
-            None => self.current = Some(open_bar(trade)),
-            Some(bar) => extend_bar(bar, trade),
+            None => self.current = Some(Bar::opened_by(trade)),
+            Some(bar) => bar.extend(trade),
         }
         self.count += 1;
         let b = match trade.side {

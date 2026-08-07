@@ -4260,6 +4260,146 @@ mod tests {
         areas.pane_gutters[index]
     }
 
+    /// The plot band of pane `index` — where its curve is drawn, as opposed to
+    /// the gutter where its numbers are.
+    fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
+        let pane = &app.active_tab().flow_pane;
+        let areas = plot_split(
+            pane.last_plot_area.expect("a frame has been drawn"),
+            pane.live_strip_width(),
+            pane.indicators.visible_panes().count(),
+        );
+        areas.indicator_panes[index]
+    }
+
+    /// The bar the viewport has at its right edge — how far the chart is
+    /// panned along time.
+    fn right_edge(app: &QuantickApp) -> f32 {
+        let pane = &app.active_tab().flow_pane;
+        pane.viewport.right_edge_bar(pane.slots())
+    }
+
+    /// A pane body is a piece of the chart, so the chart's own gestures have
+    /// to work on it: drag to move, and the pane's own axis for the vertical
+    /// half. Before this the body answered nothing at all — the only way to
+    /// move a pane's curve out of its own way was to travel to the gutter on
+    /// the far side of the tape and drag it there.
+    #[test]
+    fn dragging_a_pane_body_pans_that_pane_and_the_shared_time_axis() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        let other = add_pane_indicator(&mut app, "delta", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx); // the frame that fits each pane and records it
+
+        let body = pane_body(&app, 0);
+        let (lo, hi) = pane_range(&app, flow);
+        let edge_before = right_edge(&app);
+
+        drag_chart(
+            &mut app,
+            &ctx,
+            body.center(),
+            body.center() + egui::vec2(40.0, 30.0),
+        );
+
+        let (panned_lo, panned_hi) = pane_range(&app, flow);
+        assert!(
+            ((panned_hi - panned_lo) - (hi - lo)).abs() < 1e-6,
+            "a pan moves the window without resizing it: {lo}..{hi} -> {panned_lo}..{panned_hi}"
+        );
+        assert!(
+            panned_lo > lo,
+            "the candles' direction: pull the content down and the window climbs ({lo} -> {panned_lo})"
+        );
+        // Not the neighbour's resolved range: panning time changes what is
+        // visible, so every pane still on auto legitimately refits. What must
+        // not happen is the neighbour being taken off auto by a drag that was
+        // never over it.
+        assert!(
+            pane_is_auto(&app, other),
+            "one pane, one scale: the neighbour still fits its own values"
+        );
+        assert!(
+            !pane_is_auto(&app, flow),
+            "and the dragged one took control"
+        );
+        assert!(
+            app.active_tab().flow_pane.price_view.is_auto(),
+            "and the candles' own price scale is not a pane's to move"
+        );
+        assert!(
+            (right_edge(&app) - edge_before).abs() > f32::EPSILON,
+            "time is shared: the sideways half of the drag moved the chart"
+        );
+    }
+
+    /// Time is moved once per drag, not once per pane. Three stacked panes
+    /// answering the same sideways drag would pan the chart three times, and
+    /// the bars would run away from the pointer.
+    #[test]
+    fn a_pane_drag_pans_time_once_however_many_panes_are_stacked() {
+        let ctx = egui::Context::default();
+
+        let mut travelled = Vec::new();
+        for panes in [1_usize, 3] {
+            let (mut app, _cmd_rx) = app_with_history(200);
+            for index in 0..panes {
+                add_pane_indicator(
+                    &mut app,
+                    &format!("pane{index}"),
+                    (0..200).map(f64::from).collect(),
+                );
+            }
+            run_frame(&mut app, &ctx);
+
+            let body = pane_body(&app, 0);
+            let before = right_edge(&app);
+            drag_chart(
+                &mut app,
+                &ctx,
+                body.center(),
+                body.center() + egui::vec2(40.0, 0.0),
+            );
+            travelled.push(right_edge(&app) - before);
+        }
+
+        assert!(
+            (travelled[0] - travelled[1]).abs() < 1e-4,
+            "one pane and three must pan time by the same amount: {travelled:?}"
+        );
+        assert!(travelled[0].abs() > f32::EPSILON, "and it did pan");
+    }
+
+    /// Double click inside a pane hands its scale back to auto-fit — the same
+    /// escape its gutter offers, so a trader who panned a pane by mistake gets
+    /// out of it wherever the pointer happens to be.
+    #[test]
+    fn double_clicking_a_pane_body_returns_it_to_auto_fit() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        let flow = add_pane_indicator(&mut app, "cvd", (0..200).map(f64::from).collect());
+        run_frame(&mut app, &ctx);
+
+        let body = pane_body(&app, 0);
+        drag_chart(
+            &mut app,
+            &ctx,
+            body.center(),
+            body.center() + egui::vec2(0.0, 30.0),
+        );
+        assert!(!pane_is_auto(&app, flow), "the drag took manual control");
+
+        click_chart(&mut app, &ctx, body.center());
+        click_chart(&mut app, &ctx, body.center());
+        run_frame(&mut app, &ctx);
+
+        assert!(
+            pane_is_auto(&app, flow),
+            "and a double click gives it back to the values"
+        );
+    }
+
     /// The headline of this feature: a pane's numbers are its own axis. A drag
     /// there stretches that pane and nothing else — before the gutter was
     /// banded, the same pixels moved the *candles'* price scale, and the pane

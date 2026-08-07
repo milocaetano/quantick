@@ -79,6 +79,18 @@ impl<'a> VisibleBarTimeline<'a> {
     }
 }
 
+/// The live lane's band and the instant it runs to, read together.
+///
+/// A pane draws inside this band in tape time, so it needs both numbers from
+/// the same frame's published book — see [`OrderflowView::live_lane`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveLane {
+    /// Width of the band, in pixels, taken off the chart's right edge.
+    pub width_px: f32,
+    /// Exchange timestamp at the band's right edge: the live edge.
+    pub end_ms: i64,
+}
+
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
     symbol: String,
@@ -263,18 +275,28 @@ impl OrderflowView {
         self.published.live_end_ms
     }
 
-    /// Width in pixels of the live lane's pane, taken off the right edge of a
-    /// chart this wide.
+    /// The live lane as the chart needs it: how wide its band is, and the
+    /// instant its right edge stands for.
     ///
-    /// A pane, not a slot: the candles own everything left of it and the lane
-    /// owns this band whatever they do. Panning or zooming them changes how
-    /// many bars fit beside the tape and never the tape itself, which is what
-    /// keeps the most recent prints on screen through every chart movement.
-    /// `None` when there is no live edge to run to.
+    /// A pane, not a slot: the candles own everything left of the band and the
+    /// lane owns it whatever they do. Panning or zooming them changes how many
+    /// bars fit beside the tape and never the tape itself, which is what keeps
+    /// the newest prints on screen through every chart movement.
+    ///
+    /// One call because it is one look at the published book. Reading the two
+    /// separately sends the render thread back through the worker's mutex for
+    /// a number the first read already had — a lock per frame for nothing, on
+    /// the one thread that must never wait.
+    ///
+    /// `None` when there is no live edge to run to, which is the same thing as
+    /// "this chart has no lane".
     #[must_use]
-    pub fn live_lane_width_px(&mut self, chart_width: f32) -> Option<f32> {
-        self.live_end_ms()?;
-        Some(self.config.live_lane.resolved_width_px(chart_width))
+    pub fn live_lane(&mut self, chart_width: f32) -> Option<LiveLane> {
+        let end_ms = self.live_end_ms()?;
+        Some(LiveLane {
+            width_px: self.config.live_lane.resolved_width_px(chart_width),
+            end_ms,
+        })
     }
 
     /// Widen or narrow the lane by a pixel drag on its divider. Dragging left
