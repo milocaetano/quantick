@@ -58,6 +58,9 @@ pub(crate) enum ChartLayer {
     Heatmap,
     /// Aggression bubbles from the trade stream.
     Bubbles,
+    /// The per-price buy/sell ladder inside each candle, detail following
+    /// zoom (see `crate::footprint_render`).
+    Footprint,
     /// The book-and-aggression strip beside the price axis.
     LiveStrip,
     /// The live lane's boundary and live-edge lines.
@@ -88,9 +91,10 @@ impl ChartLayer {
     /// in the menu test that counts it. The two paper layers sit together:
     /// live orders and closed-trade marks are switched apart, because hiding
     /// history must never hide the position you are in.
-    pub(crate) const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::Heatmap,
         Self::Bubbles,
+        Self::Footprint,
         Self::LiveStrip,
         Self::LaneMarks,
         Self::DepthGaps,
@@ -110,6 +114,7 @@ impl ChartLayer {
         match self {
             Self::Heatmap => "heatmap",
             Self::Bubbles => "bubbles",
+            Self::Footprint => "footprint",
             Self::LiveStrip => "live_strip",
             Self::LaneMarks => "lane_marks",
             Self::DepthGaps => "depth_gaps",
@@ -135,6 +140,7 @@ impl ChartLayer {
         match self {
             Self::Heatmap => "L2 heatmap",
             Self::Bubbles => "aggression bubbles",
+            Self::Footprint => "candle footprint",
             Self::LiveStrip => "live strip",
             Self::LaneMarks => "live lane marks",
             Self::DepthGaps => "L2 gap boundaries",
@@ -156,6 +162,11 @@ impl ChartLayer {
                 "resting depth behind the candles. Recording never stops, so hiding it loses no history"
             }
             Self::Bubbles => "confirmed executions from the trade stream, drawn where they printed",
+            Self::Footprint => {
+                "the buy/sell split at each price inside every candle. Detail follows zoom: \
+                 numbers close in, profile and highlight marks further out. The legend names \
+                 the rows' price width at all times"
+            }
             Self::LiveStrip => {
                 "the book's resting depth and the forming bar's aggression, beside the price axis"
             }

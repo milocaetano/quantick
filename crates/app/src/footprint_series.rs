@@ -16,7 +16,7 @@
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
 
-use quantick_engine::{Bar, BarFootprint, FootprintBuilder, Trade, DEFAULT_LEVEL_CAP};
+use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, FootprintBuilder, Trade};
 use rust_decimal::Decimal;
 
 /// Row width used until the feed reports the instrument's real `price_step` —

@@ -589,6 +589,9 @@ pub struct QuantickApp {
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
+    /// The footprint layer's signal tunables, resolved once at boot
+    /// (env > `config/footprint.toml` > defaults).
+    footprint_config: crate::footprint_config::FootprintConfig,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -723,6 +726,7 @@ impl QuantickApp {
             saved_layer_mask: 0,
             layer_defaults: std::collections::BTreeMap::new(),
             layer_actions: chart_layers::LayerActions::default(),
+            footprint_config: crate::footprint_config::load(),
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -784,6 +788,12 @@ impl QuantickApp {
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
+        }
+        // Same convenience for the candle footprint — the same field the
+        // pane's layer menu writes, so a validation run sees exactly what a
+        // click would show.
+        if std::env::var("QUANTICK_FOOTPRINT_AUTOSTART").is_ok_and(|value| value == "1") {
+            app.active_tab_mut().flow_pane.footprint_visible = true;
         }
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
@@ -3804,6 +3814,9 @@ impl QuantickApp {
         // The layer menu offers what this source can produce; resolved once
         // here rather than per pane, per entry, inside the canvas.
         let capabilities = self.active_tab().capabilities(&self.config);
+        // Same one-per-frame resolution for the side-honesty label the
+        // footprint legend carries.
+        let side_inferred = self.active_tab().side_note(&self.config).is_some();
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -3817,6 +3830,7 @@ impl QuantickApp {
                         style,
                         tz,
                         layer_actions,
+                        footprint_config,
                         ..
                     } = self;
                     let mut chrome = CanvasChrome {
@@ -3825,6 +3839,8 @@ impl QuantickApp {
                         style,
                         tz: *tz,
                         capabilities,
+                        side_inferred,
+                        footprint: footprint_config,
                         layers: layer_actions,
                     };
                     tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
@@ -5751,6 +5767,7 @@ plot(close)
         body: impl FnOnce(&mut ChartPane, &mut pane::PaneChrome<'_>) -> R,
     ) -> R {
         let capabilities = app.active_tab().capabilities(&app.config);
+        let side_inferred = app.active_tab().side_note(&app.config).is_some();
         let QuantickApp {
             tabs,
             active_tab,
@@ -5759,6 +5776,7 @@ plot(close)
             style,
             tz,
             layer_actions,
+            footprint_config,
             ..
         } = app;
         let tab = &mut tabs[*active_tab];
@@ -5771,6 +5789,8 @@ plot(close)
             paper: &mut tab.paper,
             paper_owns_input: true,
             capabilities,
+            side_inferred,
+            footprint: footprint_config,
             layers: layer_actions,
         };
         body(&mut tab.flow_pane, &mut chrome)
@@ -5801,6 +5821,9 @@ plot(close)
         for (layer, expected) in [
             (ChartLayer::Heatmap, false),
             (ChartLayer::Bubbles, false),
+            // The footprint is opt-in like every market layer: the chart must
+            // open pixel-identical to the day before the layer existed.
+            (ChartLayer::Footprint, false),
             (ChartLayer::LiveStrip, false),
             (ChartLayer::LaneMarks, true),
             (ChartLayer::DepthGaps, true),

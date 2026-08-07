@@ -20,6 +20,8 @@ mod config;
 mod dock;
 mod drawings;
 mod feed;
+mod footprint_config;
+mod footprint_render;
 mod footprint_series;
 mod indicator_legend;
 mod indicator_panel;

@@ -179,6 +179,15 @@ impl OrderflowView {
         }
     }
 
+    /// The capture bucket the book engine derived for this instrument — the
+    /// declared `price_step` where the feed reports one, else the auto-sized
+    /// base. The footprint adopts it as its row grid, so the two ladders can
+    /// never disagree about what one row of price means.
+    #[must_use]
+    pub fn base_capture_grouping(&self) -> Decimal {
+        self.published.base_price_grouping
+    }
+
     /// Whether L2 depth capture is recording. Says nothing about whether the
     /// map is on screen — see [`depth_visible`](Self::depth_visible).
     #[must_use]

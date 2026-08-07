@@ -1,0 +1,26 @@
+# Footprint layer tunables (crates/app/src/footprint_config.rs).
+#
+# Every knob is optional: an absent one keeps the built-in default, and this
+# file's presence changes nothing by itself — the layer still opens off and
+# is switched in the pane's right-click layer menu. Override the file
+# location with QUANTICK_FOOTPRINT=<path>.
+
+# One side must be at least this many times its diagonal neighbour to count
+# as an imbalance (default 3.0, the industry's centre of gravity).
+#imbalance_ratio = 3.0
+
+# Absolute floor on the imbalance difference. Unset (default), the floor is
+# adaptive — the 60th percentile of per-row volume on screen — because one
+# fixed number cannot serve WIN contracts and BTC fractions at once. Pin it
+# for an instrument you know better.
+#imbalance_min_qty = 20.0
+
+# Consecutive same-side imbalances that make a stacked zone (default 3).
+#stacked_count = 3
+
+# The per-bar POC line (default true).
+#show_poc = true
+
+# The aggression ratio badges at a bar's extremes, Detailed level only
+# (default true).
+#extreme_ratio_badge = true

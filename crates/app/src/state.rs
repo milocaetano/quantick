@@ -454,7 +454,10 @@ impl ChartState {
         self.footprints.partial()
     }
 
-    /// The row width footprints are captured at.
+    /// The row width footprints are captured at. Production reads the width
+    /// off each ladder ([`BarFootprint::group`]); the tests assert on the
+    /// capture side of that round trip.
+    #[cfg(test)]
     #[must_use]
     pub fn footprint_group(&self) -> Decimal {
         self.footprints.base_group()

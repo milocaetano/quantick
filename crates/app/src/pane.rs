@@ -539,6 +539,15 @@ pub struct PaneChrome<'a> {
     /// layer this feed has no data for as disabled-with-a-reason rather than as
     /// a switch that would do nothing — the wording the toolbar already uses.
     pub capabilities: FeedCapabilities,
+    /// Whether the running feed *infers* the aggressor side (MT5 tick rule,
+    /// or a replay of such a session) instead of the venue reporting it. The
+    /// footprint layer's content is entirely buyer-vs-seller, so it carries
+    /// this label in its own legend — the status bar's note is not enough
+    /// there (data honesty).
+    pub side_inferred: bool,
+    /// The footprint layer's signal tunables, resolved once at boot by the
+    /// app (env > `config/footprint.toml` > defaults).
+    pub footprint: &'a crate::footprint_config::FootprintConfig,
     /// Where the layer menu leaves the two switches the pane does not own.
     /// Drained by the app once the canvas is done (see [`LayerActions`]).
     pub layers: &'a mut LayerActions,
@@ -567,6 +576,15 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
+    /// Whether the candle footprint layer is on. Off by default: today's
+    /// rendering is pixel-identical until the user asks for the ladder.
+    pub footprint_visible: bool,
+    /// The footprint's sticky detail level (hysteresis on zoom-out).
+    footprint_lod: crate::footprint_render::FootprintLod,
+    /// The forming bar's ladder as last snapshotted for drawing, with the
+    /// frame time it was taken. Refreshed at ~10 Hz, not per print: the eye
+    /// reads patterns, and a frozen layout cannot reflow under the pointer.
+    footprint_live: Option<(f64, quantick_engine::BarFootprint)>,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -721,6 +739,9 @@ impl ChartPane {
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             live_strip_visible: false,
+            footprint_visible: false,
+            footprint_lod: crate::footprint_render::FootprintLod::default(),
+            footprint_live: None,
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
@@ -777,6 +798,9 @@ impl ChartPane {
         match layer {
             ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_visible),
             ChartLayer::Bubbles => tape.is_some_and(OrderflowView::bubbles_enabled),
+            // Footprint reads the pane's own retained trades, not the tape
+            // machinery, so it works on flow and time panes alike.
+            ChartLayer::Footprint => self.footprint_visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
             ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
@@ -816,6 +840,7 @@ impl ChartPane {
                     tape.set_bubbles_enabled(visible);
                 }
             }
+            ChartLayer::Footprint => self.footprint_visible = visible,
             ChartLayer::LiveStrip => self.live_strip_visible = visible,
             ChartLayer::LaneMarks => {
                 if let Some(tape) = self.orderflow.as_mut() {
@@ -880,7 +905,10 @@ impl ChartPane {
         match layer {
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
-            ChartLayer::Bubbles => (!capabilities.traded_volume)
+            // The footprint is the buy/sell split per price: on a source that
+            // prints no traded volume every cell would be an identical
+            // synthetic unit — the same reason the bubbles refuse.
+            ChartLayer::Bubbles | ChartLayer::Footprint => (!capabilities.traded_volume)
                 .then_some("this source quotes prices but prints no traded volume"),
             _ => None,
         }
@@ -899,7 +927,7 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is thirteen entries, so the mask cannot outgrow
+    /// detection. `ALL` is fourteen entries, so the mask cannot outgrow
     /// `u16`.
     pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
         ChartLayer::ALL
@@ -2212,6 +2240,20 @@ impl ChartPane {
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
+        // Adopt the book engine's capture bucket as the footprint's row grid
+        // (the instrument's price_step where the feed declares one). Done
+        // before the frame borrows the bar slices; a no-op every frame but
+        // the rare one where the engine re-derives the bucket — that one
+        // replays the retained trades onto the new grid.
+        if self.footprint_visible
+            && let Some(base) = self
+                .orderflow
+                .as_ref()
+                .map(OrderflowView::base_capture_grouping)
+        {
+            self.state.set_footprint_group(base);
+        }
+
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
         let prefix = self.history_prefix.as_slice();
@@ -2407,6 +2449,52 @@ impl ChartPane {
                 true,
                 &chrome.style.candles,
             );
+        }
+        // The footprint rides directly on the candles, before everything
+        // drawn over them: it is a representation of the bars themselves,
+        // not an annotation. Prefix (venue) candles carry no tape and draw
+        // no ladder — the layer starts where trade-built bars start.
+        if self.layer_visible(ChartLayer::Footprint, chrome.style)
+            && self
+                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
+                .is_none()
+        {
+            // Snapshot the forming bar's ladder at ~10 Hz rather than per
+            // print; between snapshots the drawn numbers hold still.
+            let now = clip.ctx().input(|i| i.time);
+            match self.state.partial_footprint() {
+                Some(partial) => {
+                    let stale = self
+                        .footprint_live
+                        .as_ref()
+                        .is_none_or(|(taken, _)| now - *taken >= 0.1);
+                    if stale {
+                        self.footprint_live = Some((now, partial.clone()));
+                    }
+                }
+                None => self.footprint_live = None,
+            }
+            let viewport = &self.viewport;
+            let frame = crate::footprint_render::LayerFrame {
+                painter: &clip,
+                chart_rect: history_rect,
+                scale: &scale,
+                footprints: self.state.bar_footprints(),
+                first_state_slot: prefix.len(),
+                visible: (start, end),
+                partial: self
+                    .footprint_live
+                    .as_ref()
+                    .map(|(_, ladder)| ladder)
+                    .filter(|_| partial_visible.is_some()),
+                partial_slot: closed_total,
+                x_center: &|slot| viewport.x_center(slot, right, total),
+                half,
+                candle_width: cw,
+                side_inferred: chrome.side_inferred,
+                config: chrome.footprint,
+            };
+            crate::footprint_render::draw_layer(&frame, &mut self.footprint_lod);
         }
         // Overlay indicator plots ride the candles' own clip, scale and
         // x-mapping — after candles, before aggression bubbles (the same

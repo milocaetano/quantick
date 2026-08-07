@@ -13,7 +13,12 @@
 /// Narrowest a candle slot can be, in pixels (max zoom-out).
 pub const MIN_CANDLE_WIDTH: f32 = 2.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
-pub const MAX_CANDLE_WIDTH: f32 = 64.0;
+///
+/// Sized for the footprint's Detailed level: a `sell × buy` ladder cell is
+/// only a number from ~72 px of candle, so the old 64 px ceiling kept the
+/// most detailed view of the tape permanently out of reach. 160 px shows a
+/// handful of bars with full ladders — the "read these five candles" zoom.
+pub const MAX_CANDLE_WIDTH: f32 = 160.0;
 /// How many empty bar-slots past the newest bar you may pan into.
 const FUTURE_MARGIN_BARS: f32 = 40.0;
 

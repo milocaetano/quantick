@@ -92,6 +92,11 @@ pub struct CanvasChrome<'a> {
     /// What the running source can produce, for the layer menu's disabled
     /// entries. Resolved once by the app rather than per pane, per entry.
     pub capabilities: FeedCapabilities,
+    /// Whether the source infers the aggressor side (see
+    /// [`PaneChrome::side_inferred`]). Resolved once, like `capabilities`.
+    pub side_inferred: bool,
+    /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
+    pub footprint: &'a crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
     pub layers: &'a mut crate::chart_layers::LayerActions,
 }
@@ -1644,6 +1649,8 @@ impl Tab {
                 paper,
                 paper_owns_input: false,
                 capabilities: chrome.capabilities,
+                side_inferred: chrome.side_inferred,
+                footprint: chrome.footprint,
                 layers: chrome.layers,
             };
             // Time pane first, then flow. Both take the same two steps in the
