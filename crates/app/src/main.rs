@@ -174,6 +174,13 @@ fn main() -> eframe::Result {
     )
 }
 
+/// Size the window opens at when nothing asks for another.
+const DEFAULT_WINDOW_PX: [f32; 2] = [1100.0, 650.0];
+/// Smallest the window may be. Below this the drawing rail would fall past its
+/// Minimal stage (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
+/// clip chrome instead of collapsing it.
+const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
+
 /// Size the window opens at: [`DEFAULT_WINDOW_PX`] unless
 /// `QUANTICK_WINDOW_SIZE=WxH` says otherwise.
 ///
@@ -187,13 +194,6 @@ fn main() -> eframe::Result {
 /// reach the smallest real layout and no smaller. A value that does not parse
 /// is ignored with a warning rather than failing the launch: a malformed
 /// env var must not stand between the user and their chart.
-/// Size the window opens at when nothing asks for another.
-const DEFAULT_WINDOW_PX: [f32; 2] = [1100.0, 650.0];
-/// Smallest the window may be. Below this the drawing rail would fall past its
-/// Minimal stage (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
-/// clip chrome instead of collapsing it.
-const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
-
 fn window_size() -> [f32; 2] {
     let Ok(raw) = std::env::var("QUANTICK_WINDOW_SIZE") else {
         return DEFAULT_WINDOW_PX;
