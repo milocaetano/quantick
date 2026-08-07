@@ -13,8 +13,8 @@ use egui_phosphor::regular as icons;
 
 use super::line_core::{Extend, line_ends};
 use super::{
-    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost, ToolShortcut,
-    distance_to_segment, drawing_fill, drawing_stroke,
+    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles, PresetHost,
+    ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke,
 };
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
@@ -116,15 +116,77 @@ fn payload_of(ctxt: &DrawContext<'_>) -> ChannelPayload {
         .unwrap_or_default()
 }
 
-/// The perpendicular offset from the baseline to the opposite rail.
-fn channel_offset(points: &[egui::Pos2]) -> egui::Vec2 {
-    let baseline = points[1] - points[0];
-    let to_width_anchor = points[2] - points[0];
+/// The part of `span` that crosses the baseline. Width is measured across the
+/// channel and nowhere else: sliding a handle *along* the rails must leave the
+/// corridor exactly as wide as the trader set it.
+fn across_baseline(baseline: egui::Vec2, span: egui::Vec2) -> egui::Vec2 {
     let baseline_length_sq = baseline.length_sq();
     if baseline_length_sq <= f32::EPSILON {
-        return to_width_anchor;
+        return span;
     }
-    to_width_anchor - baseline * (to_width_anchor.dot(baseline) / baseline_length_sq)
+    span - baseline * (span.dot(baseline) / baseline_length_sq)
+}
+
+/// The perpendicular offset from the baseline to the opposite rail.
+fn channel_offset(points: &[egui::Pos2]) -> egui::Vec2 {
+    across_baseline(points[1] - points[0], points[2] - points[0])
+}
+
+/// The trader's grab points, in the order [`ParallelChannel::drag_handle`]
+/// reads them: the two ends of the trend line, then the centre of the near
+/// rail and the centre of the far one.
+///
+/// The rail handles sit on the *anchored* span, never on the extended rails:
+/// extension is a view affordance, and a handle that ran off to the edge of
+/// the chart with it would be a grab point for a place the trader never put
+/// anything.
+const HANDLE_NEAR_CENTRE: usize = 2;
+const HANDLE_FAR_CENTRE: usize = 3;
+
+fn channel_handles(points: &[egui::Pos2]) -> Option<Handles> {
+    if points.len() < 3 {
+        return None;
+    }
+    let offset = channel_offset(points);
+    let centre = points[0] + (points[1] - points[0]) / 2.0;
+    Some(Handles::from_slice(&[
+        points[0],
+        points[1],
+        centre,
+        centre + offset,
+    ]))
+}
+
+/// Where the anchors land after dragging one handle to `to`.
+///
+/// The two rail handles are the point of the tool: each widens the channel
+/// from *its own* edge and leaves the opposite rail where the trader put it.
+/// Dragging the far rail moves the far rail; dragging the near rail moves the
+/// trend line and holds the far rail still, so the corridor grows downward
+/// instead of upward. Neither gesture may quietly re-angle the channel, which
+/// is why both keep only the component across the baseline.
+fn channel_drag(points: &[egui::Pos2], handle: usize, to: egui::Pos2) -> Option<Handles> {
+    if points.len() < 3 {
+        return None;
+    }
+    let baseline = points[1] - points[0];
+    let centre = points[0] + baseline / 2.0;
+    Some(match handle {
+        0 => Handles::from_slice(&[to, points[1], points[2]]),
+        1 => Handles::from_slice(&[points[0], to, points[2]]),
+        HANDLE_NEAR_CENTRE => {
+            // The far rail is pinned: it stays at today's far point, which is
+            // exactly the anchor the width is measured to.
+            let far_anchor = points[0] + channel_offset(points);
+            let shift = across_baseline(baseline, to - centre);
+            Handles::from_slice(&[points[0] + shift, points[1] + shift, far_anchor])
+        }
+        HANDLE_FAR_CENTRE => {
+            let offset = across_baseline(baseline, to - centre);
+            Handles::from_slice(&[points[0], points[1], points[0] + offset])
+        }
+        _ => return None,
+    })
 }
 
 /// Everything a channel is made of.
@@ -321,6 +383,26 @@ impl DrawingToolImpl for ParallelChannel {
         })
     }
 
+    fn handles(
+        &self,
+        _chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        channel_handles(points)
+    }
+
+    fn drag_handle(
+        &self,
+        _chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        handle: usize,
+        to: egui::Pos2,
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        channel_drag(points, handle, to)
+    }
+
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
         (
@@ -472,6 +554,144 @@ mod tests {
             .count(),
             2
         );
+    }
+
+    /// The session's request: the width handle is not a lone dot off in a
+    /// corner. There is one per rail, each at the centre of its own rail, so
+    /// the trader can widen the channel upward *or* downward.
+    #[test]
+    fn a_channel_is_grabbed_by_its_two_ends_and_the_centre_of_each_rail() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 100.0),
+            egui::pos2(180.0, 160.0),
+        ];
+        let handles = channel_handles(&points).expect("three anchors");
+        assert_eq!(handles.len(), 4);
+        assert_eq!(handles[0], points[0]);
+        assert_eq!(handles[1], points[1]);
+        assert_eq!(handles[HANDLE_NEAR_CENTRE], egui::pos2(200.0, 100.0));
+        assert_eq!(handles[HANDLE_FAR_CENTRE], egui::pos2(200.0, 160.0));
+        assert!(
+            !handles.contains(&points[2]),
+            "the raw width anchor is not a grab point — that corner dot is what this replaces"
+        );
+    }
+
+    /// Extension is a view affordance. The handles stay on the span the
+    /// trader anchored, so widening never means chasing a ring to the edge of
+    /// the chart.
+    #[test]
+    fn the_rail_handles_ignore_extension() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 100.0),
+            egui::pos2(100.0, 160.0),
+        ];
+        let extended = ChannelPayload {
+            extend_left: true,
+            extend_right: true,
+            ..ChannelPayload::default()
+        };
+        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (start, end) = baseline(chart, &points, extended.extend());
+        assert!(start.x < points[0].x && end.x > points[1].x, "it extends");
+        let handles = channel_handles(&points).expect("three anchors");
+        assert_eq!(handles[HANDLE_NEAR_CENTRE], egui::pos2(200.0, 100.0));
+    }
+
+    /// Dragging the far rail widens the channel from that edge alone: the
+    /// trend line the trader drew stays exactly where they drew it.
+    #[test]
+    fn widening_by_the_far_rail_leaves_the_trend_line_alone() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 100.0),
+            egui::pos2(100.0, 160.0),
+        ];
+        let moved = channel_drag(&points, HANDLE_FAR_CENTRE, egui::pos2(240.0, 200.0))
+            .expect("the far rail moves");
+        assert_eq!(moved[0], points[0]);
+        assert_eq!(moved[1], points[1]);
+        assert_eq!(
+            channel_offset(&moved),
+            egui::vec2(0.0, 100.0),
+            "only the component across the baseline counts, so sliding along it changes no width"
+        );
+    }
+
+    /// The other half of the request: grabbing the *near* rail grows the
+    /// channel on that side, and the far rail does not budge.
+    #[test]
+    fn widening_by_the_near_rail_pins_the_far_one() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 100.0),
+            egui::pos2(100.0, 160.0),
+        ];
+        let far_before = points[0] + channel_offset(&points);
+        let moved = channel_drag(&points, HANDLE_NEAR_CENTRE, egui::pos2(200.0, 60.0))
+            .expect("the near rail moves");
+        assert_eq!(moved[0], egui::pos2(100.0, 60.0));
+        assert_eq!(moved[1], egui::pos2(300.0, 60.0));
+        assert_eq!(
+            moved[0] + channel_offset(&moved),
+            far_before,
+            "the far rail is pinned: the corridor grew, it did not slide"
+        );
+    }
+
+    /// A rail drag is a width gesture, never a rotation: sliding along the
+    /// rails leaves the corridor exactly where it was.
+    ///
+    /// The *corridor* — not necessarily the stored anchors. Only the
+    /// component of the width anchor across the baseline is geometry, so a
+    /// rail drag is free to rewrite it to the foot of the perpendicular. What
+    /// the trader may never see move is the two rails.
+    #[test]
+    fn a_rail_drag_never_re_angles_the_channel() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 160.0),
+            egui::pos2(100.0, 200.0),
+        ];
+        let rails = |points: &[egui::Pos2]| {
+            (points[0], points[1], points[0] + channel_offset(points))
+        };
+        let (near_start, near_end, far) = rails(&points);
+        let along = (points[1] - points[0]).normalized() * 50.0;
+        let handles = channel_handles(&points).expect("three anchors");
+        for handle in [HANDLE_NEAR_CENTRE, HANDLE_FAR_CENTRE] {
+            // From where the handle *is*: a slide is a gesture that starts on
+            // the ring under the pointer.
+            let moved = channel_drag(&points, handle, handles[handle] + along)
+                .expect("a rail moves");
+            let (moved_start, moved_end, moved_far) = rails(&moved);
+            for (before, after) in [
+                (near_start, moved_start),
+                (near_end, moved_end),
+                (far, moved_far),
+            ] {
+                assert!(
+                    (after - before).length() < 0.05,
+                    "sliding along the rails is not a gesture: {before:?} -> {after:?}"
+                );
+            }
+        }
+    }
+
+    /// The end handles are still the anchors they always were.
+    #[test]
+    fn the_end_handles_move_their_own_anchor_and_nothing_else() {
+        let points = [
+            egui::pos2(100.0, 100.0),
+            egui::pos2(300.0, 100.0),
+            egui::pos2(100.0, 160.0),
+        ];
+        let moved = channel_drag(&points, 0, egui::pos2(120.0, 90.0)).expect("the start moves");
+        assert_eq!(moved[0], egui::pos2(120.0, 90.0));
+        assert_eq!(moved[1], points[1]);
+        assert_eq!(moved[2], points[2]);
     }
 
     #[test]

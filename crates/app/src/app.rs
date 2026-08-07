@@ -3590,6 +3590,11 @@ impl QuantickApp {
         }
         self.pending_drawing_demo = false;
         let share = std::env::var("QUANTICK_DRAWINGS_DEMO_SHARED").is_ok_and(|v| v == "1");
+        // Which object ends up selected. Selection is what puts an object's
+        // handles on screen, so "show me the channel's handles" is a question
+        // no screenshot could answer while only the last-placed tool was ever
+        // selected.
+        let select_tool = std::env::var("QUANTICK_DRAWINGS_DEMO_SELECT").ok();
         if share {
             // A shared drawing has nothing to be shared *with* on a single
             // pane, so the hook that asks for one opens the split too — the
@@ -3616,6 +3621,7 @@ impl QuantickApp {
             .closed_bar(slots.saturating_sub(1))
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
+        let mut requested_selection = None;
         for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
             for anchor in 0..tool.required_points() {
                 let slot = (first + index * stride + anchor * span).min(slots.saturating_sub(1));
@@ -3640,7 +3646,13 @@ impl QuantickApp {
                 {
                     drawing.scope = drawings::DrawingScope::AllCharts;
                 }
+                if completed && select_tool.as_deref() == Some(tool.id()) {
+                    requested_selection = pane.drawings.selected();
+                }
             }
+        }
+        if requested_selection.is_some() {
+            pane.drawings.select(requested_selection);
         }
     }
 }

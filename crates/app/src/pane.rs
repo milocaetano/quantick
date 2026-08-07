@@ -484,15 +484,31 @@ fn dec_from_f64(x: f64) -> Decimal {
     Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
 }
 
+/// How chart space maps onto the pane this frame, as a drawing gesture needs
+/// it: where the chart is, where the newest bar sits, how many bars there are
+/// and the price scale in force. Absent scale means the pane has no range yet
+/// (no bars), and a gesture falls back to what it can do without projecting.
+#[derive(Clone, Copy)]
+struct DrawingFrame<'a> {
+    chart_rect: egui::Rect,
+    history_right: f32,
+    total: usize,
+    scale: Option<&'a PriceScale>,
+}
+
 /// What the pointer is currently doing to a drawing, if anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DrawingDrag {
     #[default]
     None,
     Translate,
-    Anchor {
+    /// A grab on one of the object's handles. `handle` indexes the tool's own
+    /// handle list, which is the anchors for almost every tool but not for
+    /// all of them — a channel's rail handles move anchors they do not sit
+    /// on, so only the tool may turn this index into new geometry.
+    Handle {
         drawing_index: usize,
-        point_index: usize,
+        handle: usize,
     },
     /// The press landed on a locked drawing: the gesture belongs to the
     /// object (the chart must not pan) but the geometry stays put.
@@ -1583,10 +1599,15 @@ impl ChartPane {
         }
     }
 
-    fn drawing_anchor_in(
+    /// Which handle of one object the pointer is on. The tool answers what
+    /// its handles are, so the ring the trader sees is the ring they grab —
+    /// a channel's width handle sits at the centre of a rail, not on the
+    /// corner anchor that happens to define it.
+    fn drawing_handle_in(
         &self,
         drawing_index: usize,
         pos: egui::Pos2,
+        chart_rect: egui::Rect,
         history_right: f32,
         total: usize,
         scale: &PriceScale,
@@ -1595,15 +1616,26 @@ impl ChartPane {
             return None;
         }
         let drawing = self.drawings.items().get(drawing_index)?;
-        self.projected_drawing_points(drawing, history_right, total, scale)
+        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+        let ctxt = DrawContext {
+            payload: drawing.payload.as_ref(),
+            anchors: &drawing.points,
+            scale,
+            style: drawing.style,
+            selected: self.drawings.selected() == Some(drawing_index),
+            halo: false,
+        };
+        drawing
+            .tool
+            .handles(chart_rect, &projected, &ctxt)
             .iter()
             .enumerate()
-            .map(|(point_index, point)| (point_index, point.distance_sq(pos)))
+            .map(|(handle, point)| (handle, point.distance_sq(pos)))
             .filter(|(_, distance_sq)| {
                 *distance_sq <= DRAWING_ANCHOR_RADIUS_PX * DRAWING_ANCHOR_RADIUS_PX
             })
             .min_by(|left, right| left.1.total_cmp(&right.1))
-            .map(|(point_index, _)| point_index)
+            .map(|(handle, _)| handle)
     }
 
     /// What a pointer at `pos` is on: a drawing's handle first, then its
@@ -1618,31 +1650,82 @@ impl ChartPane {
         total: usize,
         scale: &PriceScale,
     ) -> Option<usize> {
-        self.drawing_anchor_at(pos, history_right, total, scale)
+        self.drawing_handle_at(pos, chart_rect, history_right, total, scale)
             .map(|(drawing_index, _)| drawing_index)
             .or_else(|| self.drawing_at(pos, chart_rect, history_right, total, scale))
     }
 
-    fn drawing_anchor_at(
+    /// Apply one frame of a handle drag, with the pointer already resolved to
+    /// the chart point the trader is on (magnet included).
+    ///
+    /// A tool that owns its handles answers with every anchor's new screen
+    /// position and the host projects them back; the anchors it *derived* are
+    /// exact by construction and are never snapped a second time — the magnet
+    /// belongs to the point under the pointer, not to a rail computed from it.
+    /// Everything else is the plain "handle `handle` is anchor `handle`" move.
+    fn drag_drawing_handle(
+        &mut self,
+        drawing_index: usize,
+        handle: usize,
+        target: ChartPoint,
+        frame: DrawingFrame<'_>,
+    ) {
+        let DrawingFrame {
+            chart_rect,
+            history_right,
+            total,
+            scale,
+        } = frame;
+        let moved = scale.and_then(|scale| {
+            let drawing = self.drawings.items().get(drawing_index)?;
+            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+            let ctxt = DrawContext {
+                payload: drawing.payload.as_ref(),
+                anchors: &drawing.points,
+                scale,
+                style: drawing.style,
+                selected: true,
+                halo: false,
+            };
+            let to = self.drawing_screen_point(target, history_right, total, scale);
+            drawing
+                .tool
+                .drag_handle(chart_rect, &projected, handle, to, &ctxt)
+        });
+        let Some(moved) = moved else {
+            self.drawings.move_anchor(drawing_index, handle, target);
+            return;
+        };
+        let anchors: Option<SmallVec<[ChartPoint; 4]>> = moved
+            .iter()
+            .map(|point| self.drawing_point_at(*point, history_right, total, false))
+            .collect();
+        if let Some(anchors) = anchors {
+            self.drawings.set_points(drawing_index, &anchors);
+        }
+    }
+
+    fn drawing_handle_at(
         &self,
         pos: egui::Pos2,
+        chart_rect: egui::Rect,
         history_right: f32,
         total: usize,
         scale: &PriceScale,
     ) -> Option<(usize, usize)> {
         let selected = self.drawings.selected();
         if let Some(drawing_index) = selected
-            && let Some(point_index) =
-                self.drawing_anchor_in(drawing_index, pos, history_right, total, scale)
+            && let Some(handle) =
+                self.drawing_handle_in(drawing_index, pos, chart_rect, history_right, total, scale)
         {
-            return Some((drawing_index, point_index));
+            return Some((drawing_index, handle));
         }
         (0..self.drawings.items().len())
             .rev()
             .filter(|drawing_index| Some(*drawing_index) != selected)
             .find_map(|drawing_index| {
-                self.drawing_anchor_in(drawing_index, pos, history_right, total, scale)
-                    .map(|point_index| (drawing_index, point_index))
+                self.drawing_handle_in(drawing_index, pos, chart_rect, history_right, total, scale)
+                    .map(|handle| (drawing_index, handle))
             })
     }
 
@@ -1776,7 +1859,14 @@ impl ChartPane {
             {
                 if let Some(selected) = self.drawings.selected()
                     && self
-                        .drawing_anchor_in(selected, position, history_right, total, &scale)
+                        .drawing_handle_in(
+                            selected,
+                            position,
+                            drawing_area,
+                            history_right,
+                            total,
+                            &scale,
+                        )
                         .is_some()
                 {
                     ui.ctx()
@@ -1852,17 +1942,17 @@ impl ChartPane {
                     &scale,
                 ));
                 self.drawing_drag_pending_from = Some(position);
-                if let Some((drawing_index, point_index)) =
-                    self.drawing_anchor_at(position, history_right, total, &scale)
+                if let Some((drawing_index, handle)) =
+                    self.drawing_handle_at(position, drawing_area, history_right, total, &scale)
                 {
                     self.drawings.select(Some(drawing_index));
                     self.drawing_drag = if self.drawings.items()[drawing_index].locked {
                         DrawingDrag::Blocked
                     } else {
                         self.drawings.begin_gesture();
-                        DrawingDrag::Anchor {
+                        DrawingDrag::Handle {
                             drawing_index,
-                            point_index,
+                            handle,
                         }
                     };
                 } else if let Some(index) =
@@ -1911,9 +2001,9 @@ impl ChartPane {
                 && let Some(travel) = travel
             {
                 match self.drawing_drag {
-                    DrawingDrag::Anchor {
+                    DrawingDrag::Handle {
                         drawing_index,
-                        point_index,
+                        handle,
                     } => {
                         if let Some(position) = pointer_position {
                             let position = egui::pos2(
@@ -1923,7 +2013,17 @@ impl ChartPane {
                             if let Some(point) =
                                 self.drawing_point_at(position, history_right, total, magnet)
                             {
-                                self.drawings.move_anchor(drawing_index, point_index, point);
+                                self.drag_drawing_handle(
+                                    drawing_index,
+                                    handle,
+                                    point,
+                                    DrawingFrame {
+                                        chart_rect: areas.chart,
+                                        history_right,
+                                        total,
+                                        scale: drawing_scale.as_ref(),
+                                    },
+                                );
                             }
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
                         }
