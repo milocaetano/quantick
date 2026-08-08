@@ -1188,11 +1188,23 @@ impl ChartPane {
             return Some("the order-flow layers are drawn on the flow pane");
         }
         match layer {
-            // The badge reports on the book feed, so a source with no book has
-            // nothing for it to say.
-            ChartLayer::Heatmap | ChartLayer::DepthGaps | ChartLayer::BookStatus => (!capabilities
-                .book_capture)
+            ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
+            // The badge reports on the book feed, so a source with no book has
+            // nothing for it to say — and it is drawn with the map, so while
+            // the map is hidden the switch would tick a box that draws
+            // nothing. Offered disabled with the reason instead.
+            ChartLayer::BookStatus => {
+                if capabilities.book_capture {
+                    (!self
+                        .orderflow
+                        .as_ref()
+                        .is_some_and(OrderflowView::depth_visible))
+                    .then_some("the badge reports on the depth map, which is hidden")
+                } else {
+                    Some("order-book capture is not available for this source")
+                }
+            }
             // The footprint is the buy/sell split per price: on a source that
             // prints no traded volume every cell would be an identical
             // synthetic unit — the same reason the bubbles refuse.
@@ -1215,14 +1227,19 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is sixteen entries, so the mask cannot outgrow
-    /// `u16`.
-    pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
+    /// detection.
+    ///
+    /// The bit is the layer's index in `ALL`, which is now sixteen entries —
+    /// the last bit `u32` has room for after this widening, and the reason the
+    /// accumulator is not `u16` any more: a seventeenth layer would have
+    /// shifted by 16, panicking in debug and silently colliding in release.
+    /// The assertion below fails the build rather than the chart.
+    pub fn layer_mask(&self, style: &ChartStyle) -> u32 {
         ChartLayer::ALL
             .into_iter()
             .enumerate()
             .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
-            .fold(0_u16, |mask, (bit, _)| mask | (1 << bit))
+            .fold(0_u32, |mask, (bit, _)| mask | (1 << bit))
     }
 
     /// Apply saved visibility to this pane, ignoring layers it cannot draw.
@@ -3490,12 +3507,14 @@ impl ChartPane {
         // position is open, and one row per indicator chip — so nothing at the
         // top-left prints over anything else.
         //
-        // Focus is deliberately not part of this: the HUD appears on the pane
-        // that owns order entry whatever is focused, and the chips drop for it
-        // the same way, so demanding focus here would leave the key printing
-        // over chips that had already moved.
+        // The HUD's row counts only where the HUD paints: on the pane that
+        // owns order entry (the focused one) — exactly the condition this pane
+        // caches its anchor under, further down this same draw. The anchor is
+        // not readable yet this frame (it is written after the paper layer),
+        // so the condition is restated here rather than read back.
+        let hud_here = chrome.paper_owns_input && chrome.paper.position_summary().is_some();
         let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
-            + crate::indicator_legend::hud_offset_px(chrome.paper.position_summary().is_some())
+            + crate::indicator_legend::hud_offset_px(hud_here)
             + crate::indicator_legend::stack_height_px(self.indicators.all());
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame

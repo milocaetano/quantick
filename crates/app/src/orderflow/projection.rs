@@ -671,11 +671,16 @@ pub fn project_settled(
     // orders arrive, so the left side reads what is happening now instead of
     // only what already happened. Raw prints are still drawn exactly once; only
     // the aggregate is allowed to overlap the tape it was computed from.
-    // Both sides have to be on screen for a two-sided mark to be honest: a
-    // bubble summing buys and sells would lie about its size if one of them
-    // were hidden.
-    let summarizing =
-        config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
+    // Whether the bar is summarized is the trader's summary switch and nothing
+    // else. It used to also demand both side switches — a two-sided mark would
+    // lie about its size with one side hidden — but that put a *display*
+    // choice back inside the projection, and the live strip reads these same
+    // clusters: hiding one side of the bubbles reshaped the strip's histogram
+    // (the hostage relationship this branch exists to end, and the shipped
+    // presets turn the summary on). The honesty it protected is enforced where
+    // the ink is now: `RenderContext::bubbles` refuses to draw a two-sided
+    // mark while a side is hidden.
+    let summarizing = config.bubble_candle_summary;
 
     // The chart is cut in two at the oldest bar still taking orders. What
     // follows that instant is redrawn from the tape every frame, so this half
@@ -3082,6 +3087,19 @@ mod tests {
         // the sell that stayed.
         let only_sell = projection_with(false, true);
         assert_eq!(only_sell.aggressions.len(), 2);
+        // Same clusters, print for print: the live strip buckets these, and a
+        // bubble switch may not reshape its histogram.
+        assert_eq!(
+            both.aggressions
+                .iter()
+                .map(|a| a.agg_id)
+                .collect::<Vec<_>>(),
+            only_sell
+                .aggressions
+                .iter()
+                .map(|a| a.agg_id)
+                .collect::<Vec<_>>()
+        );
         let hidden_buy_sell_size = only_sell
             .aggressions
             .iter()

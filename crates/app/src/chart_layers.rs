@@ -114,6 +114,17 @@ impl ChartLayer {
         Self::Drawings,
     ];
 
+    /// One bit per layer is how visibility change is detected
+    /// ([`crate::pane::ChartPane::layer_mask`]), and the bit is the index into
+    /// [`Self::ALL`] — so the list may never outgrow that accumulator. Past it
+    /// the shift is undefined: a panic in debug, colliding persistence bits in
+    /// release. Adding the 33rd layer fails the build here instead.
+    #[expect(
+        dead_code,
+        reason = "a const assertion is evaluated at compile time; nothing reads it at runtime"
+    )]
+    const MASK_FITS: () = assert!(Self::ALL.len() <= u32::BITS as usize);
+
     /// Stable identifier used in the state file. Never renamed without a
     /// version bump: the file is hand-editable and an unknown id is dropped.
     pub(crate) const fn id(self) -> &'static str {
@@ -151,7 +162,9 @@ impl ChartLayer {
             Self::Footprint => "candle footprint",
             Self::LiveStrip => "live strip",
             Self::LaneMarks => "live lane marks",
-            Self::FlowLegend => "flow legend",
+            // The same words the L2 panel's checkbox uses: one switch may not
+            // have two names.
+            Self::FlowLegend => "chart legend",
             Self::BookStatus => "book status badge",
             Self::DepthGaps => "L2 gap boundaries",
             Self::Grid => "grid",

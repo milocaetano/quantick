@@ -50,17 +50,20 @@ pub(crate) enum LegendAction {
     Remove(SlotId),
 }
 
-/// How far down this legend starts when the position HUD owns the very
-/// corner. Zero with no open position.
+/// How far down this legend starts when the position HUD claims the very
+/// corner of *this* pane. Zero anywhere the HUD is not painting.
 ///
-/// One owner for one number: the app places the legend with it, and the pane
-/// stacks the order-flow key below the same corner with it. They disagreed
-/// once — the pane also demanded input focus, so in a split with a position
-/// open and the *other* pane focused the chips dropped and the key did not,
-/// straight back onto them. The HUD does not care who has focus, so neither
-/// does this.
-pub(crate) fn hud_offset_px(position_open: bool) -> f32 {
-    if position_open { HUD_OFFSET_PX } else { 0.0 }
+/// One owner for one number: the app places this legend with it, and the pane
+/// stacks the order-flow key below the same corner with it. What it must be
+/// asked is "does the HUD paint here", not "is there a position" — the HUD
+/// rides the pane that owns order entry, which is the focused one
+/// (`tab.rs`: `paper_owns_input = side == focused`, and the HUD draws from
+/// `focused_pane().paper_hud_anchor()`). Ask the wrong question and a split
+/// with a position open moves the overlap to the other pane rather than
+/// removing it: chips that never dropped under a HUD that is right on top of
+/// them, and 64 px reserved on the pane where no HUD is.
+pub(crate) fn hud_offset_px(hud_paints_here: bool) -> f32 {
+    if hud_paints_here { HUD_OFFSET_PX } else { 0.0 }
 }
 
 /// How much of the canvas's top-left corner this legend claims, measured

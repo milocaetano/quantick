@@ -77,9 +77,11 @@ pub(crate) struct OrderflowRenderStyle {
     pub(crate) depth_layer: bool,
     /// Whether the aggression layer is active.
     pub(crate) aggression_layer: bool,
-    /// Per-layer display switches, mirroring the config flags: the projection
-    /// already filters the primitives, so the renderer's only job is keeping
-    /// the legend honest about which layers can draw.
+    /// Per-layer display switches, mirroring the config flags. The projection
+    /// no longer filters the aggression primitives — several surfaces read
+    /// them — so for those two switches this is where the decision is made
+    /// ([`RenderContext::bubbles`]); for the rest the renderer's job is
+    /// keeping the legend honest about which layers can draw.
     pub(crate) show_liquidity: bool,
     /// See [`show_liquidity`](Self::show_liquidity).
     pub(crate) show_buy: bool,
@@ -929,15 +931,32 @@ impl<'a> RenderContext<'a> {
     /// The size reference, the dust merge and the liquidity association all
     /// saw both sides upstream, so hiding one side never rescales or
     /// re-associates the other.
+    ///
+    /// Reads the raw style rather than the sanitized copy on purpose:
+    /// `sanitized` clamps numbers and never touches a display flag, so the two
+    /// answer identically and the filter costs no second clone per frame.
     pub(crate) fn bubbles(&self) -> impl Iterator<Item = &'a AggressionPrimitive> {
         let style = self.style;
         let projection = self.projection;
+        let both_sides = style.show_buy && style.show_sell;
         projection.aggressions.iter().filter(move |mark| {
-            style.aggression_layer
-                && match mark.side {
-                    Side::Buy => style.show_buy,
-                    Side::Sell => style.show_sell,
-                }
+            if !style.aggression_layer {
+                return false;
+            }
+            // A mark carrying both sides — a merged cluster, or a bar summary
+            // — is sized by the two together, so with one side hidden its area
+            // would state a quantity the canvas is not showing. It is withheld
+            // rather than drawn at a lie of a size. The projection used to
+            // decide this by refusing to summarize at all; it now builds the
+            // same clusters whatever is on screen, which is what keeps the
+            // live strip's histogram steady while a bubble switch moves.
+            if !both_sides && mark.buy_share > 0.0 && mark.buy_share < 1.0 {
+                return false;
+            }
+            match mark.side {
+                Side::Buy => style.show_buy,
+                Side::Sell => style.show_sell,
+            }
         })
     }
 }
@@ -1334,6 +1353,12 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
 /// keeps the "aggression consuming the book" legible even when price is going
 /// sideways and the prints stack into a horizontal band.
 pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderContext<'_>) {
+    // Off, this pass has nothing to do: the frame still carries every cluster
+    // (the strip reads them), so without this it would clip, sanitize and walk
+    // up to `max_aggression_primitives` marks per frame to draw none of them.
+    if !context.style.aggression_layer {
+        return;
+    }
     let style = context.style.sanitized();
     let bubbles = &style.bubbles;
     let palette = Palette::for_theme(style.theme);

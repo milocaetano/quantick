@@ -28,6 +28,16 @@ use crate::widgets::{IconButton, TOOLBAR_ICON};
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 
+// The LAYERS group's glyphs. Named here, and asserted as a set by
+// `the_layer_toggles_speak_one_visual_language`, because a test that spells
+// the literal itself proves nothing: revert the button and it still passes.
+// The two layers that own a dock tab take the tab's glyph instead of a
+// constant here, so a toggle and the panel behind it cannot drift apart.
+/// The indicators menu: a plotted line.
+const LAYER_INDICATORS_ICON: &str = icons::CHART_LINE;
+/// The live strip: a sideways histogram, which is what it draws.
+const LAYER_STRIP_ICON: &str = icons::CHART_BAR_HORIZONTAL;
+
 // Width estimates for the overflow rule, in pixels. egui sizes widgets while
 // drawing them, so the plan is decided up front from these; they only need to
 // be right enough that folding starts before clipping does.
@@ -690,7 +700,7 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     // Never capability-gated: the aggression histogram runs on the trade
     // stream every source provides (replay included), and without book data
     // the strip honestly degrades to it.
-    let strip = IconButton::new(icons::CHART_BAR_HORIZONTAL, TOOLBAR_ICON)
+    let strip = IconButton::new(LAYER_STRIP_ICON, TOOLBAR_ICON)
         .active(model.live_strip_on)
         .accent(theme::ACCENT)
         .hover_text(
@@ -711,7 +721,7 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
 /// for the script library browser; the entry list stays.
 fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     let any_active = !model.indicators.is_empty();
-    let icon = egui::RichText::new(icons::CHART_LINE)
+    let icon = egui::RichText::new(LAYER_INDICATORS_ICON)
         .size(16.0)
         .color(if any_active {
             theme::ACCENT
@@ -904,11 +914,13 @@ mod tests {
         // Every glyph in the group is distinct — two layers wearing one mark
         // would read as one feature — and none of them is a metaphor the
         // chart never draws.
+        // Every entry comes from what the buttons actually use: revert one of
+        // them and this fails, which a test spelling its own literals cannot.
         let group = [
-            icons::CHART_LINE,           // indicators: a plotted line
-            DockTab::Bubbles.icon(),     // prints: circles
-            DockTab::L2.icon(),          // depth map: the book's rows
-            icons::CHART_BAR_HORIZONTAL, // live strip: a sideways histogram
+            LAYER_INDICATORS_ICON,   // indicators: a plotted line
+            DockTab::Bubbles.icon(), // prints: circles
+            DockTab::L2.icon(),      // depth map: the book's rows
+            LAYER_STRIP_ICON,        // live strip: a sideways histogram
         ];
         for (index, glyph) in group.iter().enumerate() {
             assert!(
