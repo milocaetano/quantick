@@ -1705,13 +1705,22 @@ impl OrderflowView {
 
                         ui.separator();
                         let health = &self.published.health;
+                        // The projection carries clusters whether or not the
+                        // bubble layer draws them — the live strip reads the
+                        // same ones. Calling them "bubbles" while none is on
+                        // screen would report a layer that is off.
+                        let (noun, drawn) = if self.config.show_aggressions {
+                            ("bubbles", "not drawn")
+                        } else {
+                            ("clusters (bubble layer off)", "dropped from the frame")
+                        };
                         ui.label(format!(
-                            "{} bubbles projected Â· {} aggressions retained",
+                            "{} {noun} projected Â· {} aggressions retained",
                             health.projection_aggressions, health.aggression_count
                         ));
                         if health.dropped_aggressions > 0 {
                             ui.small(format!(
-                                "{} bubbles above the primitive cap were not drawn",
+                                "{} above the primitive cap were {drawn}",
                                 health.dropped_aggressions
                             ));
                         }
