@@ -1,4 +1,4 @@
-﻿//! egui facade for the asynchronous order-flow heatmap.
+//! egui facade for the asynchronous order-flow heatmap.
 //!
 //! All book state (history, synchronization, projection) lives in
 //! [`crate::orderflow_engine::BookEngine`] on the worker thread owned by
@@ -82,7 +82,7 @@ impl<'a> VisibleBarTimeline<'a> {
 /// The live lane's band and the instant it runs to, read together.
 ///
 /// A pane draws inside this band in tape time, so it needs both numbers from
-/// the same frame's published book â€” see [`OrderflowView::live_lane`].
+/// the same frame's published book — see [`OrderflowView::live_lane`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LiveLane {
     /// Width of the band, in pixels, taken off the chart's right edge.
@@ -132,7 +132,7 @@ impl OrderflowView {
                 action = "using_built_in_presets",
                 "bubble presets file could not be read; built-in presets are in use"
             );
-            preset_status = Some(format!("presets not loaded â€” {message}"));
+            preset_status = Some(format!("presets not loaded — {message}"));
         }
         if let Some(active) = presets.get(&presets.active) {
             active.apply_to(&mut config);
@@ -179,7 +179,7 @@ impl OrderflowView {
         }
     }
 
-    /// The capture bucket the book engine derived for this instrument â€” the
+    /// The capture bucket the book engine derived for this instrument — the
     /// declared `price_step` where the feed reports one, else the auto-sized
     /// base. The footprint adopts it as its row grid, so the two ladders can
     /// never disagree about what one row of price means.
@@ -189,7 +189,7 @@ impl OrderflowView {
     }
 
     /// Whether L2 depth capture is recording. Says nothing about whether the
-    /// map is on screen â€” see [`depth_visible`](Self::depth_visible).
+    /// map is on screen — see [`depth_visible`](Self::depth_visible).
     #[must_use]
     pub fn enabled(&self) -> bool {
         self.config.enabled
@@ -226,7 +226,7 @@ impl OrderflowView {
     }
 
     /// Toggle the aggression layer without touching L2 capture. No feed
-    /// command is needed â€” aggregate trades already flow for the candles.
+    /// command is needed — aggregate trades already flow for the candles.
     pub fn set_bubbles_enabled(&mut self, enabled: bool) {
         if self.config.show_aggressions == enabled {
             return;
@@ -237,7 +237,7 @@ impl OrderflowView {
     }
 
     /// State that a surface other than the bubbles is reading the aggression
-    /// clusters this frame â€” the live strip beside the price axis.
+    /// clusters this frame — the live strip beside the price axis.
     ///
     /// The pane says this every frame from the layer it owns, so the two can
     /// never drift apart. With the bubbles hidden and the strip shown, this is
@@ -260,7 +260,7 @@ impl OrderflowView {
     }
 
     /// Show or hide those marks. The very field the dock's checkbox writes, so
-    /// the two entry points can never disagree â€” and, like every other lane
+    /// the two entry points can never disagree — and, like every other lane
     /// setting, it is saved with the order-flow preset rather than on its own.
     pub fn set_lane_marks_visible(&mut self, visible: bool) {
         if self.config.live_lane.show_marks == visible {
@@ -277,7 +277,7 @@ impl OrderflowView {
         self.config.show_legend
     }
 
-    /// Show or hide it â€” the very field the L2 panel's "show chart legend"
+    /// Show or hide it — the very field the L2 panel's "show chart legend"
     /// checkbox writes, so the canvas's right-click menu and the panel can
     /// never disagree about it. Chrome only: every layer it names keeps
     /// drawing while the key is hidden.
@@ -298,7 +298,7 @@ impl OrderflowView {
 
     /// Show or hide it. The recorder is not part of this question: capture,
     /// generation and the ladder carry on, and the L2 panel still states them
-    /// â€” this silences a label on the canvas, nothing else.
+    /// — this silences a label on the canvas, nothing else.
     pub fn set_status_badge_visible(&mut self, visible: bool) {
         if self.config.show_status_badge == visible {
             return;
@@ -314,7 +314,7 @@ impl OrderflowView {
         self.config.show_gaps
     }
 
-    /// Show or hide the gap boundaries â€” the same field as the dock's "L2 gap"
+    /// Show or hide the gap boundaries — the same field as the dock's "L2 gap"
     /// checkbox. This one hides a *statement about missing data* rather than
     /// data itself, which is why the layer menu's entry spells out that an
     /// unrecorded stretch will then look like a recorded one.
@@ -348,7 +348,7 @@ impl OrderflowView {
     ///
     /// One call because it is one look at the published book. Reading the two
     /// separately sends the render thread back through the worker's mutex for
-    /// a number the first read already had â€” a lock per frame for nothing, on
+    /// a number the first read already had — a lock per frame for nothing, on
     /// the one thread that must never wait.
     ///
     /// `None` when there is no live edge to run to, which is the same thing as
@@ -387,7 +387,7 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// Market time the lane is showing right now, in milliseconds â€” the label
+    /// Market time the lane is showing right now, in milliseconds — the label
     /// under it, and the only readout of what the zoom is worth.
     #[must_use]
     pub fn live_lane_window_ms(&self, closed: &[Bar]) -> i64 {
@@ -557,7 +557,7 @@ impl OrderflowView {
         // Every frame, with no gate of its own. The worker coalesces requests
         // latest-wins and decides for itself what is worth rebuilding, so the
         // only thing a gate here could add is a bar snapshot older than the
-        // prints it is supposed to place â€” which is how a fresh print ends up
+        // prints it is supposed to place — which is how a fresh print ends up
         // outside the timeline and drawn nowhere.
         self.worker.send(BookCommand::Project(request));
         self.published.frame.clone()
@@ -592,7 +592,7 @@ impl OrderflowView {
     }
 
     /// Draw factual aggressive prints over the candles. The canvas's key is
-    /// not part of this pass â€” see [`draw_legend`](Self::draw_legend).
+    /// not part of this pass — see [`draw_legend`](Self::draw_legend).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -620,7 +620,7 @@ impl OrderflowView {
     /// Draw the canvas's compact visual key.
     ///
     /// Its own pass, not a tail of the bubbles: the legend is chrome about
-    /// what the canvas is showing â€” it names the depth layers too â€” so hiding
+    /// what the canvas is showing — it names the depth layers too — so hiding
     /// the bubbles must not take it down, and hiding it must not take the
     /// bubbles down. The trader switches it from the canvas's right-click
     /// menu (`ChartLayer::FlowLegend`).
@@ -653,7 +653,7 @@ impl OrderflowView {
     pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
         // Tied to the map, not to the recorder: a badge reporting on a book
         // nobody asked to see is just chrome. The trader can silence it on its
-        // own too, from the canvas's right-click menu â€” but only while the
+        // own too, from the canvas's right-click menu — but only while the
         // book is working. A failure re-asserts the badge: it is the one
         // real-time statement that the depth on screen has stopped being the
         // book, and hiding chrome may never hide *that* (data honesty).
@@ -682,10 +682,10 @@ impl OrderflowView {
 
     /// Draw the live strip: the forming bar's aggression histogram, buys
     /// growing rightward from the centre and sells leftward, on the bubbles'
-    /// square-root area rule normalized by the bar itself â€” it resets on bar
+    /// square-root area rule normalized by the bar itself — it resets on bar
     /// close because the new bar has no clusters yet. The published ladder
     /// contributes only the best bid/ask touch lines (the real spread); the
-    /// depth silhouette was retired after live use â€” it repeated the
+    /// depth silhouette was retired after live use — it repeated the
     /// heatmap's right edge and buried the histogram. `bar_open_ms` is the
     /// forming bar's open time (`None` hides the histogram); `scale` is the
     /// chart's own price scale, so everything lines up 1:1 with the chart.
@@ -714,7 +714,7 @@ impl OrderflowView {
         let rows_left = strip.left() + live_strip::STRIP_ROW_INSET_PX;
 
         // The forming bar's mirrored aggression histogram, from the same
-        // projection clusters the bubbles draw â€” one engine, one aggregation
+        // projection clusters the bubbles draw — one engine, one aggregation
         // path. Empty whenever those layers publish nothing.
         let histogram = match (frame.as_deref(), bar_open_ms) {
             (Some(frame), Some(open_ms)) => {
@@ -790,7 +790,7 @@ impl OrderflowView {
             mark(ladder.best_bid.map(BookLevel::price), colors.buy);
         }
 
-        // Honest empty state: the strip is on, no data source has anything â€”
+        // Honest empty state: the strip is on, no data source has anything —
         // no book (capture off or no snapshot) and no forming-bar aggression.
         if ladder.is_none() && histogram.is_empty() {
             painter.text(
@@ -811,7 +811,7 @@ impl OrderflowView {
     /// Timestamp of the newest accepted book event, from the frame's mirror.
     ///
     /// Read-only twin of [`Self::health`] for callers that only need this one
-    /// figure and hold `&self` â€” the status bar's tape-age readout, which
+    /// figure and hold `&self` — the status bar's tape-age readout, which
     /// runs while the frame is already borrowing the app immutably.
     #[must_use]
     pub fn last_event_ms(&self) -> Option<i64> {
@@ -847,7 +847,7 @@ impl OrderflowView {
         ui.horizontal(|ui| {
             ui.label("preset");
             let selected = if self.presets.active.is_empty() {
-                "â€” custom â€”"
+                "— custom —"
             } else {
                 self.presets.active.as_str()
             };
@@ -905,7 +905,7 @@ impl OrderflowView {
         {
             self.apply_preset(&name);
         }
-        ui.small(format!("presets Â· {}", self.presets_source));
+        ui.small(format!("presets · {}", self.presets_source));
         if let Some(status) = &self.preset_status {
             ui.small(status.clone());
         }
@@ -943,7 +943,7 @@ impl OrderflowView {
         match bubble_presets::save(&self.presets) {
             Ok(path) => {
                 self.presets_source = PresetSource::WorkingDir(path.clone());
-                self.preset_status = Some(format!("{success} â†’ {}", path.display()));
+                self.preset_status = Some(format!("{success} → {}", path.display()));
             }
             Err(message) => {
                 tracing::error!(
@@ -954,7 +954,7 @@ impl OrderflowView {
                     action = "keep_settings_in_memory_only",
                     "bubble presets could not be written; the current look is in memory only"
                 );
-                self.preset_status = Some(format!("not saved â€” {message}"));
+                self.preset_status = Some(format!("not saved — {message}"));
             }
         }
     }
@@ -973,7 +973,7 @@ impl OrderflowView {
                     action = "using_built_in_presets",
                     "bubble presets file could not be read; built-in presets are in use"
                 );
-                self.preset_status = Some(format!("presets not loaded â€” {message}"));
+                self.preset_status = Some(format!("presets not loaded — {message}"));
             }
             None => {
                 let active = self.presets.active.clone();
@@ -981,7 +981,7 @@ impl OrderflowView {
                     self.preset_status = Some("presets reloaded".to_owned());
                 } else {
                     self.apply_preset(&active);
-                    self.preset_status = Some(format!("reloaded Â· '{active}' applied"));
+                    self.preset_status = Some(format!("reloaded · '{active}' applied"));
                 }
             }
         }
@@ -1022,12 +1022,12 @@ impl OrderflowView {
                             MIN_LIVE_LANE_ZOOM..=MAX_LIVE_LANE_ZOOM,
                         )
                         .logarithmic(true)
-                        .suffix("Ã—"),
+                        .suffix("×"),
                     );
                 })
                 .response
                 .on_hover_text(
-                    "how much market time fits in the tape, against the recent bars' typical duration. Zoom in and prints run across it faster and further apart; zoom out and more time crowds in â€” the clustering window follows, so they gather into fewer, bigger bubbles. Also set by dragging the time strip under the tape",
+                    "how much market time fits in the tape, against the recent bars' typical duration. Zoom in and prints run across it faster and further apart; zoom out and more time crowds in — the clustering window follows, so they gather into fewer, bigger bubbles. Also set by dragging the time strip under the tape",
                 );
                 ui.horizontal(|ui| {
                     ui.label("cluster");
@@ -1055,7 +1055,7 @@ impl OrderflowView {
                             &mut lane.radius_scale,
                             MIN_LIVE_LANE_RADIUS_SCALE..=MAX_LIVE_LANE_RADIUS_SCALE,
                         )
-                        .suffix("Ã—"),
+                        .suffix("×"),
                     );
                 })
                 .response
@@ -1085,12 +1085,12 @@ impl OrderflowView {
                             ui.selectable_value(
                                 &mut bubbles.render_mode,
                                 BubbleRenderMode::Flat,
-                                "Flat Â· 2D disc",
+                                "Flat · 2D disc",
                             );
                             ui.selectable_value(
                                 &mut bubbles.render_mode,
                                 BubbleRenderMode::Sphere,
-                                "Sphere Â· 3D shaded",
+                                "Sphere · 3D shaded",
                             );
                         })
                         .response
@@ -1098,7 +1098,7 @@ impl OrderflowView {
                             "flat is the classic solid disc. Sphere shades every bubble like a \
                              ball lit from the upper left (the Bookmap look): on a dense tape \
                              each darkened rim keeps overlapping prints readable as separate \
-                             bubbles instead of one merged blob. Purely visual â€” clustering and \
+                             bubbles instead of one merged blob. Purely visual — clustering and \
                              liquidity association do not change.",
                         );
                 });
@@ -1148,12 +1148,12 @@ impl OrderflowView {
                             ui.selectable_value(
                                 &mut bubbles.size_reference,
                                 BubbleSizeReference::VisibleP99,
-                                "Auto Â· visible P99",
+                                "Auto · visible P99",
                             );
                             ui.selectable_value(
                                 &mut bubbles.size_reference,
                                 BubbleSizeReference::VisibleMax,
-                                "Auto Â· largest visible",
+                                "Auto · largest visible",
                             );
                             ui.selectable_value(
                                 &mut bubbles.size_reference,
@@ -1236,7 +1236,7 @@ impl OrderflowView {
             .default_open(true)
             .show(ui, |ui| {
                 ui.small(
-                    "Drawn only when a print aligned with a factual L2 reduction â€” the bubble \
+                    "Drawn only when a print aligned with a factual L2 reduction — the bubble \
                      ate resting liquidity.",
                 );
                 ui.checkbox(
@@ -1250,7 +1250,7 @@ impl OrderflowView {
                 ui.add_enabled(
                     bubbles.show_consumption_front,
                     egui::Slider::new(&mut bubbles.front_length_scale, 0.5..=6.0)
-                        .text("front length Ã— radius"),
+                        .text("front length × radius"),
                 );
                 ui.checkbox(&mut bubbles.show_impact_ring, "impact ring on the rim");
                 ui.add_enabled(
@@ -1280,7 +1280,7 @@ impl OrderflowView {
                     &mut bubbles.show_quantity_labels,
                     "quantity inside the bubble",
                 );
-                ui.checkbox(&mut bubbles.show_trade_count, "Ã—N clustered prints");
+                ui.checkbox(&mut bubbles.show_trade_count, "×N clustered prints");
                 ui.add(
                     egui::Slider::new(&mut bubbles.label_min_radius, 4.0..=48.0)
                         .text("label from px"),
@@ -1312,7 +1312,7 @@ impl OrderflowView {
     /// whether capture must restart because the base capture resolution
     /// changed.
     ///
-    /// The layer's *toggle* lives in the toolbar; this tab is settings only â€”
+    /// The layer's *toggle* lives in the toolbar; this tab is settings only —
     /// opening it never starts capture (looking is not enabling).
     pub fn draw_l2_tab(&mut self, ui: &mut egui::Ui) -> bool {
         self.sync_published();
@@ -1369,24 +1369,24 @@ impl OrderflowView {
                             ui.selectable_value(
                                 &mut self.config.display_grouping,
                                 DisplayGrouping::Adaptive { target_rows: 160 },
-                                "Auto Â· follows zoom",
+                                "Auto · follows zoom",
                             );
                             ui.selectable_value(
                                 &mut self.config.display_grouping,
                                 DisplayGrouping::Native,
-                                "Native Â· 1Ã—",
+                                "Native · 1×",
                             );
                             for multiple in [2, 5, 10, 25, 50] {
                                 ui.selectable_value(
                                     &mut self.config.display_grouping,
                                     DisplayGrouping::Multiple(multiple),
-                                    format!("Range Â· {multiple}Ã—"),
+                                    format!("Range · {multiple}×"),
                                 );
                             }
                             ui.selectable_value(
                                 &mut self.config.display_grouping,
                                 DisplayGrouping::Multiple(3),
-                                "Customâ€¦",
+                                "Custom…",
                             );
                         });
                 });
@@ -1528,7 +1528,7 @@ impl OrderflowView {
                 }
                 ui.checkbox(&mut self.config.show_legend, "show chart legend");
 
-                ui.collapsing("advanced Â· capture resolution", |ui| {
+                ui.collapsing("advanced · capture resolution", |ui| {
                     ui.horizontal(|ui| {
                         ui.label("base price bucket");
                         ui.add(
@@ -1557,22 +1557,22 @@ impl OrderflowView {
                 ui.separator();
                 let health = &self.published.health;
                 ui.label(format!(
-                    "{} Â· {} bid / {} ask levels",
+                    "{} · {} bid / {} ask levels",
                     self.published.status.label(),
                     health.bid_levels,
                     health.ask_levels
                 ));
                 if let Some(ladder) = &self.published.ladder {
                     let side = |level: Option<BookLevel>| match level {
-                        Some(level) => format!("{} Ã— {}", level.price(), level.quantity()),
-                        None => "â€”".to_owned(),
+                        Some(level) => format!("{} × {}", level.price(), level.quantity()),
+                        None => "—".to_owned(),
                     };
                     let spread = match (ladder.best_bid, ladder.best_ask) {
                         (Some(bid), Some(ask)) => (ask.price() - bid.price()).to_string(),
-                        _ => "â€”".to_owned(),
+                        _ => "—".to_owned(),
                     };
                     ui.label(format!(
-                        "book now: bid {} Â· ask {} Â· spread {}",
+                        "book now: bid {} · ask {} · spread {}",
                         side(ladder.best_bid),
                         side(ladder.best_ask),
                         spread
@@ -1587,13 +1587,13 @@ impl OrderflowView {
                     ));
                 }
                 ui.label(format!(
-                    "{} runs Â· {:.1} MiB retained Â· projection {:.1} ms",
+                    "{} runs · {:.1} MiB retained · projection {:.1} ms",
                     health.archived_runs + health.active_levels,
                     health.history_bytes as f64 / (1024.0 * 1024.0),
                     health.projection_ms
                 ));
                 ui.label(format!(
-                    "effective range {} Â· {}Ã— base",
+                    "effective range {} · {}× base",
                     health.effective_grouping, health.effective_grouping_multiple
                 ));
                 if ui.button("reset L2 visuals").clicked() {
@@ -1619,7 +1619,7 @@ impl OrderflowView {
     }
 
     /// The Bubbles dock tab's body: the aggression layer's settings.
-    /// Everything here is independent of L2 capture â€” bubbles are built from
+    /// Everything here is independent of L2 capture — bubbles are built from
     /// the aggregate-trade stream. Same return contract as
     /// [`Self::draw_l2_tab`].
     pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui) -> bool {
@@ -1654,7 +1654,7 @@ impl OrderflowView {
                                     .selected_text(cluster_label(self.config.bubble_cluster_ms))
                                     .show_ui(ui, |ui| {
                                         for (milliseconds, label) in [
-                                            (0, "Raw Â· one bubble per print"),
+                                            (0, "Raw · one bubble per print"),
                                             (50, "50 ms"),
                                             (100, "100 ms"),
                                             (200, "200 ms"),
@@ -1690,7 +1690,7 @@ impl OrderflowView {
                             })
                             .response
                             .on_hover_text(
-                                "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" â€” quantities and trade counts are summed exactly",
+                                "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" — quantities and trade counts are summed exactly",
                             );
                             ui.checkbox(
                                 &mut self.config.bubble_candle_summary,
@@ -1715,7 +1715,7 @@ impl OrderflowView {
                             ("clusters (bubble layer off)", "dropped from the frame")
                         };
                         ui.label(format!(
-                            "{} {noun} projected Â· {} aggressions retained",
+                            "{} {noun} projected · {} aggressions retained",
                             health.projection_aggressions, health.aggression_count
                         ));
                         if health.dropped_aggressions > 0 {
@@ -1782,9 +1782,9 @@ fn theme_label(theme: HeatmapTheme) -> &'static str {
 
 fn display_grouping_label(grouping: DisplayGrouping) -> String {
     match grouping {
-        DisplayGrouping::Native => "Native Â· 1Ã—".to_owned(),
-        DisplayGrouping::Multiple(multiple) => format!("Range Â· {multiple}Ã—"),
-        DisplayGrouping::Adaptive { target_rows } => format!("Auto Â· {target_rows} rows"),
+        DisplayGrouping::Native => "Native · 1×".to_owned(),
+        DisplayGrouping::Multiple(multiple) => format!("Range · {multiple}×"),
+        DisplayGrouping::Adaptive { target_rows } => format!("Auto · {target_rows} rows"),
     }
 }
 
@@ -1798,15 +1798,15 @@ fn cluster_label(milliseconds: i64) -> String {
 
 fn lane_cluster_label(window: Option<i64>, inherited: i64) -> String {
     match window {
-        None => format!("Same as history Â· {}", dust_label(inherited)),
-        Some(0) => "Raw Â· one bubble per print".to_owned(),
+        None => format!("Same as history · {}", dust_label(inherited)),
+        Some(0) => "Raw · one bubble per print".to_owned(),
         Some(milliseconds) => dust_label(milliseconds),
     }
 }
 
 fn dust_label(milliseconds: i64) -> String {
     if milliseconds == 0 {
-        "Off Â· draw every print".to_owned()
+        "Off · draw every print".to_owned()
     } else if milliseconds % 1_000 == 0 {
         format!("{} s", milliseconds / 1_000)
     } else {
@@ -1816,16 +1816,16 @@ fn dust_label(milliseconds: i64) -> String {
 
 const fn size_reference_label(reference: BubbleSizeReference) -> &'static str {
     match reference {
-        BubbleSizeReference::VisibleP99 => "Auto Â· visible P99",
-        BubbleSizeReference::VisibleMax => "Auto Â· largest visible",
+        BubbleSizeReference::VisibleP99 => "Auto · visible P99",
+        BubbleSizeReference::VisibleMax => "Auto · largest visible",
         BubbleSizeReference::Fixed => "Fixed quantity",
     }
 }
 
 const fn render_mode_label(mode: BubbleRenderMode) -> &'static str {
     match mode {
-        BubbleRenderMode::Flat => "Flat Â· 2D disc",
-        BubbleRenderMode::Sphere => "Sphere Â· 3D shaded",
+        BubbleRenderMode::Flat => "Flat · 2D disc",
+        BubbleRenderMode::Sphere => "Sphere · 3D shaded",
     }
 }
 
@@ -2034,10 +2034,10 @@ mod tests {
         let chart = 1_000.0;
         let before = view.config.live_lane.resolved_width_px(chart);
 
-        // Drag left â†’ a wider tape, pixel for pixel.
+        // Drag left → a wider tape, pixel for pixel.
         view.resize_live_lane(-60.0, chart);
         assert!((view.config.live_lane.resolved_width_px(chart) - (before + 60.0)).abs() < 0.01);
-        // Drag right â†’ a narrower one.
+        // Drag right → a narrower one.
         view.resize_live_lane(60.0, chart);
         assert!((view.config.live_lane.resolved_width_px(chart) - before).abs() < 0.01);
 
@@ -2172,7 +2172,7 @@ mod tests {
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
 
-        // Turning the bubbles off closes the pipeline again â€” nobody is left
+        // Turning the bubbles off closes the pipeline again — nobody is left
         // reading it.
         view.set_bubbles_enabled(false);
         assert!(
@@ -2292,12 +2292,12 @@ mod tests {
             text
         };
 
-        // The bubble pass writes no keyâ€¦
+        // The bubble pass writes no key…
         assert!(
             !text_of(&view, false).contains("liquidity"),
             "the bubbles must not carry the legend on their back"
         );
-        // â€¦the key's own pass does, with the bubble layer off.
+        // …the key's own pass does, with the bubble layer off.
         view.set_bubbles_enabled(false);
         assert!(
             text_of(&view, true).contains("liquidity"),
@@ -2314,8 +2314,8 @@ mod tests {
 
     /// The live strip is a consumer in its own right: it draws the forming
     /// bar's clusters beside the price axis, from the same engine path the
-    /// bubbles use. Hiding the bubbles must not blank it â€” "essa parte deve
-    /// permanecer calculando â€¦ mesmo desabilitando a bolha".
+    /// bubbles use. Hiding the bubbles must not blank it — "essa parte deve
+    /// permanecer calculando … mesmo desabilitando a bolha".
     #[test]
     fn the_live_strip_alone_keeps_the_aggression_pipeline_running() {
         let mut view = OrderflowView::new("BTCUSDT");

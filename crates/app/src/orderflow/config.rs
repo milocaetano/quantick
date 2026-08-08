@@ -1,4 +1,4 @@
-﻿//! Sanitized runtime configuration for the order-book heatmap.
+//! Sanitized runtime configuration for the order-book heatmap.
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
@@ -9,7 +9,7 @@ pub const MIN_RETENTION_MS: i64 = 1_000;
 /// Longest in-memory history window accepted by the UI.
 pub const MAX_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 /// Default history window: thirty minutes, so the visible past keeps its
-/// story â€” where a wall lived, when it was eaten and when it was pulled.
+/// story — where a wall lived, when it was eaten and when it was pulled.
 /// Affordable because projection only sweeps runs intersecting the visible
 /// window (on its own thread) and the run/byte caps below still bound memory;
 /// the adaptive capture bucket keeps dense books at ~10^4 runs per hour.
@@ -76,10 +76,10 @@ pub const MIN_LIVE_LANE_WIDTH_PX: f32 = 24.0;
 /// Default zoom of the lane's time window: one typical bar's worth of market
 /// time, the same window the lane showed before the knob existed.
 pub const DEFAULT_LIVE_LANE_ZOOM: f32 = 1.0;
-/// Most zoomed-out lane accepted â€” four times the typical bar duration in the
+/// Most zoomed-out lane accepted — four times the typical bar duration in the
 /// same band, so prints crowd together and cluster into fewer, bigger marks.
 pub const MIN_LIVE_LANE_ZOOM: f32 = 0.25;
-/// Most zoomed-in lane accepted â€” an eighth of it, so prints run across the
+/// Most zoomed-in lane accepted — an eighth of it, so prints run across the
 /// band fast and far apart.
 pub const MAX_LIVE_LANE_ZOOM: f32 = 8.0;
 /// Least market time a zoomed-in lane will show. Below an instant there is no
@@ -191,7 +191,7 @@ impl BubbleSizeReference {
     /// Whether the reference is derived from what is on screen.
     ///
     /// The opposite is [`Fixed`](Self::Fixed), pinned so a bubble means the
-    /// same quantity all session â€” which is exactly why nothing the renderer
+    /// same quantity all session — which is exactly why nothing the renderer
     /// decides is allowed to rescale it.
     #[must_use]
     pub fn is_visible(self) -> bool {
@@ -202,7 +202,7 @@ impl BubbleSizeReference {
 /// How a bubble's fill is painted.
 ///
 /// `Flat` is the classic solid disc. `Sphere` shades each bubble like a ball
-/// lit from the upper left â€” an offset highlight over a darkened rim â€” so
+/// lit from the upper left — an offset highlight over a darkened rim — so
 /// overlapping prints on a dense tape keep a visible boundary instead of
 /// merging into one solid blob. Purely visual: geometry, clustering and
 /// liquidity association are identical in both modes.
@@ -227,7 +227,7 @@ const SERIALIZED_FLOAT_PLACES: i32 = 4;
 /// TOML floats are `f64`, so an `f32` promoted straight through prints its
 /// exact binary expansion: `0.78` is written back as `0.7799999713897705`.
 /// Presets are tracked in git precisely so a look can be reviewed and rolled
-/// back like code, and a diff of noise defeats that â€” this is the write path
+/// back like code, and a diff of noise defeats that — this is the write path
 /// for every visual float, so rounding here fixes the file for all of them.
 fn serialize_short_f32<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -239,13 +239,13 @@ where
 }
 
 /// Everything the "aggression bubbles" panel owns: bubble geometry, colour,
-/// labels and the two marks a bubble draws when it ate resting liquidity â€” the
+/// labels and the two marks a bubble draws when it ate resting liquidity — the
 /// vertical consumption front (the "risco") and the trail that leaks into the
 /// consumed side (the "rastro").
 ///
 /// Every field here is display-only. [`min_quantity`](Self::min_quantity) and
 /// the size reference reach the projection, but only to decide which bubbles
-/// are drawn and how large â€” never what is captured, retained, or associated
+/// are drawn and how large — never what is captured, retained, or associated
 /// with an L2 reduction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -276,7 +276,7 @@ pub struct BubbleStyle {
     /// [`hollow_small_buys`](Self::hollow_small_buys) gate on. Deliberately
     /// *not* [`detail_min_radius`](Self::detail_min_radius): that one decides
     /// how much dressing a bubble can afford, and a sphere-heavy look sets it
-    /// low on purpose â€” the "3d spheres" and "dense tape btc" presets put it
+    /// low on purpose — the "3d spheres" and "dense tape btc" presets put it
     /// at or below `min_radius`, which would leave nothing to fold.
     #[serde(serialize_with = "serialize_short_f32")]
     pub readable_min_radius: f32,
@@ -311,7 +311,7 @@ pub struct BubbleStyle {
     /// Vertical separation, in pixels, between the two sides: buy bubbles are
     /// nudged up (they lift the ask), sell bubbles down (they hit the bid).
     ///
-    /// Deliberately unfaithful to the exact price â€” with a one-tick spread both
+    /// Deliberately unfaithful to the exact price — with a one-tick spread both
     /// sides land on the same row and stack into an unreadable line. Zero
     /// restores exact price placement.
     #[serde(serialize_with = "serialize_short_f32")]
@@ -443,8 +443,8 @@ impl BubbleStyle {
     /// Quantity at which a print stops being dust: the exact quantity whose
     /// bubble lands on [`readable_min_radius`](Self::readable_min_radius).
     ///
-    /// Inverts the renderer's area mapping â€” `radius = sqrt(minÂ² + sizeÂ² Â·
-    /// (maxÂ² âˆ’ minÂ²))` at `sizeÂ² = quantity / reference` â€” so the threshold
+    /// Inverts the renderer's area mapping — `radius = sqrt(min² + size² ·
+    /// (max² − min²))` at `size² = quantity / reference` — so the threshold
     /// follows whatever radius range is configured instead of pinning a second
     /// magic number beside it. `None` means nothing can be dust: no reference
     /// to size against, or a floor already at the smallest drawn radius.
@@ -490,7 +490,7 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
 /// The live lane is a pane of its own, pinned to the right edge of the chart:
 /// history is compressed into equal-width bar slots that pan and zoom, the lane
 /// is a fixed band of screen showing a fixed window of market time that always
-/// ends at now. Being its own pane is what earns it settings of its own â€” how
+/// ends at now. Being its own pane is what earns it settings of its own — how
 /// wide it is, how much time fits in it, and how big its bubbles are, none of
 /// which the candles beside it get a say in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -501,7 +501,7 @@ pub struct LiveLaneStyle {
     /// Measured against the chart rather than the candle so that the tape is a
     /// *place* on screen: zooming the time axis changes how many bars fit
     /// beside it, never how much room it gets. Fixed, and so is the market time
-    /// it shows, which together give the tape a constant pixels-per-ms rate â€”
+    /// it shows, which together give the tape a constant pixels-per-ms rate —
     /// a print enters at the right edge and slides left at the same speed. A
     /// bar closing changes neither, so nothing on the tape ever jumps.
     pub width_share: f32,
@@ -511,7 +511,7 @@ pub struct LiveLaneStyle {
     /// `1.0` fits about one bar's worth of market time in the band. Zooming in
     /// (`> 1`) shows less time in the same width, so prints run across it
     /// faster and further apart; zooming out (`< 1`) shows more, so they crowd
-    /// together â€” and the clustering window follows the span
+    /// together — and the clustering window follows the span
     /// ([`effective_cluster_ms`](Self::effective_cluster_ms)), which is what
     /// turns that crowd into fewer, bigger marks instead of a smear.
     pub time_zoom: f32,
@@ -569,7 +569,7 @@ impl LiveLaneStyle {
     /// Lane width in pixels for a chart this wide.
     ///
     /// The lane is a pane, not a number of candle slots: it takes
-    /// `chart_width Ã— width_share` of screen whatever the candles are doing, so
+    /// `chart_width × width_share` of screen whatever the candles are doing, so
     /// zooming the time axis changes how many bars fit beside the tape and
     /// never how much room the tape gets.
     #[must_use]
@@ -648,7 +648,7 @@ impl LiveLaneStyle {
 /// consumes, so they never need the depth pipeline.
 ///
 /// Recording and drawing are separate concerns. [`enabled`](Self::enabled) is
-/// the recorder and defaults to disabled â€” merely adding the feature cannot
+/// the recorder and defaults to disabled — merely adding the feature cannot
 /// change feed load or memory use. `show_depth` is the display switch, and the
 /// projection only builds depth primitives when both are on.
 #[derive(Debug, Clone, PartialEq)]
@@ -657,7 +657,7 @@ pub struct HeatmapConfig {
     ///
     /// This is a data concern, not a visual one: the app keeps it on for every
     /// feed that can stream depth, so hiding the map never punches a hole in
-    /// the recording. Only the depth map depends on it â€” the aggression layer
+    /// the recording. Only the depth map depends on it — the aggression layer
     /// keeps working with capture off.
     pub enabled: bool,
     /// Maximum age retained in memory, measured in exchange milliseconds.
@@ -687,7 +687,7 @@ pub struct HeatmapConfig {
     /// Not a user setting and never written to disk: the pane owns those
     /// layers' visibility and states their demand here every frame, so this
     /// field can have no second owner to disagree with. It exists because a
-    /// frame nobody builds is a surface nobody draws â€” hiding the bubbles used
+    /// frame nobody builds is a surface nobody draws — hiding the bubbles used
     /// to blank the strip, and switching every other flow layer off left the
     /// lane reserved but unmarked while its menu entry still read as on.
     pub projection_demand: bool,
@@ -711,7 +711,7 @@ pub struct HeatmapConfig {
     /// sides stack on top of each other and read as a smear. The summary is
     /// the alternative: one mark per price range per bar, carrying the summed
     /// quantity of both sides and showing their proportion instead of hiding
-    /// one behind the other. Prints in the live lane are never summarized â€”
+    /// one behind the other. Prints in the live lane are never summarized —
     /// they have not finished happening.
     pub bubble_candle_summary: bool,
     /// Everything else the aggression-bubble panel owns: geometry (including
@@ -720,7 +720,7 @@ pub struct HeatmapConfig {
     pub bubbles: BubbleStyle,
     /// How the reserved band right of the forming bar is drawn and clustered.
     pub live_lane: LiveLaneStyle,
-    /// Whether the depth map is drawn at all â€” the toolbar's book-heatmap
+    /// Whether the depth map is drawn at all — the toolbar's book-heatmap
     /// switch, and the master of the `show_*` flags under it.
     ///
     /// Display-only, like every `show_*` flag in this block: L2 capture keeps
@@ -756,7 +756,7 @@ pub struct HeatmapConfig {
     pub show_gaps: bool,
     /// Smallest reduction fraction whose *unattributed* (depth-only) marker is
     /// displayed. A busy book shrinks buckets by >10% constantly; drawing every
-    /// one is violet drizzle. Aggression-aligned reductions always display â€”
+    /// one is violet drizzle. Aggression-aligned reductions always display —
     /// consumption is the feature's heart. Display-only: the underlying runs
     /// and transitions stay factual and complete.
     pub min_unattributed_reduction: f32,
@@ -799,7 +799,7 @@ impl Default for HeatmapConfig {
             display_grouping: DisplayGrouping::default(),
             opacity: 0.9,
             // Above one so quiet liquidity sinks into the dark canvas and only
-            // real walls glow â€” the Bookmap contrast. Below one paints a dense
+            // real walls glow — the Bookmap contrast. Below one paints a dense
             // book edge-to-edge (no walls stand out).
             gamma: 1.8,
             show_aggressions: false,
@@ -844,7 +844,7 @@ impl HeatmapConfig {
     ///
     /// The depth map and the aggression bubbles are independent: either one
     /// alone keeps the pipeline alive, and neither can switch the other off.
-    /// Capture is not part of this question â€” the recorder runs on its own, so
+    /// Capture is not part of this question — the recorder runs on its own, so
     /// a hidden map stops costing projections without stopping the recording.
     ///
     /// A surface that is not a layer of its own can ask too
@@ -860,7 +860,7 @@ impl HeatmapConfig {
     ///
     /// The two depletion layers share one computation; either alone keeps it
     /// on. With both off, aggression bubbles also lose their consumption
-    /// marks â€” matched evidence comes from that same correlation.
+    /// marks — matched evidence comes from that same correlation.
     #[must_use]
     pub fn liquidity_events_enabled(&self) -> bool {
         self.show_aligned_depletion || self.show_unattributed_reductions
@@ -958,7 +958,7 @@ mod tests {
         assert_eq!(config.bubbles.max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
         // Every visual layer defaults to on: gaining per-layer switches must
         // change no pixels until someone actually flips one. The depth map
-        // still draws nothing here, because nothing is being recorded yet â€”
+        // still draws nothing here, because nothing is being recorded yet —
         // recording and drawing are separate questions.
         assert!(config.show_depth);
         assert!(!config.depth_visible());
@@ -1038,7 +1038,7 @@ mod tests {
     }
 
     /// The lane is a pane of the chart, so its width is a share of the chart
-    /// and nothing else â€” the candle zoom has no say in it at all.
+    /// and nothing else — the candle zoom has no say in it at all.
     #[test]
     fn the_lane_takes_a_share_of_the_chart_and_never_more_than_half() {
         let lane = LiveLaneStyle::default();
@@ -1086,7 +1086,7 @@ mod tests {
         assert_eq!(default.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 100);
 
         // Zoomed out: four times the market time in the same band, and a
-        // cluster four times as long â€” so a cluster keeps its width on screen.
+        // cluster four times as long — so a cluster keeps its width on screen.
         let out = LiveLaneStyle {
             time_zoom: 0.25,
             ..default.clone()
