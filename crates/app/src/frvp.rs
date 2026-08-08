@@ -79,6 +79,14 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
     let partial_slot = inputs.partial_ladder.is_some().then_some(closed_total);
     let last_slot = partial_slot.or_else(|| closed_total.checked_sub(1));
 
+    // The developing mode: the right edge is the newest slot, whatever the
+    // second anchor says. The anchors are never touched — the cache key's
+    // `end_slot` carries the resolved edge, and every bar close moves it.
+    let max_bar = if payload.extend_right {
+        f32::MAX
+    } else {
+        max_bar
+    };
     let span = covered_slots(min_bar, max_bar, last_slot);
     let (start_slot, end_slot) = span.unwrap_or((0, 0));
     let bars_total = span.map_or(0, |(start, end)| end - start + 1);
@@ -380,6 +388,62 @@ mod tests {
             depth,
             "derived-state refresh is not an edit"
         );
+    }
+
+    /// The developing mode: with `extend_right` on, the range's right edge is
+    /// the newest slot however short the anchors fall, every closed bar grows
+    /// the fold, and switching it off restores exactly the drawn range.
+    #[test]
+    fn extend_right_follows_the_tape_and_releases_cleanly() {
+        let mut state = state_with_tape();
+        let mut drawings = Drawings::default();
+        // Anchors cover only bar 0; the tape has three closed bars.
+        place_frvp(&mut drawings, 0.0, 0.9);
+        drawings.items_mut()[0]
+            .payload
+            .as_any_mut()
+            .downcast_mut::<FrvpPayload>()
+            .unwrap()
+            .extend_right = true;
+
+        refresh(&mut drawings, &inputs(&state, false));
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.key.end_slot, 2, "edge is the newest closed bar");
+        assert_eq!(cache.bars_total, 3);
+        assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("6"));
+
+        // A new bar closes: the same drawing re-keys and grows on its own.
+        state.ingest_live(&trade(7, "105", "1", Side::Buy));
+        assert_eq!(state.bars().len(), 4);
+        refresh(&mut drawings, &inputs(&state, false));
+        let grown = cache_of(&drawings);
+        assert_eq!(grown.key.end_slot, 3);
+        assert_eq!(grown.profile.expect("tape").0.total_volume(), dec("8"));
+
+        // The forming bar joins too, through the snapshot. (Trade 7 closed
+        // bar 3 exactly, so a fresh print opens the live bar first.)
+        state.ingest_live(&trade(8, "106", "1", Side::Sell));
+        let partial = state.partial_footprint().cloned();
+        assert!(partial.is_some());
+        let with_partial = RefreshInputs {
+            partial_ladder: partial.as_ref(),
+            partial_version: 1,
+            ..inputs(&state, false)
+        };
+        refresh(&mut drawings, &with_partial);
+        assert!(cache_of(&drawings).key.include_partial);
+
+        // Off again: back to exactly the anchors' own range.
+        drawings.items_mut()[0]
+            .payload
+            .as_any_mut()
+            .downcast_mut::<FrvpPayload>()
+            .unwrap()
+            .extend_right = false;
+        refresh(&mut drawings, &with_partial);
+        let released = cache_of(&drawings);
+        assert_eq!(released.key.end_slot, 0);
+        assert_eq!(released.profile.expect("tape").0.total_volume(), dec("2"));
     }
 
     #[test]

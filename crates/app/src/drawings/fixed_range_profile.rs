@@ -107,6 +107,10 @@ struct FrvpPresetData {
     show_poc: bool,
     delta_coloring: bool,
     show_labels: bool,
+    /// Added after v1 presets shipped; absent in older files, so it defaults
+    /// rather than invalidating them.
+    #[serde(default)]
+    extend_right: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +124,11 @@ pub struct FrvpPayload {
     /// Split each row into its buy and sell quantities instead of one bar.
     pub delta_coloring: bool,
     pub show_labels: bool,
+    /// The developing mode: the range's right edge is the newest bar (the
+    /// forming one included), whatever the second anchor says — the profile
+    /// keeps growing as the tape prints. The anchors are untouched, so
+    /// switching this off restores exactly the range that was drawn.
+    pub extend_right: bool,
     /// Derived state, refreshed by `frvp::refresh`; see [`FrvpCache`].
     pub cache: Option<FrvpCache>,
 }
@@ -133,6 +142,7 @@ impl Default for FrvpPayload {
             show_poc: true,
             delta_coloring: false,
             show_labels: true,
+            extend_right: false,
             cache: None,
         }
     }
@@ -148,6 +158,7 @@ impl PartialEq for FrvpPayload {
             && self.show_poc == other.show_poc
             && self.delta_coloring == other.delta_coloring
             && self.show_labels == other.show_labels
+            && self.extend_right == other.extend_right
     }
 }
 
@@ -176,6 +187,7 @@ impl DrawingPayload for FrvpPayload {
             show_poc: self.show_poc,
             delta_coloring: self.delta_coloring,
             show_labels: self.show_labels,
+            extend_right: self.extend_right,
         })
         .ok()
     }
@@ -196,10 +208,36 @@ impl DrawingPayload for FrvpPayload {
         self.show_poc = data.show_poc;
         self.delta_coloring = data.delta_coloring;
         self.show_labels = data.show_labels;
+        self.extend_right = data.extend_right;
         // The cache key carries the value-area fraction, so the next refresh
         // recomputes; nothing to invalidate by hand.
         true
     }
+}
+
+/// The horizontal edges of the range, in screen space. Normally the two
+/// anchors' x's; in the developing mode the right edge is the newest covered
+/// bar instead, found by extending the anchors' own bar→x line — the mapping
+/// is affine across the history region, so two anchors are enough to name
+/// any slot's x without asking the pane.
+fn range_edges(payload: &FrvpPayload, points: &[egui::Pos2], ctxt: &DrawContext<'_>) -> (f32, f32) {
+    let left = points[0].x.min(points[1].x);
+    let mut right = points[0].x.max(points[1].x);
+    if payload.extend_right
+        && let Some(cache) = payload.cache.as_ref()
+        && let [a, b, ..] = ctxt.anchors
+    {
+        let bar_span = b.bar - a.bar;
+        if bar_span.abs() > f32::EPSILON {
+            let slot_width = (points[1].x - points[0].x) / bar_span;
+            // The right boundary of the newest covered slot (its centre is
+            // `end_slot + 0.5`, its trailing edge half a slot further).
+            #[allow(clippy::cast_precision_loss)]
+            let live_x = points[0].x + (cache.key.end_slot as f32 + 1.0 - a.bar) * slot_width;
+            right = right.max(live_x);
+        }
+    }
+    (left, right)
 }
 
 /// The vertical span the object occupies: the profile's own price extent when
@@ -311,8 +349,7 @@ impl DrawingToolImpl for FixedRangeProfile {
             }
             return;
         }
-        let left = points[0].x.min(points[1].x);
-        let right = points[0].x.max(points[1].x);
+        let (left, right) = range_edges(payload, points, ctxt);
         let (top, bottom) = price_extent(payload, points, ctxt);
 
         // The range's edges — the stroke geometry, which is all the halo
@@ -435,6 +472,10 @@ impl DrawingToolImpl for FixedRangeProfile {
                     // like the footprint legend speaks its coarsening.
                     status.push_str(" · grouped");
                 }
+                if payload.extend_right {
+                    // The developing mode: this profile follows the tape.
+                    status.push_str(" · to live");
+                }
                 if cache.bars_covered < cache.bars_total {
                     status.push_str(&format!(
                         " · profile from {} of {} bars",
@@ -504,8 +545,7 @@ impl DrawingToolImpl for FixedRangeProfile {
         if points.len() < 2 {
             return false;
         }
-        let left = points[0].x.min(points[1].x);
-        let right = points[0].x.max(points[1].x);
+        let (left, right) = range_edges(payload, points, ctxt);
         let (top, bottom) = price_extent(payload, points, ctxt);
         let in_band = position.y >= top - radius_px && position.y <= bottom + radius_px;
         if !in_band {
@@ -567,6 +607,14 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
         .checkbox(&mut payload.delta_coloring, "split rows by buy/sell")
         .changed();
     edited |= ui.checkbox(&mut payload.show_labels, "labels").changed();
+    edited |= ui
+        .checkbox(&mut payload.extend_right, "extend to newest bar")
+        .on_hover_text(
+            "The developing profile: the right edge follows the tape and \
+             every new bar joins the fold. The anchors stay where you put \
+             them, so switching this off restores the drawn range.",
+        )
+        .changed();
 
     ui.separator();
 
@@ -639,6 +687,7 @@ mod tests {
             show_poc: true,
             delta_coloring: true,
             show_labels: false,
+            extend_right: true,
             cache: Some(FrvpCache {
                 key: FrvpCacheKey {
                     start_slot: 1,
