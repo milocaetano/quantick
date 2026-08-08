@@ -14,6 +14,7 @@ pub mod presets;
 // Geometry shared by a family of tools. Not tools themselves, so they are not
 // in the registry — a family core exists so its members stay declarations.
 mod line_core;
+mod mark_core;
 mod measure_core;
 mod shape_core;
 
@@ -204,6 +205,22 @@ pub struct DrawContext<'a> {
     pub halo: bool,
 }
 
+/// Where a tool wants its anchor to land on the bar under the pointer.
+///
+/// Almost every tool answers [`AnchorSnap::Pointer`]: the trader chose the
+/// price by pointing at it, and the OHLC magnet is theirs to switch on. A
+/// *mark* is the exception — it is a note about a bar, not a level, and it
+/// only reads as a mark when it sits clear of the candle it belongs to. It
+/// snaps whether or not the magnet is on, because a mark floating inside a
+/// candle body is the failure the tool exists to avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchorSnap {
+    #[default]
+    Pointer,
+    BarLow,
+    BarHigh,
+}
+
 /// A tool's arming shortcut, declared by the tool itself so the keyboard
 /// map never becomes a central match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,6 +267,21 @@ trait DrawingToolImpl: Sync {
     }
     /// The key that arms this tool from the chart, if it has one.
     fn shortcut(&self) -> Option<ToolShortcut> {
+        None
+    }
+    /// Where this tool's anchors land on the bar under the pointer.
+    fn anchor_snap(&self) -> AnchorSnap {
+        AnchorSnap::Pointer
+    }
+    /// The colour a fresh object of this tool is born in, when the stock
+    /// blue would be the wrong answer. `None` — almost every tool — takes
+    /// [`DEFAULT_DRAWING_COLOR`].
+    ///
+    /// It exists for the tools whose colour *is* their meaning: a buy mark
+    /// that arrives blue is one the trader repaints every single time. The
+    /// trader's own saved default still wins over this, because that one was
+    /// chosen rather than assumed.
+    fn default_color(&self) -> Option<egui::Color32> {
         None
     }
     /// The rail family this tool belongs to, if any. Consecutive registry
@@ -392,6 +424,21 @@ impl DrawingTool {
     #[must_use]
     pub fn supports_stroke_width(self) -> bool {
         self.0.supports_stroke_width()
+    }
+
+    #[must_use]
+    pub fn anchor_snap(self) -> AnchorSnap {
+        self.0.anchor_snap()
+    }
+
+    /// The stock look of a fresh object of this tool, before the trader's
+    /// own saved default is consulted.
+    #[must_use]
+    pub fn default_style(self) -> DrawingStyle {
+        DrawingStyle {
+            color: self.0.default_color().unwrap_or(DEFAULT_DRAWING_COLOR),
+            ..DrawingStyle::default()
+        }
     }
 
     #[must_use]
@@ -614,6 +661,9 @@ register_drawing_tools!(
     arrow,
     // Channels
     parallel_channel,
+    // Marks
+    arrow_mark_up,
+    arrow_mark_down,
     // Shapes
     rectangle,
     ellipse,

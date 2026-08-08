@@ -9831,6 +9831,100 @@ plot(close)
         );
     }
 
+    /// The trader's third veto, end to end: a mark that lands at the price
+    /// under the cursor floats inside the candle body, disappears at a
+    /// glance and vanishes entirely with the footprint open. It has to grab
+    /// the bar's extreme, and it has to do so with the magnet *off* —
+    /// snapping is this tool's own rule, not a setting it borrows.
+    #[test]
+    fn a_buy_mark_grabs_the_bars_low_with_the_magnet_off() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        assert!(!app.toolrail.magnet(), "this proof needs the magnet off");
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        let candle = app
+            .active_tab()
+            .flow_pane
+            .closed_bar(anchor.bar.floor() as usize)
+            .expect("the click landed on a bar")
+            .clone();
+        let low = rust_decimal::prelude::ToPrimitive::to_f64(&candle.low).unwrap();
+        assert!(
+            (anchor.price - low).abs() < 1e-9,
+            "the buy mark hangs from the low ({low}), not from the pointer ({})",
+            anchor.price
+        );
+
+        // And the pointer's height is genuinely ignored, not merely equal to
+        // the low by luck of this fixture: a second mark 90 px up the same
+        // bar lands on the same price.
+        arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 210.0));
+        let second = app.active_tab().flow_pane.drawings.items()[1].points[0];
+        assert!(
+            (second.price - anchor.price).abs() < 1e-9,
+            "two clicks on one bar, 90 px apart, must give one price"
+        );
+        assert!((second.bar.floor() - anchor.bar.floor()).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_sell_mark_grabs_the_bars_high() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-down");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let anchor = app.active_tab().flow_pane.drawings.items()[0].points[0];
+        let candle = app
+            .active_tab()
+            .flow_pane
+            .closed_bar(anchor.bar.floor() as usize)
+            .expect("the click landed on a bar")
+            .clone();
+        let high = rust_decimal::prelude::ToPrimitive::to_f64(&candle.high).unwrap();
+        assert!((anchor.price - high).abs() < 1e-9);
+    }
+
+    /// A buy mark that arrives in the stock blue is one the trader repaints
+    /// every single time.
+    #[test]
+    fn the_marks_are_born_in_the_colour_of_the_side_they_mean() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        for (id, expected) in [
+            ("arrow-mark-up", theme::BUY),
+            ("arrow-mark-down", theme::SELL),
+        ] {
+            arm_drawing_from_toolbox(&mut app, &ctx, id);
+            click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+            let placed = app
+                .active_tab()
+                .flow_pane
+                .drawings
+                .items()
+                .last()
+                .expect("the mark was placed");
+            assert_eq!(placed.tool.id(), id);
+            assert_eq!(placed.style.color, expected, "{id} was born wrong");
+        }
+    }
+
+    /// The stamp and the vector stay two different tools: one click versus
+    /// two anchors is the whole difference, and folding them together would
+    /// cost the stamp its reason to exist.
+    #[test]
+    fn a_mark_is_one_click_and_the_arrow_tool_is_still_two() {
+        assert_eq!(drawing_tool("arrow-mark-up").required_points(), 1);
+        assert_eq!(drawing_tool("arrow-mark-down").required_points(), 1);
+        assert_eq!(drawing_tool("arrow").required_points(), 2);
+    }
+
     /// The headline of this change: clicking a drawing must not throw a
     /// 320 px panel over the chart. It raises the strip, and nothing else.
     #[test]

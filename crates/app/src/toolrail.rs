@@ -1300,10 +1300,10 @@ mod tests {
     fn stage_lengths_match_the_spec_for_the_shipped_registry() {
         let slots = tool_slots().len();
         assert_eq!(
-            slots, 6,
-            "the registry folds into Lines, Channels, Shapes, Fib, Measure and Text"
+            slots, 7,
+            "the registry folds into Lines, Channels, Marks, Shapes, Fib, Measure and Text"
         );
-        assert_eq!(full_length(slots), 525.0);
+        assert_eq!(full_length(slots), 561.0);
         assert_eq!(compact_length(), 381.0);
         assert_eq!(minimal_length(), 191.0);
     }
@@ -1684,13 +1684,14 @@ mod tests {
     #[test]
     fn stages_are_pure_functions_of_extent() {
         let slots = tool_slots().len();
-        for extent in [100.0_f32, 200.0, 380.9, 381.0, 524.9, 525.0, 1000.0] {
+        for extent in [100.0_f32, 200.0, 380.9, 381.0, 560.9, 561.0, 1000.0] {
             let first = stage_for(extent, slots);
             let second = stage_for(extent, slots);
             assert_eq!(first, second);
         }
-        assert_eq!(stage_for(525.0, slots), RailStage::Full);
-        assert_eq!(stage_for(524.9, slots), RailStage::Compact);
+        // The full stage costs one slot more since the Marks family landed.
+        assert_eq!(stage_for(561.0, slots), RailStage::Full);
+        assert_eq!(stage_for(560.9, slots), RailStage::Compact);
         assert_eq!(stage_for(381.0, slots), RailStage::Compact);
         assert_eq!(stage_for(380.9, slots), RailStage::Minimal);
     }

@@ -1718,6 +1718,7 @@ impl ChartPane {
         history_right: f32,
         total: usize,
         magnet: bool,
+        snap: drawings::AnchorSnap,
         band: &Band,
     ) -> Option<ChartPoint> {
         let scale = band.scale.as_ref()?;
@@ -1726,11 +1727,32 @@ impl ChartPane {
         }
         let bar = self.viewport.right_edge_bar(total) + 0.5
             - (history_right - pos.x) / self.viewport.candle_width();
-        let value = magnet
-            .then(|| self.magnet_value(band, bar, pos.y, scale))
-            .flatten()
-            .unwrap_or_else(|| scale.price_at(pos.y));
+        let value = match snap {
+            // A mark's own rule beats the magnet toggle in both directions:
+            // it snaps with the magnet off, and it snaps to *its* extreme
+            // rather than to whichever of the four OHLC prices is nearest.
+            drawings::AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
+            drawings::AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
+            drawings::AnchorSnap::Pointer => magnet
+                .then(|| self.magnet_value(band, bar, pos.y, scale))
+                .flatten(),
+        }
+        .unwrap_or_else(|| scale.price_at(pos.y));
         Some(ChartPoint::at_time(bar, value, self.anchor_time(bar)))
+    }
+
+    /// The high or low of the bar `bar` falls on, on the price band only.
+    ///
+    /// An indicator band has no candle, so a mark dropped there keeps the
+    /// pointer's own value: inventing a high for a CVD pane would be the
+    /// data-honesty failure this repo refuses, and refusing the click
+    /// outright would read as a bug.
+    fn bar_extreme(&self, band: &Band, bar: f32, high: bool) -> Option<f64> {
+        if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
+            return None;
+        }
+        let candle = self.closed_bar(bar.floor() as usize)?;
+        if high { candle.high } else { candle.low }.to_f64()
     }
 
     /// Work a shared mark that lives on the other pane, from this one.
@@ -1760,6 +1782,7 @@ impl ChartPane {
                 pointer.history_right,
                 pointer.total,
                 pointer.magnet,
+                drawings::AnchorSnap::Pointer,
                 band,
             )
             .and_then(|point| Some((point.time_ms?, point.price)))
@@ -2002,7 +2025,14 @@ impl ChartPane {
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {
                 let (band, position) = self.placement_target(areas, bands, position)?;
-                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+                self.drawing_point_at(
+                    position,
+                    history_right,
+                    self.slots(),
+                    magnet,
+                    tool.anchor_snap(),
+                    band,
+                )
             });
         if (response.hovered() || response.dragged()) && !over_pane_chrome {
             ui.ctx().set_cursor_icon(match hovered {
@@ -2026,8 +2056,14 @@ impl ChartPane {
         if let Some(position) = pressed_position
             .filter(|position| surface.contains(*position) && !over_chrome(ui, *position))
             && let Some((band, position)) = self.placement_target(areas, bands, position)
-            && let Some(point) =
-                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+            && let Some(point) = self.drawing_point_at(
+                position,
+                history_right,
+                self.slots(),
+                magnet,
+                tool.anchor_snap(),
+                band,
+            )
         {
             let band = band.key.clone();
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
@@ -2049,8 +2085,14 @@ impl ChartPane {
             && surface.contains(position)
             && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
             && let Some((band, position)) = self.placement_target(areas, bands, position)
-            && let Some(point) =
-                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+            && let Some(point) = self.drawing_point_at(
+                position,
+                history_right,
+                self.slots(),
+                magnet,
+                tool.anchor_snap(),
+                band,
+            )
         {
             let band = band.key.clone();
             self.place_drawing_point(tool, &band, point, chrome);
@@ -2111,7 +2153,7 @@ impl ChartPane {
         let completed = self.drawings.place_with(tool, band, point, |tool| {
             let style = presets
                 .default_style(tool.id())
-                .unwrap_or_else(drawings::DrawingStyle::default);
+                .unwrap_or_else(|| tool.default_style());
             let mut payload = tool.default_payload();
             if let Some(name) = presets.default_preset(tool.id())
                 && let Some(value) = presets.load_custom_preset(tool.id(), &name)
@@ -2316,7 +2358,18 @@ impl ChartPane {
         };
         let anchors: Option<SmallVec<[ChartPoint; 4]>> = moved
             .iter()
-            .map(|point| self.drawing_point_at(*point, history_right, total, false, band))
+            // Derived anchors are exact by construction — neither the magnet
+            // nor a tool's own snap rule applies to them a second time.
+            .map(|point| {
+                self.drawing_point_at(
+                    *point,
+                    history_right,
+                    total,
+                    false,
+                    drawings::AnchorSnap::Pointer,
+                    band,
+                )
+            })
             .collect();
         if let Some(anchors) = anchors {
             self.drawings.set_points(drawing_index, &anchors);
@@ -2641,6 +2694,15 @@ impl ChartPane {
                             .items()
                             .get(drawing_index)
                             .and_then(|drawing| bands::band_of(&bands, drawing));
+                        // Moving a mark keeps it glued to a bar's extreme:
+                        // the rule that placed it is the rule that holds it.
+                        let handle_snap = self
+                            .drawings
+                            .items()
+                            .get(drawing_index)
+                            .map_or(drawings::AnchorSnap::Pointer, |drawing| {
+                                drawing.tool.anchor_snap()
+                            });
                         if let Some(band) = dragged
                             && let Some(position) = pointer_position
                         {
@@ -2648,9 +2710,14 @@ impl ChartPane {
                                 position.x.clamp(band.rect.left(), history_right),
                                 position.y.clamp(band.rect.top(), band.rect.bottom()),
                             );
-                            if let Some(point) =
-                                self.drawing_point_at(position, history_right, total, magnet, band)
-                            {
+                            if let Some(point) = self.drawing_point_at(
+                                position,
+                                history_right,
+                                total,
+                                magnet,
+                                handle_snap,
+                                band,
+                            ) {
                                 self.drag_drawing_handle(
                                     drawing_index,
                                     handle,
