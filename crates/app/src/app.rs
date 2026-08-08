@@ -562,8 +562,16 @@ pub struct QuantickApp {
     // and the selection the last placement was computed for.
     inspector_tab: InspectorTab,
     inspector_pinned: bool,
+    /// Whether the floating inspector is open. Selecting a drawing no longer
+    /// opens it: the context bar is what a selection raises, and the gear on
+    /// that bar is the one thing that opens the full panel. The pinned dock
+    /// ignores this — pinning *is* the standing request to keep it open.
+    inspector_open: bool,
     inspector_moved: bool,
     inspector_last_selection: Option<usize>,
+    /// The selected object's context bar: the floating row of icons that
+    /// opens where the object is.
+    context_bar: drawings::context_bar::ContextBar,
     // The floating inspector's position: automatic placement until the user
     // drags the title bar, manual from then on (only ever re-clamped). The
     // chart rectangle it is placed against belongs to the focused
@@ -597,6 +605,8 @@ pub struct QuantickApp {
     drawing_presets: drawings::presets::PresetStore,
     #[cfg(test)]
     inspector_pin_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    context_bar_rect: Option<egui::Rect>,
     #[cfg(test)]
     toast_undo_rect: Option<egui::Rect>,
     #[cfg(test)]
@@ -816,8 +826,10 @@ impl QuantickApp {
             toast: None,
             inspector_tab: InspectorTab::default(),
             inspector_pinned: false,
+            inspector_open: false,
             inspector_moved: false,
             inspector_last_selection: None,
+            context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             inspector_pos: None,
             inspector_size: None,
@@ -831,6 +843,8 @@ impl QuantickApp {
             ),
             #[cfg(test)]
             inspector_pin_rect: None,
+            #[cfg(test)]
+            context_bar_rect: None,
             #[cfg(test)]
             toast_undo_rect: None,
             #[cfg(test)]
@@ -922,6 +936,13 @@ impl QuantickApp {
         // mouse.
         app.drawing_manager_open =
             std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1");
+        // The context bar only exists while something is selected, so the
+        // hook that reaches it is a hook that *selects*: pair it with
+        // QUANTICK_DRAWINGS_DEMO_SELECT. This one opens the panel behind the
+        // gear on top, which is the state a screenshot cannot otherwise
+        // reach without a click.
+        app.inspector_open =
+            std::env::var("QUANTICK_DRAWING_INSPECTOR").is_ok_and(|value| value == "1");
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -3369,11 +3390,25 @@ impl QuantickApp {
     /// manager). A locked object raises the confirmation next to the trigger
     /// instead of deleting; a landed delete raises the Undo toast.
     fn request_delete_selected(&mut self, now: Instant) {
+        // Read the name before the object is gone. "Drawing deleted" makes
+        // the undo useless on a crowded chart: the trader has to know *what*
+        // they lost to know whether they want it back — and the context bar
+        // deletes on a bare glyph, so the toast is what pays for that.
+        let name = self
+            .drawing_pane()
+            .drawings
+            .selected()
+            .and_then(|index| self.drawing_pane().drawings.items().get(index))
+            .map(|drawing| drawing.tool.name().to_owned());
         match self.drawing_pane_mut().drawings.delete_selected(false) {
             DeleteOutcome::Deleted => {
                 self.drawing_delete_confirm = false;
+                let message = name.map_or_else(
+                    || "Drawing deleted.".to_owned(),
+                    |name| format!("{name} deleted."),
+                );
                 self.toast = Some(Toast {
-                    message: "Drawing deleted.".into(),
+                    message: message.into(),
                     shown_at: now,
                     offers_undo: true,
                 });
@@ -4003,7 +4038,15 @@ impl QuantickApp {
             }
         }
         if actions.close {
-            self.drawing_pane_mut().drawings.select(None);
+            // Closing the panel is now a smaller act than it used to be: it
+            // puts the trader back on the context bar, with the object still
+            // selected. Clearing the selection here would make the X the
+            // only control that answers a bigger question than it asks.
+            self.inspector_open = false;
+            if self.inspector_pinned {
+                self.inspector_pinned = false;
+                self.inspector_pin_touched = true;
+            }
             self.drawing_delete_confirm = false;
         }
         if let Some(saved) = actions.saved_default {
@@ -4090,6 +4133,147 @@ impl QuantickApp {
         Some((index, self.drawing_pane().drawings.items()[index].clone()))
     }
 
+    /// The selected object's context bar.
+    ///
+    /// This is what a selection raises now — one row of icons, where the
+    /// object is, for the handful of things a trader does with their eye on
+    /// the chart. Everything else stayed exactly where it was, behind the
+    /// gear. The bar re-uses [`Self::apply_inspector_actions`] verbatim, so
+    /// lock, delete, hide and the undo coalescing have one implementation
+    /// and cannot drift between the two hosts.
+    fn draw_drawing_context_bar(&mut self, ctx: &egui::Context, now: Instant) {
+        let selection = self.drawing_pane().drawings.selected();
+        if self.context_bar.note_selection(selection) {
+            // A new object is a new question: the panel the last one opened
+            // does not follow the selection around.
+            self.inspector_open = false;
+        }
+        let Some(index) = selection else {
+            return;
+        };
+        // An armed tool means the trader is drawing, not editing. The bar is
+        // opaque to the pointer, so leaving it up would let it eat the click
+        // that places the next object — the selection it belongs to is the
+        // one they just finished, not the one they are starting.
+        if matches!(self.toolrail.tool(), Tool::Drawing(_)) {
+            return;
+        }
+        // Which gestures hide the bar is decided here, once, from the raw
+        // input — not at each of the six call sites that could move the
+        // world. A *click* never suppresses: it is how the trader reaches
+        // the bar. Only a decided drag does, and only when it began outside
+        // the bar, so dragging the grip does not hide what is being dragged.
+        //
+        // Note what is deliberately absent: the market moving. A drawing
+        // carried along by the auto-scroll carries the bar with it, smoothly
+        // — suppressing that would blink the bar all session on a live tape.
+        let now_ms = (ctx.input(|input| input.time) * 1000.0) as u64;
+        let bar_rect = self.context_bar.last_rect();
+        let (dragging, origin, zoomed, screen) = ctx.input(|input| {
+            (
+                input.pointer.is_decidedly_dragging(),
+                input.pointer.press_origin(),
+                input.raw_scroll_delta.y.abs() > f32::EPSILON
+                    || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
+                input.screen_rect,
+            )
+        });
+        let on_the_bar =
+            matches!((origin, bar_rect), (Some(origin), Some(rect)) if rect.contains(origin));
+        if dragging && !on_the_bar {
+            self.context_bar.suppress_gesture();
+        } else if !dragging {
+            self.context_bar.release_gesture();
+        }
+        if zoomed {
+            self.context_bar.suppress_transient(now_ms);
+        }
+        self.context_bar.note_screen(screen, now_ms);
+        // Suppressed means suppressed: nothing below this line runs, so the
+        // bar cannot measure a world the gesture that suppressed it is still
+        // moving. That is the rule the drag gestures already learned.
+        if self.context_bar.suppressed(now_ms) {
+            return;
+        }
+        let Some(chart) = self.drawing_pane().last_chart_area else {
+            return;
+        };
+        let Some(bbox) = self.drawing_bbox_on_screen(chart, index) else {
+            return;
+        };
+        let before = self.drawing_pane().drawings.items()[index].clone();
+        let mut style = before.style;
+        let glyph_before = before.tool.glyph_size(&before);
+        let mut object = drawings::context_bar::BarObject {
+            style: &mut style,
+            glyph_size: glyph_before,
+            locked: before.locked,
+            hidden: before.hidden,
+            supports_fill: before.tool.supports_fill(),
+            // Pinned, the full panel is already on screen: a gear leading
+            // where the eye already is would be the dead slot the bar's own
+            // contract forbids.
+            settings_available: !self.inspector_pinned,
+            confirming_delete: self.drawing_delete_confirm && before.locked,
+            tool_name: before.tool.name(),
+        };
+        let position = self.context_bar.manual_position().unwrap_or_else(|| {
+            let right_limit = self
+                .drawing_pane()
+                .last_lane_divider_x
+                .unwrap_or(chart.right());
+            let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
+                drawings::context_bar::Capabilities {
+                    stroke_width: glyph_before.is_none(),
+                    glyph_size: glyph_before.is_some(),
+                    settings: !self.inspector_pinned,
+                },
+            ));
+            drawings::context_bar::place(chart, right_limit, bbox, size)
+        });
+        let intent = drawings::context_bar::show(&mut self.context_bar, ctx, position, &mut object);
+        let glyph_after = object.glyph_size;
+        #[cfg(test)]
+        {
+            self.context_bar_rect = self.context_bar.last_rect();
+        }
+
+        if intent.reset_position {
+            self.context_bar.clear_manual();
+        } else if intent.drag_delta != egui::Vec2::ZERO {
+            self.context_bar.set_manual(position + intent.drag_delta);
+        }
+        if intent.edited
+            && let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut()
+        {
+            drawing.style = style;
+            if let Some(size) = glyph_after {
+                let tool = drawing.tool;
+                tool.set_glyph_size(drawing, size.px);
+            }
+        }
+        if intent.open_settings {
+            self.inspector_open = true;
+            // Place against the object the way a fresh selection would.
+            self.inspector_last_selection = None;
+        }
+        if intent.duplicate {
+            self.drawing_pane_mut()
+                .drawings
+                .duplicate_selected(DUPLICATE_OFFSET_BARS);
+        }
+        let actions = InspectorActions {
+            toggle_hidden: intent.toggle_hidden,
+            toggle_lock: intent.actions.toggle_lock,
+            delete: intent.actions.delete,
+            force_delete: intent.force_delete,
+            cancel_delete: intent.cancel_delete,
+            edited: intent.edited,
+            ..InspectorActions::default()
+        };
+        self.apply_inspector_actions(ctx, actions, index, before, now);
+    }
+
     /// The pinned inspector: a dock panel at the chart's side. Declared with
     /// the chrome, before the central canvas, so the canvas pays its width.
     fn draw_drawing_inspector_panel(&mut self, ctx: &egui::Context, now: Instant) {
@@ -4129,6 +4313,12 @@ impl QuantickApp {
         let Some((index, before)) = self.inspector_selection() else {
             return;
         };
+        // Selecting an object no longer opens this window — the context bar
+        // does. The gear on that bar is the one door, so the panel only
+        // covers the chart when the trader asked for the panel.
+        if !self.inspector_open {
+            return;
+        }
         if std::mem::take(&mut self.inspector_settle_frame) {
             // The unpin happened this frame: the side panel still occupies
             // this frame's layout and the drawing projects against the
@@ -4939,6 +5129,7 @@ impl QuantickApp {
             });
         // Floating drawing controls must be registered after the opaque
         // central canvas so they stay in front of the chart.
+        self.draw_drawing_context_bar(ctx, now);
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
         self.draw_toast(ctx, now);
@@ -7944,6 +8135,20 @@ plot(close)
         );
     }
 
+    /// What the gear on the context bar does, in one line.
+    ///
+    /// Selecting a drawing raises the bar, not the panel, so a test that is
+    /// about the panel's *contents* has to open it first — the same way the
+    /// trader does. `the_gear_on_the_context_bar_opens_the_inspector` is the
+    /// test that proves this shortcut matches the real button.
+    fn open_inspector(app: &mut QuantickApp, ctx: &egui::Context) {
+        app.inspector_open = true;
+        // Two frames: the first opens the window, the second lets it settle
+        // its size and automatic placement before anything reads its rect.
+        run_frame(app, ctx);
+        run_frame(app, ctx);
+    }
+
     fn drawing_tool(id: &str) -> drawings::DrawingTool {
         drawings::DRAWING_TOOLS
             .into_iter()
@@ -8019,6 +8224,7 @@ plot(close)
 
         let style_tab_labels = |app: &mut QuantickApp, ctx: &egui::Context| -> Vec<String> {
             app.inspector_tab = InspectorTab::Style;
+            open_inspector(app, ctx);
             painted_text(&run_frame(app, ctx))
         };
 
@@ -8193,6 +8399,7 @@ plot(close)
         arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         app.inspector_tab = InspectorTab::Coordinates;
+        open_inspector(&mut app, &ctx);
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             texts.iter().any(|text| text.contains("Show on all charts")),
@@ -8949,6 +9156,7 @@ plot(close)
         let anchor = egui::pos2(700.0, 300.0);
         click_chart(&mut app, &ctx, anchor);
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
 
         // Automatic placement now sends the panel to a chart corner (§D3),
         // deliberately clear of the object — so park it over the stroke by
@@ -8997,6 +9205,7 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
 
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -9028,6 +9237,7 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
 
+        open_inspector(&mut app, &ctx);
         let output = run_frame(&mut app, &ctx);
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -9059,6 +9269,7 @@ plot(close)
             egui::pos2(400.0, 380.0),
         );
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
 
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -9093,6 +9304,7 @@ plot(close)
             egui::pos2(400.0, 380.0),
         );
         // Let the window settle its size and position before reading rects.
+        open_inspector(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         let chart_before = app
@@ -9272,6 +9484,7 @@ plot(close)
         }
         click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
 
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -9285,9 +9498,13 @@ plot(close)
         );
         let held = app.inspector_pos.expect("the manual position is recorded");
 
-        // Selecting the other line must not snap the window back.
+        // Selecting the other line must not snap the window back. The panel
+        // closes with the selection now — the context bar is what the next
+        // object raises — so this re-opens it and proves the *position* is
+        // what survives, which is what the rule was ever about.
         click_chart(&mut app, &ctx, egui::pos2(400.0, 400.0));
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
         assert_eq!(
             app.inspector_pos,
             Some(held),
@@ -9305,6 +9522,7 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
 
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -9385,9 +9603,14 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_sized(&mut app, &ctx, narrow, egui::pos2(600.0, 300.0));
         run_sized_frame(&mut app, &ctx, narrow, Vec::new());
+        // The auto-pin is about the *panel*, and the panel now opens on
+        // request: asking for it on a chart this narrow is what trips the
+        // rule, because a 320 px floating window has nowhere to go here.
+        app.inspector_open = true;
+        run_sized_frame(&mut app, &ctx, narrow, Vec::new());
         assert!(
             app.inspector_pinned,
-            "a fresh selection on a narrow chart opens pinned"
+            "opening the panel on a narrow chart opens it pinned"
         );
 
         // The user unpins: their preference holds from here on.
@@ -9446,6 +9669,7 @@ plot(close)
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
 
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -9607,6 +9831,119 @@ plot(close)
         );
     }
 
+    /// The headline of this change: clicking a drawing must not throw a
+    /// 320 px panel over the chart. It raises the strip, and nothing else.
+    #[test]
+    fn selecting_a_drawing_raises_the_context_bar_not_the_panel() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+
+        assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
+        assert!(
+            app.context_bar_rect.is_some(),
+            "the selection raises the context bar"
+        );
+        for absent in ["Horizontal line settings", "Delete drawing", "Style"] {
+            assert!(
+                !texts.iter().any(|text| text.contains(absent)),
+                "the panel must stay shut until it is asked for; found {absent:?}"
+            );
+        }
+        assert!(
+            ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                .is_none(),
+            "no inspector window exists before the gear is pressed"
+        );
+    }
+
+    /// …and the gear is the one door to the panel, which is what makes the
+    /// `open_inspector` shortcut the rest of these tests use legitimate.
+    #[test]
+    fn the_gear_on_the_context_bar_opens_the_inspector() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        let gear = app
+            .context_bar
+            .gear_rect()
+            .expect("the bar rendered its gear");
+        click_chart(&mut app, &ctx, gear.center());
+        run_frame(&mut app, &ctx);
+
+        assert!(app.inspector_open, "the gear opens the panel");
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("Horizontal line settings")),
+            "…and the panel that opens is the one that always existed; painted: {texts:?}"
+        );
+    }
+
+    /// The trader's first veto, end to end: an armed tool means they are
+    /// drawing, and an opaque strip left over the canvas would eat the click
+    /// that places the next object.
+    #[test]
+    fn an_armed_tool_takes_the_context_bar_off_the_canvas() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        assert!(app.context_bar_rect.is_some(), "the finished object has it");
+
+        app.context_bar_rect = None;
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.context_bar_rect.is_none(),
+            "arming a tool clears the way for the next drawing"
+        );
+    }
+
+    /// Condition (c) of the bare-glyph contract: the protected object still
+    /// asks. Without this the Del key on a locked drawing is a silent no-op
+    /// now that the panel is not there to raise the question.
+    #[test]
+    fn a_locked_drawing_asks_before_it_goes_from_the_bar() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .set_selected_locked(true);
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "a locked object is not deleted by the first ask"
+        );
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("Delete locked drawing?")),
+            "the bar speaks in words for the one act that is protected; painted: {texts:?}"
+        );
+    }
+
     #[test]
     fn a_selected_drawing_exposes_its_edit_and_delete_controls() {
         let (mut app, _commands) = app_with_history(200);
@@ -9622,6 +9959,7 @@ plot(close)
         assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
         assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
 
+        open_inspector(&mut app, &ctx);
         let output = run_frame(&mut app, &ctx);
         assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
         let texts = painted_text(&output);
@@ -9657,6 +9995,7 @@ plot(close)
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots());
 
+        open_inspector(&mut app, &ctx);
         let inspector = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             inspector
@@ -9877,7 +10216,9 @@ plot(close)
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
         assert!(app.active_tab().flow_pane.drawings.items().is_empty());
         let texts = painted_text(&run_frame(&mut app, &ctx));
-        for label in ["Drawing deleted.", "Undo"] {
+        // The toast names the tool: on a crowded chart "Drawing deleted"
+        // leaves the trader unable to tell whether they want the undo.
+        for label in ["Horizontal line deleted.", "Undo"] {
             assert!(
                 texts.iter().any(|text| text.contains(label)),
                 "the toast must offer {label:?}; painted: {texts:?}"
@@ -10236,6 +10577,7 @@ plot(close)
         );
         assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
 
+        open_inspector(&mut app, &ctx);
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             texts.iter().any(|text| text.contains("Levels")),

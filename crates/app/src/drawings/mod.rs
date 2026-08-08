@@ -7,6 +7,7 @@
 //! about UI marks.
 
 pub mod action_bar;
+pub mod context_bar;
 pub mod fib;
 pub mod presets;
 
@@ -276,6 +277,20 @@ trait DrawingToolImpl: Sync {
     fn supports_stroke_width(&self) -> bool {
         true
     }
+    /// The object's own glyph size, for a tool drawn as a glyph rather than
+    /// a stroke — a text note, a trade mark. `None`, the answer for almost
+    /// every tool, means the object has no such size and the context bar
+    /// offers stroke width in that slot instead.
+    ///
+    /// The size is in screen pixels and stays in screen pixels: a note about
+    /// the chart that inflates with the zoom has quietly become a second
+    /// series.
+    fn glyph_size(&self, _payload: &dyn DrawingPayload) -> Option<GlyphSize> {
+        None
+    }
+    /// Write a glyph size back. A tool that answers [`Self::glyph_size`]
+    /// must implement this, or its own control would move nothing.
+    fn set_glyph_size(&self, _payload: &mut dyn DrawingPayload, _px: f32) {}
     /// Fresh tool-owned state for a newly placed object.
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(NoPayload)
@@ -377,6 +392,15 @@ impl DrawingTool {
     #[must_use]
     pub fn supports_stroke_width(self) -> bool {
         self.0.supports_stroke_width()
+    }
+
+    #[must_use]
+    pub fn glyph_size(self, drawing: &Drawing) -> Option<GlyphSize> {
+        self.0.glyph_size(drawing.payload.as_ref())
+    }
+
+    pub fn set_glyph_size(self, drawing: &mut Drawing, px: f32) {
+        self.0.set_glyph_size(drawing.payload.as_mut(), px);
     }
 
     #[must_use]
@@ -649,6 +673,16 @@ impl ChartPoint {
             time_ms,
         }
     }
+}
+
+/// A glyph tool's own type size, and the range it accepts. The range travels
+/// with the value so a host offering sizes never has to know which tool it
+/// is talking to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlyphSize {
+    pub px: f32,
+    pub min: f32,
+    pub max: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

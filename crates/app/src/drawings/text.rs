@@ -11,7 +11,8 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use super::{
-    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost, ToolShortcut,
+    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, GlyphSize, PresetHost,
+    ToolShortcut,
 };
 use crate::theme;
 
@@ -127,6 +128,23 @@ impl DrawingToolImpl for Text {
     /// tab must not offer a width slider that moves nothing.
     fn supports_stroke_width(&self) -> bool {
         false
+    }
+    /// …and what the width slot offers instead: the type size, so the size
+    /// of a note is one click away from the note itself.
+    fn glyph_size(&self, payload: &dyn DrawingPayload) -> Option<GlyphSize> {
+        payload
+            .as_any()
+            .downcast_ref::<TextPayload>()
+            .map(|payload| GlyphSize {
+                px: payload.size_px,
+                min: MIN_TEXT_PX,
+                max: MAX_TEXT_PX,
+            })
+    }
+    fn set_glyph_size(&self, payload: &mut dyn DrawingPayload, px: f32) {
+        if let Some(payload) = payload.as_any_mut().downcast_mut::<TextPayload>() {
+            payload.size_px = px.clamp(MIN_TEXT_PX, MAX_TEXT_PX);
+        }
     }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(TextPayload::default())
