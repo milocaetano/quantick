@@ -116,6 +116,34 @@ pub struct VisibleOrderflow {
     pub(crate) slot_count: usize,
 }
 
+impl VisibleOrderflow {
+    /// The oldest global bar slot any heatmap cell covers this frame — the
+    /// left boundary of the liquidity map on the chart, `None` when the map
+    /// painted nothing. Cells' x are normalized over the frame's slot
+    /// regions, so the mapping back is one multiply per cell.
+    ///
+    /// O(visible cells), and the caller only asks while a range-profile
+    /// drawing exists — never per trade, never unconditionally per frame.
+    #[must_use]
+    pub fn first_heat_slot(&self) -> Option<usize> {
+        if self.slot_count == 0 {
+            return None;
+        }
+        let min_x0 = self
+            .projection
+            .cells
+            .iter()
+            .map(|cell| cell.x0)
+            .fold(f64::INFINITY, f64::min);
+        if !min_x0.is_finite() {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let region = (min_x0.clamp(0.0, 1.0) * self.slot_count as f64).floor() as usize;
+        Some(self.first_bar_index + region.min(self.slot_count - 1))
+    }
+}
+
 /// Visual identity of one projection request; cache revisions separately prove
 /// that equal layouts still describe the same market history and bar timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
