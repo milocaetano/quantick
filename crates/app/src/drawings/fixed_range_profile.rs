@@ -23,7 +23,8 @@ use std::any::Any;
 
 use super::measure_core::MEASURE_FAMILY;
 use super::{
-    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost, drawing_stroke,
+    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles, PresetHost,
+    drawing_stroke,
 };
 use crate::chart::to_f64;
 use crate::theme;
@@ -40,6 +41,9 @@ const MAX_WIDTH_FRAC: f32 = 1.0;
 const LABEL_SIZE_PX: f32 = 10.0;
 /// Gap between the range's geometry and its text plates.
 const LABEL_OFFSET_PX: f32 = 4.0;
+/// The resize handles never sit closer than this to the band's edges, so
+/// they stay grabbable however tall the profile is.
+const HANDLE_EDGE_MARGIN_PX: f32 = 8.0;
 const VA_DASH_PX: f32 = 4.0;
 const VA_GAP_PX: f32 = 3.0;
 /// Row fills inside vs outside the value area — the area is read by weight,
@@ -561,6 +565,64 @@ impl DrawingToolImpl for FixedRangeProfile {
         near_edge || in_histogram
     }
 
+    /// The grab points live on the object, not on the anchors: the profile's
+    /// price extent comes from the data, so the raw anchors sit at whatever
+    /// heights they were dropped at — possibly far from the histogram, or
+    /// off screen after a drag. A resize handle nobody can find is a resize
+    /// handle that does not exist (the channel's rail handles set the
+    /// precedent). Each handle keeps its anchor's x and centres itself in
+    /// the drawn extent, so it is visible whenever the object is.
+    fn handles(
+        &self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        let payload = ctxt.payload.as_any().downcast_ref::<FrvpPayload>()?;
+        if points.len() < 2 {
+            return None;
+        }
+        // Centre of the *visible* slice of the extent, not of the extent
+        // itself: a profile taller than the viewport would put its midpoint
+        // off screen and hide the handles all over again.
+        let (top, bottom) = price_extent(payload, points, ctxt);
+        let visible_top = top.max(chart_rect.top());
+        let visible_bottom = bottom.min(chart_rect.bottom());
+        let mid = if visible_top <= visible_bottom {
+            (visible_top + visible_bottom) / 2.0
+        } else {
+            chart_rect.center().y
+        }
+        .clamp(
+            chart_rect.top() + HANDLE_EDGE_MARGIN_PX,
+            chart_rect.bottom() - HANDLE_EDGE_MARGIN_PX,
+        );
+        Some(Handles::from_slice(&[
+            egui::pos2(points[0].x, mid),
+            egui::pos2(points[1].x, mid),
+        ]))
+    }
+
+    /// A handle drag resizes the range: the grabbed edge's anchor follows the
+    /// pointer in time and keeps its price — the profile ignores anchor
+    /// prices, and letting them wander with every resize would scatter the
+    /// anchors for no visible effect.
+    fn drag_handle(
+        &self,
+        _chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        handle: usize,
+        to: egui::Pos2,
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        if points.len() < 2 || handle >= 2 {
+            return None;
+        }
+        let mut anchors = Handles::from_slice(points);
+        anchors[handle].x = to.x;
+        Some(anchors)
+    }
+
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
         (
@@ -677,6 +739,61 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chart::PriceScale;
+    use crate::drawings::{ChartPoint, ValueUnit};
+
+    /// The handles sit on the drawn object — each anchor's x at the visible
+    /// extent's midpoint — and a handle drag moves only that edge's bar,
+    /// never the anchors' prices. This is what makes the resize findable
+    /// after any drag: the grab points are wherever the histogram is.
+    #[test]
+    fn handles_ride_the_visible_object_and_resize_in_time_only() {
+        let chart_rect =
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 400.0);
+        let payload = FrvpPayload::default();
+        let anchors = [ChartPoint::at(10.0, 104.0), ChartPoint::at(30.0, 96.0)];
+        let points = [egui::pos2(100.0, 120.0), egui::pos2(300.0, 280.0)];
+        let ctxt = DrawContext {
+            payload: &payload,
+            anchors: &anchors,
+            scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: true,
+            halo: false,
+        };
+
+        let handles = TOOL.handles(chart_rect, &points, &ctxt).expect("overridden");
+        // No cache: the extent falls back to the anchors' heights, midpoint
+        // 200. Each handle keeps its own anchor's x.
+        assert_eq!(handles.as_slice(), &[
+            egui::pos2(100.0, 200.0),
+            egui::pos2(300.0, 200.0)
+        ]);
+
+        // Dragging the right handle left shrinks the range: only that
+        // anchor's x moves, both ys (prices) stay put.
+        let dragged = TOOL
+            .drag_handle(chart_rect, &points, 1, egui::pos2(180.0, 350.0), &ctxt)
+            .expect("tool owns the gesture");
+        assert_eq!(dragged.as_slice(), &[
+            egui::pos2(100.0, 120.0),
+            egui::pos2(180.0, 280.0)
+        ]);
+
+        // An extent taller than the viewport clamps the handles into the
+        // visible band instead of hiding them off screen.
+        let tall = [egui::pos2(100.0, -900.0), egui::pos2(300.0, 1500.0)];
+        let clamped = TOOL.handles(chart_rect, &tall, &ctxt).expect("overridden");
+        assert!(
+            clamped
+                .iter()
+                .all(|handle| chart_rect.expand(-HANDLE_EDGE_MARGIN_PX + 0.5).contains(*handle)),
+            "handles stay inside the band: {clamped:?}"
+        );
+    }
 
     #[test]
     fn preset_round_trip_excludes_the_cache() {
