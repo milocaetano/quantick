@@ -1079,6 +1079,8 @@ impl ChartPane {
             ChartLayer::Footprint => self.footprint_visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
+            ChartLayer::FlowLegend => tape.is_some_and(OrderflowView::legend_visible),
+            ChartLayer::BookStatus => tape.is_some_and(OrderflowView::status_badge_visible),
             ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
             ChartLayer::Grid => style.canvas.grid_enabled,
             // The toolbox's global eye already owns this one, undo history and
@@ -1123,6 +1125,16 @@ impl ChartPane {
                     tape.set_lane_marks_visible(visible);
                 }
             }
+            ChartLayer::FlowLegend => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_legend_visible(visible);
+                }
+            }
+            ChartLayer::BookStatus => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_status_badge_visible(visible);
+                }
+            }
             ChartLayer::DepthGaps => {
                 if let Some(tape) = self.orderflow.as_mut() {
                     tape.set_gaps_visible(visible);
@@ -1145,6 +1157,22 @@ impl ChartPane {
         }
     }
 
+    /// Whether a surface that is neither the depth map nor the bubbles needs
+    /// the order-flow projection this frame.
+    ///
+    /// Two do: the live strip draws the same clusters the bubbles would, and
+    /// the lane's marks need the frame's live edge. Without this, switching
+    /// the bubbles off blanked the strip, and switching every flow layer off
+    /// left the lane reserved but unmarked — a band indistinguishable from a
+    /// dead feed, while its menu entry still read as on.
+    fn projection_demand(&self) -> bool {
+        self.live_strip_visible
+            || self
+                .orderflow
+                .as_ref()
+                .is_some_and(OrderflowView::lane_marks_visible)
+    }
+
     /// Whether this pane draws `layer` at all, whatever the source can produce.
     ///
     /// §11 keeps the tape and everything read off it on the flow pane, so a
@@ -1157,6 +1185,8 @@ impl ChartPane {
                     | ChartLayer::Bubbles
                     | ChartLayer::LiveStrip
                     | ChartLayer::LaneMarks
+                    | ChartLayer::FlowLegend
+                    | ChartLayer::BookStatus
                     | ChartLayer::DepthGaps
             )
     }
@@ -1181,6 +1211,21 @@ impl ChartPane {
         match layer {
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
+            // The badge reports on the book feed, so a source with no book has
+            // nothing for it to say — and it is drawn with the map, so while
+            // the map is hidden the switch would tick a box that draws
+            // nothing. Offered disabled with the reason instead.
+            ChartLayer::BookStatus => {
+                if capabilities.book_capture {
+                    (!self
+                        .orderflow
+                        .as_ref()
+                        .is_some_and(OrderflowView::depth_visible))
+                    .then_some("the badge reports on the depth map, which is hidden")
+                } else {
+                    Some("order-book capture is not available for this source")
+                }
+            }
             // The footprint is the buy/sell split per price: on a source that
             // prints no traded volume every cell would be an identical
             // synthetic unit — the same reason the bubbles refuse.
@@ -1203,14 +1248,19 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is fourteen entries, so the mask cannot outgrow
-    /// `u16`.
-    pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
+    /// detection.
+    ///
+    /// The bit is the layer's index in `ALL`, which is now sixteen entries —
+    /// the last bit `u32` has room for after this widening, and the reason the
+    /// accumulator is not `u16` any more: a seventeenth layer would have
+    /// shifted by 16, panicking in debug and silently colliding in release.
+    /// The assertion below fails the build rather than the chart.
+    pub fn layer_mask(&self, style: &ChartStyle) -> u32 {
         ChartLayer::ALL
             .into_iter()
             .enumerate()
             .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
-            .fold(0_u16, |mask, (bit, _)| mask | (1 << bit))
+            .fold(0_u32, |mask, (bit, _)| mask | (1 << bit))
     }
 
     /// Apply saved visibility to this pane, ignoring layers it cannot draw.
@@ -3353,7 +3403,16 @@ impl ChartPane {
             visible_state,
             partial_visible,
         );
+        // Two surfaces consume the projection without being the depth map or
+        // the bubbles: the live strip draws the same clusters, and the lane's
+        // marks need the frame's live edge. Stated here, every frame, from the
+        // layers this pane owns — so with the bubbles hidden the pipeline stays
+        // alive for the strip, and with every other flow layer off the lane is
+        // still marked instead of being a reserved but empty band whose menu
+        // entry claims it is on.
+        let demand = self.projection_demand();
         let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
+            orderflow.set_projection_demand(demand);
             orderflow.project_visible(timeline, lane_width_px > 0.0, end == total, scale.range())
         });
         if let Some(orderflow) = self.orderflow.as_mut()
@@ -3603,6 +3662,36 @@ impl ChartPane {
                 frame,
                 canvas_background,
                 lane_width_px,
+            );
+        }
+
+        // The canvas's key, in a pass of its own so the bubble switch cannot
+        // take it down with them. It starts below everything already stacked
+        // at this corner — the chart header, the position HUD while a
+        // position is open, and one row per indicator chip — so nothing at the
+        // top-left prints over anything else.
+        //
+        // The HUD's row counts only where the HUD paints: on the pane that
+        // owns order entry (the focused one) — exactly the condition this pane
+        // caches its anchor under, further down this same draw. The anchor is
+        // not readable yet this frame (it is written after the paper layer),
+        // so the condition is restated here rather than read back.
+        let hud_here = chrome.paper_owns_input && chrome.paper.position_summary().is_some();
+        let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
+            + crate::indicator_legend::hud_offset_px(hud_here)
+            + crate::indicator_legend::stack_height_px(self.indicators.all());
+        if let Some(orderflow) = self.orderflow.as_mut()
+            && let Some(frame) = &orderflow_frame
+        {
+            orderflow.draw_legend(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                lane_width_px,
+                legend_inset,
             );
         }
 
@@ -4782,6 +4871,27 @@ fn magnet_price_of(
 mod tests {
     use super::*;
     use crate::indicator_worker::IndicatorEvent;
+
+    /// A frame nobody builds is a surface nobody draws. The strip and the
+    /// lane's marks are the two surfaces that need the projection without
+    /// being the depth map or the bubbles, so each of them alone has to keep
+    /// it running — otherwise the lane sits reserved and unmarked (a band you
+    /// cannot tell from a dead feed) while its menu entry reads as on.
+    #[test]
+    fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let mut discarded = LayerActions::default();
+        pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
+        pane.set_layer_visible(ChartLayer::LaneMarks, false, &mut discarded);
+        assert!(!pane.projection_demand(), "nobody is asking");
+
+        pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut discarded);
+        assert!(pane.projection_demand(), "the strip alone asks");
+
+        pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
+        pane.set_layer_visible(ChartLayer::LaneMarks, true, &mut discarded);
+        assert!(pane.projection_demand(), "the lane's marks alone ask");
+    }
 
     /// A chart that has never been configured follows the window's setup —
     /// which is what keeps one chart behaving like a global preference —

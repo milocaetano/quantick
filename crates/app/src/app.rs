@@ -57,9 +57,6 @@ const AXIS_GUTTER: f32 = 64.0;
 const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
-/// How far the indicator legend drops below the position HUD when both
-/// claim the chart's top-left corner.
-const LEGEND_BELOW_HUD_OFFSET_PX: f32 = 64.0;
 
 /// The (flow, time) pane ids for tab `id`.
 ///
@@ -648,7 +645,7 @@ pub struct QuantickApp {
     /// whoever flipped it — the menu, the toolbar, the dock or the appearance
     /// panel. A dozen bool reads and an integer compare: cheaper than teaching
     /// four call sites to remember.
-    saved_layer_mask: u16,
+    saved_layer_mask: u32,
     /// What the file said at startup, applied to every pane opened since.
     layer_defaults: std::collections::BTreeMap<ChartLayer, bool>,
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
@@ -1654,11 +1651,17 @@ impl QuantickApp {
             let Some(mut rect) = pane.last_chart_area else {
                 continue;
             };
-            // The position HUD owns the very corner while a position is
-            // open; the legend rides just below it.
-            if side == PaneSide::Flow && self.active_tab().paper.position_summary().is_some() {
-                rect.min.y += LEGEND_BELOW_HUD_OFFSET_PX;
-            }
+            // The position HUD owns the very corner of the pane it paints on;
+            // this legend rides just below it there, and nowhere else. That
+            // pane is the one holding the HUD anchor — the focused one, not
+            // the flow one, so a split with the time pane focused drops these
+            // chips on the *time* pane. The order-flow key stacks under this
+            // legend and reads the same offset from the same place, so the two
+            // cannot drift apart.
+            rect.min.y += indicator_legend::hud_offset_px(
+                pane.paper_hud_anchor().is_some()
+                    && self.active_tab().paper.position_summary().is_some(),
+            );
             for action in indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all()) {
                 pending.push((side, action));
             }
@@ -2217,7 +2220,7 @@ impl QuantickApp {
     /// quantick is built around, the same scope the indicator state file has
     /// (see [`Self::maintain_indicator_state`]). A tab's second pane opens
     /// matching it and is in-session from there.
-    fn layer_mask(&self) -> u16 {
+    fn layer_mask(&self) -> u32 {
         self.active_tab().flow_pane.layer_mask(&self.style)
     }
 
