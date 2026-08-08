@@ -75,7 +75,14 @@ before it. Step 7 hands over the line to paste.
 
    Rules the built-in imposes on that line:
 
-   - **4,000 characters maximum.**
+   - **4,000 characters maximum.** If the criteria from step 2 do not fit,
+     compress rather than drop: state each criterion as a terse observable
+     outcome ("clippy/fmt/build/test exit 0", "PR URL printed", "GOAL.md
+     archived"), strip all rationale and repo context, and collapse per-surface
+     detail into one line ("all visual-qa surfaces PASS"). Only if it still
+     overflows, keep the gates (checks, arch-review, PR, archive) and summarize
+     the mission-specific criteria into the fewest observable outcomes that
+     still prove them. Count the characters before printing the line.
    - The evaluator **does not run commands or read files**. It only judges what
      has appeared in the conversation, so every criterion must be something
      this session's own output demonstrates — "`cargo test --workspace` exits
