@@ -83,6 +83,9 @@ const DEMO_SPANS_PER_WINDOW: usize = 4;
 /// the chart is showing.
 const DEMO_ANCHOR_BAND_STEP: f64 = 0.12;
 const DEMO_ROW_BAND_STEP: f64 = 0.22;
+/// Points the demo hook gives a freehand tool, which declares no anchor
+/// count of its own. Enough to read as a path rather than as a line.
+const DEMO_FREEHAND_POINTS: usize = 4;
 /// The band to spread across before the pane has an auto-range to read (no
 /// bars yet): a fraction of price, since there is nothing better to ask.
 const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
@@ -4783,7 +4786,15 @@ impl QuantickApp {
             });
         let mut requested_selection = None;
         for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
-            for anchor in 0..tool.required_points() {
+            // A freehand tool declares no anchor count, so the demo gives it
+            // a short path of its own. A stroke no screenshot can reach is a
+            // tool that ships unvalidated.
+            let anchors = if tool.freehand() {
+                DEMO_FREEHAND_POINTS
+            } else {
+                tool.required_points()
+            };
+            for anchor in 0..anchors {
                 let slot = (first + index * stride + anchor * span).min(slots.saturating_sub(1));
                 let point = drawings::ChartPoint::at_time(
                     slot as f32 + 0.5,
@@ -4791,14 +4802,18 @@ impl QuantickApp {
                         - (f64::from(index as i32 % 3) - 1.0) * band * DEMO_ROW_BAND_STEP,
                     pane.slot_open_time(slot),
                 );
-                let completed =
+                let mut completed =
                     pane.drawings
                         .place_with(tool, &drawings::DrawingBand::Price, point, |tool| {
                             drawings::NewDrawing {
-                                style: drawings::DrawingStyle::default(),
+                                style: tool.default_style(),
                                 payload: tool.default_payload(),
                             }
                         });
+                // The release, for the tool whose gesture has one.
+                if tool.freehand() && anchor + 1 == anchors {
+                    completed = pane.drawings.finish_draft();
+                }
                 // Placement selects what it completed, so this reaches the
                 // object just made — no separate index bookkeeping.
                 if completed
@@ -9044,16 +9059,19 @@ plot(close)
         // shipping unreachable.
         for (index, tool) in drawings::DRAWING_TOOLS.into_iter().enumerate() {
             arm_drawing_from_toolbox(&mut app, &ctx, tool.id());
+            let offset = index as f32;
+            let origin = egui::pos2(560.0 + (offset % 4.0) * 50.0, 250.0 + (offset % 3.0) * 70.0);
+            if tool.freehand() {
+                // Held drag, not clicks — the gesture this tool declares.
+                drag_chart(&mut app, &ctx, origin, origin + egui::vec2(60.0, 40.0));
+                continue;
+            }
             for anchor in 0..tool.required_points() {
-                let offset = index as f32;
                 let step = anchor as f32;
                 click_chart(
                     &mut app,
                     &ctx,
-                    egui::pos2(
-                        560.0 + (offset % 4.0) * 50.0 + step * 70.0,
-                        250.0 + (offset % 3.0) * 70.0 + step * 50.0,
-                    ),
+                    origin + egui::vec2(step * 70.0, step * 50.0),
                 );
             }
         }
@@ -9073,7 +9091,11 @@ plot(close)
                 .drawings
                 .items()
                 .iter()
-                .all(|drawing| drawing.points.len() == drawing.tool.required_points())
+                .all(|drawing| if drawing.tool.freehand() {
+                    drawing.points.len() >= 2
+                } else {
+                    drawing.points.len() == drawing.tool.required_points()
+                })
         );
         assert_eq!(
             app.toolrail.tool(),
@@ -9828,6 +9850,88 @@ plot(close)
             app.active_tab().flow_pane.drawings.items()[1].points[0].price,
             hidden_line_price,
             "Front moves the object to the top of the z-order"
+        );
+    }
+
+    /// The pencil is the first tool placed by a held drag. One gesture, one
+    /// object, one undo entry — and a path, not two anchors.
+    #[test]
+    fn the_pencil_draws_a_path_from_one_held_drag() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(620.0, 300.0),
+            egui::pos2(760.0, 380.0),
+        );
+
+        let items = app.active_tab().flow_pane.drawings.items();
+        assert_eq!(items.len(), 1, "one gesture makes one object");
+        assert_eq!(items[0].tool.id(), "brush");
+        assert!(items[0].points.len() >= 2, "a stroke is a path, not a dot");
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.undo_depth(),
+            undo_before + 1,
+            "the whole stroke is one undo entry, not one per captured point"
+        );
+        assert_eq!(
+            app.toolrail.tool(),
+            Tool::Pointer,
+            "finishing the stroke restores navigation, like every other tool"
+        );
+    }
+
+    /// A press that never moved is a click that missed, not a drawing. An
+    /// invisible one-point object the trader can neither see nor select is
+    /// worse than nothing happening.
+    #[test]
+    fn a_pencil_click_that_never_moved_leaves_nothing_behind() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().flow_pane.drawings.items().is_empty(),
+            "a dot is not a stroke"
+        );
+        assert!(
+            app.active_tab().flow_pane.drawings.draft().is_none(),
+            "and it leaves no half-finished draft behind either"
+        );
+    }
+
+    /// Every point carries its own (bar, price), which is what lets a
+    /// circled cluster stay on top of what was circled when the view moves.
+    /// The alternative — anchoring the first point and keeping the shape in
+    /// pixels — looks better and starts pointing at the wrong bars.
+    #[test]
+    fn every_pencil_point_is_anchored_to_the_tape() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(620.0, 300.0),
+            egui::pos2(760.0, 380.0),
+        );
+        let stroke = &app.active_tab().flow_pane.drawings.items()[0];
+        assert!(
+            stroke.points.iter().all(|point| point.time_ms.is_some()),
+            "a point with no instant behind it could never be re-anchored"
+        );
+        let bars: Vec<f32> = stroke.points.iter().map(|point| point.bar).collect();
+        assert!(
+            bars.windows(2).any(|pair| pair[0] != pair[1]),
+            "the path spans bars, it is not one column: {bars:?}"
         );
     }
 

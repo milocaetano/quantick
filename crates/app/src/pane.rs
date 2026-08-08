@@ -56,6 +56,14 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
+/// How far the pointer must travel before a freehand stroke records another
+/// point. Chosen so a hand-drawn circle keeps its shape while a half-second
+/// scribble stores tens of anchors instead of hundreds — every anchor is
+/// paint and hit-test work on every frame for the rest of the session.
+const FREEHAND_MIN_STEP_PX: f32 = 4.0;
+/// Hard ceiling on one stroke, so a pointer that never stops moving cannot
+/// turn a single drawing into an unbounded cost.
+const FREEHAND_MAX_POINTS: usize = 512;
 
 /// Alpha of the last-price line: legible at a glance without competing with a
 /// candle or a bubble for attention.
@@ -860,6 +868,9 @@ pub struct ChartPane {
     drawing_band_hint: Option<egui::Rect>,
     pub drawing_press_position: Option<egui::Pos2>,
     pub drawing_press_started_empty: bool,
+    /// The last screen position a freehand stroke actually recorded, so the
+    /// capture decimates as it goes rather than storing every mouse event.
+    freehand_last_position: Option<egui::Pos2>,
     /// What the press resolved under the Pointer tool, held until the click
     /// it belongs to completes. `Some(None)` is a real answer — a press on
     /// empty canvas, the one that deselects.
@@ -977,6 +988,7 @@ impl ChartPane {
             drawing_band_hint: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
+            freehand_last_position: None,
             drawing_press_pick: None,
             drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
@@ -2068,6 +2080,12 @@ impl ChartPane {
             let band = band.key.clone();
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
             self.drawing_press_position = Some(position);
+            // The first anchor of a stroke also seeds its decimation, or the
+            // very next frame records a second point on the same pixel and a
+            // stationary click becomes a two-point "drawing".
+            if tool.freehand() {
+                self.freehand_last_position = Some(position);
+            }
             self.place_drawing_point(tool, &band, point, chrome);
         }
 
@@ -2078,6 +2096,50 @@ impl ChartPane {
                 .then(|| input.pointer.latest_pos())
                 .flatten()
         });
+        // A held drag, not N clicks: the press above laid the first anchor,
+        // every frame the pointer stays down feeds the path, and the release
+        // is what finishes the object.
+        if tool.freehand() {
+            if self.drawings.draft_len() > 0
+                && ui.input(|input| input.pointer.primary_down())
+                && let Some(position) = ui.input(|input| input.pointer.latest_pos())
+                && let Some((band, position)) = self.placement_target(areas, bands, position)
+                && let Some(point) = self.drawing_point_at(
+                    position,
+                    history_right,
+                    self.slots(),
+                    magnet,
+                    tool.anchor_snap(),
+                    band,
+                )
+                // Decimate on the way in rather than simplifying afterwards.
+                // A fast hand on a dense tape produces hundreds of points a
+                // second, and every one of them costs a paint and a hit-test
+                // on every later frame — for a shape whose whole value is
+                // roughly where it is.
+                && self
+                    .freehand_last_position
+                    .is_none_or(|last| last.distance(position) >= FREEHAND_MIN_STEP_PX)
+                && self.drawings.draft_len() < FREEHAND_MAX_POINTS
+            {
+                self.freehand_last_position = Some(position);
+                let band = band.key.clone();
+                self.place_drawing_point(tool, &band, point, chrome);
+            }
+            if released_position.is_some() {
+                self.freehand_last_position = None;
+                if self.drawings.finish_draft() {
+                    // Same one-shot rule the clicked tools follow.
+                    if !chrome.toolrail.repeat() {
+                        chrome.toolrail.arm(Tool::Pointer);
+                    }
+                    self.drawing_hover = None;
+                }
+                self.drawing_press_position = None;
+                self.drawing_press_started_empty = false;
+            }
+            return true;
+        }
         if tool.required_points() > 1
             && self.drawing_press_started_empty
             && let Some(start) = self.drawing_press_position

@@ -273,6 +273,14 @@ trait DrawingToolImpl: Sync {
     fn anchor_snap(&self) -> AnchorSnap {
         AnchorSnap::Pointer
     }
+    /// Whether this tool is placed by a held drag instead of by N clicks.
+    ///
+    /// A freehand tool answers `0` from [`Self::required_points`], because
+    /// the count is whatever the gesture gave: the host starts its draft on
+    /// the press, feeds it the path, and finishes it on the release.
+    fn freehand(&self) -> bool {
+        false
+    }
     /// The colour a fresh object of this tool is born in, when the stock
     /// blue would be the wrong answer. `None` — almost every tool — takes
     /// [`DEFAULT_DRAWING_COLOR`].
@@ -429,6 +437,11 @@ impl DrawingTool {
     #[must_use]
     pub fn anchor_snap(self) -> AnchorSnap {
         self.0.anchor_snap()
+    }
+
+    #[must_use]
+    pub fn freehand(self) -> bool {
+        self.0.freehand()
     }
 
     /// The stock look of a fresh object of this tool, before the trader's
@@ -664,6 +677,8 @@ register_drawing_tools!(
     // Marks
     arrow_mark_up,
     arrow_mark_down,
+    // Freehand
+    brush,
     // Shapes
     rectangle,
     ellipse,
@@ -1088,7 +1103,9 @@ impl Drawings {
         }
         let draft = self.draft.as_mut().expect("draft was installed above");
         draft.points.push(point);
-        if draft.points.len() == tool.required_points() {
+        // A freehand tool declares no anchor count: its draft is finished by
+        // the release, through `finish_draft`, never by arithmetic here.
+        if tool.required_points() > 0 && draft.points.len() == tool.required_points() {
             let before = self.snapshot();
             self.items
                 .push(self.draft.take().expect("draft has points"));
@@ -1108,6 +1125,29 @@ impl Drawings {
 
     pub fn cancel_draft(&mut self) {
         self.draft = None;
+    }
+
+    /// Finish a freehand draft: what the release does for a tool whose
+    /// anchor count is whatever the hand gave.
+    ///
+    /// A stroke of fewer than two points is a click that missed, not a
+    /// drawing — it is dropped rather than stored as an invisible object the
+    /// trader can neither see nor select to delete.
+    pub fn finish_draft(&mut self) -> bool {
+        let Some(draft) = self.draft.take() else {
+            return false;
+        };
+        if draft.points.len() < 2 {
+            return false;
+        }
+        let before = self.snapshot();
+        self.items.push(draft);
+        self.selected = Some(self.items.len() - 1);
+        // Same rule as a clicked placement: drawing releases hide-all, and
+        // it does so inside the one undo entry the gesture records.
+        self.all_hidden = false;
+        self.record(before);
+        true
     }
 
     /// Backspace during placement: drop the last placed anchor; dropping the
@@ -1485,7 +1525,20 @@ mod tests {
             assert!(!tool.icon().is_empty());
             assert!(!tool.settings_title().is_empty());
             assert!(!tool.hover_text().is_empty());
-            assert!(tool.required_points() > 0);
+            // Zero anchors is legal for exactly one shape of tool: a
+            // freehand one, whose count is whatever the gesture gave. Any
+            // other tool answering zero would never complete a draft.
+            assert_eq!(
+                tool.required_points() == 0,
+                tool.freehand(),
+                "{} must declare an anchor count unless it is freehand",
+                tool.id()
+            );
+            assert!(
+                !tool.freehand() || tool.placement_hint(0).is_some(),
+                "{} is placed by a gesture nobody has seen before; it has to say so",
+                tool.id()
+            );
         }
     }
 
@@ -2332,6 +2385,16 @@ mod tests {
                 );
                 continue;
             }
+            if drawing_tool.id() == "brush" {
+                // The one tool that answers "none", on purpose: a ring on
+                // every captured point is a cloud nobody can aim at, over a
+                // shape whose individual points mean nothing.
+                assert!(
+                    handles.is_empty(),
+                    "a scribble is moved whole, never point by point"
+                );
+                continue;
+            }
             assert_eq!(
                 handles.as_slice(),
                 points.as_slice(),
@@ -2354,7 +2417,13 @@ mod tests {
         let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
         for drawing_tool in DRAWING_TOOLS {
             let (points, hit) = drawing_tool.test_geometry();
-            assert_eq!(points.len(), drawing_tool.required_points());
+            if drawing_tool.freehand() {
+                // A captured path has no declared length; two points is the
+                // shortest thing that is still a stroke.
+                assert!(points.len() >= 2, "{} needs a path", drawing_tool.id());
+            } else {
+                assert_eq!(points.len(), drawing_tool.required_points());
+            }
             let payload = drawing_tool.default_payload();
             let anchors = anchors_for(&points, &scale);
             let ctxt = DrawContext {
