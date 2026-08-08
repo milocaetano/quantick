@@ -36,6 +36,9 @@ pub struct RefreshInputs<'a> {
     /// The footprint layer's capability block: a feed with no traded volume
     /// has no honest profile to offer.
     pub blocked: bool,
+    /// Whether the feed infers aggressor sides rather than reporting them —
+    /// stamped on the cache so the paint can label the delta honestly.
+    pub side_inferred: bool,
 }
 
 /// Bring every fixed-range-profile drawing's cached profile up to date.
@@ -95,6 +98,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         },
         value_area_pct: payload.value_area_pct,
         blocked: inputs.blocked,
+        side_inferred: inputs.side_inferred,
     };
     if payload.cache.as_ref().is_some_and(|cache| cache.key == key) {
         return;
@@ -226,6 +230,7 @@ mod tests {
             partial_ladder: None,
             partial_version: 0,
             blocked,
+            side_inferred: false,
         }
     }
 

@@ -38,6 +38,8 @@ const DEFAULT_WIDTH_FRAC: f32 = 0.30;
 const MIN_WIDTH_FRAC: f32 = 0.10;
 const MAX_WIDTH_FRAC: f32 = 1.0;
 const LABEL_SIZE_PX: f32 = 10.0;
+/// Gap between the range's geometry and its text plates.
+const LABEL_OFFSET_PX: f32 = 4.0;
 const VA_DASH_PX: f32 = 4.0;
 const VA_GAP_PX: f32 = 3.0;
 /// Row fills inside vs outside the value area — the area is read by weight,
@@ -87,6 +89,11 @@ pub struct FrvpCacheKey {
     pub partial_snapshot: u64,
     pub value_area_pct: u8,
     pub blocked: bool,
+    /// Whether the feed *infers* aggressor sides (tick rule) rather than
+    /// reporting them. In the key so a feed switch re-stamps the label: a
+    /// delta whose sides were guessed must say so, like the footprint legend
+    /// does.
+    pub side_inferred: bool,
 }
 
 /// The versioned on-disk shape of a saved preset. Coordinates and cache never
@@ -429,6 +436,11 @@ impl DrawingToolImpl for FixedRangeProfile {
                         cache.bars_covered, cache.bars_total
                     ));
                 }
+                if cache.key.side_inferred {
+                    // The delta and the buy/sell split rest on guessed
+                    // aggressor sides — same label the footprint legend uses.
+                    status.push_str(" · side inferred");
+                }
                 if let Some(area) = value_area {
                     // POC/VAH/VAL price plates at the right edge of the range.
                     let labels = [
@@ -445,7 +457,7 @@ impl DrawingToolImpl for FixedRangeProfile {
                         }
                         let price = profile.bucket_price(bucket);
                         painter.text(
-                            egui::pos2(right + 4.0, ctxt.scale.y(to_f64(price))),
+                            egui::pos2(right + LABEL_OFFSET_PX, ctxt.scale.y(to_f64(price))),
                             egui::Align2::LEFT_CENTER,
                             format!("{name} {price}"),
                             egui::FontId::proportional(LABEL_SIZE_PX),
@@ -465,7 +477,7 @@ impl DrawingToolImpl for FixedRangeProfile {
         }
         if !status.is_empty() {
             painter.text(
-                egui::pos2(left, bottom + 4.0),
+                egui::pos2(left, bottom + LABEL_OFFSET_PX),
                 egui::Align2::LEFT_TOP,
                 status,
                 egui::FontId::proportional(LABEL_SIZE_PX),
@@ -633,6 +645,7 @@ mod tests {
                     partial_snapshot: 0,
                     value_area_pct: 68,
                     blocked: false,
+                    side_inferred: false,
                 },
                 profile: None,
                 empty: Some(FrvpEmpty::NoTape),

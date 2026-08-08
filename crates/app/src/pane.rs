@@ -3120,6 +3120,7 @@ impl ChartPane {
                 partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
                 partial_version: self.footprint_live_version,
                 blocked: footprint_blocked,
+                side_inferred: chrome.side_inferred,
             },
         );
         let areas = self.plot_areas(area);
