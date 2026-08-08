@@ -759,6 +759,9 @@ pub struct ChartPane {
     /// changes: at a bar close the previous bar's ladder must never linger
     /// on the new bar, not even for one throttle interval.
     footprint_live: Option<(f64, usize, quantick_engine::BarFootprint)>,
+    /// The venue prefix's approximated ladders for the range profile —
+    /// built once per (group, prefix length), see `frvp::ApproxLadders`.
+    frvp_approx: Option<crate::frvp::ApproxLadders>,
     /// Bumped whenever [`Self::footprint_live`] is re-taken or cleared — the
     /// cache key the range-profile drawings use to notice the live edge
     /// moved, so they re-fold at the snapshot cadence, never per paint.
@@ -947,6 +950,7 @@ impl ChartPane {
             footprint_override: None,
             footprint_lod: crate::footprint_render::FootprintLod::default(),
             footprint_live: None,
+            frvp_approx: None,
             footprint_live_version: 0,
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
@@ -3278,11 +3282,21 @@ impl ChartPane {
                     && self.wants_range_profile()
             })
             .and_then(|frame| frame.first_heat_slot());
+        let prefix_approx = if self.wants_range_profile() && !footprint_blocked {
+            crate::frvp::ApproxLadders::ensure(
+                &mut self.frvp_approx,
+                prefix,
+                self.state.footprint_group(),
+            )
+            .ladders()
+        } else {
+            &[]
+        };
         crate::frvp::refresh(
             &mut self.drawings,
             &crate::frvp::RefreshInputs {
                 state: &self.state,
-                prefix_bars: prefix,
+                prefix_approx,
                 partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
                 partial_version: self.footprint_live_version,
                 blocked: footprint_blocked,

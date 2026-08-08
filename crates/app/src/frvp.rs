@@ -20,17 +20,58 @@ use crate::state::ChartState;
 /// module and the pane share to recognise a profile object.
 pub const TOOL_ID: &str = "fixed-range-profile";
 
+/// The venue prefix's approximated ladders, built **once** per
+/// `(group, prefix length)` and borrowed by every refresh after — a ladder
+/// is static data (the candle never changes), and rebuilding 25k of them on
+/// every cache-key change would put a BTreeMap construction storm inside an
+/// anchor drag. `None` per slot = that candle traded nothing.
+pub struct ApproxLadders {
+    group: Decimal,
+    ladders: Vec<Option<BarFootprint>>,
+}
+
+impl ApproxLadders {
+    /// The cached ladders for `prefix` at `group`, rebuilding only when the
+    /// prefix grew or the capture grouping refolded. O(prefix) on rebuild —
+    /// once per backfill page or group change, declared; O(1) after.
+    pub fn ensure<'a>(
+        slot: &'a mut Option<ApproxLadders>,
+        prefix: &[Bar],
+        group: Decimal,
+    ) -> &'a ApproxLadders {
+        let stale = slot
+            .as_ref()
+            .is_none_or(|cache| cache.group != group || cache.ladders.len() != prefix.len());
+        if stale {
+            *slot = Some(ApproxLadders {
+                group,
+                ladders: prefix
+                    .iter()
+                    .map(|bar| BarFootprint::approximated(bar, group, DEFAULT_LEVEL_CAP))
+                    .collect(),
+            });
+        }
+        slot.as_ref().expect("just ensured")
+    }
+
+    /// Ladders indexed by prefix slot; `None` where the candle traded nothing.
+    #[must_use]
+    pub fn ladders(&self) -> &[Option<BarFootprint>] {
+        &self.ladders
+    }
+}
+
 /// Everything one refresh reads. The partial ladder comes in as the pane's
 /// throttled snapshot (not the live one), so the forming bar re-merges at
 /// the snapshot cadence, never per paint.
 pub struct RefreshInputs<'a> {
     pub state: &'a ChartState,
-    /// Venue history candles before the trade-built bars. They carry no
-    /// tape; with the payload's `approximate_history` on they join the fold
-    /// as approximated ladders (volume over their own high–low), labeled —
-    /// otherwise a range over them is *partial coverage* and the cache says
-    /// so. `prefix_bars.len()` is the prefix length.
-    pub prefix_bars: &'a [Bar],
+    /// The venue prefix's approximated ladders (see [`ApproxLadders`]) —
+    /// one entry per prefix slot, `None` where the candle traded nothing.
+    /// With the payload's `approximate_history` on they join the fold,
+    /// labeled; otherwise a range over them is *partial coverage* and the
+    /// cache says so. Its length is the prefix length.
+    pub prefix_approx: &'a [Option<BarFootprint>],
     /// The throttled snapshot of the forming bar's ladder, if any.
     pub partial_ladder: Option<&'a BarFootprint>,
     /// Bumped whenever the snapshot above is re-taken.
@@ -104,7 +145,7 @@ fn covered_slots(min_bar: f32, max_bar: f32, last_slot: Option<usize>) -> Option
 
 fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &RefreshInputs<'_>) {
     let closed_len = inputs.state.bars().len();
-    let closed_total = inputs.prefix_bars.len() + closed_len;
+    let closed_total = inputs.prefix_approx.len() + closed_len;
     let partial_slot = inputs.partial_ladder.is_some().then_some(closed_total);
     let last_slot = partial_slot.or_else(|| closed_total.checked_sub(1));
 
@@ -162,28 +203,25 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
     // construction; the difference between what the span asks for and what
     // the tape can answer is `bars_covered < bars_total`, spoken by paint.
     let ladders_all = inputs.state.bar_footprints();
-    // Approximated ladders for the venue-prefix slots the span reaches —
-    // built on key change only (this whole path is key-guarded above), each
-    // bounded by the cap. Owned here so the merge below can borrow them
-    // beside the real ones: one fold, one profile, one code path.
-    let mut approx: Vec<BarFootprint> = Vec::new();
-    if payload.approximate_history && span.is_some() && start_slot < inputs.prefix_bars.len() {
-        let group = inputs.state.footprint_group();
-        let hi_prefix = end_slot.min(inputs.prefix_bars.len().saturating_sub(1));
-        for bar in &inputs.prefix_bars[start_slot..=hi_prefix] {
-            if let Some(ladder) = BarFootprint::approximated(bar, group, DEFAULT_LEVEL_CAP) {
-                approx.push(ladder);
-            }
-        }
+    // The venue-prefix slots the span reaches join through the prebuilt
+    // approximated ladders — borrowed, never rebuilt here: one fold, one
+    // profile, one code path.
+    let mut ladders: Vec<&BarFootprint> = Vec::new();
+    if payload.approximate_history && span.is_some() && start_slot < inputs.prefix_approx.len() {
+        let hi_prefix = end_slot.min(inputs.prefix_approx.len().saturating_sub(1));
+        ladders.extend(
+            inputs.prefix_approx[start_slot..=hi_prefix]
+                .iter()
+                .filter_map(Option::as_ref),
+        );
     }
-    let bars_approximated = approx.len();
-    let mut ladders: Vec<&BarFootprint> = approx.iter().collect();
+    let bars_approximated = ladders.len();
     if span.is_some() {
         // State-bar coverage exists only where the span reaches past the
         // prefix and into the closed bars at all.
-        if end_slot >= inputs.prefix_bars.len() && start_slot < closed_total && closed_total > 0 {
-            let lo = start_slot.max(inputs.prefix_bars.len()) - inputs.prefix_bars.len();
-            let hi_state = end_slot.min(closed_total - 1) - inputs.prefix_bars.len();
+        if end_slot >= inputs.prefix_approx.len() && start_slot < closed_total && closed_total > 0 {
+            let lo = start_slot.max(inputs.prefix_approx.len()) - inputs.prefix_approx.len();
+            let hi_state = end_slot.min(closed_total - 1) - inputs.prefix_approx.len();
             if lo <= hi_state {
                 for ladder in ladders_all.iter().skip(lo).take(hi_state - lo + 1) {
                     // A bar whose ladder printed nothing contributes nothing;
@@ -286,7 +324,7 @@ mod tests {
     fn inputs<'a>(state: &'a ChartState, blocked: bool) -> RefreshInputs<'a> {
         RefreshInputs {
             state,
-            prefix_bars: &[],
+            prefix_approx: &[],
             partial_ladder: None,
             partial_version: 0,
             blocked,
@@ -412,8 +450,10 @@ mod tests {
         let mut drawings = Drawings::default();
         // Slots 0-1 are venue prefix, 2-4 are the three state bars.
         place_frvp(&mut drawings, 0.0, 4.9);
+        let mut approx_slot = None;
+        let approx = ApproxLadders::ensure(&mut approx_slot, &prefix, dec("1"));
         let with_prefix = RefreshInputs {
-            prefix_bars: &prefix,
+            prefix_approx: approx.ladders(),
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_prefix);
@@ -439,8 +479,10 @@ mod tests {
             .downcast_mut::<FrvpPayload>()
             .unwrap()
             .approximate_history = false;
+        let mut approx_slot = None;
+        let approx = ApproxLadders::ensure(&mut approx_slot, &prefix, dec("1"));
         let with_prefix = RefreshInputs {
-            prefix_bars: &prefix,
+            prefix_approx: approx.ladders(),
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_prefix);
