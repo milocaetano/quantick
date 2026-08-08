@@ -270,6 +270,15 @@ trait DrawingToolImpl: Sync {
     fn value_axis(&self) -> bool {
         true
     }
+    /// Whether this tool only ever means something on the candles' price
+    /// axis. The mirror of [`Self::value_axis`]'s `false`: where a time-only
+    /// tool belongs to *every* band, a price-only tool belongs to the price
+    /// band whatever band it was started over — a volume profile's rows are
+    /// prices, and one drawn against a CVD axis would be the data-honesty
+    /// failure this repo refuses.
+    fn price_band_only(&self) -> bool {
+        false
+    }
     /// Whether the tool paints a stroke the width control affects. Almost
     /// every tool does; a text note has glyphs and no stroke at all, and a
     /// width slider on its Style tab would move nothing.
@@ -387,10 +396,13 @@ impl DrawingTool {
     /// The band a fresh object of this tool is placed on when the pointer is
     /// over `band`. A time-only tool ignores the band it was drawn in — it
     /// crosses all of them, and a band picker on it would be a control with
-    /// one correct setting.
+    /// one correct setting. A price-only tool ignores it the other way: its
+    /// values are prices, so it lands on the price band wherever it started.
     #[must_use]
     pub fn band_for(self, band: &DrawingBand) -> DrawingBand {
-        if self.value_axis() {
+        if self.0.price_band_only() {
+            DrawingBand::Price
+        } else if self.value_axis() {
             band.clone()
         } else {
             DrawingBand::AllBands
@@ -601,9 +613,14 @@ register_drawing_tools!(
     measure,
     price_range,
     date_range,
+    fixed_range_profile,
     // Annotation
     text,
 );
+
+// The profile drawing's payload types, re-exported for `crate::frvp` — the
+// refresh pass that folds engine ladders into the cache the paint reads.
+pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
 
 /// One anchor of a drawing.
 ///
@@ -838,6 +855,17 @@ impl Drawings {
     #[must_use]
     pub fn items(&self) -> &[Drawing] {
         &self.items
+    }
+
+    /// Mutable access for **derived-state refresh only** — `frvp::refresh`
+    /// bringing cached profiles up to date. Never a user edit: nothing
+    /// reached through here may participate in payload equality, or a
+    /// refresh would register as an edit against the undo snapshots
+    /// (`Self::record` compares them). The cache exclusion in
+    /// `FrvpPayload::eq` is the other half of this contract.
+    #[must_use]
+    pub(crate) fn items_mut(&mut self) -> &mut [Drawing] {
+        &mut self.items
     }
 
     /// How many objects are painted on the tab's other panes as well — the
@@ -1403,6 +1431,22 @@ mod tests {
             assert!(!tool.hover_text().is_empty());
             assert!(tool.required_points() > 0);
         }
+    }
+
+    /// A price-only tool started over an indicator band still lands on the
+    /// candles' price axis: profile rows are prices, and a profile hanging
+    /// off a CVD axis would read its rows as CVD values.
+    #[test]
+    fn a_price_only_tool_lands_on_the_price_band_wherever_it_started() {
+        let mut drawings = Drawings::default();
+        let frvp = tool("fixed-range-profile");
+        let band = DrawingBand::Indicator(PaneKey {
+            kind: "native.cvd".into(),
+            ordinal: 0,
+        });
+        drawings.place_on(frvp, &band, ChartPoint::at(1.0, 5.0));
+        drawings.place_on(frvp, &band, ChartPoint::at(4.0, 9.0));
+        assert_eq!(drawings.items()[0].band, DrawingBand::Price);
     }
 
     #[test]
@@ -2245,6 +2289,18 @@ mod tests {
                     handles.len(),
                     6,
                     "the channel adds a corner and a centre per rail"
+                );
+                continue;
+            }
+            if drawing_tool.id() == "fixed-range-profile" {
+                // The profile opts out too: its anchors' prices are not data
+                // (the extent comes from the profile), so the grab points
+                // ride the drawn object — anchor x's, visible-extent middle.
+                assert_eq!(handles.len(), 2);
+                assert_eq!(
+                    handles.iter().map(|handle| handle.x).collect::<Vec<_>>(),
+                    points.iter().map(|point| point.x).collect::<Vec<_>>(),
+                    "profile handles keep their anchors' x"
                 );
                 continue;
             }

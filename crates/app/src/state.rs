@@ -485,10 +485,10 @@ impl ChartState {
         self.footprints.partial()
     }
 
-    /// The row width footprints are captured at. Production reads the width
-    /// off each ladder ([`BarFootprint::group`]); the tests assert on the
-    /// capture side of that round trip.
-    #[cfg(test)]
+    /// The row width footprints are captured at. Rendering reads the width
+    /// off each ladder ([`BarFootprint::group`]); this is the capture side of
+    /// that round trip — what the range-profile cache keys on to notice a
+    /// refold, and what the tests assert against.
     #[must_use]
     pub fn footprint_group(&self) -> Decimal {
         self.footprints.base_group()
