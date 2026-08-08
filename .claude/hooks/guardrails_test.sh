@@ -138,6 +138,38 @@ run "a commit on main says nothing" \
 run "a commit on a branch ahead of origin/main reminds" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context
 
+# --- the gate must judge the command, not the prose around it ---------------
+#
+# Both cases below blocked or misjudged real work the first time these hooks
+# ran for real, which is why they are pinned here.
+
+rm -f "$wt_git_dir/arch-review-ok"
+
+run "a commit message that merely names the gated command is ignored" \
+    pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" silent
+
+run "a commit message naming the gated command still reminds, not blocks" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m 'note about gh pr create'")" context
+
+# --- the gate must follow the command into its worktree ---------------------
+#
+# The payload's cwd is the session's and resets between calls; every agent
+# command reaches its worktree with a leading `cd`. Judging cwd alone made the
+# gate read the main checkout no matter which branch was being shipped.
+
+run "a leading cd sends the gate to the worktree, not the session cwd" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" deny
+
+echo "$head_sha" > "$wt_git_dir/arch-review-ok"
+run "a leading cd finds the review recorded in that worktree" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" silent
+
+run "a leading cd sends the reminder to the worktree branch" \
+    commit-reminder "$(json_bash "$root/mainco" "cd $root/wt && git commit -m x")" context
+
+run "a cd to a path that does not exist falls back to the session cwd" \
+    commit-reminder "$(json_bash "$root/mainco" "cd $root/nowhere && git commit -m x")" silent
+
 # --- report -----------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

@@ -75,6 +75,30 @@ context() {
     exit 0
 }
 
+# True when the command actually runs `$2` as a statement, rather than merely
+# mentioning it. A commit message body reaches the hook inside the command
+# string, so a free substring match blocks `git commit -F -` whenever the
+# message happens to name the gated command.
+runs_command() {
+    printf '%s' "$1" |
+        sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g' |
+        grep -qE "^[[:space:]]*$2([[:space:]]|\$)"
+}
+
+# The directory the command operates on. The payload's `cwd` is the session's,
+# which resets between calls, while every agent command reaches its worktree
+# with a leading `cd <dir> &&`. Trusting `cwd` alone made the gate judge the
+# main checkout no matter which branch was being shipped.
+effective_dir() {
+    d=$(printf '%s' "$1" | sed -n 's|^[[:space:]]*cd[[:space:]][[:space:]]*"\{0,1\}\([^"[:space:];&|]*\)"\{0,1\}.*|\1|p' | head -n 1)
+    d=$(normalize_path "$d")
+    if [ -n "$d" ] && [ -d "$d" ]; then
+        printf '%s' "$d"
+        return 0
+    fi
+    printf '%s' "$2"
+}
+
 review_marker_path() {
     printf '%s/%s' "$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" "$REVIEW_MARKER_NAME"
 }
@@ -118,12 +142,9 @@ worktree_guard() {
 
 pr_gate() {
     command=$(json_string_field command)
-    case "$command" in
-        *"gh pr create"*) ;;
-        *) exit 0 ;;
-    esac
+    runs_command "$command" "gh pr create" || exit 0
 
-    dir=$(normalize_path "$(json_string_field cwd)")
+    dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
     head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
@@ -147,12 +168,9 @@ pr_gate() {
 
 commit_reminder() {
     command=$(json_string_field command)
-    case "$command" in
-        *"git commit"*) ;;
-        *) exit 0 ;;
-    esac
+    runs_command "$command" "git commit" || exit 0
 
-    dir=$(normalize_path "$(json_string_field cwd)")
+    dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
     branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
