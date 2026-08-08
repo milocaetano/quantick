@@ -30,11 +30,16 @@ impl DrawingToolImpl for FibExtension {
     fn required_points(&self) -> usize {
         FibKind::Extension.required_points()
     }
+    /// No key of its own, and that is the fix rather than the omission.
+    ///
+    /// It used to be `Shift+F`, which is also *flatten* — close the position
+    /// and cancel every working order. The rail reads its shortcuts with
+    /// `key_pressed`, which does not consume them, so reaching for this tool
+    /// also flattened, and reaching for flatten also armed a Fib. The rail's
+    /// family flyout already reaches this tool in two clicks; an order key is
+    /// not something a drawing tool may share.
     fn shortcut(&self) -> Option<ToolShortcut> {
-        Some(ToolShortcut {
-            key: egui::Key::F,
-            shift: true,
-        })
+        None
     }
     fn family(&self) -> Option<super::ToolFamily> {
         Some(fib::FIB_FAMILY)

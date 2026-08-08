@@ -56,6 +56,21 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_DRAWINGS_MANAGER=1` | opens the object manager, which is where the "off series" and "other market" badges are read — and the only place a mark clamped off the visible window can be found at all |
 | `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>` | selects that tool's demo object and centres the viewport on it. Selection is what puts an object's handles on screen, so this is the only way to photograph the grab points of a tool that is not last in the registry (`parallel-channel` for its corner and rail handles) |
 
+Landing with the drawing context bar goal (`feat/drawing-context-bar`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_DRAWING_INSPECTOR=1` | the full settings panel open at launch. Selecting a drawing no longer opens it — it raises the context bar, and the gear on that bar is the one door — so this is the only way to photograph the panel without a click. Pair with `QUANTICK_DRAWINGS_DEMO_SELECT` |
+
+The context bar itself has no hook of its own and needs none: it exists for
+as long as something is selected, so `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`
+*is* the hook that reaches it — and it reaches a different bar per tool,
+which is the thing worth photographing, since the bar is built from the
+selected object's capabilities. `QUANTICK_DRAWING_TOOL` covers the two new
+marks (`arrow-mark-up`, `arrow-mark-down`) and the pencil (`brush`) like any
+other registered tool, and `QUANTICK_DRAWINGS_DEMO=1` now places a short
+freehand path for the pencil, which declares no anchor count of its own.
+
 Once merged, move them into the table above.
 
 Landing with PR #127 (paper trading v2): `QUANTICK_DOCK_TAB`
