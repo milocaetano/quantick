@@ -271,6 +271,43 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
+    /// Whether the canvas's compact visual key is drawn.
+    #[must_use]
+    pub fn legend_visible(&self) -> bool {
+        self.config.show_legend
+    }
+
+    /// Show or hide it — the very field the L2 panel's "show chart legend"
+    /// checkbox writes, so the canvas's right-click menu and the panel can
+    /// never disagree about it. Chrome only: every layer it names keeps
+    /// drawing while the key is hidden.
+    pub fn set_legend_visible(&mut self, visible: bool) {
+        if self.config.show_legend == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_legend = visible;
+        self.commit_config_changes(before);
+    }
+
+    /// Whether the book's status badge is drawn on the canvas.
+    #[must_use]
+    pub fn status_badge_visible(&self) -> bool {
+        self.config.show_status_badge
+    }
+
+    /// Show or hide it. The recorder is not part of this question: capture,
+    /// generation and the ladder carry on, and the L2 panel still states them
+    /// — this silences a label on the canvas, nothing else.
+    pub fn set_status_badge_visible(&mut self, visible: bool) {
+        if self.config.show_status_badge == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_status_badge = visible;
+        self.commit_config_changes(before);
+    }
+
     /// Whether intervals with no depth coverage are marked out.
     #[must_use]
     pub fn gaps_visible(&self) -> bool {
@@ -554,7 +591,8 @@ impl OrderflowView {
         draw_liquidity_events(painter, &context);
     }
 
-    /// Draw factual aggressive prints and the compact visual key over candles.
+    /// Draw factual aggressive prints over the candles. The canvas's key is
+    /// not part of this pass — see [`draw_legend`](Self::draw_legend).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -577,13 +615,46 @@ impl OrderflowView {
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_aggression_bubbles(painter, &context);
+    }
+
+    /// Draw the canvas's compact visual key.
+    ///
+    /// Its own pass, not a tail of the bubbles: the legend is chrome about
+    /// what the canvas is showing — it names the depth layers too — so hiding
+    /// the bubbles must not take it down, and hiding it must not take the
+    /// bubbles down. The trader switches it from the canvas's right-click
+    /// menu (`ChartLayer::FlowLegend`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_legend(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        viewport: &Viewport,
+        total_bars: usize,
+        frame: &VisibleOrderflow,
+        canvas_background: egui::Color32,
+        lane_width_px: f32,
+        top_inset_px: f32,
+    ) {
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            lane_width_px,
+        );
+        let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        style.legend_top_inset = top_inset_px;
+        let context = RenderContext::new(&frame.projection, layout, &style);
         draw_compact_legend(painter, &context);
     }
 
     pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
         // Tied to the map, not to the recorder: a badge reporting on a book
-        // nobody asked to see is just chrome.
-        if !self.config.depth_visible() {
+        // nobody asked to see is just chrome. The trader can silence it on its
+        // own too, from the canvas's right-click menu.
+        if !self.config.depth_visible() || !self.config.show_status_badge {
             return;
         }
         let text = self.published.status.label();
@@ -2094,6 +2165,83 @@ mod tests {
         assert!(
             view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()
+        );
+    }
+
+    /// The canvas's key is chrome about the canvas, not a tail of the
+    /// bubbles: it names the depth layers too. It draws in a pass of its own,
+    /// so hiding the bubbles leaves it standing, and the trader can silence it
+    /// from the canvas's right-click menu without touching a single layer.
+    #[test]
+    fn the_legend_draws_on_its_own_pass_and_the_trader_can_silence_it() {
+        let ctx = egui::Context::default();
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 10);
+        view.handle_depth_event(snapshot_event(10));
+        view.flush_for_test();
+        let bars = [bar(900, 1_100)];
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.flush_for_test();
+        let frame = view
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .expect("published frame");
+
+        let text_of = |view: &OrderflowView, legend: bool| {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    if legend {
+                        view.draw_legend(
+                            ui.painter(),
+                            rect,
+                            &viewport,
+                            1,
+                            &frame,
+                            egui::Color32::BLACK,
+                            0.0,
+                            crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
+                        );
+                    } else {
+                        view.draw_aggressions(
+                            ui.painter(),
+                            rect,
+                            &viewport,
+                            1,
+                            &frame,
+                            egui::Color32::BLACK,
+                            0.0,
+                        );
+                    }
+                });
+            });
+            let mut text = String::new();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(galley) = shape.shape {
+                    text.push_str(galley.galley.text());
+                    text.push(' ');
+                }
+            }
+            text
+        };
+
+        // The bubble pass writes no key…
+        assert!(
+            !text_of(&view, false).contains("liquidity"),
+            "the bubbles must not carry the legend on their back"
+        );
+        // …the key's own pass does, with the bubble layer off.
+        view.set_bubbles_enabled(false);
+        assert!(
+            text_of(&view, true).contains("liquidity"),
+            "the key stands with the bubbles hidden"
+        );
+        // And the right-click switch silences it outright.
+        view.set_legend_visible(false);
+        assert!(!view.legend_visible());
+        assert!(
+            text_of(&view, true).is_empty(),
+            "a silenced key draws no text at all"
         );
     }
 

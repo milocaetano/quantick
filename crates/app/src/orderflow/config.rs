@@ -767,6 +767,10 @@ pub struct HeatmapConfig {
     pub liquidity_correlation_ms: i64,
     /// Whether the renderer should show its visual legend.
     pub show_legend: bool,
+    /// Whether the book's status badge is drawn in the canvas's top-right
+    /// corner. Chrome about the capture, not about the market: switching it
+    /// off silences the label and changes nothing about the recording.
+    pub show_status_badge: bool,
     /// Renderer palette.
     pub theme: HeatmapTheme,
     /// Maximum number of closed RLE runs retained. Active levels are separate.
@@ -814,6 +818,7 @@ impl Default for HeatmapConfig {
             min_unattributed_pull_share: 0.25,
             liquidity_correlation_ms: DEFAULT_LIQUIDITY_CORRELATION_MS,
             show_legend: true,
+            show_status_badge: true,
             theme: HeatmapTheme::Bookmap,
             max_history_runs: 500_000,
             max_history_bytes: 64 * 1024 * 1024,
@@ -967,6 +972,7 @@ mod tests {
             DEFAULT_LIQUIDITY_CORRELATION_MS
         );
         assert!(config.show_legend);
+        assert!(config.show_status_badge);
         assert_eq!(config.theme, HeatmapTheme::Bookmap);
         assert_eq!(config.max_visible_cells, 12_000);
         assert_eq!(config.max_aggression_primitives, 700);

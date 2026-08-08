@@ -92,10 +92,25 @@ pub(crate) struct OrderflowRenderStyle {
     /// See [`show_liquidity`](Self::show_liquidity).
     pub(crate) show_gaps: bool,
     pub(crate) legend_max_width: f32,
+    /// Vertical space already spoken for at the canvas's top-left corner: the
+    /// chart header, plus whatever the pane stacked under it (an indicator
+    /// chip per row). The legend starts below it, so the two can never print
+    /// over each other — they did, because this used to be a constant that
+    /// only knew about the header.
+    pub(crate) legend_top_inset: f32,
     /// Follows the chart canvas so the deterministic preview sits on the same
     /// ground as the live chart.
     pub(crate) canvas_background: egui::Color32,
 }
+
+/// The chart header's own row at the canvas's top-left corner: the floor
+/// every legend inset starts from, whatever the pane measured.
+pub(crate) const LEGEND_HEADER_CLEARANCE_PX: f32 = 22.0;
+
+/// How far down the canvas a measured stack of chips may push the legend
+/// before it stops following: past this the legend would be reading as part
+/// of the chart rather than as its key.
+const MAX_LEGEND_TOP_INSET_PX: f32 = 220.0;
 
 impl Default for OrderflowRenderStyle {
     fn default() -> Self {
@@ -119,6 +134,7 @@ impl Default for OrderflowRenderStyle {
             show_unattributed: true,
             show_gaps: true,
             legend_max_width: 690.0,
+            legend_top_inset: LEGEND_HEADER_CLEARANCE_PX,
             canvas_background: egui::Color32::from_rgb(19, 23, 34),
         }
     }
@@ -158,6 +174,14 @@ impl OrderflowRenderStyle {
         style.bubbles.sanitize();
         style.live_lane.sanitize();
         style.legend_max_width = finite_clamp(style.legend_max_width, 160.0, 2_000.0, 690.0);
+        // A caller that measured nothing still clears the header; one that
+        // measured a tall stack of chips cannot push the legend off the canvas.
+        style.legend_top_inset = finite_clamp(
+            style.legend_top_inset,
+            LEGEND_HEADER_CLEARANCE_PX,
+            MAX_LEGEND_TOP_INSET_PX,
+            LEGEND_HEADER_CLEARANCE_PX,
+        );
         style
     }
 }
@@ -1511,12 +1535,13 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
         (flow.size.x + inner_margin * 2.0).min(max_panel_width),
         flow.size.y + inner_margin * 2.0,
     );
-    // The chart header owns the first text row at the top-left. Keep the
-    // legend below it so symbol/bar metadata remains readable at every width.
-    let header_clearance = 22.0;
+    // The chart header owns the first text row at the top-left, and the pane
+    // may have stacked indicator chips under it. Keep the legend below all of
+    // it, so symbol/bar metadata and every chip remain readable at every
+    // width — nothing at this corner prints over anything else.
     let panel = egui::Rect::from_min_size(
         context.layout.chart_rect.left_top()
-            + egui::vec2(outer_margin, outer_margin + header_clearance),
+            + egui::vec2(outer_margin, outer_margin + style.legend_top_inset),
         panel_size,
     );
     clip.rect_filled(panel, egui::Rounding::same(4.0), palette.legend_background);

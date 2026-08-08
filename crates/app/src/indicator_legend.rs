@@ -26,6 +26,13 @@ const DOT_DIAMETER_PX: f32 = 8.0;
 /// How much of a hidden row's dot colour survives — enough to still name
 /// the plot, faded enough to read as off.
 const HIDDEN_DOT_FADE: f32 = 0.4;
+/// Height of one row, in pixels: a small button plus egui's button padding,
+/// which is the tallest widget in the row.
+const ROW_HEIGHT_PX: f32 = 20.0;
+/// Vertical gap between two rows, matching the spacing the frame sets.
+const ROW_SPACING_PX: f32 = 3.0;
+/// The frame's own vertical padding, top and bottom.
+const FRAME_PADDING_Y_PX: f32 = 5.0;
 
 /// What a legend row asked of the app this frame. The caller applies each
 /// against the pane the legend was drawn for — never the focused pane, so a
@@ -38,6 +45,26 @@ pub(crate) enum LegendAction {
     OpenSettings(SlotId),
     /// Remove the indicator.
     Remove(SlotId),
+}
+
+/// How much of the canvas's top-left corner this legend claims, measured
+/// from the corner itself — its own margin included, zero when it draws
+/// nothing.
+///
+/// Predicted rather than measured, so whoever stacks below it (the order-flow
+/// key) lands correctly on the very first frame instead of printing over a
+/// legend that had not been laid out yet. `the_predicted_stack_height_covers_
+/// what_the_legend_actually_draws` keeps the prediction honest against the
+/// real layout.
+pub(crate) fn stack_height_px(views: &[IndicatorView]) -> f32 {
+    if views.is_empty() {
+        return 0.0;
+    }
+    let rows = views.len() as f32;
+    LEGEND_MARGIN_PX
+        + FRAME_PADDING_Y_PX * 2.0
+        + rows * ROW_HEIGHT_PX
+        + (rows - 1.0) * ROW_SPACING_PX
 }
 
 /// Draw the legend over `chart_rect`. A no-op with no indicators — an empty
@@ -238,6 +265,49 @@ mod tests {
             }
         }
         text
+    }
+
+    /// Whoever stacks under this legend — the order-flow key at the same
+    /// corner — places itself from [`stack_height_px`] before the legend has
+    /// ever been laid out. The prediction therefore has to cover what the
+    /// legend really draws, at every row count, or the two print over each
+    /// other on the frame an indicator is added.
+    #[test]
+    fn the_predicted_stack_height_covers_what_the_legend_actually_draws() {
+        let ctx = egui::Context::default();
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        assert_eq!(stack_height_px(&[]), 0.0, "nothing drawn, nothing claimed");
+
+        let mut views = IndicatorViews::new();
+        for rows in 1..=3_usize {
+            let slot = views.allocate_slot("test.indicator");
+            views.apply(IndicatorEvent::Rebuilt {
+                slot,
+                descriptor: descriptor(&format!("EMA({rows}, close)")),
+                columns: vec![vec![101.5, 1_234.0]],
+                inputs: Vec::new(),
+                stale: None,
+            });
+
+            let mut bottom = f32::NEG_INFINITY;
+            for _ in 0..2 {
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    draw(ctx, 0, chart, views.all());
+                });
+                bottom = f32::NEG_INFINITY;
+                for shape in output.shapes {
+                    let rect = shape.shape.visual_bounding_rect();
+                    if rect.is_positive() {
+                        bottom = bottom.max(rect.bottom());
+                    }
+                }
+            }
+            let claimed = chart.top() + stack_height_px(views.all());
+            assert!(
+                bottom <= claimed,
+                "{rows} row(s): the legend reaches {bottom}, the prediction claims {claimed}"
+            );
+        }
     }
 
     /// A healthy row reaches pixels: name and last value, in the axis'

@@ -65,6 +65,10 @@ pub(crate) enum ChartLayer {
     LiveStrip,
     /// The live lane's boundary and live-edge lines.
     LaneMarks,
+    /// The compact visual key at the canvas's top-left corner.
+    FlowLegend,
+    /// The book's status badge at the canvas's top-right corner.
+    BookStatus,
     /// Dashed boundaries around intervals with no depth coverage.
     DepthGaps,
     /// Price/time gridlines.
@@ -91,12 +95,14 @@ impl ChartLayer {
     /// in the menu test that counts it. The two paper layers sit together:
     /// live orders and closed-trade marks are switched apart, because hiding
     /// history must never hide the position you are in.
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::Heatmap,
         Self::Bubbles,
         Self::Footprint,
         Self::LiveStrip,
         Self::LaneMarks,
+        Self::FlowLegend,
+        Self::BookStatus,
         Self::DepthGaps,
         Self::Grid,
         Self::LastPrice,
@@ -117,6 +123,8 @@ impl ChartLayer {
             Self::Footprint => "footprint",
             Self::LiveStrip => "live_strip",
             Self::LaneMarks => "lane_marks",
+            Self::FlowLegend => "flow_legend",
+            Self::BookStatus => "book_status",
             Self::DepthGaps => "depth_gaps",
             Self::Grid => "grid",
             Self::LastPrice => "last_price",
@@ -143,6 +151,8 @@ impl ChartLayer {
             Self::Footprint => "candle footprint",
             Self::LiveStrip => "live strip",
             Self::LaneMarks => "live lane marks",
+            Self::FlowLegend => "flow legend",
+            Self::BookStatus => "book status badge",
             Self::DepthGaps => "L2 gap boundaries",
             Self::Grid => "grid",
             Self::LastPrice => "last price line",
@@ -175,6 +185,19 @@ impl ChartLayer {
             Self::LaneMarks => {
                 "the dashed line where the bar slots end and the tape begins, and the line on the \
                  live edge itself. Saved with the order-flow preset, not with the other layers"
+            }
+            // Chrome, not market data: both of these draw *about* the canvas
+            // rather than on it, so their entries say what stays true while
+            // they are hidden.
+            Self::FlowLegend => {
+                "the key at the top-left naming every flow layer that is on. Hiding it changes \
+                 nothing about what is drawn — the layers keep drawing, and the key comes back \
+                 with the same entries. The same switch as the L2 panel's 'show chart legend'"
+            }
+            Self::BookStatus => {
+                "the badge at the top-right reporting on the book feed. Hiding it silences a \
+                 label, never the recorder: capture, generation and the ladder carry on, and the \
+                 L2 panel still states them"
             }
             // Data honesty: this is the one switch that hides a statement
             // about missing data rather than data itself, so the entry says
@@ -214,7 +237,10 @@ impl ChartLayer {
     ///
     /// The lane marks live in the order-flow preset — a feed can declare one,
     /// and the dock saves it as a unit. Storing them here as well would let two
-    /// files disagree about one field.
+    /// files disagree about one field. The legend and the status badge are
+    /// persisted here instead: the order-flow preset does not carry them, and
+    /// their state has a single owner (the order-flow config) that this file
+    /// merely restores — exactly as it does for the heatmap and the bubbles.
     pub(crate) const fn persisted(self) -> bool {
         !matches!(self, Self::LaneMarks)
     }

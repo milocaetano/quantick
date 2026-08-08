@@ -1058,6 +1058,8 @@ impl ChartPane {
             ChartLayer::Footprint => self.footprint_visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
+            ChartLayer::FlowLegend => tape.is_some_and(OrderflowView::legend_visible),
+            ChartLayer::BookStatus => tape.is_some_and(OrderflowView::status_badge_visible),
             ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
             ChartLayer::Grid => style.canvas.grid_enabled,
             // The toolbox's global eye already owns this one, undo history and
@@ -1102,6 +1104,16 @@ impl ChartPane {
                     tape.set_lane_marks_visible(visible);
                 }
             }
+            ChartLayer::FlowLegend => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_legend_visible(visible);
+                }
+            }
+            ChartLayer::BookStatus => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_status_badge_visible(visible);
+                }
+            }
             ChartLayer::DepthGaps => {
                 if let Some(tape) = self.orderflow.as_mut() {
                     tape.set_gaps_visible(visible);
@@ -1136,6 +1148,8 @@ impl ChartPane {
                     | ChartLayer::Bubbles
                     | ChartLayer::LiveStrip
                     | ChartLayer::LaneMarks
+                    | ChartLayer::FlowLegend
+                    | ChartLayer::BookStatus
                     | ChartLayer::DepthGaps
             )
     }
@@ -1158,7 +1172,10 @@ impl ChartPane {
             return Some("the order-flow layers are drawn on the flow pane");
         }
         match layer {
-            ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
+            // The badge reports on the book feed, so a source with no book has
+            // nothing for it to say.
+            ChartLayer::Heatmap | ChartLayer::DepthGaps | ChartLayer::BookStatus => (!capabilities
+                .book_capture)
                 .then_some("order-book capture is not available for this source"),
             // The footprint is the buy/sell split per price: on a source that
             // prints no traded volume every cell would be an identical
@@ -1182,7 +1199,7 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is fourteen entries, so the mask cannot outgrow
+    /// detection. `ALL` is sixteen entries, so the mask cannot outgrow
     /// `u16`.
     pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
         ChartLayer::ALL
@@ -3445,6 +3462,34 @@ impl ChartPane {
                 frame,
                 canvas_background,
                 lane_width_px,
+            );
+        }
+
+        // The canvas's key, in a pass of its own so the bubble switch cannot
+        // take it down with them. It starts below everything already stacked
+        // at this corner — the chart header, the position HUD while a
+        // position is open, and one row per indicator chip — so nothing at the
+        // top-left prints over anything else.
+        let paper_hud_open = chrome.paper_owns_input && chrome.paper.position_summary().is_some();
+        let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
+            + if paper_hud_open {
+                crate::app::LEGEND_BELOW_HUD_OFFSET_PX
+            } else {
+                0.0
+            }
+            + crate::indicator_legend::stack_height_px(self.indicators.all());
+        if let Some(orderflow) = self.orderflow.as_mut()
+            && let Some(frame) = &orderflow_frame
+        {
+            orderflow.draw_legend(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                lane_width_px,
+                legend_inset,
             );
         }
 

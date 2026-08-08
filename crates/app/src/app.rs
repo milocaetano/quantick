@@ -58,8 +58,9 @@ const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 /// How far the indicator legend drops below the position HUD when both
-/// claim the chart's top-left corner.
-const LEGEND_BELOW_HUD_OFFSET_PX: f32 = 64.0;
+/// claim the chart's top-left corner. The order-flow key stacks under that
+/// same corner, so the pane reads this too — one number for one corner.
+pub(crate) const LEGEND_BELOW_HUD_OFFSET_PX: f32 = 64.0;
 
 /// The (flow, time) pane ids for tab `id`.
 ///
