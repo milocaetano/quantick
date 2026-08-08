@@ -3109,20 +3109,6 @@ impl ChartPane {
                 }
             }
         }
-        // Bring the range-profile drawings' folds up to date before anything
-        // paints. Key-guarded inside: the common frame compares one small key
-        // per profile object and folds nothing.
-        crate::frvp::refresh(
-            &mut self.drawings,
-            &crate::frvp::RefreshInputs {
-                state: &self.state,
-                prefix_len: prefix.len(),
-                partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
-                partial_version: self.footprint_live_version,
-                blocked: footprint_blocked,
-                side_inferred: chrome.side_inferred,
-            },
-        );
         let areas = self.plot_areas(area);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
@@ -3269,6 +3255,34 @@ impl ChartPane {
                 lane_width_px,
             );
         }
+
+        // Bring the range-profile drawings' folds up to date before anything
+        // paints over the map. Key-guarded inside: the common frame compares
+        // one small key per profile object and folds nothing. It runs after
+        // the heatmap projection on purpose — the map's left boundary is
+        // where each profile's paint cuts from fill to silhouette, and the
+        // O(cells) scan behind it is paid only while a profile object exists.
+        let heat_first_slot = orderflow_frame
+            .as_ref()
+            .filter(|_| {
+                self.orderflow
+                    .as_ref()
+                    .is_some_and(OrderflowView::depth_visible)
+                    && self.wants_range_profile()
+            })
+            .and_then(|frame| frame.first_heat_slot());
+        crate::frvp::refresh(
+            &mut self.drawings,
+            &crate::frvp::RefreshInputs {
+                state: &self.state,
+                prefix_len: prefix.len(),
+                partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
+                partial_version: self.footprint_live_version,
+                blocked: footprint_blocked,
+                side_inferred: chrome.side_inferred,
+                heat_first_slot,
+            },
+        );
 
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.

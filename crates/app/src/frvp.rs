@@ -39,6 +39,11 @@ pub struct RefreshInputs<'a> {
     /// Whether the feed infers aggressor sides rather than reporting them —
     /// stamped on the cache so the paint can label the delta honestly.
     pub side_inferred: bool,
+    /// The oldest global slot the L2 heatmap covers this frame, `None` when
+    /// the map is off or painted nothing. Presentation state: it moves the
+    /// paint's fill→outline cut, never the fold, so it lives on the cache
+    /// *beside* the key — a map growing must not re-merge anything.
+    pub heat_first_slot: Option<usize>,
 }
 
 /// Bring every fixed-range-profile drawing's cached profile up to date.
@@ -108,7 +113,10 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         blocked: inputs.blocked,
         side_inferred: inputs.side_inferred,
     };
-    if payload.cache.as_ref().is_some_and(|cache| cache.key == key) {
+    if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
+        // Key hit: the fold is current. Presentation state still follows the
+        // frame — the map's boundary moves without invalidating the merge.
+        cache.heat_first_slot = inputs.heat_first_slot;
         return;
     }
 
@@ -119,6 +127,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
             empty: Some(FrvpEmpty::Blocked),
             bars_covered: 0,
             bars_total,
+            heat_first_slot: inputs.heat_first_slot,
         });
         return;
     }
@@ -161,6 +170,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         empty,
         bars_covered,
         bars_total,
+        heat_first_slot: inputs.heat_first_slot,
     });
 }
 
@@ -239,6 +249,7 @@ mod tests {
             partial_version: 0,
             blocked,
             side_inferred: false,
+            heat_first_slot: None,
         }
     }
 
@@ -444,6 +455,28 @@ mod tests {
         let released = cache_of(&drawings);
         assert_eq!(released.key.end_slot, 0);
         assert_eq!(released.profile.expect("tape").0.total_volume(), dec("2"));
+    }
+
+    /// The map's boundary is presentation state: it lands on the cache every
+    /// refresh — including key hits — and never re-keys the fold. A growing
+    /// heatmap must move the paint's cut, not re-merge anything.
+    #[test]
+    fn heat_boundary_rides_the_cache_without_rekeying_the_fold() {
+        let state = state_with_tape();
+        let mut drawings = Drawings::default();
+        place_frvp(&mut drawings, 0.0, 2.9);
+        refresh(&mut drawings, &inputs(&state, false));
+        let before = cache_of(&drawings);
+        assert_eq!(before.heat_first_slot, None);
+
+        let with_heat = RefreshInputs {
+            heat_first_slot: Some(1),
+            ..inputs(&state, false)
+        };
+        refresh(&mut drawings, &with_heat);
+        let after = cache_of(&drawings);
+        assert_eq!(after.key, before.key, "the fold's key is untouched");
+        assert_eq!(after.heat_first_slot, Some(1));
     }
 
     #[test]

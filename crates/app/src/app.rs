@@ -921,7 +921,8 @@ impl QuantickApp {
         // One fixed-range volume profile, placed to straddle the venue-prefix
         // seam when there is one — the partial-coverage honesty label is a
         // surface, and this is how a validation run photographs it.
-        app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value == "1");
+        app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO")
+            .is_ok_and(|value| matches!(value.trim(), "1" | "compare"));
         // The object manager is where a mark that cannot be trusted says so —
         // the "off series", "other market" and band badges live there, and a
         // mark clamped to an edge may be nowhere near the visible window,
@@ -4672,8 +4673,22 @@ impl QuantickApp {
         else {
             return;
         };
+        // `=compare` places two adjacent profiles over the same stretch of
+        // map, one in each over-heatmap mode — the before/after of the
+        // silhouette decision in a single frame, which no toggle-and-wait
+        // pair of screenshots can prove as cleanly.
+        let compare =
+            std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value.trim() == "compare");
+        let prefix = self.active_tab_mut().flow_pane.history_prefix.len();
+        // The compare scene exists to photograph profiles *over the map*, and
+        // the map only covers bars closed after book capture began — the
+        // session's earliest bars never get cells. So it waits for enough
+        // freshly-built bars and anchors on those, where the coverage is.
+        if compare && slots.saturating_sub(prefix) < 60 {
+            self.pending_frvp_demo = true;
+            return;
+        }
         let pane = &mut self.active_tab_mut().flow_pane;
-        let prefix = pane.history_prefix.len();
         // Straddle the seam when there is one; else the newest stretch.
         let start = if prefix > 0 && prefix < slots {
             prefix.saturating_sub(5)
@@ -4685,16 +4700,42 @@ impl QuantickApp {
             .closed_bar(end)
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
-        for slot in [start, end] {
-            pane.drawings.place_with(
-                tool,
-                &drawings::DrawingBand::Price,
-                drawings::ChartPoint::at_time(slot as f32 + 0.5, close, pane.slot_open_time(slot)),
-                |tool| drawings::NewDrawing {
-                    style: drawings::DrawingStyle::default(),
-                    payload: tool.default_payload(),
-                },
-            );
+        let newest = slots - 1;
+        let ranges: &[(usize, usize, bool)] = if compare {
+            // Two adjacent 25-bar ranges over the newest (map-covered) tape.
+            // Left object keeps the honest default; right one is forced to
+            // "always fill", the composed-into-the-map look under review.
+            &[
+                (newest.saturating_sub(49), newest.saturating_sub(25), true),
+                (newest.saturating_sub(24), newest, false),
+            ]
+        } else {
+            &[(start, end, true)]
+        };
+        for &(from, to, outline) in ranges {
+            for slot in [from, to] {
+                pane.drawings.place_with(
+                    tool,
+                    &drawings::DrawingBand::Price,
+                    drawings::ChartPoint::at_time(
+                        slot as f32 + 0.5,
+                        close,
+                        pane.slot_open_time(slot),
+                    ),
+                    |tool| {
+                        let mut payload = tool.default_payload();
+                        if let Some(frvp) =
+                            payload.as_any_mut().downcast_mut::<drawings::FrvpPayload>()
+                        {
+                            frvp.outline_over_heatmap = outline;
+                        }
+                        drawings::NewDrawing {
+                            style: drawings::DrawingStyle::default(),
+                            payload,
+                        }
+                    },
+                );
+            }
         }
     }
 
