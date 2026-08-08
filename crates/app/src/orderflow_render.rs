@@ -107,10 +107,15 @@ pub(crate) struct OrderflowRenderStyle {
 /// every legend inset starts from, whatever the pane measured.
 pub(crate) const LEGEND_HEADER_CLEARANCE_PX: f32 = 22.0;
 
-/// How far down the canvas a measured stack of chips may push the legend
-/// before it stops following: past this the legend would be reading as part
-/// of the chart rather than as its key.
-const MAX_LEGEND_TOP_INSET_PX: f32 = 220.0;
+/// How far down the canvas the stack above the key may push it, as a share
+/// of the canvas height.
+///
+/// Past this the key would be reading as part of the chart rather than as its
+/// key — and a canvas whose top half is chips has no room for it at all, so it
+/// stands down instead of printing over them. Chrome yields to the chart;
+/// nothing it says is data (the layers keep drawing, and the trader can bring
+/// it back from the right-click menu).
+const MAX_LEGEND_TOP_INSET_FRAC: f32 = 0.5;
 
 impl Default for OrderflowRenderStyle {
     fn default() -> Self {
@@ -174,12 +179,12 @@ impl OrderflowRenderStyle {
         style.bubbles.sanitize();
         style.live_lane.sanitize();
         style.legend_max_width = finite_clamp(style.legend_max_width, 160.0, 2_000.0, 690.0);
-        // A caller that measured nothing still clears the header; one that
-        // measured a tall stack of chips cannot push the legend off the canvas.
+        // A caller that measured nothing still clears the header. The ceiling
+        // is the canvas's, applied where the canvas is known (`draw_compact_legend`).
         style.legend_top_inset = finite_clamp(
             style.legend_top_inset,
             LEGEND_HEADER_CLEARANCE_PX,
-            MAX_LEGEND_TOP_INSET_PX,
+            f32::MAX,
             LEGEND_HEADER_CLEARANCE_PX,
         );
         style
@@ -1494,6 +1499,13 @@ fn legend_entries(
 pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderContext<'_>) {
     let style = context.style.sanitized();
     if !style.show_legend || context.layout.chart_rect.width() < 150.0 {
+        return;
+    }
+    // The corner may already be full — a tall stack of indicator chips over a
+    // short canvas. The key stands down rather than printing over them: it is
+    // chrome, everything it names keeps drawing, and it comes back the moment
+    // there is room (or a chip goes away).
+    if style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC {
         return;
     }
     // The legend is a key for what is on screen, so the aggression swatches
@@ -3303,6 +3315,14 @@ mod tests {
         );
         // And a caller that measured nothing still clears the header.
         assert!(top_of_key(0.0) >= rect.top() + LEGEND_HEADER_CLEARANCE_PX);
+
+        // Past half the canvas the corner belongs to whatever is stacked
+        // there. The key stands down instead of printing over it — chrome
+        // yields, and nothing it names stops being drawn.
+        assert!(
+            !top_of_key(rect.height() * MAX_LEGEND_TOP_INSET_FRAC + 1.0).is_finite(),
+            "the key must draw nothing when the corner is full"
+        );
     }
 
     /// The legend is a key for what is on screen: exactly one entry per layer
