@@ -674,6 +674,15 @@ fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
 pub struct PaneChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
+    /// Raised when a tool that arrives empty was just placed, so the host
+    /// opens the settings panel for it.
+    ///
+    /// Selecting a drawing raises the context bar, not the panel — but a
+    /// text note has no *content* until someone types it, and the field that
+    /// takes those words lives in the panel. Placing one and being shown a
+    /// row of style icons leaves the trader with an object that says "Note"
+    /// in grey and no way to make it say anything else.
+    pub open_settings: &'a mut bool,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
     /// The symbol to name while the series is still empty.
@@ -1763,7 +1772,19 @@ impl ChartPane {
         if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
             return None;
         }
-        let candle = self.closed_bar(bar.floor() as usize)?;
+        let slot = bar.floor() as usize;
+        // The forming bar counts. Marking the bar that is running *is* the
+        // live use of this tool — marking a closed one is review — and
+        // `closed_bar` stops one slot short of it, which would drop the mark
+        // back onto the pointer's own price: exactly the failure the snap
+        // exists to prevent, in the only moment it is used under pressure.
+        //
+        // The extreme is read at the instant of the click. A low that
+        // deepens afterwards leaves the mark where the bar was when it was
+        // marked, which is what the mark is a record of.
+        let candle = self
+            .closed_bar(slot)
+            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)?;
         if high { candle.high } else { candle.low }.to_f64()
     }
 
@@ -2104,6 +2125,17 @@ impl ChartPane {
                 && ui.input(|input| input.pointer.primary_down())
                 && let Some(position) = ui.input(|input| input.pointer.latest_pos())
                 && let Some((band, position)) = self.placement_target(areas, bands, position)
+                // The draft belongs to the band its first anchor landed in.
+                // A hand that strays 15 px into the CVD pane mid-stroke
+                // would otherwise write a CVD value into an object living on
+                // the price axis — and the stroke, having no handles, could
+                // only be deleted and redrawn. Points outside the draft's
+                // own band are dropped; the stroke resumes when the hand
+                // comes back.
+                && self
+                    .drawings
+                    .draft()
+                    .is_some_and(|draft| draft.band == tool.band_for(&band.key))
                 && let Some(point) = self.drawing_point_at(
                     position,
                     history_right,
@@ -2229,6 +2261,9 @@ impl ChartPane {
             // armed for the next object.
             if !chrome.toolrail.repeat() {
                 chrome.toolrail.arm(Tool::Pointer);
+            }
+            if tool.opens_settings_on_place() {
+                *chrome.open_settings = true;
             }
             self.drawing_hover = None;
         }

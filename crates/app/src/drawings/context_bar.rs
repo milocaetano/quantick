@@ -250,6 +250,8 @@ pub struct ContextBar {
     delete_hover_for: &'static str,
     /// Last resolved rect, for the wake radius and for tests.
     rect: Option<egui::Rect>,
+    /// The rect the current press landed on — see [`Self::press_rect`].
+    press_rect: Option<egui::Rect>,
     /// Where the gear and the colour controls landed, so a test can press
     /// the real buttons rather than trust arithmetic about slot order.
     #[cfg(test)]
@@ -320,6 +322,30 @@ impl ContextBar {
     /// on purpose.
     pub fn set_manual(&mut self, position: egui::Pos2) {
         self.manual = Some(position);
+    }
+
+    /// The bar's rect as it stood when the current press began.
+    ///
+    /// A press is answered by the geometry it actually landed on, for the
+    /// whole life of that press. Re-reading the live rect mid-gesture is the
+    /// mistake this repo has paid for once already: no gesture re-measures a
+    /// world that it is itself moving. Dragging the grip moves the bar, so
+    /// the moved rect would leave the press origin behind and suppress the
+    /// very gesture doing the moving.
+    pub fn press_rect(
+        &mut self,
+        origin: Option<egui::Pos2>,
+        current: Option<egui::Rect>,
+    ) -> Option<egui::Rect> {
+        if origin.is_none() {
+            // The press is over; the next one measures afresh.
+            self.press_rect = None;
+            return current;
+        }
+        if self.press_rect.is_none() {
+            self.press_rect = current;
+        }
+        self.press_rect
     }
 
     /// Escape with a hand-placed bar puts it back on the object before it

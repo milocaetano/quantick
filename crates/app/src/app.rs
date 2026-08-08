@@ -584,6 +584,15 @@ pub struct QuantickApp {
     /// that bar is the one thing that opens the full panel. The pinned dock
     /// ignores this — pinning *is* the standing request to keep it open.
     inspector_open: bool,
+    /// A tool asked for the panel while it was being placed (a text note has
+    /// no words until the panel gives it some).
+    ///
+    /// Separate from `inspector_open` because of frame order: placement runs
+    /// in the canvas pass, and the context bar runs after it and clears
+    /// `inspector_open` on every selection change — including the selection
+    /// the placement just made. The request survives that and is applied on
+    /// the far side of it.
+    pending_open_settings: bool,
     inspector_moved: bool,
     inspector_last_selection: Option<usize>,
     /// The selected object's context bar: the floating row of icons that
@@ -844,6 +853,7 @@ impl QuantickApp {
             inspector_tab: InspectorTab::default(),
             inspector_pinned: false,
             inspector_open: false,
+            pending_open_settings: false,
             inspector_moved: false,
             inspector_last_selection: None,
             context_bar: drawings::context_bar::ContextBar::default(),
@@ -4165,6 +4175,13 @@ impl QuantickApp {
             // does not follow the selection around.
             self.inspector_open = false;
         }
+        // …except when the object just placed asked for it. Applied after
+        // the reset above, because the placement that made the request also
+        // made the selection change that clears it.
+        if std::mem::take(&mut self.pending_open_settings) {
+            self.inspector_open = true;
+            self.inspector_last_selection = None;
+        }
         let Some(index) = selection else {
             return;
         };
@@ -4195,8 +4212,16 @@ impl QuantickApp {
                 input.screen_rect,
             )
         });
-        let on_the_bar =
-            matches!((origin, bar_rect), (Some(origin), Some(rect)) if rect.contains(origin));
+        // Against the rect the press *landed* on, not this frame's — the bar
+        // moves with a grip drag, so comparing against the moved rect makes
+        // the origin fall outside after ~20 px and suppresses the very
+        // gesture that is moving it. The grip is the escape hatch for a bar
+        // sitting over something the trader needs to see; it has to survive
+        // being used.
+        let on_the_bar = matches!(
+            (origin, self.context_bar.press_rect(origin, bar_rect)),
+            (Some(origin), Some(rect)) if rect.contains(origin)
+        );
         if dragging && !on_the_bar {
             self.context_bar.suppress_gesture();
         } else if !dragging {
@@ -5145,6 +5170,7 @@ impl QuantickApp {
                         active_tab,
                         toolrail,
                         drawing_presets,
+                        pending_open_settings,
                         style,
                         tz,
                         layer_actions,
@@ -5154,6 +5180,7 @@ impl QuantickApp {
                     let mut chrome = CanvasChrome {
                         toolrail,
                         presets: drawing_presets,
+                        open_settings: pending_open_settings,
                         style,
                         tz: *tz,
                         capabilities,
@@ -7204,6 +7231,7 @@ plot(close)
             active_tab,
             toolrail,
             drawing_presets,
+            pending_open_settings,
             style,
             tz,
             layer_actions,
@@ -7214,6 +7242,7 @@ plot(close)
         let mut chrome = pane::PaneChrome {
             toolrail,
             presets: drawing_presets,
+            open_settings: pending_open_settings,
             style,
             tz: *tz,
             symbol: &tab.symbol,
@@ -9881,6 +9910,227 @@ plot(close)
             hidden_line_price,
             "Front moves the object to the top of the z-order"
         );
+    }
+
+    /// The live use of a mark is marking the bar that is *running* — marking
+    /// a closed one is review. `closed_bar` stops one slot short of the
+    /// forming bar, so the snap used to fall through to the pointer's own
+    /// price there: the mark landed inside the candle body, which is the one
+    /// failure the whole tool exists to avoid, in the only moment it is used
+    /// under pressure.
+    #[test]
+    fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
+        // tick(2) with an odd trade count: the last print leaves a bar open,
+        // which `app_with_history`'s tick(1) never does.
+        let (mut app, evt_tx, _commands, _book) = test_app();
+        app.active_tab_mut().flow_pane.tick_n = 2;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        let trades: Vec<_> = (1..=201).map(trade).collect();
+        evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+        app.active_tab_mut().drain_feed();
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        let forming = pane.closed_slots();
+        assert_eq!(
+            pane.slots(),
+            forming + 1,
+            "this proof needs a bar still forming"
+        );
+
+        // Aim at the forming slot: the newest one, at the right edge of the
+        // history area.
+        let chart = pane.last_chart_area.expect("chart laid out");
+        let width = pane.viewport.candle_width();
+        let right = pane.last_lane_divider_x.unwrap_or(chart.right());
+        let x = right - width * 0.5;
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
+        click_chart(&mut app, &ctx, egui::pos2(x, 300.0));
+        let placed = app.active_tab().flow_pane.drawings.items().last();
+        let Some(placed) = placed else {
+            panic!("the mark was not placed on the forming bar");
+        };
+        let anchor = placed.points[0];
+        assert_eq!(
+            anchor.bar.floor() as usize,
+            forming,
+            "the click has to land on the forming slot for this to prove anything"
+        );
+        let low = app
+            .active_tab()
+            .flow_pane
+            .state
+            .partial()
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.low))
+            .expect("the forming bar has a low");
+        assert!(
+            (anchor.price - low).abs() < 1e-9,
+            "the mark must hang from the forming bar's low ({low}), not the cursor ({})",
+            anchor.price
+        );
+    }
+
+    /// The grip is the escape hatch when the bar sits over something the
+    /// trader needs to see, so it has to survive being used. It did not:
+    /// `on_the_bar` compared the press origin against the *current* rect,
+    /// which moves with the drag, so past ~20 px the origin fell outside and
+    /// the bar suppressed the very gesture moving it.
+    #[test]
+    fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        let before = app.context_bar_rect.expect("the bar is on screen");
+
+        // The grip is the leading cell; grab its middle and pull well past
+        // the distance that used to break it.
+        let grip = egui::pos2(before.left() + 9.0, before.center().y);
+        drag_chart(&mut app, &ctx, grip, grip + egui::vec2(90.0, 60.0));
+        run_frame(&mut app, &ctx);
+
+        let after = app
+            .context_bar_rect
+            .expect("the bar must survive its own drag");
+        assert!(
+            app.context_bar.manual_position().is_some(),
+            "the drag has to be recorded as a hand-placed position"
+        );
+        assert!(
+            (after.left() - before.left()).abs() > 40.0,
+            "the bar has to have actually travelled: {} -> {}",
+            before.left(),
+            after.left()
+        );
+    }
+
+    /// The draft belongs to the band its first anchor landed in. A hand that
+    /// strays into the indicator pane mid-stroke would otherwise write that
+    /// pane's value into an object living on the price axis — and a stroke
+    /// has no handles, so it could only be deleted and redrawn.
+    #[test]
+    fn a_pencil_stroke_ignores_points_outside_its_own_band() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("chart laid out");
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+        // Start well inside the price band, then run the pointer far below
+        // the pane and back — the shape of a hand overshooting the divider.
+        let start = egui::pos2(620.0, chart.center().y);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        for offset in [30.0_f32, 60.0, 90.0] {
+            let below = egui::pos2(start.x + offset, chart.bottom() + 200.0);
+            run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(below)]);
+        }
+        let end = egui::pos2(start.x + 120.0, chart.center().y + 20.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
+        );
+
+        let items = app.active_tab().flow_pane.drawings.items();
+        assert_eq!(items.len(), 1, "one stroke");
+        let stroke = &items[0];
+        assert_eq!(stroke.band, drawings::DrawingBand::Price);
+        // Every anchor has to be a price this chart could actually show.
+        let (lo, hi) = app
+            .active_tab()
+            .flow_pane
+            .last_auto_range
+            .expect("the pane has a range");
+        let span = hi - lo;
+        for point in &stroke.points {
+            assert!(
+                point.price > lo - span && point.price < hi + span,
+                "a stray point escaped the band: {} not near {lo}..{hi}",
+                point.price
+            );
+        }
+    }
+
+    /// A text note is placed *empty* and its words live in the panel. Left to
+    /// the context bar alone, the trader gets a grey "Note" and a row of
+    /// style icons with no way in.
+    #[test]
+    fn placing_a_text_note_opens_the_panel_that_takes_its_words() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        assert!(!app.inspector_open);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "text");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.inspector_open,
+            "the one tool that arrives empty opens the field that fills it"
+        );
+
+        // …and no other tool does: the panel staying shut is the whole point.
+        app.inspector_open = false;
+        arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
+        click_chart(&mut app, &ctx, egui::pos2(640.0, 320.0));
+        run_frame(&mut app, &ctx);
+        assert!(
+            !app.inspector_open,
+            "a line is complete when it is drawn; it gets the bar, not the panel"
+        );
+    }
+
+    /// No drawing tool may share a chord with an order.
+    ///
+    /// The rail arms tools with `key_pressed`, which does not consume the
+    /// key, and it runs before the trading shortcuts — so a shared chord
+    /// fires *both*. `Shift+B` armed the sell mark and bought at market;
+    /// `Shift+F` armed a Fib extension and flattened the position. Neither
+    /// is a thing a trader can be asked to remember around.
+    #[test]
+    fn no_drawing_shortcut_shares_a_chord_with_an_order() {
+        let orders = [
+            ("buy at market", PAPER_BUY_SHORTCUT),
+            ("sell at market", PAPER_SELL_SHORTCUT),
+            ("reverse", PAPER_REVERSE_SHORTCUT),
+            ("flatten", PAPER_FLATTEN_SHORTCUT),
+            ("cancel working orders", PAPER_CANCEL_SHORTCUT),
+        ];
+        for tool in drawings::DRAWING_TOOLS {
+            let Some(shortcut) = tool.shortcut() else {
+                continue;
+            };
+            for (name, order) in orders {
+                // The rail matches key *and* shift exactly, so `B` and
+                // `Shift+B` are genuinely different chords — which is what
+                // lets the marks keep the letter of the side they mean.
+                let same_chord = order.logical_key == shortcut.key
+                    && order.modifiers.shift == shortcut.shift
+                    && !order.modifiers.command
+                    && !order.modifiers.alt;
+                assert!(
+                    !same_chord,
+                    "{} shares its chord with {name}: one keystroke would draw and trade",
+                    tool.id()
+                );
+            }
+        }
     }
 
     /// The pencil is the first tool placed by a held drag. One gesture, one

@@ -28,17 +28,24 @@ impl DrawingToolImpl for ArrowMarkDown {
         icons::ARROW_FAT_DOWN
     }
     fn hover_text(&self) -> &'static str {
-        "Arrow mark down - one click marks a sell above the bar's high (Shift+B)"
+        "Arrow mark down - one click marks a sell above the bar's high (S)"
     }
     fn required_points(&self) -> usize {
         1
     }
-    /// Shift for the mirrored twin — the pattern Fib retracement and
-    /// extension already set with F and Shift+F.
+    /// `S` for sell, matching `B` for buy on its twin — deliberately *not*
+    /// `Shift+B`, which sends a simulated buy at market. Arming a drawing
+    /// tool must never share a chord with an order: the rail reads its keys
+    /// with `key_pressed`, which does not consume them, so a shared chord
+    /// fires both and one stray keystroke both trades and arms a tool.
+    ///
+    /// The pairing that survives is one letter per side, with the modifier
+    /// deciding mark-or-order: `B`/`S` mark, `Shift+B`/`Shift+S` trade. A
+    /// missed shift then costs a drawing, never an order.
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
-            key: egui::Key::B,
-            shift: true,
+            key: egui::Key::S,
+            shift: false,
         })
     }
     fn family(&self) -> Option<ToolFamily> {

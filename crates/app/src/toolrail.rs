@@ -1594,10 +1594,29 @@ mod tests {
             rail.tool().drawing_tool().map(DrawingTool::id),
             Some("fib-retracement")
         );
+        // Shift+F is *flatten*. The Fib extension gave the chord up rather
+        // than keep arming a tool and closing a position on one keystroke;
+        // it is reached through the Fib family flyout.
         send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT);
         assert_eq!(
             rail.tool().drawing_tool().map(DrawingTool::id),
-            Some("fib-extension")
+            Some("fib-retracement"),
+            "Shift+F must arm nothing new, leaving the previous tool alone"
+        );
+        send(&mut rail, egui::Key::B, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("arrow-mark-up")
+        );
+        send(&mut rail, egui::Key::S, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("arrow-mark-down")
+        );
+        send(&mut rail, egui::Key::P, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("brush")
         );
         send(&mut rail, egui::Key::Num1, egui::Modifiers::NONE);
         assert_eq!(rail.tool(), Tool::Pointer);

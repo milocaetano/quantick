@@ -273,6 +273,16 @@ trait DrawingToolImpl: Sync {
     fn anchor_snap(&self) -> AnchorSnap {
         AnchorSnap::Pointer
     }
+    /// Whether a freshly placed object of this tool needs its settings panel
+    /// opened straight away.
+    ///
+    /// `false` for every tool whose object is complete the moment it is
+    /// drawn — which is all of them but one. A text note is placed *empty*,
+    /// and the field that gives it words is in the panel: without this it
+    /// arrives as a grey placeholder with no visible way to write in it.
+    fn opens_settings_on_place(&self) -> bool {
+        false
+    }
     /// Whether this tool is placed by a held drag instead of by N clicks.
     ///
     /// A freehand tool answers `0` from [`Self::required_points`], because
@@ -442,6 +452,11 @@ impl DrawingTool {
     #[must_use]
     pub fn freehand(self) -> bool {
         self.0.freehand()
+    }
+
+    #[must_use]
+    pub fn opens_settings_on_place(self) -> bool {
+        self.0.opens_settings_on_place()
     }
 
     /// The stock look of a fresh object of this tool, before the trader's
