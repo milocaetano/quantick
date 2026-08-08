@@ -156,6 +156,19 @@ impl BarFootprint {
         self.doublings > 0
     }
 
+    /// The builder's base grouping, before any cap-forced doubling. Crate-only:
+    /// [`VolumeProfile::merge`](crate::VolumeProfile::merge) needs it to refuse
+    /// ladders whose buckets never aligned in the first place.
+    pub(crate) fn base_group(&self) -> Decimal {
+        self.base_group
+    }
+
+    /// Power-of-two doublings applied on top of the base group. Crate-only:
+    /// the profile merge folds finer ladders down by exactly this difference.
+    pub(crate) fn doublings(&self) -> u32 {
+        self.doublings
+    }
+
     /// Point of control: the bucket with the highest total volume.
     ///
     /// Ties break toward the **lowest** bucket, deterministically: iteration

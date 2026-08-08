@@ -123,7 +123,12 @@ auto-triggers, and none claim standalone statistical edge.
 
 Explicitly not built (v1): Nelogica progression/sequential factors (false-
 positive generators; stacking covers the useful part), per-candle value area
-(session-profile concept, meaningless on one bar's sample), per-cell heatmap /
+(session-profile concept, meaningless on one bar's sample — value area now
+exists, but over a *range*: `engine::VolumeProfile` folds many bars' ladders
+and `value_area(fraction)` expands from the POC two printed rows at a time,
+Sierra/CQG style, larger pair wins, exact ties expand downward — the same
+tie-toward-lowest rule the POC itself uses; the fixed-range-profile drawing is
+its consumer), per-cell heatmap /
 delta% coloring everything, trade-count clusters, big-order alerts, financial
 volume unit (dollar bars already give that reading), second simultaneous
 footprint. Deferred to v2: unfinished auction (must be computed on the base

@@ -759,6 +759,10 @@ pub struct ChartPane {
     /// changes: at a bar close the previous bar's ladder must never linger
     /// on the new bar, not even for one throttle interval.
     footprint_live: Option<(f64, usize, quantick_engine::BarFootprint)>,
+    /// Bumped whenever [`Self::footprint_live`] is re-taken or cleared — the
+    /// cache key the range-profile drawings use to notice the live edge
+    /// moved, so they re-fold at the snapshot cadence, never per paint.
+    footprint_live_version: u64,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -943,6 +947,7 @@ impl ChartPane {
             footprint_override: None,
             footprint_lod: crate::footprint_render::FootprintLod::default(),
             footprint_live: None,
+            footprint_live_version: 0,
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
@@ -985,6 +990,19 @@ impl ChartPane {
             shared_pointer_mark: None,
             pending_reanchor: None,
         }
+    }
+
+    /// Whether any placed or in-flight drawing is a fixed-range volume
+    /// profile — the second consumer of the footprint ladders, keeping
+    /// accumulation on while the layer itself is hidden. O(drawings), once
+    /// per frame, never on the ingestion path.
+    fn wants_range_profile(&self) -> bool {
+        self.drawings
+            .items()
+            .iter()
+            .map(|drawing| drawing.tool)
+            .chain(self.drawings.draft().map(|draft| draft.tool))
+            .any(|tool| tool.id() == crate::frvp::TOOL_ID)
     }
 
     /// The footprint setup this chart draws with: its own once configured
@@ -3031,17 +3049,20 @@ impl ChartPane {
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
-        // The ladders accumulate only while the layer is on somewhere: off,
-        // ingestion pays nothing and holds nothing; the first frame after a
-        // switch-on refolds the retained trades (declared cost, once). Then
-        // adopt the book engine's capture bucket as the row grid (the
-        // instrument's price_step where the feed declares one). Both before
-        // the frame borrows the bar slices; both no-ops every frame but the
-        // one where something changed.
-        let footprint_on = self.footprint_visible
-            && self
-                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
-                .is_none();
+        // The ladders accumulate only while something consumes them: the
+        // footprint layer, or a fixed-range-profile drawing (placed or being
+        // placed) folding those same ladders over its bar span. Off, ingestion
+        // pays nothing and holds nothing; the first frame after a switch-on
+        // refolds the retained trades (declared cost, once). Then adopt the
+        // book engine's capture bucket as the row grid (the instrument's
+        // price_step where the feed declares one). Both before the frame
+        // borrows the bar slices; both no-ops every frame but the one where
+        // something changed.
+        let footprint_blocked = self
+            .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
+            .is_some();
+        let footprint_on =
+            (self.footprint_visible || self.wants_range_profile()) && !footprint_blocked;
         self.state.set_footprint_enabled(footprint_on);
         if footprint_on
             && let Some(base) = self
@@ -3059,6 +3080,48 @@ impl ChartPane {
         let partial = self.state.partial();
         let closed_total = prefix.len() + closed.len();
         let total = closed_total + usize::from(partial.is_some());
+
+        // Snapshot the forming bar's ladder at ~10 Hz rather than per print;
+        // between snapshots the drawn numbers hold still. Taken here, with
+        // the accumulation switch, because it has two consumers now — the
+        // footprint layer and the range-profile drawings — and each reading
+        // the live ladder on its own cadence would show two different bars.
+        if footprint_on {
+            let now = painter.ctx().input(|i| i.time);
+            match self.state.partial_footprint() {
+                Some(partial_ladder) => {
+                    let stale =
+                        self.footprint_live
+                            .as_ref()
+                            .is_none_or(|(taken, snapshot_slot, _)| {
+                                *snapshot_slot != closed_total
+                                    || now - *taken >= LIVE_LADDER_REFRESH_S
+                            });
+                    if stale {
+                        self.footprint_live = Some((now, closed_total, partial_ladder.clone()));
+                        self.footprint_live_version = self.footprint_live_version.wrapping_add(1);
+                    }
+                }
+                None => {
+                    if self.footprint_live.take().is_some() {
+                        self.footprint_live_version = self.footprint_live_version.wrapping_add(1);
+                    }
+                }
+            }
+        }
+        // Bring the range-profile drawings' folds up to date before anything
+        // paints. Key-guarded inside: the common frame compares one small key
+        // per profile object and folds nothing.
+        crate::frvp::refresh(
+            &mut self.drawings,
+            &crate::frvp::RefreshInputs {
+                state: &self.state,
+                prefix_len: prefix.len(),
+                partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
+                partial_version: self.footprint_live_version,
+                blocked: footprint_blocked,
+            },
+        );
         let areas = self.plot_areas(area);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
@@ -3265,24 +3328,9 @@ impl ChartPane {
                 .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
                 .is_none()
         {
-            // Snapshot the forming bar's ladder at ~10 Hz rather than per
-            // print; between snapshots the drawn numbers hold still.
-            let now = clip.ctx().input(|i| i.time);
-            match self.state.partial_footprint() {
-                Some(partial) => {
-                    let stale =
-                        self.footprint_live
-                            .as_ref()
-                            .is_none_or(|(taken, snapshot_slot, _)| {
-                                *snapshot_slot != closed_total
-                                    || now - *taken >= LIVE_LADDER_REFRESH_S
-                            });
-                    if stale {
-                        self.footprint_live = Some((now, closed_total, partial.clone()));
-                    }
-                }
-                None => self.footprint_live = None,
-            }
+            // The forming bar's ladder is the ~10 Hz snapshot taken with the
+            // accumulation switch at the top of the frame, shared with the
+            // range-profile drawings.
             let viewport = &self.viewport;
             let frame = crate::footprint_render::LayerFrame {
                 painter: &clip,
@@ -4647,6 +4695,43 @@ mod tests {
         // "follow the default again".
         pane.set_footprint_override(None);
         assert_eq!(pane.footprint_config(&window), &window);
+    }
+
+    /// A fixed-range profile is the footprint ladders' second consumer: with
+    /// the layer itself hidden, a placed (or in-flight) profile object keeps
+    /// accumulation wanted, and deleting the last one releases it — the gate
+    /// `draw_chart` feeds into `set_footprint_enabled`.
+    #[test]
+    fn a_range_profile_drawing_wants_the_footprint_ladders() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        assert!(!pane.wants_range_profile(), "empty store wants nothing");
+
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        // The first anchor alone is an in-flight draft — accumulation must
+        // already be on, or the preview would show an empty profile.
+        assert!(
+            !pane
+                .drawings
+                .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+        );
+        assert!(pane.wants_range_profile(), "a draft already wants ladders");
+        assert!(
+            pane.drawings
+                .place(frvp, crate::drawings::ChartPoint::at(5.0, 105.0))
+        );
+        assert!(pane.wants_range_profile());
+
+        assert_eq!(
+            pane.drawings.delete_selected(false),
+            crate::drawings::DeleteOutcome::Deleted
+        );
+        assert!(
+            !pane.wants_range_profile(),
+            "deleting the last profile releases the ladders"
+        );
     }
 
     /// The tape's lane is a live region, not a canvas. A drawing that ran
