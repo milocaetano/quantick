@@ -1237,6 +1237,47 @@ mod tests {
     use quantick_engine::Side;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
+    /// `first_heat_slot` maps the leftmost cell's normalized x back to the
+    /// global slot the region grid assigned it — the boundary where a range
+    /// profile's paint cuts from fill to silhouette.
+    #[test]
+    fn first_heat_slot_names_the_oldest_covered_bar() {
+        use crate::orderflow::grouping::EffectiveGrouping;
+        use crate::orderflow::history::RestingSide;
+        use crate::orderflow::projection::{HeatmapCell, HeatmapProjection};
+
+        let grouping = EffectiveGrouping {
+            base_width: Decimal::ONE,
+            multiple: 1,
+            bucket_width: Decimal::ONE,
+        };
+        let mut projection = HeatmapProjection::empty(true, grouping);
+        let cell = |x0: f64| HeatmapCell {
+            generation: 1,
+            side: RestingSide::Bid,
+            price_bucket: Decimal::ONE,
+            quantity: Decimal::ONE,
+            x0,
+            x1: x0 + 0.05,
+            y0: 0.2,
+            y1: 0.3,
+            intensity: 0.5,
+            alpha: 0.5,
+        };
+        let frame = |projection: HeatmapProjection| VisibleOrderflow {
+            projection: Arc::new(projection),
+            first_bar_index: 40,
+            slot_count: 10,
+        };
+
+        // No cells: no boundary — the paint must not invent a cut.
+        assert_eq!(frame(projection.clone()).first_heat_slot(), None);
+
+        // Cells in regions 3 and 7 of 10: region 3 wins, slot = 40 + 3.
+        projection.cells = Arc::new(vec![cell(0.71), cell(0.34)]);
+        assert_eq!(frame(projection).first_heat_slot(), Some(43));
+    }
+
     #[test]
     fn only_states_working_towards_a_live_book_read_as_syncing() {
         assert!(CaptureStatus::Connecting.is_syncing());

@@ -1026,6 +1026,23 @@ mod tests {
         );
     }
 
+    /// The fill→silhouette cut and the developing edge both project through
+    /// the anchors' own affine bar→x map; anchors sharing a bar have no
+    /// slope and must answer `None`, never a division blow-up.
+    #[test]
+    fn bar_x_extends_the_anchors_affine_map() {
+        let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(20.0, 105.0)];
+        let points = [egui::pos2(100.0, 0.0), egui::pos2(300.0, 0.0)];
+        // 10 bars over 200px → 20px per bar; bar 15 lands halfway.
+        assert_eq!(bar_x(&points, &anchors, 15.0), Some(200.0));
+        // Extrapolation works the same both ways.
+        assert_eq!(bar_x(&points, &anchors, 25.0), Some(400.0));
+        assert_eq!(bar_x(&points, &anchors, 5.0), Some(0.0));
+
+        let flat = [ChartPoint::at(10.0, 100.0), ChartPoint::at(10.0, 105.0)];
+        assert_eq!(bar_x(&points, &flat, 15.0), None);
+    }
+
     #[test]
     fn preset_round_trip_excludes_the_cache() {
         let mut payload = FrvpPayload {
