@@ -5979,6 +5979,43 @@ mod tests {
         );
     }
 
+    /// A single press-drag-release with a multi-anchor tool armed drops the
+    /// first anchor at the press and the second at the release — the drag
+    /// placement every two-point tool advertises ("click two points or
+    /// drag"). One gesture, one finished object.
+    #[test]
+    fn an_armed_two_point_tool_completes_on_a_single_drag() {
+        for tool_id in ["trend-line", "fixed-range-profile", "measure"] {
+            let (mut app, _cmd_rx) = app_with_history(200);
+            let ctx = egui::Context::default();
+            run_frame(&mut app, &ctx);
+            app.toolrail.arm(Tool::Drawing(drawing_tool(tool_id)));
+            run_frame(&mut app, &ctx);
+
+            let chart = app
+                .active_tab()
+                .flow_pane
+                .last_chart_area
+                .expect("a frame has been drawn");
+            let start = chart.center() - egui::vec2(120.0, 40.0);
+            let end = chart.center() + egui::vec2(120.0, 40.0);
+            drag_sized(&mut app, &ctx, TEST_WINDOW, start, end);
+
+            let drawings = app.active_tab().flow_pane.drawings.items();
+            assert_eq!(
+                drawings.len(),
+                1,
+                "{tool_id}: one drag places one finished object"
+            );
+            assert_eq!(drawings[0].points.len(), 2, "{tool_id}: both anchors down");
+            let bars: Vec<f32> = drawings[0].points.iter().map(|point| point.bar).collect();
+            assert!(
+                (bars[0] - bars[1]).abs() >= 1.0,
+                "{tool_id}: the anchors span the dragged distance, got {bars:?}"
+            );
+        }
+    }
+
     /// An anchor dropped in an indicator pane belongs to that pane.
     #[test]
     fn a_click_in_an_indicator_pane_draws_on_that_band() {

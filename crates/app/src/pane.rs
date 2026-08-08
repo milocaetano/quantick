@@ -2015,8 +2015,15 @@ impl ChartPane {
         self.drawing_band_hint = hovered
             .filter(|band| band.drawable() && !over_pane_chrome)
             .map(|band| band.rect);
-        self.drawing_hover = response
-            .hover_pos()
+        // While the placement drag is in flight the widget stops reporting
+        // hover (egui: a dragged widget is not "hovered"), which used to make
+        // the rubber band vanish for exactly the frames the trader is shaping
+        // the object. The raw pointer keeps answering, so the preview does.
+        let preview_pos = response.hover_pos().or_else(|| {
+            self.drawing_press_position
+                .and_then(|_| ui.input(|input| input.pointer.latest_pos()))
+        });
+        self.drawing_hover = preview_pos
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {
                 let (band, position) = self.placement_target(areas, bands, position)?;
@@ -3281,6 +3288,7 @@ impl ChartPane {
                 blocked: footprint_blocked,
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
+                draft_hover_bar: self.drawing_hover.map(|point| point.bar),
             },
         );
 

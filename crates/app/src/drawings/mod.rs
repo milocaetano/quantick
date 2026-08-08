@@ -868,6 +868,14 @@ impl Drawings {
         &mut self.items
     }
 
+    /// The in-flight draft, under the same derived-state-only contract as
+    /// [`Self::items_mut`] — the profile refresh folds it so the histogram
+    /// is live while the range is still being placed.
+    #[must_use]
+    pub(crate) fn draft_mut(&mut self) -> Option<&mut Drawing> {
+        self.draft.as_mut()
+    }
+
     /// How many objects are painted on the tab's other panes as well — the
     /// per-frame reprojection cost, in the health summary.
     #[must_use]

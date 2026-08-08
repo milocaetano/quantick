@@ -44,6 +44,10 @@ pub struct RefreshInputs<'a> {
     /// paint's fill→outline cut, never the fold, so it lives on the cache
     /// *beside* the key — a map growing must not re-merge anything.
     pub heat_first_slot: Option<usize>,
+    /// Where the pointer hovers while a profile is being placed — the bar
+    /// that completes a one-anchor draft's range, so the histogram is live
+    /// under the drag instead of appearing only on release.
+    pub draft_hover_bar: Option<f32>,
 }
 
 /// Bring every fixed-range-profile drawing's cached profile up to date.
@@ -61,6 +65,24 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
             continue;
         };
         refresh_one(payload, a.min(b), a.max(b), inputs);
+    }
+    // The in-flight draft folds too, with the hovered bar standing in for
+    // the second anchor — the histogram forms under the drag, instead of the
+    // trader shaping a range blind and seeing the data only on release.
+    if let Some(draft) = drawings
+        .draft_mut()
+        .filter(|draft| draft.tool.id() == TOOL_ID)
+    {
+        let span = match (draft.points.first(), draft.points.get(1)) {
+            (Some(a), Some(b)) => Some((a.bar, b.bar)),
+            (Some(a), None) => inputs.draft_hover_bar.map(|hover| (a.bar, hover)),
+            _ => None,
+        };
+        if let Some((a, b)) = span
+            && let Some(payload) = draft.payload.as_any_mut().downcast_mut::<FrvpPayload>()
+        {
+            refresh_one(payload, a.min(b), a.max(b), inputs);
+        }
     }
 }
 
@@ -250,6 +272,7 @@ mod tests {
             blocked,
             side_inferred: false,
             heat_first_slot: None,
+            draft_hover_bar: None,
         }
     }
 
