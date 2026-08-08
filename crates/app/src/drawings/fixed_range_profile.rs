@@ -430,6 +430,11 @@ impl DrawingToolImpl for FixedRangeProfile {
                     fmt_qty(profile.total_delta())
                 ));
                 status.push_str(&format!(" · rows {}", profile.group()));
+                if profile.is_aggregated() {
+                    // The rows are coarser than the capture grid — spoken,
+                    // like the footprint legend speaks its coarsening.
+                    status.push_str(" · grouped");
+                }
                 if cache.bars_covered < cache.bars_total {
                     status.push_str(&format!(
                         " · profile from {} of {} bars",
