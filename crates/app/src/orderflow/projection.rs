@@ -346,14 +346,10 @@ impl SettledProjection {
         let mut aggressions = Vec::with_capacity(self.aggressions.len() + live.aggressions.len());
         aggressions.extend(self.aggressions.iter().cloned());
         aggressions.extend(live.aggressions);
-        let dropped_aggressions = if config.show_aggressions {
-            self.dropped_aggressions
-                + aggressions
-                    .len()
-                    .saturating_sub(config.max_aggression_primitives)
-        } else {
-            0
-        };
+        let dropped_aggressions = self.dropped_aggressions
+            + aggressions
+                .len()
+                .saturating_sub(config.max_aggression_primitives);
         // Capped first, then ordered: the cap picks by size, but what a frame
         // draws is ordered by time, so a chart that is over the budget stacks
         // its bubbles the same way as one that is under it.
@@ -367,17 +363,13 @@ impl SettledProjection {
                 .then_with(|| a.agg_id.cmp(&b.agg_id))
         });
 
-        if !config.show_aggressions {
-            aggressions.clear();
-        }
-
-        // Side switches are display-only and run last: the size reference, the
-        // dust merge and the liquidity association all saw both sides, so
-        // hiding one side never rescales or re-associates the other.
-        aggressions.retain(|mark| match mark.side {
-            AggressorSide::Buy => config.show_buy_aggressions,
-            AggressorSide::Sell => config.show_sell_aggressions,
-        });
+        // The display switches — the aggression layer's master switch and the
+        // per-side ones — are *not* applied here. A projection is the fact the
+        // frame observed, and more than one surface reads it: the bubbles, the
+        // consumption carve, and the live strip's histogram beside the price
+        // axis. Filtering here made every one of them a hostage of the bubble
+        // switch (the strip went blank when the bubbles were hidden). Each
+        // renderer now decides what it draws — see `RenderContext::bubbles`.
 
         // Both halves capped themselves where they were built; the join is
         // capped again for the same reason the bubbles are, so the markers a
@@ -3081,12 +3073,22 @@ mod tests {
             .expect("the sell bubble draws with both sides on")
             .size;
 
+        // A side switch is a display choice, so the projection still carries
+        // both prints: what a frame *draws* is decided in the renderer
+        // (`RenderContext::bubbles`), which is what lets the live strip read
+        // the same clusters while a side — or the whole bubble layer — is
+        // hidden. The invariant this test exists for survives that move: the
+        // size reference saw both sides, so hiding the buys must not inflate
+        // the sell that stayed.
         let only_sell = projection_with(false, true);
-        assert_eq!(only_sell.aggressions.len(), 1);
-        assert_eq!(only_sell.aggressions[0].side, Side::Sell);
-        // The size reference saw both sides, so hiding the buys must not
-        // inflate the sell that stayed.
-        assert_eq!(only_sell.aggressions[0].size, sell_size);
+        assert_eq!(only_sell.aggressions.len(), 2);
+        let hidden_buy_sell_size = only_sell
+            .aggressions
+            .iter()
+            .find(|bubble| bubble.side == Side::Sell)
+            .expect("the sell print is still a fact of the frame")
+            .size;
+        assert_eq!(hidden_buy_sell_size, sell_size);
     }
 
     #[test]

@@ -236,6 +236,23 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
+    /// State that a surface other than the bubbles is reading the aggression
+    /// clusters this frame — the live strip beside the price axis.
+    ///
+    /// The pane says this every frame from the layer it owns, so the two can
+    /// never drift apart. With the bubbles hidden and the strip shown, this is
+    /// what keeps prints being retained and projected: the strip draws the
+    /// same clusters, from the same engine path, and stopping the pipeline
+    /// under it would blank a live surface nobody switched off.
+    pub fn set_aggression_demand(&mut self, wanted: bool) {
+        if self.config.aggression_demand == wanted {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.aggression_demand = wanted;
+        self.commit_config_changes(before);
+    }
+
     /// Whether the live lane's boundary and live-edge lines are drawn.
     #[must_use]
     pub fn lane_marks_visible(&self) -> bool {
@@ -2071,8 +2088,56 @@ mod tests {
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
 
-        // Turning the bubbles off closes the pipeline again.
+        // Turning the bubbles off closes the pipeline again — nobody is left
+        // reading it.
         view.set_bubbles_enabled(false);
+        assert!(
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+                .is_none()
+        );
+    }
+
+    /// The live strip is a consumer in its own right: it draws the forming
+    /// bar's clusters beside the price axis, from the same engine path the
+    /// bubbles use. Hiding the bubbles must not blank it — "essa parte deve
+    /// permanecer calculando … mesmo desabilitando a bolha".
+    #[test]
+    fn the_live_strip_alone_keeps_the_aggression_pipeline_running() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        // No depth capture, no bubbles: only the strip is asking.
+        view.set_aggression_demand(true);
+        assert!(!view.enabled(), "a strip must not start book capture");
+        assert!(!view.bubbles_enabled(), "and it draws no bubbles");
+
+        view.record_trade(&Trade {
+            agg_id: 1,
+            timestamp_ms: 1_000,
+            price: Decimal::new(1_005, 1),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        });
+        view.flush_for_test();
+        assert_eq!(view.health().aggression_count, 1, "the print was retained");
+
+        let bars = [bar(900, 1_100)];
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.flush_for_test();
+        let frame = view
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .expect("the strip's own frame");
+        assert_eq!(
+            frame.projection.aggressions.len(),
+            1,
+            "the strip reads the clusters the hidden bubbles would have drawn"
+        );
+        assert!(
+            !live_strip::aggression_rows(&frame.projection.aggressions, 900).is_empty(),
+            "and they become histogram rows"
+        );
+
+        // Drop the demand and the pipeline closes, exactly as before: nothing
+        // keeps running for a surface nobody is showing.
+        view.set_aggression_demand(false);
         assert!(
             view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()

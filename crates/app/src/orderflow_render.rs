@@ -890,6 +890,27 @@ impl<'a> RenderContext<'a> {
             style,
         }
     }
+
+    /// The aggressions this canvas draws as bubbles, in projection order.
+    ///
+    /// The display switches live here rather than in the projection: the
+    /// clusters are a fact several surfaces read (bubbles, the consumption
+    /// carve behind them, the live strip's histogram), so hiding the bubble
+    /// layer has to hide bubbles — not empty the frame everyone else reads.
+    /// The size reference, the dust merge and the liquidity association all
+    /// saw both sides upstream, so hiding one side never rescales or
+    /// re-associates the other.
+    pub(crate) fn bubbles(&self) -> impl Iterator<Item = &'a AggressionPrimitive> {
+        let style = self.style;
+        let projection = self.projection;
+        projection.aggressions.iter().filter(move |mark| {
+            style.aggression_layer
+                && match mark.side {
+                    Side::Buy => style.show_buy,
+                    Side::Sell => style.show_sell,
+                }
+        })
+    }
 }
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
@@ -1122,7 +1143,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
     // Carve a gap around each consumption bubble so a re-stacked wall does not
     // slide through it: the eaten wall ends, the bubble marks the bite, and the
     // fresh wall only resumes to the bubble's right.
-    for trade in &context.projection.aggressions {
+    for trade in context.bubbles() {
         if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
             continue;
         }
@@ -1336,7 +1357,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // Consumption trail behind the bubbles, so a bubble's own fill never hides it.
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
-        for trade in &context.projection.aggressions {
+        for trade in context.bubbles() {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
@@ -1357,7 +1378,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         }
     }
 
-    for trade in &context.projection.aggressions {
+    for trade in context.bubbles() {
         let Some(center) = center_of(trade) else {
             continue;
         };
@@ -3368,6 +3389,96 @@ mod tests {
             )
         });
         assert!(readable.contains(&sell_ink), "a readable pie: {readable}");
+    }
+
+    /// Hiding the bubble layer hides bubbles — it does not empty the frame.
+    ///
+    /// The clusters are a fact more than one surface reads: the bubbles, the
+    /// consumption carve behind them, and the live strip's histogram beside
+    /// the price axis. The projection used to apply these switches, so turning
+    /// the bubbles off blanked the strip with them ("se eu desativar as bolhas
+    /// de agressão, quero continuar vendo essa parte"). The filter belongs
+    /// here, one step before the ink.
+    #[test]
+    fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(600.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+        let mut projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+        for (agg_id, side, x) in [(1_u64, Side::Buy, 0.25_f64), (2, Side::Sell, 0.75)] {
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id,
+                agg_ids: vec![agg_id],
+                generation: None,
+                side,
+                consumed_side: match side {
+                    Side::Buy => BookSide::Ask,
+                    Side::Sell => BookSide::Bid,
+                },
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: match side {
+                    Side::Buy => 1.0,
+                    Side::Sell => 0.0,
+                },
+                live: false,
+                price_bucket: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x,
+                y: 0.5,
+                size: 1.0,
+            });
+        }
+
+        let drawn = |style: &OrderflowRenderStyle| {
+            RenderContext::new(&projection, layout, style)
+                .bubbles()
+                .map(|mark| mark.agg_id)
+                .collect::<Vec<_>>()
+        };
+
+        let both = OrderflowRenderStyle::default();
+        assert_eq!(drawn(&both), vec![1, 2]);
+
+        let mut buys_hidden = both.clone();
+        buys_hidden.show_buy = false;
+        assert_eq!(drawn(&buys_hidden), vec![2]);
+
+        let mut layer_off = both.clone();
+        layer_off.aggression_layer = false;
+        assert!(drawn(&layer_off).is_empty(), "no bubble is drawn");
+        // …and the frame the other surfaces read is untouched: this is the
+        // whole point of moving the switch out of the projection.
+        assert_eq!(projection.aggressions.len(), 2);
+        // The strip builds its histogram from exactly these clusters, so it
+        // still has both prints with the bubble layer off.
+        let rows = crate::live_strip::aggression_rows(&projection.aggressions, 0);
+        assert_eq!(rows.len(), 1, "both prints share one bucket");
+        assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);
+        assert_eq!(rows[0].sell, rust_decimal::Decimal::ONE);
+
+        // Nothing draws over the canvas either — the bubble pass is silent.
+        let painted_with_layer_off = painted(|painter| {
+            draw_aggression_bubbles(
+                painter,
+                &RenderContext::new(&projection, layout, &layer_off),
+            );
+        });
+        assert!(
+            !painted_with_layer_off.contains("Circle"),
+            "no circle with the layer off: {painted_with_layer_off}"
+        );
     }
 
     /// The lane's radius multiplier has to survive all the way to the circle

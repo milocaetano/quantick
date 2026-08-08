@@ -3189,7 +3189,13 @@ impl ChartPane {
             visible_state,
             partial_visible,
         );
+        // The live strip reads the same aggression clusters the bubbles do, so
+        // it is a consumer of the projection in its own right. Stated here,
+        // every frame, from the layer this pane owns: with the bubbles hidden
+        // and the strip shown, the pipeline stays alive for the strip alone.
+        let strip_demand = self.live_strip_visible;
         let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
+            orderflow.set_aggression_demand(strip_demand);
             orderflow.project_visible(timeline, lane_width_px > 0.0, end == total, scale.range())
         });
         if let Some(orderflow) = self.orderflow.as_mut()
