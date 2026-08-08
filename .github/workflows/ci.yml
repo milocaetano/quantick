@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Agent guardrails
+        # The hooks in .claude/settings.json are what keep an agent session off
+        # the main checkout and off an un-reviewed PR. Nothing in cargo test
+        # touches them, so they get their own step. Hermetic: the suite builds
+        # its own throwaway repos and never reads this checkout.
+        run: sh .claude/hooks/guardrails_test.sh
       - name: Install desktop GUI dependencies
         # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
         run: |
