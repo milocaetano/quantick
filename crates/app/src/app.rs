@@ -219,6 +219,20 @@ struct InspectorActions {
 }
 
 impl InspectorActions {
+    /// Whether this frame asked for anything at all. The context bar reads
+    /// it to decide whether the undo baseline is worth cloning.
+    fn any(&self) -> bool {
+        self.toggle_hidden
+            || self.toggle_lock
+            || self.toggle_pin
+            || self.delete
+            || self.cancel_delete
+            || self.force_delete
+            || self.close
+            || self.edited
+            || self.saved_default.is_some()
+    }
+
     /// Fold another frame section's requests into this one — the title bar
     /// and the body each report intent, the host applies the union.
     fn merge(&mut self, other: Self) {
@@ -4204,21 +4218,28 @@ impl QuantickApp {
         let Some(bbox) = self.drawing_bbox_on_screen(chart, index) else {
             return;
         };
-        let before = self.drawing_pane().drawings.items()[index].clone();
-        let mut style = before.style;
-        let glyph_before = before.tool.glyph_size(&before);
+        // Read the object, never clone it, on the way in. This runs every
+        // frame something is selected, and a `Drawing` carries a `Vec` of
+        // anchors plus a boxed payload — a pencil stroke is 512 of them. The
+        // clone the undo baseline needs is paid for below, only on the frame
+        // an action actually happened.
+        let drawing = &self.drawing_pane().drawings.items()[index];
+        let tool = drawing.tool;
+        let locked = drawing.locked;
+        let mut style = drawing.style;
+        let glyph_before = tool.glyph_size(drawing);
         let mut object = drawings::context_bar::BarObject {
             style: &mut style,
             glyph_size: glyph_before,
-            locked: before.locked,
-            hidden: before.hidden,
-            supports_fill: before.tool.supports_fill(),
+            locked,
+            hidden: drawing.hidden,
+            supports_fill: tool.supports_fill(),
             // Pinned, the full panel is already on screen: a gear leading
             // where the eye already is would be the dead slot the bar's own
             // contract forbids.
             settings_available: !self.inspector_pinned,
-            confirming_delete: self.drawing_delete_confirm && before.locked,
-            tool_name: before.tool.name(),
+            confirming_delete: self.drawing_delete_confirm && locked,
+            tool_name: tool.name(),
         };
         let position = self.context_bar.manual_position().unwrap_or_else(|| {
             let right_limit = self
@@ -4246,6 +4267,22 @@ impl QuantickApp {
         } else if intent.drag_delta != egui::Vec2::ZERO {
             self.context_bar.set_manual(position + intent.drag_delta);
         }
+        let actions = InspectorActions {
+            toggle_hidden: intent.toggle_hidden,
+            toggle_lock: intent.actions.toggle_lock,
+            delete: intent.actions.delete,
+            force_delete: intent.force_delete,
+            cancel_delete: intent.cancel_delete,
+            edited: intent.edited,
+            ..InspectorActions::default()
+        };
+        // The undo baseline, taken *before* the edit below lands — a copy
+        // made afterwards would equal the new state and the change would
+        // never make it into the history. It costs its allocation only on a
+        // frame that asked for something, or one with a gesture still open
+        // waiting to be committed; idle frames clone nothing.
+        let before = (actions.any() || self.inspector_edit_baseline.is_some())
+            .then(|| self.drawing_pane().drawings.items()[index].clone());
         if intent.edited
             && let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut()
         {
@@ -4265,16 +4302,9 @@ impl QuantickApp {
                 .drawings
                 .duplicate_selected(DUPLICATE_OFFSET_BARS);
         }
-        let actions = InspectorActions {
-            toggle_hidden: intent.toggle_hidden,
-            toggle_lock: intent.actions.toggle_lock,
-            delete: intent.actions.delete,
-            force_delete: intent.force_delete,
-            cancel_delete: intent.cancel_delete,
-            edited: intent.edited,
-            ..InspectorActions::default()
-        };
-        self.apply_inspector_actions(ctx, actions, index, before, now);
+        if let Some(before) = before {
+            self.apply_inspector_actions(ctx, actions, index, before, now);
+        }
     }
 
     /// The pinned inspector: a dock panel at the chart's side. Declared with
@@ -10056,6 +10086,52 @@ plot(close)
             ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
                 .is_none(),
             "no inspector window exists before the gear is pressed"
+        );
+    }
+
+    /// The thing the whole change is for: recolouring a drawing without a
+    /// panel. Swatch, click, done — and it lands as one undo entry, not one
+    /// per frame the popover was open.
+    #[test]
+    fn the_bar_recolours_a_drawing_in_two_clicks() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        let before = app.active_tab().flow_pane.drawings.items()[0].style.color;
+        let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
+
+        let swatch = app
+            .context_bar
+            .color_rect()
+            .expect("the bar renders its colour slot");
+        click_chart(&mut app, &ctx, swatch.center());
+        run_frame(&mut app, &ctx);
+
+        // The palette's fourth entry is BUY — "this is the buy zone" is the
+        // reason a level gets recoloured at all.
+        let buy = app
+            .context_bar
+            .swatch_rect(3)
+            .expect("the palette opened under the slot");
+        click_chart(&mut app, &ctx, buy.center());
+        run_frame(&mut app, &ctx);
+
+        let after = app.active_tab().flow_pane.drawings.items()[0].style.color;
+        assert_ne!(after, before, "the swatch has to reach the object");
+        assert_eq!(after, theme::BUY);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.undo_depth(),
+            undo_before + 1,
+            "one colour change is one undo entry"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(0),
+            "styling an object never costs the selection"
         );
     }
 

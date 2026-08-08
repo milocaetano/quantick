@@ -20,6 +20,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use smallvec::SmallVec;
 
 use super::action_bar::ActionBarIntent;
 use super::{DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA};
@@ -114,9 +115,12 @@ pub struct Capabilities {
 }
 
 /// The cells of a bar for an object with these capabilities.
+///
+/// A `SmallVec`, not a `Vec`: this is rebuilt on every frame something is
+/// selected, and the bar never holds more cells than fit inline.
 #[must_use]
-pub fn slots(caps: Capabilities) -> Vec<Slot> {
-    let mut slots = vec![Slot::Grip, Slot::Color];
+pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 12]> {
+    let mut slots = SmallVec::from_slice(&[Slot::Grip, Slot::Color]);
     if caps.stroke_width {
         slots.push(Slot::Width);
     }
@@ -239,12 +243,21 @@ pub struct ContextBar {
     anchor: Option<egui::Rect>,
     /// Last window size seen, so a resize can suppress like a zoom does.
     last_screen: Option<egui::Rect>,
+    /// The delete tooltip, which names the object. Cached rather than
+    /// formatted per frame: the bar is up for as long as something is
+    /// selected, and this sentence only changes when the tool does.
+    delete_hover: String,
+    delete_hover_for: &'static str,
     /// Last resolved rect, for the wake radius and for tests.
     rect: Option<egui::Rect>,
-    /// Where the gear landed, so a test can press the real button rather
-    /// than trust arithmetic about slot order.
+    /// Where the gear and the colour controls landed, so a test can press
+    /// the real buttons rather than trust arithmetic about slot order.
     #[cfg(test)]
     gear_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    color_rect: Option<egui::Rect>,
+    #[cfg(test)]
+    swatch_rects: Vec<egui::Rect>,
 }
 
 impl ContextBar {
@@ -326,6 +339,18 @@ impl ContextBar {
         self.gear_rect
     }
 
+    #[cfg(test)]
+    #[must_use]
+    pub fn color_rect(&self) -> Option<egui::Rect> {
+        self.color_rect
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub fn swatch_rect(&self, index: usize) -> Option<egui::Rect> {
+        self.swatch_rects.get(index).copied()
+    }
+
     fn toggle(&mut self, popover: Popover, anchor: egui::Rect) {
         self.open = if self.open == popover {
             Popover::None
@@ -379,8 +404,10 @@ pub struct BarObject<'a> {
     /// of this module's contract is what buys the bare glyph everywhere else.
     pub confirming_delete: bool,
     /// Name of the tool, for the delete tooltip: a trader who cannot tell
-    /// *what* was deleted cannot use undo to get it back.
-    pub tool_name: &'a str,
+    /// *what* was deleted cannot use undo to get it back. `'static` because
+    /// the registry's names are, which is what lets the tooltip be cached
+    /// instead of formatted every frame.
+    pub tool_name: &'static str,
 }
 
 /// Draw the bar at `position` and report what was asked of it.
@@ -405,6 +432,10 @@ pub fn show(
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
     bar.rect = Some(rect);
+    if bar.delete_hover_for != object.tool_name {
+        bar.delete_hover_for = object.tool_name;
+        bar.delete_hover = format!("Delete {} (Del)", object.tool_name.to_lowercase());
+    }
 
     // One opacity for the whole surface: near the pointer it is a tool, away
     // from it it steps back behind the price without disappearing.
@@ -535,10 +566,9 @@ fn draw_slot(
             // The glyph earns its place through the tooltip that names the
             // object, the toast that names it again on the way out, and the
             // undo behind both.
-            let hover = format!("Delete {} (Del)", object.tool_name.to_lowercase());
             if IconButton::new(icons::TRASH_SIMPLE, TOOLRAIL_ICON)
                 .accent(theme::WARN)
-                .hover_text(&hover)
+                .hover_text(&bar.delete_hover)
                 .show(ui)
                 .clicked()
             {
@@ -600,7 +630,7 @@ fn draw_separator(ui: &mut egui::Ui) {
 fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(TOOLRAIL_ICON.hit, TOOLRAIL_ICON.hit),
-        sense(object),
+        egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
         let swatch =
@@ -613,7 +643,15 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
             egui::Stroke::new(1.0_f32, theme::BORDER),
         );
     }
-    let response = response.on_hover_text(hover_text(object, "Colour"));
+    #[cfg(test)]
+    {
+        bar.color_rect = Some(rect);
+    }
+    let response = response.on_hover_text(hover_text(
+        object,
+        "Colour",
+        "Colour - the lock protects position, not style",
+    ));
     if response.clicked() {
         bar.toggle(Popover::Color, rect);
     }
@@ -624,7 +662,7 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
 fn draw_width_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'_>) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(TOOLRAIL_ICON.hit, TOOLRAIL_ICON.hit),
-        sense(object),
+        egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
         let color = if response.hovered() {
@@ -646,7 +684,11 @@ fn draw_width_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
             egui::Stroke::new(object.style.width_px, color),
         );
     }
-    let response = response.on_hover_text(hover_text(object, "Line width"));
+    let response = response.on_hover_text(hover_text(
+        object,
+        "Line width",
+        "Line width - the lock protects position, not style",
+    ));
     if response.clicked() {
         bar.toggle(Popover::Width, rect);
     }
@@ -663,17 +705,13 @@ fn draw_glyph_size_slot(ui: &mut egui::Ui, bar: &mut ContextBar) {
 
 /// A locked object keeps its shape *and* its style: the lock protects the
 /// geometry from an accidental drag, which is the only accident the trader
-/// asked to be protected from.
-fn sense(_object: &BarObject<'_>) -> egui::Sense {
-    egui::Sense::click()
-}
-
-fn hover_text(object: &BarObject<'_>, label: &'static str) -> String {
-    if object.locked {
-        format!("{label} - the lock protects position, not style")
-    } else {
-        label.to_owned()
-    }
+/// asked to be protected from — so the style slots stay live, and say so.
+///
+/// Both strings are `'static`: this is read on every frame the bar is up,
+/// and a `format!` here would allocate sixty times a second to say a
+/// sentence that never changes.
+fn hover_text(object: &BarObject<'_>, idle: &'static str, locked: &'static str) -> &'static str {
+    if object.locked { locked } else { idle }
 }
 
 fn draw_popover(
@@ -687,6 +725,8 @@ fn draw_popover(
         (popover, Some(anchor)) => (popover, anchor),
     };
     let id = egui::Id::new("drawing_context_bar_popover");
+    #[cfg(test)]
+    let mut swatch_rects = Vec::new();
     let response = egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(anchor.left_bottom() + egui::vec2(0.0, POPOVER_GAP_PX))
@@ -695,13 +735,23 @@ fn draw_popover(
                 .fill(theme::CONTROL)
                 .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
                 .show(ui, |ui| match popover {
-                    Popover::Color => draw_color_popover(ui, object, intent),
+                    Popover::Color => draw_color_popover(
+                        ui,
+                        object,
+                        intent,
+                        #[cfg(test)]
+                        &mut swatch_rects,
+                    ),
                     Popover::Width => draw_width_popover(ui, object, intent),
                     Popover::GlyphSize => draw_glyph_size_popover(ui, object, intent),
                     Popover::None => {}
                 });
         })
         .response;
+    #[cfg(test)]
+    {
+        bar.swatch_rects = swatch_rects;
+    }
     // Click anywhere else closes the popover and keeps the selection: the
     // bar is never modal, and dismissing a colour list is not a reason to
     // lose the object you were styling.
@@ -721,6 +771,7 @@ fn draw_color_popover(
     ui: &mut egui::Ui,
     object: &mut BarObject<'_>,
     intent: &mut ContextBarIntent,
+    #[cfg(test)] swatch_rects: &mut Vec<egui::Rect>,
 ) {
     ui.spacing_mut().item_spacing.x = ITEM_GAP_PX;
     ui.horizontal(|ui| {
@@ -747,6 +798,10 @@ fn draw_color_popover(
                         egui::Stroke::new(1.0_f32, theme::TEXT_MUTED),
                     );
                 }
+            }
+            #[cfg(test)]
+            {
+                swatch_rects.push(rect);
             }
             if response.clicked() {
                 object.style.color = swatch;
