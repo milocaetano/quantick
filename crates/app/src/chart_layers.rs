@@ -197,7 +197,8 @@ impl ChartLayer {
             Self::BookStatus => {
                 "the badge at the top-right reporting on the book feed. Hiding it silences a \
                  label, never the recorder: capture, generation and the ladder carry on, and the \
-                 L2 panel still states them"
+                 L2 panel still states them. A book that goes down or errors brings the badge \
+                 back on its own — hidden chrome may not hide a dead feed"
             }
             // Data honesty: this is the one switch that hides a statement
             // about missing data rather than data itself, so the entry says

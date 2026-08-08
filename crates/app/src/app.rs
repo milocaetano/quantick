@@ -57,10 +57,6 @@ const AXIS_GUTTER: f32 = 64.0;
 const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
-/// How far the indicator legend drops below the position HUD when both
-/// claim the chart's top-left corner. The order-flow key stacks under that
-/// same corner, so the pane reads this too — one number for one corner.
-pub(crate) const LEGEND_BELOW_HUD_OFFSET_PX: f32 = 64.0;
 
 /// The (flow, time) pane ids for tab `id`.
 ///
@@ -1608,9 +1604,13 @@ impl QuantickApp {
                 continue;
             };
             // The position HUD owns the very corner while a position is
-            // open; the legend rides just below it.
-            if side == PaneSide::Flow && self.active_tab().paper.position_summary().is_some() {
-                rect.min.y += LEGEND_BELOW_HUD_OFFSET_PX;
+            // open; the legend rides just below it. The order-flow key stacks
+            // under this legend and reads the same offset from the same place,
+            // so the two cannot drift apart.
+            if side == PaneSide::Flow {
+                rect.min.y += indicator_legend::hud_offset_px(
+                    self.active_tab().paper.position_summary().is_some(),
+                );
             }
             for action in indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all()) {
                 pending.push((side, action));

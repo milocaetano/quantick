@@ -33,6 +33,9 @@ const ROW_HEIGHT_PX: f32 = 20.0;
 const ROW_SPACING_PX: f32 = 3.0;
 /// The frame's own vertical padding, top and bottom.
 const FRAME_PADDING_Y_PX: f32 = 5.0;
+/// How far this legend drops below the position HUD when both claim the
+/// chart's top-left corner. See [`hud_offset_px`].
+const HUD_OFFSET_PX: f32 = 64.0;
 
 /// What a legend row asked of the app this frame. The caller applies each
 /// against the pane the legend was drawn for — never the focused pane, so a
@@ -45,6 +48,19 @@ pub(crate) enum LegendAction {
     OpenSettings(SlotId),
     /// Remove the indicator.
     Remove(SlotId),
+}
+
+/// How far down this legend starts when the position HUD owns the very
+/// corner. Zero with no open position.
+///
+/// One owner for one number: the app places the legend with it, and the pane
+/// stacks the order-flow key below the same corner with it. They disagreed
+/// once — the pane also demanded input focus, so in a split with a position
+/// open and the *other* pane focused the chips dropped and the key did not,
+/// straight back onto them. The HUD does not care who has focus, so neither
+/// does this.
+pub(crate) fn hud_offset_px(position_open: bool) -> f32 {
+    if position_open { HUD_OFFSET_PX } else { 0.0 }
 }
 
 /// How much of the canvas's top-left corner this legend claims, measured

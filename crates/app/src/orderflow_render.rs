@@ -3253,6 +3253,58 @@ mod tests {
         );
     }
 
+    /// The key starts below whatever already owns the canvas's top-left
+    /// corner. It used to clear a constant 22 px — the chart header alone —
+    /// and printed straight through the indicator chips stacked under it.
+    #[test]
+    fn the_legend_starts_below_the_corner_it_was_told_about() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+        let projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+
+        let top_of_key = |inset: f32| {
+            let style = OrderflowRenderStyle {
+                legend_top_inset: inset,
+                ..OrderflowRenderStyle::default()
+            };
+            let ctx = egui::Context::default();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let context = RenderContext::new(&projection, layout, &style);
+                draw_compact_legend(&ctx.layer_painter(egui::LayerId::background()), &context);
+            });
+            let mut top = f32::INFINITY;
+            for shape in output.shapes {
+                let rect = shape.shape.visual_bounding_rect();
+                if rect.is_positive() {
+                    top = top.min(rect.top());
+                }
+            }
+            top
+        };
+
+        let header_only = top_of_key(LEGEND_HEADER_CLEARANCE_PX);
+        let with_two_chips = top_of_key(LEGEND_HEADER_CLEARANCE_PX + 60.0);
+        assert!(
+            header_only.is_finite() && with_two_chips.is_finite(),
+            "the key's panel has to be measurable: {header_only} / {with_two_chips}"
+        );
+        assert!(
+            with_two_chips - header_only >= 59.0,
+            "a taller corner has to push the key down by the same amount: \
+             {header_only} → {with_two_chips}"
+        );
+        // And a caller that measured nothing still clears the header.
+        assert!(top_of_key(0.0) >= rect.top() + LEGEND_HEADER_CLEARANCE_PX);
+    }
+
     /// The legend is a key for what is on screen: exactly one entry per layer
     /// that is both active as a family and switched on individually.
     #[test]
