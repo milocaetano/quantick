@@ -2292,6 +2292,18 @@ mod tests {
                 );
                 continue;
             }
+            if drawing_tool.id() == "fixed-range-profile" {
+                // The profile opts out too: its anchors' prices are not data
+                // (the extent comes from the profile), so the grab points
+                // ride the drawn object — anchor x's, visible-extent middle.
+                assert_eq!(handles.len(), 2);
+                assert_eq!(
+                    handles.iter().map(|handle| handle.x).collect::<Vec<_>>(),
+                    points.iter().map(|point| point.x).collect::<Vec<_>>(),
+                    "profile handles keep their anchors' x"
+                );
+                continue;
+            }
             assert_eq!(
                 handles.as_slice(),
                 points.as_slice(),
