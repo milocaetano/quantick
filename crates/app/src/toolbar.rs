@@ -637,10 +637,20 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
 /// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
 /// right-click opens its dock tab — looking is not enabling. Drawn inside the
 /// right-to-left layout, so the call order is the reverse of what is seen.
+///
+/// One alphabet for the group: **every glyph is the shape its layer draws on
+/// the chart**, never a metaphor for it. A line for the indicators, circles
+/// for the prints, the book's stacked rows for the depth map, a sideways
+/// histogram for the strip. The metaphors that used to sit here (a flame for
+/// the heatmap, a brick wall for the strip) had nothing to do with each other
+/// or with what the trader sees — and the depth map, which *is* the bid/ask
+/// lists, was the one that read least like itself.
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     draw_indicators_menu(ui, model, actions);
 
-    let bubbles = IconButton::new(icons::CIRCLES_THREE, TOOLBAR_ICON)
+    // The glyph comes from the dock tab that configures the layer, so the
+    // toggle and the panel behind it can never wear two different marks.
+    let bubbles = IconButton::new(DockTab::Bubbles.icon(), TOOLBAR_ICON)
         .active(model.bubbles_on)
         .accent(theme::BUY)
         // A bubble's whole message is its size. Where every print is one
@@ -660,7 +670,7 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
         actions.push(ToolbarAction::OpenDockTab(DockTab::Bubbles));
     }
 
-    let heatmap = IconButton::new(icons::FIRE, TOOLBAR_ICON)
+    let heatmap = IconButton::new(DockTab::L2.icon(), TOOLBAR_ICON)
         .active(model.heatmap_on)
         .accent(theme::ACCENT)
         .enabled(model.capabilities.book_capture)
@@ -680,7 +690,7 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     // Never capability-gated: the aggression histogram runs on the trade
     // stream every source provides (replay included), and without book data
     // the strip honestly degrades to it.
-    let strip = IconButton::new(icons::WALL, TOOLBAR_ICON)
+    let strip = IconButton::new(icons::CHART_BAR_HORIZONTAL, TOOLBAR_ICON)
         .active(model.live_strip_on)
         .accent(theme::ACCENT)
         .hover_text(
@@ -880,6 +890,34 @@ mod tests {
     /// The flat TRADE pair's width — the old `W_TRADE` constant, kept as the
     /// tests' baseline now that the group is measured from its labels.
     const FLAT_TRADE_W: f32 = 110.0;
+
+    /// The LAYERS group speaks one visual language: each glyph is the shape
+    /// its layer draws, and a layer that also has a dock tab wears the tab's
+    /// glyph rather than a second one of its own. The depth map in particular
+    /// has to read as the book — the stacked bid/ask lists — which is what
+    /// the flame it used to wear never did.
+    #[test]
+    fn the_layer_toggles_speak_one_visual_language() {
+        assert_eq!(DockTab::L2.icon(), icons::ROWS, "the book is its own rows");
+        assert_eq!(DockTab::Bubbles.icon(), icons::CIRCLES_THREE);
+
+        // Every glyph in the group is distinct — two layers wearing one mark
+        // would read as one feature — and none of them is a metaphor the
+        // chart never draws.
+        let group = [
+            icons::CHART_LINE,           // indicators: a plotted line
+            DockTab::Bubbles.icon(),     // prints: circles
+            DockTab::L2.icon(),          // depth map: the book's rows
+            icons::CHART_BAR_HORIZONTAL, // live strip: a sideways histogram
+        ];
+        for (index, glyph) in group.iter().enumerate() {
+            assert!(
+                !group[index + 1..].contains(glyph),
+                "two layer toggles wear the same glyph"
+            );
+            assert!(![icons::FIRE, icons::WALL, icons::STACK].contains(glyph));
+        }
+    }
 
     /// How many §6 collapse steps a plan has taken. `None` when the plan is
     /// not one of the seven canonical states — folding out of order.
