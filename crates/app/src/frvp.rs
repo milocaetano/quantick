@@ -10,7 +10,7 @@
 //!
 //! Never on the per-trade path: ingestion does not know this module exists.
 
-use quantick_engine::{BarFootprint, DEFAULT_LEVEL_CAP, VolumeProfile};
+use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, VolumeProfile};
 use rust_decimal::Decimal;
 
 use crate::drawings::{Drawings, FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
@@ -25,10 +25,12 @@ pub const TOOL_ID: &str = "fixed-range-profile";
 /// the snapshot cadence, never per paint.
 pub struct RefreshInputs<'a> {
     pub state: &'a ChartState,
-    /// Venue history candles before the trade-built bars. They carry no tape
-    /// and therefore no ladder; a range over them is *partial coverage* and
-    /// the cache says so.
-    pub prefix_len: usize,
+    /// Venue history candles before the trade-built bars. They carry no
+    /// tape; with the payload's `approximate_history` on they join the fold
+    /// as approximated ladders (volume over their own high–low), labeled —
+    /// otherwise a range over them is *partial coverage* and the cache says
+    /// so. `prefix_bars.len()` is the prefix length.
+    pub prefix_bars: &'a [Bar],
     /// The throttled snapshot of the forming bar's ladder, if any.
     pub partial_ladder: Option<&'a BarFootprint>,
     /// Bumped whenever the snapshot above is re-taken.
@@ -102,7 +104,7 @@ fn covered_slots(min_bar: f32, max_bar: f32, last_slot: Option<usize>) -> Option
 
 fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &RefreshInputs<'_>) {
     let closed_len = inputs.state.bars().len();
-    let closed_total = inputs.prefix_len + closed_len;
+    let closed_total = inputs.prefix_bars.len() + closed_len;
     let partial_slot = inputs.partial_ladder.is_some().then_some(closed_total);
     let last_slot = partial_slot.or_else(|| closed_total.checked_sub(1));
 
@@ -134,6 +136,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         value_area_pct: payload.value_area_pct,
         blocked: inputs.blocked,
         side_inferred: inputs.side_inferred,
+        approximate: payload.approximate_history,
     };
     if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
         // Key hit: the fold is current. Presentation state still follows the
@@ -148,6 +151,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
             profile: None,
             empty: Some(FrvpEmpty::Blocked),
             bars_covered: 0,
+            bars_approximated: 0,
             bars_total,
             heat_first_slot: inputs.heat_first_slot,
         });
@@ -158,13 +162,28 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
     // construction; the difference between what the span asks for and what
     // the tape can answer is `bars_covered < bars_total`, spoken by paint.
     let ladders_all = inputs.state.bar_footprints();
-    let mut ladders: Vec<&BarFootprint> = Vec::new();
+    // Approximated ladders for the venue-prefix slots the span reaches —
+    // built on key change only (this whole path is key-guarded above), each
+    // bounded by the cap. Owned here so the merge below can borrow them
+    // beside the real ones: one fold, one profile, one code path.
+    let mut approx: Vec<BarFootprint> = Vec::new();
+    if payload.approximate_history && span.is_some() && start_slot < inputs.prefix_bars.len() {
+        let group = inputs.state.footprint_group();
+        let hi_prefix = end_slot.min(inputs.prefix_bars.len().saturating_sub(1));
+        for bar in &inputs.prefix_bars[start_slot..=hi_prefix] {
+            if let Some(ladder) = BarFootprint::approximated(bar, group, DEFAULT_LEVEL_CAP) {
+                approx.push(ladder);
+            }
+        }
+    }
+    let bars_approximated = approx.len();
+    let mut ladders: Vec<&BarFootprint> = approx.iter().collect();
     if span.is_some() {
         // State-bar coverage exists only where the span reaches past the
         // prefix and into the closed bars at all.
-        if end_slot >= inputs.prefix_len && start_slot < closed_total && closed_total > 0 {
-            let lo = start_slot.max(inputs.prefix_len) - inputs.prefix_len;
-            let hi_state = end_slot.min(closed_total - 1) - inputs.prefix_len;
+        if end_slot >= inputs.prefix_bars.len() && start_slot < closed_total && closed_total > 0 {
+            let lo = start_slot.max(inputs.prefix_bars.len()) - inputs.prefix_bars.len();
+            let hi_state = end_slot.min(closed_total - 1) - inputs.prefix_bars.len();
             if lo <= hi_state {
                 for ladder in ladders_all.iter().skip(lo).take(hi_state - lo + 1) {
                     // A bar whose ladder printed nothing contributes nothing;
@@ -178,7 +197,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
             ladders.push(partial);
         }
     }
-    let bars_covered = ladders.len();
+    let bars_covered = ladders.len() - bars_approximated;
 
     let profile = VolumeProfile::merge(ladders, DEFAULT_LEVEL_CAP).map(|profile| {
         let fraction = Decimal::from(payload.value_area_pct) / Decimal::ONE_HUNDRED;
@@ -191,6 +210,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         profile,
         empty,
         bars_covered,
+        bars_approximated,
         bars_total,
         heat_first_slot: inputs.heat_first_slot,
     });
@@ -266,7 +286,7 @@ mod tests {
     fn inputs<'a>(state: &'a ChartState, blocked: bool) -> RefreshInputs<'a> {
         RefreshInputs {
             state,
-            prefix_len: 0,
+            prefix_bars: &[],
             partial_ladder: None,
             partial_version: 0,
             blocked,
@@ -365,38 +385,86 @@ mod tests {
         assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("6"));
     }
 
+    /// Two venue candles standing in for a prefix: $2-tall bodies with a
+    /// real taker split, one unit of volume each.
+    fn prefix_bars() -> Vec<quantick_engine::Bar> {
+        (0..2)
+            .map(|i| quantick_engine::Bar {
+                open_time: 1_699_999_000_000 + i * 60_000,
+                close_time: 1_699_999_060_000 + i * 60_000,
+                open: dec("99"),
+                high: dec("100.9"),
+                low: dec("99"),
+                close: dec("100.5"),
+                buy_volume: dec("0.6"),
+                sell_volume: dec("0.4"),
+                trade_count: 10,
+            })
+            .collect()
+    }
+
+    /// A mixed range folds both worlds: the tape bars exactly, the venue
+    /// prefix as approximated ladders — counted apart, never blended away.
     #[test]
-    fn prefix_candles_count_toward_total_but_not_covered() {
+    fn prefix_candles_join_approximated_and_are_counted_apart() {
         let state = state_with_tape();
+        let prefix = prefix_bars();
         let mut drawings = Drawings::default();
         // Slots 0-1 are venue prefix, 2-4 are the three state bars.
         place_frvp(&mut drawings, 0.0, 4.9);
         let with_prefix = RefreshInputs {
-            prefix_len: 2,
+            prefix_bars: &prefix,
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_prefix);
         let cache = cache_of(&drawings);
         assert_eq!(cache.bars_total, 5);
-        assert_eq!(cache.bars_covered, 3, "prefix candles carry no tape");
-        assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("6"));
+        assert_eq!(cache.bars_covered, 3, "tape bars stay exact");
+        assert_eq!(cache.bars_approximated, 2, "venue candles join, labeled");
+        // Six units of tape plus one unit per approximated candle.
+        assert_eq!(cache.profile.expect("fold").0.total_volume(), dec("8"));
     }
 
+    /// The off-switch restores exactly the pre-approximation behaviour: a
+    /// prefix-only range is honest empty again.
     #[test]
-    fn a_range_entirely_on_the_prefix_is_no_tape() {
+    fn approximation_off_leaves_the_prefix_as_no_tape() {
         let state = state_with_tape();
+        let prefix = prefix_bars();
         let mut drawings = Drawings::default();
         place_frvp(&mut drawings, 0.0, 1.9);
+        drawings.items_mut()[0]
+            .payload
+            .as_any_mut()
+            .downcast_mut::<FrvpPayload>()
+            .unwrap()
+            .approximate_history = false;
         let with_prefix = RefreshInputs {
-            prefix_len: 2,
+            prefix_bars: &prefix,
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_prefix);
         let cache = cache_of(&drawings);
         assert_eq!(cache.bars_total, 2);
         assert_eq!(cache.bars_covered, 0);
+        assert_eq!(cache.bars_approximated, 0);
         assert!(cache.profile.is_none());
         assert_eq!(cache.empty, Some(FrvpEmpty::NoTape));
+
+        // Toggling back on re-keys and the approximated fold appears.
+        drawings.items_mut()[0]
+            .payload
+            .as_any_mut()
+            .downcast_mut::<FrvpPayload>()
+            .unwrap()
+            .approximate_history = true;
+        refresh(&mut drawings, &with_prefix);
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_approximated, 2);
+        assert_eq!(
+            cache.profile.expect("approximated fold").0.total_volume(),
+            dec("2")
+        );
     }
 
     #[test]
