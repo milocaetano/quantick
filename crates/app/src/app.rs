@@ -4679,8 +4679,16 @@ impl QuantickApp {
         // pair of screenshots can prove as cleanly.
         let compare =
             std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value.trim() == "compare");
+        let prefix = self.active_tab_mut().flow_pane.history_prefix.len();
+        // The compare scene exists to photograph profiles *over the map*, and
+        // the map only covers bars closed after book capture began — the
+        // session's earliest bars never get cells. So it waits for enough
+        // freshly-built bars and anchors on those, where the coverage is.
+        if compare && slots.saturating_sub(prefix) < 60 {
+            self.pending_frvp_demo = true;
+            return;
+        }
         let pane = &mut self.active_tab_mut().flow_pane;
-        let prefix = pane.history_prefix.len();
         // Straddle the seam when there is one; else the newest stretch.
         let start = if prefix > 0 && prefix < slots {
             prefix.saturating_sub(5)
@@ -4692,11 +4700,15 @@ impl QuantickApp {
             .closed_bar(end)
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
+        let newest = slots - 1;
         let ranges: &[(usize, usize, bool)] = if compare {
-            let mid = start + (end - start) / 2;
+            // Two adjacent 25-bar ranges over the newest (map-covered) tape.
             // Left object keeps the honest default; right one is forced to
             // "always fill", the composed-into-the-map look under review.
-            &[(start, mid, true), (mid + 1, end, false)]
+            &[
+                (newest.saturating_sub(49), newest.saturating_sub(25), true),
+                (newest.saturating_sub(24), newest, false),
+            ]
         } else {
             &[(start, end, true)]
         };
