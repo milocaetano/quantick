@@ -116,6 +116,34 @@ pub struct VisibleOrderflow {
     pub(crate) slot_count: usize,
 }
 
+impl VisibleOrderflow {
+    /// The oldest global bar slot any heatmap cell covers this frame — the
+    /// left boundary of the liquidity map on the chart, `None` when the map
+    /// painted nothing. Cells' x are normalized over the frame's slot
+    /// regions, so the mapping back is one multiply per cell.
+    ///
+    /// O(visible cells), and the caller only asks while a range-profile
+    /// drawing exists — never per trade, never unconditionally per frame.
+    #[must_use]
+    pub fn first_heat_slot(&self) -> Option<usize> {
+        if self.slot_count == 0 {
+            return None;
+        }
+        let min_x0 = self
+            .projection
+            .cells
+            .iter()
+            .map(|cell| cell.x0)
+            .fold(f64::INFINITY, f64::min);
+        if !min_x0.is_finite() {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let region = (min_x0.clamp(0.0, 1.0) * self.slot_count as f64).floor() as usize;
+        Some(self.first_bar_index + region.min(self.slot_count - 1))
+    }
+}
+
 /// Visual identity of one projection request; cache revisions separately prove
 /// that equal layouts still describe the same market history and bar timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1229,6 +1257,47 @@ mod tests {
     use super::*;
     use quantick_engine::Side;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+
+    /// `first_heat_slot` maps the leftmost cell's normalized x back to the
+    /// global slot the region grid assigned it — the boundary where a range
+    /// profile's paint cuts from fill to silhouette.
+    #[test]
+    fn first_heat_slot_names_the_oldest_covered_bar() {
+        use crate::orderflow::grouping::EffectiveGrouping;
+        use crate::orderflow::history::RestingSide;
+        use crate::orderflow::projection::{HeatmapCell, HeatmapProjection};
+
+        let grouping = EffectiveGrouping {
+            base_width: Decimal::ONE,
+            multiple: 1,
+            bucket_width: Decimal::ONE,
+        };
+        let mut projection = HeatmapProjection::empty(true, grouping);
+        let cell = |x0: f64| HeatmapCell {
+            generation: 1,
+            side: RestingSide::Bid,
+            price_bucket: Decimal::ONE,
+            quantity: Decimal::ONE,
+            x0,
+            x1: x0 + 0.05,
+            y0: 0.2,
+            y1: 0.3,
+            intensity: 0.5,
+            alpha: 0.5,
+        };
+        let frame = |projection: HeatmapProjection| VisibleOrderflow {
+            projection: Arc::new(projection),
+            first_bar_index: 40,
+            slot_count: 10,
+        };
+
+        // No cells: no boundary — the paint must not invent a cut.
+        assert_eq!(frame(projection.clone()).first_heat_slot(), None);
+
+        // Cells in regions 3 and 7 of 10: region 3 wins, slot = 40 + 3.
+        projection.cells = Arc::new(vec![cell(0.71), cell(0.34)]);
+        assert_eq!(frame(projection).first_heat_slot(), Some(43));
+    }
 
     #[test]
     fn only_states_working_towards_a_live_book_read_as_syncing() {
