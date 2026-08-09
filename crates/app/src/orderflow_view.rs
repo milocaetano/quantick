@@ -236,6 +236,23 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
+    /// State that a surface other than the bubbles is reading the aggression
+    /// clusters this frame — the live strip beside the price axis.
+    ///
+    /// The pane says this every frame from the layer it owns, so the two can
+    /// never drift apart. With the bubbles hidden and the strip shown, this is
+    /// what keeps prints being retained and projected: the strip draws the
+    /// same clusters, from the same engine path, and stopping the pipeline
+    /// under it would blank a live surface nobody switched off.
+    pub fn set_projection_demand(&mut self, wanted: bool) {
+        if self.config.projection_demand == wanted {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.projection_demand = wanted;
+        self.commit_config_changes(before);
+    }
+
     /// Whether the live lane's boundary and live-edge lines are drawn.
     #[must_use]
     pub fn lane_marks_visible(&self) -> bool {
@@ -251,6 +268,43 @@ impl OrderflowView {
         }
         let before = self.config.clone();
         self.config.live_lane.show_marks = visible;
+        self.commit_config_changes(before);
+    }
+
+    /// Whether the canvas's compact visual key is drawn.
+    #[must_use]
+    pub fn legend_visible(&self) -> bool {
+        self.config.show_legend
+    }
+
+    /// Show or hide it — the very field the L2 panel's "show chart legend"
+    /// checkbox writes, so the canvas's right-click menu and the panel can
+    /// never disagree about it. Chrome only: every layer it names keeps
+    /// drawing while the key is hidden.
+    pub fn set_legend_visible(&mut self, visible: bool) {
+        if self.config.show_legend == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_legend = visible;
+        self.commit_config_changes(before);
+    }
+
+    /// Whether the book's status badge is drawn on the canvas.
+    #[must_use]
+    pub fn status_badge_visible(&self) -> bool {
+        self.config.show_status_badge
+    }
+
+    /// Show or hide it. The recorder is not part of this question: capture,
+    /// generation and the ladder carry on, and the L2 panel still states them
+    /// — this silences a label on the canvas, nothing else.
+    pub fn set_status_badge_visible(&mut self, visible: bool) {
+        if self.config.show_status_badge == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.show_status_badge = visible;
         self.commit_config_changes(before);
     }
 
@@ -537,7 +591,8 @@ impl OrderflowView {
         draw_liquidity_events(painter, &context);
     }
 
-    /// Draw factual aggressive prints and the compact visual key over candles.
+    /// Draw factual aggressive prints over the candles. The canvas's key is
+    /// not part of this pass — see [`draw_legend`](Self::draw_legend).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -560,13 +615,50 @@ impl OrderflowView {
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_aggression_bubbles(painter, &context);
+    }
+
+    /// Draw the canvas's compact visual key.
+    ///
+    /// Its own pass, not a tail of the bubbles: the legend is chrome about
+    /// what the canvas is showing — it names the depth layers too — so hiding
+    /// the bubbles must not take it down, and hiding it must not take the
+    /// bubbles down. The trader switches it from the canvas's right-click
+    /// menu (`ChartLayer::FlowLegend`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_legend(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        viewport: &Viewport,
+        total_bars: usize,
+        frame: &VisibleOrderflow,
+        canvas_background: egui::Color32,
+        lane_width_px: f32,
+        top_inset_px: f32,
+    ) {
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            lane_width_px,
+        );
+        let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        style.legend_top_inset = top_inset_px;
+        let context = RenderContext::new(&frame.projection, layout, &style);
         draw_compact_legend(painter, &context);
     }
 
     pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
         // Tied to the map, not to the recorder: a badge reporting on a book
-        // nobody asked to see is just chrome.
-        if !self.config.depth_visible() {
+        // nobody asked to see is just chrome. The trader can silence it on its
+        // own too, from the canvas's right-click menu — but only while the
+        // book is working. A failure re-asserts the badge: it is the one
+        // real-time statement that the depth on screen has stopped being the
+        // book, and hiding chrome may never hide *that* (data honesty).
+        let failing = self.published.status.is_failure();
+        if !self.config.depth_visible() || (!self.config.show_status_badge && !failing) {
             return;
         }
         let text = self.published.status.label();
@@ -1613,13 +1705,22 @@ impl OrderflowView {
 
                         ui.separator();
                         let health = &self.published.health;
+                        // The projection carries clusters whether or not the
+                        // bubble layer draws them — the live strip reads the
+                        // same ones. Calling them "bubbles" while none is on
+                        // screen would report a layer that is off.
+                        let (noun, drawn) = if self.config.show_aggressions {
+                            ("bubbles", "not drawn")
+                        } else {
+                            ("clusters (bubble layer off)", "dropped from the frame")
+                        };
                         ui.label(format!(
-                            "{} bubbles projected · {} aggressions retained",
+                            "{} {noun} projected · {} aggressions retained",
                             health.projection_aggressions, health.aggression_count
                         ));
                         if health.dropped_aggressions > 0 {
                             ui.small(format!(
-                                "{} bubbles above the primitive cap were not drawn",
+                                "{} above the primitive cap were {drawn}",
                                 health.dropped_aggressions
                             ));
                         }
@@ -2071,8 +2172,187 @@ mod tests {
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
 
-        // Turning the bubbles off closes the pipeline again.
+        // Turning the bubbles off closes the pipeline again — nobody is left
+        // reading it.
         view.set_bubbles_enabled(false);
+        assert!(
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+                .is_none()
+        );
+    }
+
+    /// Hiding the badge silences chrome, never a dead feed. The badge is the
+    /// only real-time statement that the depth on screen has stopped being the
+    /// book — the loading overlay covers the waiting states only, and the dock
+    /// strip carries no status at all — so a failure re-asserts it whatever
+    /// the switch says.
+    #[test]
+    fn a_failing_book_says_so_even_with_the_badge_switched_off() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 10);
+        view.handle_depth_event(snapshot_event(10));
+        view.flush_for_test();
+
+        let badge_text = |view: &mut OrderflowView| {
+            view.sync_published();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    view.draw_status_badge(ui.painter(), rect);
+                });
+            });
+            let mut text = String::new();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(galley) = shape.shape {
+                    text.push_str(galley.galley.text());
+                }
+            }
+            text
+        };
+
+        assert!(badge_text(&mut view).contains("book"), "a healthy badge");
+        view.set_status_badge_visible(false);
+        assert!(
+            badge_text(&mut view).is_empty(),
+            "a healthy book stays quiet once the trader silences it"
+        );
+
+        // The feed drops. The switch has not moved, and the badge is back.
+        view.handle_depth_event(DepthEvent::Status {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            status: quantick_orderbook::DepthStatus::Disconnected {
+                error_class: "websocket",
+            },
+        });
+        view.flush_for_test();
+        assert!(!view.status_badge_visible(), "the switch did not move");
+        let failing = badge_text(&mut view);
+        assert!(
+            failing.contains("book down"),
+            "a dead book may never be hidden chrome: {failing:?}"
+        );
+    }
+
+    /// The canvas's key is chrome about the canvas, not a tail of the
+    /// bubbles: it names the depth layers too. It draws in a pass of its own,
+    /// so hiding the bubbles leaves it standing, and the trader can silence it
+    /// from the canvas's right-click menu without touching a single layer.
+    #[test]
+    fn the_legend_draws_on_its_own_pass_and_the_trader_can_silence_it() {
+        let ctx = egui::Context::default();
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 10);
+        view.handle_depth_event(snapshot_event(10));
+        view.flush_for_test();
+        let bars = [bar(900, 1_100)];
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.flush_for_test();
+        let frame = view
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .expect("published frame");
+
+        let text_of = |view: &OrderflowView, legend: bool| {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    if legend {
+                        view.draw_legend(
+                            ui.painter(),
+                            rect,
+                            &viewport,
+                            1,
+                            &frame,
+                            egui::Color32::BLACK,
+                            0.0,
+                            crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
+                        );
+                    } else {
+                        view.draw_aggressions(
+                            ui.painter(),
+                            rect,
+                            &viewport,
+                            1,
+                            &frame,
+                            egui::Color32::BLACK,
+                            0.0,
+                        );
+                    }
+                });
+            });
+            let mut text = String::new();
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(galley) = shape.shape {
+                    text.push_str(galley.galley.text());
+                    text.push(' ');
+                }
+            }
+            text
+        };
+
+        // The bubble pass writes no key…
+        assert!(
+            !text_of(&view, false).contains("liquidity"),
+            "the bubbles must not carry the legend on their back"
+        );
+        // …the key's own pass does, with the bubble layer off.
+        view.set_bubbles_enabled(false);
+        assert!(
+            text_of(&view, true).contains("liquidity"),
+            "the key stands with the bubbles hidden"
+        );
+        // And the right-click switch silences it outright.
+        view.set_legend_visible(false);
+        assert!(!view.legend_visible());
+        assert!(
+            text_of(&view, true).is_empty(),
+            "a silenced key draws no text at all"
+        );
+    }
+
+    /// The live strip is a consumer in its own right: it draws the forming
+    /// bar's clusters beside the price axis, from the same engine path the
+    /// bubbles use. Hiding the bubbles must not blank it — "essa parte deve
+    /// permanecer calculando … mesmo desabilitando a bolha".
+    #[test]
+    fn the_live_strip_alone_keeps_the_aggression_pipeline_running() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        // No depth capture, no bubbles: only the strip is asking.
+        view.set_projection_demand(true);
+        assert!(!view.enabled(), "a strip must not start book capture");
+        assert!(!view.bubbles_enabled(), "and it draws no bubbles");
+
+        view.record_trade(&Trade {
+            agg_id: 1,
+            timestamp_ms: 1_000,
+            price: Decimal::new(1_005, 1),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        });
+        view.flush_for_test();
+        assert_eq!(view.health().aggression_count, 1, "the print was retained");
+
+        let bars = [bar(900, 1_100)];
+        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.flush_for_test();
+        let frame = view
+            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .expect("the strip's own frame");
+        assert_eq!(
+            frame.projection.aggressions.len(),
+            1,
+            "the strip reads the clusters the hidden bubbles would have drawn"
+        );
+        assert!(
+            !live_strip::aggression_rows(&frame.projection.aggressions, 900).is_empty(),
+            "and they become histogram rows"
+        );
+
+        // Drop the demand and the pipeline closes, exactly as before: nothing
+        // keeps running for a surface nobody is showing.
+        view.set_projection_demand(false);
         assert!(
             view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()

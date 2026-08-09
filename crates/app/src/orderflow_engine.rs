@@ -350,6 +350,27 @@ impl CaptureStatus {
         }
     }
 
+    /// Whether this status is a failure the trader has to be told about: the
+    /// book stopped and the depth on screen is no longer the book.
+    ///
+    /// The canvas badge is the only place that says so in real time — the
+    /// loading overlay covers the *waiting* states only, and the dock's strip
+    /// carries no status at all. So this is the one thing hiding the badge may
+    /// not silence: data honesty outranks a clean canvas, and stale depth that
+    /// reads as live is exactly the lie the rule exists to prevent.
+    /// Exhaustive, so a new status has to decide whether it is a failure.
+    pub fn is_failure(&self) -> bool {
+        match self {
+            Self::Disconnected { .. } | Self::Error => true,
+            Self::Disabled
+            | Self::Connecting
+            | Self::Buffering
+            | Self::SnapshotFetching
+            | Self::Live { .. }
+            | Self::Resyncing { .. } => false,
+        }
+    }
+
     /// Whether capture is working towards a live book — the states the app's
     /// loading overlay shows as a wait. Exhaustive so a new status must decide
     /// whether it reads as "loading" instead of silently defaulting to "no".

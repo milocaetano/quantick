@@ -61,6 +61,43 @@ pub const TEXT_SUPPORT: Color32 = Color32::from_rgb(0x86, 0x92, 0xA4);
 /// buttons, the position HUD's side tag, the jump-to-live chip).
 pub const CHIP_INK: Color32 = Color32::from_rgb(0x0E, 0x12, 0x1A);
 
+/// `draw/violet` and `draw/cyan` — the two drawing colours no chart element
+/// already owns. They exist because the drawing palette needs hues that do
+/// not collide with meaning: green and red are the candles, blue is
+/// [`ACCENT`], yellow is [`POC`]. Without these two, every drawing colour
+/// borrows something that already says something else.
+pub const DRAW_VIOLET: Color32 = Color32::from_rgb(0xC5, 0x8A, 0xF9);
+/// See [`DRAW_VIOLET`].
+pub const DRAW_CYAN: Color32 = Color32::from_rgb(0x4D, 0xD0, 0xE1);
+
+/// The drawing palette offered as one-click swatches on the context bar.
+///
+/// Eight, because that is what fits one row without the row becoming a grid
+/// the trader has to read. Six are tokens that already mean something on
+/// this chart, so a colour choice speaks the language the rest of the UI
+/// speaks; two are the hues nothing else owns.
+///
+/// [`AMBER`] is deliberately absent and must stay absent: it is reserved for
+/// provenance honesty, and a trader painting a line amber by taste would be
+/// borrowing the one colour that promises "this data is not live".
+/// Grep-guarded in the context bar, the way the rail guards itself.
+pub const DRAWING_SWATCHES: [Color32; 8] = [
+    ACCENT,
+    TEXT_PRIMARY,
+    TEXT_MUTED,
+    BUY,
+    SELL,
+    POC,
+    DRAW_VIOLET,
+    DRAW_CYAN,
+];
+
+/// `shadow/float` — the drop shadow of a surface floating free over the
+/// canvas. Docked chrome never uses it: a panel glued to an edge separates
+/// itself with its hairline border. A floating strip has no anchored side,
+/// and [`CHROME`] over [`CANVAS`] is too close in value to read alone.
+pub const FLOAT_SHADOW: Color32 = Color32::from_black_alpha(96);
+
 /// Alpha of an "active" tint: a layer accent at 22% over the chrome.
 const ACTIVE_TINT_ALPHA: u8 = 56; // ≈ 22% of 255
 /// Alpha of a "pressed" tint: a layer accent at 33% over the chrome. One

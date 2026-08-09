@@ -1300,10 +1300,10 @@ mod tests {
     fn stage_lengths_match_the_spec_for_the_shipped_registry() {
         let slots = tool_slots().len();
         assert_eq!(
-            slots, 6,
-            "the registry folds into Lines, Channels, Shapes, Fib, Measure and Text"
+            slots, 8,
+            "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure and Text"
         );
-        assert_eq!(full_length(slots), 525.0);
+        assert_eq!(full_length(slots), 597.0);
         assert_eq!(compact_length(), 381.0);
         assert_eq!(minimal_length(), 191.0);
     }
@@ -1594,10 +1594,29 @@ mod tests {
             rail.tool().drawing_tool().map(DrawingTool::id),
             Some("fib-retracement")
         );
+        // Shift+F is *flatten*. The Fib extension gave the chord up rather
+        // than keep arming a tool and closing a position on one keystroke;
+        // it is reached through the Fib family flyout.
         send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT);
         assert_eq!(
             rail.tool().drawing_tool().map(DrawingTool::id),
-            Some("fib-extension")
+            Some("fib-retracement"),
+            "Shift+F must arm nothing new, leaving the previous tool alone"
+        );
+        send(&mut rail, egui::Key::B, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("arrow-mark-up")
+        );
+        send(&mut rail, egui::Key::S, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("arrow-mark-down")
+        );
+        send(&mut rail, egui::Key::P, egui::Modifiers::NONE);
+        assert_eq!(
+            rail.tool().drawing_tool().map(DrawingTool::id),
+            Some("brush")
         );
         send(&mut rail, egui::Key::Num1, egui::Modifiers::NONE);
         assert_eq!(rail.tool(), Tool::Pointer);
@@ -1684,13 +1703,15 @@ mod tests {
     #[test]
     fn stages_are_pure_functions_of_extent() {
         let slots = tool_slots().len();
-        for extent in [100.0_f32, 200.0, 380.9, 381.0, 524.9, 525.0, 1000.0] {
+        for extent in [100.0_f32, 200.0, 380.9, 381.0, 596.9, 597.0, 1000.0] {
             let first = stage_for(extent, slots);
             let second = stage_for(extent, slots);
             assert_eq!(first, second);
         }
-        assert_eq!(stage_for(525.0, slots), RailStage::Full);
-        assert_eq!(stage_for(524.9, slots), RailStage::Compact);
+        // The full stage costs two slots more since Marks and Freehand
+        // landed: 525 -> 597.
+        assert_eq!(stage_for(597.0, slots), RailStage::Full);
+        assert_eq!(stage_for(596.9, slots), RailStage::Compact);
         assert_eq!(stage_for(381.0, slots), RailStage::Compact);
         assert_eq!(stage_for(380.9, slots), RailStage::Minimal);
     }
