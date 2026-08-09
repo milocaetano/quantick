@@ -59,3 +59,4 @@ CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on
 
   Work happens inside that directory. After the branch is merged, clean up from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
 - **Arch-review before PR**: before opening a PR (and before any merge), run the `arch-review` skill over `git diff main...HEAD` and resolve every Blocker and Should-fix finding. A finding deliberately deferred is noted in the PR body. No branch ships un-reviewed.
+- **The two rules above are enforced by hooks, not by memory**: a write landing in the main checkout while it sits on `main` is denied, and `gh pr create` is gated on arch-review having run for the branch. See `.claude/hooks/README.md` for what fires when, why the gate is a prompt hook, and how to override.

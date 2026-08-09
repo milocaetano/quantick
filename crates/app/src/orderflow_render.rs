@@ -77,9 +77,11 @@ pub(crate) struct OrderflowRenderStyle {
     pub(crate) depth_layer: bool,
     /// Whether the aggression layer is active.
     pub(crate) aggression_layer: bool,
-    /// Per-layer display switches, mirroring the config flags: the projection
-    /// already filters the primitives, so the renderer's only job is keeping
-    /// the legend honest about which layers can draw.
+    /// Per-layer display switches, mirroring the config flags. The projection
+    /// no longer filters the aggression primitives — several surfaces read
+    /// them — so for those two switches this is where the decision is made
+    /// ([`RenderContext::bubbles`]); for the rest the renderer's job is
+    /// keeping the legend honest about which layers can draw.
     pub(crate) show_liquidity: bool,
     /// See [`show_liquidity`](Self::show_liquidity).
     pub(crate) show_buy: bool,
@@ -92,10 +94,30 @@ pub(crate) struct OrderflowRenderStyle {
     /// See [`show_liquidity`](Self::show_liquidity).
     pub(crate) show_gaps: bool,
     pub(crate) legend_max_width: f32,
+    /// Vertical space already spoken for at the canvas's top-left corner: the
+    /// chart header, plus whatever the pane stacked under it (an indicator
+    /// chip per row). The legend starts below it, so the two can never print
+    /// over each other — they did, because this used to be a constant that
+    /// only knew about the header.
+    pub(crate) legend_top_inset: f32,
     /// Follows the chart canvas so the deterministic preview sits on the same
     /// ground as the live chart.
     pub(crate) canvas_background: egui::Color32,
 }
+
+/// The chart header's own row at the canvas's top-left corner: the floor
+/// every legend inset starts from, whatever the pane measured.
+pub(crate) const LEGEND_HEADER_CLEARANCE_PX: f32 = 22.0;
+
+/// How far down the canvas the stack above the key may push it, as a share
+/// of the canvas height.
+///
+/// Past this the key would be reading as part of the chart rather than as its
+/// key — and a canvas whose top half is chips has no room for it at all, so it
+/// stands down instead of printing over them. Chrome yields to the chart;
+/// nothing it says is data (the layers keep drawing, and the trader can bring
+/// it back from the right-click menu).
+const MAX_LEGEND_TOP_INSET_FRAC: f32 = 0.5;
 
 impl Default for OrderflowRenderStyle {
     fn default() -> Self {
@@ -119,6 +141,7 @@ impl Default for OrderflowRenderStyle {
             show_unattributed: true,
             show_gaps: true,
             legend_max_width: 690.0,
+            legend_top_inset: LEGEND_HEADER_CLEARANCE_PX,
             canvas_background: egui::Color32::from_rgb(19, 23, 34),
         }
     }
@@ -158,6 +181,14 @@ impl OrderflowRenderStyle {
         style.bubbles.sanitize();
         style.live_lane.sanitize();
         style.legend_max_width = finite_clamp(style.legend_max_width, 160.0, 2_000.0, 690.0);
+        // A caller that measured nothing still clears the header. The ceiling
+        // is the canvas's, applied where the canvas is known (`draw_compact_legend`).
+        style.legend_top_inset = finite_clamp(
+            style.legend_top_inset,
+            LEGEND_HEADER_CLEARANCE_PX,
+            f32::MAX,
+            LEGEND_HEADER_CLEARANCE_PX,
+        );
         style
     }
 }
@@ -890,6 +921,44 @@ impl<'a> RenderContext<'a> {
             style,
         }
     }
+
+    /// The aggressions this canvas draws as bubbles, in projection order.
+    ///
+    /// The display switches live here rather than in the projection: the
+    /// clusters are a fact several surfaces read (bubbles, the consumption
+    /// carve behind them, the live strip's histogram), so hiding the bubble
+    /// layer has to hide bubbles — not empty the frame everyone else reads.
+    /// The size reference, the dust merge and the liquidity association all
+    /// saw both sides upstream, so hiding one side never rescales or
+    /// re-associates the other.
+    ///
+    /// Reads the raw style rather than the sanitized copy on purpose:
+    /// `sanitized` clamps numbers and never touches a display flag, so the two
+    /// answer identically and the filter costs no second clone per frame.
+    pub(crate) fn bubbles(&self) -> impl Iterator<Item = &'a AggressionPrimitive> {
+        let style = self.style;
+        let projection = self.projection;
+        let both_sides = style.show_buy && style.show_sell;
+        projection.aggressions.iter().filter(move |mark| {
+            if !style.aggression_layer {
+                return false;
+            }
+            // A mark carrying both sides — a merged cluster, or a bar summary
+            // — is sized by the two together, so with one side hidden its area
+            // would state a quantity the canvas is not showing. It is withheld
+            // rather than drawn at a lie of a size. The projection used to
+            // decide this by refusing to summarize at all; it now builds the
+            // same clusters whatever is on screen, which is what keeps the
+            // live strip's histogram steady while a bubble switch moves.
+            if !both_sides && mark.buy_share > 0.0 && mark.buy_share < 1.0 {
+                return false;
+            }
+            match mark.side {
+                Side::Buy => style.show_buy,
+                Side::Sell => style.show_sell,
+            }
+        })
+    }
 }
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
@@ -1122,7 +1191,7 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
     // Carve a gap around each consumption bubble so a re-stacked wall does not
     // slide through it: the eaten wall ends, the bubble marks the bite, and the
     // fresh wall only resumes to the bubble's right.
-    for trade in &context.projection.aggressions {
+    for trade in context.bubbles() {
         if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
             continue;
         }
@@ -1284,6 +1353,12 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
 /// keeps the "aggression consuming the book" legible even when price is going
 /// sideways and the prints stack into a horizontal band.
 pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderContext<'_>) {
+    // Off, this pass has nothing to do: the frame still carries every cluster
+    // (the strip reads them), so without this it would clip, sanitize and walk
+    // up to `max_aggression_primitives` marks per frame to draw none of them.
+    if !context.style.aggression_layer {
+        return;
+    }
     let style = context.style.sanitized();
     let bubbles = &style.bubbles;
     let palette = Palette::for_theme(style.theme);
@@ -1336,7 +1411,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // Consumption trail behind the bubbles, so a bubble's own fill never hides it.
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
-        for trade in &context.projection.aggressions {
+        for trade in context.bubbles() {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
@@ -1357,7 +1432,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         }
     }
 
-    for trade in &context.projection.aggressions {
+    for trade in context.bubbles() {
         let Some(center) = center_of(trade) else {
             continue;
         };
@@ -1451,6 +1526,13 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
     if !style.show_legend || context.layout.chart_rect.width() < 150.0 {
         return;
     }
+    // The corner may already be full — a tall stack of indicator chips over a
+    // short canvas. The key stands down rather than printing over them: it is
+    // chrome, everything it names keeps drawing, and it comes back the moment
+    // there is room (or a chip goes away).
+    if style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC {
+        return;
+    }
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
     let mut palette = Palette::for_theme(style.theme);
@@ -1490,12 +1572,13 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
         (flow.size.x + inner_margin * 2.0).min(max_panel_width),
         flow.size.y + inner_margin * 2.0,
     );
-    // The chart header owns the first text row at the top-left. Keep the
-    // legend below it so symbol/bar metadata remains readable at every width.
-    let header_clearance = 22.0;
+    // The chart header owns the first text row at the top-left, and the pane
+    // may have stacked indicator chips under it. Keep the legend below all of
+    // it, so symbol/bar metadata and every chip remain readable at every
+    // width — nothing at this corner prints over anything else.
     let panel = egui::Rect::from_min_size(
         context.layout.chart_rect.left_top()
-            + egui::vec2(outer_margin, outer_margin + header_clearance),
+            + egui::vec2(outer_margin, outer_margin + style.legend_top_inset),
         panel_size,
     );
     clip.rect_filled(panel, egui::Rounding::same(4.0), palette.legend_background);
@@ -3207,6 +3290,66 @@ mod tests {
         );
     }
 
+    /// The key starts below whatever already owns the canvas's top-left
+    /// corner. It used to clear a constant 22 px — the chart header alone —
+    /// and printed straight through the indicator chips stacked under it.
+    #[test]
+    fn the_legend_starts_below_the_corner_it_was_told_about() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+        let projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+
+        let top_of_key = |inset: f32| {
+            let style = OrderflowRenderStyle {
+                legend_top_inset: inset,
+                ..OrderflowRenderStyle::default()
+            };
+            let ctx = egui::Context::default();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let context = RenderContext::new(&projection, layout, &style);
+                draw_compact_legend(&ctx.layer_painter(egui::LayerId::background()), &context);
+            });
+            let mut top = f32::INFINITY;
+            for shape in output.shapes {
+                let rect = shape.shape.visual_bounding_rect();
+                if rect.is_positive() {
+                    top = top.min(rect.top());
+                }
+            }
+            top
+        };
+
+        let header_only = top_of_key(LEGEND_HEADER_CLEARANCE_PX);
+        let with_two_chips = top_of_key(LEGEND_HEADER_CLEARANCE_PX + 60.0);
+        assert!(
+            header_only.is_finite() && with_two_chips.is_finite(),
+            "the key's panel has to be measurable: {header_only} / {with_two_chips}"
+        );
+        assert!(
+            with_two_chips - header_only >= 59.0,
+            "a taller corner has to push the key down by the same amount: \
+             {header_only} → {with_two_chips}"
+        );
+        // And a caller that measured nothing still clears the header.
+        assert!(top_of_key(0.0) >= rect.top() + LEGEND_HEADER_CLEARANCE_PX);
+
+        // Past half the canvas the corner belongs to whatever is stacked
+        // there. The key stands down instead of printing over it — chrome
+        // yields, and nothing it names stops being drawn.
+        assert!(
+            !top_of_key(rect.height() * MAX_LEGEND_TOP_INSET_FRAC + 1.0).is_finite(),
+            "the key must draw nothing when the corner is full"
+        );
+    }
+
     /// The legend is a key for what is on screen: exactly one entry per layer
     /// that is both active as a family and switched on individually.
     #[test]
@@ -3368,6 +3511,96 @@ mod tests {
             )
         });
         assert!(readable.contains(&sell_ink), "a readable pie: {readable}");
+    }
+
+    /// Hiding the bubble layer hides bubbles — it does not empty the frame.
+    ///
+    /// The clusters are a fact more than one surface reads: the bubbles, the
+    /// consumption carve behind them, and the live strip's histogram beside
+    /// the price axis. The projection used to apply these switches, so turning
+    /// the bubbles off blanked the strip with them ("se eu desativar as bolhas
+    /// de agressão, quero continuar vendo essa parte"). The filter belongs
+    /// here, one step before the ink.
+    #[test]
+    fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(600.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+        let mut projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+        for (agg_id, side, x) in [(1_u64, Side::Buy, 0.25_f64), (2, Side::Sell, 0.75)] {
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id,
+                agg_ids: vec![agg_id],
+                generation: None,
+                side,
+                consumed_side: match side {
+                    Side::Buy => BookSide::Ask,
+                    Side::Sell => BookSide::Bid,
+                },
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: match side {
+                    Side::Buy => 1.0,
+                    Side::Sell => 0.0,
+                },
+                live: false,
+                price_bucket: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x,
+                y: 0.5,
+                size: 1.0,
+            });
+        }
+
+        let drawn = |style: &OrderflowRenderStyle| {
+            RenderContext::new(&projection, layout, style)
+                .bubbles()
+                .map(|mark| mark.agg_id)
+                .collect::<Vec<_>>()
+        };
+
+        let both = OrderflowRenderStyle::default();
+        assert_eq!(drawn(&both), vec![1, 2]);
+
+        let mut buys_hidden = both.clone();
+        buys_hidden.show_buy = false;
+        assert_eq!(drawn(&buys_hidden), vec![2]);
+
+        let mut layer_off = both.clone();
+        layer_off.aggression_layer = false;
+        assert!(drawn(&layer_off).is_empty(), "no bubble is drawn");
+        // …and the frame the other surfaces read is untouched: this is the
+        // whole point of moving the switch out of the projection.
+        assert_eq!(projection.aggressions.len(), 2);
+        // The strip builds its histogram from exactly these clusters, so it
+        // still has both prints with the bubble layer off.
+        let rows = crate::live_strip::aggression_rows(&projection.aggressions, 0);
+        assert_eq!(rows.len(), 1, "both prints share one bucket");
+        assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);
+        assert_eq!(rows[0].sell, rust_decimal::Decimal::ONE);
+
+        // Nothing draws over the canvas either — the bubble pass is silent.
+        let painted_with_layer_off = painted(|painter| {
+            draw_aggression_bubbles(
+                painter,
+                &RenderContext::new(&projection, layout, &layer_off),
+            );
+        });
+        assert!(
+            !painted_with_layer_off.contains("Circle"),
+            "no circle with the layer off: {painted_with_layer_off}"
+        );
     }
 
     /// The lane's radius multiplier has to survive all the way to the circle

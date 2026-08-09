@@ -7,12 +7,14 @@
 //! about UI marks.
 
 pub mod action_bar;
+pub mod context_bar;
 pub mod fib;
 pub mod presets;
 
 // Geometry shared by a family of tools. Not tools themselves, so they are not
 // in the registry — a family core exists so its members stay declarations.
 mod line_core;
+mod mark_core;
 mod measure_core;
 mod shape_core;
 
@@ -203,6 +205,22 @@ pub struct DrawContext<'a> {
     pub halo: bool,
 }
 
+/// Where a tool wants its anchor to land on the bar under the pointer.
+///
+/// Almost every tool answers [`AnchorSnap::Pointer`]: the trader chose the
+/// price by pointing at it, and the OHLC magnet is theirs to switch on. A
+/// *mark* is the exception — it is a note about a bar, not a level, and it
+/// only reads as a mark when it sits clear of the candle it belongs to. It
+/// snaps whether or not the magnet is on, because a mark floating inside a
+/// candle body is the failure the tool exists to avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchorSnap {
+    #[default]
+    Pointer,
+    BarLow,
+    BarHigh,
+}
+
 /// A tool's arming shortcut, declared by the tool itself so the keyboard
 /// map never becomes a central match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +269,39 @@ trait DrawingToolImpl: Sync {
     fn shortcut(&self) -> Option<ToolShortcut> {
         None
     }
+    /// Where this tool's anchors land on the bar under the pointer.
+    fn anchor_snap(&self) -> AnchorSnap {
+        AnchorSnap::Pointer
+    }
+    /// Whether a freshly placed object of this tool needs its settings panel
+    /// opened straight away.
+    ///
+    /// `false` for every tool whose object is complete the moment it is
+    /// drawn — which is all of them but one. A text note is placed *empty*,
+    /// and the field that gives it words is in the panel: without this it
+    /// arrives as a grey placeholder with no visible way to write in it.
+    fn opens_settings_on_place(&self) -> bool {
+        false
+    }
+    /// Whether this tool is placed by a held drag instead of by N clicks.
+    ///
+    /// A freehand tool answers `0` from [`Self::required_points`], because
+    /// the count is whatever the gesture gave: the host starts its draft on
+    /// the press, feeds it the path, and finishes it on the release.
+    fn freehand(&self) -> bool {
+        false
+    }
+    /// The colour a fresh object of this tool is born in, when the stock
+    /// blue would be the wrong answer. `None` — almost every tool — takes
+    /// [`DEFAULT_DRAWING_COLOR`].
+    ///
+    /// It exists for the tools whose colour *is* their meaning: a buy mark
+    /// that arrives blue is one the trader repaints every single time. The
+    /// trader's own saved default still wins over this, because that one was
+    /// chosen rather than assumed.
+    fn default_color(&self) -> Option<egui::Color32> {
+        None
+    }
     /// The rail family this tool belongs to, if any. Consecutive registry
     /// entries with the same family id share one rail slot.
     fn family(&self) -> Option<ToolFamily> {
@@ -285,6 +336,20 @@ trait DrawingToolImpl: Sync {
     fn supports_stroke_width(&self) -> bool {
         true
     }
+    /// The object's own glyph size, for a tool drawn as a glyph rather than
+    /// a stroke — a text note, a trade mark. `None`, the answer for almost
+    /// every tool, means the object has no such size and the context bar
+    /// offers stroke width in that slot instead.
+    ///
+    /// The size is in screen pixels and stays in screen pixels: a note about
+    /// the chart that inflates with the zoom has quietly become a second
+    /// series.
+    fn glyph_size(&self, _payload: &dyn DrawingPayload) -> Option<GlyphSize> {
+        None
+    }
+    /// Write a glyph size back. A tool that answers [`Self::glyph_size`]
+    /// must implement this, or its own control would move nothing.
+    fn set_glyph_size(&self, _payload: &mut dyn DrawingPayload, _px: f32) {}
     /// Fresh tool-owned state for a newly placed object.
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(NoPayload)
@@ -386,6 +451,40 @@ impl DrawingTool {
     #[must_use]
     pub fn supports_stroke_width(self) -> bool {
         self.0.supports_stroke_width()
+    }
+
+    #[must_use]
+    pub fn anchor_snap(self) -> AnchorSnap {
+        self.0.anchor_snap()
+    }
+
+    #[must_use]
+    pub fn freehand(self) -> bool {
+        self.0.freehand()
+    }
+
+    #[must_use]
+    pub fn opens_settings_on_place(self) -> bool {
+        self.0.opens_settings_on_place()
+    }
+
+    /// The stock look of a fresh object of this tool, before the trader's
+    /// own saved default is consulted.
+    #[must_use]
+    pub fn default_style(self) -> DrawingStyle {
+        DrawingStyle {
+            color: self.0.default_color().unwrap_or(DEFAULT_DRAWING_COLOR),
+            ..DrawingStyle::default()
+        }
+    }
+
+    #[must_use]
+    pub fn glyph_size(self, drawing: &Drawing) -> Option<GlyphSize> {
+        self.0.glyph_size(drawing.payload.as_ref())
+    }
+
+    pub fn set_glyph_size(self, drawing: &mut Drawing, px: f32) {
+        self.0.set_glyph_size(drawing.payload.as_mut(), px);
     }
 
     #[must_use]
@@ -602,6 +701,11 @@ register_drawing_tools!(
     arrow,
     // Channels
     parallel_channel,
+    // Marks
+    arrow_mark_up,
+    arrow_mark_down,
+    // Freehand
+    brush,
     // Shapes
     rectangle,
     ellipse,
@@ -666,6 +770,16 @@ impl ChartPoint {
             time_ms,
         }
     }
+}
+
+/// A glyph tool's own type size, and the range it accepts. The range travels
+/// with the value so a host offering sizes never has to know which tool it
+/// is talking to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlyphSize {
+    pub px: f32,
+    pub min: f32,
+    pub max: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1040,7 +1154,9 @@ impl Drawings {
         }
         let draft = self.draft.as_mut().expect("draft was installed above");
         draft.points.push(point);
-        if draft.points.len() == tool.required_points() {
+        // A freehand tool declares no anchor count: its draft is finished by
+        // the release, through `finish_draft`, never by arithmetic here.
+        if tool.required_points() > 0 && draft.points.len() == tool.required_points() {
             let before = self.snapshot();
             self.items
                 .push(self.draft.take().expect("draft has points"));
@@ -1060,6 +1176,29 @@ impl Drawings {
 
     pub fn cancel_draft(&mut self) {
         self.draft = None;
+    }
+
+    /// Finish a freehand draft: what the release does for a tool whose
+    /// anchor count is whatever the hand gave.
+    ///
+    /// A stroke of fewer than two points is a click that missed, not a
+    /// drawing — it is dropped rather than stored as an invisible object the
+    /// trader can neither see nor select to delete.
+    pub fn finish_draft(&mut self) -> bool {
+        let Some(draft) = self.draft.take() else {
+            return false;
+        };
+        if draft.points.len() < 2 {
+            return false;
+        }
+        let before = self.snapshot();
+        self.items.push(draft);
+        self.selected = Some(self.items.len() - 1);
+        // Same rule as a clicked placement: drawing releases hide-all, and
+        // it does so inside the one undo entry the gesture records.
+        self.all_hidden = false;
+        self.record(before);
+        true
     }
 
     /// Backspace during placement: drop the last placed anchor; dropping the
@@ -1437,7 +1576,20 @@ mod tests {
             assert!(!tool.icon().is_empty());
             assert!(!tool.settings_title().is_empty());
             assert!(!tool.hover_text().is_empty());
-            assert!(tool.required_points() > 0);
+            // Zero anchors is legal for exactly one shape of tool: a
+            // freehand one, whose count is whatever the gesture gave. Any
+            // other tool answering zero would never complete a draft.
+            assert_eq!(
+                tool.required_points() == 0,
+                tool.freehand(),
+                "{} must declare an anchor count unless it is freehand",
+                tool.id()
+            );
+            assert!(
+                !tool.freehand() || tool.placement_hint(0).is_some(),
+                "{} is placed by a gesture nobody has seen before; it has to say so",
+                tool.id()
+            );
         }
     }
 
@@ -2312,6 +2464,16 @@ mod tests {
                 );
                 continue;
             }
+            if drawing_tool.id() == "brush" {
+                // The one tool that answers "none", on purpose: a ring on
+                // every captured point is a cloud nobody can aim at, over a
+                // shape whose individual points mean nothing.
+                assert!(
+                    handles.is_empty(),
+                    "a scribble is moved whole, never point by point"
+                );
+                continue;
+            }
             assert_eq!(
                 handles.as_slice(),
                 points.as_slice(),
@@ -2334,7 +2496,13 @@ mod tests {
         let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
         for drawing_tool in DRAWING_TOOLS {
             let (points, hit) = drawing_tool.test_geometry();
-            assert_eq!(points.len(), drawing_tool.required_points());
+            if drawing_tool.freehand() {
+                // A captured path has no declared length; two points is the
+                // shortest thing that is still a stroke.
+                assert!(points.len() >= 2, "{} needs a path", drawing_tool.id());
+            } else {
+                assert_eq!(points.len(), drawing_tool.required_points());
+            }
             let payload = drawing_tool.default_payload();
             let anchors = anchors_for(&points, &scale);
             let ctxt = DrawContext {
