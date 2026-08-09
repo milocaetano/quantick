@@ -27,6 +27,7 @@ mod builder;
 mod dollar;
 mod footprint;
 mod imbalance;
+mod profile;
 pub mod threshold;
 mod tick;
 mod time;
@@ -41,6 +42,7 @@ pub use footprint::{
     StackedZone,
 };
 pub use imbalance::ImbalanceBarBuilder;
+pub use profile::{ValueArea, VolumeProfile};
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
 pub use time::TimeBarBuilder;

@@ -603,6 +603,9 @@ pub struct QuantickApp {
     // Scripted-validation hook: place one of every registered drawing on the
     // flow pane as soon as it has bars to anchor them to. Consumed once.
     pending_drawing_demo: bool,
+    // Scripted-validation hook: one fixed-range volume profile straddling the
+    // venue-prefix seam (when there is one). Consumed once.
+    pending_frvp_demo: bool,
     inspector_pos: Option<egui::Pos2>,
     // The floating panel's size as it was last actually drawn. Read back from
     // the window response rather than from egui's area memory: the memory
@@ -855,6 +858,7 @@ impl QuantickApp {
             inspector_last_selection: None,
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
+            pending_frvp_demo: false,
             inspector_pos: None,
             inspector_size: None,
             inspector_pin_touched: false,
@@ -952,6 +956,10 @@ impl QuantickApp {
         }
         app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
+        // One fixed-range volume profile, placed to straddle the venue-prefix
+        // seam when there is one — the partial-coverage honesty label is a
+        // surface, and this is how a validation run photographs it.
+        app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value == "1");
         // The object manager is where a mark that cannot be trusted says so —
         // the "off series", "other market" and band badges live there, and a
         // mark clamped to an edge may be nowhere near the visible window,
@@ -4907,6 +4915,52 @@ impl QuantickApp {
         self.apply_drawing_demo_recut();
     }
 
+    /// The `QUANTICK_FRVP_DEMO` hook: one fixed-range volume profile on the
+    /// flow pane. When the pane carries a venue history prefix the range
+    /// starts inside it, so the partial-coverage honesty label ("profile
+    /// from N of M bars") is on screen — the surface this hook exists to
+    /// photograph. Consumed once, like the drawings demo.
+    fn apply_frvp_demo(&mut self) {
+        if !self.pending_frvp_demo {
+            return;
+        }
+        let slots = self.active_tab_mut().flow_pane.slots();
+        if slots < 12 {
+            return;
+        }
+        self.pending_frvp_demo = false;
+        let Some(tool) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+        else {
+            return;
+        };
+        let pane = &mut self.active_tab_mut().flow_pane;
+        let prefix = pane.history_prefix.len();
+        // Straddle the seam when there is one; else the newest stretch.
+        let start = if prefix > 0 && prefix < slots {
+            prefix.saturating_sub(5)
+        } else {
+            slots.saturating_sub(30)
+        };
+        let end = (start + 29).min(slots - 1);
+        let close = pane
+            .closed_bar(end)
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+            .unwrap_or(1.0);
+        for slot in [start, end] {
+            pane.drawings.place_with(
+                tool,
+                &drawings::DrawingBand::Price,
+                drawings::ChartPoint::at_time(slot as f32 + 0.5, close, pane.slot_open_time(slot)),
+                |tool| drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                },
+            );
+        }
+    }
+
     /// The `bands` half of the demo hook: on every indicator pane, a level on
     /// the band's own value and a diagonal across it.
     ///
@@ -5017,6 +5071,7 @@ impl QuantickApp {
 
         self.drain_tabs();
         self.apply_drawing_demo();
+        self.apply_frvp_demo();
         self.maybe_emit_summary(now);
         self.maintain_workspace(ctx);
 
