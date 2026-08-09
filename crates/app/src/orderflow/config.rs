@@ -679,6 +679,18 @@ pub struct HeatmapConfig {
     /// only, so it turns on and off without touching L2 depth capture. Hiding
     /// bubbles is a visual choice and never discards factual history.
     pub show_aggressions: bool,
+    /// Whether a surface that is not the depth map or the bubbles is reading
+    /// the projection right now: the live strip beside the price axis, which
+    /// draws the same clusters, and the live lane's marks, which need the
+    /// frame's live edge.
+    ///
+    /// Not a user setting and never written to disk: the pane owns those
+    /// layers' visibility and states their demand here every frame, so this
+    /// field can have no second owner to disagree with. It exists because a
+    /// frame nobody builds is a surface nobody draws — hiding the bubbles used
+    /// to blank the strip, and switching every other flow layer off left the
+    /// lane reserved but unmarked while its menu entry still read as on.
+    pub projection_demand: bool,
     /// Temporal window used to cluster compatible aggressive prints.
     ///
     /// Zero keeps raw, one-trade-per-bubble projection.
@@ -757,6 +769,10 @@ pub struct HeatmapConfig {
     pub liquidity_correlation_ms: i64,
     /// Whether the renderer should show its visual legend.
     pub show_legend: bool,
+    /// Whether the book's status badge is drawn in the canvas's top-right
+    /// corner. Chrome about the capture, not about the market: switching it
+    /// off silences the label and changes nothing about the recording.
+    pub show_status_badge: bool,
     /// Renderer palette.
     pub theme: HeatmapTheme,
     /// Maximum number of closed RLE runs retained. Active levels are separate.
@@ -787,6 +803,7 @@ impl Default for HeatmapConfig {
             // book edge-to-edge (no walls stand out).
             gamma: 1.8,
             show_aggressions: false,
+            projection_demand: false,
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             bubble_dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             bubble_candle_summary: false,
@@ -803,6 +820,7 @@ impl Default for HeatmapConfig {
             min_unattributed_pull_share: 0.25,
             liquidity_correlation_ms: DEFAULT_LIQUIDITY_CORRELATION_MS,
             show_legend: true,
+            show_status_badge: true,
             theme: HeatmapTheme::Bookmap,
             max_history_runs: 500_000,
             max_history_bytes: 64 * 1024 * 1024,
@@ -828,9 +846,14 @@ impl HeatmapConfig {
     /// alone keeps the pipeline alive, and neither can switch the other off.
     /// Capture is not part of this question — the recorder runs on its own, so
     /// a hidden map stops costing projections without stopping the recording.
+    ///
+    /// A surface that is not a layer of its own can ask too
+    /// ([`projection_demand`](Self::projection_demand)): the live strip draws
+    /// the same clusters the bubbles do, and it stays alive when they are
+    /// hidden.
     #[must_use]
     pub fn any_layer_enabled(&self) -> bool {
-        self.depth_visible() || self.show_aggressions
+        self.depth_visible() || self.show_aggressions || self.projection_demand
     }
 
     /// Whether displayed-liquidity reductions need to be computed at all.
@@ -951,6 +974,7 @@ mod tests {
             DEFAULT_LIQUIDITY_CORRELATION_MS
         );
         assert!(config.show_legend);
+        assert!(config.show_status_badge);
         assert_eq!(config.theme, HeatmapTheme::Bookmap);
         assert_eq!(config.max_visible_cells, 12_000);
         assert_eq!(config.max_aggression_primitives, 700);

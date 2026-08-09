@@ -56,6 +56,14 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
+/// How far the pointer must travel before a freehand stroke records another
+/// point. Chosen so a hand-drawn circle keeps its shape while a half-second
+/// scribble stores tens of anchors instead of hundreds — every anchor is
+/// paint and hit-test work on every frame for the rest of the session.
+const FREEHAND_MIN_STEP_PX: f32 = 4.0;
+/// Hard ceiling on one stroke, so a pointer that never stops moving cannot
+/// turn a single drawing into an unbounded cost.
+const FREEHAND_MAX_POINTS: usize = 512;
 
 /// Alpha of the last-price line: legible at a glance without competing with a
 /// candle or a bubble for attention.
@@ -666,6 +674,15 @@ fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
 pub struct PaneChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
+    /// Raised when a tool that arrives empty was just placed, so the host
+    /// opens the settings panel for it.
+    ///
+    /// Selecting a drawing raises the context bar, not the panel — but a
+    /// text note has no *content* until someone types it, and the field that
+    /// takes those words lives in the panel. Placing one and being shown a
+    /// row of style icons leaves the trader with an object that says "Note"
+    /// in grey and no way to make it say anything else.
+    pub open_settings: &'a mut bool,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
     /// The symbol to name while the series is still empty.
@@ -864,6 +881,9 @@ pub struct ChartPane {
     drawing_band_hint: Option<egui::Rect>,
     pub drawing_press_position: Option<egui::Pos2>,
     pub drawing_press_started_empty: bool,
+    /// The last screen position a freehand stroke actually recorded, so the
+    /// capture decimates as it goes rather than storing every mouse event.
+    freehand_last_position: Option<egui::Pos2>,
     /// What the press resolved under the Pointer tool, held until the click
     /// it belongs to completes. `Some(None)` is a real answer — a press on
     /// empty canvas, the one that deselects.
@@ -982,6 +1002,7 @@ impl ChartPane {
             drawing_band_hint: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
+            freehand_last_position: None,
             drawing_press_pick: None,
             drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
@@ -1076,6 +1097,8 @@ impl ChartPane {
             ChartLayer::Footprint => self.footprint_visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
+            ChartLayer::FlowLegend => tape.is_some_and(OrderflowView::legend_visible),
+            ChartLayer::BookStatus => tape.is_some_and(OrderflowView::status_badge_visible),
             ChartLayer::DepthGaps => tape.is_some_and(OrderflowView::gaps_visible),
             ChartLayer::Grid => style.canvas.grid_enabled,
             // The toolbox's global eye already owns this one, undo history and
@@ -1120,6 +1143,16 @@ impl ChartPane {
                     tape.set_lane_marks_visible(visible);
                 }
             }
+            ChartLayer::FlowLegend => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_legend_visible(visible);
+                }
+            }
+            ChartLayer::BookStatus => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_status_badge_visible(visible);
+                }
+            }
             ChartLayer::DepthGaps => {
                 if let Some(tape) = self.orderflow.as_mut() {
                     tape.set_gaps_visible(visible);
@@ -1142,6 +1175,22 @@ impl ChartPane {
         }
     }
 
+    /// Whether a surface that is neither the depth map nor the bubbles needs
+    /// the order-flow projection this frame.
+    ///
+    /// Two do: the live strip draws the same clusters the bubbles would, and
+    /// the lane's marks need the frame's live edge. Without this, switching
+    /// the bubbles off blanked the strip, and switching every flow layer off
+    /// left the lane reserved but unmarked — a band indistinguishable from a
+    /// dead feed, while its menu entry still read as on.
+    fn projection_demand(&self) -> bool {
+        self.live_strip_visible
+            || self
+                .orderflow
+                .as_ref()
+                .is_some_and(OrderflowView::lane_marks_visible)
+    }
+
     /// Whether this pane draws `layer` at all, whatever the source can produce.
     ///
     /// §11 keeps the tape and everything read off it on the flow pane, so a
@@ -1154,6 +1203,8 @@ impl ChartPane {
                     | ChartLayer::Bubbles
                     | ChartLayer::LiveStrip
                     | ChartLayer::LaneMarks
+                    | ChartLayer::FlowLegend
+                    | ChartLayer::BookStatus
                     | ChartLayer::DepthGaps
             )
     }
@@ -1178,6 +1229,21 @@ impl ChartPane {
         match layer {
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
+            // The badge reports on the book feed, so a source with no book has
+            // nothing for it to say — and it is drawn with the map, so while
+            // the map is hidden the switch would tick a box that draws
+            // nothing. Offered disabled with the reason instead.
+            ChartLayer::BookStatus => {
+                if capabilities.book_capture {
+                    (!self
+                        .orderflow
+                        .as_ref()
+                        .is_some_and(OrderflowView::depth_visible))
+                    .then_some("the badge reports on the depth map, which is hidden")
+                } else {
+                    Some("order-book capture is not available for this source")
+                }
+            }
             // The footprint is the buy/sell split per price: on a source that
             // prints no traded volume every cell would be an identical
             // synthetic unit — the same reason the bubbles refuse.
@@ -1200,14 +1266,19 @@ impl ChartPane {
     }
 
     /// The same visibility as one bit per persisted layer, for change
-    /// detection. `ALL` is fourteen entries, so the mask cannot outgrow
-    /// `u16`.
-    pub fn layer_mask(&self, style: &ChartStyle) -> u16 {
+    /// detection.
+    ///
+    /// The bit is the layer's index in `ALL`, which is now sixteen entries —
+    /// the last bit `u32` has room for after this widening, and the reason the
+    /// accumulator is not `u16` any more: a seventeenth layer would have
+    /// shifted by 16, panicking in debug and silently colliding in release.
+    /// The assertion below fails the build rather than the chart.
+    pub fn layer_mask(&self, style: &ChartStyle) -> u32 {
         ChartLayer::ALL
             .into_iter()
             .enumerate()
             .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
-            .fold(0_u16, |mask, (bit, _)| mask | (1 << bit))
+            .fold(0_u32, |mask, (bit, _)| mask | (1 << bit))
     }
 
     /// Apply saved visibility to this pane, ignoring layers it cannot draw.
@@ -1736,6 +1807,7 @@ impl ChartPane {
         history_right: f32,
         total: usize,
         magnet: bool,
+        snap: drawings::AnchorSnap,
         band: &Band,
     ) -> Option<ChartPoint> {
         let scale = band.scale.as_ref()?;
@@ -1744,11 +1816,44 @@ impl ChartPane {
         }
         let bar = self.viewport.right_edge_bar(total) + 0.5
             - (history_right - pos.x) / self.viewport.candle_width();
-        let value = magnet
-            .then(|| self.magnet_value(band, bar, pos.y, scale))
-            .flatten()
-            .unwrap_or_else(|| scale.price_at(pos.y));
+        let value = match snap {
+            // A mark's own rule beats the magnet toggle in both directions:
+            // it snaps with the magnet off, and it snaps to *its* extreme
+            // rather than to whichever of the four OHLC prices is nearest.
+            drawings::AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
+            drawings::AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
+            drawings::AnchorSnap::Pointer => magnet
+                .then(|| self.magnet_value(band, bar, pos.y, scale))
+                .flatten(),
+        }
+        .unwrap_or_else(|| scale.price_at(pos.y));
         Some(ChartPoint::at_time(bar, value, self.anchor_time(bar)))
+    }
+
+    /// The high or low of the bar `bar` falls on, on the price band only.
+    ///
+    /// An indicator band has no candle, so a mark dropped there keeps the
+    /// pointer's own value: inventing a high for a CVD pane would be the
+    /// data-honesty failure this repo refuses, and refusing the click
+    /// outright would read as a bug.
+    fn bar_extreme(&self, band: &Band, bar: f32, high: bool) -> Option<f64> {
+        if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
+            return None;
+        }
+        let slot = bar.floor() as usize;
+        // The forming bar counts. Marking the bar that is running *is* the
+        // live use of this tool — marking a closed one is review — and
+        // `closed_bar` stops one slot short of it, which would drop the mark
+        // back onto the pointer's own price: exactly the failure the snap
+        // exists to prevent, in the only moment it is used under pressure.
+        //
+        // The extreme is read at the instant of the click. A low that
+        // deepens afterwards leaves the mark where the bar was when it was
+        // marked, which is what the mark is a record of.
+        let candle = self
+            .closed_bar(slot)
+            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)?;
+        if high { candle.high } else { candle.low }.to_f64()
     }
 
     /// Work a shared mark that lives on the other pane, from this one.
@@ -1778,6 +1883,7 @@ impl ChartPane {
                 pointer.history_right,
                 pointer.total,
                 pointer.magnet,
+                drawings::AnchorSnap::Pointer,
                 band,
             )
             .and_then(|point| Some((point.time_ms?, point.price)))
@@ -2020,7 +2126,14 @@ impl ChartPane {
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {
                 let (band, position) = self.placement_target(areas, bands, position)?;
-                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+                self.drawing_point_at(
+                    position,
+                    history_right,
+                    self.slots(),
+                    magnet,
+                    tool.anchor_snap(),
+                    band,
+                )
             });
         if (response.hovered() || response.dragged()) && !over_pane_chrome {
             ui.ctx().set_cursor_icon(match hovered {
@@ -2044,12 +2157,24 @@ impl ChartPane {
         if let Some(position) = pressed_position
             .filter(|position| surface.contains(*position) && !over_chrome(ui, *position))
             && let Some((band, position)) = self.placement_target(areas, bands, position)
-            && let Some(point) =
-                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+            && let Some(point) = self.drawing_point_at(
+                position,
+                history_right,
+                self.slots(),
+                magnet,
+                tool.anchor_snap(),
+                band,
+            )
         {
             let band = band.key.clone();
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
             self.drawing_press_position = Some(position);
+            // The first anchor of a stroke also seeds its decimation, or the
+            // very next frame records a second point on the same pixel and a
+            // stationary click becomes a two-point "drawing".
+            if tool.freehand() {
+                self.freehand_last_position = Some(position);
+            }
             self.place_drawing_point(tool, &band, point, chrome);
         }
 
@@ -2060,6 +2185,61 @@ impl ChartPane {
                 .then(|| input.pointer.latest_pos())
                 .flatten()
         });
+        // A held drag, not N clicks: the press above laid the first anchor,
+        // every frame the pointer stays down feeds the path, and the release
+        // is what finishes the object.
+        if tool.freehand() {
+            if self.drawings.draft_len() > 0
+                && ui.input(|input| input.pointer.primary_down())
+                && let Some(position) = ui.input(|input| input.pointer.latest_pos())
+                && let Some((band, position)) = self.placement_target(areas, bands, position)
+                // The draft belongs to the band its first anchor landed in.
+                // A hand that strays 15 px into the CVD pane mid-stroke
+                // would otherwise write a CVD value into an object living on
+                // the price axis — and the stroke, having no handles, could
+                // only be deleted and redrawn. Points outside the draft's
+                // own band are dropped; the stroke resumes when the hand
+                // comes back.
+                && self
+                    .drawings
+                    .draft()
+                    .is_some_and(|draft| draft.band == tool.band_for(&band.key))
+                && let Some(point) = self.drawing_point_at(
+                    position,
+                    history_right,
+                    self.slots(),
+                    magnet,
+                    tool.anchor_snap(),
+                    band,
+                )
+                // Decimate on the way in rather than simplifying afterwards.
+                // A fast hand on a dense tape produces hundreds of points a
+                // second, and every one of them costs a paint and a hit-test
+                // on every later frame — for a shape whose whole value is
+                // roughly where it is.
+                && self
+                    .freehand_last_position
+                    .is_none_or(|last| last.distance(position) >= FREEHAND_MIN_STEP_PX)
+                && self.drawings.draft_len() < FREEHAND_MAX_POINTS
+            {
+                self.freehand_last_position = Some(position);
+                let band = band.key.clone();
+                self.place_drawing_point(tool, &band, point, chrome);
+            }
+            if released_position.is_some() {
+                self.freehand_last_position = None;
+                if self.drawings.finish_draft() {
+                    // Same one-shot rule the clicked tools follow.
+                    if !chrome.toolrail.repeat() {
+                        chrome.toolrail.arm(Tool::Pointer);
+                    }
+                    self.drawing_hover = None;
+                }
+                self.drawing_press_position = None;
+                self.drawing_press_started_empty = false;
+            }
+            return true;
+        }
         if tool.required_points() > 1
             && self.drawing_press_started_empty
             && let Some(start) = self.drawing_press_position
@@ -2067,8 +2247,14 @@ impl ChartPane {
             && surface.contains(position)
             && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
             && let Some((band, position)) = self.placement_target(areas, bands, position)
-            && let Some(point) =
-                self.drawing_point_at(position, history_right, self.slots(), magnet, band)
+            && let Some(point) = self.drawing_point_at(
+                position,
+                history_right,
+                self.slots(),
+                magnet,
+                tool.anchor_snap(),
+                band,
+            )
         {
             let band = band.key.clone();
             self.place_drawing_point(tool, &band, point, chrome);
@@ -2129,7 +2315,7 @@ impl ChartPane {
         let completed = self.drawings.place_with(tool, band, point, |tool| {
             let style = presets
                 .default_style(tool.id())
-                .unwrap_or_else(drawings::DrawingStyle::default);
+                .unwrap_or_else(|| tool.default_style());
             let mut payload = tool.default_payload();
             if let Some(name) = presets.default_preset(tool.id())
                 && let Some(value) = presets.load_custom_preset(tool.id(), &name)
@@ -2143,6 +2329,9 @@ impl ChartPane {
             // armed for the next object.
             if !chrome.toolrail.repeat() {
                 chrome.toolrail.arm(Tool::Pointer);
+            }
+            if tool.opens_settings_on_place() {
+                *chrome.open_settings = true;
             }
             self.drawing_hover = None;
         }
@@ -2334,7 +2523,18 @@ impl ChartPane {
         };
         let anchors: Option<SmallVec<[ChartPoint; 4]>> = moved
             .iter()
-            .map(|point| self.drawing_point_at(*point, history_right, total, false, band))
+            // Derived anchors are exact by construction — neither the magnet
+            // nor a tool's own snap rule applies to them a second time.
+            .map(|point| {
+                self.drawing_point_at(
+                    *point,
+                    history_right,
+                    total,
+                    false,
+                    drawings::AnchorSnap::Pointer,
+                    band,
+                )
+            })
             .collect();
         if let Some(anchors) = anchors {
             self.drawings.set_points(drawing_index, &anchors);
@@ -2659,6 +2859,15 @@ impl ChartPane {
                             .items()
                             .get(drawing_index)
                             .and_then(|drawing| bands::band_of(&bands, drawing));
+                        // Moving a mark keeps it glued to a bar's extreme:
+                        // the rule that placed it is the rule that holds it.
+                        let handle_snap = self
+                            .drawings
+                            .items()
+                            .get(drawing_index)
+                            .map_or(drawings::AnchorSnap::Pointer, |drawing| {
+                                drawing.tool.anchor_snap()
+                            });
                         if let Some(band) = dragged
                             && let Some(position) = pointer_position
                         {
@@ -2666,9 +2875,14 @@ impl ChartPane {
                                 position.x.clamp(band.rect.left(), history_right),
                                 position.y.clamp(band.rect.top(), band.rect.bottom()),
                             );
-                            if let Some(point) =
-                                self.drawing_point_at(position, history_right, total, magnet, band)
-                            {
+                            if let Some(point) = self.drawing_point_at(
+                                position,
+                                history_right,
+                                total,
+                                magnet,
+                                handle_snap,
+                                band,
+                            ) {
                                 self.drag_drawing_handle(
                                     drawing_index,
                                     handle,
@@ -3253,7 +3467,16 @@ impl ChartPane {
             visible_state,
             partial_visible,
         );
+        // Two surfaces consume the projection without being the depth map or
+        // the bubbles: the live strip draws the same clusters, and the lane's
+        // marks need the frame's live edge. Stated here, every frame, from the
+        // layers this pane owns — so with the bubbles hidden the pipeline stays
+        // alive for the strip, and with every other flow layer off the lane is
+        // still marked instead of being a reserved but empty band whose menu
+        // entry claims it is on.
+        let demand = self.projection_demand();
         let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
+            orderflow.set_projection_demand(demand);
             orderflow.project_visible(timeline, lane_width_px > 0.0, end == total, scale.range())
         });
         if let Some(orderflow) = self.orderflow.as_mut()
@@ -3488,6 +3711,36 @@ impl ChartPane {
                 frame,
                 canvas_background,
                 lane_width_px,
+            );
+        }
+
+        // The canvas's key, in a pass of its own so the bubble switch cannot
+        // take it down with them. It starts below everything already stacked
+        // at this corner — the chart header, the position HUD while a
+        // position is open, and one row per indicator chip — so nothing at the
+        // top-left prints over anything else.
+        //
+        // The HUD's row counts only where the HUD paints: on the pane that
+        // owns order entry (the focused one) — exactly the condition this pane
+        // caches its anchor under, further down this same draw. The anchor is
+        // not readable yet this frame (it is written after the paper layer),
+        // so the condition is restated here rather than read back.
+        let hud_here = chrome.paper_owns_input && chrome.paper.position_summary().is_some();
+        let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
+            + crate::indicator_legend::hud_offset_px(hud_here)
+            + crate::indicator_legend::stack_height_px(self.indicators.all());
+        if let Some(orderflow) = self.orderflow.as_mut()
+            && let Some(frame) = &orderflow_frame
+        {
+            orderflow.draw_legend(
+                painter,
+                chart_rect,
+                &self.viewport,
+                total,
+                frame,
+                canvas_background,
+                lane_width_px,
+                legend_inset,
             );
         }
 
@@ -4667,6 +4920,27 @@ fn magnet_price_of(
 mod tests {
     use super::*;
     use crate::indicator_worker::IndicatorEvent;
+
+    /// A frame nobody builds is a surface nobody draws. The strip and the
+    /// lane's marks are the two surfaces that need the projection without
+    /// being the depth map or the bubbles, so each of them alone has to keep
+    /// it running — otherwise the lane sits reserved and unmarked (a band you
+    /// cannot tell from a dead feed) while its menu entry reads as on.
+    #[test]
+    fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let mut discarded = LayerActions::default();
+        pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
+        pane.set_layer_visible(ChartLayer::LaneMarks, false, &mut discarded);
+        assert!(!pane.projection_demand(), "nobody is asking");
+
+        pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut discarded);
+        assert!(pane.projection_demand(), "the strip alone asks");
+
+        pane.set_layer_visible(ChartLayer::LiveStrip, false, &mut discarded);
+        pane.set_layer_visible(ChartLayer::LaneMarks, true, &mut discarded);
+        assert!(pane.projection_demand(), "the lane's marks alone ask");
+    }
 
     /// A chart that has never been configured follows the window's setup —
     /// which is what keeps one chart behaving like a global preference —

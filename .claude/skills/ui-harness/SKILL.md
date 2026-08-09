@@ -37,7 +37,7 @@ is the source of truth, this table is the index):
 | `QUANTICK_INDICATORS_AUTOSTART` / `QUANTICK_INDICATOR_SCRIPTS_AUTOSTART` | indicator panes / pine scripts |
 | `QUANTICK_REPLAY_DIR` + `QUANTICK_REPLAY_AUTOSTART=1` + `QUANTICK_REPLAY_SPEED` | recorded session playback (deterministic tape → deterministic screen) |
 | `QUANTICK_BUBBLES=<bubbles.toml>` | bubble preset override without touching tracked config |
-| `QUANTICK_CHART_LAYERS` | chart layer visibility set |
+| `QUANTICK_CHART_LAYERS` | chart layer visibility set: a `version = 1` TOML with a `[layers]` table keyed by layer id (`heatmap`, `bubbles`, `footprint`, `live_strip`, `flow_legend`, `book_status`, `depth_gaps`, `grid`, `last_price`, `crosshair`, `paper_trading`, `trade_paint`, `drawings`, …). This is also how the canvas *chrome* is reached with no clicks — `flow_legend = false` silences the top-left key, `book_status = false` the top-right badge — and `bubbles = false` with `live_strip = true` is the state that used to blank the strip. **Point it at a scratchpad file**: the app writes this file back whenever a switch flips. |
 | `QUANTICK_UI_STATE=<toml>` | the saved workspace — the tab strip, each tab's layout/split/focus/bar specs, the dock, the rail, the timezone, the window size. **Always point this at a scratchpad file.** Without it a validation run reads the user's real `ui-state.toml` and, on exit, overwrites it: the run both inherits yesterday's cockpit and destroys it. Point it at a path that does not exist to force the configured default; write one by hand to open on an exact arrangement. |
 | `QUANTICK_WORKSPACE_SAVE=1` | takes `Workspace → Save workspace` at startup, through the menu entry's own path — the save really happens, so the status-line confirmation is on screen to capture. Pair with `QUANTICK_UI_STATE` pointed at a scratchpad. |
 | `QUANTICK_BACKFILL` / `QUANTICK_BOOK_DEPTH` | history paging / depth size |
@@ -56,6 +56,21 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_DRAWINGS_MANAGER=1` | opens the object manager, which is where the "off series" and "other market" badges are read — and the only place a mark clamped off the visible window can be found at all |
 | `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>` | selects that tool's demo object and centres the viewport on it. Selection is what puts an object's handles on screen, so this is the only way to photograph the grab points of a tool that is not last in the registry (`parallel-channel` for its corner and rail handles) |
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
+
+Landing with the drawing context bar goal (`feat/drawing-context-bar`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_DRAWING_INSPECTOR=1` | the full settings panel open at launch. Selecting a drawing no longer opens it — it raises the context bar, and the gear on that bar is the one door — so this is the only way to photograph the panel without a click. Pair with `QUANTICK_DRAWINGS_DEMO_SELECT` |
+
+The context bar itself has no hook of its own and needs none: it exists for
+as long as something is selected, so `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`
+*is* the hook that reaches it — and it reaches a different bar per tool,
+which is the thing worth photographing, since the bar is built from the
+selected object's capabilities. `QUANTICK_DRAWING_TOOL` covers the two new
+marks (`arrow-mark-up`, `arrow-mark-down`) and the pencil (`brush`) like any
+other registered tool, and `QUANTICK_DRAWINGS_DEMO=1` now places a short
+freehand path for the pencil, which declares no anchor count of its own.
 
 Once merged, move them into the table above.
 

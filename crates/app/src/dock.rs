@@ -57,10 +57,14 @@ impl DockTab {
     ];
 
     /// The Phosphor glyph on the strip.
+    ///
+    /// A tab wears the same glyph as the toolbar toggle for the same thing —
+    /// the depth map is the book's stacked bid/ask rows in both places. Two
+    /// glyphs for one layer read as two features.
     #[must_use]
     pub fn icon(self) -> &'static str {
         match self {
-            Self::L2 => icons::STACK,
+            Self::L2 => icons::ROWS,
             Self::Bubbles => icons::CIRCLES_THREE,
             Self::Session => icons::FILM_STRIP,
             Self::Trading => icons::TREND_UP,
