@@ -37,9 +37,14 @@
 
 use std::collections::BTreeMap;
 
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 
 use crate::{Side, Trade};
+
+/// Decimal places an approximated ladder's per-row share is truncated to.
+/// Deeper than any venue's quantity step, shallow enough that a truncated
+/// share times a full ladder of rows never overdraws the bar's own total.
+const APPROX_SHARE_DECIMALS: u32 = 12;
 
 /// Default ladder size cap: beyond this many price levels in one bar the
 /// grouping doubles. Generous for every realistic bar (a dense Binance tick
@@ -123,6 +128,93 @@ impl BarFootprint {
             base_group,
             doublings: 0,
         }
+    }
+
+    /// An **approximated** ladder built from a bar's summary alone — for
+    /// bars with no tape behind them (venue history candles), where the real
+    /// per-price distribution is unknowable.
+    ///
+    /// The bar's volume is spread uniformly over the buckets its low–high
+    /// range crosses, each side separately (a venue that reports the
+    /// taker-buy split — Binance klines do — keeps its real side totals);
+    /// division remainders land in the close's bucket, so every total is
+    /// conserved *exactly*: folding approximated ladders into a
+    /// [`VolumeProfile`](crate::VolumeProfile) sums to precisely the bars'
+    /// own volumes. A range too wide for `level_cap` doubles the grouping
+    /// first and reports itself [`aggregated`](Self::is_aggregated).
+    ///
+    /// The shape is honest about *totals* and approximate about *placement*
+    /// — the consumer must label it so (data honesty); the engine cannot,
+    /// because an approximated ladder reads identically to a real one on
+    /// purpose: one fold, one profile, one code path.
+    ///
+    /// `None` when the bar traded nothing. # Panics — on a non-positive
+    /// `base_group` or a zero `level_cap`, the same configuration contract
+    /// as [`FootprintBuilder::new`].
+    #[must_use]
+    pub fn approximated(bar: &crate::Bar, base_group: Decimal, level_cap: usize) -> Option<Self> {
+        assert!(
+            base_group > Decimal::ZERO,
+            "footprint base group must be positive"
+        );
+        assert!(level_cap > 0, "footprint level cap must be positive");
+        let volume = bar.buy_volume.saturating_add(bar.sell_volume);
+        if volume <= Decimal::ZERO {
+            return None;
+        }
+        // Widen the grouping until the bar's price span fits the cap — the
+        // same bound the trade fold enforces, decided up front because the
+        // span is known before any bucket exists.
+        let mut ladder = Self::new(base_group);
+        let (lo, hi) = loop {
+            let group = ladder.group();
+            let lo = bucket_of(bar.low.min(bar.high), group);
+            let hi = bucket_of(bar.high.max(bar.low), group);
+            let span = hi.saturating_sub(lo).saturating_add(1);
+            if span >= 0 && (span as u128) <= level_cap as u128 {
+                break (lo, hi);
+            }
+            ladder.doublings += 1;
+        };
+        let close_bucket = bucket_of(bar.close, ladder.group()).clamp(lo, hi);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let rows = (hi - lo + 1) as u64;
+        let rows_dec = Decimal::from(rows);
+        // Per-row shares rounded *down*, remainders to the close's row:
+        // totals conserve exactly, whatever the divisions truncated — a
+        // share rounded up would overdraw the total by an epsilon and break
+        // the conservation the fold is trusted for.
+        let share = |total: Decimal| {
+            total
+                .checked_div(rows_dec)
+                .unwrap_or(Decimal::ZERO)
+                .round_dp_with_strategy(APPROX_SHARE_DECIMALS, RoundingStrategy::ToZero)
+        };
+        let buy_share = share(bar.buy_volume);
+        let sell_share = share(bar.sell_volume);
+        let count_share = bar.trade_count / rows;
+        for bucket in lo..=hi {
+            ladder.levels.insert(
+                bucket,
+                FootprintLevel {
+                    buy: buy_share,
+                    sell: sell_share,
+                    trade_count: count_share,
+                },
+            );
+        }
+        let close_level = ladder
+            .levels
+            .get_mut(&close_bucket)
+            .expect("close bucket is clamped into the spread range");
+        close_level.buy = bar
+            .buy_volume
+            .saturating_sub(buy_share.saturating_mul(Decimal::from(rows - 1)));
+        close_level.sell = bar
+            .sell_volume
+            .saturating_sub(sell_share.saturating_mul(Decimal::from(rows - 1)));
+        close_level.trade_count = bar.trade_count - count_share * (rows - 1);
+        Some(ladder)
     }
 
     /// The ladder, lowest bucket first. Keys are `floor(price / group())`.
@@ -654,6 +746,89 @@ mod tests {
             side: Side::Buy,
         });
         assert_eq!(builder.close().unwrap().extreme_ratio(Extreme::Low), None);
+    }
+
+    fn venue_bar(
+        low: &str,
+        high: &str,
+        close: &str,
+        buy: &str,
+        sell: &str,
+        trades: u64,
+    ) -> crate::Bar {
+        crate::Bar {
+            open_time: 1_700_000_000_000,
+            close_time: 1_700_000_060_000,
+            open: dec(low),
+            high: dec(high),
+            low: dec(low),
+            close: dec(close),
+            buy_volume: dec(buy),
+            sell_volume: dec(sell),
+            trade_count: trades,
+        }
+    }
+
+    /// The approximated ladder conserves every total exactly: shares are
+    /// rounded down and the remainders land in the close's row, so folding
+    /// approximated bars sums to precisely the bars' own volumes — the
+    /// property the range profile trusts.
+    #[test]
+    fn an_approximated_ladder_conserves_volume_sides_and_count_exactly() {
+        // 1.0 buy over three $1 rows: 0.333… truncated, remainder to close.
+        let bar = venue_bar("100", "102.9", "100.5", "1", "0.2", 7);
+        let ladder = BarFootprint::approximated(&bar, dec("1"), DEFAULT_LEVEL_CAP).unwrap();
+
+        let buckets: Vec<i64> = ladder.levels().keys().copied().collect();
+        assert_eq!(buckets, vec![100, 101, 102]);
+        let total_buy: Decimal = ladder.levels().values().map(|l| l.buy).sum();
+        let total_sell: Decimal = ladder.levels().values().map(|l| l.sell).sum();
+        let total_count: u64 = ladder.levels().values().map(|l| l.trade_count).sum();
+        assert_eq!(total_buy, dec("1"), "buy conserved exactly");
+        assert_eq!(total_sell, dec("0.2"), "sell conserved exactly");
+        assert_eq!(total_count, 7, "trade count conserved exactly");
+        // The close's row (bucket 100) carries the remainders, so it is the
+        // heaviest — every other row holds the truncated share.
+        assert!(ladder.levels()[&100].buy > ladder.levels()[&101].buy);
+        assert_eq!(ladder.levels()[&101], ladder.levels()[&102]);
+        assert!(!ladder.is_aggregated());
+    }
+
+    #[test]
+    fn a_one_row_candle_puts_everything_in_that_row() {
+        let bar = venue_bar("100.2", "100.7", "100.4", "3", "2", 5);
+        let ladder = BarFootprint::approximated(&bar, dec("1"), DEFAULT_LEVEL_CAP).unwrap();
+        assert_eq!(ladder.levels().len(), 1);
+        assert_eq!(ladder.levels()[&100].buy, dec("3"));
+        assert_eq!(ladder.levels()[&100].sell, dec("2"));
+        assert_eq!(ladder.levels()[&100].trade_count, 5);
+    }
+
+    #[test]
+    fn a_bar_that_traded_nothing_yields_no_ladder() {
+        assert!(
+            BarFootprint::approximated(
+                &venue_bar("100", "101", "100", "0", "0", 0),
+                dec("1"),
+                DEFAULT_LEVEL_CAP
+            )
+            .is_none()
+        );
+    }
+
+    /// A span wider than the cap coarsens the grouping up front and says so
+    /// — same contract as the trade fold's cap, same honesty flag.
+    #[test]
+    fn an_oversized_span_coarsens_and_says_so() {
+        let bar = venue_bar("100", "163", "120", "8", "0", 8);
+        let ladder = BarFootprint::approximated(&bar, dec("1"), 32).unwrap();
+        assert!(ladder.is_aggregated());
+        assert_eq!(ladder.group(), dec("2"));
+        let total: Decimal = ladder.levels().values().map(|l| l.buy).sum();
+        assert_eq!(total, dec("8"));
+        // An approximated ladder folds into a profile beside real ones.
+        let profile = crate::VolumeProfile::merge([&ladder], DEFAULT_LEVEL_CAP).unwrap();
+        assert_eq!(profile.total_volume(), dec("8"));
     }
 
     /// The doubled ladder equals the ladder a builder with the doubled base

@@ -90,6 +90,10 @@ pub struct FrvpCache {
     pub empty: Option<FrvpEmpty>,
     /// Bars whose ladders went into the fold (the partial counts once).
     pub bars_covered: usize,
+    /// Bars folded from an **approximated** ladder — venue candles with no
+    /// tape, their volume spread over their own high–low. Spoken by the
+    /// status line, never blended away.
+    pub bars_approximated: usize,
     /// Bars the anchors span on the chart, prefix candles included.
     pub bars_total: usize,
     /// The oldest global slot the L2 heatmap covers this frame — where the
@@ -117,6 +121,9 @@ pub struct FrvpCacheKey {
     /// delta whose sides were guessed must say so, like the footprint legend
     /// does.
     pub side_inferred: bool,
+    /// Whether venue-history candles are folded in as approximated ladders
+    /// — the payload's own switch, in the key so toggling it re-folds.
+    pub approximate: bool,
 }
 
 /// The versioned on-disk shape of a saved preset. Coordinates and cache never
@@ -138,6 +145,10 @@ struct FrvpPresetData {
     /// honest behaviour (outline over the map).
     #[serde(default = "default_true")]
     outline_over_heatmap: bool,
+    /// Same vintage rule again: approximating venue history is the default
+    /// because the label speaks whenever it happens.
+    #[serde(default = "default_true")]
+    approximate_history: bool,
 }
 
 fn default_true() -> bool {
@@ -165,6 +176,11 @@ pub struct FrvpPayload {
     /// the cells. Off = always fill, for whoever prefers the solid object
     /// and accepts the fight.
     pub outline_over_heatmap: bool,
+    /// Venue-history candles (no tape) join the fold as approximated
+    /// ladders — volume spread over each candle's high–low, labeled
+    /// `approximated from OHLC` in the status. Off = those bars contribute
+    /// nothing, exactly as before this option existed.
+    pub approximate_history: bool,
     /// Derived state, refreshed by `frvp::refresh`; see [`FrvpCache`].
     pub cache: Option<FrvpCache>,
 }
@@ -180,6 +196,7 @@ impl Default for FrvpPayload {
             show_labels: true,
             extend_right: false,
             outline_over_heatmap: true,
+            approximate_history: true,
             cache: None,
         }
     }
@@ -197,6 +214,7 @@ impl PartialEq for FrvpPayload {
             && self.show_labels == other.show_labels
             && self.extend_right == other.extend_right
             && self.outline_over_heatmap == other.outline_over_heatmap
+            && self.approximate_history == other.approximate_history
     }
 }
 
@@ -227,6 +245,7 @@ impl DrawingPayload for FrvpPayload {
             show_labels: self.show_labels,
             extend_right: self.extend_right,
             outline_over_heatmap: self.outline_over_heatmap,
+            approximate_history: self.approximate_history,
         })
         .ok()
     }
@@ -249,6 +268,7 @@ impl DrawingPayload for FrvpPayload {
         self.show_labels = data.show_labels;
         self.extend_right = data.extend_right;
         self.outline_over_heatmap = data.outline_over_heatmap;
+        self.approximate_history = data.approximate_history;
         // The cache key carries the value-area fraction, so the next refresh
         // recomputes; nothing to invalidate by hand.
         true
@@ -698,10 +718,20 @@ impl DrawingToolImpl for FixedRangeProfile {
                     // The developing mode: this profile follows the tape.
                     status.push_str(" · to live");
                 }
-                if cache.bars_covered < cache.bars_total {
+                if cache.bars_covered + cache.bars_approximated < cache.bars_total {
                     status.push_str(&format!(
                         " · profile from {} of {} bars",
-                        cache.bars_covered, cache.bars_total
+                        cache.bars_covered + cache.bars_approximated,
+                        cache.bars_total
+                    ));
+                }
+                if cache.bars_approximated > 0 {
+                    // Venue candles joined without tape: their placement is
+                    // approximated, and the profile says so at the point of
+                    // reading, never in a tooltip.
+                    status.push_str(&format!(
+                        " · approximated from OHLC ({} of {} bars)",
+                        cache.bars_approximated, cache.bars_total
                     ));
                 }
                 if cache.key.side_inferred {
@@ -908,6 +938,12 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
              layers compose.",
         )
         .changed();
+    edited |= ui
+        .checkbox(&mut payload.approximate_history, "approximate from candles")
+        .on_hover_text(
+            "Venue-history candles carry no tape; with this on their volume              is spread over each candle's high–low and the status line says              'approximated from OHLC'. Off = those bars contribute nothing.",
+        )
+        .changed();
 
     ui.separator();
 
@@ -1054,6 +1090,7 @@ mod tests {
             show_labels: false,
             extend_right: true,
             outline_over_heatmap: false,
+            approximate_history: false,
             cache: Some(FrvpCache {
                 key: FrvpCacheKey {
                     start_slot: 1,
@@ -1066,10 +1103,12 @@ mod tests {
                     value_area_pct: 68,
                     blocked: false,
                     side_inferred: false,
+                    approximate: true,
                 },
                 profile: None,
                 empty: Some(FrvpEmpty::NoTape),
                 bars_covered: 0,
+                bars_approximated: 0,
                 bars_total: 5,
                 heat_first_slot: None,
             }),
