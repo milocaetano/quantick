@@ -2097,6 +2097,14 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) -> bool {
         let magnet = chrome.toolrail.magnet();
+        // Shift, read once for the whole pass: the preview, the press and the
+        // release must agree about it as strictly as they agree about where
+        // the pointer is.
+        let constrain = if ui.input(|input| input.modifiers.shift) {
+            drawings::Constrain::Level
+        } else {
+            drawings::Constrain::Free
+        };
         let Some(tool) = chrome.toolrail.tool().drawing_tool() else {
             self.drawings.cancel_draft();
             self.drawing_hover = None;
@@ -2163,8 +2171,15 @@ impl ChartPane {
         self.drawing_hover = preview_pos
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {
-                let (_, point) =
-                    self.shaped_placement(tool, areas, bands, position, history_right, magnet)?;
+                let (_, point) = self.shaped_placement(
+                    tool,
+                    areas,
+                    bands,
+                    position,
+                    history_right,
+                    magnet,
+                    constrain,
+                )?;
                 Some(point)
             });
         if (response.hovered() || response.dragged()) && !over_pane_chrome {
@@ -2188,8 +2203,15 @@ impl ChartPane {
         });
         if let Some(position) = pressed_position
             .filter(|position| surface.contains(*position) && !over_chrome(ui, *position))
-            && let Some((band, point)) =
-                self.shaped_placement(tool, areas, bands, position, history_right, magnet)
+            && let Some((band, point)) = self.shaped_placement(
+                tool,
+                areas,
+                bands,
+                position,
+                history_right,
+                magnet,
+                constrain,
+            )
         {
             let band = band.key.clone();
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
@@ -2271,8 +2293,15 @@ impl ChartPane {
             && let Some(position) = released_position
             && surface.contains(position)
             && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
-            && let Some((band, point)) =
-                self.shaped_placement(tool, areas, bands, position, history_right, magnet)
+            && let Some((band, point)) = self.shaped_placement(
+                tool,
+                areas,
+                bands,
+                position,
+                history_right,
+                magnet,
+                constrain,
+            )
         {
             let band = band.key.clone();
             self.place_drawing_point(tool, &band, point, chrome);
@@ -2338,6 +2367,7 @@ impl ChartPane {
     /// outside the band it was aimed at — clamping it back would hand the
     /// degenerate case straight back to the trader, which is the whole thing
     /// being fixed.
+    #[allow(clippy::too_many_arguments)]
     fn shaped_placement<'a>(
         &self,
         tool: drawings::DrawingTool,
@@ -2346,6 +2376,7 @@ impl ChartPane {
         position: egui::Pos2,
         history_right: f32,
         magnet: bool,
+        constrain: drawings::Constrain,
     ) -> Option<(&'a Band, ChartPoint)> {
         let (band, position) = self.placement_target(areas, bands, position)?;
         let total = self.slots();
@@ -2367,7 +2398,7 @@ impl ChartPane {
         let shaped = match (self.drawings.draft(), band.scale.as_ref()) {
             (Some(draft), Some(scale)) if draft.tool == tool && !tool.freehand() => {
                 let placed = self.projected_drawing_points(draft, history_right, total, scale);
-                tool.pending_anchor(&placed, position)
+                tool.pending_anchor(&placed, position, constrain)
             }
             _ => position,
         };
@@ -2570,6 +2601,7 @@ impl ChartPane {
     /// exact by construction and are never snapped a second time — the magnet
     /// belongs to the point under the pointer, not to a rail computed from it.
     /// Everything else is the plain "handle `handle` is anchor `handle`" move.
+    #[allow(clippy::too_many_arguments)]
     fn drag_drawing_handle(
         &mut self,
         drawing_index: usize,
@@ -2578,6 +2610,7 @@ impl ChartPane {
         band: &Band,
         history_right: f32,
         total: usize,
+        constrain: drawings::Constrain,
     ) {
         let moved = band.scale.as_ref().and_then(|scale| {
             let drawing = self.drawings.items().get(drawing_index)?;
@@ -2595,7 +2628,7 @@ impl ChartPane {
             let to = self.drawing_screen_point(target, history_right, total, scale);
             drawing
                 .tool
-                .drag_handle(band.rect, &projected, handle, to, &ctxt)
+                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)
         });
         let Some(moved) = moved else {
             self.drawings.move_anchor(drawing_index, handle, target);
@@ -2970,6 +3003,11 @@ impl ChartPane {
                                     band,
                                     history_right,
                                     total,
+                                    if ui.input(|input| input.modifiers.shift) {
+                                        drawings::Constrain::Level
+                                    } else {
+                                        drawings::Constrain::Free
+                                    },
                                 );
                             }
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);

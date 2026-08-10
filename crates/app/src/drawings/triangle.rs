@@ -3,7 +3,7 @@ use egui_phosphor::regular as icons;
 
 use super::shape_core::{SHAPES_FAMILY, hit_outline, paint_outline};
 use super::{
-    DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, drawing_stroke, off_line_by,
+    Constrain, DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, drawing_stroke, off_line_by,
 };
 
 /// The shortest a triangle's third corner may stand off the side the first
@@ -44,7 +44,16 @@ impl DrawingToolImpl for Triangle {
     }
     /// The third corner never lands on the side the first two drew — see
     /// [`MIN_BORN_HEIGHT_PX`].
-    fn pending_anchor(&self, placed: &[egui::Pos2], cursor: egui::Pos2) -> egui::Pos2 {
+    ///
+    /// The constraint is ignored: a triangle has three sides and no obvious
+    /// one for Shift to hold level, so guessing would be worse than leaving
+    /// the modifier free for a later decision.
+    fn pending_anchor(
+        &self,
+        placed: &[egui::Pos2],
+        cursor: egui::Pos2,
+        _constrain: Constrain,
+    ) -> egui::Pos2 {
         let [start, end] = placed else {
             return cursor;
         };
@@ -111,7 +120,7 @@ mod tests {
     fn the_third_corner_never_lands_on_the_first_side() {
         let start = egui::pos2(100.0, 200.0);
         let end = egui::pos2(300.0, 140.0);
-        let shaped = TOOL.pending_anchor(&[start, end], end);
+        let shaped = TOOL.pending_anchor(&[start, end], end, Constrain::Free);
         let side = end - start;
         // Twice the triangle's area: zero exactly when the corners are
         // collinear, whatever the units. Divided back by the side gives the
@@ -136,6 +145,6 @@ mod tests {
         let start = egui::pos2(100.0, 200.0);
         let end = egui::pos2(300.0, 140.0);
         let cursor = egui::pos2(200.0, 300.0);
-        assert_eq!(TOOL.pending_anchor(&[start, end], cursor), cursor);
+        assert_eq!(TOOL.pending_anchor(&[start, end], cursor, Constrain::Free), cursor);
     }
 }

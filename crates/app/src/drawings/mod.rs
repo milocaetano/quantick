@@ -205,6 +205,37 @@ pub struct DrawContext<'a> {
     pub halo: bool,
 }
 
+/// What the trader is holding down while they shape an object.
+///
+/// Shift is free to take during a chart drag, and that is worth stating
+/// because Shift is otherwise the trading modifier: every paper-trading
+/// hotkey is Shift **plus a letter** (`docs/ux/paper-trading.md` §9) and the
+/// rail's tool keys are letters too, so the modifier held on its own cannot
+/// fire an order, flatten a position or arm a tool. Holding it while the hand
+/// is on the mouse costs nothing and collides with nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Constrain {
+    /// The pointer means exactly where it is.
+    #[default]
+    Free,
+    /// Shift is down: hold the shape level.
+    Level,
+}
+
+/// Hold `cursor` level with `anchor` — the same height, free to slide along
+/// the tape.
+///
+/// Level, and not "the nearest of 0°/45°/90°", because a chart's two axes are
+/// not the same kind of thing: one is a price and the other is time, their
+/// ratio changes with every zoom, and a 45° line drawn today is a different
+/// line after one scroll. Horizontal is the only angle that survives a zoom,
+/// and it is the one that means something — a level *is* a price a trader is
+/// holding constant. Vertical is an instant, which is what the vertical-line
+/// tool is for.
+pub(super) fn level_with(anchor: egui::Pos2, cursor: egui::Pos2) -> egui::Pos2 {
+    egui::pos2(cursor.x, anchor.y)
+}
+
 /// Where a tool wants its anchor to land on the bar under the pointer.
 ///
 /// Almost every tool answers [`AnchorSnap::Pointer`]: the trader chose the
@@ -286,8 +317,16 @@ trait DrawingToolImpl: Sync {
     /// a click creates is always the one that was on screen when it was
     /// clicked.
     ///
+    /// `constrain` is what the trader is holding — see [`Constrain`]. A tool
+    /// that has an axis worth holding to says so here; the rest ignore it.
+    ///
     /// Rate: per frame while a draft is in flight, over a handful of anchors.
-    fn pending_anchor(&self, _placed: &[egui::Pos2], cursor: egui::Pos2) -> egui::Pos2 {
+    fn pending_anchor(
+        &self,
+        _placed: &[egui::Pos2],
+        cursor: egui::Pos2,
+        _constrain: Constrain,
+    ) -> egui::Pos2 {
         cursor
     }
     /// The key that arms this tool from the chart, if it has one.
@@ -441,6 +480,7 @@ trait DrawingToolImpl: Sync {
         _handle: usize,
         _to: egui::Pos2,
         _ctxt: &DrawContext<'_>,
+        _constrain: Constrain,
     ) -> Option<Handles> {
         None
     }
@@ -586,8 +626,13 @@ impl DrawingTool {
     /// Where the anchor under the pointer really lands while the object is
     /// still being shaped — see [`DrawingToolImpl::pending_anchor`].
     #[must_use]
-    pub fn pending_anchor(self, placed: &[egui::Pos2], cursor: egui::Pos2) -> egui::Pos2 {
-        self.0.pending_anchor(placed, cursor)
+    pub fn pending_anchor(
+        self,
+        placed: &[egui::Pos2],
+        cursor: egui::Pos2,
+        constrain: Constrain,
+    ) -> egui::Pos2 {
+        self.0.pending_anchor(placed, cursor, constrain)
     }
 
     /// Paint the object. Selection adds a halo *under* the geometry and, when
@@ -665,8 +710,10 @@ impl DrawingTool {
         handle: usize,
         to: egui::Pos2,
         ctxt: &DrawContext<'_>,
+        constrain: Constrain,
     ) -> Option<Handles> {
-        self.0.drag_handle(chart_rect, points, handle, to, ctxt)
+        self.0
+            .drag_handle(chart_rect, points, handle, to, ctxt, constrain)
     }
 
     #[must_use]
@@ -1699,7 +1746,7 @@ mod tests {
         let cursor = egui::pos2(60.0, 35.0);
         let mut shaping: Vec<&'static str> = DRAWING_TOOLS
             .into_iter()
-            .filter(|tool| tool.pending_anchor(&placed, cursor) != cursor)
+            .filter(|tool| tool.pending_anchor(&placed, cursor, Constrain::Free) != cursor)
             .map(DrawingTool::id)
             .collect();
         shaping.sort_unstable();
@@ -1723,7 +1770,7 @@ mod tests {
         let cursor = egui::pos2(60.0, 35.0);
         for tool in DRAWING_TOOLS.into_iter().filter(|tool| tool.freehand()) {
             assert_eq!(
-                tool.pending_anchor(&placed, cursor),
+                tool.pending_anchor(&placed, cursor, Constrain::Free),
                 cursor,
                 "{} is freehand, and the host does not consult the port for one",
                 tool.id()
@@ -2509,6 +2556,7 @@ mod tests {
                 _handle: usize,
                 to: egui::Pos2,
                 _ctxt: &DrawContext<'_>,
+                _constrain: Constrain,
             ) -> Option<Handles> {
                 Some(Handles::from_slice(&[
                     to + egui::vec2(0.0, PIVOT_HANDLE_OFFSET_PX)
@@ -2548,9 +2596,16 @@ mod tests {
             "the anchor is not a grab point unless the tool says so"
         );
         assert_eq!(
-            tool.drag_handle(chart, &points, 0, egui::pos2(80.0, 10.0), &ctxt)
-                .expect("the tool owns the drag")
-                .as_slice(),
+            tool.drag_handle(
+                chart,
+                &points,
+                0,
+                egui::pos2(80.0, 10.0),
+                &ctxt,
+                Constrain::Free
+            )
+            .expect("the tool owns the drag")
+            .as_slice(),
             &[egui::pos2(80.0, 30.0)],
             "the tool decides which anchors a handle moves"
         );
@@ -2651,7 +2706,14 @@ mod tests {
             );
             assert!(
                 drawing_tool
-                    .drag_handle(chart, &points, 0, egui::pos2(1.0, 1.0), &ctxt)
+                    .drag_handle(
+                        chart,
+                        &points,
+                        0,
+                        egui::pos2(1.0, 1.0),
+                        &ctxt,
+                        Constrain::Free
+                    )
                     .is_none(),
                 "{} leaves the drag to the host",
                 drawing_tool.id()

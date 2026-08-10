@@ -8732,6 +8732,97 @@ plot(close)
         );
     }
 
+    /// A press-drag-release with a modifier held for the whole gesture.
+    fn drag_chart_with(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        start: egui::Pos2,
+        end: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) {
+        for events in [
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+            vec![egui::Event::PointerMoved(end)],
+            vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
+        ] {
+            run_frame_sized(app, ctx, TEST_WINDOW, events, modifiers);
+        }
+    }
+
+    /// Holding Shift while dragging the trend line lays the channel level, so
+    /// a range comes out flat instead of "nearly flat" — which a free hand
+    /// cannot produce and which no later gesture could fix by eye.
+    ///
+    /// End to end: the host reads the modifier, the tool decides what level
+    /// means for it, and the anchor that gets committed is the levelled one.
+    #[test]
+    fn holding_shift_lays_a_channel_dead_level() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        drag_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            // Well off the horizontal: without the modifier this is a channel
+            // sloping down across sixty pixels of price.
+            egui::pos2(800.0, 340.0),
+            egui::Modifiers::SHIFT,
+        );
+        let draft = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .draft()
+            .expect("the drag laid the trend line")
+            .clone();
+        assert_eq!(draft.points.len(), 2);
+        assert!(
+            (draft.points[0].price - draft.points[1].price).abs() < 1e-9,
+            "both ends of the trend line sit on one price: {:?}",
+            draft.points
+        );
+        assert!(
+            draft.points[1].bar > draft.points[0].bar,
+            "and it still ran along the tape: {:?}",
+            draft.points
+        );
+    }
+
+    /// The same drag without the modifier keeps the slope the hand gave it —
+    /// the constraint is opt-in, never a snap the trader did not ask for.
+    #[test]
+    fn without_shift_a_channel_keeps_the_slope_it_was_drawn_with() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+        );
+        let draft = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .draft()
+            .expect("the drag laid the trend line")
+            .clone();
+        assert!(
+            (draft.points[0].price - draft.points[1].price).abs() > 1e-6,
+            "the trend line kept its slope: {:?}",
+            draft.points
+        );
+    }
+
     /// The same guarantee for the other tool whose third anchor gives a shape
     /// its thickness: a triangle of three collinear corners is a line.
     #[test]
