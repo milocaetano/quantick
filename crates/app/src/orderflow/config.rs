@@ -116,6 +116,17 @@ pub const DEFAULT_READABLE_MIN_RADIUS: f32 = 5.7295;
 /// radius: `1/φ`, at the precision the presets file stores. Only
 /// [`ConsumptionMark::Front`] reads it.
 pub const DEFAULT_FRONT_LENGTH_SCALE: f32 = 0.618;
+/// Smallest radius that gets a label, as a fraction of
+/// [`DEFAULT_BUBBLE_MAX_RADIUS`].
+///
+/// Not a φ rung, and deliberately not dressed up as one: the rule is "the top
+/// of the radius range", because laying out text is the most expensive thing
+/// a bubble can ask for and only the largest prints have room to hold it.
+pub const DEFAULT_LABEL_MIN_RADIUS_SHARE: f32 = 0.9;
+/// Smallest radius that gets a label, in pixels — see
+/// [`DEFAULT_LABEL_MIN_RADIUS_SHARE`].
+pub const DEFAULT_LABEL_MIN_RADIUS: f32 =
+    DEFAULT_BUBBLE_MAX_RADIUS * DEFAULT_LABEL_MIN_RADIUS_SHARE;
 /// Largest accepted readability floor.
 pub const MAX_READABLE_MIN_RADIUS: f32 = 32.0;
 /// Default edge darkening of a sphere-rendered bubble.
@@ -530,7 +541,7 @@ impl Default for BubbleStyle {
             show_trade_count: true,
             // Only the largest bubbles get a (text-layout-costly) label: the
             // top of the radius range, not a number picked beside it.
-            label_min_radius: DEFAULT_BUBBLE_MAX_RADIUS * 0.9,
+            label_min_radius: DEFAULT_LABEL_MIN_RADIUS,
             buy_color: None,
             sell_color: None,
             front_color: None,
@@ -586,12 +597,8 @@ impl BubbleStyle {
         self.impact_ring_width = finite_clamp(self.impact_ring_width, 0.5, 8.0, 1.4);
         self.trail_length = finite_clamp(self.trail_length, 0.0, 120.0, 0.0);
         self.trail_opacity = finite_clamp(self.trail_opacity, 0.0, 1.0, 0.45);
-        self.label_min_radius = finite_clamp(
-            self.label_min_radius,
-            4.0,
-            64.0,
-            DEFAULT_BUBBLE_MAX_RADIUS * 0.9,
-        );
+        self.label_min_radius =
+            finite_clamp(self.label_min_radius, 4.0, 64.0, DEFAULT_LABEL_MIN_RADIUS);
     }
 
     /// Quantity at which a print stops being dust: the exact quantity whose

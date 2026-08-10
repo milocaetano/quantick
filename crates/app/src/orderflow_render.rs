@@ -3506,6 +3506,26 @@ mod tests {
             )
         });
         assert!(untouched.len() < crowned.len());
+
+        // The third variant is a port, not a placeholder: asking for no mark
+        // must paint exactly what a print that ate nothing paints, so the
+        // consumption signal can be switched off without also changing the
+        // disc. Without this the arm is only reachable through the panel.
+        let silent = painted(|painter| {
+            draw_bubble(
+                painter,
+                mark,
+                &BubbleStyle {
+                    consumption_mark: ConsumptionMark::None,
+                    ..bubbles.clone()
+                },
+                &colors,
+            )
+        });
+        assert_eq!(
+            silent, untouched,
+            "ConsumptionMark::None must leave the bubble exactly as it was"
+        );
     }
 
     #[test]
