@@ -207,6 +207,58 @@ pub fn embedded() -> BubblePresetFile {
     parse(EMBEDDED_DEFAULT).unwrap_or_default()
 }
 
+/// Keys a presets file may still carry from before a setting was replaced,
+/// each paired with what took the job over.
+///
+/// Serde ignoring an unknown key is what lets an old file keep loading, and
+/// that is the behaviour we want — but *silently* is not the same as
+/// *honestly*. Someone who wrote `show_consumption_front` asked for a specific
+/// mark by name, and the chart now draws a different one. Saying so once at
+/// load is the difference between a documented default change and what reads
+/// from the outside like the setting broke.
+const RETIRED_KEYS: [(&str, &str); 1] = [("show_consumption_front", "consumption_mark")];
+
+/// Retired keys actually *set* by this presets text, as
+/// `(retired, replacement)`.
+///
+/// A line scan rather than a second parse: this runs once at startup, and the
+/// shape being matched — a key at the start of a line followed by `=` — is
+/// exactly what TOML assignment looks like. It deliberately does not match a
+/// mention inside a comment, because the shipped file documents the migration
+/// by name and would otherwise warn about itself on every launch.
+#[must_use]
+pub fn retired_keys(text: &str) -> Vec<(&'static str, &'static str)> {
+    let assigns = |key: &str| {
+        text.lines().any(|line| {
+            let statement = line.split('#').next().unwrap_or_default().trim();
+            statement
+                .strip_prefix(key)
+                .is_some_and(|rest| rest.trim_start().starts_with('='))
+        })
+    };
+    RETIRED_KEYS
+        .into_iter()
+        .filter(|(retired, _)| assigns(retired))
+        .collect()
+}
+
+/// Log every retired key a presets file still carries.
+fn report_retired_keys(text: &str, path: &Path) {
+    for (retired, replacement) in retired_keys(text) {
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "BUBBLE_PRESET_KEY_RETIRED",
+            file = %path.display(),
+            retired,
+            replacement,
+            action = "using_replacement_default",
+            "a bubble preset still sets a retired key; the setting that replaced it \
+             is at its default"
+        );
+    }
+}
+
 /// Path the panel reads from and writes to.
 #[must_use]
 pub fn presets_path() -> PathBuf {
@@ -230,7 +282,10 @@ pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
     }
     match std::fs::read_to_string(&path) {
         Ok(text) => match parse(&text) {
-            Ok(file) => (file, source(path), None),
+            Ok(file) => {
+                report_retired_keys(&text, &path);
+                (file, source(path), None)
+            }
             Err(message) => (
                 embedded(),
                 PresetSource::Embedded,
@@ -292,7 +347,7 @@ const PRESET_FILE_HEADER: &str = "\
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::{BubbleSizeReference, INV_PHI};
+    use crate::orderflow::{BubbleSizeReference, ConsumptionMark, INV_PHI};
 
     #[test]
     fn the_embedded_file_parses_and_carries_a_valid_active_preset() {
@@ -323,6 +378,41 @@ mod tests {
             .get("default")
             .expect("the shipped file carries a preset named 'default'");
         assert_eq!(preset.bubbles, BubbleStyle::default());
+    }
+
+    #[test]
+    fn a_retired_key_is_named_rather_than_ignored_in_silence() {
+        // The file still loads — that is the point of ignoring unknown keys —
+        // but a preset that asked for the vertical front by name now draws a
+        // crown, and nothing else in the app would ever say so.
+        let legacy = "
+            active = \"mine\"
+            [[presets]]
+            name = \"mine\"
+            [presets.bubbles]
+            show_consumption_front = true
+        ";
+        assert_eq!(
+            retired_keys(legacy),
+            vec![("show_consumption_front", "consumption_mark")]
+        );
+        let parsed = parse(legacy).expect("a legacy file still parses");
+        assert_eq!(
+            parsed.get("mine").expect("preset").bubbles.consumption_mark,
+            ConsumptionMark::Crown
+        );
+
+        // And a file written today says nothing, so the warning stays rare
+        // enough to mean something — even though the shipped file documents
+        // the migration by name in a comment, which must not count as setting
+        // it.
+        assert!(retired_keys(EMBEDDED_DEFAULT).is_empty());
+        assert!(
+            EMBEDDED_DEFAULT.contains("show_consumption_front"),
+            "the shipped file explains the migration, so this test is really \
+             asserting that a comment is not an assignment"
+        );
+        assert!(retired_keys("# show_consumption_front = true").is_empty());
     }
 
     #[test]
