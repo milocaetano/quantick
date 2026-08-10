@@ -21,11 +21,20 @@ impl DrawingToolImpl for FibExtension {
     fn icon(&self) -> &'static str {
         icons::ROWS_PLUS_TOP
     }
+    /// No key is named here, and that is deliberate: this tool gave up
+    /// `Shift+F` because that key flattens the position (see
+    /// [`Self::shortcut`]). The tooltip went on advertising it long after,
+    /// which told the trader to press the one key that closes their position
+    /// to reach a drawing tool.
     fn hover_text(&self) -> &'static str {
-        "Fib extension - set the first leg, then click the projection origin (Shift+F)"
+        "Fib extension - drag the first leg, then click the projection origin"
     }
     fn placement_hint(&self, placed: usize) -> Option<&'static str> {
-        (placed == 2).then_some("Click where the retracement ended")
+        match placed {
+            1 => Some("Drag out the first leg"),
+            2 => Some("Click where the retracement ended"),
+            _ => None,
+        }
     }
     fn required_points(&self) -> usize {
         FibKind::Extension.required_points()

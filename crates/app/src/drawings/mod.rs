@@ -265,6 +265,31 @@ trait DrawingToolImpl: Sync {
     fn placement_hint(&self, _placed: usize) -> Option<&'static str> {
         None
     }
+    /// Where the anchor the trader is still shaping really lands, given the
+    /// anchors already down and the pointer — both in screen space.
+    ///
+    /// Default: the pointer itself, which is every tool whose anchors mean
+    /// exactly where they were dropped.
+    ///
+    /// It exists because a tool of three anchors has a *shaping* phase the
+    /// raw pointer describes badly. A drag fixes a channel's trend line and
+    /// lets go with the pointer still sitting **on** that line, and a
+    /// channel's width is measured across the line and nowhere else — so the
+    /// width the pointer implies at that instant is exactly zero. The preview
+    /// draws a corridor of no width, which is a straight line, and the click
+    /// that looks like it confirms the shape commits one: a three-anchor
+    /// object that *is* a line. A tool that knows what it is refuses to be
+    /// born degenerate, and says so here rather than leaving the host to
+    /// special-case it by id.
+    ///
+    /// The host runs the preview *and* the commit through this, so the object
+    /// a click creates is always the one that was on screen when it was
+    /// clicked.
+    ///
+    /// Rate: per frame while a draft is in flight, over a handful of anchors.
+    fn pending_anchor(&self, _placed: &[egui::Pos2], cursor: egui::Pos2) -> egui::Pos2 {
+        cursor
+    }
     /// The key that arms this tool from the chart, if it has one.
     fn shortcut(&self) -> Option<ToolShortcut> {
         None
@@ -556,6 +581,13 @@ impl DrawingTool {
     #[must_use]
     pub fn placement_hint(self, placed: usize) -> Option<&'static str> {
         self.0.placement_hint(placed)
+    }
+
+    /// Where the anchor under the pointer really lands while the object is
+    /// still being shaped — see [`DrawingToolImpl::pending_anchor`].
+    #[must_use]
+    pub fn pending_anchor(self, placed: &[egui::Pos2], cursor: egui::Pos2) -> egui::Pos2 {
+        self.0.pending_anchor(placed, cursor)
     }
 
     /// Paint the object. Selection adds a halo *under* the geometry and, when
@@ -1555,6 +1587,44 @@ pub(super) fn distance_to_segment(position: egui::Pos2, start: egui::Pos2, end: 
     position.distance(start + segment * projection)
 }
 
+/// The unit normal of `direction` — the axis a shape's thickness is measured
+/// along. A direction of no length has no normal of its own, so it is given
+/// the vertical, which is the axis a chart measures in.
+pub(super) fn unit_normal(direction: egui::Vec2) -> egui::Vec2 {
+    let length = direction.length();
+    if length <= f32::EPSILON {
+        return egui::vec2(0.0, 1.0);
+    }
+    egui::vec2(-direction.y, direction.x) / length
+}
+
+/// Push `cursor` off the line through `start`–`end` until it stands at least
+/// `floor_px` away from it, keeping exactly where it sits *along* that line.
+///
+/// The shared half of [`DrawingToolImpl::pending_anchor`]: a tool whose third
+/// anchor gives a shape its thickness is degenerate when that anchor lands on
+/// the line the first two drew — a channel of no width, a triangle of no
+/// area — and that is precisely where the pointer is standing the instant a
+/// drag lets go. Sliding *along* the line is left alone, so the gesture still
+/// means what it always meant; only the collapsed case is refused.
+///
+/// A cursor exactly on the line opens the shape on the normal's own side, so
+/// the same gesture always produces the same object.
+pub(super) fn off_line_by(
+    start: egui::Pos2,
+    end: egui::Pos2,
+    cursor: egui::Pos2,
+    floor_px: f32,
+) -> egui::Pos2 {
+    let normal = unit_normal(end - start);
+    let offset = (cursor - start).dot(normal);
+    if offset.abs() >= floor_px {
+        return cursor;
+    }
+    let side = if offset < 0.0 { -1.0 } else { 1.0 };
+    cursor + normal * (side * floor_px - offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1591,6 +1661,105 @@ mod tests {
                 tool.id()
             );
         }
+    }
+
+    /// A tool of three or more anchors says what every step wants, in words.
+    ///
+    /// Two anchors need no words: the drag that starts the object also
+    /// finishes it, so the trader is never left holding one. The third anchor
+    /// is where they get stranded — the gesture ends, the object sits there,
+    /// and the `n/N` badge is on the far side of the screen from the cursor.
+    /// A new tool that stays silent mid-placement fails here rather than in
+    /// the running app.
+    #[test]
+    fn a_tool_that_outlasts_its_drag_says_what_each_step_wants() {
+        for tool in DRAWING_TOOLS
+            .into_iter()
+            .filter(|tool| tool.required_points() >= 3)
+        {
+            for placed in 1..tool.required_points() {
+                assert!(
+                    tool.placement_hint(placed).is_some(),
+                    "{} says nothing with {placed} anchors down",
+                    tool.id()
+                );
+            }
+        }
+    }
+
+    /// The shaping port is opt-in: it changed nothing for a tool that did not
+    /// ask for it. Only the two whose third anchor gives a shape its
+    /// thickness — and which are therefore the two that can collapse into a
+    /// line — move the pointer at all.
+    #[test]
+    fn the_shaping_port_defaults_to_the_pointer_the_trader_is_holding() {
+        let placed = [egui::pos2(10.0, 10.0), egui::pos2(110.0, 60.0)];
+        // Exactly on the line between the two anchors: the collapsed case,
+        // where a tool that shapes has to move and one that does not must not.
+        let cursor = egui::pos2(60.0, 35.0);
+        let mut shaping: Vec<&'static str> = DRAWING_TOOLS
+            .into_iter()
+            .filter(|tool| tool.pending_anchor(&placed, cursor) != cursor)
+            .map(DrawingTool::id)
+            .collect();
+        shaping.sort_unstable();
+        assert_eq!(shaping, vec!["parallel-channel", "triangle"]);
+    }
+
+    /// The host skips the shaping port for a freehand draft, and the reason
+    /// is runtime: a pencil stroke holds hundreds of anchors, and projecting
+    /// every one of them up to three times a frame just to consult the port
+    /// would cost far more than the gesture is worth — see
+    /// `ChartPane::shaped_placement`.
+    ///
+    /// That skip is only sound while no freehand tool actually wants its
+    /// anchors shaped; otherwise the host would be ignoring a tool that
+    /// asked, in silence. This is the test that holds the two facts together,
+    /// so a pencil that one day wants shaping fails here instead of being
+    /// quietly disobeyed.
+    #[test]
+    fn no_freehand_tool_asks_to_shape_its_anchors() {
+        let placed = [egui::pos2(10.0, 10.0), egui::pos2(110.0, 60.0)];
+        let cursor = egui::pos2(60.0, 35.0);
+        for tool in DRAWING_TOOLS.into_iter().filter(|tool| tool.freehand()) {
+            assert_eq!(
+                tool.pending_anchor(&placed, cursor),
+                cursor,
+                "{} is freehand, and the host does not consult the port for one",
+                tool.id()
+            );
+        }
+    }
+
+    /// The shared half of the port: push off the line, keep the position
+    /// along it.
+    #[test]
+    fn off_line_by_moves_across_the_line_and_never_along_it() {
+        let start = egui::pos2(0.0, 0.0);
+        let end = egui::pos2(100.0, 0.0);
+        let pushed = off_line_by(start, end, egui::pos2(40.0, 1.0), 10.0);
+        assert!(
+            (pushed.x - 40.0).abs() < 1e-3,
+            "kept its place along the line"
+        );
+        assert!((pushed.y - 10.0).abs() < 1e-3, "stands the floor off it");
+        let clear = egui::pos2(40.0, -25.0);
+        assert_eq!(
+            off_line_by(start, end, clear, 10.0),
+            clear,
+            "a point already clear is untouched"
+        );
+    }
+
+    /// A "line" whose ends are one point has no direction of its own. It gets
+    /// the vertical, which is the axis a chart measures in — the alternative
+    /// is a NaN anchor, which is an object that can never be drawn or deleted.
+    #[test]
+    fn a_line_of_no_length_still_pushes_off_itself() {
+        let point = egui::pos2(50.0, 50.0);
+        let pushed = off_line_by(point, point, point, 10.0);
+        assert!(pushed.is_finite());
+        assert!((pushed.y - 60.0).abs() < 1e-3, "pushed along the vertical");
     }
 
     /// A price-only tool started over an indicator band still lands on the

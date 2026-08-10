@@ -14,7 +14,7 @@ use egui_phosphor::regular as icons;
 use super::line_core::{Extend, line_ends};
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles, PresetHost,
-    ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke,
+    ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke, off_line_by, unit_normal,
 };
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
@@ -169,22 +169,24 @@ fn channel_handles(points: &[egui::Pos2]) -> Option<Handles> {
     ]))
 }
 
-/// The unit normal of the trend line — the direction width is measured in.
-/// A degenerate trend line (both ends on one point) has no direction of its
-/// own, so it is given the vertical, which is the axis a chart measures in.
-fn baseline_normal(baseline: egui::Vec2) -> egui::Vec2 {
-    let length = baseline.length();
-    if length <= f32::EPSILON {
-        return egui::vec2(0.0, 1.0);
-    }
-    egui::vec2(-baseline.y, baseline.x) / length
-}
-
 /// How far the far rail sits from the trend line, signed so that the side the
 /// corridor opens on survives every gesture.
 fn signed_width(points: &[egui::Pos2]) -> f32 {
-    channel_offset(points).dot(baseline_normal(points[1] - points[0]))
+    channel_offset(points).dot(unit_normal(points[1] - points[0]))
 }
+
+/// The thinnest corridor a channel may be **born** with, in pixels.
+///
+/// Width is measured across the trend line and nowhere else, so the moment a
+/// drag fixes that line and lets go, the pointer — still standing on it —
+/// implies a width of exactly zero. Under this many pixels the corridor reads
+/// as a single line whatever the numbers say, which is the one thing a
+/// channel must never be mistaken for.
+///
+/// This floors the *shaping* phase only. An existing channel is still dragged
+/// as thin as the trader likes by its own rail handles: this is what a new
+/// object opens at, not a constraint on the shape.
+const MIN_BORN_WIDTH_PX: f32 = 12.0;
 
 /// Rebuild the channel from a rail that runs from `start` to `end`, keeping
 /// the corridor exactly as wide as it is now.
@@ -202,7 +204,7 @@ fn rebuild_from_rail(
     rail_is_far: bool,
 ) -> Handles {
     let direction = end - start;
-    let offset = baseline_normal(direction) * width;
+    let offset = unit_normal(direction) * width;
     let (near_start, far_point) = if rail_is_far {
         (start - offset, start)
     } else {
@@ -370,17 +372,26 @@ impl DrawingToolImpl for ParallelChannel {
         icons::PARALLELOGRAM
     }
     fn hover_text(&self) -> &'static str {
-        "Rising / falling channel - draw the trend line, then click the channel width (C)"
+        "Rising / falling channel - drag the trend line, then set the width (C)"
     }
     fn required_points(&self) -> usize {
         3
     }
     fn placement_hint(&self, placed: usize) -> Option<&'static str> {
         match placed {
-            1 => Some("Click the end of the trend line"),
-            2 => Some("Click the channel width"),
+            1 => Some("Drag out the trend line"),
+            2 => Some("Move to set the width, click to place"),
             _ => None,
         }
+    }
+    /// The width anchor keeps the bar the pointer is on and never the width
+    /// zero — see [`MIN_BORN_WIDTH_PX`]. With fewer than two anchors down
+    /// there is no trend line to measure across yet, so the pointer stands.
+    fn pending_anchor(&self, placed: &[egui::Pos2], cursor: egui::Pos2) -> egui::Pos2 {
+        let [start, end] = placed else {
+            return cursor;
+        };
+        off_line_by(*start, *end, cursor, MIN_BORN_WIDTH_PX)
     }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
@@ -929,5 +940,89 @@ mod tests {
         assert!(target.import_preset(&toml::Value::Table(table)));
         assert!(!target.midline);
         assert!(target.extend_right, "the flag it never named survives");
+    }
+
+    /// The trend line a shaping test measures across.
+    fn baseline_ends() -> (egui::Pos2, egui::Pos2) {
+        (egui::pos2(100.0, 200.0), egui::pos2(300.0, 140.0))
+    }
+
+    /// The defect this port exists for, reported from the running build: the
+    /// drag lets go with the pointer still standing **on** the trend line,
+    /// width is measured across that line and nowhere else, so the width the
+    /// pointer implies is exactly zero. The preview drew a corridor of no
+    /// width — a straight line — and the click that looked like it confirmed
+    /// the shape committed one.
+    #[test]
+    fn a_channel_is_never_born_with_no_width_at_all() {
+        let (start, end) = baseline_ends();
+        let shaped = TOOL.pending_anchor(&[start, end], end);
+        let width = signed_width(&[start, end, shaped]);
+        // A pixel of corridor is still a line to the eye. Asserted against a
+        // number of its own rather than against the constant, so shrinking
+        // the floor to nothing fails here instead of passing vacuously.
+        assert!(
+            width.abs() > 1.0,
+            "a channel let go of on its own trend line still opens a corridor, width was {width}"
+        );
+        assert!(
+            (width.abs() - MIN_BORN_WIDTH_PX).abs() < 1e-3,
+            "and it opens exactly at the floor, width was {width}"
+        );
+    }
+
+    /// Flooring the width must not slide the anchor *along* the rails: the
+    /// bar the trader put it on is the one the Coordinates tab reports, and
+    /// the same rule already governs a width drag on a finished channel.
+    #[test]
+    fn flooring_the_width_keeps_the_bar_the_pointer_was_on() {
+        let (start, end) = baseline_ends();
+        let cursor = egui::pos2(220.0, 176.0);
+        let shaped = TOOL.pending_anchor(&[start, end], cursor);
+        let direction = (end - start).normalized();
+        let along = |point: egui::Pos2| (point - start).dot(direction);
+        assert!(
+            (along(shaped) - along(cursor)).abs() < 1e-3,
+            "only the distance across the line moved: {} vs {}",
+            along(shaped),
+            along(cursor)
+        );
+    }
+
+    /// A pointer that has already declared a width keeps it exactly. The
+    /// floor is for the collapsed case alone — it must not quietly become a
+    /// minimum channel width the trader cannot draw under.
+    #[test]
+    fn a_pointer_clear_of_the_trend_line_is_left_exactly_where_it_is() {
+        let (start, end) = baseline_ends();
+        let cursor = egui::pos2(200.0, 260.0);
+        assert_eq!(TOOL.pending_anchor(&[start, end], cursor), cursor);
+    }
+
+    /// The side the trader started opening the corridor on is the side it
+    /// opens on, however little they had moved when the floor caught them.
+    #[test]
+    fn the_corridor_opens_on_the_side_the_pointer_chose() {
+        let (start, end) = baseline_ends();
+        let normal = unit_normal(end - start);
+        for side in [-1.0_f32, 1.0] {
+            let cursor = start + normal * (2.0 * side);
+            let shaped = TOOL.pending_anchor(&[start, end], cursor);
+            let width = signed_width(&[start, end, shaped]);
+            assert!(
+                (width - side * MIN_BORN_WIDTH_PX).abs() < 1e-3,
+                "a nudge to side {side} floors to that side, got {width}"
+            );
+        }
+    }
+
+    /// Before two anchors are down there is no trend line to measure across,
+    /// so the pointer means exactly itself — the first two anchors of a
+    /// channel are placed like any other tool's.
+    #[test]
+    fn nothing_is_shaped_before_the_trend_line_exists() {
+        let cursor = egui::pos2(42.0, 84.0);
+        assert_eq!(TOOL.pending_anchor(&[], cursor), cursor);
+        assert_eq!(TOOL.pending_anchor(&[egui::pos2(1.0, 1.0)], cursor), cursor);
     }
 }

@@ -884,6 +884,18 @@ pub struct ChartPane {
     drawing_band_hint: Option<egui::Rect>,
     pub drawing_press_position: Option<egui::Pos2>,
     pub drawing_press_started_empty: bool,
+    /// Where the pointer stands for a run that has no hands on the mouse —
+    /// the `QUANTICK_DRAWING_DRAFT` harness hook, `None` for every real
+    /// session.
+    ///
+    /// The live preview of a half-placed object is the whole feedback of a
+    /// multi-anchor gesture, and it is the one surface a click-free launch
+    /// could not reach: it exists only between two clicks, and only while a
+    /// pointer is over the chart. This is read exactly where the real pointer
+    /// is read and nowhere else, so everything downstream — the tool's
+    /// shaping, the hint chip, the rubber band — runs the same code the hand
+    /// runs.
+    pub parked_pointer: Option<egui::Pos2>,
     /// The last screen position a freehand stroke actually recorded, so the
     /// capture decimates as it goes rather than storing every mouse event.
     freehand_last_position: Option<egui::Pos2>,
@@ -1006,6 +1018,7 @@ impl ChartPane {
             drawing_band_hint: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
+            parked_pointer: None,
             freehand_last_position: None,
             drawing_press_pick: None,
             drawing_drag_pending_from: None,
@@ -2125,26 +2138,34 @@ impl ChartPane {
         self.drawing_band_hint = hovered
             .filter(|band| band.drawable() && !over_pane_chrome)
             .map(|band| band.rect);
-        // While the placement drag is in flight the widget stops reporting
-        // hover (egui: a dragged widget is not "hovered"), which used to make
-        // the rubber band vanish for exactly the frames the trader is shaping
-        // the object. The raw pointer keeps answering, so the preview does.
-        let preview_pos = response.hover_pos().or_else(|| {
-            self.drawing_press_position
-                .and_then(|_| ui.input(|input| input.pointer.latest_pos()))
-        });
+        // The raw pointer, never the widget's hover.
+        //
+        // "Is this widget the top interactable" is a different question from
+        // the one placement asks, which is "is the pointer inside the drawing
+        // surface, and is floating chrome on top of it". The widget's answer
+        // already had to be patched once, because a dragged widget is not
+        // "hovered" (egui) and the rubber band blanked for exactly the frames
+        // the trader was shaping the object; the patch read the raw pointer,
+        // but only while a press was down.
+        //
+        // So the preview and the click were reading two different sources for
+        // the same fact. That is the shape of the bug this change is about,
+        // and it is also why the preview could not be tested at all: under a
+        // headless context the widget reports no hover ever, so the preview
+        // painted the bare anchors and no test could see the shape. The press
+        // path's two questions are the honest ones and they are asked here
+        // now, so preview and commit cannot disagree about where the pointer
+        // is — in any host.
+        let preview_pos = ui
+            .input(|input| input.pointer.latest_pos())
+            .filter(|position| surface.contains(*position))
+            .or(self.parked_pointer);
         self.drawing_hover = preview_pos
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {
-                let (band, position) = self.placement_target(areas, bands, position)?;
-                self.drawing_point_at(
-                    position,
-                    history_right,
-                    self.slots(),
-                    magnet,
-                    tool.anchor_snap(),
-                    band,
-                )
+                let (_, point) =
+                    self.shaped_placement(tool, areas, bands, position, history_right, magnet)?;
+                Some(point)
             });
         if (response.hovered() || response.dragged()) && !over_pane_chrome {
             ui.ctx().set_cursor_icon(match hovered {
@@ -2167,15 +2188,8 @@ impl ChartPane {
         });
         if let Some(position) = pressed_position
             .filter(|position| surface.contains(*position) && !over_chrome(ui, *position))
-            && let Some((band, position)) = self.placement_target(areas, bands, position)
-            && let Some(point) = self.drawing_point_at(
-                position,
-                history_right,
-                self.slots(),
-                magnet,
-                tool.anchor_snap(),
-                band,
-            )
+            && let Some((band, point)) =
+                self.shaped_placement(tool, areas, bands, position, history_right, magnet)
         {
             let band = band.key.clone();
             self.drawing_press_started_empty = self.drawings.draft_len() == 0;
@@ -2257,15 +2271,8 @@ impl ChartPane {
             && let Some(position) = released_position
             && surface.contains(position)
             && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
-            && let Some((band, position)) = self.placement_target(areas, bands, position)
-            && let Some(point) = self.drawing_point_at(
-                position,
-                history_right,
-                self.slots(),
-                magnet,
-                tool.anchor_snap(),
-                band,
-            )
+            && let Some((band, point)) =
+                self.shaped_placement(tool, areas, bands, position, history_right, magnet)
         {
             let band = band.key.clone();
             self.place_drawing_point(tool, &band, point, chrome);
@@ -2311,6 +2318,68 @@ impl ChartPane {
             position.y.clamp(band.rect.top(), band.rect.bottom()),
         );
         Some((band, clamped))
+    }
+
+    /// Where an anchor dropped at `position` really lands: the band that will
+    /// own it, and the chart point it takes once the tool has had its say
+    /// about an anchor it is still shaping
+    /// ([`drawings::DrawingTool::pending_anchor`]).
+    ///
+    /// The preview, the press and the release all come through here. They
+    /// used to compute their point apart from one another, and that is how a
+    /// channel could be previewed as a corridor and then born as a line: the
+    /// draft preview completed the geometry with the hovered anchor while the
+    /// click that committed it read the raw pointer. One door, so the object
+    /// a click creates is the one that was under the cursor when it was
+    /// clicked.
+    ///
+    /// The shaped point is deliberately *not* re-clamped into the band. A
+    /// tool floors a collapsed shape by pixels, so the anchor can end a hair
+    /// outside the band it was aimed at — clamping it back would hand the
+    /// degenerate case straight back to the trader, which is the whole thing
+    /// being fixed.
+    fn shaped_placement<'a>(
+        &self,
+        tool: drawings::DrawingTool,
+        areas: &PlotAreas,
+        bands: &'a [Band],
+        position: egui::Pos2,
+        history_right: f32,
+        magnet: bool,
+    ) -> Option<(&'a Band, ChartPoint)> {
+        let (band, position) = self.placement_target(areas, bands, position)?;
+        let total = self.slots();
+        // A tool shapes in the space it paints in, so the anchors already
+        // down are handed over projected. A draft belonging to another tool
+        // is not this tool's draft — `place_with` will start a fresh one, so
+        // there is nothing shaped yet.
+        //
+        // A freehand draft is skipped, and the reason is runtime rather than
+        // taste. This runs up to three times a frame while a tool is armed
+        // (hover, press, release), and a pencil stroke holds up to
+        // `FREEHAND_MAX_POINTS` anchors against a `SmallVec` that keeps four
+        // inline — so projecting one would allocate and walk the whole stroke
+        // every frame, during exactly the gesture where the hand is moving
+        // fastest, to hand it to a port that has no anchor to shape: a
+        // freehand tool declares no anchor count, and its draft is finished by
+        // the release, never by a click. Every other tool's draft is three
+        // anchors at most, which stays inline and allocates nothing.
+        let shaped = match (self.drawings.draft(), band.scale.as_ref()) {
+            (Some(draft), Some(scale)) if draft.tool == tool && !tool.freehand() => {
+                let placed = self.projected_drawing_points(draft, history_right, total, scale);
+                tool.pending_anchor(&placed, position)
+            }
+            _ => position,
+        };
+        let point = self.drawing_point_at(
+            shaped,
+            history_right,
+            total,
+            magnet,
+            tool.anchor_snap(),
+            band,
+        )?;
+        Some((band, point))
     }
 
     fn place_drawing_point(

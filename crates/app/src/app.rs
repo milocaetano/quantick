@@ -83,6 +83,17 @@ const DEMO_ROW_BAND_STEP: f64 = 0.22;
 /// Points the demo hook gives a freehand tool, which declares no anchor
 /// count of its own. Enough to read as a path rather than as a line.
 const DEMO_FREEHAND_POINTS: usize = 4;
+/// How much of the visible window and of the visible price band the
+/// `QUANTICK_DRAWING_DRAFT` hook's anchors span. Wide enough that the
+/// half-made object reads at a glance, and centred, so the segment its
+/// anchors describe passes through the parked pointer at the chart's middle.
+///
+/// Much wider than it is tall, because a trend line a trader would actually
+/// draw runs *along* the tape. A near-vertical draft photographs the
+/// mechanism but nothing about whether the shape reads, which is what a QA
+/// reference image is for.
+const DEMO_DRAFT_SPAN: f32 = 0.6;
+const DEMO_DRAFT_BAND_SPAN: f64 = 0.12;
 /// The band to spread across before the pane has an auto-range to read (no
 /// bars yet): a fraction of price, since there is nothing better to ask.
 const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
@@ -606,6 +617,10 @@ pub struct QuantickApp {
     // Scripted-validation hook: one fixed-range volume profile straddling the
     // venue-prefix seam (when there is one). Consumed once.
     pending_frvp_demo: bool,
+    // Scripted-validation hook: how many anchors of the armed tool are already
+    // placed when the run opens, with the pointer parked where the next one
+    // would go. Consumed once.
+    pending_drawing_draft: Option<usize>,
     inspector_pos: Option<egui::Pos2>,
     // The floating panel's size as it was last actually drawn. Read back from
     // the window response rather than from egui's area memory: the memory
@@ -859,6 +874,7 @@ impl QuantickApp {
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             pending_frvp_demo: false,
+            pending_drawing_draft: None,
             inspector_pos: None,
             inspector_size: None,
             inspector_pin_touched: false,
@@ -956,6 +972,13 @@ impl QuantickApp {
         }
         app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
+        // How many anchors of the armed tool are already down when the run
+        // opens — the half-placed state a screenshot cannot otherwise reach,
+        // because it lives between two clicks. See `apply_drawing_draft`.
+        app.pending_drawing_draft = std::env::var("QUANTICK_DRAWING_DRAFT")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|anchors| *anchors > 0);
         // One fixed-range volume profile, placed to straddle the venue-prefix
         // seam when there is one — the partial-coverage honesty label is a
         // surface, and this is how a validation run photographs it.
@@ -4916,6 +4939,84 @@ impl QuantickApp {
         self.apply_drawing_demo_recut();
     }
 
+    /// The `QUANTICK_DRAWING_DRAFT=<anchors>` hook: the tool armed by
+    /// `QUANTICK_DRAWING_TOOL`, part-placed, with the pointer parked where
+    /// the next anchor would go.
+    ///
+    /// The live preview of a half-made object is a surface like any other,
+    /// and for a multi-anchor tool it is the *whole* feedback of the gesture:
+    /// it is what tells the trader that a drag has fixed the trend line and a
+    /// click is owed for the width. It is also the one surface no click-free
+    /// launch could reach, because it exists only between two clicks and only
+    /// while a pointer is over the chart — so this hook does both halves.
+    ///
+    /// The anchors go down through `place_with`, the same call the click path
+    /// makes; nothing here is a parallel placement path. They straddle the
+    /// middle of the visible window so the line they draw runs through the
+    /// parked pointer — which is the exact spot the reported defect lived at,
+    /// the pointer standing on the trend line it just drew. A screenshot of
+    /// this state is a screenshot of the fix.
+    ///
+    /// Waits for bars, and is consumed once, for the same reasons
+    /// [`Self::apply_drawing_demo`] is.
+    fn apply_drawing_draft(&mut self) {
+        let Some(anchors) = self.pending_drawing_draft else {
+            return;
+        };
+        let Some(tool) = self.toolrail.tool().drawing_tool() else {
+            return;
+        };
+        // Bars first, and a chart rectangle to park a pointer in: both are
+        // answers only a drawn frame has.
+        let pane = &self.active_tab().flow_pane;
+        let slots = pane.slots();
+        let (Some(chart), true) = (pane.last_chart_area, slots > 0) else {
+            return;
+        };
+        self.pending_drawing_draft = None;
+        let pane = &mut self.active_tab_mut().flow_pane;
+        // One short of the count, whatever was asked for: a draft that
+        // completed itself is not a draft, and photographs as a finished
+        // object rather than as the gesture under test.
+        let anchors = anchors.min(tool.required_points().saturating_sub(1));
+        let visible = DEMO_VISIBLE_SLOTS.min(slots);
+        let first = slots - visible;
+        let close = pane
+            .closed_bar(slots.saturating_sub(1))
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+            .unwrap_or(1.0);
+        let (centre, band) = pane
+            .last_auto_range
+            .filter(|(lo, hi)| hi > lo)
+            .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
+                ((lo + hi) / 2.0, hi - lo)
+            });
+        for anchor in 0..anchors {
+            // Symmetric about the middle of the window, so the segment the
+            // anchors describe has the chart's own centre as its midpoint.
+            let offset = (anchor as f32 + 0.5) / anchors as f32 - 0.5;
+            let slot = ((first as f32 + visible as f32 * (0.5 + offset * DEMO_DRAFT_SPAN))
+                as usize)
+                .min(slots.saturating_sub(1));
+            let point = drawings::ChartPoint::at_time(
+                slot as f32 + 0.5,
+                centre + f64::from(offset) * band * DEMO_DRAFT_BAND_SPAN,
+                pane.slot_open_time(slot),
+            );
+            pane.drawings
+                .place_with(tool, &drawings::DrawingBand::Price, point, |tool| {
+                    drawings::NewDrawing {
+                        style: tool.default_style(),
+                        payload: tool.default_payload(),
+                    }
+                });
+        }
+        // The hand this run does not have. Parked on the line the anchors
+        // drew, which is where a real hand is sitting the instant a drag lets
+        // go — and where a channel used to be born with no width at all.
+        pane.parked_pointer = Some(chart.center());
+    }
+
     /// The `QUANTICK_FRVP_DEMO` hook: one fixed-range volume profile on the
     /// flow pane. When the pane carries a venue history prefix the range
     /// starts inside it, so the partial-coverage honesty label ("profile
@@ -5112,6 +5213,7 @@ impl QuantickApp {
 
         self.drain_tabs();
         self.apply_drawing_demo();
+        self.apply_drawing_draft();
         self.apply_frvp_demo();
         self.maybe_emit_summary(now);
         self.maintain_workspace(ctx);
@@ -8568,8 +8670,244 @@ plot(close)
         assert!(
             texts
                 .iter()
-                .any(|text| text.contains("Click the channel width")),
+                .any(|text| text.contains("Move to set the width")),
             "the draft must say what it is waiting for; painted: {texts:?}"
+        );
+    }
+
+    /// Twice the area of the triangle the three anchors make, in chart space.
+    /// Zero exactly when they are collinear — which for a channel means a
+    /// corridor of no width, and for a triangle no triangle.
+    fn anchor_cross(points: &[drawings::ChartPoint]) -> f64 {
+        let [a, b, c] = points else {
+            panic!("a three-anchor object, got {}", points.len());
+        };
+        (f64::from(b.bar) - f64::from(a.bar)) * (c.price - a.price)
+            - (f64::from(c.bar) - f64::from(a.bar)) * (b.price - a.price)
+    }
+
+    /// The reported defect, end to end: drag a channel, let go, click to
+    /// confirm what is on screen — and get a channel.
+    ///
+    /// The pointer is still standing on the trend line when the drag lets go,
+    /// and a channel's width is measured across that line and nowhere else.
+    /// So the width the pointer implied was exactly zero: the preview drew a
+    /// corridor of no width, which is a straight line, and the click that
+    /// looked like it confirmed the shape committed one — a three-anchor
+    /// object that is a line. The tool now refuses to be born degenerate
+    /// (`DrawingToolImpl::pending_anchor`), and the preview and the commit
+    /// come through the same door, so what is clicked is what is created.
+    #[test]
+    fn a_dragged_channel_is_born_a_corridor_and_not_a_line() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        let release = egui::pos2(800.0, 340.0);
+        drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            2,
+            "the drag laid the trend line and the object waits for its width"
+        );
+        // Confirming without moving: the worst case, and the one a trader who
+        // expects the drag to have finished the object actually performs.
+        click_chart(&mut app, &ctx, release);
+
+        let channel = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the click committed the channel")
+            .clone();
+        assert_eq!(channel.tool.id(), "parallel-channel");
+        assert_eq!(channel.points.len(), 3);
+        assert!(
+            anchor_cross(&channel.points).abs() > 0.0,
+            "the width anchor is off the trend line; anchors {:?}",
+            channel.points
+        );
+    }
+
+    /// The same guarantee for the other tool whose third anchor gives a shape
+    /// its thickness: a triangle of three collinear corners is a line.
+    #[test]
+    fn a_dragged_triangle_is_born_with_an_area() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "triangle");
+        let release = egui::pos2(800.0, 340.0);
+        drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
+        click_chart(&mut app, &ctx, release);
+
+        let triangle = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the click committed the triangle")
+            .clone();
+        assert_eq!(triangle.tool.id(), "triangle");
+        assert!(
+            anchor_cross(&triangle.points).abs() > 0.0,
+            "the third corner is off the first side; anchors {:?}",
+            triangle.points
+        );
+    }
+
+    /// What is under the cursor while the width is being set has to be a
+    /// *channel*. The complaint that opened this work was that it was a
+    /// straight line — and it was: the preview completed the geometry with
+    /// the pointer, the pointer was still on the trend line the drag drew,
+    /// and a corridor of no width is a line. Two rails means a corridor;
+    /// one stroke means the tool still looks broken.
+    #[test]
+    fn a_channel_being_shaped_previews_as_a_corridor() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        let release = egui::pos2(800.0, 340.0);
+        drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
+        // The pointer has not moved since the release: the worst case, and
+        // the frame the trader is actually looking at.
+        let output =
+            run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(release)]);
+        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 2);
+        let strokes = drawing_strokes(&output);
+        assert!(
+            strokes >= 2,
+            "both rails have to be on screen, painted {strokes} stroke(s)"
+        );
+    }
+
+    /// The harness hook's parked pointer stands in for a hand: the preview of
+    /// a half-placed object is a surface, and a run with nothing touching the
+    /// mouse must still be able to photograph it. It is read exactly where
+    /// the real pointer is read, so the preview it produces is the real one.
+    #[test]
+    fn a_parked_pointer_previews_the_draft_with_no_hand_on_the_mouse() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        let release = egui::pos2(800.0, 340.0);
+        drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
+
+        // The hand leaves the window: with no pointer there is no anchor to
+        // complete the shape with, so the draft is back to the bare line the
+        // two placed anchors describe.
+        let gone = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);
+        assert_eq!(
+            drawing_strokes(&gone),
+            1,
+            "only the trend line the anchors themselves make"
+        );
+
+        app.active_tab_mut().flow_pane.parked_pointer = Some(release);
+        let parked = run_frame(&mut app, &ctx);
+        assert!(
+            drawing_strokes(&parked) >= 2,
+            "the parked pointer brings the corridor back for the camera"
+        );
+    }
+
+    /// A tool of two anchors is finished by the release, exactly as it always
+    /// was: the shaping port must not have turned every drag into a gesture
+    /// that owes a click.
+    #[test]
+    fn a_two_anchor_tool_still_closes_on_the_release() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+        );
+        let pane = &app.active_tab().flow_pane;
+        assert_eq!(pane.drawings.draft_len(), 0, "nothing is left in flight");
+        assert_eq!(
+            pane.drawings.items().last().map(|item| item.tool.id()),
+            Some("trend-line"),
+            "the release finished the object"
+        );
+    }
+
+    /// Escape during the shaping phase drops the whole draft and leaves no
+    /// half-made object behind — the trader's way out of a gesture they did
+    /// not mean to start.
+    #[test]
+    fn escape_drops_a_half_placed_channel_and_leaves_nothing_behind() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+        );
+        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 2);
+
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        let pane = &app.active_tab().flow_pane;
+        assert_eq!(pane.drawings.draft_len(), 0, "the draft is gone");
+        assert!(
+            pane.drawings.items().is_empty(),
+            "a cancelled draft is not a drawing; items {:?}",
+            pane.drawings.items().len()
+        );
+    }
+
+    /// Backspace steps back one anchor at a time, so a trader who mis-placed
+    /// the trend line fixes that one anchor instead of starting over. The
+    /// last step back ends the draft rather than leaving an anchor stranded.
+    #[test]
+    fn backspace_steps_back_one_anchor_of_a_channel_at_a_time() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+        drag_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+        );
+        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 2);
+
+        let backspace = || key_press_with(egui::Key::Backspace, egui::Modifiers::NONE);
+        run_frame_with_events(&mut app, &ctx, vec![backspace()]);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            1,
+            "one anchor back, not the whole draft"
+        );
+        run_frame_with_events(&mut app, &ctx, vec![backspace()]);
+        let pane = &app.active_tab().flow_pane;
+        assert_eq!(pane.drawings.draft_len(), 0);
+        assert!(
+            pane.drawings.items().is_empty(),
+            "stepping back past the first anchor deletes nothing that exists"
         );
     }
 

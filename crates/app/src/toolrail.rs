@@ -1596,7 +1596,9 @@ mod tests {
         );
         // Shift+F is *flatten*. The Fib extension gave the chord up rather
         // than keep arming a tool and closing a position on one keystroke;
-        // it is reached through the Fib family flyout.
+        // it is reached through the Fib family flyout. Its tooltip went on
+        // advertising the chord for far longer — see
+        // `a_tooltip_names_the_key_the_tool_really_answers_to`.
         send(&mut rail, egui::Key::F, egui::Modifiers::SHIFT);
         assert_eq!(
             rail.tool().drawing_tool().map(DrawingTool::id),
@@ -1623,6 +1625,35 @@ mod tests {
         // A held command modifier keeps the letters out of the tool map.
         send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND);
         assert_eq!(rail.tool(), Tool::Pointer);
+    }
+
+    /// A tooltip that names a key must name the key the tool really answers
+    /// to, and a tool with no key must name none.
+    ///
+    /// The Fib extension advertised `Shift+F` in its tooltip for a long time
+    /// after giving that chord up — and `Shift+F` is *flatten*. The tooltip
+    /// was telling the trader that the way to reach a drawing tool is the one
+    /// keystroke that closes their position and cancels their working orders.
+    /// Nothing failed; the words simply went stale. This is the test that
+    /// stops them.
+    ///
+    /// The convention the rail already follows: a trailing `(<label>)`, with
+    /// `<label>` exactly what the menus print for that tool.
+    #[test]
+    fn a_tooltip_names_the_key_the_tool_really_answers_to() {
+        for tool in DRAWING_TOOLS.into_iter().map(Tool::Drawing) {
+            let advertised = tool
+                .hover_text()
+                .rsplit_once('(')
+                .and_then(|(_, tail)| tail.strip_suffix(')'))
+                .map(str::to_owned);
+            assert_eq!(
+                advertised,
+                tool.shortcut_label(),
+                "{} advertises one key and answers to another",
+                tool.name()
+            );
+        }
     }
 
     #[test]
