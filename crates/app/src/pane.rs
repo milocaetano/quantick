@@ -56,6 +56,14 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
+
+/// A pointer and a modifier for a run with nobody at the keyboard — see
+/// [`ChartPane::parked_hand`]. Never constructed outside the harness hook.
+#[derive(Debug, Clone, Copy)]
+pub struct ParkedHand {
+    pub position: egui::Pos2,
+    pub constrain: drawings::Constrain,
+}
 /// How far the pointer must travel before a freehand stroke records another
 /// point. Chosen so a hand-drawn circle keeps its shape while a half-second
 /// scribble stores tens of anchors instead of hundreds — every anchor is
@@ -884,18 +892,17 @@ pub struct ChartPane {
     drawing_band_hint: Option<egui::Rect>,
     pub drawing_press_position: Option<egui::Pos2>,
     pub drawing_press_started_empty: bool,
-    /// Where the pointer stands for a run that has no hands on the mouse —
-    /// the `QUANTICK_DRAWING_DRAFT` harness hook, `None` for every real
-    /// session.
+    /// The hand a run has when nobody is at the mouse — the
+    /// `QUANTICK_DRAWING_DRAFT` harness hook. `None` for every real session.
     ///
     /// The live preview of a half-placed object is the whole feedback of a
     /// multi-anchor gesture, and it is the one surface a click-free launch
     /// could not reach: it exists only between two clicks, and only while a
-    /// pointer is over the chart. This is read exactly where the real pointer
-    /// is read and nowhere else, so everything downstream — the tool's
-    /// shaping, the hint chip, the rubber band — runs the same code the hand
-    /// runs.
-    pub parked_pointer: Option<egui::Pos2>,
+    /// pointer is over the chart. Both halves are read exactly where the real
+    /// pointer and the real modifier are read and nowhere else, so everything
+    /// downstream — the tool's shaping, the hint chip, the rubber band — runs
+    /// the same code a hand runs.
+    pub parked_hand: Option<ParkedHand>,
     /// The last screen position a freehand stroke actually recorded, so the
     /// capture decimates as it goes rather than storing every mouse event.
     freehand_last_position: Option<egui::Pos2>,
@@ -1018,7 +1025,7 @@ impl ChartPane {
             drawing_band_hint: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
-            parked_pointer: None,
+            parked_hand: None,
             freehand_last_position: None,
             drawing_press_pick: None,
             drawing_drag_pending_from: None,
@@ -2099,11 +2106,13 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Shift, read once for the whole pass: the preview, the press and the
         // release must agree about it as strictly as they agree about where
-        // the pointer is.
+        // the pointer is. A parked hand supplies it for a run with nobody at
+        // the keyboard, the same way it supplies the pointer.
         let constrain = if ui.input(|input| input.modifiers.shift) {
             drawings::Constrain::Level
         } else {
-            drawings::Constrain::Free
+            self.parked_hand
+                .map_or(drawings::Constrain::Free, |hand| hand.constrain)
         };
         let Some(tool) = chrome.toolrail.tool().drawing_tool() else {
             self.drawings.cancel_draft();
@@ -2167,7 +2176,7 @@ impl ChartPane {
         let preview_pos = ui
             .input(|input| input.pointer.latest_pos())
             .filter(|position| surface.contains(*position))
-            .or(self.parked_pointer);
+            .or_else(|| self.parked_hand.map(|hand| hand.position));
         self.drawing_hover = preview_pos
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {

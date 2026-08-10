@@ -1753,6 +1753,25 @@ mod tests {
         assert_eq!(shaping, vec!["parallel-channel", "triangle"]);
     }
 
+    /// Which tools Shift means something to, named exactly. Everything else
+    /// answers with the pointer, so a trader holding the modifier out of
+    /// habit on some other tool gets no surprise — and a tool that *should*
+    /// answer to it fails here until it is listed.
+    #[test]
+    fn shift_reaches_exactly_the_tools_with_an_angle_to_hold() {
+        // One anchor down: the far end of a line, which is the step the
+        // modifier is about for every tool that has one.
+        let placed = [egui::pos2(10.0, 10.0)];
+        let cursor = egui::pos2(110.0, 60.0);
+        let mut levelled: Vec<&'static str> = DRAWING_TOOLS
+            .into_iter()
+            .filter(|tool| tool.pending_anchor(&placed, cursor, Constrain::Level) != cursor)
+            .map(DrawingTool::id)
+            .collect();
+        levelled.sort_unstable();
+        assert_eq!(levelled, vec!["parallel-channel", "trend-line"]);
+    }
+
     /// The host skips the shaping port for a freehand draft, and the reason
     /// is runtime: a pencil stroke holds hundreds of anchors, and projecting
     /// every one of them up to three times a frame just to consult the port

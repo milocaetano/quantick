@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::line_core::{Extend, LINES_FAMILY, hit_line, paint_line};
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
+use super::line_core::{Extend, LINES_FAMILY, hit_line, levelled_far_end, paint_line};
+use super::{Constrain, DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
 
 pub(super) static TOOL: TrendLine = TrendLine;
 
@@ -22,10 +22,26 @@ impl DrawingToolImpl for TrendLine {
         icons::TREND_UP
     }
     fn hover_text(&self) -> &'static str {
-        "Trend line - click two swing points (T)"
+        "Trend line - two swing points, Shift to keep it level (T)"
     }
     fn required_points(&self) -> usize {
         2
+    }
+    /// Advertised on the step it applies to, beside the cursor, while the
+    /// hand is already doing the gesture — a modifier nobody is told about is
+    /// a modifier nobody uses.
+    fn placement_hint(&self, placed: usize) -> Option<&'static str> {
+        (placed == 1).then_some("Drag out the line - hold Shift to keep it level")
+    }
+    /// Shift lays the far end at the price the near end is on: a level the
+    /// trader drew *as* a line, rather than a level that is nearly one.
+    fn pending_anchor(
+        &self,
+        placed: &[egui::Pos2],
+        cursor: egui::Pos2,
+        constrain: Constrain,
+    ) -> egui::Pos2 {
+        levelled_far_end(placed, cursor, constrain)
     }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {

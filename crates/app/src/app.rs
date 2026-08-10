@@ -94,6 +94,15 @@ const DEMO_FREEHAND_POINTS: usize = 4;
 /// reference image is for.
 const DEMO_DRAFT_SPAN: f32 = 0.6;
 const DEMO_DRAFT_BAND_SPAN: f64 = 0.12;
+/// Where the parked pointer stands when a single anchor is down, as a
+/// fraction of the chart from its centre.
+///
+/// A lone anchor sits at that centre, so parking the pointer there too gives
+/// a rubber band of no length — an invisible draft, which is the one thing
+/// this hook exists not to photograph. Offset, there is a line to see, and it
+/// is a *sloped* one, which is what makes the levelled state worth its own
+/// capture.
+const DEMO_DRAFT_POINTER_OFFSET: egui::Vec2 = egui::vec2(0.2, -0.15);
 /// The band to spread across before the pane has an auto-range to read (no
 /// bars yet): a fraction of price, since there is nothing better to ask.
 const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
@@ -5014,7 +5023,34 @@ impl QuantickApp {
         // The hand this run does not have. Parked on the line the anchors
         // drew, which is where a real hand is sitting the instant a drag lets
         // go — and where a channel used to be born with no width at all.
-        pane.parked_pointer = Some(chart.center());
+        //
+        // `QUANTICK_DRAWING_CONSTRAIN=1` presses Shift for it. The levelled
+        // draft is a state of its own — a corridor held flat looks different
+        // from one following the pointer — and a modifier is the one input a
+        // capture run cannot supply any other way.
+        // With two anchors down the pointer belongs *on* the line they drew —
+        // the exact spot the reported defect lived at. With one, that spot is
+        // the anchor itself, so it steps aside far enough to leave a rubber
+        // band worth looking at.
+        let parked = if anchors >= 2 {
+            chart.center()
+        } else {
+            chart.center()
+                + egui::vec2(
+                    chart.width() * DEMO_DRAFT_POINTER_OFFSET.x,
+                    chart.height() * DEMO_DRAFT_POINTER_OFFSET.y,
+                )
+        };
+        pane.parked_hand = Some(pane::ParkedHand {
+            position: parked,
+            constrain: if std::env::var("QUANTICK_DRAWING_CONSTRAIN")
+                .is_ok_and(|value| value == "1")
+            {
+                drawings::Constrain::Level
+            } else {
+                drawings::Constrain::Free
+            },
+        });
     }
 
     /// The `QUANTICK_FRVP_DEMO` hook: one fixed-range volume profile on the
@@ -8430,6 +8466,46 @@ plot(close)
         );
     }
 
+    /// A click with a modifier held, and the move that carries the pointer
+    /// there — the click-move-click half of a placement, as opposed to a drag.
+    fn click_chart_with(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        position: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) {
+        for pressed in [true, false] {
+            run_frame_sized(
+                app,
+                ctx,
+                TEST_WINDOW,
+                vec![
+                    egui::Event::PointerMoved(position),
+                    pointer_button(position, pressed),
+                ],
+                modifiers,
+            );
+        }
+    }
+
+    /// Move the pointer without pressing anything, and answer what got
+    /// painted — the frames between two clicks, which is where a placement
+    /// gesture does all of its talking.
+    fn move_chart_with(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        position: egui::Pos2,
+        modifiers: egui::Modifiers,
+    ) -> egui::FullOutput {
+        run_frame_sized(
+            app,
+            ctx,
+            TEST_WINDOW,
+            vec![egui::Event::PointerMoved(position)],
+            modifiers,
+        )
+    }
+
     fn drag_chart(app: &mut QuantickApp, ctx: &egui::Context, start: egui::Pos2, end: egui::Pos2) {
         run_frame_with_events(
             app,
@@ -8823,6 +8899,206 @@ plot(close)
         );
     }
 
+    /// The price the trend line holds at `bar` — the height the width anchor
+    /// is measured above or below.
+    fn trend_price_at(points: &[drawings::ChartPoint], bar: f32) -> f64 {
+        let (a, b) = (&points[0], &points[1]);
+        let span = f64::from(b.bar - a.bar);
+        if span.abs() < 1e-9 {
+            return a.price;
+        }
+        a.price + (b.price - a.price) * f64::from(bar - a.bar) / span
+    }
+
+    /// The whole gesture, walked the way a trader describes it: click, move
+    /// and watch a straight line follow, click again to fix it, then move and
+    /// watch the corridor open, and click to place.
+    ///
+    /// Written from a trader's own account of how this must behave, so each
+    /// step asserts what is *on screen* at that step and not merely the state
+    /// behind it — a placement gesture does all of its talking in the frames
+    /// between the clicks.
+    #[test]
+    fn the_channel_walks_the_gesture_a_trader_describes() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+
+        let (first, second, width) = (
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+            // Well below the trend line: the corridor must open downward.
+            egui::pos2(800.0, 460.0),
+        );
+
+        click_chart_with(&mut app, &ctx, first, egui::Modifiers::NONE);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            1,
+            "the first click anchors the trend line"
+        );
+
+        // Moving between the first and second click shows a straight line and
+        // nothing else — there is no width yet to draw.
+        let output = move_chart_with(&mut app, &ctx, second, egui::Modifiers::NONE);
+        assert_eq!(
+            drawing_strokes(&output),
+            1,
+            "only the line between the anchor and the pointer"
+        );
+
+        click_chart_with(&mut app, &ctx, second, egui::Modifiers::NONE);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            2,
+            "the second click fixes the trend line"
+        );
+
+        // From here every movement opens the corridor.
+        let output = move_chart_with(&mut app, &ctx, width, egui::Modifiers::NONE);
+        assert!(
+            drawing_strokes(&output) >= 2,
+            "both rails follow the pointer now, painted {}",
+            drawing_strokes(&output)
+        );
+
+        click_chart_with(&mut app, &ctx, width, egui::Modifiers::NONE);
+        let channel = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the third click placed the channel")
+            .clone();
+        assert_eq!(channel.points.len(), 3);
+        assert!(
+            channel.points[2].price < trend_price_at(&channel.points, channel.points[2].bar),
+            "the corridor opened downward, the way the pointer moved: {:?}",
+            channel.points
+        );
+    }
+
+    /// The corridor grows on the side the hand went, both ways. A channel
+    /// that always opened the same way would be a coin toss the trader has to
+    /// correct by hand every other time.
+    #[test]
+    fn the_corridor_opens_on_the_side_the_pointer_moved() {
+        for (label, width_at, opens_below) in [
+            ("down", egui::pos2(800.0, 460.0), true),
+            ("up", egui::pos2(800.0, 220.0), false),
+        ] {
+            let (mut app, _commands) = app_with_history(200);
+            let ctx = egui::Context::default();
+            run_frame(&mut app, &ctx);
+            arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+            drag_chart(
+                &mut app,
+                &ctx,
+                egui::pos2(600.0, 400.0),
+                egui::pos2(800.0, 340.0),
+            );
+            click_chart_with(&mut app, &ctx, width_at, egui::Modifiers::NONE);
+
+            let channel = app
+                .active_tab()
+                .flow_pane
+                .drawings
+                .items()
+                .last()
+                .expect("the click placed the channel")
+                .clone();
+            let line = trend_price_at(&channel.points, channel.points[2].bar);
+            assert_eq!(
+                channel.points[2].price < line,
+                opens_below,
+                "moving {label} opens the corridor {label}: {:?}",
+                channel.points
+            );
+        }
+    }
+
+    /// Shift on the click-move-click path, not just on the drag: the same
+    /// gesture placed a different way must mean the same thing, and a trader
+    /// who places by clicks is not a trader who wants a sloped range.
+    #[test]
+    fn holding_shift_levels_a_channel_placed_by_clicks() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::Modifiers::NONE,
+        );
+        // The second click lands well below the first, which without the
+        // modifier is a channel sloping down across sixty pixels of price.
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(800.0, 460.0),
+            egui::Modifiers::SHIFT,
+        );
+
+        let draft = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .draft()
+            .expect("two clicks laid the trend line")
+            .clone();
+        assert_eq!(draft.points.len(), 2);
+        assert!(
+            (draft.points[0].price - draft.points[1].price).abs() < 1e-9,
+            "clicking below still lands level: {:?}",
+            draft.points
+        );
+    }
+
+    /// The same modifier on the trend line, which is the tool a trader
+    /// reaches for when they want a level in the first place. A two-anchor
+    /// tool finishes on the release, so this proves the constraint survives
+    /// the path where placement and completion are the same event.
+    #[test]
+    fn holding_shift_lays_a_trend_line_dead_level() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        drag_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::pos2(800.0, 340.0),
+            egui::Modifiers::SHIFT,
+        );
+        let line = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the release finished the trend line")
+            .clone();
+        assert_eq!(line.tool.id(), "trend-line");
+        assert_eq!(line.points.len(), 2);
+        assert!(
+            (line.points[0].price - line.points[1].price).abs() < 1e-9,
+            "both ends sit on one price: {:?}",
+            line.points
+        );
+        assert!(
+            line.points[1].bar > line.points[0].bar,
+            "and it still ran along the tape: {:?}",
+            line.points
+        );
+    }
+
     /// The same guarantee for the other tool whose third anchor gives a shape
     /// its thickness: a triangle of three collinear corners is a line.
     #[test]
@@ -8903,7 +9179,10 @@ plot(close)
             "only the trend line the anchors themselves make"
         );
 
-        app.active_tab_mut().flow_pane.parked_pointer = Some(release);
+        app.active_tab_mut().flow_pane.parked_hand = Some(pane::ParkedHand {
+            position: release,
+            constrain: drawings::Constrain::Free,
+        });
         let parked = run_frame(&mut app, &ctx);
         assert!(
             drawing_strokes(&parked) >= 2,
