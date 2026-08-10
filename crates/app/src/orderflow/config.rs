@@ -40,8 +40,45 @@ pub const MAX_BUBBLE_DUST_MERGE_MS: i64 = 30_000;
 pub const DEFAULT_LIQUIDITY_CORRELATION_MS: i64 = 250;
 /// Safe upper bound for depth/aggression correlation.
 pub const MAX_LIQUIDITY_CORRELATION_MS: i64 = 10_000;
+/// The golden ratio, φ.
+///
+/// The aggression layer's proportions are steps on this one ladder rather than
+/// a scatter of independently tuned numbers. Radius is *area*-proportional to
+/// quantity, so a φ step in radius is a φ² ≈ 2.6× step in quantity — "roughly
+/// two and a half times the print" is a size class a flow trader already reads
+/// in, which is what makes the ladder a measuring stick and not an ornament.
+///
+/// It is used where a *proportion* is being expressed. It is deliberately not
+/// used for pixel floors (below ~3px the display grid rules, and a 0.38px
+/// stroke is a rounding error) nor for alphas, which are perceptual and tuned
+/// against the heat ramp's actual luminance.
+pub const PHI: f32 = 1.618_034;
+/// 1/φ ≈ 0.618 — see [`PHI`]. Each rung is derived from the last rather than
+/// written out, so the ladder cannot drift apart one literal at a time.
+pub const INV_PHI: f32 = 1.0 / PHI;
+/// 1/φ² ≈ 0.382 — see [`PHI`].
+pub const INV_PHI_2: f32 = INV_PHI / PHI;
+/// 1/φ³ ≈ 0.236 — see [`PHI`].
+///
+/// The bottom rung of the ladder, `1/φ⁴`, is deliberately not a constant of
+/// its own: nothing computes with it at runtime — the smallest radius is a
+/// stored default, not a derived value — so it would be a name with no
+/// caller. It is written as `INV_PHI_3 / PHI` where it is needed.
+pub const INV_PHI_3: f32 = INV_PHI_2 / PHI;
+/// The golden angle, 360°/φ² ≈ 137.5°, in radians.
+///
+/// The sweep a fully consuming print's crown reaches. Being 1/φ² of the rim
+/// rather than all of it is what makes the crown structurally incapable of
+/// closing into a second circle around the bubble — the exact ambiguity the
+/// old closed impact ring created with the disc's own edge.
+pub const GOLDEN_ANGLE: f32 = std::f32::consts::TAU * INV_PHI_2;
 /// Default alpha applied to aggression bubbles.
-pub const DEFAULT_BUBBLE_OPACITY: f32 = 0.78;
+///
+/// High enough that a bubble occludes rather than tints: translucency over a
+/// coloured heat cell drags the fill toward the heat's own hue, and occlusion
+/// is the strongest cue for counting overlapping prints. Short of opaque, so a
+/// bubble still admits it is sitting over the book.
+pub const DEFAULT_BUBBLE_OPACITY: f32 = 0.9;
 /// Default on-screen radius, in points, of the largest aggression bubble.
 pub const DEFAULT_BUBBLE_MAX_RADIUS: f32 = 15.0;
 /// Smallest accepted maximum bubble radius.
@@ -50,16 +87,60 @@ pub const MIN_BUBBLE_MAX_RADIUS: f32 = 4.0;
 pub const MAX_BUBBLE_MAX_RADIUS: f32 = 48.0;
 /// Largest accepted radius for the smallest drawn bubble.
 pub const MAX_BUBBLE_MIN_RADIUS: f32 = 12.0;
+/// Default radius of the smallest drawn print: the bottom rung of the φ
+/// ladder, `max / φ⁴`. See [`PHI`].
+///
+/// Written as a literal, not as `DEFAULT_BUBBLE_MAX_RADIUS * INV_PHI_4`, for
+/// one mechanical reason: the presets file stores floats to
+/// [`SERIALIZED_FLOAT_PLACES`] decimals, so a default carrying more precision
+/// than that would come back different from a save-and-reload and every
+/// preset round trip would drift. The rungs are therefore the exact ladder
+/// rounded to what the file can hold — asserted by
+/// `the_default_radii_are_rungs_of_one_golden_ladder`.
+pub const DEFAULT_BUBBLE_MIN_RADIUS: f32 = 2.1885;
+/// Default radius at which a bubble can afford its dressing — shading and the
+/// separator hair. The `max / φ³` rung.
+///
+/// It lands where hue starts working: below roughly 3.5px the eye's chromatic
+/// channel is too low-pass to separate a green speck from a red one, so that
+/// is exactly the size at which shading a bubble by side begins to pay. Under
+/// it a print is one flat disc, which is also what keeps the per-frame
+/// tessellation budget flat on a fast tape.
+pub const DEFAULT_DETAIL_MIN_RADIUS: f32 = 3.541;
 /// Default radius, in pixels, below which a bubble is treated as unreadable
 /// on its own: small enough to be a routine print, large enough that side
-/// colour and the side nudge actually register at a glance.
-pub const DEFAULT_READABLE_MIN_RADIUS: f32 = 6.0;
+/// colour and the side nudge actually register at a glance. The `max / φ²`
+/// rung, and the floor the consumption crown and the pie split gate on.
+pub const DEFAULT_READABLE_MIN_RADIUS: f32 = 5.7295;
+/// Default half-length of the vertical consumption front, as a multiple of the
+/// radius: `1/φ`, at the precision the presets file stores. Only
+/// [`ConsumptionMark::Front`] reads it.
+pub const DEFAULT_FRONT_LENGTH_SCALE: f32 = 0.618;
+/// Smallest radius that gets a label, as a fraction of
+/// [`DEFAULT_BUBBLE_MAX_RADIUS`].
+///
+/// Not a φ rung, and deliberately not dressed up as one: the rule is "the top
+/// of the radius range", because laying out text is the most expensive thing
+/// a bubble can ask for and only the largest prints have room to hold it.
+pub const DEFAULT_LABEL_MIN_RADIUS_SHARE: f32 = 0.9;
+/// Smallest radius that gets a label, in pixels — see
+/// [`DEFAULT_LABEL_MIN_RADIUS_SHARE`].
+pub const DEFAULT_LABEL_MIN_RADIUS: f32 =
+    DEFAULT_BUBBLE_MAX_RADIUS * DEFAULT_LABEL_MIN_RADIUS_SHARE;
 /// Largest accepted readability floor.
 pub const MAX_READABLE_MIN_RADIUS: f32 = 32.0;
 /// Default edge darkening of a sphere-rendered bubble.
-pub const DEFAULT_SPHERE_SHADING: f32 = 0.55;
+///
+/// Enough contrast that two piled bubbles keep a boundary, and no more:
+/// counting overlapping discs needs only a soft edge, while a hard one reads
+/// as a black outline drawn around every print on the tape.
+pub const DEFAULT_SPHERE_SHADING: f32 = 0.34;
 /// Default highlight strength of a sphere-rendered bubble.
-pub const DEFAULT_SPHERE_HIGHLIGHT: f32 = 0.35;
+///
+/// A specular cue, not a second colour. Pushed harder, the sell side's core
+/// washes out to pink — the loudest thing on the canvas and the one that makes
+/// the layer read as decoration rather than as instrumentation.
+pub const DEFAULT_SPHERE_HIGHLIGHT: f32 = 0.18;
 /// Default share of the chart width taken by the live lane. Enough room for
 /// the tape to be read as a tape, with two thirds of the chart left for the
 /// history it is read against.
@@ -187,6 +268,49 @@ pub enum BubbleSizeReference {
     Fixed,
 }
 
+/// How a print that ate resting liquidity says so.
+///
+/// The signal has to survive three things at once: a dense tape where prints
+/// overlap, a canvas that is nearly black, and a heat map underneath that is
+/// the only layer carrying liquidity. That rules out any mark that works by
+/// *subtraction* — a dark stroke is invisible over the canvas and a hole
+/// punched in the book everywhere else — and it rules out any mark that
+/// crosses the disc, whose area is the quantity reading.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsumptionMark {
+    /// An open arc outside the rim, on the side of the book that was eaten:
+    /// buy aggression lifts the ask, so its crown sits above; sell aggression
+    /// hits the bid and wears it below.
+    ///
+    /// Arc *length* carries how much of the print matched resting liquidity —
+    /// the one channel the eye reads ordinally without a reference beside it —
+    /// from [`INV_PHI_2`] of the [`GOLDEN_ANGLE`] at a nibble to the whole
+    /// golden angle at a full sweep. Because it never closes and never crosses
+    /// the disc, it cannot be confused with the bubble's own rim, and stacked
+    /// crowns at one price row read as the nested brackets that absorption
+    /// actually is.
+    #[default]
+    Crown,
+    /// The vertical line through the bubble that shipped before the crown.
+    ///
+    /// Kept because a chart is someone's muscle memory and a preset that asked
+    /// for it should still get it — not because it reads well on a fast tape,
+    /// where it slices every disc it marks.
+    Front,
+    /// No consumption mark at all. The heat map to the right of the print
+    /// still shows whether the level refilled, which is the honest record.
+    None,
+}
+
+impl ConsumptionMark {
+    /// Whether this mark draws the vertical front.
+    #[must_use]
+    pub fn is_front(self) -> bool {
+        matches!(self, Self::Front)
+    }
+}
+
 impl BubbleSizeReference {
     /// Whether the reference is derived from what is on screen.
     ///
@@ -283,10 +407,15 @@ pub struct BubbleStyle {
     /// Whether buy prints below [`readable_min_radius`](Self::readable_min_radius)
     /// are drawn as an open ring instead of a solid dot.
     ///
-    /// Shape survives where colour does not: at that size a green speck and a
-    /// red speck are the same speck, but a ring and a disc still read as two
-    /// different things. Bubbles above the floor keep their fill, so a sphere
-    /// look is untouched.
+    /// Off by default. The intent was that shape survives where colour does
+    /// not, but the ring spends most of the disc's area to say it: at 2px a
+    /// green ring around a 22%-alpha interior carries *less* green than the
+    /// dot it replaced, so the side became harder to read, not easier — and
+    /// the two sides ended up drawn in visibly different media. Side is
+    /// carried instead by the buy/sell luminance gap, which the achromatic
+    /// channel resolves several times smaller than the chromatic one, and by
+    /// [`side_offset`](Self::side_offset). The knob stays for anyone who
+    /// preferred the ring.
     pub hollow_small_buys: bool,
     /// Whether the fill is a flat disc or a shaded sphere.
     pub render_mode: BubbleRenderMode,
@@ -316,10 +445,15 @@ pub struct BubbleStyle {
     /// restores exact price placement.
     #[serde(serialize_with = "serialize_short_f32")]
     pub side_offset: f32,
-    /// Whether a bubble that ate resting liquidity draws its vertical
-    /// consumption front.
-    pub show_consumption_front: bool,
-    /// Width of that front, in pixels.
+    /// How a bubble that ate resting liquidity says so.
+    ///
+    /// Replaces the older `show_consumption_front` switch. A preset written
+    /// before the crown existed simply does not carry this key, so it opens
+    /// wearing the crown — which is the point of changing the default, and is
+    /// covered by a test that such a preset still loads.
+    pub consumption_mark: ConsumptionMark,
+    /// Width of the vertical front, in pixels. Unused by
+    /// [`ConsumptionMark::Crown`], whose width is a proportion of the radius.
     #[serde(serialize_with = "serialize_short_f32")]
     pub front_width: f32,
     /// Half-length of the front as a multiple of the bubble radius.
@@ -364,35 +498,50 @@ pub struct BubbleStyle {
 impl Default for BubbleStyle {
     fn default() -> Self {
         Self {
-            // Area stays quantity-proportional: the minimum keeps the smallest
-            // print a subtle dot, the maximum lets a real sweep dominate.
-            min_radius: 2.0,
+            // Area stays quantity-proportional, and the four radii are rungs
+            // of one φ ladder off `max_radius` — see `PHI`.
+            min_radius: DEFAULT_BUBBLE_MIN_RADIUS,
             max_radius: DEFAULT_BUBBLE_MAX_RADIUS,
             opacity: DEFAULT_BUBBLE_OPACITY,
-            outline_width: 1.0,
-            halo_strength: 0.12,
-            detail_min_radius: 4.0,
+            // Zero, not a hairline: a sub-pixel stroke is antialiased into a
+            // grey fringe around every print, and in sphere mode the darkened
+            // rim already is the boundary. A second edge on top of it is what
+            // made each bubble wear three outlines.
+            outline_width: 0.0,
+            halo_strength: 0.1,
+            detail_min_radius: DEFAULT_DETAIL_MIN_RADIUS,
             readable_min_radius: DEFAULT_READABLE_MIN_RADIUS,
-            hollow_small_buys: true,
-            // Flat, so merely gaining the sphere option changes no pixels.
-            render_mode: BubbleRenderMode::Flat,
+            hollow_small_buys: false,
+            // Shading is what keeps piled bubbles countable where their rims
+            // coincide, which a dense tape does constantly.
+            render_mode: BubbleRenderMode::Sphere,
             sphere_shading: DEFAULT_SPHERE_SHADING,
             sphere_highlight: DEFAULT_SPHERE_HIGHLIGHT,
             size_reference: BubbleSizeReference::VisibleP99,
             size_reference_quantity: 100.0,
             min_quantity: 0.0,
-            side_offset: 3.5,
-            show_consumption_front: true,
-            front_width: 3.0,
-            front_length_scale: 2.1,
-            show_impact_ring: true,
-            impact_ring_width: 2.2,
-            trail_length: 18.0,
-            trail_opacity: 0.62,
+            // Wide enough that two prints on one price row visibly straddle
+            // it, which is the second channel carrying side at speck size.
+            side_offset: 3.0,
+            consumption_mark: ConsumptionMark::Crown,
+            front_width: 1.6,
+            front_length_scale: DEFAULT_FRONT_LENGTH_SCALE,
+            // The crown says "ate the book" without closing a second circle
+            // around the rim; a closed ring on top of it restates the same
+            // fact in the one shape that blurs the disc's own edge.
+            show_impact_ring: false,
+            impact_ring_width: 1.4,
+            // Off. The trail fired on nearly every print, so it carried almost
+            // no information, and it painted over the strip of heat map that
+            // answers the question it raised — did the level refill? The knob
+            // stays; the default stops smearing the book.
+            trail_length: 0.0,
+            trail_opacity: 0.45,
             show_quantity_labels: true,
             show_trade_count: true,
-            // Only the largest bubbles get a (text-layout-costly) label.
-            label_min_radius: 16.0,
+            // Only the largest bubbles get a (text-layout-costly) label: the
+            // top of the radius range, not a number picked beside it.
+            label_min_radius: DEFAULT_LABEL_MIN_RADIUS,
             buy_color: None,
             sell_color: None,
             front_color: None,
@@ -405,7 +554,12 @@ impl Default for BubbleStyle {
 impl BubbleStyle {
     /// Clamp every numeric field to a value that is safe for geometry and math.
     pub fn sanitize(&mut self) {
-        self.min_radius = finite_clamp(self.min_radius, 0.5, MAX_BUBBLE_MIN_RADIUS, 2.0);
+        self.min_radius = finite_clamp(
+            self.min_radius,
+            0.5,
+            MAX_BUBBLE_MIN_RADIUS,
+            DEFAULT_BUBBLE_MIN_RADIUS,
+        );
         self.max_radius = finite_clamp(
             self.max_radius,
             self.min_radius,
@@ -413,9 +567,10 @@ impl BubbleStyle {
             DEFAULT_BUBBLE_MAX_RADIUS,
         );
         self.opacity = finite_clamp(self.opacity, 0.05, 1.0, DEFAULT_BUBBLE_OPACITY);
-        self.outline_width = finite_clamp(self.outline_width, 0.0, 6.0, 1.0);
-        self.halo_strength = finite_clamp(self.halo_strength, 0.0, 1.0, 0.12);
-        self.detail_min_radius = finite_clamp(self.detail_min_radius, 0.0, 32.0, 4.0);
+        self.outline_width = finite_clamp(self.outline_width, 0.0, 6.0, 0.0);
+        self.halo_strength = finite_clamp(self.halo_strength, 0.0, 1.0, 0.1);
+        self.detail_min_radius =
+            finite_clamp(self.detail_min_radius, 0.0, 32.0, DEFAULT_DETAIL_MIN_RADIUS);
         self.readable_min_radius = finite_clamp(
             self.readable_min_radius,
             0.0,
@@ -431,13 +586,19 @@ impl BubbleStyle {
         if !self.min_quantity.is_finite() || self.min_quantity < 0.0 {
             self.min_quantity = 0.0;
         }
-        self.side_offset = finite_clamp(self.side_offset, 0.0, 40.0, 3.5);
-        self.front_width = finite_clamp(self.front_width, 0.5, 12.0, 3.0);
-        self.front_length_scale = finite_clamp(self.front_length_scale, 0.2, 8.0, 2.1);
-        self.impact_ring_width = finite_clamp(self.impact_ring_width, 0.5, 8.0, 2.2);
-        self.trail_length = finite_clamp(self.trail_length, 0.0, 120.0, 18.0);
-        self.trail_opacity = finite_clamp(self.trail_opacity, 0.0, 1.0, 0.62);
-        self.label_min_radius = finite_clamp(self.label_min_radius, 4.0, 64.0, 16.0);
+        self.side_offset = finite_clamp(self.side_offset, 0.0, 40.0, 3.0);
+        self.front_width = finite_clamp(self.front_width, 0.5, 12.0, 1.6);
+        self.front_length_scale = finite_clamp(
+            self.front_length_scale,
+            0.2,
+            8.0,
+            DEFAULT_FRONT_LENGTH_SCALE,
+        );
+        self.impact_ring_width = finite_clamp(self.impact_ring_width, 0.5, 8.0, 1.4);
+        self.trail_length = finite_clamp(self.trail_length, 0.0, 120.0, 0.0);
+        self.trail_opacity = finite_clamp(self.trail_opacity, 0.0, 1.0, 0.45);
+        self.label_min_radius =
+            finite_clamp(self.label_min_radius, 4.0, 64.0, DEFAULT_LABEL_MIN_RADIUS);
     }
 
     /// Quantity at which a print stops being dust: the exact quantity whose
@@ -953,7 +1114,10 @@ mod tests {
             config.live_lane.scaled_radii(&config.bubbles),
             (config.bubbles.min_radius, config.bubbles.max_radius)
         );
-        assert!(config.bubbles.hollow_small_buys);
+        assert!(
+            !config.bubbles.hollow_small_buys,
+            "a small print keeps its fill; side is carried by luminance and the nudge"
+        );
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, DEFAULT_BUBBLE_MAX_RADIUS);
         // Every visual layer defaults to on: gaining per-layer switches must
@@ -1213,17 +1377,108 @@ mod tests {
             bubbles.side_offset > 0.0,
             "buy and sell must not stack on the same row by default"
         );
-        assert!(bubbles.show_consumption_front);
+        assert_eq!(bubbles.consumption_mark, ConsumptionMark::Crown);
         assert_eq!(bubbles.size_reference, BubbleSizeReference::VisibleP99);
         assert_eq!(bubbles.min_quantity, 0.0, "nothing is hidden by default");
         assert_eq!(bubbles.min_quantity_decimal(), None);
-        assert_eq!(
-            bubbles.render_mode,
-            BubbleRenderMode::Flat,
-            "gaining the sphere option must not change existing charts"
-        );
+        assert_eq!(bubbles.render_mode, BubbleRenderMode::Sphere);
         assert!((0.0..=1.0).contains(&bubbles.sphere_shading));
         assert!((0.0..=1.0).contains(&bubbles.sphere_highlight));
+    }
+
+    #[test]
+    fn the_default_bubble_never_hollows_a_print_or_smears_the_book() {
+        let bubbles = BubbleStyle::default();
+        assert!(
+            !bubbles.hollow_small_buys,
+            "a small print is a solid disc: hollowing it spends the disc's own area \
+             to say something the luminance gap and the side nudge already say"
+        );
+        assert_eq!(
+            bubbles.trail_length, 0.0,
+            "the trail painted over the strip of heat map that answers the question \
+             it raised — whether the level refilled"
+        );
+        assert!(
+            !bubbles.show_impact_ring,
+            "the crown already says the print ate; a closed ring on top of it \
+             restates the fact in the one shape that blurs the disc's own edge"
+        );
+    }
+
+    #[test]
+    fn the_default_radii_are_rungs_of_one_golden_ladder() {
+        let bubbles = BubbleStyle::default();
+        // The rungs really are successive powers of φ, not four numbers that
+        // merely look related.
+        for (power, inverse) in [
+            (1, INV_PHI),
+            (2, INV_PHI_2),
+            (3, INV_PHI_3),
+            (4, INV_PHI_3 / PHI),
+        ] {
+            assert!(
+                (inverse * PHI.powi(power) - 1.0).abs() < 1e-5,
+                "1/φ^{power} = {inverse} is not the reciprocal of φ^{power}"
+            );
+        }
+        // The defaults are those rungs rounded to the precision the presets
+        // file stores, so the tolerance is that rounding step and nothing
+        // looser: this is what stops a literal from quietly becoming a number
+        // nobody can derive.
+        let tolerance = 0.5 * 10_f32.powi(-SERIALIZED_FLOAT_PLACES);
+        for (label, actual, expected) in [
+            (
+                "min radius",
+                bubbles.min_radius,
+                bubbles.max_radius * INV_PHI_3 / PHI,
+            ),
+            (
+                "detail radius",
+                bubbles.detail_min_radius,
+                bubbles.max_radius * INV_PHI_3,
+            ),
+            (
+                "readable radius",
+                bubbles.readable_min_radius,
+                bubbles.max_radius * INV_PHI_2,
+            ),
+            ("front length scale", bubbles.front_length_scale, INV_PHI),
+        ] {
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "{label} {actual} is not the φ rung {expected} at file precision"
+            );
+        }
+        assert!(bubbles.min_radius < bubbles.detail_min_radius);
+        assert!(bubbles.detail_min_radius < bubbles.readable_min_radius);
+        assert!(bubbles.readable_min_radius < bubbles.max_radius);
+    }
+
+    #[test]
+    fn a_preset_written_before_the_crown_still_loads_and_gains_it() {
+        // Exactly the shape every shipped preset had before this change: the
+        // old boolean switch, and no `consumption_mark` key at all.
+        let legacy = "
+            min_radius = 2.0
+            max_radius = 15.0
+            show_consumption_front = true
+            front_width = 3.0
+            front_length_scale = 2.1
+            hollow_small_buys = true
+        ";
+        let style: BubbleStyle = toml::from_str(legacy).expect("a legacy preset still parses");
+        assert_eq!(style.max_radius, 15.0, "its own values survive");
+        assert_eq!(style.front_width, 3.0);
+        assert!(
+            style.hollow_small_buys,
+            "a preset that asked for hollow buys keeps them"
+        );
+        assert_eq!(
+            style.consumption_mark,
+            ConsumptionMark::Crown,
+            "the key it never carried takes the new default"
+        );
     }
 
     #[test]
@@ -1244,9 +1499,12 @@ mod tests {
         let parsed: BubbleStyle = toml::from_str(&text).expect("parse");
         assert_eq!(parsed, style);
 
-        // A presets file written before the mode existed keeps rendering flat.
+        // A presets file that predates the mode adopts the shipped default,
+        // which is now the shaded sphere: it is what keeps piled bubbles
+        // countable where their rims coincide.
         let old: BubbleStyle = toml::from_str("max_radius = 30.0").expect("parse old file");
-        assert_eq!(old.render_mode, BubbleRenderMode::Flat);
+        assert_eq!(old.render_mode, BubbleRenderMode::Sphere);
+        assert_eq!(old.max_radius, 30.0);
     }
 
     #[test]
@@ -1263,11 +1521,11 @@ mod tests {
             ..BubbleStyle::default()
         };
         style.sanitize();
-        assert_eq!(style.min_radius, 2.0);
+        assert_eq!(style.min_radius, DEFAULT_BUBBLE_MIN_RADIUS);
         assert!(style.max_radius >= style.min_radius);
         assert_eq!(style.opacity, 1.0);
         assert_eq!(style.front_width, 0.5);
-        assert_eq!(style.trail_length, 18.0);
+        assert_eq!(style.trail_length, 0.0);
         assert_eq!(style.side_offset, 0.0);
         assert_eq!(style.min_quantity, 0.0);
         assert_eq!(style.size_reference_quantity, 100.0);
@@ -1283,7 +1541,7 @@ mod tests {
             ..HeatmapConfig::default()
         }
         .sanitized();
-        assert_eq!(config.bubbles.opacity, 0.78);
+        assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
     }
 
     #[test]

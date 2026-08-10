@@ -1,207 +1,246 @@
-# quantick — built-in aggression bubble presets (FALLBACK ONLY).
+# quantick — aggression bubble presets.
 #
-# Compiled into the binary so the app runs with no external file. The file the
-# panel actually reads and writes is `config/bubbles.toml` at the repository
-# root — edit that one. See config/README.md.
+# Written by the "aggression bubbles" panel (save), and safe to edit by hand:
+# this file is the versioned record of how the tape is read. See README.md in
+# this folder.
+# `active` names the preset the panel opens on. Colour overrides are optional
+# `[r, g, b]` triples; leave them out to follow the chart theme.
 #
-# Quantities are in the symbol's own units: contracts on the mini index, coins
-# on Binance. A `min_quantity` that hides noise on WIN$N hides everything on
-# BTCUSDT, so size-based presets say which market they were built for.
+# The radii of every shipped preset are rungs of one golden-ratio ladder off
+# `max_radius`: `min = max/φ⁴`, `detail_min = max/φ³`, `readable_min = max/φ²`,
+# and the halo switches on at `max/φ`. Radius is area-proportional to quantity,
+# so a φ step in radius is a φ² ≈ 2.6× step in quantity — the ladder is a
+# measuring stick, not an ornament. See `PHI` in
+# `crates/app/src/orderflow/config.rs`.
 #
-# Colour overrides are optional `[r, g, b]` triples. Leave a colour out and it
-# follows the chart theme.
-#
-# A preset only describes how bubbles LOOK. Turning the layer on stays a live
-# decision in the panel, so having this file can never start capture by itself.
+# `consumption_mark` replaces the older `show_consumption_front` switch. A
+# preset written before the crown existed simply does not carry the key and
+# opens wearing the crown.
 
-active = "dense tape btc"
+active = "default"
 
+# The shipped default, and deliberately identical to `BubbleStyle::default()`
+# in code — a test asserts it, so the file a new user reads and the behaviour a
+# fresh install gets can never drift apart.
+#
+# Three decisions define it:
+#   * consumption is a crown — an open arc just outside the rim, on the side of
+#     the book the print ate, whose length carries how much of it matched. It
+#     never crosses the disc, whose area is the quantity reading.
+#   * no trail. It fired on nearly every print, so it carried almost no
+#     information, and it painted over the strip of heat map that answers the
+#     question it raised: did the level refill?
+#   * small prints are solid discs. Side is carried by the buy/sell luminance
+#     gap and by `side_offset`, not by hollowing out the mark.
+#
+# Aggregation is the fourth decision, and it is not a detail: the marks above
+# only read as calm if there are few enough of them. Three windows do that
+# work, and all three are set here rather than left to the bare code defaults,
+# which are tuned for a slow tape:
+#   * cluster_ms — compatible prints inside this window become one bubble.
+#   * dust_merge_ms — prints too small to read on their own fold into one
+#     bubble per price range. The threshold is whatever quantity lands on
+#     `readable_min_radius`, so it moves with the radius range.
+#   * candle_summary — once a bar closes, its prints become one bubble per
+#     price range, drawn as a pie of the buy and sell shares. The pie is the
+#     only mark that shows both sides of one price at once, and it is what
+#     keeps history reading as a summary instead of as a wall of specks.
 [[presets]]
 name = "default"
-cluster_ms = 200
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
 
 [presets.bubbles]
-min_radius = 2.0
+min_radius = 2.1885
 max_radius = 15.0
-opacity = 0.78
-outline_width = 1.0
-halo_strength = 0.12
-detail_min_radius = 4.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
 size_reference = "visible_p99"
 size_reference_quantity = 100.0
 min_quantity = 0.0
-side_offset = 3.5
-show_consumption_front = true
-front_width = 3.0
-front_length_scale = 2.1
-show_impact_ring = true
-impact_ring_width = 2.2
-trail_length = 18.0
-trail_opacity = 0.62
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
 show_quantity_labels = true
 show_trade_count = true
-label_min_radius = 16.0
+label_min_radius = 13.5
 
-# A fast tape with hundreds of prints per minute: smaller dots, harder
-# clustering, no labels. Reading direction and size beats reading numbers.
 [[presets]]
 name = "dense tape"
 cluster_ms = 500
 
 [presets.bubbles]
-min_radius = 1.5
+min_radius = 1.6049
 max_radius = 11.0
-opacity = 0.7
+opacity = 0.9
 outline_width = 0.0
 halo_strength = 0.08
-detail_min_radius = 6.0
+detail_min_radius = 2.5967
+readable_min_radius = 4.2016
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
 size_reference = "visible_p99"
 size_reference_quantity = 100.0
 min_quantity = 0.0
 side_offset = 4.5
-show_consumption_front = true
-front_width = 2.0
-front_length_scale = 1.6
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
 show_impact_ring = false
-impact_ring_width = 2.2
-trail_length = 10.0
+impact_ring_width = 1.4
+trail_length = 0.0
 trail_opacity = 0.45
 show_quantity_labels = false
 show_trade_count = false
-label_min_radius = 20.0
+label_min_radius = 9.9
 
-# Only what moves the book: everything under 10 contracts is hidden and the
-# scale is pinned, so a bubble means the same size all session. Built for the
-# B3 mini index (WIN$N / WDO$N).
 [[presets]]
 name = "mini index sweeps"
 cluster_ms = 200
 
 [presets.bubbles]
-min_radius = 3.0
+min_radius = 3.2098
 max_radius = 22.0
-opacity = 0.85
-outline_width = 1.2
+opacity = 0.92
+outline_width = 0.0
 halo_strength = 0.16
-detail_min_radius = 4.0
+detail_min_radius = 5.1935
+readable_min_radius = 8.4033
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
 size_reference = "fixed"
 size_reference_quantity = 200.0
 min_quantity = 10.0
 side_offset = 5.0
-show_consumption_front = true
-front_width = 3.5
-front_length_scale = 2.4
-show_impact_ring = true
-impact_ring_width = 2.6
-trail_length = 22.0
-trail_opacity = 0.7
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
 show_quantity_labels = true
 show_trade_count = true
-label_min_radius = 14.0
+label_min_radius = 19.8
 
-# For studying who is eating whom: the bubble shrinks and the consumption mark
-# takes over — a wide, bright front and a long trail into the consumed side.
+# The one preset that keeps the older vertical front and the trail, because
+# that is what it is for: a slow tape where the question is which levels got
+# eaten and whether they came back, and where both marks have room to be read.
 [[presets]]
 name = "consumption focus"
 cluster_ms = 200
 
 [presets.bubbles]
-min_radius = 2.0
+min_radius = 1.7508
 max_radius = 12.0
-opacity = 0.55
+opacity = 0.75
 outline_width = 0.0
 halo_strength = 0.06
-detail_min_radius = 3.0
+detail_min_radius = 2.8328
+readable_min_radius = 4.5836
+hollow_small_buys = false
+render_mode = "flat"
+sphere_shading = 0.34
+sphere_highlight = 0.18
 size_reference = "visible_max"
 size_reference_quantity = 100.0
 min_quantity = 0.0
 side_offset = 6.0
-show_consumption_front = true
-front_width = 5.0
-front_length_scale = 3.2
+consumption_mark = "front"
+front_width = 2.0
+front_length_scale = 1.2
 show_impact_ring = true
-impact_ring_width = 3.0
-trail_length = 40.0
-trail_opacity = 0.85
+impact_ring_width = 2.0
+trail_length = 22.0
+trail_opacity = 0.5
 show_quantity_labels = false
 show_trade_count = false
-label_min_radius = 16.0
+label_min_radius = 10.8
 front_color = [255, 246, 205]
 trail_color = [255, 190, 90]
 
-# Bookmap-style shaded spheres. The darkened rim on every bubble keeps
-# overlapping prints readable as separate bubbles on a dense tape, so the
-# detail floor is low: even small prints get the shading.
+# Bookmap-style shaded spheres, pushed a little harder than the default: a
+# heavier rim buys separation on a tape where prints pile up.
 [[presets]]
 name = "3d spheres"
 cluster_ms = 200
 
 [presets.bubbles]
-min_radius = 2.0
+min_radius = 2.3344
 max_radius = 16.0
-opacity = 0.85
-outline_width = 1.0
-halo_strength = 0.05
-detail_min_radius = 2.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.7771
+readable_min_radius = 6.1115
+hollow_small_buys = false
 render_mode = "sphere"
-sphere_shading = 0.6
-sphere_highlight = 0.4
+sphere_shading = 0.4
+sphere_highlight = 0.2
 size_reference = "visible_p99"
 size_reference_quantity = 100.0
 min_quantity = 0.0
 side_offset = 3.5
-show_consumption_front = true
-front_width = 3.0
-front_length_scale = 2.1
-show_impact_ring = true
-impact_ring_width = 2.2
-trail_length = 18.0
-trail_opacity = 0.62
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
 show_quantity_labels = true
 show_trade_count = true
-label_min_radius = 16.0
+label_min_radius = 14.4
 
-# The project's default open: a BTC-tuned dense tape saved from the panel,
-# rendered as 3D spheres. Small quiet dots hugging the tape, thin fronts,
-# near-black consumption marks. Built for Binance BTCUSDT. Kept in sync with
-# `config/bubbles.toml`.
 [[presets]]
 name = "dense tape btc"
 cluster_ms = 500
 candle_summary = true
 
 [presets.bubbles]
-min_radius = 2.2
+min_radius = 2.0426
 max_radius = 14.0
-opacity = 0.75
-outline_width = 0.2
-halo_strength = 0.25
-detail_min_radius = 2.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.3049
+readable_min_radius = 5.3475
+hollow_small_buys = false
 render_mode = "sphere"
-sphere_shading = 0.55
-sphere_highlight = 0.35
+sphere_shading = 0.34
+sphere_highlight = 0.18
 size_reference = "visible_p99"
 size_reference_quantity = 100.0
 min_quantity = 0.0
-side_offset = 1.0
-show_consumption_front = true
-front_width = 0.5
-front_length_scale = 1.1
-show_impact_ring = true
-impact_ring_width = 0.5
-trail_length = 7.0
-trail_opacity = 0.77
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
 show_quantity_labels = false
 show_trade_count = true
-label_min_radius = 20.0
-front_color = [2, 2, 0]
-trail_color = [0, 0, 0]
+label_min_radius = 12.6
 
-# The lane and the summary as one look: closed bars fold into pie bubbles whose
-# sectors are the buy/sell proportion, while the live lane keeps every print
-# separate, clustered tighter and drawn larger. Sized so a pie is only ever
-# drawn where it can be read (`detail_min_radius` well above the dot floor).
-# Built for Binance BTCUSDT; the lane settings carry over to any symbol.
 [[presets]]
 name = "live lane pie"
 cluster_ms = 500
@@ -209,32 +248,31 @@ dust_merge_ms = 1500
 candle_summary = true
 
 [presets.bubbles]
-min_radius = 2.2
+min_radius = 2.918
 max_radius = 20.0
-opacity = 0.8
-outline_width = 0.4
-halo_strength = 0.2
-detail_min_radius = 5.0
-readable_min_radius = 8.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 4.7214
+readable_min_radius = 7.6393
+hollow_small_buys = false
 render_mode = "sphere"
-sphere_shading = 0.55
-sphere_highlight = 0.35
+sphere_shading = 0.34
+sphere_highlight = 0.18
 size_reference = "visible_p99"
 size_reference_quantity = 100.0
 min_quantity = 0.0
-side_offset = 1.0
-show_consumption_front = true
-front_width = 0.5
-front_length_scale = 1.1
-show_impact_ring = true
-impact_ring_width = 0.5
-trail_length = 7.0
-trail_opacity = 0.77
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
 show_quantity_labels = false
 show_trade_count = true
-label_min_radius = 20.0
-front_color = [2, 2, 0]
-trail_color = [0, 0, 0]
+label_min_radius = 18.0
 
 [presets.live_lane]
 width_share = 0.5

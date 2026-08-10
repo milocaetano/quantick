@@ -13,8 +13,9 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::orderflow::{
-    AggressionPrimitive, BEFORE_CAPTURE, BubbleRenderMode, BubbleStyle, HeatmapConfig,
-    HeatmapProjection, HeatmapTheme, LiquidityEvidence, LiveLaneStyle,
+    AggressionPrimitive, BEFORE_CAPTURE, BubbleRenderMode, BubbleStyle, ConsumptionMark,
+    GOLDEN_ANGLE, HeatmapConfig, HeatmapProjection, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3,
+    LiquidityEvidence, LiveLaneStyle,
 };
 use crate::viewport::Viewport;
 
@@ -205,18 +206,36 @@ struct BubbleColors {
     front: egui::Color32,
     trail: egui::Color32,
     text: egui::Color32,
+    /// The crown's colour per side. Derived from the side colour rather than
+    /// from [`front`](Self::front), so consumption reads as the same event
+    /// hotter instead of introducing a third hue — unless the panel explicitly
+    /// overrode the consumption colour, which stays the one door to change it.
+    crown_buy: egui::Color32,
+    crown_sell: egui::Color32,
 }
 
 impl BubbleColors {
     fn resolve(palette: &Palette, bubbles: &BubbleStyle) -> Self {
         let front = bubbles.front_color.map_or(palette.consumption, opaque_rgb);
+        let buy = bubbles.buy_color.map_or(palette.buy, opaque_rgb);
+        let sell = bubbles.sell_color.map_or(palette.sell, opaque_rgb);
+        let crown_of = |side: egui::Color32| match bubbles.front_color {
+            Some(rgb) => opaque_rgb(rgb),
+            None => opaque_rgb(mix_rgb(
+                [side.r(), side.g(), side.b()],
+                [255, 255, 255],
+                CROWN_WHITE_MIX,
+            )),
+        };
         Self {
-            buy: bubbles.buy_color.map_or(palette.buy, opaque_rgb),
-            sell: bubbles.sell_color.map_or(palette.sell, opaque_rgb),
+            buy,
+            sell,
             front,
             // The trail is the front's own glow, so it follows it by default.
             trail: bubbles.trail_color.map_or(front, opaque_rgb),
             text: bubbles.label_color.map_or(palette.bubble_text, opaque_rgb),
+            crown_buy: crown_of(buy),
+            crown_sell: crown_of(sell),
         }
     }
 
@@ -224,6 +243,13 @@ impl BubbleColors {
         match side {
             Side::Buy => self.buy,
             Side::Sell => self.sell,
+        }
+    }
+
+    const fn crown_for_side(self, side: Side) -> egui::Color32 {
+        match side {
+            Side::Buy => self.crown_buy,
+            Side::Sell => self.crown_sell,
         }
     }
 }
@@ -283,19 +309,57 @@ fn hollow_ring_width(radius: f32) -> f32 {
     (radius * HOLLOW_RING_SCALE).clamp(HOLLOW_MIN_RING_PX, HOLLOW_MAX_RING_PX)
 }
 
-/// Width of the dark separator ring drawn just outside a bubble's rim. The
-/// heat ramp passes through greens the buy side almost matches, so without a
-/// dark hair between them "aggression" and "liquidity" melt into one layer
-/// wherever a bubble sits on warm heat — the ring is what keeps them two.
-const SEPARATOR_RING_PX: f32 = 1.2;
-/// Alpha of that ring: translucent black, so it darkens whatever heat is
+/// Width of the dark separator hair drawn just outside a bubble's rim, as a
+/// fraction of the radius, and the pixel range it is held to.
+///
+/// The heat ramp passes through greens the buy side almost matches, so without
+/// a dark hair between them "aggression" and "liquidity" melt into one layer
+/// wherever a bubble sits on warm heat — the hair is what keeps them two.
+///
+/// Proportional rather than fixed: at a flat 1.2px the hair was over half the
+/// radius of a routine 2px print and under a tenth of a full sweep's, so small
+/// prints wore a heavy black collar and large ones a thread. One ratio makes
+/// every bubble the same drawing at a different size.
+const SEPARATOR_RING_SCALE: f32 = 0.14;
+/// See [`SEPARATOR_RING_SCALE`].
+const SEPARATOR_MIN_RING_PX: f32 = 0.5;
+/// See [`SEPARATOR_RING_SCALE`].
+const SEPARATOR_MAX_RING_PX: f32 = 1.5;
+/// Alpha of that hair: translucent black, so it darkens whatever heat is
 /// behind it instead of assuming one canvas colour.
-const SEPARATOR_RING_ALPHA: u8 = 200;
+const SEPARATOR_RING_ALPHA: u8 = 170;
 
-/// Gap, in pixels, between a bubble's rim and the halo drawn behind it.
-const HALO_PADDING_PX: f32 = 2.5;
-/// Gap, in pixels, between a bubble's rim and its impact ring.
-const IMPACT_RING_PADDING_PX: f32 = 2.2;
+/// Separator-hair width for a bubble of this radius.
+fn separator_ring_width(radius: f32) -> f32 {
+    (radius * SEPARATOR_RING_SCALE).clamp(SEPARATOR_MIN_RING_PX, SEPARATOR_MAX_RING_PX)
+}
+
+/// Gap between a bubble's rim and the halo behind it, as a fraction of the
+/// radius, and the pixel range it is held to.
+const HALO_PADDING_SCALE: f32 = 0.2;
+/// See [`HALO_PADDING_SCALE`].
+const HALO_MIN_PADDING_PX: f32 = 2.0;
+/// See [`HALO_PADDING_SCALE`].
+const HALO_MAX_PADDING_PX: f32 = 5.0;
+
+/// Halo gap for a bubble of this radius.
+fn halo_padding(radius: f32) -> f32 {
+    (radius * HALO_PADDING_SCALE).clamp(HALO_MIN_PADDING_PX, HALO_MAX_PADDING_PX)
+}
+
+/// Gap between a bubble's rim and its impact ring, as a fraction of the
+/// radius, and the pixel range it is held to.
+const IMPACT_RING_PADDING_SCALE: f32 = 0.16;
+/// See [`IMPACT_RING_PADDING_SCALE`].
+const IMPACT_RING_MIN_PADDING_PX: f32 = 1.6;
+/// See [`IMPACT_RING_PADDING_SCALE`].
+const IMPACT_RING_MAX_PADDING_PX: f32 = 3.5;
+
+/// Impact-ring gap for a bubble of this radius.
+fn impact_ring_padding(radius: f32) -> f32 {
+    (radius * IMPACT_RING_PADDING_SCALE)
+        .clamp(IMPACT_RING_MIN_PADDING_PX, IMPACT_RING_MAX_PADDING_PX)
+}
 /// Pixels added beyond `front_length_scale × radius`, so the consumption mark
 /// on even the smallest bubble is long enough to read as a mark.
 const FRONT_END_PADDING_PX: f32 = 6.0;
@@ -337,6 +401,153 @@ const SPHERE_MAX_SEGMENTS: usize = 32;
 fn sphere_segments(radius: f32) -> usize {
     ((radius * SPHERE_SEGMENTS_PER_RADIUS_PX) as usize)
         .clamp(SPHERE_MIN_SEGMENTS, SPHERE_MAX_SEGMENTS)
+}
+
+/// Gap between the rim and the consumption crown, as a fraction of the radius,
+/// and the pixel range it is held to. `1/φ³` — the innermost step of the
+/// nested `1/φ³` gap + `1/φ²` stroke that lands the whole crown apparatus at
+/// about `r/φ²` beyond the rim on a full-size print.
+const CROWN_GAP_SCALE: f32 = INV_PHI_3;
+/// See [`CROWN_GAP_SCALE`].
+const CROWN_MIN_GAP_PX: f32 = 1.4;
+/// See [`CROWN_GAP_SCALE`].
+const CROWN_MAX_GAP_PX: f32 = 3.0;
+/// Stroke width of the crown as a fraction of the radius, and the pixel range
+/// it is held to. `1/φ²`.
+const CROWN_WIDTH_SCALE: f32 = INV_PHI_2;
+/// See [`CROWN_WIDTH_SCALE`].
+const CROWN_MIN_WIDTH_PX: f32 = 1.0;
+/// See [`CROWN_WIDTH_SCALE`].
+const CROWN_MAX_WIDTH_PX: f32 = 2.4;
+/// Arc length, in pixels, below which an arc has stopped reading as an arc.
+/// Under it the crown collapses to a pip at the pole — a print small enough to
+/// be a speck still gets to say it ate something, for about four pixels of ink.
+const CROWN_MIN_ARC_PX: f32 = 4.0;
+/// Radius of that pip, in pixels.
+const CROWN_PIP_RADIUS_PX: f32 = 1.2;
+/// How far the crown's colour is pushed from its side colour toward white.
+///
+/// `1/φ`. Consumption is the same event, hotter — deriving the crown from the
+/// side keeps a third hue off the canvas, and means N stacked crowns saturate
+/// toward their own green or red instead of toward glare or toward mud.
+const CROWN_WHITE_MIX: f32 = INV_PHI;
+/// Crown alpha before the matched share.
+const CROWN_BASE_ALPHA: f32 = 0.62;
+/// Share of the crown's alpha that tracks the matched fraction. Secondary to
+/// arc length, which is the channel actually carrying the reading.
+const CROWN_MATCH_ALPHA: f32 = 0.38;
+/// Extra width of the dark stroke laid under the crown, so the arc survives
+/// over a bright heat band without assuming one canvas colour. A hairline each
+/// side, never a mass.
+const CROWN_BACKING_PX: f32 = 1.0;
+/// See [`CROWN_BACKING_PX`].
+const CROWN_BACKING_ALPHA: u8 = 110;
+
+/// The pole a crown is centred on.
+///
+/// Buy aggression lifts the ask, so its crown sits above the print; sell
+/// aggression hits the bid and wears it below. Screen y grows downward. This
+/// is the same fact [`side_offset_y`] encodes, deliberately restated: on a
+/// dense tape the two reinforce each other rather than compete.
+const fn crown_center_angle(side: Side) -> f32 {
+    match side {
+        Side::Buy => -std::f32::consts::FRAC_PI_2,
+        Side::Sell => std::f32::consts::FRAC_PI_2,
+    }
+}
+
+/// The crown's geometry for a bubble of this radius and matched share.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CrownGeometry {
+    /// Radius of the arc itself — outside the rim, never on it.
+    arc_radius: f32,
+    /// Stroke width.
+    width: f32,
+    /// Angular length, in radians. Never exceeds the [`GOLDEN_ANGLE`], so the
+    /// crown cannot close into a second circle around the bubble.
+    sweep: f32,
+}
+
+impl CrownGeometry {
+    /// Length of the arc in pixels — what decides whether it can be drawn as
+    /// an arc at all.
+    fn arc_length(self) -> f32 {
+        self.arc_radius * self.sweep
+    }
+}
+
+/// Crown geometry for a print of this radius that matched this fraction of
+/// resting liquidity.
+fn crown_geometry(radius: f32, matched: f32) -> CrownGeometry {
+    let gap = (radius * CROWN_GAP_SCALE).clamp(CROWN_MIN_GAP_PX, CROWN_MAX_GAP_PX);
+    CrownGeometry {
+        arc_radius: radius + gap,
+        width: (radius * CROWN_WIDTH_SCALE).clamp(CROWN_MIN_WIDTH_PX, CROWN_MAX_WIDTH_PX),
+        // A `1/φ²` floor plus a `1/φ` span: a nibble still shows a mark, a
+        // full sweep reaches the golden angle and no further.
+        sweep: GOLDEN_ANGLE * (INV_PHI_2 + INV_PHI * finite_unit(matched)),
+    }
+}
+
+/// The crown's colour for a print that matched this fraction.
+fn crown_alpha(matched: f32) -> f32 {
+    CROWN_BASE_ALPHA + CROWN_MATCH_ALPHA * finite_unit(matched)
+}
+
+/// Draw the consumption crown: an open arc outside the rim, on the side of the
+/// book the print ate, whose length carries how much of it matched.
+///
+/// Additive rather than subtractive — the arc is the side colour pushed toward
+/// white — because the canvas is nearly black and the layer underneath is the
+/// only one carrying liquidity. A dark mark here is invisible over the canvas
+/// and a hole punched in the book everywhere else, which is what the vertical
+/// front it replaces had become.
+fn draw_crown(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    side: Side,
+    matched: f32,
+    color: egui::Color32,
+) {
+    if !center.is_finite() || !radius.is_finite() || radius <= 0.0 {
+        return;
+    }
+    let geometry = crown_geometry(radius, matched);
+    let color = color.gamma_multiply(crown_alpha(matched));
+    let pole = crown_center_angle(side);
+    if geometry.arc_length() < CROWN_MIN_ARC_PX {
+        let direction = egui::vec2(pole.cos(), pole.sin());
+        painter.circle_filled(
+            center + direction * geometry.arc_radius,
+            CROWN_PIP_RADIUS_PX,
+            color,
+        );
+        return;
+    }
+    // The arc is a slice of a circle of this radius, so it inherits the same
+    // segment budget and spends only its own share of it.
+    let full = sphere_segments(geometry.arc_radius);
+    let segments =
+        (((full as f32) * (geometry.sweep / std::f32::consts::TAU)).ceil() as usize).max(3);
+    let start = pole - geometry.sweep / 2.0;
+    let points: Vec<egui::Pos2> = (0..=segments)
+        .map(|index| {
+            let angle = start + geometry.sweep * (index as f32 / segments as f32);
+            center + egui::vec2(angle.cos(), angle.sin()) * geometry.arc_radius
+        })
+        .collect();
+    painter.add(egui::Shape::line(
+        points.clone(),
+        egui::Stroke::new(
+            geometry.width + CROWN_BACKING_PX,
+            egui::Color32::from_black_alpha(CROWN_BACKING_ALPHA),
+        ),
+    ));
+    painter.add(egui::Shape::line(
+        points,
+        egui::Stroke::new(geometry.width, color),
+    ));
 }
 
 /// Label font size as a fraction of the bubble radius, and the range it is
@@ -386,6 +597,24 @@ fn impact_ring_alpha(matched_fraction: f32) -> f32 {
     IMPACT_RING_BASE_ALPHA
         + finite_unit(matched_fraction).max(MIN_MATCH_STRENGTH) * IMPACT_RING_MATCH_ALPHA
 }
+
+/// Half-height of the trail behind a bubble of this radius, and the pixel
+/// range it is held to.
+///
+/// `1/φ` of the radius, so the trail stays strictly *smaller* than the bubble
+/// it belongs to. It used to borrow the consumption front's half-length, which
+/// carries a fixed 6px addition — on a routine 2px print that made the trail a
+/// 17px-tall bar behind a 4px disc, and a chart whose signal is horizontal
+/// bands does not need decorative horizontal bands eight times the ink of the
+/// mark they decorate.
+fn trail_half_height(radius: f32) -> f32 {
+    (radius * INV_PHI).clamp(TRAIL_MIN_HALF_HEIGHT_PX, TRAIL_MAX_HALF_HEIGHT_PX)
+}
+
+/// See [`trail_half_height`].
+const TRAIL_MIN_HALF_HEIGHT_PX: f32 = 1.5;
+/// See [`trail_half_height`].
+const TRAIL_MAX_HALF_HEIGHT_PX: f32 = 9.0;
 
 /// The consumption trail leaking to the right of a bubble, stopped at
 /// `right_edge` so it never paints past the chart.
@@ -592,23 +821,26 @@ fn draw_bubble(
         && matches!(side, Side::Buy)
         && radius < bubbles.readable_min_radius;
     let sphere = !hollow && dressed && bubbles.render_mode == BubbleRenderMode::Sphere;
-    if !hollow && dressed && bubbles.halo_strength > 0.0 {
+    // The halo says "this one is big", so it is gated on size rather than
+    // merely scaled with it: the top rung of the φ ladder, `max / φ`. Under a
+    // gate it is a handful of prints a minute; under none it was a fog beneath
+    // every speck on the tape, which is the same ink spent to say nothing.
+    let haloed = !hollow && dressed && radius >= bubbles.max_radius * INV_PHI;
+    if haloed && bubbles.halo_strength > 0.0 {
         painter.circle_filled(
             center,
-            radius + HALO_PADDING_PX,
+            radius + halo_padding(radius),
             color.gamma_multiply(halo_alpha(size, bubbles)),
         );
     }
     // The dark hair between the mark and the heat behind it. Skipped on the
     // cheap-dot path, which stays a single circle per print.
     if dressed || hollow {
+        let hair = separator_ring_width(radius);
         painter.circle_stroke(
             center,
-            radius + SEPARATOR_RING_PX / 2.0,
-            egui::Stroke::new(
-                SEPARATOR_RING_PX,
-                egui::Color32::from_black_alpha(SEPARATOR_RING_ALPHA),
-            ),
+            radius + hair / 2.0,
+            egui::Stroke::new(hair, egui::Color32::from_black_alpha(SEPARATOR_RING_ALPHA)),
         );
     }
     if hollow {
@@ -675,20 +907,36 @@ fn draw_bubble(
     let Some(matched_fraction) = matched else {
         return;
     };
-    if bubbles.show_consumption_front {
-        let half_length = front_half_length(radius, bubbles);
-        painter.line_segment(
-            [
-                egui::pos2(center.x, center.y - half_length),
-                egui::pos2(center.x, center.y + half_length),
-            ],
-            egui::Stroke::new(bubbles.front_width, colors.front),
-        );
+    match bubbles.consumption_mark {
+        // The crown lives outside the rim, so it costs the disc nothing and
+        // the smallest prints can still afford their pip.
+        ConsumptionMark::Crown => draw_crown(
+            painter,
+            center,
+            radius,
+            side,
+            matched_fraction,
+            colors.crown_for_side(side),
+        ),
+        // The old vertical front, for a preset that asked for it by name. It
+        // outgrows its own bubble by construction, so it stays behind the
+        // dressing gate, where the bubble is at least big enough to carry it.
+        ConsumptionMark::Front if dressed => {
+            let half_length = front_half_length(radius, bubbles);
+            painter.line_segment(
+                [
+                    egui::pos2(center.x, center.y - half_length),
+                    egui::pos2(center.x, center.y + half_length),
+                ],
+                egui::Stroke::new(bubbles.front_width, colors.front),
+            );
+        }
+        ConsumptionMark::Front | ConsumptionMark::None => {}
     }
     if dressed && bubbles.show_impact_ring {
         painter.circle_stroke(
             center,
-            radius + IMPACT_RING_PADDING_PX,
+            radius + impact_ring_padding(radius),
             egui::Stroke::new(
                 bubbles.impact_ring_width,
                 colors
@@ -1419,10 +1667,10 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 continue;
             };
             let pane = context.layout.pane(trade.x);
-            let half_length = front_half_length(radius_of(trade), bubbles);
+            let half_height = trail_half_height(radius_of(trade));
             add_gradient_rect(
                 &mut trail_mesh,
-                trail_rect(center, half_length, bubbles.trail_length, pane.right()).intersect(pane),
+                trail_rect(center, half_height, bubbles.trail_length, pane.right()).intersect(pane),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
@@ -2653,6 +2901,10 @@ mod tests {
             min_radius: 2.2,
             max_radius: 14.0,
             detail_min_radius: 2.0,
+            // Opt in explicitly: the ring is off by default now, and this test
+            // is about the readability floor still arming it when the dressing
+            // radius is set below the minimum.
+            hollow_small_buys: true,
             ..BubbleStyle::default()
         };
         assert!(dense_tape_btc.detail_min_radius < dense_tape_btc.min_radius);
@@ -3159,6 +3411,158 @@ mod tests {
     }
 
     #[test]
+    fn the_crown_never_touches_the_disc_and_never_closes_a_circle() {
+        // The two properties the mark exists for. The first is why it replaced
+        // the vertical front: a bubble's area is its quantity, so nothing may
+        // be drawn over it. The second is why it is an arc and not a ring: a
+        // closed circle concentric with the disc makes the disc's own edge
+        // ambiguous, which is what the impact ring did.
+        for radius in [1.0_f32, 2.2, 3.5, 5.7, 9.3, 15.0, 22.0, 48.0] {
+            for matched in [0.0_f32, 0.1, 0.5, 0.99, 1.0] {
+                let geometry = crown_geometry(radius, matched);
+                assert!(
+                    geometry.arc_radius - geometry.width / 2.0 > radius,
+                    "at r={radius} m={matched} the crown's inner edge \
+                     {} is not clear of the rim",
+                    geometry.arc_radius - geometry.width / 2.0
+                );
+                assert!(
+                    geometry.sweep <= GOLDEN_ANGLE + 1e-5,
+                    "at r={radius} m={matched} the sweep {} exceeds the golden angle",
+                    geometry.sweep
+                );
+                assert!(
+                    geometry.sweep >= GOLDEN_ANGLE * INV_PHI_2 - 1e-5,
+                    "a print that ate anything still shows a mark"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_crown_grows_with_the_matched_share() {
+        // Arc length is the channel a trader reads ordinally without a
+        // reference beside it, so it has to be monotone in what it encodes.
+        let radius = 12.0;
+        let mut previous = f32::NEG_INFINITY;
+        for matched in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
+            let length = crown_geometry(radius, matched).arc_length();
+            assert!(
+                length > previous,
+                "matched={matched} must draw a longer arc than the share below it"
+            );
+            previous = length;
+        }
+        // A full sweep reaches the golden angle exactly, and a nibble 1/φ² of it.
+        assert!((crown_geometry(radius, 1.0).sweep - GOLDEN_ANGLE).abs() < 1e-5);
+        assert!((crown_geometry(radius, 0.0).sweep - GOLDEN_ANGLE * INV_PHI_2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
+        let bubbles = BubbleStyle::default();
+        assert_eq!(bubbles.consumption_mark, ConsumptionMark::Crown);
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let mark = BubbleMark {
+            center: egui::pos2(60.0, 60.0),
+            radius: 10.0,
+            side: Side::Buy,
+            size: 0.6,
+            matched: Some(0.7),
+            buy_share: 1.0,
+        };
+        let crowned = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
+        let fronted = painted(|painter| {
+            draw_bubble(
+                painter,
+                mark,
+                &BubbleStyle {
+                    consumption_mark: ConsumptionMark::Front,
+                    ..bubbles.clone()
+                },
+                &colors,
+            )
+        });
+        assert_ne!(crowned, fronted, "the mark must change what is painted");
+        assert!(
+            fronted.contains("LineSegment"),
+            "the front is still the line it always was: {fronted}"
+        );
+        assert!(
+            !crowned.contains("LineSegment"),
+            "the crown draws no line through the bubble: {crowned}"
+        );
+
+        // A print that ate nothing wears no crown at all.
+        let untouched = painted(|painter| {
+            draw_bubble(
+                painter,
+                BubbleMark {
+                    matched: None,
+                    ..mark
+                },
+                &bubbles,
+                &colors,
+            )
+        });
+        assert!(untouched.len() < crowned.len());
+
+        // The third variant is a port, not a placeholder: asking for no mark
+        // must paint exactly what a print that ate nothing paints, so the
+        // consumption signal can be switched off without also changing the
+        // disc. Without this the arm is only reachable through the panel.
+        let silent = painted(|painter| {
+            draw_bubble(
+                painter,
+                mark,
+                &BubbleStyle {
+                    consumption_mark: ConsumptionMark::None,
+                    ..bubbles.clone()
+                },
+                &colors,
+            )
+        });
+        assert_eq!(
+            silent, untouched,
+            "ConsumptionMark::None must leave the bubble exactly as it was"
+        );
+    }
+
+    #[test]
+    fn a_crown_follows_its_own_side_unless_the_panel_overrode_it() {
+        let palette = Palette::for_theme(HeatmapTheme::Bookmap);
+        let bubbles = BubbleStyle::default();
+        let colors = BubbleColors::resolve(&palette, &bubbles);
+        // Derived from the side colour, and brighter than it: consumption is
+        // the same event, hotter — no third hue enters the canvas.
+        for (side, base) in [(Side::Buy, colors.buy), (Side::Sell, colors.sell)] {
+            let crown = colors.crown_for_side(side);
+            assert_ne!(crown, base);
+            assert!(
+                crown.r() >= base.r() && crown.g() >= base.g() && crown.b() >= base.b(),
+                "the crown is the side colour pushed toward white, not away from it"
+            );
+        }
+        assert_ne!(
+            colors.crown_for_side(Side::Buy),
+            colors.crown_for_side(Side::Sell)
+        );
+
+        // The consumption colour override stays the one door to change it.
+        let overridden = BubbleColors::resolve(
+            &palette,
+            &BubbleStyle {
+                front_color: Some([10, 20, 30]),
+                ..bubbles
+            },
+        );
+        assert_eq!(
+            overridden.crown_for_side(Side::Buy),
+            egui::Color32::from_rgb(10, 20, 30)
+        );
+    }
+
+    #[test]
     fn sphere_mode_swaps_the_flat_fill_for_a_shaded_mesh() {
         let mark = BubbleMark {
             center: egui::pos2(120.0, 80.0),
@@ -3169,7 +3573,13 @@ mod tests {
             buy_share: 1.0,
         };
         let palette = Palette::for_theme(HeatmapTheme::Bookmap);
-        let flat_style = BubbleStyle::default();
+        // Both modes are named explicitly: the shipped default is the sphere
+        // now, and a test comparing the two must not depend on which one that
+        // happens to be.
+        let flat_style = BubbleStyle {
+            render_mode: BubbleRenderMode::Flat,
+            ..BubbleStyle::default()
+        };
         let sphere_style = BubbleStyle {
             render_mode: BubbleRenderMode::Sphere,
             ..BubbleStyle::default()
@@ -3251,11 +3661,13 @@ mod tests {
 
     #[test]
     fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
+        // The ring is off by default now; this test is about the knob still
+        // doing what it says for anyone who turns it back on.
         let hollow = BubbleStyle {
             trail_length: 0.0,
+            hollow_small_buys: true,
             ..BubbleStyle::default()
         };
-        assert!(hollow.hollow_small_buys);
         let solid = BubbleStyle {
             hollow_small_buys: false,
             ..hollow.clone()
