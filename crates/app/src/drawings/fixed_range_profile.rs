@@ -436,6 +436,16 @@ fn knockout_text(
 /// from OHLC" notice were cut off reads as a complete, exact number, which is
 /// the one thing this label must never do. Truncation that hides a caveat is
 /// worse than a label that leaves its range.
+/// Where a left-aligned label `width` px wide must start to stay inside
+/// `bounds`, given where it would rather start.
+///
+/// The left edge wins when the label is wider than the pane: the head of the
+/// line (`vol`, `Δ`) is what a truncated read must keep, and losing the tail
+/// to the right edge is exactly the failure this clamp exists to prevent.
+fn clamped_label_x(preferred_x: f32, width: f32, bounds: egui::Rect) -> f32 {
+    (preferred_x.min(bounds.right() - width)).max(bounds.left())
+}
+
 /// Lays the text out exactly as many times as [`knockout_text`] does — the
 /// clamp reads its width off the galley it is about to paint, so keeping the
 /// label on screen costs no extra layout on the per-frame path.
@@ -449,9 +459,7 @@ fn knockout_text_within(
     let font = egui::FontId::proportional(LABEL_SIZE_PX);
     let ink_galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
     let casing_galley = painter.layout_no_wrap(text.to_owned(), font, CASING);
-    // Left edge wins if the label is wider than the whole pane: the head of
-    // the line (`vol`, `Δ`) is what a truncated read must keep.
-    let x = (pos.x.min(bounds.right() - ink_galley.size().x)).max(bounds.left());
+    let x = clamped_label_x(pos.x, ink_galley.size().x, bounds);
     let corner = egui::Align2::LEFT_TOP
         .anchor_size(egui::pos2(x, pos.y), ink_galley.size())
         .min;
@@ -1190,6 +1198,63 @@ mod tests {
         cache.key.include_partial = true;
         let status = status_line(&profile, &cache, &payload, false);
         assert!(status.contains(" · incl. forming bar"), "{status}");
+    }
+
+    /// The status line slides left to keep its tail — where every caveat
+    /// lives — inside the pane, and gives up the tail only when the label is
+    /// wider than the pane itself.
+    #[test]
+    fn a_label_near_the_right_edge_slides_in_instead_of_being_clipped() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(100.0, 0.0), egui::pos2(900.0, 400.0));
+        // Comfortably inside: left alone.
+        assert_eq!(clamped_label_x(200.0, 300.0, bounds), 200.0);
+        // Would overrun the right edge: slid back so it ends exactly on it.
+        assert_eq!(clamped_label_x(800.0, 300.0, bounds), 600.0);
+        // Flush against the right edge is not a slide.
+        assert_eq!(clamped_label_x(600.0, 300.0, bounds), 600.0);
+        // Wider than the whole pane: the head wins, the tail overflows.
+        assert_eq!(clamped_label_x(400.0, 1000.0, bounds), 100.0);
+        // Never dragged left of the pane by a range anchored off-screen.
+        assert_eq!(clamped_label_x(-50.0, 200.0, bounds), 100.0);
+    }
+
+    /// The developing mode's live edge lands on the newest covered slot's
+    /// trailing edge — half a slot past its centre, the same
+    /// centre-is-the-integer convention the fold reads anchors with. A full
+    /// slot past it drew the range one candle wider than it folded.
+    #[test]
+    fn the_developing_edge_stops_at_the_newest_slots_trailing_edge() {
+        let mut payload = FrvpPayload {
+            extend_right: true,
+            ..FrvpPayload::default()
+        };
+        // end_slot 30 while the anchors only reach bar 20.
+        payload.cache = Some(FrvpCache {
+            key: FrvpCacheKey {
+                end_slot: 30,
+                ..cache_for(21, 21, 0).key
+            },
+            ..cache_for(21, 21, 0)
+        });
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 400.0);
+        let anchors = [ChartPoint::at(10.0, 104.0), ChartPoint::at(20.0, 96.0)];
+        // 10 bars over 200px → 20px per slot, bar 10 at x=100.
+        let points = [egui::pos2(100.0, 120.0), egui::pos2(300.0, 280.0)];
+        let ctxt = DrawContext {
+            payload: &payload,
+            anchors: &anchors,
+            scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: false,
+            halo: false,
+        };
+        let (left, right) = range_edges(&payload, &points, &ctxt);
+        assert_eq!(left, 100.0, "the drawn left edge is untouched");
+        // Slot 30's centre is at x = 100 + (30-10)*20 = 500; its trailing
+        // edge is half a slot further.
+        assert_eq!(right, 510.0);
     }
 
     /// Partial coverage keeps its own explicit `N of M`, on top of the span.
