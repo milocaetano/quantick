@@ -21,10 +21,10 @@ use crate::chart::PriceScale;
 use crate::live_strip;
 use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
-    BubbleRenderMode, BubbleSizeReference, DisplayGrouping, HeatmapConfig, HeatmapTheme,
-    IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE,
-    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM, reserved_span_ms,
+    BubbleRenderMode, BubbleSizeReference, ConsumptionMark, DisplayGrouping, HeatmapConfig,
+    HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM, reserved_span_ms,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
@@ -1239,19 +1239,41 @@ impl OrderflowView {
                     "Drawn only when a print aligned with a factual L2 reduction — the bubble \
                      ate resting liquidity.",
                 );
-                ui.checkbox(
-                    &mut bubbles.show_consumption_front,
-                    "vertical front through the bubble",
-                );
-                ui.add_enabled(
-                    bubbles.show_consumption_front,
-                    egui::Slider::new(&mut bubbles.front_width, 0.5..=10.0).text("front width px"),
-                );
-                ui.add_enabled(
-                    bubbles.show_consumption_front,
-                    egui::Slider::new(&mut bubbles.front_length_scale, 0.5..=6.0)
-                        .text("front length × radius"),
-                );
+                ui.horizontal(|ui| {
+                    ui.label("mark");
+                    egui::ComboBox::from_id_salt("bubble_consumption_mark")
+                        .selected_text(consumption_mark_label(bubbles.consumption_mark))
+                        .show_ui(ui, |ui| {
+                            for mark in [
+                                ConsumptionMark::Crown,
+                                ConsumptionMark::Front,
+                                ConsumptionMark::None,
+                            ] {
+                                ui.selectable_value(
+                                    &mut bubbles.consumption_mark,
+                                    mark,
+                                    consumption_mark_label(mark),
+                                );
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "the crown is an open arc just outside the rim, on the side of the \
+                             book the print ate — its length grows with how much of the print \
+                             matched, and it never crosses the disc whose area is the quantity. \
+                             The front is the older vertical line through the bubble.",
+                        );
+                });
+                if bubbles.consumption_mark.is_front() {
+                    ui.add(
+                        egui::Slider::new(&mut bubbles.front_width, 0.5..=10.0)
+                            .text("front width px"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut bubbles.front_length_scale, 0.5..=6.0)
+                            .text("front length × radius"),
+                    );
+                }
                 ui.checkbox(&mut bubbles.show_impact_ring, "impact ring on the rim");
                 ui.add_enabled(
                     bubbles.show_impact_ring,
@@ -1829,6 +1851,14 @@ const fn render_mode_label(mode: BubbleRenderMode) -> &'static str {
     }
 }
 
+const fn consumption_mark_label(mark: ConsumptionMark) -> &'static str {
+    match mark {
+        ConsumptionMark::Crown => "Crown · arc outside the rim",
+        ConsumptionMark::Front => "Front · line through the bubble",
+        ConsumptionMark::None => "None",
+    }
+}
+
 /// One optional colour: a swatch that adopts the override the moment it is
 /// touched, and a way back to the theme.
 fn color_override(ui: &mut egui::Ui, label: &str, value: &mut Option<[u8; 3]>, fallback: [u8; 3]) {
@@ -1880,7 +1910,7 @@ mod tests {
         // Now the conditional branches: fixed size reference (extra field),
         // marks turned off, no trail, and a custom colour instead of the theme.
         view.config.bubbles.size_reference = BubbleSizeReference::Fixed;
-        view.config.bubbles.show_consumption_front = false;
+        view.config.bubbles.consumption_mark = ConsumptionMark::Front;
         view.config.bubbles.show_impact_ring = false;
         view.config.bubbles.trail_length = 0.0;
         view.config.bubbles.buy_color = Some([1, 2, 3]);

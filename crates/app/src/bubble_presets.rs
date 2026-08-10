@@ -292,7 +292,7 @@ const PRESET_FILE_HEADER: &str = "\
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::BubbleSizeReference;
+    use crate::orderflow::{BubbleSizeReference, INV_PHI};
 
     #[test]
     fn the_embedded_file_parses_and_carries_a_valid_active_preset() {
@@ -305,6 +305,95 @@ mod tests {
         );
         for preset in &file.presets {
             assert!(preset.bubbles.max_radius >= preset.bubbles.min_radius);
+        }
+    }
+
+    #[test]
+    fn the_shipped_default_preset_is_the_code_default() {
+        // The file a new user reads and the behaviour a fresh install gets are
+        // the same thing said twice, so they are asserted to agree. Without
+        // this, changing one default in code silently leaves the published
+        // preset describing a chart the app no longer draws.
+        let shipped = embedded();
+        assert_eq!(
+            shipped.active, "default",
+            "a fresh install opens on the shipped default"
+        );
+        let preset = shipped
+            .get("default")
+            .expect("the shipped file carries a preset named 'default'");
+        assert_eq!(preset.bubbles, BubbleStyle::default());
+    }
+
+    #[test]
+    fn every_shipped_preset_keeps_its_radii_on_the_golden_ladder() {
+        for preset in embedded().presets {
+            let bubbles = &preset.bubbles;
+            let name = &preset.name;
+            assert!(
+                bubbles.min_radius < bubbles.detail_min_radius
+                    && bubbles.detail_min_radius < bubbles.readable_min_radius
+                    && bubbles.readable_min_radius < bubbles.max_radius,
+                "'{name}' has rungs out of order: {} {} {} {}",
+                bubbles.min_radius,
+                bubbles.detail_min_radius,
+                bubbles.readable_min_radius,
+                bubbles.max_radius
+            );
+            // One ladder, every preset, whatever its radius range. The
+            // readability floor hangs two steps under the top — the rung
+            // between them, `max/φ`, is where the halo switches on and is not
+            // a stored field — and each rung below is the one above it over φ.
+            for (label, expected, actual) in [
+                (
+                    "readable",
+                    bubbles.max_radius * INV_PHI * INV_PHI,
+                    bubbles.readable_min_radius,
+                ),
+                (
+                    "detail",
+                    bubbles.readable_min_radius * INV_PHI,
+                    bubbles.detail_min_radius,
+                ),
+                (
+                    "min",
+                    bubbles.detail_min_radius * INV_PHI,
+                    bubbles.min_radius,
+                ),
+            ] {
+                assert!(
+                    (actual - expected).abs() <= 0.001,
+                    "'{name}' {label} rung {actual} is not {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_shipped_preset_smears_the_book_or_hollows_a_print() {
+        for preset in embedded().presets {
+            let bubbles = &preset.bubbles;
+            let name = &preset.name;
+            assert!(
+                !bubbles.hollow_small_buys,
+                "'{name}' still draws small buys as an open ring"
+            );
+            // One preset is allowed a trail, and it is the one named for the
+            // marks: a slow tape where the question is which levels got eaten.
+            if bubbles.trail_length > 0.0 {
+                assert_eq!(
+                    name, "consumption focus",
+                    "'{name}' ships a trail; only the consumption preset may"
+                );
+            }
+            // Nothing ships a near-black consumption colour: over this canvas
+            // that mark is invisible, and over the heat map it is a hole.
+            if let Some([r, g, b]) = bubbles.front_color {
+                assert!(
+                    u16::from(r) + u16::from(g) + u16::from(b) > 180,
+                    "'{name}' paints its consumption mark almost black: {r},{g},{b}"
+                );
+            }
         }
     }
 
@@ -441,15 +530,15 @@ mod tests {
             text.starts_with(PRESET_FILE_HEADER),
             "the explanatory header survives a save:\n{text}"
         );
+        assert!(text.contains("opacity = 0.9"), "floats stay short:\n{text}");
         assert!(
-            text.contains("opacity = 0.78"),
+            text.contains("front_length_scale = 0.618"),
             "floats stay short:\n{text}"
         );
         assert!(
-            text.contains("front_length_scale = 2.1"),
-            "floats stay short:\n{text}"
+            !text.contains("0.61803398"),
+            "no binary expansions:\n{text}"
         );
-        assert!(!text.contains("0.7799"), "no binary expansions:\n{text}");
         assert!(
             text.contains("front_color = [255, 246, 205]"),
             "colour triples stay on one line, as config/README.md documents:\n{text}"
