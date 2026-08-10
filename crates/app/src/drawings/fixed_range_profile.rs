@@ -427,6 +427,45 @@ fn knockout_text(
     painter.galley(corner, ink_galley, color);
 }
 
+/// The status line, slid left when it would otherwise run past the right of
+/// `bounds`.
+///
+/// It starts at the range's left edge and grows rightwards, so a range near
+/// the newest bar had its tail clipped by the pane edge — and the tail is
+/// where every caveat lives. A `vol` figure whose bar count and "approximated
+/// from OHLC" notice were cut off reads as a complete, exact number, which is
+/// the one thing this label must never do. Truncation that hides a caveat is
+/// worse than a label that leaves its range.
+/// Lays the text out exactly as many times as [`knockout_text`] does — the
+/// clamp reads its width off the galley it is about to paint, so keeping the
+/// label on screen costs no extra layout on the per-frame path.
+fn knockout_text_within(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    text: &str,
+    color: egui::Color32,
+    bounds: egui::Rect,
+) {
+    let font = egui::FontId::proportional(LABEL_SIZE_PX);
+    let ink_galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    let casing_galley = painter.layout_no_wrap(text.to_owned(), font, CASING);
+    // Left edge wins if the label is wider than the whole pane: the head of
+    // the line (`vol`, `Δ`) is what a truncated read must keep.
+    let x = (pos.x.min(bounds.right() - ink_galley.size().x)).max(bounds.left());
+    let corner = egui::Align2::LEFT_TOP
+        .anchor_size(egui::pos2(x, pos.y), ink_galley.size())
+        .min;
+    for offset in [
+        egui::vec2(-1.0, 0.0),
+        egui::vec2(1.0, 0.0),
+        egui::vec2(0.0, -1.0),
+        egui::vec2(0.0, 1.0),
+    ] {
+        painter.galley(corner + offset, casing_galley.clone(), CASING);
+    }
+    painter.galley(corner, ink_galley, color);
+}
+
 /// The vertical span the object occupies: the profile's own price extent when
 /// there is one — the data owns the price axis — else the anchors' heights,
 /// which is all a draft or an empty range has to say.
@@ -818,12 +857,12 @@ impl DrawingToolImpl for FixedRangeProfile {
             (_, None) => {}
         }
         if !status.is_empty() {
-            knockout_text(
+            knockout_text_within(
                 painter,
                 egui::pos2(left, bottom + LABEL_OFFSET_PX),
-                egui::Align2::LEFT_TOP,
                 &status,
                 theme::TEXT_MUTED,
+                chart_rect,
             );
         }
     }
