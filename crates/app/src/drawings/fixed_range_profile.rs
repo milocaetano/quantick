@@ -10,7 +10,12 @@
 //! Honesty rules the paint must keep:
 //! - a range whose bars carry no tape (venue prefix candles, a feed with no
 //!   traded volume) says so instead of showing an empty histogram as "quiet";
+//! - every profile names how many bars it folded, so one `vol` figure can be
+//!   compared with another's without counting candles by eye;
 //! - partial coverage is spoken (`N of M bars`), never blended away;
+//! - the range that folds is the rectangle that was drawn — an anchor's
+//!   integer bar coordinate is a candle's centre, the same convention the
+//!   viewport paints with (see [`crate::frvp`]);
 //! - a cap-coarsened profile names its effective row width, like the
 //!   footprint legend does.
 
@@ -290,14 +295,88 @@ fn range_edges(payload: &FrvpPayload, points: &[egui::Pos2], ctxt: &DrawContext<
         let bar_span = b.bar - a.bar;
         if bar_span.abs() > f32::EPSILON {
             let slot_width = (points[1].x - points[0].x) / bar_span;
-            // The right boundary of the newest covered slot (its centre is
-            // `end_slot + 0.5`, its trailing edge half a slot further).
+            // The right boundary of the newest covered slot: its centre is
+            // `end_slot`, its trailing edge half a slot further — the same
+            // centre-is-the-integer convention the fold reads anchors with.
             #[allow(clippy::cast_precision_loss)]
-            let live_x = points[0].x + (cache.key.end_slot as f32 + 1.0 - a.bar) * slot_width;
+            let live_x = points[0].x + (cache.key.end_slot as f32 + 0.5 - a.bar) * slot_width;
             right = right.max(live_x);
         }
     }
     (left, right)
+}
+
+/// The status line under a range: what the profile is made of, in the
+/// footprint legend's language. Pure, so what the object owes the trader can
+/// be asserted in a test rather than rest on someone reading a screenshot.
+///
+/// The bar count is unconditional, and that is the point. Printing it only
+/// when something was *wrong* left the ordinary case — an exact, fully
+/// covered range — showing a `vol` figure with no denominator, so two
+/// profiles side by side could not be told apart between "different window"
+/// and "different market". A total without its span is not a comparable
+/// number.
+fn status_line(
+    profile: &VolumeProfile,
+    cache: &FrvpCache,
+    payload: &FrvpPayload,
+    outline_active: bool,
+) -> String {
+    let mut status = format!(
+        "vol {} · Δ {} · rows {}",
+        fmt_qty(profile.total_volume()),
+        fmt_qty(profile.total_delta()),
+        profile.group()
+    );
+    if profile.is_aggregated() {
+        // The rows are coarser than the capture grid — spoken, like the
+        // footprint legend speaks its coarsening.
+        status.push_str(" · grouped");
+    }
+    status.push_str(&format!(
+        " · {} {}",
+        cache.bars_total,
+        if cache.bars_total == 1 { "bar" } else { "bars" }
+    ));
+    if payload.extend_right {
+        // The developing mode: this profile follows the tape.
+        status.push_str(" · to live");
+    }
+    if cache.key.include_partial {
+        // One of those bars is still forming, so it holds only as much of
+        // its interval as has traded so far. Without this the same range
+        // reads differently a second later for no stated reason.
+        status.push_str(" · incl. forming bar");
+    }
+    if cache.bars_covered + cache.bars_approximated < cache.bars_total {
+        status.push_str(&format!(
+            " · profile from {} of {} bars",
+            cache.bars_covered + cache.bars_approximated,
+            cache.bars_total
+        ));
+    }
+    if cache.bars_approximated > 0 {
+        // Venue candles joined without tape: their placement is approximated,
+        // and the profile says so at the point of reading, never in a
+        // tooltip. Phrased as a count of *approximated* bars — the old
+        // "approximated from OHLC (85 of 85 bars)" read as a coverage
+        // reassurance when it meant the exact opposite.
+        status.push_str(&format!(
+            " · {} of {} approximated from OHLC",
+            cache.bars_approximated, cache.bars_total
+        ));
+    }
+    if cache.key.side_inferred {
+        // The delta and the buy/sell split rest on guessed aggressor sides —
+        // same label the footprint legend uses.
+        status.push_str(" · side inferred");
+    }
+    if outline_active {
+        // The object changed its look on its own; the app says why, in the
+        // same chain as everything else it does.
+        status.push_str(" · outline over heatmap");
+    }
+    status
 }
 
 /// x of an arbitrary bar coordinate through the anchors' own affine bar→x
@@ -703,47 +782,7 @@ impl DrawingToolImpl for FixedRangeProfile {
         let mut status = String::new();
         match (profile, cache) {
             (Some((profile, value_area)), Some(cache)) => {
-                status.push_str(&format!(
-                    "vol {} · Δ {}",
-                    fmt_qty(profile.total_volume()),
-                    fmt_qty(profile.total_delta())
-                ));
-                status.push_str(&format!(" · rows {}", profile.group()));
-                if profile.is_aggregated() {
-                    // The rows are coarser than the capture grid — spoken,
-                    // like the footprint legend speaks its coarsening.
-                    status.push_str(" · grouped");
-                }
-                if payload.extend_right {
-                    // The developing mode: this profile follows the tape.
-                    status.push_str(" · to live");
-                }
-                if cache.bars_covered + cache.bars_approximated < cache.bars_total {
-                    status.push_str(&format!(
-                        " · profile from {} of {} bars",
-                        cache.bars_covered + cache.bars_approximated,
-                        cache.bars_total
-                    ));
-                }
-                if cache.bars_approximated > 0 {
-                    // Venue candles joined without tape: their placement is
-                    // approximated, and the profile says so at the point of
-                    // reading, never in a tooltip.
-                    status.push_str(&format!(
-                        " · approximated from OHLC ({} of {} bars)",
-                        cache.bars_approximated, cache.bars_total
-                    ));
-                }
-                if cache.key.side_inferred {
-                    // The delta and the buy/sell split rest on guessed
-                    // aggressor sides — same label the footprint legend uses.
-                    status.push_str(" · side inferred");
-                }
-                if outline_active {
-                    // The object changed its look on its own; the app says
-                    // why, in the same chain as everything else it does.
-                    status.push_str(" · outline over heatmap");
-                }
+                status.push_str(&status_line(profile, cache, payload, outline_active));
                 if let Some(area) = value_area {
                     // POC/VAH/VAL price plates at the right edge of the range.
                     let labels = [
@@ -1008,6 +1047,121 @@ mod tests {
     use super::*;
     use crate::chart::PriceScale;
     use crate::drawings::{ChartPoint, ValueUnit};
+
+    /// One venue candle's worth of profile — enough to carry a `vol` figure
+    /// into the status line.
+    fn some_profile() -> VolumeProfile {
+        let bar = quantick_engine::Bar {
+            open_time: 0,
+            close_time: 60_000,
+            open: Decimal::from(100),
+            high: Decimal::from(104),
+            low: Decimal::from(100),
+            close: Decimal::from(102),
+            buy_volume: Decimal::from(6),
+            sell_volume: Decimal::from(4),
+            trade_count: 10,
+        };
+        let ladder = quantick_engine::BarFootprint::approximated(
+            &bar,
+            Decimal::ONE,
+            quantick_engine::DEFAULT_LEVEL_CAP,
+        )
+        .expect("the candle traded");
+        VolumeProfile::merge(vec![&ladder], quantick_engine::DEFAULT_LEVEL_CAP)
+            .expect("one ladder folds")
+    }
+
+    fn cache_for(total: usize, covered: usize, approximated: usize) -> FrvpCache {
+        FrvpCache {
+            key: FrvpCacheKey {
+                start_slot: 0,
+                end_slot: total.saturating_sub(1),
+                group: Decimal::ONE,
+                timeline_revision: 0,
+                closed_len: total,
+                include_partial: false,
+                partial_snapshot: 0,
+                value_area_pct: DEFAULT_VALUE_AREA_PCT,
+                blocked: false,
+                side_inferred: false,
+                approximate: approximated > 0,
+            },
+            profile: None,
+            empty: None,
+            bars_covered: covered,
+            bars_approximated: approximated,
+            bars_total: total,
+            heat_first_slot: None,
+        }
+    }
+
+    /// The regression that started this: an exact, fully covered profile used
+    /// to print `vol` with no denominator, so two profiles side by side could
+    /// not be told apart between "different window" and "different market".
+    #[test]
+    fn status_line_always_names_the_bar_count() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 85, 0), &payload, false);
+        assert!(
+            status.contains(" · 85 bars"),
+            "a complete range still owes its span: {status}"
+        );
+        assert!(status.starts_with("vol "), "{status}");
+        // Nothing is claimed about coverage or approximation when neither
+        // applies — the count alone is the whole story.
+        assert!(!status.contains("profile from"), "{status}");
+        assert!(!status.contains("approximated"), "{status}");
+    }
+
+    #[test]
+    fn status_line_counts_one_bar_in_the_singular() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(1, 1, 0), &payload, false);
+        assert!(status.contains(" · 1 bar"), "{status}");
+        assert!(!status.contains("1 bars"), "{status}");
+    }
+
+    /// The approximation caveat reads as a caveat. `approximated from OHLC
+    /// (85 of 85 bars)` parsed as a coverage reassurance while meaning that
+    /// every single row placement was a guess.
+    #[test]
+    fn status_line_names_approximated_bars_as_a_caveat() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 0, 85), &payload, false);
+        assert!(status.contains(" · 85 bars"), "the span, always: {status}");
+        assert!(
+            status.contains(" · 85 of 85 approximated from OHLC"),
+            "{status}"
+        );
+    }
+
+    /// A range still under construction says so: the same anchors read
+    /// differently a second later, and that is not a mystery the trader
+    /// should have to solve.
+    #[test]
+    fn status_line_speaks_the_forming_bar() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let mut cache = cache_for(30, 30, 0);
+        assert!(!status_line(&profile, &cache, &payload, false).contains("forming"));
+        cache.key.include_partial = true;
+        let status = status_line(&profile, &cache, &payload, false);
+        assert!(status.contains(" · incl. forming bar"), "{status}");
+    }
+
+    /// Partial coverage keeps its own explicit `N of M`, on top of the span.
+    #[test]
+    fn status_line_still_speaks_partial_coverage() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 40, 0), &payload, false);
+        assert!(status.contains(" · 85 bars"), "{status}");
+        assert!(status.contains(" · profile from 40 of 85 bars"), "{status}");
+    }
 
     /// The handles sit on the drawn object — each anchor's x at the visible
     /// extent's midpoint — and a handle drag moves only that edge's bar,

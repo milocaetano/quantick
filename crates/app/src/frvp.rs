@@ -130,16 +130,34 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
 }
 
 /// The slots a `[min_bar, max_bar]` anchor span covers: every slot whose
-/// centre (`slot + 0.5`) falls inside it, clamped to the slots that exist.
-/// `last_slot` is the partial's slot when there is one, else the last closed.
+/// centre falls inside it, clamped to the slots that exist. `last_slot` is
+/// the partial's slot when there is one, else the last closed.
+///
+/// A slot's centre is its own integer coordinate: the convention
+/// [`Viewport::x_at_bar_position`](crate::viewport::Viewport::x_at_bar_position)
+/// paints with and `Pane::drawing_point_at` inverts, where `slot - 0.5` and
+/// `slot + 0.5` are the candle's edges. The fold has to read an anchor the
+/// way the paint wrote it, or the range that sums is not the rectangle the
+/// trader drew.
+///
+/// `None` when the span reaches no candle at all, including one lying
+/// entirely off either end. A rectangle over no candles has no profile, and
+/// clamping it onto the nearest one would answer a question nobody asked
+/// with a histogram indistinguishable from real data.
 fn covered_slots(min_bar: f32, max_bar: f32, last_slot: Option<usize>) -> Option<(usize, usize)> {
     let last = last_slot?;
+    let (first_centre, last_centre) = (min_bar.ceil(), max_bar.floor());
+    // Decided in float, before any cast: a float→int cast saturates, so a
+    // span wholly left of slot 0 or wholly past `last` would otherwise
+    // collapse onto an edge slot and fold it as if it had been asked for.
+    #[allow(clippy::cast_precision_loss)]
+    if last_centre < 0.0 || first_centre > last as f32 {
+        return None;
+    }
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let start = (min_bar - 0.5).ceil().max(0.0) as usize;
+    let start = first_centre.max(0.0) as usize;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let end = (max_bar - 0.5).floor().max(0.0) as usize;
-    let start = start.min(last);
-    let end = end.min(last);
+    let end = (last_centre.max(0.0) as usize).min(last);
     (start <= end).then_some((start, end))
 }
 
@@ -332,6 +350,68 @@ mod tests {
             heat_first_slot: None,
             draft_hover_bar: None,
         }
+    }
+
+    /// The fold reads an anchor the way the paint writes one: an integer bar
+    /// coordinate is a candle's *centre*. A range dragged from one candle's
+    /// centre to another's therefore folds both end candles — the rectangle
+    /// on screen and the bars behind the histogram are the same bars.
+    #[test]
+    fn covered_slots_folds_exactly_the_drawn_rectangle() {
+        // Centre-to-centre over candles 100..=184 is 85 candles, both ends
+        // included. Reading a centre as `slot + 0.5` drops the candle under
+        // the right edge and pulls in half of the one left of the box.
+        assert_eq!(covered_slots(100.0, 184.0, Some(300)), Some((100, 184)));
+        // The same range named by its outer *edges* covers the same candles.
+        assert_eq!(covered_slots(99.5, 184.5, Some(300)), Some((100, 184)));
+        // A range that stops between two centres cannot claim the far one.
+        assert_eq!(covered_slots(100.0, 183.9, Some(300)), Some((100, 183)));
+    }
+
+    /// Both anchors on one candle fold that candle. Dropping it left the
+    /// trader with a rectangle, a "no tape in range" label and a bar that
+    /// visibly traded.
+    #[test]
+    fn covered_slots_folds_the_single_candle_under_a_dot() {
+        assert_eq!(covered_slots(5.0, 5.0, Some(300)), Some((5, 5)));
+    }
+
+    /// A range over no candles has no profile. Clamping it onto the nearest
+    /// slot drew that slot's histogram — real-looking data for a rectangle
+    /// the trader put nowhere near it.
+    #[test]
+    fn covered_slots_rejects_a_range_that_reaches_no_candle() {
+        assert_eq!(covered_slots(-50.0, -40.0, Some(300)), None, "left of data");
+        assert_eq!(
+            covered_slots(400.0, 450.0, Some(300)),
+            None,
+            "past the tape"
+        );
+        // Between two centres, touching neither.
+        assert_eq!(covered_slots(10.2, 10.8, Some(300)), None, "inside one gap");
+        // The edges still clamp *into* the data when the span overlaps it.
+        assert_eq!(covered_slots(-50.0, 2.0, Some(300)), Some((0, 2)));
+        assert_eq!(covered_slots(298.0, 450.0, Some(300)), Some((298, 300)));
+        assert_eq!(covered_slots(0.0, 10.0, None), None, "no slots exist yet");
+    }
+
+    /// End to end: a range anchored centre-to-centre folds the tape of both
+    /// end bars, not one of them.
+    #[test]
+    fn refresh_folds_both_end_bars_of_a_centre_to_centre_range() {
+        let state = state_with_tape();
+        let mut drawings = Drawings::default();
+        // Bars 0..=2 hold two trades of qty 1 each.
+        place_frvp(&mut drawings, 0.0, 2.0);
+        refresh(&mut drawings, &inputs(&state, false));
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_total, 3, "three candles under the rectangle");
+        assert_eq!(cache.bars_covered, 3);
+        assert_eq!(
+            cache.profile.expect("range has tape").0.total_volume(),
+            dec("6"),
+            "the bar under the right edge is part of the profile"
+        );
     }
 
     #[test]
