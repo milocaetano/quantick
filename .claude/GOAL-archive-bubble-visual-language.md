@@ -59,3 +59,14 @@ Worktree: `../quantick-worktrees/feat-bubble-visual-language`
 
 Heatmap de liquidez, footprint, candles, layout. A missão é a linguagem visual
 da agressão e o preset que a publica.
+
+## Resultado
+
+Concluída. PR aberto a partir de `feat/bubble-visual-language`.
+
+Todos os critérios específicos atendidos, com um achado do próprio operador
+durante a revisão: mover `active` para um preset novo derrubou em silêncio as
+três janelas de agregação (`cluster_ms` 500→200, `candle_summary` on→off), o
+que deixou a camada correta e ilegível. Corrigido e travado por
+`the_shipped_default_aggregates_before_it_draws` — nenhum teste olhava para a
+agregação do preset publicado, que é exatamente por que a regressão foi muda.
