@@ -57,6 +57,26 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 const MAGNET_REACH_PX: f32 = 12.0;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 
+/// How far a press must travel before its release counts as "the trader
+/// dragged this object out" instead of "the trader clicked".
+///
+/// Deliberately larger than [`DRAWING_DRAG_THRESHOLD_PX`], which answers a
+/// different question: whether a gesture already under way is a drag at all.
+/// This one decides whether a *release* finishes an object, and it was
+/// sharing that four-pixel answer — which is inside the wander of an ordinary
+/// click.
+///
+/// What that cost, reported from the running build: a click meant to start a
+/// fixed-range profile placed **both** its anchors, so the object was born
+/// less than one bar wide ("1 of 1 bars"), and completing it disarmed the
+/// tool. Moving the pointer afterwards then did nothing at all, which reads
+/// exactly like a frozen chart — the trader is waiting for a range to follow
+/// their hand and there is no longer a draft to follow it.
+///
+/// A release under this distance leaves the draft alive instead, so the
+/// gesture becomes the click-move-click the hand was already doing.
+const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
+
 /// A pointer and a modifier for a run with nobody at the keyboard — see
 /// [`ChartPane::parked_hand`]. Never constructed outside the harness hook.
 #[derive(Debug, Clone, Copy)]
@@ -2301,7 +2321,7 @@ impl ChartPane {
             && let Some(start) = self.drawing_press_position
             && let Some(position) = released_position
             && surface.contains(position)
-            && start.distance(position) >= DRAWING_DRAG_THRESHOLD_PX
+            && start.distance(position) >= DRAWING_DRAG_COMPLETES_PX
             && let Some((band, point)) = self.shaped_placement(
                 tool,
                 areas,

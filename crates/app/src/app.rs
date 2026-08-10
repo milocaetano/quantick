@@ -9059,6 +9059,90 @@ plot(close)
         );
     }
 
+    /// A press and release a few pixels apart — the wander an ordinary click
+    /// carries — must stay a click.
+    ///
+    /// Reported from the running build against the fixed-range profile: a
+    /// click placed **both** anchors, so the object was born less than one
+    /// bar wide, and completing it disarmed the tool. The pointer moving
+    /// afterwards then did nothing, which reads exactly like a frozen chart:
+    /// the trader is waiting for a range to follow their hand and there is no
+    /// longer a draft to follow it.
+    ///
+    /// The gesture must instead become the click-move-click the hand was
+    /// already doing — draft alive, tool still armed, preview following.
+    #[test]
+    fn a_click_that_wanders_a_few_pixels_is_still_a_click() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "fixed-range-profile");
+
+        let press = egui::pos2(600.0, 400.0);
+        // Five pixels: inside the tremor of a real click, and it used to be
+        // enough to finish the object.
+        let release = egui::pos2(605.0, 400.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(press),
+                pointer_button(press, true),
+            ],
+        );
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(release),
+                pointer_button(release, false),
+            ],
+        );
+
+        assert!(
+            app.active_tab().flow_pane.drawings.items().is_empty(),
+            "a click is not an object"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            1,
+            "it anchored one end and is waiting for the other"
+        );
+        assert_eq!(
+            app.toolrail
+                .tool()
+                .drawing_tool()
+                .map(drawings::DrawingTool::id),
+            Some("fixed-range-profile"),
+            "and the tool is still armed, so the range can still follow the hand"
+        );
+
+        // The half of the gesture the trader was waiting for: the preview
+        // follows, and the next click finishes a range worth having.
+        let far = egui::pos2(900.0, 400.0);
+        let output = move_chart_with(&mut app, &ctx, far, egui::Modifiers::NONE);
+        assert!(
+            drawing_strokes(&output) >= 2,
+            "both edges of the range follow the pointer, painted {}",
+            drawing_strokes(&output)
+        );
+        click_chart_with(&mut app, &ctx, far, egui::Modifiers::NONE);
+
+        let profile = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the second click placed the profile")
+            .clone();
+        assert!(
+            (profile.points[1].bar - profile.points[0].bar).abs() > 1.0,
+            "and it spans real bars, not a fraction of one: {:?}",
+            profile.points
+        );
+    }
+
     /// The same modifier on the trend line, which is the tool a trader
     /// reaches for when they want a level in the first place. A two-anchor
     /// tool finishes on the release, so this proves the constraint survives
