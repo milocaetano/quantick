@@ -32,9 +32,24 @@ active = "default"
 #     question it raised: did the level refill?
 #   * small prints are solid discs. Side is carried by the buy/sell luminance
 #     gap and by `side_offset`, not by hollowing out the mark.
+#
+# Aggregation is the fourth decision, and it is not a detail: the marks above
+# only read as calm if there are few enough of them. Three windows do that
+# work, and all three are set here rather than left to the bare code defaults,
+# which are tuned for a slow tape:
+#   * cluster_ms — compatible prints inside this window become one bubble.
+#   * dust_merge_ms — prints too small to read on their own fold into one
+#     bubble per price range. The threshold is whatever quantity lands on
+#     `readable_min_radius`, so it moves with the radius range.
+#   * candle_summary — once a bar closes, its prints become one bubble per
+#     price range, drawn as a pie of the buy and sell shares. The pie is the
+#     only mark that shows both sides of one price at once, and it is what
+#     keeps history reading as a summary instead of as a wall of specks.
 [[presets]]
 name = "default"
-cluster_ms = 200
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
 
 [presets.bubbles]
 min_radius = 2.1885

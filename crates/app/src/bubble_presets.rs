@@ -326,6 +326,32 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_default_aggregates_before_it_draws() {
+        // The calm the visual language buys is spent immediately if every
+        // print still gets its own mark. These three windows are what keep the
+        // count down, and they were once lost by moving `active` to a preset
+        // that inherited the bare code defaults — the layer stayed correct and
+        // became unreadable. Pinned so that cannot happen quietly again.
+        let preset = embedded()
+            .get("default")
+            .cloned()
+            .expect("the shipped default");
+        assert!(
+            preset.cluster_ms >= 500,
+            "compatible prints inside half a second must become one bubble, not {}",
+            preset.cluster_ms
+        );
+        assert!(
+            preset.dust_merge_ms > 0,
+            "prints too small to read must fold into one bubble per price range"
+        );
+        assert!(
+            preset.candle_summary,
+            "a closed bar must summarize into pies; without it history is a wall of specks"
+        );
+    }
+
+    #[test]
     fn every_shipped_preset_keeps_its_radii_on_the_golden_ladder() {
         for preset in embedded().presets {
             let bubbles = &preset.bubbles;
