@@ -7,7 +7,7 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use super::config::{BubbleSizeReference, DisplayGrouping, HeatmapConfig, IntensityMode};
+use super::config::{BubbleSizeReference, HeatmapConfig, IntensityMode};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, CoverageSegment, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
@@ -696,29 +696,16 @@ pub fn project_settled(
         (None, live_from_ms),
         summarizing,
     );
-    // The size scale is a statement about the recorded session, never about
-    // the screen: zoom decides what is visible, not what a quantity means, so
-    // the same print keeps the same area through every window. The automatic
-    // references therefore measure every retained print, clustered at the
-    // *configured* grouping — an adaptive display grouping tracks the visible
-    // span, which is the one input the scale must ignore, so it contributes
-    // its base width instead. A cluster the viewport merges past this
-    // reference saturates at full size: the honest reading of "more than
-    // anything the scale measures". Computed before the display filter below
-    // — hiding small prints must not silently rescale the ones left on screen
-    // — and only retention trimming the recording (or the user pinning a
-    // fixed quantity) may move it.
-    let reference_clusters = if config.bubbles.size_reference.is_automatic() {
-        cluster_aggressions(
-            history.aggressions(),
-            &coverage,
-            reference_grouping(config),
-            config.bubble_cluster_ms,
-        )
-    } else {
-        Vec::new()
-    };
-    let aggression_reference = size_reference(&reference_clusters, config);
+    // The size scale is a statement about the session, never about the
+    // screen: zoom decides what is visible, not what a quantity means, so the
+    // same print keeps the same area through every window, and a cluster the
+    // viewport merges past the scale saturates at full size — the honest
+    // reading of "more than anything the scale measures". The history
+    // accumulates it one print at a time (`SessionScale`), so reading it here
+    // costs the same whether ten prints are retained or a million — and it is
+    // independent of the display filter below, so hiding small prints never
+    // silently rescales the ones left on screen.
+    let aggression_reference = history.bubble_size_reference();
 
     // A reduction is allocated by the half that owns the prints around it, so
     // the same removed quantity is never claimed as evidence twice. Cut at the
@@ -1274,20 +1261,11 @@ fn tier_primitives(
         .collect()
 }
 
-/// Grouping the automatic size reference is measured at.
-///
-/// The configured grouping, with one exception: an adaptive display grouping
-/// resolves against the visible span, which is the one input the scale must
-/// ignore — so it contributes its base width and nothing else.
-fn reference_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
-    let display = match config.display_grouping {
-        DisplayGrouping::Adaptive { .. } => DisplayGrouping::Native,
-        display => display,
-    };
-    EffectiveGrouping::resolve(display, config.price_grouping, Decimal::ZERO)
-}
-
 /// Quantity that maps to a full-size bubble for this set of clusters.
+///
+/// This is the *summary tier's* scale — pies sized against pies. The raw
+/// print scale is the session's, read from
+/// [`LiquidityHistory::bubble_size_reference`].
 fn size_reference(clusters: &[AggressionCluster], config: &HeatmapConfig) -> Decimal {
     match config.bubbles.size_reference {
         BubbleSizeReference::VisibleP99 => {

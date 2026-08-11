@@ -7,7 +7,8 @@ use quantick_engine::{Side, Trade};
 use quantick_orderbook::{ApplyOutcome, BookDelta, BookError, BookSide, BookSnapshot, OrderBook};
 use rust_decimal::Decimal;
 
-use super::config::HeatmapConfig;
+use super::config::{BubbleSizeReference, HeatmapConfig};
+use super::scale::SessionScale;
 
 /// Resting side represented by a liquidity run.
 pub type RestingSide = BookSide;
@@ -239,6 +240,7 @@ pub struct LiquidityHistory {
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
+    scale: SessionScale,
     coverage: VecDeque<CoverageSegment>,
     gaps: VecDeque<CoverageGap>,
     pending_gap: Option<usize>,
@@ -249,8 +251,10 @@ impl LiquidityHistory {
     /// Construct empty history from sanitized settings.
     #[must_use]
     pub fn new(config: HeatmapConfig) -> Self {
+        let config = config.sanitized();
         Self {
-            config: config.sanitized(),
+            scale: SessionScale::new(config.price_grouping, config.bubble_cluster_ms),
+            config,
             book: OrderBook::new(),
             generation: None,
             last_generation: None,
@@ -283,6 +287,17 @@ impl LiquidityHistory {
                 current: self.config.price_grouping,
                 requested: next.price_grouping,
             });
+        }
+        // A new clustering window changes what "one cluster" means, so the
+        // session scale restarts from the prints still retained — the honest
+        // best effort, since evicted prints cannot be replayed. Every other
+        // setting leaves the scale alone: it is an accumulation, not a view.
+        if next.bubble_cluster_ms != self.config.bubble_cluster_ms {
+            let mut scale = SessionScale::new(next.price_grouping, next.bubble_cluster_ms);
+            for trade in &self.aggressions {
+                scale.record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
+            }
+            self.scale = scale;
         }
         self.config = next;
         if let Some(now_ms) = self.latest_book_ms {
@@ -413,6 +428,25 @@ impl LiquidityHistory {
         self.aggressions.iter()
     }
 
+    /// Quantity that maps to a full-size bubble, on the session scale.
+    ///
+    /// The automatic modes read the scale accumulated since the session (or
+    /// the last structural reset) began — see [`SessionScale`] for why the
+    /// answer deliberately ignores the viewport and retention alike. `Fixed`
+    /// reads the quantity the user pinned.
+    #[must_use]
+    pub fn bubble_size_reference(&self) -> Decimal {
+        match self.config.bubbles.size_reference {
+            BubbleSizeReference::VisibleP99 => self.scale.p99(),
+            BubbleSizeReference::VisibleMax => self.scale.max(),
+            BubbleSizeReference::Fixed => self
+                .config
+                .bubbles
+                .fixed_reference_decimal()
+                .unwrap_or_default(),
+        }
+    }
+
     /// Continuous synchronized intervals.
     pub fn coverage_segments(&self) -> impl Iterator<Item = &CoverageSegment> {
         self.coverage.iter()
@@ -517,6 +551,8 @@ impl LiquidityHistory {
 
     /// Retain one trade for the aggression overlay without touching the book.
     pub fn record_aggression(&mut self, trade: &Trade) {
+        self.scale
+            .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
         self.aggressions.push_back(Aggression {
             agg_id: trade.agg_id,
             timestamp_ms: trade.timestamp_ms,
@@ -550,6 +586,7 @@ impl LiquidityHistory {
             dropped_aggressions: self.aggressions.len(),
         };
         self.config.price_grouping = grouping;
+        self.scale = SessionScale::new(grouping, self.config.bubble_cluster_ms);
         self.book = OrderBook::new();
         self.generation = None;
         self.latest_book_ms = None;
