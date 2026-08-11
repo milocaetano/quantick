@@ -14482,7 +14482,7 @@ plot(close)
         assert_eq!(
             pane.partial_bucket_slot(),
             Some(2),
-            "the seam slot is named as partly covered"
+            "the tape's first bar is named as partly covered"
         );
         // The composed series is non-decreasing in open_time, which is what
         // the slot search depends on.

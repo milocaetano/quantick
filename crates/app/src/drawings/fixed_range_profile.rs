@@ -359,10 +359,14 @@ fn status_line(
         status.push_str(" · incl. forming bar");
     }
     if cache.bars_partly_covered > 0 {
-        // The tape's first bar opened mid-interval and the venue candle that
-        // covered the rest was dropped at the seam. The shortfall is real and
-        // unmeasurable from here, so it is named rather than topped up.
-        status.push_str(" · seam bar partly covered");
+        // The tape's first bar opened mid-interval, so it holds less than the
+        // interval it occupies — and where a venue prefix exists, the candle
+        // that did cover the rest was dropped at the seam. The shortfall is
+        // real and unmeasurable from here, so it is named, not topped up.
+        //
+        // "first tape bar", not "seam bar": a pane with no venue history has
+        // no seam, and its first bar is short all the same.
+        status.push_str(" · first tape bar partly covered");
     }
     if cache.bars_covered + cache.bars_approximated < cache.bars_total {
         status.push_str(&format!(
@@ -1307,12 +1311,14 @@ mod tests {
         assert_eq!(right, 510.0);
     }
 
-    /// The seam bar's shortfall is named, not topped up. Without this the
-    /// range read as fully covered while missing whatever traded in that
+    /// The short first bar's shortfall is named, not topped up. Without this
+    /// the range read as fully covered while missing whatever traded in that
     /// interval before the app connected — 36% of a minute, 94% of an hour,
-    /// measured on a live BTCUSDT connect.
+    /// measured on a live BTCUSDT connect. It is worded for the tape, not for
+    /// the seam: a pane with no venue history has no seam and a short first
+    /// bar all the same.
     #[test]
-    fn status_line_speaks_a_partly_covered_seam_bar() {
+    fn status_line_speaks_a_partly_covered_first_tape_bar() {
         let profile = some_profile();
         let payload = FrvpPayload::default();
         let mut cache = cache_for(3, 3, 0);
@@ -1321,7 +1327,11 @@ mod tests {
         cache.bars_partly_covered = 1;
         cache.key.partly_covered = true;
         let status = status_line(&profile, &cache, &payload, false);
-        assert!(status.contains(" · seam bar partly covered"), "{status}");
+        assert!(
+            status.contains(" · first tape bar partly covered"),
+            "{status}"
+        );
+        assert!(!status.contains("seam"), "no seam is claimed: {status}");
         // It is a caveat about one bar, not a coverage shortfall: all three
         // bars still contributed, so the "N of M" clause stays quiet.
         assert!(!status.contains("profile from"), "{status}");
