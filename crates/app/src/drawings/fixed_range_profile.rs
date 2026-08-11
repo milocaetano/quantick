@@ -10,7 +10,12 @@
 //! Honesty rules the paint must keep:
 //! - a range whose bars carry no tape (venue prefix candles, a feed with no
 //!   traded volume) says so instead of showing an empty histogram as "quiet";
+//! - every profile names how many bars it folded, so one `vol` figure can be
+//!   compared with another's without counting candles by eye;
 //! - partial coverage is spoken (`N of M bars`), never blended away;
+//! - the range that folds is the rectangle that was drawn — an anchor's
+//!   integer bar coordinate is a candle's centre, the same convention the
+//!   viewport paints with (see [`crate::frvp`]);
 //! - a cap-coarsened profile names its effective row width, like the
 //!   footprint legend does.
 
@@ -290,14 +295,88 @@ fn range_edges(payload: &FrvpPayload, points: &[egui::Pos2], ctxt: &DrawContext<
         let bar_span = b.bar - a.bar;
         if bar_span.abs() > f32::EPSILON {
             let slot_width = (points[1].x - points[0].x) / bar_span;
-            // The right boundary of the newest covered slot (its centre is
-            // `end_slot + 0.5`, its trailing edge half a slot further).
+            // The right boundary of the newest covered slot: its centre is
+            // `end_slot`, its trailing edge half a slot further — the same
+            // centre-is-the-integer convention the fold reads anchors with.
             #[allow(clippy::cast_precision_loss)]
-            let live_x = points[0].x + (cache.key.end_slot as f32 + 1.0 - a.bar) * slot_width;
+            let live_x = points[0].x + (cache.key.end_slot as f32 + 0.5 - a.bar) * slot_width;
             right = right.max(live_x);
         }
     }
     (left, right)
+}
+
+/// The status line under a range: what the profile is made of, in the
+/// footprint legend's language. Pure, so what the object owes the trader can
+/// be asserted in a test rather than rest on someone reading a screenshot.
+///
+/// The bar count is unconditional, and that is the point. Printing it only
+/// when something was *wrong* left the ordinary case — an exact, fully
+/// covered range — showing a `vol` figure with no denominator, so two
+/// profiles side by side could not be told apart between "different window"
+/// and "different market". A total without its span is not a comparable
+/// number.
+fn status_line(
+    profile: &VolumeProfile,
+    cache: &FrvpCache,
+    payload: &FrvpPayload,
+    outline_active: bool,
+) -> String {
+    let mut status = format!(
+        "vol {} · Δ {} · rows {}",
+        fmt_qty(profile.total_volume()),
+        fmt_signed_qty(profile.total_delta()),
+        profile.group()
+    );
+    if profile.is_aggregated() {
+        // The rows are coarser than the capture grid — spoken, like the
+        // footprint legend speaks its coarsening.
+        status.push_str(" · grouped");
+    }
+    status.push_str(&format!(
+        " · {} {}",
+        cache.bars_total,
+        if cache.bars_total == 1 { "bar" } else { "bars" }
+    ));
+    if payload.extend_right {
+        // The developing mode: this profile follows the tape.
+        status.push_str(" · to live");
+    }
+    if cache.key.include_partial {
+        // One of those bars is still forming, so it holds only as much of
+        // its interval as has traded so far. Without this the same range
+        // reads differently a second later for no stated reason.
+        status.push_str(" · incl. forming bar");
+    }
+    if cache.bars_covered + cache.bars_approximated < cache.bars_total {
+        status.push_str(&format!(
+            " · profile from {} of {} bars",
+            cache.bars_covered + cache.bars_approximated,
+            cache.bars_total
+        ));
+    }
+    if cache.bars_approximated > 0 {
+        // Venue candles joined without tape: their placement is approximated,
+        // and the profile says so at the point of reading, never in a
+        // tooltip. Phrased as a count of *approximated* bars — the old
+        // "approximated from OHLC (85 of 85 bars)" read as a coverage
+        // reassurance when it meant the exact opposite.
+        status.push_str(&format!(
+            " · {} of {} approximated from OHLC",
+            cache.bars_approximated, cache.bars_total
+        ));
+    }
+    if cache.key.side_inferred {
+        // The delta and the buy/sell split rest on guessed aggressor sides —
+        // same label the footprint legend uses.
+        status.push_str(" · side inferred");
+    }
+    if outline_active {
+        // The object changed its look on its own; the app says why, in the
+        // same chain as everything else it does.
+        status.push_str(" · outline over heatmap");
+    }
+    status
 }
 
 /// x of an arbitrary bar coordinate through the anchors' own affine bar→x
@@ -348,6 +427,53 @@ fn knockout_text(
     painter.galley(corner, ink_galley, color);
 }
 
+/// The status line, slid left when it would otherwise run past the right of
+/// `bounds`.
+///
+/// It starts at the range's left edge and grows rightwards, so a range near
+/// the newest bar had its tail clipped by the pane edge — and the tail is
+/// where every caveat lives. A `vol` figure whose bar count and "approximated
+/// from OHLC" notice were cut off reads as a complete, exact number, which is
+/// the one thing this label must never do. Truncation that hides a caveat is
+/// worse than a label that leaves its range.
+/// Where a left-aligned label `width` px wide must start to stay inside
+/// `bounds`, given where it would rather start.
+///
+/// The left edge wins when the label is wider than the pane: the head of the
+/// line (`vol`, `Δ`) is what a truncated read must keep, and losing the tail
+/// to the right edge is exactly the failure this clamp exists to prevent.
+fn clamped_label_x(preferred_x: f32, width: f32, bounds: egui::Rect) -> f32 {
+    (preferred_x.min(bounds.right() - width)).max(bounds.left())
+}
+
+/// Lays the text out exactly as many times as [`knockout_text`] does — the
+/// clamp reads its width off the galley it is about to paint, so keeping the
+/// label on screen costs no extra layout on the per-frame path.
+fn knockout_text_within(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    text: &str,
+    color: egui::Color32,
+    bounds: egui::Rect,
+) {
+    let font = egui::FontId::proportional(LABEL_SIZE_PX);
+    let ink_galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    let casing_galley = painter.layout_no_wrap(text.to_owned(), font, CASING);
+    let x = clamped_label_x(pos.x, ink_galley.size().x, bounds);
+    let corner = egui::Align2::LEFT_TOP
+        .anchor_size(egui::pos2(x, pos.y), ink_galley.size())
+        .min;
+    for offset in [
+        egui::vec2(-1.0, 0.0),
+        egui::vec2(1.0, 0.0),
+        egui::vec2(0.0, -1.0),
+        egui::vec2(0.0, 1.0),
+    ] {
+        painter.galley(corner + offset, casing_galley.clone(), CASING);
+    }
+    painter.galley(corner, ink_galley, color);
+}
+
 /// The vertical span the object occupies: the profile's own price extent when
 /// there is one — the data owns the price axis — else the anchors' heights,
 /// which is all a draft or an empty range has to say.
@@ -383,6 +509,22 @@ fn row_height(profile: &VolumeProfile, ctxt: &DrawContext<'_>) -> f32 {
 
 fn fmt_qty(value: Decimal) -> String {
     crate::chart::compact_value(to_f64(value))
+}
+
+/// A signed quantity, with the `+` written out.
+///
+/// Delta's sign *is* the reading — buyers or sellers took the range — and a
+/// bare `214.24` against `-214.24` puts that entire meaning in a three-pixel
+/// hyphen, at 10 px, in one flat muted colour, with `delta_coloring` off by
+/// default. Two people already read the wrong side off this label. Zero is
+/// written unsigned: it took neither side.
+fn fmt_signed_qty(value: Decimal) -> String {
+    let body = fmt_qty(value);
+    if value > Decimal::ZERO {
+        format!("+{body}")
+    } else {
+        body
+    }
 }
 
 impl DrawingToolImpl for FixedRangeProfile {
@@ -703,47 +845,7 @@ impl DrawingToolImpl for FixedRangeProfile {
         let mut status = String::new();
         match (profile, cache) {
             (Some((profile, value_area)), Some(cache)) => {
-                status.push_str(&format!(
-                    "vol {} · Δ {}",
-                    fmt_qty(profile.total_volume()),
-                    fmt_qty(profile.total_delta())
-                ));
-                status.push_str(&format!(" · rows {}", profile.group()));
-                if profile.is_aggregated() {
-                    // The rows are coarser than the capture grid — spoken,
-                    // like the footprint legend speaks its coarsening.
-                    status.push_str(" · grouped");
-                }
-                if payload.extend_right {
-                    // The developing mode: this profile follows the tape.
-                    status.push_str(" · to live");
-                }
-                if cache.bars_covered + cache.bars_approximated < cache.bars_total {
-                    status.push_str(&format!(
-                        " · profile from {} of {} bars",
-                        cache.bars_covered + cache.bars_approximated,
-                        cache.bars_total
-                    ));
-                }
-                if cache.bars_approximated > 0 {
-                    // Venue candles joined without tape: their placement is
-                    // approximated, and the profile says so at the point of
-                    // reading, never in a tooltip.
-                    status.push_str(&format!(
-                        " · approximated from OHLC ({} of {} bars)",
-                        cache.bars_approximated, cache.bars_total
-                    ));
-                }
-                if cache.key.side_inferred {
-                    // The delta and the buy/sell split rest on guessed
-                    // aggressor sides — same label the footprint legend uses.
-                    status.push_str(" · side inferred");
-                }
-                if outline_active {
-                    // The object changed its look on its own; the app says
-                    // why, in the same chain as everything else it does.
-                    status.push_str(" · outline over heatmap");
-                }
+                status.push_str(&status_line(profile, cache, payload, outline_active));
                 if let Some(area) = value_area {
                     // POC/VAH/VAL price plates at the right edge of the range.
                     let labels = [
@@ -779,12 +881,12 @@ impl DrawingToolImpl for FixedRangeProfile {
             (_, None) => {}
         }
         if !status.is_empty() {
-            knockout_text(
+            knockout_text_within(
                 painter,
                 egui::pos2(left, bottom + LABEL_OFFSET_PX),
-                egui::Align2::LEFT_TOP,
                 &status,
                 theme::TEXT_MUTED,
+                chart_rect,
             );
         }
     }
@@ -1010,6 +1112,194 @@ mod tests {
     use super::*;
     use crate::chart::PriceScale;
     use crate::drawings::{ChartPoint, ValueUnit};
+
+    /// One venue candle's worth of profile — enough to carry a `vol` figure
+    /// into the status line.
+    fn some_profile() -> VolumeProfile {
+        let bar = quantick_engine::Bar {
+            open_time: 0,
+            close_time: 60_000,
+            open: Decimal::from(100),
+            high: Decimal::from(104),
+            low: Decimal::from(100),
+            close: Decimal::from(102),
+            buy_volume: Decimal::from(6),
+            sell_volume: Decimal::from(4),
+            trade_count: 10,
+        };
+        let ladder = quantick_engine::BarFootprint::approximated(
+            &bar,
+            Decimal::ONE,
+            quantick_engine::DEFAULT_LEVEL_CAP,
+        )
+        .expect("the candle traded");
+        VolumeProfile::merge(vec![&ladder], quantick_engine::DEFAULT_LEVEL_CAP)
+            .expect("one ladder folds")
+    }
+
+    fn cache_for(total: usize, covered: usize, approximated: usize) -> FrvpCache {
+        FrvpCache {
+            key: FrvpCacheKey {
+                start_slot: 0,
+                end_slot: total.saturating_sub(1),
+                group: Decimal::ONE,
+                timeline_revision: 0,
+                closed_len: total,
+                include_partial: false,
+                partial_snapshot: 0,
+                value_area_pct: DEFAULT_VALUE_AREA_PCT,
+                blocked: false,
+                side_inferred: false,
+                approximate: approximated > 0,
+            },
+            profile: None,
+            empty: None,
+            bars_covered: covered,
+            bars_approximated: approximated,
+            bars_total: total,
+            heat_first_slot: None,
+        }
+    }
+
+    /// The regression that started this: an exact, fully covered profile used
+    /// to print `vol` with no denominator, so two profiles side by side could
+    /// not be told apart between "different window" and "different market".
+    #[test]
+    fn status_line_always_names_the_bar_count() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 85, 0), &payload, false);
+        assert!(
+            status.contains(" · 85 bars"),
+            "a complete range still owes its span: {status}"
+        );
+        assert!(status.starts_with("vol "), "{status}");
+        // Nothing is claimed about coverage or approximation when neither
+        // applies — the count alone is the whole story.
+        assert!(!status.contains("profile from"), "{status}");
+        assert!(!status.contains("approximated"), "{status}");
+    }
+
+    #[test]
+    fn status_line_counts_one_bar_in_the_singular() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(1, 1, 0), &payload, false);
+        assert!(status.contains(" · 1 bar"), "{status}");
+        assert!(!status.contains("1 bars"), "{status}");
+    }
+
+    /// The approximation caveat reads as a caveat. `approximated from OHLC
+    /// (85 of 85 bars)` parsed as a coverage reassurance while meaning that
+    /// every single row placement was a guess.
+    #[test]
+    fn status_line_names_approximated_bars_as_a_caveat() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 0, 85), &payload, false);
+        assert!(status.contains(" · 85 bars"), "the span, always: {status}");
+        assert!(
+            status.contains(" · 85 of 85 approximated from OHLC"),
+            "{status}"
+        );
+    }
+
+    /// A range still under construction says so: the same anchors read
+    /// differently a second later, and that is not a mystery the trader
+    /// should have to solve.
+    #[test]
+    fn status_line_speaks_the_forming_bar() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let mut cache = cache_for(30, 30, 0);
+        assert!(!status_line(&profile, &cache, &payload, false).contains("forming"));
+        cache.key.include_partial = true;
+        let status = status_line(&profile, &cache, &payload, false);
+        assert!(status.contains(" · incl. forming bar"), "{status}");
+    }
+
+    /// Delta's sign is the whole reading, so it is written, not implied by
+    /// the absence of a hyphen. This is the label that sent two readers to
+    /// the wrong side of the tape.
+    #[test]
+    fn delta_writes_its_sign_on_both_sides_of_zero() {
+        assert_eq!(fmt_signed_qty(Decimal::from(214)), "+214.00");
+        assert_eq!(fmt_signed_qty(Decimal::from(-214)), "-214.00");
+        assert_eq!(fmt_signed_qty(Decimal::ZERO), "0.00", "zero took no side");
+        // Volume is unsigned and must not grow a `+`.
+        assert_eq!(fmt_qty(Decimal::from(985)), "985.00");
+
+        let payload = FrvpPayload::default();
+        let status = status_line(&some_profile(), &cache_for(85, 85, 0), &payload, false);
+        assert!(status.contains("Δ +"), "a buy-side delta is signed: {status}");
+    }
+
+    /// The status line slides left to keep its tail — where every caveat
+    /// lives — inside the pane, and gives up the tail only when the label is
+    /// wider than the pane itself.
+    #[test]
+    fn a_label_near_the_right_edge_slides_in_instead_of_being_clipped() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(100.0, 0.0), egui::pos2(900.0, 400.0));
+        // Comfortably inside: left alone.
+        assert_eq!(clamped_label_x(200.0, 300.0, bounds), 200.0);
+        // Would overrun the right edge: slid back so it ends exactly on it.
+        assert_eq!(clamped_label_x(800.0, 300.0, bounds), 600.0);
+        // Flush against the right edge is not a slide.
+        assert_eq!(clamped_label_x(600.0, 300.0, bounds), 600.0);
+        // Wider than the whole pane: the head wins, the tail overflows.
+        assert_eq!(clamped_label_x(400.0, 1000.0, bounds), 100.0);
+        // Never dragged left of the pane by a range anchored off-screen.
+        assert_eq!(clamped_label_x(-50.0, 200.0, bounds), 100.0);
+    }
+
+    /// The developing mode's live edge lands on the newest covered slot's
+    /// trailing edge — half a slot past its centre, the same
+    /// centre-is-the-integer convention the fold reads anchors with. A full
+    /// slot past it drew the range one candle wider than it folded.
+    #[test]
+    fn the_developing_edge_stops_at_the_newest_slots_trailing_edge() {
+        let mut payload = FrvpPayload {
+            extend_right: true,
+            ..FrvpPayload::default()
+        };
+        // end_slot 30 while the anchors only reach bar 20.
+        payload.cache = Some(FrvpCache {
+            key: FrvpCacheKey {
+                end_slot: 30,
+                ..cache_for(21, 21, 0).key
+            },
+            ..cache_for(21, 21, 0)
+        });
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 400.0);
+        let anchors = [ChartPoint::at(10.0, 104.0), ChartPoint::at(20.0, 96.0)];
+        // 10 bars over 200px → 20px per slot, bar 10 at x=100.
+        let points = [egui::pos2(100.0, 120.0), egui::pos2(300.0, 280.0)];
+        let ctxt = DrawContext {
+            payload: &payload,
+            anchors: &anchors,
+            scale: &scale,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: false,
+            halo: false,
+        };
+        let (left, right) = range_edges(&payload, &points, &ctxt);
+        assert_eq!(left, 100.0, "the drawn left edge is untouched");
+        // Slot 30's centre is at x = 100 + (30-10)*20 = 500; its trailing
+        // edge is half a slot further.
+        assert_eq!(right, 510.0);
+    }
+
+    /// Partial coverage keeps its own explicit `N of M`, on top of the span.
+    #[test]
+    fn status_line_still_speaks_partial_coverage() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 40, 0), &payload, false);
+        assert!(status.contains(" · 85 bars"), "{status}");
+        assert!(status.contains(" · profile from 40 of 85 bars"), "{status}");
+    }
 
     /// The handles sit on the drawn object — each anchor's x at the visible
     /// extent's midpoint — and a handle drag moves only that edge's bar,

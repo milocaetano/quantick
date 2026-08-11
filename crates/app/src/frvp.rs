@@ -129,17 +129,42 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
     }
 }
 
-/// The slots a `[min_bar, max_bar]` anchor span covers: every slot whose
-/// centre (`slot + 0.5`) falls inside it, clamped to the slots that exist.
-/// `last_slot` is the partial's slot when there is one, else the last closed.
+/// The slots a `[min_bar, max_bar]` anchor span covers: the candle each
+/// anchor was dropped **on**, and everything between them, clamped to the
+/// slots that exist. `last_slot` is the partial's slot when there is one,
+/// else the last closed.
+///
+/// A slot's centre is its own integer coordinate and it owns the half-open
+/// interval `[slot - 0.5, slot + 0.5)`: the convention
+/// [`Viewport::x_at_bar_position`](crate::viewport::Viewport::x_at_bar_position)
+/// paints with and `Pane::drawing_point_at` inverts. Rounding is therefore
+/// the whole rule — `round(coord)` *is* "which candle is under this pixel".
+///
+/// The tool snaps no anchor, so a real drag lands mid-candle every time. That
+/// is why this rounds instead of taking the first and last centres strictly
+/// inside the span: `ceil`/`floor` would step *past* both endpoints and drop
+/// the two candles the trader could see under their own cursor, and the count
+/// would wobble between 83, 84 and 85 on sub-pixel luck for one repeated
+/// gesture.
+///
+/// `None` when the span reaches no candle at all, including one lying
+/// entirely off either end. A rectangle over no candles has no profile, and
+/// clamping it onto the nearest one would answer a question nobody asked
+/// with a histogram indistinguishable from real data.
 fn covered_slots(min_bar: f32, max_bar: f32, last_slot: Option<usize>) -> Option<(usize, usize)> {
     let last = last_slot?;
+    let (first_slot, last_slot_hit) = (min_bar.round(), max_bar.round());
+    // Decided in float, before any cast: a float→int cast saturates, so a
+    // span wholly left of slot 0 or wholly past `last` would otherwise
+    // collapse onto an edge slot and fold it as if it had been asked for.
+    #[allow(clippy::cast_precision_loss)]
+    if last_slot_hit < 0.0 || first_slot > last as f32 {
+        return None;
+    }
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let start = (min_bar - 0.5).ceil().max(0.0) as usize;
+    let start = first_slot.max(0.0) as usize;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let end = (max_bar - 0.5).floor().max(0.0) as usize;
-    let start = start.min(last);
-    let end = end.min(last);
+    let end = (last_slot_hit.max(0.0) as usize).min(last);
     (start <= end).then_some((start, end))
 }
 
@@ -334,11 +359,95 @@ mod tests {
         }
     }
 
+    /// The fold reads an anchor the way the paint writes one: an integer bar
+    /// coordinate is a candle's *centre*. A range dragged from one candle's
+    /// centre to another's therefore folds both end candles — the rectangle
+    /// on screen and the bars behind the histogram are the same bars.
+    #[test]
+    fn covered_slots_folds_exactly_the_drawn_rectangle() {
+        // Centre-to-centre over candles 100..=184 is 85 candles, both ends
+        // included. Reading a centre as `slot + 0.5` drops the candle under
+        // the right edge and pulls in half of the one left of the box.
+        assert_eq!(covered_slots(100.0, 184.0, Some(300)), Some((100, 184)));
+        // A coordinate belongs to the candle it lands *on*: candle N owns
+        // `[N - 0.5, N + 0.5)`, so 99.5 is candle 100 and 184.4 is candle 184.
+        assert_eq!(covered_slots(99.5, 184.4, Some(300)), Some((100, 184)));
+    }
+
+    /// The tool snaps no anchor, so every real drag ends mid-candle. Taking
+    /// the first and last centres strictly *inside* the span (`ceil`/`floor`)
+    /// stepped past both endpoints and folded 83 bars for an 85-candle drag —
+    /// and gave a different count each time the same gesture was repeated.
+    #[test]
+    fn covered_slots_folds_the_candles_a_mid_candle_drag_lands_on() {
+        // Pressed inside candle 100, released inside candle 184.
+        assert_eq!(covered_slots(100.4, 183.6, Some(300)), Some((100, 184)));
+        assert_eq!(covered_slots(99.7, 184.3, Some(300)), Some((100, 184)));
+        // The same gesture, jittered by a sub-pixel, folds the same bars.
+        for (lo, hi) in [(99.6, 183.51), (100.49, 184.49), (99.51, 184.2)] {
+            assert_eq!(
+                covered_slots(lo, hi, Some(300)),
+                Some((100, 184)),
+                "drag {lo}..{hi} is the same 85 candles"
+            );
+        }
+    }
+
+    /// Both anchors on one candle fold that candle. Dropping it left the
+    /// trader with a rectangle, a "no tape in range" label and a bar that
+    /// visibly traded.
+    #[test]
+    fn covered_slots_folds_the_single_candle_under_a_dot() {
+        assert_eq!(covered_slots(5.0, 5.0, Some(300)), Some((5, 5)));
+    }
+
+    /// A range over no candles has no profile. Clamping it onto the nearest
+    /// slot drew that slot's histogram — real-looking data for a rectangle
+    /// the trader put nowhere near it.
+    #[test]
+    fn covered_slots_rejects_a_range_that_reaches_no_candle() {
+        assert_eq!(covered_slots(-50.0, -40.0, Some(300)), None, "left of data");
+        assert_eq!(
+            covered_slots(400.0, 450.0, Some(300)),
+            None,
+            "past the tape"
+        );
+        // A short drag from inside candle 10 to inside candle 11 is those two
+        // candles — there is no "between candles" to land in.
+        assert_eq!(covered_slots(10.2, 10.8, Some(300)), Some((10, 11)));
+        assert_eq!(covered_slots(10.2, 10.4, Some(300)), Some((10, 10)));
+        // Left of candle 0 entirely: both ends round to -1.
+        assert_eq!(covered_slots(-1.4, -0.6, Some(300)), None, "left of slot 0");
+        // The edges still clamp *into* the data when the span overlaps it.
+        assert_eq!(covered_slots(-50.0, 2.0, Some(300)), Some((0, 2)));
+        assert_eq!(covered_slots(298.0, 450.0, Some(300)), Some((298, 300)));
+        assert_eq!(covered_slots(0.0, 10.0, None), None, "no slots exist yet");
+    }
+
+    /// End to end: a range anchored centre-to-centre folds the tape of both
+    /// end bars, not one of them.
+    #[test]
+    fn refresh_folds_both_end_bars_of_a_centre_to_centre_range() {
+        let state = state_with_tape();
+        let mut drawings = Drawings::default();
+        // Bars 0..=2 hold two trades of qty 1 each.
+        place_frvp(&mut drawings, 0.0, 2.0);
+        refresh(&mut drawings, &inputs(&state, false));
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_total, 3, "three candles under the rectangle");
+        assert_eq!(cache.bars_covered, 3);
+        assert_eq!(
+            cache.profile.expect("range has tape").0.total_volume(),
+            dec("6"),
+            "the bar under the right edge is part of the profile"
+        );
+    }
+
     #[test]
     fn refresh_merges_the_covered_closed_bars() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
 
         refresh(&mut drawings, &inputs(&state, false));
 
@@ -356,7 +465,7 @@ mod tests {
     fn refresh_skips_when_nothing_changed_and_recomputes_on_anchor_move() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
 
         refresh(&mut drawings, &inputs(&state, false));
         let first = cache_of(&drawings);
@@ -368,7 +477,7 @@ mod tests {
         );
 
         // Narrow the range to one bar: the key and the merge both change.
-        drawings.move_anchor(0, 1, ChartPoint::at(0.9, 105.0));
+        drawings.move_anchor(0, 1, ChartPoint::at(0.0, 105.0));
         refresh(&mut drawings, &inputs(&state, false));
         let narrowed = cache_of(&drawings);
         assert_ne!(narrowed.key, first.key);
@@ -383,7 +492,7 @@ mod tests {
     fn refresh_recomputes_when_the_group_refolds() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, false));
         let before = cache_of(&drawings);
 
@@ -400,7 +509,7 @@ mod tests {
         let state = state_with_tape();
         let partial = state.partial_footprint().expect("forming bar").clone();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 3.9);
+        place_frvp(&mut drawings, 0.0, 3.0);
 
         let with_partial = RefreshInputs {
             partial_ladder: Some(&partial),
@@ -416,7 +525,7 @@ mod tests {
         assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("7"));
 
         // A range that stops short of the forming bar leaves it out.
-        drawings.move_anchor(0, 1, ChartPoint::at(2.9, 105.0));
+        drawings.move_anchor(0, 1, ChartPoint::at(2.0, 105.0));
         refresh(&mut drawings, &with_partial);
         let cache = cache_of(&drawings);
         assert!(!cache.key.include_partial);
@@ -449,7 +558,7 @@ mod tests {
         let prefix = prefix_bars();
         let mut drawings = Drawings::default();
         // Slots 0-1 are venue prefix, 2-4 are the three state bars.
-        place_frvp(&mut drawings, 0.0, 4.9);
+        place_frvp(&mut drawings, 0.0, 4.0);
         let mut approx_slot = None;
         let approx = ApproxLadders::ensure(&mut approx_slot, &prefix, dec("1"));
         let with_prefix = RefreshInputs {
@@ -472,7 +581,7 @@ mod tests {
         let state = state_with_tape();
         let prefix = prefix_bars();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 1.9);
+        place_frvp(&mut drawings, 0.0, 1.0);
         drawings.items_mut()[0]
             .payload
             .as_any_mut()
@@ -513,7 +622,7 @@ mod tests {
     fn blocked_capability_stores_the_block_not_a_profile() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, true));
         let cache = cache_of(&drawings);
         assert!(cache.profile.is_none());
@@ -524,7 +633,7 @@ mod tests {
     fn refresh_never_touches_the_undo_history() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
         let depth = drawings.undo_depth();
         refresh(&mut drawings, &inputs(&state, false));
         assert_eq!(
@@ -542,7 +651,7 @@ mod tests {
         let mut state = state_with_tape();
         let mut drawings = Drawings::default();
         // Anchors cover only bar 0; the tape has three closed bars.
-        place_frvp(&mut drawings, 0.0, 0.9);
+        place_frvp(&mut drawings, 0.0, 0.0);
         drawings.items_mut()[0]
             .payload
             .as_any_mut()
@@ -597,7 +706,7 @@ mod tests {
     fn heat_boundary_rides_the_cache_without_rekeying_the_fold() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, false));
         let before = cache_of(&drawings);
         assert_eq!(before.heat_first_slot, None);
@@ -616,7 +725,7 @@ mod tests {
     fn value_area_fraction_rides_the_cache_key() {
         let state = state_with_tape();
         let mut drawings = Drawings::default();
-        place_frvp(&mut drawings, 0.0, 2.9);
+        place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, false));
         let before = cache_of(&drawings);
 

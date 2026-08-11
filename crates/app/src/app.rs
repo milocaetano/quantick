@@ -5117,11 +5117,10 @@ impl QuantickApp {
                 pane.drawings.place_with(
                     tool,
                     &drawings::DrawingBand::Price,
-                    drawings::ChartPoint::at_time(
-                        slot as f32 + 0.5,
-                        close,
-                        pane.slot_open_time(slot),
-                    ),
+                    // On the slot's centre, where a trader's click lands —
+                    // anchoring on its trailing edge drew a box one candle
+                    // wider than the range it folded.
+                    drawings::ChartPoint::at_time(slot as f32, close, pane.slot_open_time(slot)),
                     |tool| {
                         let mut payload = tool.default_payload();
                         if let Some(frvp) =
