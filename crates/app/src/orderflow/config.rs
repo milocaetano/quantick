@@ -251,18 +251,24 @@ impl IntensityMode {
 
 /// How the quantity that maps to a full-size bubble is chosen.
 ///
-/// `VisibleP99` keeps one outlier sweep from shrinking every other print to a
-/// dot, at the cost of making the top 1% all render at the maximum radius.
-/// `VisibleMax` restores a strict ordering (the biggest print is the only one
-/// at full size); `Fixed` pins the scale so bubble size means the same thing
-/// across sessions and symbols.
+/// The automatic modes measure the whole recorded tape, never the visible
+/// window: zoom decides what is on screen, not what a quantity means, so the
+/// scale only moves when the recording itself does — a new print beyond the
+/// old reference, or retention trimming the floor. `VisibleP99` keeps one
+/// outlier sweep from shrinking every other print to a dot, at the cost of
+/// making the top 1% all render at the maximum radius. `VisibleMax` restores
+/// a strict ordering among recorded prints (clusters a zoomed-out view merges
+/// past it saturate at full size); `Fixed` pins the scale so bubble size
+/// means the same thing across sessions and symbols. The `Visible*` names are
+/// the wire format shipped presets already use; what they measure stopped
+/// being the viewport the day zoom stopped being allowed to rescale a print.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BubbleSizeReference {
-    /// 99th percentile of the visible clustered prints.
+    /// 99th percentile of the recorded clustered prints.
     #[default]
     VisibleP99,
-    /// The largest visible clustered print.
+    /// The largest recorded clustered print.
     VisibleMax,
     /// An explicit quantity, [`BubbleStyle::size_reference_quantity`].
     Fixed,
@@ -312,13 +318,12 @@ impl ConsumptionMark {
 }
 
 impl BubbleSizeReference {
-    /// Whether the reference is derived from what is on screen.
-    ///
-    /// The opposite is [`Fixed`](Self::Fixed), pinned so a bubble means the
-    /// same quantity all session — which is exactly why nothing the renderer
-    /// decides is allowed to rescale it.
+    /// Whether the reference is measured from the recorded prints, as opposed
+    /// to [`Fixed`](Self::Fixed) — pinned by the user so a bubble means the
+    /// same quantity across sessions and symbols, which is exactly why
+    /// nothing the renderer decides is allowed to rescale it.
     #[must_use]
-    pub fn is_visible(self) -> bool {
+    pub fn is_automatic(self) -> bool {
         !matches!(self, Self::Fixed)
     }
 }

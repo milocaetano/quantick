@@ -1148,12 +1148,12 @@ impl OrderflowView {
                             ui.selectable_value(
                                 &mut bubbles.size_reference,
                                 BubbleSizeReference::VisibleP99,
-                                "Auto · visible P99",
+                                "Auto · session P99",
                             );
                             ui.selectable_value(
                                 &mut bubbles.size_reference,
                                 BubbleSizeReference::VisibleMax,
-                                "Auto · largest visible",
+                                "Auto · largest in session",
                             );
                             ui.selectable_value(
                                 &mut bubbles.size_reference,
@@ -1163,10 +1163,11 @@ impl OrderflowView {
                         })
                         .response
                         .on_hover_text(
-                            "P99 keeps one outlier sweep from shrinking everything else, but \
-                             the top 1% all render at the maximum radius. 'Largest visible' \
-                             restores a strict order; a fixed quantity makes bubble size mean \
-                             the same thing across sessions.",
+                            "the automatic modes measure the recorded session, so zooming never \
+                             resizes a print. P99 keeps one outlier sweep from shrinking \
+                             everything else, but the top 1% all render at the maximum radius. \
+                             'Largest in session' restores a strict order; a fixed quantity \
+                             makes bubble size mean the same thing across sessions.",
                         );
                 });
                 if bubbles.size_reference == BubbleSizeReference::Fixed {
@@ -1838,8 +1839,8 @@ fn dust_label(milliseconds: i64) -> String {
 
 const fn size_reference_label(reference: BubbleSizeReference) -> &'static str {
     match reference {
-        BubbleSizeReference::VisibleP99 => "Auto · visible P99",
-        BubbleSizeReference::VisibleMax => "Auto · largest visible",
+        BubbleSizeReference::VisibleP99 => "Auto · session P99",
+        BubbleSizeReference::VisibleMax => "Auto · largest in session",
         BubbleSizeReference::Fixed => "Fixed quantity",
     }
 }
