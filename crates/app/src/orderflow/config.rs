@@ -317,17 +317,6 @@ impl ConsumptionMark {
     }
 }
 
-impl BubbleSizeReference {
-    /// Whether the reference is measured from the recorded prints, as opposed
-    /// to [`Fixed`](Self::Fixed) — pinned by the user so a bubble means the
-    /// same quantity across sessions and symbols, which is exactly why
-    /// nothing the renderer decides is allowed to rescale it.
-    #[must_use]
-    pub fn is_automatic(self) -> bool {
-        !matches!(self, Self::Fixed)
-    }
-}
-
 /// How a bubble's fill is painted.
 ///
 /// `Flat` is the classic solid disc. `Sphere` shades each bubble like a ball

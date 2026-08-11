@@ -8,7 +8,7 @@ use quantick_orderbook::{ApplyOutcome, BookDelta, BookError, BookSide, BookSnaps
 use rust_decimal::Decimal;
 
 use super::config::{BubbleSizeReference, HeatmapConfig};
-use super::scale::SessionScale;
+use super::scale::{SessionScale, SummaryScale};
 
 /// Resting side represented by a liquidity run.
 pub type RestingSide = BookSide;
@@ -241,6 +241,7 @@ pub struct LiquidityHistory {
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
     scale: SessionScale,
+    summary_scale: SummaryScale,
     coverage: VecDeque<CoverageSegment>,
     gaps: VecDeque<CoverageGap>,
     pending_gap: Option<usize>,
@@ -254,6 +255,7 @@ impl LiquidityHistory {
         let config = config.sanitized();
         Self {
             scale: SessionScale::new(config.price_grouping, config.bubble_cluster_ms),
+            summary_scale: SummaryScale::new(config.price_grouping),
             config,
             book: OrderBook::new(),
             generation: None,
@@ -377,6 +379,7 @@ impl LiquidityHistory {
         self.archived.len() * size_of::<LiquidityRun>()
             + self.aggressions.len() * size_of::<Aggression>()
             + self.scale.approximate_bytes()
+            + self.summary_scale.approximate_bytes()
     }
 
     /// Finalized runs followed by active runs (`end_ms == None`).
@@ -430,7 +433,7 @@ impl LiquidityHistory {
         self.aggressions.iter()
     }
 
-    /// Quantity that maps to a full-size bubble, on the session scale.
+    /// Quantity that maps to a full-size bubble, on the session print scale.
     ///
     /// The automatic modes read the scale accumulated since the session (or
     /// the last structural reset) began — see [`SessionScale`] for why the
@@ -441,6 +444,24 @@ impl LiquidityHistory {
         match self.config.bubbles.size_reference {
             BubbleSizeReference::VisibleP99 => self.scale.p99(),
             BubbleSizeReference::VisibleMax => self.scale.max(),
+            BubbleSizeReference::Fixed => self
+                .config
+                .bubbles
+                .fixed_reference_decimal()
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Quantity that maps to a full-size summary pie, on the session scale of
+    /// per-minute level totals — see [`SummaryScale`] for why a pie is
+    /// measured against the busiest minute rather than against whatever pies
+    /// happen to be on screen. `Fixed` reads the pinned quantity, exactly as
+    /// the print scale does.
+    #[must_use]
+    pub fn bubble_summary_reference(&self) -> Decimal {
+        match self.config.bubbles.size_reference {
+            BubbleSizeReference::VisibleP99 => self.summary_scale.p99(),
+            BubbleSizeReference::VisibleMax => self.summary_scale.max(),
             BubbleSizeReference::Fixed => self
                 .config
                 .bubbles
@@ -555,6 +576,8 @@ impl LiquidityHistory {
     pub fn record_aggression(&mut self, trade: &Trade) {
         self.scale
             .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
+        self.summary_scale
+            .record(trade.timestamp_ms, trade.price, trade.quantity);
         self.aggressions.push_back(Aggression {
             agg_id: trade.agg_id,
             timestamp_ms: trade.timestamp_ms,
@@ -589,6 +612,7 @@ impl LiquidityHistory {
         };
         self.config.price_grouping = grouping;
         self.scale = SessionScale::new(grouping, self.config.bubble_cluster_ms);
+        self.summary_scale = SummaryScale::new(grouping);
         self.book = OrderBook::new();
         self.generation = None;
         self.latest_book_ms = None;

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use super::config::{BubbleSizeReference, HeatmapConfig, IntensityMode};
+use super::config::{HeatmapConfig, IntensityMode};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, CoverageSegment, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
@@ -735,39 +735,20 @@ pub fn project_settled(
     let dropped_liquidity_events = filter_events(&mut events, config, liquidity_reference);
 
     let settled_marks = refine_tier(settled, config, aggression_reference, timeline, summarizing);
-    // While every mark is a raw print they share the session scale above, so
-    // an area means the same thing everywhere. The summary breaks that
-    // premise: a pie carries a whole bar and a tape mark carries one print,
-    // quantities an order of magnitude apart, and one shared reference would
-    // peg every pie at the largest radius while flattening the tape into
-    // dots. Pies then get their own reference — pies stay comparable with
-    // pies, prints with prints — except under a fixed reference, where the
-    // user pinned an absolute quantity precisely so that nothing on screen may
-    // rescale it. Measured over the visible summaries of both halves — the
-    // forming bar's running pie included, which is the only reason the moving
-    // half is clustered here at all. A pie aggregates a viewport-grouped
-    // price range, so a viewport-free scale for pies is a separate design
-    // question from the print scale settled above.
-    let summary_reference = if summarizing && config.bubbles.size_reference.is_automatic() {
-        let live = cluster_tier(
-            history,
-            timeline,
-            prices,
-            &coverage,
-            effective_grouping,
-            (live_from_ms, None),
-            summarizing,
-        );
-        let live_marks = refine_tier(live, config, aggression_reference, timeline, summarizing);
-        size_reference(
-            &settled_marks
-                .slot
-                .iter()
-                .chain(live_marks.slot.iter())
-                .cloned()
-                .collect::<Vec<_>>(),
-            config,
-        )
+    // While every mark is a raw print they share the session print scale
+    // above, so an area means the same thing everywhere. The summary breaks
+    // that premise: a pie carries a whole bar and a tape mark carries one
+    // print, quantities an order of magnitude apart, and one shared reference
+    // would peg every pie at the largest radius while flattening the tape
+    // into dots. Pies then get their own scale — as session-anchored as the
+    // print scale, measured against the busiest minute a price level saw
+    // (`SummaryScale`), never against whatever pies happen to be on screen:
+    // pies dominate a summarized chart, so a viewport reference here would
+    // hand the zoom the very rescale the print scale just took away. Under a
+    // fixed reference both getters return the pinned quantity, because the
+    // user chose it precisely so that nothing on screen may rescale a mark.
+    let summary_reference = if summarizing {
+        history.bubble_summary_reference()
     } else {
         aggression_reference
     };
@@ -1261,25 +1242,6 @@ fn tier_primitives(
         .collect()
 }
 
-/// Quantity that maps to a full-size bubble for this set of clusters.
-///
-/// This is the *summary tier's* scale — pies sized against pies. The raw
-/// print scale is the session's, read from
-/// [`LiquidityHistory::bubble_size_reference`].
-fn size_reference(clusters: &[AggressionCluster], config: &HeatmapConfig) -> Decimal {
-    match config.bubbles.size_reference {
-        BubbleSizeReference::VisibleP99 => {
-            percentile_99(clusters.iter().map(|cluster| cluster.quantity))
-        }
-        BubbleSizeReference::VisibleMax => clusters
-            .iter()
-            .map(|cluster| cluster.quantity)
-            .max()
-            .unwrap_or(Decimal::ZERO),
-        BubbleSizeReference::Fixed => config.bubbles.fixed_reference_decimal().unwrap_or_default(),
-    }
-}
-
 fn aggression_primitive(
     cluster: AggressionCluster,
     x: f64,
@@ -1352,7 +1314,9 @@ pub(crate) fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::config::{BubbleStyle, DisplayGrouping, LiveLaneStyle};
+    use crate::orderflow::config::{
+        BubbleSizeReference, BubbleStyle, DisplayGrouping, LiveLaneStyle,
+    };
     use crate::orderflow::history::LiquidityHistory;
     use quantick_engine::{Bar, Side, Trade};
     use quantick_orderbook::BookSide;
@@ -2500,6 +2464,56 @@ mod tests {
         }
     }
 
+    /// The zoom rule holds for the summary tier too: a closed bar's pie maps
+    /// to the same normalized size through every price window. This is the
+    /// mark most of a chart is made of once the candle summary is on, so the
+    /// print scale being stable is not enough — a 1mm zoom that rescales
+    /// every pie rescales the chart.
+    #[test]
+    fn a_pie_keeps_its_size_when_the_window_zooms_out() {
+        let trades = [
+            (1_u64, 6_000_i64, "100", "2", Side::Buy),
+            (2, 6_500, "100", "2", Side::Sell),
+            (3, 7_000, "200", "100", Side::Sell),
+        ];
+        let closed = [bar(0, 5_000), bar(5_000, 10_000), bar(10_000, 15_000)];
+        let partial = bar(15_000, 20_000);
+        let timeline = BarTimeline::from_bars(0, &closed, Some(&partial), live(20_000, &closed));
+        // Zoomed in only the small pie is on screen; zoomed out the huge one
+        // joins it.
+        let zoomed_in = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let zoomed_out = PriceWindow::new(dec("98"), dec("203")).unwrap();
+        for reference in [
+            BubbleSizeReference::VisibleP99,
+            BubbleSizeReference::VisibleMax,
+            BubbleSizeReference::Fixed,
+        ] {
+            let config = HeatmapConfig {
+                bubble_candle_summary: true,
+                bubbles: BubbleStyle {
+                    size_reference: reference,
+                    size_reference_quantity: 100.0,
+                    ..bubbles_only().bubbles
+                },
+                ..bubbles_only()
+            };
+            let pie_size_through = |prices: PriceWindow| {
+                project(&tape(config.clone(), &trades), &timeline, prices)
+                    .aggressions
+                    .iter()
+                    .find(|mark| !mark.live && mark.quantity == dec("4"))
+                    .map(|mark| mark.size)
+                    .expect("the small bar's pie is inside both windows")
+            };
+            let narrow = pie_size_through(zoomed_in);
+            let wide = pie_size_through(zoomed_out);
+            assert!(
+                (narrow - wide).abs() < 1e-6,
+                "{reference:?}: one pie, one size — got {narrow} zoomed in, {wide} zoomed out"
+            );
+        }
+    }
+
     /// The one legitimate way zoom grows a bubble: a coarser grouping merges
     /// prints into one cluster, and the merged mark carries their summed
     /// quantity — so it may only read *bigger* than the prints it swallowed,
@@ -2721,9 +2735,11 @@ mod tests {
 
     /// A summary carries a whole bar's quantity. Sized against the reference
     /// single prints set, every one of them would peg at the largest radius
-    /// and the summaries would stop saying anything about each other.
+    /// and the summaries would stop saying anything about each other — so
+    /// pies read on their own scale, the session's busiest minute per level,
+    /// and stay ordered among themselves.
     #[test]
-    fn a_summary_is_sized_against_summaries_and_a_pinned_reference_never_moves() {
+    fn a_summary_is_sized_against_the_sessions_minutes_and_a_pinned_reference_never_moves() {
         // One busy bar and one quiet one, both closed, plus a live print.
         let mut trades: Vec<(u64, i64, &str, &str, Side)> = Vec::new();
         for index in 0..20_u64 {
