@@ -99,6 +99,12 @@ pub struct FrvpCache {
     /// tape, their volume spread over their own high–low. Spoken by the
     /// status line, never blended away.
     pub bars_approximated: usize,
+    /// Bars folded that cover only *part* of the interval they occupy — in
+    /// practice the tape's first bar, whose venue candle was dropped at the
+    /// seam. 0 or 1 today. How much volume they are short by is unknowable
+    /// from here and is never invented; the status line names the bar and
+    /// lets the trader judge it.
+    pub bars_partly_covered: usize,
     /// Bars the anchors span on the chart, prefix candles included.
     pub bars_total: usize,
     /// The oldest global slot the L2 heatmap covers this frame — where the
@@ -129,6 +135,10 @@ pub struct FrvpCacheKey {
     /// Whether venue-history candles are folded in as approximated ladders
     /// — the payload's own switch, in the key so toggling it re-folds.
     pub approximate: bool,
+    /// Whether the range reaches a bar covering only part of its interval
+    /// (see [`FrvpCache::bars_partly_covered`]). In the key so dragging off that bar
+    /// clears the caveat and dragging back onto it restores it.
+    pub partly_covered: bool,
 }
 
 /// The versioned on-disk shape of a saved preset. Coordinates and cache never
@@ -347,6 +357,12 @@ fn status_line(
         // its interval as has traded so far. Without this the same range
         // reads differently a second later for no stated reason.
         status.push_str(" · incl. forming bar");
+    }
+    if cache.bars_partly_covered > 0 {
+        // The tape's first bar opened mid-interval and the venue candle that
+        // covered the rest was dropped at the seam. The shortfall is real and
+        // unmeasurable from here, so it is named rather than topped up.
+        status.push_str(" · seam bar partly covered");
     }
     if cache.bars_covered + cache.bars_approximated < cache.bars_total {
         status.push_str(&format!(
@@ -1149,11 +1165,13 @@ mod tests {
                 blocked: false,
                 side_inferred: false,
                 approximate: approximated > 0,
+                partly_covered: false,
             },
             profile: None,
             empty: None,
             bars_covered: covered,
             bars_approximated: approximated,
+            bars_partly_covered: 0,
             bars_total: total,
             heat_first_slot: None,
         }
@@ -1289,6 +1307,27 @@ mod tests {
         assert_eq!(right, 510.0);
     }
 
+    /// The seam bar's shortfall is named, not topped up. Without this the
+    /// range read as fully covered while missing whatever traded in that
+    /// interval before the app connected — 36% of a minute, 94% of an hour,
+    /// measured on a live BTCUSDT connect.
+    #[test]
+    fn status_line_speaks_a_partly_covered_seam_bar() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let mut cache = cache_for(3, 3, 0);
+        assert!(!status_line(&profile, &cache, &payload, false).contains("partly covered"));
+
+        cache.bars_partly_covered = 1;
+        cache.key.partly_covered = true;
+        let status = status_line(&profile, &cache, &payload, false);
+        assert!(status.contains(" · seam bar partly covered"), "{status}");
+        // It is a caveat about one bar, not a coverage shortfall: all three
+        // bars still contributed, so the "N of M" clause stays quiet.
+        assert!(!status.contains("profile from"), "{status}");
+        assert!(status.contains(" · 3 bars"), "{status}");
+    }
+
     /// Partial coverage keeps its own explicit `N of M`, on top of the span.
     #[test]
     fn status_line_still_speaks_partial_coverage() {
@@ -1394,11 +1433,13 @@ mod tests {
                     blocked: false,
                     side_inferred: false,
                     approximate: true,
+                    partly_covered: false,
                 },
                 profile: None,
                 empty: Some(FrvpEmpty::NoTape),
                 bars_covered: 0,
                 bars_approximated: 0,
+                bars_partly_covered: 0,
                 bars_total: 5,
                 heat_first_slot: None,
             }),

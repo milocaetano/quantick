@@ -14458,8 +14458,31 @@ plot(close)
         assert_eq!(
             pane.seam_slot(),
             2,
-            "the overlapping bucket is dropped; what the app cut from prints \
-             is the better record of that window"
+            "the overlapping bucket is dropped, which keeps the slot search sound"
+        );
+        // Dropping it is right for ordering and lossy for volume: the engine
+        // bar inheriting that slot opened on its first print, part-way into
+        // the interval the venue candle covered whole. The pane owns up to it
+        // so a profile folding the slot can say so — the alternative is a
+        // total that silently omits everything traded before the app
+        // connected (36% of a minute, 94% of an hour, measured live).
+        let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
+        let first_open = pane
+            .state
+            .bars()
+            .first()
+            .or_else(|| pane.state.partial())
+            .map(|bar| bar.open_time)
+            .expect("the pane holds the fixture trades");
+        assert_ne!(
+            crate::resample::bucket_start(first_open, interval),
+            first_open,
+            "the fixture's first engine bar opens inside its bucket"
+        );
+        assert_eq!(
+            pane.partial_bucket_slot(),
+            Some(2),
+            "the seam slot is named as partly covered"
         );
         // The composed series is non-decreasing in open_time, which is what
         // the slot search depends on.
