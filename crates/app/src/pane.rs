@@ -1469,6 +1469,32 @@ impl ChartPane {
         self.history_prefix.len()
     }
 
+    /// The slot of a bar that covers only *part* of the interval it occupies,
+    /// when there is one.
+    ///
+    /// The tape's first bar opens on its first print, which lands somewhere
+    /// inside the interval rather than on its edge — and the venue candle
+    /// that did cover the whole interval was dropped at the seam
+    /// (`trim_to_seam`) precisely because the two overlap. So that slot holds
+    /// a short bar wearing a full bar's clothes: a range folding it is missing
+    /// whatever traded before the app connected, measured on a live BTCUSDT
+    /// connect at 36% of a 1-minute bucket and 94% of an hourly one.
+    ///
+    /// No volume is invented to close the gap. The profile says the bar is
+    /// partly covered and lets the trader judge it — the same contract the
+    /// approximated-from-OHLC label keeps.
+    ///
+    /// `None` for a pane that does not cut by time (a tick or volume bar owns
+    /// no interval to fall short of), and for a first bar that opens exactly
+    /// on its boundary.
+    pub fn partial_bucket_slot(&self) -> Option<usize> {
+        let interval = self.state.spec().time_interval_ms()?;
+        let first = self.state.bars().first().or_else(|| self.state.partial())?;
+        let opens_inside =
+            crate::resample::bucket_start(first.open_time, interval) != first.open_time;
+        opens_inside.then(|| self.seam_slot())
+    }
+
     /// The closed bar in `slot`, from whichever series owns it.
     pub fn closed_bar(&self, slot: usize) -> Option<&quantick_engine::Bar> {
         self.history_prefix
@@ -3641,6 +3667,8 @@ impl ChartPane {
                     && self.wants_range_profile()
             })
             .and_then(|frame| frame.first_heat_slot());
+        // Read before the drawings are borrowed mutably below.
+        let partial_bucket_slot = self.partial_bucket_slot();
         let prefix_approx = if self.wants_range_profile() && !footprint_blocked {
             crate::frvp::ApproxLadders::ensure(
                 &mut self.frvp_approx,
@@ -3662,6 +3690,7 @@ impl ChartPane {
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
                 draft_hover_bar: self.drawing_hover.map(|point| point.bar),
+                partial_bucket_slot,
             },
         );
 

@@ -91,6 +91,13 @@ pub struct RefreshInputs<'a> {
     /// that completes a one-anchor draft's range, so the histogram is live
     /// under the drag instead of appearing only on release.
     pub draft_hover_bar: Option<f32>,
+    /// The slot of a bar covering only part of its interval — the tape's
+    /// first bar, which opened on a print inside the interval while the venue
+    /// candle covering all of it was dropped at the seam. See
+    /// [`Pane::partial_bucket_slot`](crate::pane::Pane::partial_bucket_slot).
+    /// A range reaching it is short by whatever traded before the app
+    /// connected, and says so rather than being quietly topped up.
+    pub partial_bucket_slot: Option<usize>,
 }
 
 /// Bring every fixed-range-profile drawing's cached profile up to date.
@@ -186,6 +193,13 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
     let (start_slot, end_slot) = span.unwrap_or((0, 0));
     let bars_total = span.map_or(0, |(start, end)| end - start + 1);
     let include_partial = span.is_some() && partial_slot.is_some_and(|slot| slot <= end_slot);
+    // A range reaching the tape's first bar folds a bar that covers only part
+    // of its interval. In the key, so the caveat cannot outlive the range that
+    // earned it.
+    let partly_covered = span.is_some()
+        && inputs
+            .partial_bucket_slot
+            .is_some_and(|slot| start_slot <= slot && slot <= end_slot);
 
     let key = FrvpCacheKey {
         start_slot,
@@ -203,6 +217,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         blocked: inputs.blocked,
         side_inferred: inputs.side_inferred,
         approximate: payload.approximate_history,
+        partly_covered,
     };
     if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
         // Key hit: the fold is current. Presentation state still follows the
@@ -218,6 +233,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
             empty: Some(FrvpEmpty::Blocked),
             bars_covered: 0,
             bars_approximated: 0,
+            bars_partly_covered: 0,
             bars_total,
             heat_first_slot: inputs.heat_first_slot,
         });
@@ -274,6 +290,7 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         empty,
         bars_covered,
         bars_approximated,
+        bars_partly_covered: usize::from(partly_covered),
         bars_total,
         heat_first_slot: inputs.heat_first_slot,
     });
@@ -356,6 +373,7 @@ mod tests {
             side_inferred: false,
             heat_first_slot: None,
             draft_hover_bar: None,
+            partial_bucket_slot: None,
         }
     }
 
@@ -441,6 +459,51 @@ mod tests {
             dec("6"),
             "the bar under the right edge is part of the profile"
         );
+    }
+
+    /// The tape's first bar opens on a print inside its interval, and the
+    /// venue candle that covered the rest was dropped at the seam. A range
+    /// reaching that bar is short by whatever traded before the app
+    /// connected — it says so, and nothing tops the volume back up.
+    #[test]
+    fn a_range_reaching_the_seam_bar_says_it_is_partly_covered() {
+        let state = state_with_tape();
+        let mut drawings = Drawings::default();
+        place_frvp(&mut drawings, 0.0, 2.0);
+
+        let seam = RefreshInputs {
+            partial_bucket_slot: Some(0),
+            ..inputs(&state, false)
+        };
+        refresh(&mut drawings, &seam);
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_partly_covered, 1, "the seam bar is in range");
+        assert!(cache.key.partly_covered);
+        // The caveat costs no volume: the short bar still folds its own tape.
+        assert_eq!(
+            cache.profile.expect("tape").0.total_volume(),
+            dec("6"),
+            "nothing is invented and nothing is dropped"
+        );
+
+        // Drag off the seam bar and the caveat goes with it.
+        drawings.move_anchor(0, 0, ChartPoint::at(1.0, 100.0));
+        refresh(&mut drawings, &seam);
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_partly_covered, 0);
+        assert!(!cache.key.partly_covered);
+    }
+
+    /// A pane with no seam bar to speak of stays silent — the caveat is not
+    /// stamped on every profile just because the plumbing exists.
+    #[test]
+    fn without_a_partial_bucket_no_caveat_is_claimed() {
+        let state = state_with_tape();
+        let mut drawings = Drawings::default();
+        place_frvp(&mut drawings, 0.0, 2.0);
+        refresh(&mut drawings, &inputs(&state, false));
+        assert_eq!(cache_of(&drawings).bars_partly_covered, 0);
+        assert!(!cache_of(&drawings).key.partly_covered);
     }
 
     #[test]
