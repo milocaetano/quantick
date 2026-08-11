@@ -34,6 +34,7 @@
 //!   everywhere: the same prints in the same order produce the same scale.
 
 use std::collections::BTreeMap;
+use std::mem::size_of;
 
 use quantick_engine::Side;
 use rust_decimal::Decimal;
@@ -141,6 +142,17 @@ impl SessionScale {
             remaining -= count;
         }
         Decimal::ZERO
+    }
+
+    /// Approximate bytes held by the accumulated distribution.
+    ///
+    /// The multiset is the one part of the scale a long session grows without
+    /// bound (one entry per *distinct* cluster quantity), so the history's
+    /// memory estimate counts it rather than letting it hide.
+    #[must_use]
+    pub fn approximate_bytes(&self) -> usize {
+        self.counts.len() * size_of::<(Decimal, u64)>()
+            + self.open.len() * size_of::<((u8, Decimal), OpenCluster)>()
     }
 }
 

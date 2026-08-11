@@ -370,11 +370,13 @@ impl LiquidityHistory {
         self.active.len()
     }
 
-    /// Approximate bytes used by the bounded event history.
+    /// Approximate bytes used by the bounded event history — plus the session
+    /// scale, which is the one accumulation retention does *not* bound.
     #[must_use]
     pub fn approximate_history_bytes(&self) -> usize {
         self.archived.len() * size_of::<LiquidityRun>()
             + self.aggressions.len() * size_of::<Aggression>()
+            + self.scale.approximate_bytes()
     }
 
     /// Finalized runs followed by active runs (`end_ms == None`).
@@ -1192,6 +1194,67 @@ mod tests {
             [2, 3]
         );
         assert_eq!(history.counters().aggressions_evicted, 1);
+    }
+
+    /// Retention bounds what the chart draws, never what a quantity means:
+    /// evicting the session's biggest print must not move the size scale, or
+    /// every bubble would quietly inflate as the big prints age out.
+    #[test]
+    fn evicting_a_print_never_moves_the_bubble_scale() {
+        let config = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            max_aggressions: 1,
+            bubble_cluster_ms: 0,
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(config);
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 100,
+            price: dec("101"),
+            quantity: dec("50"),
+            side: Side::Buy,
+        });
+        let anchored = history.bubble_size_reference();
+        assert_eq!(anchored, dec("50"));
+
+        // The cap evicts the big print; the scale still remembers it.
+        history.record_aggression(&trade(2, 200, Side::Sell));
+        assert_eq!(history.aggressions().count(), 1);
+        assert_eq!(history.counters().aggressions_evicted, 1);
+        assert_eq!(history.bubble_size_reference(), anchored);
+    }
+
+    /// Changing the clustering window changes what "one cluster" means, so
+    /// the scale rebuilds from the retained prints — and a structural
+    /// grouping reset starts it over with the history it just cleared.
+    #[test]
+    fn cluster_window_changes_rebuild_the_bubble_scale_from_retained_prints() {
+        let config = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            bubble_cluster_ms: 0,
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(config.clone());
+        // Two raw prints on one level, 500ms apart: separate clusters raw,
+        // one cluster of 4 once the window covers them.
+        history.record_aggression(&trade(1, 100, Side::Buy));
+        history.record_aggression(&trade(2, 600, Side::Buy));
+        assert_eq!(history.bubble_size_reference(), dec("2"));
+
+        history
+            .update_config(HeatmapConfig {
+                bubble_cluster_ms: 1_000,
+                ..config
+            })
+            .unwrap();
+        assert_eq!(history.bubble_size_reference(), dec("4"));
+
+        // A grouping reset drops the prints, and the scale with them.
+        history.reset_price_grouping(dec("2")).unwrap();
+        assert_eq!(history.bubble_size_reference(), Decimal::ZERO);
     }
 
     #[test]
