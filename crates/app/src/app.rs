@@ -9059,6 +9059,76 @@ plot(close)
         );
     }
 
+    /// Shift on a **corner of a finished channel**, driven through the real
+    /// app rather than through the tool alone.
+    ///
+    /// The tool-level test proves the geometry; this proves the wiring, and
+    /// the two are not the same claim. The host reads the modifier in a
+    /// different place for editing than for placing, and a `Constrain::Free`
+    /// left behind in that second place would pass every unit test while the
+    /// feature was dead in the trader's hands — which is exactly the shape of
+    /// the preview-versus-commit split this PR started from.
+    #[test]
+    fn shift_on_a_corner_levels_a_channel_through_the_app() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+
+        let corner = egui::pos2(800.0, 340.0);
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(600.0, 400.0),
+            egui::Modifiers::NONE,
+        );
+        click_chart_with(&mut app, &ctx, corner, egui::Modifiers::NONE);
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(800.0, 460.0),
+            egui::Modifiers::NONE,
+        );
+        run_frame(&mut app, &ctx);
+
+        let before = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the channel was placed")
+            .clone();
+        assert!(
+            (before.points[0].price - before.points[1].price).abs() > 1e-6,
+            "it starts sloped, or there is nothing to straighten: {:?}",
+            before.points
+        );
+
+        // Grab that same corner and carry it somewhere plainly not level.
+        drag_chart_with(
+            &mut app,
+            &ctx,
+            corner,
+            egui::pos2(860.0, 290.0),
+            egui::Modifiers::SHIFT,
+        );
+
+        let after = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .items()
+            .last()
+            .expect("the channel is still there")
+            .clone();
+        assert!(
+            (after.points[0].price - after.points[1].price).abs() < 1e-9,
+            "the corner drag straightened it: {:?}",
+            after.points
+        );
+    }
+
     /// A press and release a few pixels apart — the wander an ordinary click
     /// carries — must stay a click.
     ///
