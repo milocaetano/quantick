@@ -23,8 +23,8 @@ use std::any::Any;
 
 use super::measure_core::MEASURE_FAMILY;
 use super::{
-    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles, PresetHost,
-    drawing_stroke,
+    Constrain, DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles,
+    PresetHost, drawing_stroke,
 };
 use crate::chart::to_f64;
 use crate::theme;
@@ -867,6 +867,8 @@ impl DrawingToolImpl for FixedRangeProfile {
         handle: usize,
         to: egui::Pos2,
         _ctxt: &DrawContext<'_>,
+        // A range is two instants and no angle; nothing to hold level.
+        _constrain: Constrain,
     ) -> Option<Handles> {
         if points.len() < 2 || handle >= 2 {
             return None;
@@ -1043,7 +1045,7 @@ mod tests {
         // Dragging the right handle left shrinks the range: only that
         // anchor's x moves, both ys (prices) stay put.
         let dragged = TOOL
-            .drag_handle(chart_rect, &points, 1, egui::pos2(180.0, 350.0), &ctxt)
+            .drag_handle(chart_rect, &points, 1, egui::pos2(180.0, 350.0), &ctxt, Constrain::Free)
             .expect("tool owns the gesture");
         assert_eq!(dragged.as_slice(), &[
             egui::pos2(100.0, 120.0),

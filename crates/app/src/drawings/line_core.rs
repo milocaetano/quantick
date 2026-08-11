@@ -10,7 +10,25 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{DrawingStyle, ToolFamily, distance_to_segment, drawing_stroke};
+use super::{Constrain, DrawingStyle, ToolFamily, distance_to_segment, drawing_stroke, level_with};
+
+/// The far end of a two-point line while the trader holds Shift: level with
+/// the end it started from, and still free to slide along the tape.
+///
+/// Shared here rather than written out per tool, because "a line held level"
+/// is one rule and every tool built on this core wants the same one. A tool
+/// adopts it by forwarding its shaping port to this and nothing else, which
+/// is what keeps the gesture meaning the same thing everywhere it exists.
+pub(super) fn levelled_far_end(
+    placed: &[egui::Pos2],
+    cursor: egui::Pos2,
+    constrain: Constrain,
+) -> egui::Pos2 {
+    match (placed, constrain) {
+        ([start], Constrain::Level) => level_with(*start, cursor),
+        _ => cursor,
+    }
+}
 
 /// The one rail family every straight-line tool declares. Shared here so
 /// the members cannot drift apart on the title or the pre-arm icon.

@@ -14,7 +14,8 @@ use egui_phosphor::regular as icons;
 use super::line_core::{Extend, line_ends};
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles, PresetHost,
-    ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke,
+    Constrain, ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke, level_with,
+    off_line_by, unit_normal,
 };
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
@@ -169,22 +170,24 @@ fn channel_handles(points: &[egui::Pos2]) -> Option<Handles> {
     ]))
 }
 
-/// The unit normal of the trend line — the direction width is measured in.
-/// A degenerate trend line (both ends on one point) has no direction of its
-/// own, so it is given the vertical, which is the axis a chart measures in.
-fn baseline_normal(baseline: egui::Vec2) -> egui::Vec2 {
-    let length = baseline.length();
-    if length <= f32::EPSILON {
-        return egui::vec2(0.0, 1.0);
-    }
-    egui::vec2(-baseline.y, baseline.x) / length
-}
-
 /// How far the far rail sits from the trend line, signed so that the side the
 /// corridor opens on survives every gesture.
 fn signed_width(points: &[egui::Pos2]) -> f32 {
-    channel_offset(points).dot(baseline_normal(points[1] - points[0]))
+    channel_offset(points).dot(unit_normal(points[1] - points[0]))
 }
+
+/// The thinnest corridor a channel may be **born** with, in pixels.
+///
+/// Width is measured across the trend line and nowhere else, so the moment a
+/// drag fixes that line and lets go, the pointer — still standing on it —
+/// implies a width of exactly zero. Under this many pixels the corridor reads
+/// as a single line whatever the numbers say, which is the one thing a
+/// channel must never be mistaken for.
+///
+/// This floors the *shaping* phase only. An existing channel is still dragged
+/// as thin as the trader likes by its own rail handles: this is what a new
+/// object opens at, not a constraint on the shape.
+const MIN_BORN_WIDTH_PX: f32 = 12.0;
 
 /// Rebuild the channel from a rail that runs from `start` to `end`, keeping
 /// the corridor exactly as wide as it is now.
@@ -202,7 +205,7 @@ fn rebuild_from_rail(
     rail_is_far: bool,
 ) -> Handles {
     let direction = end - start;
-    let offset = baseline_normal(direction) * width;
+    let offset = unit_normal(direction) * width;
     let (near_start, far_point) = if rail_is_far {
         (start - offset, start)
     } else {
@@ -225,10 +228,34 @@ fn rebuild_from_rail(
 /// trend line and holds the far rail still, so the corridor grows the other
 /// way. Only the component across the trend line counts for width, so sliding
 /// a handle along the rails does nothing at all.
-fn channel_drag(points: &[egui::Pos2], handle: usize, to: egui::Pos2) -> Option<Handles> {
+fn channel_drag(
+    points: &[egui::Pos2],
+    handle: usize,
+    to: egui::Pos2,
+    constrain: Constrain,
+) -> Option<Handles> {
     if points.len() < 3 {
         return None;
     }
+    // Holding Shift on a corner lays that corner level with the corner it is
+    // pivoting around — the other end of its own rail. The rails are
+    // parallel, so levelling one levels the channel. A constraint that only
+    // existed while the object was being born would be no use at all: a
+    // corridor that came out a degree off is exactly the one the trader wants
+    // to straighten, and straightening is a corner drag.
+    //
+    // The rail-centre handles are absent on purpose. They set the width,
+    // which is measured across the trend line and never along it, so there is
+    // no angle for the constraint to hold.
+    let to = match (constrain, handle) {
+        (Constrain::Level, HANDLE_NEAR_START) => level_with(points[1], to),
+        (Constrain::Level, HANDLE_NEAR_END) => level_with(points[0], to),
+        (Constrain::Level, HANDLE_FAR_START) => {
+            level_with(points[1] + channel_offset(points), to)
+        }
+        (Constrain::Level, HANDLE_FAR_END) => level_with(points[0] + channel_offset(points), to),
+        _ => to,
+    };
     let baseline = points[1] - points[0];
     let centre = points[0] + baseline / 2.0;
     let width = signed_width(points);
@@ -370,16 +397,45 @@ impl DrawingToolImpl for ParallelChannel {
         icons::PARALLELOGRAM
     }
     fn hover_text(&self) -> &'static str {
-        "Rising / falling channel - draw the trend line, then click the channel width (C)"
+        "Rising / falling channel - drag the trend line, then set the width (C)"
     }
     fn required_points(&self) -> usize {
         3
     }
     fn placement_hint(&self, placed: usize) -> Option<&'static str> {
         match placed {
-            1 => Some("Click the end of the trend line"),
-            2 => Some("Click the channel width"),
+            // The modifier is advertised on the step it applies to, beside
+            // the cursor, while the hand is already doing the gesture. A
+            // constraint nobody is told about is a constraint nobody uses.
+            1 => Some("Drag out the trend line - hold Shift to keep it level"),
+            2 => Some("Move to set the width, click to place"),
             _ => None,
+        }
+    }
+    /// Two anchors, two different questions.
+    ///
+    /// The **second** closes the trend line, and holding Shift there lays that
+    /// line level with the first — which makes the whole corridor level, since
+    /// the rails are parallel to it. A horizontal channel is a range, and a
+    /// range dragged by hand is never quite flat: the trader can see it is off
+    /// but cannot fix it, because there is nothing to fix it *against*.
+    ///
+    /// The **third** sets the width, which is measured across the trend line
+    /// and never along it, so the constraint has nothing to say there — the
+    /// floor does all the work (see [`MIN_BORN_WIDTH_PX`]).
+    ///
+    /// With no anchor down there is nothing to be level with, so the pointer
+    /// stands.
+    fn pending_anchor(
+        &self,
+        placed: &[egui::Pos2],
+        cursor: egui::Pos2,
+        constrain: Constrain,
+    ) -> egui::Pos2 {
+        match (placed, constrain) {
+            ([start], Constrain::Level) => level_with(*start, cursor),
+            ([start, end], _) => off_line_by(*start, *end, cursor, MIN_BORN_WIDTH_PX),
+            _ => cursor,
         }
     }
     fn shortcut(&self) -> Option<ToolShortcut> {
@@ -489,8 +545,9 @@ impl DrawingToolImpl for ParallelChannel {
         handle: usize,
         to: egui::Pos2,
         _ctxt: &DrawContext<'_>,
+        constrain: Constrain,
     ) -> Option<Handles> {
-        channel_drag(points, handle, to)
+        channel_drag(points, handle, to, constrain)
     }
 
     #[cfg(test)]
@@ -509,6 +566,12 @@ impl DrawingToolImpl for ParallelChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An unconstrained handle drag — what every gesture test that is not
+    /// about Shift is asking for.
+    fn drag(points: &[egui::Pos2], handle: usize, to: egui::Pos2) -> Option<Handles> {
+        channel_drag(points, handle, to, Constrain::Free)
+    }
 
     /// Six grab points: a corner at each end of each rail, plus the centre of
     /// each rail. Corners angle, centres widen.
@@ -700,7 +763,7 @@ mod tests {
             egui::pos2(300.0, 100.0),
             egui::pos2(100.0, 160.0),
         ];
-        let moved = channel_drag(&points, HANDLE_FAR_CENTRE, egui::pos2(240.0, 200.0))
+        let moved = drag(&points, HANDLE_FAR_CENTRE, egui::pos2(240.0, 200.0))
             .expect("the far rail moves");
         assert_eq!(moved[0], points[0]);
         assert_eq!(moved[1], points[1]);
@@ -721,7 +784,7 @@ mod tests {
             egui::pos2(100.0, 160.0),
         ];
         let far_before = points[0] + channel_offset(&points);
-        let moved = channel_drag(&points, HANDLE_NEAR_CENTRE, egui::pos2(200.0, 60.0))
+        let moved = drag(&points, HANDLE_NEAR_CENTRE, egui::pos2(200.0, 60.0))
             .expect("the near rail moves");
         assert_eq!(moved[0], egui::pos2(100.0, 60.0));
         assert_eq!(moved[1], egui::pos2(300.0, 60.0));
@@ -755,7 +818,7 @@ mod tests {
         for handle in [HANDLE_NEAR_CENTRE, HANDLE_FAR_CENTRE] {
             // From where the handle *is*: a slide is a gesture that starts on
             // the ring under the pointer.
-            let moved = channel_drag(&points, handle, handles[handle] + along)
+            let moved = drag(&points, handle, handles[handle] + along)
                 .expect("a rail moves");
             let (moved_start, moved_end, moved_far) = rails(&moved);
             for (before, after) in [
@@ -783,7 +846,7 @@ mod tests {
         ];
         let handles = channel_handles(&points).expect("three anchors");
         for handle in [HANDLE_NEAR_CENTRE, HANDLE_FAR_CENTRE] {
-            let moved = channel_drag(&points, handle, handles[handle] + egui::vec2(0.0, 40.0))
+            let moved = drag(&points, handle, handles[handle] + egui::vec2(0.0, 40.0))
                 .expect("a rail moves");
             assert!(
                 (moved[2].x - points[2].x).abs() < 1e-3,
@@ -808,13 +871,13 @@ mod tests {
         assert_eq!(handles[HANDLE_NEAR_CENTRE], egui::pos2(100.0, 200.0));
         assert_eq!(handles[HANDLE_FAR_CENTRE], egui::pos2(160.0, 200.0));
 
-        let widened = channel_drag(&points, HANDLE_FAR_CENTRE, egui::pos2(200.0, 240.0))
+        let widened = drag(&points, HANDLE_FAR_CENTRE, egui::pos2(200.0, 240.0))
             .expect("the far rail moves");
         assert_eq!(widened[0], points[0], "the trend line is untouched");
         assert_eq!(channel_offset(&widened), egui::vec2(100.0, 0.0));
 
         let far_before = points[0] + channel_offset(&points);
-        let grown = channel_drag(&points, HANDLE_NEAR_CENTRE, egui::pos2(60.0, 200.0))
+        let grown = drag(&points, HANDLE_NEAR_CENTRE, egui::pos2(60.0, 200.0))
             .expect("the near rail moves");
         assert_eq!(grown[0], egui::pos2(60.0, 100.0));
         assert_eq!(
@@ -836,7 +899,7 @@ mod tests {
         ];
         let width = signed_width(&points);
         let moved =
-            channel_drag(&points, HANDLE_NEAR_START, egui::pos2(120.0, 40.0)).expect("it angles");
+            drag(&points, HANDLE_NEAR_START, egui::pos2(120.0, 40.0)).expect("it angles");
         assert_eq!(moved[0], egui::pos2(120.0, 40.0), "the held corner");
         assert_eq!(moved[1], points[1], "the other end of the rail stays");
         assert!(
@@ -860,7 +923,7 @@ mod tests {
         let handles = channel_handles(&points).expect("three anchors");
         let far_end_before = handles[HANDLE_FAR_END];
 
-        let moved = channel_drag(&points, HANDLE_FAR_START, egui::pos2(120.0, 200.0))
+        let moved = drag(&points, HANDLE_FAR_START, egui::pos2(120.0, 200.0))
             .expect("the far corner angles it");
         let after = channel_handles(&moved).expect("three anchors");
         assert!(
@@ -929,5 +992,171 @@ mod tests {
         assert!(target.import_preset(&toml::Value::Table(table)));
         assert!(!target.midline);
         assert!(target.extend_right, "the flag it never named survives");
+    }
+
+    /// The trend line a shaping test measures across.
+    fn baseline_ends() -> (egui::Pos2, egui::Pos2) {
+        (egui::pos2(100.0, 200.0), egui::pos2(300.0, 140.0))
+    }
+
+    /// The defect this port exists for, reported from the running build: the
+    /// drag lets go with the pointer still standing **on** the trend line,
+    /// width is measured across that line and nowhere else, so the width the
+    /// pointer implies is exactly zero. The preview drew a corridor of no
+    /// width — a straight line — and the click that looked like it confirmed
+    /// the shape committed one.
+    #[test]
+    fn a_channel_is_never_born_with_no_width_at_all() {
+        let (start, end) = baseline_ends();
+        let shaped = TOOL.pending_anchor(&[start, end], end, Constrain::Free);
+        let width = signed_width(&[start, end, shaped]);
+        // A pixel of corridor is still a line to the eye. Asserted against a
+        // number of its own rather than against the constant, so shrinking
+        // the floor to nothing fails here instead of passing vacuously.
+        assert!(
+            width.abs() > 1.0,
+            "a channel let go of on its own trend line still opens a corridor, width was {width}"
+        );
+        assert!(
+            (width.abs() - MIN_BORN_WIDTH_PX).abs() < 1e-3,
+            "and it opens exactly at the floor, width was {width}"
+        );
+    }
+
+    /// Flooring the width must not slide the anchor *along* the rails: the
+    /// bar the trader put it on is the one the Coordinates tab reports, and
+    /// the same rule already governs a width drag on a finished channel.
+    #[test]
+    fn flooring_the_width_keeps_the_bar_the_pointer_was_on() {
+        let (start, end) = baseline_ends();
+        let cursor = egui::pos2(220.0, 176.0);
+        let shaped = TOOL.pending_anchor(&[start, end], cursor, Constrain::Free);
+        let direction = (end - start).normalized();
+        let along = |point: egui::Pos2| (point - start).dot(direction);
+        assert!(
+            (along(shaped) - along(cursor)).abs() < 1e-3,
+            "only the distance across the line moved: {} vs {}",
+            along(shaped),
+            along(cursor)
+        );
+    }
+
+    /// A pointer that has already declared a width keeps it exactly. The
+    /// floor is for the collapsed case alone — it must not quietly become a
+    /// minimum channel width the trader cannot draw under.
+    #[test]
+    fn a_pointer_clear_of_the_trend_line_is_left_exactly_where_it_is() {
+        let (start, end) = baseline_ends();
+        let cursor = egui::pos2(200.0, 260.0);
+        assert_eq!(TOOL.pending_anchor(&[start, end], cursor, Constrain::Free), cursor);
+    }
+
+    /// The side the trader started opening the corridor on is the side it
+    /// opens on, however little they had moved when the floor caught them.
+    #[test]
+    fn the_corridor_opens_on_the_side_the_pointer_chose() {
+        let (start, end) = baseline_ends();
+        let normal = unit_normal(end - start);
+        for side in [-1.0_f32, 1.0] {
+            let cursor = start + normal * (2.0 * side);
+            let shaped = TOOL.pending_anchor(&[start, end], cursor, Constrain::Free);
+            let width = signed_width(&[start, end, shaped]);
+            assert!(
+                (width - side * MIN_BORN_WIDTH_PX).abs() < 1e-3,
+                "a nudge to side {side} floors to that side, got {width}"
+            );
+        }
+    }
+
+    /// Before two anchors are down there is no trend line to measure across,
+    /// so the pointer means exactly itself — the first two anchors of a
+    /// channel are placed like any other tool's.
+    #[test]
+    fn nothing_is_shaped_before_the_trend_line_exists() {
+        let cursor = egui::pos2(42.0, 84.0);
+        assert_eq!(TOOL.pending_anchor(&[], cursor, Constrain::Free), cursor);
+        assert_eq!(TOOL.pending_anchor(&[egui::pos2(1.0, 1.0)], cursor, Constrain::Free), cursor);
+    }
+
+    /// Shift while the trend line is being dragged lays it level with the
+    /// anchor it started from — a range, which is the channel a trader draws
+    /// most and the one a free hand can never get quite flat.
+    #[test]
+    fn shift_lays_the_trend_line_level_with_where_it_started() {
+        let start = egui::pos2(100.0, 200.0);
+        let cursor = egui::pos2(340.0, 137.0);
+        let shaped = TOOL.pending_anchor(&[start], cursor, Constrain::Level);
+        assert!(
+            (shaped.y - start.y).abs() < 1e-3,
+            "the far end sits at the price the near end is on, y was {}",
+            shaped.y
+        );
+        assert!(
+            (shaped.x - cursor.x).abs() < 1e-3,
+            "and it still slides freely along the tape"
+        );
+    }
+
+    /// Without the modifier the trend line is exactly where the hand put it.
+    #[test]
+    fn an_unheld_trend_line_follows_the_pointer_exactly() {
+        let start = egui::pos2(100.0, 200.0);
+        let cursor = egui::pos2(340.0, 137.0);
+        assert_eq!(
+            TOOL.pending_anchor(&[start], cursor, Constrain::Free),
+            cursor
+        );
+    }
+
+    /// Straightening is a corner drag, so the constraint has to live there
+    /// too: a corridor that came out a degree off is exactly the one the
+    /// trader wants level, and by then it already exists.
+    #[test]
+    fn shift_on_a_corner_lays_the_whole_corridor_level() {
+        let points = [
+            egui::pos2(100.0, 200.0),
+            egui::pos2(300.0, 140.0),
+            egui::pos2(100.0, 260.0),
+        ];
+        let moved = channel_drag(
+            &points,
+            HANDLE_NEAR_END,
+            egui::pos2(320.0, 95.0),
+            Constrain::Level,
+        )
+        .expect("the channel owns its corners");
+        assert!(
+            (moved[1].y - moved[0].y).abs() < 1e-3,
+            "the trend line came out level: {:?} vs {:?}",
+            moved[0],
+            moved[1]
+        );
+        // Parallel rails: levelling one levels the other, which is the whole
+        // reason one corner is enough to straighten a channel.
+        let far = channel_offset(&moved);
+        assert!(
+            far.x.abs() < 1e-3,
+            "the far rail is level too, offset was {far:?}"
+        );
+    }
+
+    /// Width is measured across the trend line and never along it, so the
+    /// rail-centre handles have no angle for the constraint to hold — and
+    /// must not silently gain one.
+    #[test]
+    fn shift_leaves_a_width_drag_alone() {
+        let points = [
+            egui::pos2(100.0, 200.0),
+            egui::pos2(300.0, 140.0),
+            egui::pos2(100.0, 260.0),
+        ];
+        let to = egui::pos2(210.0, 240.0);
+        for handle in [HANDLE_NEAR_CENTRE, HANDLE_FAR_CENTRE] {
+            assert_eq!(
+                channel_drag(&points, handle, to, Constrain::Level),
+                channel_drag(&points, handle, to, Constrain::Free),
+                "handle {handle} must not care about the modifier"
+            );
+        }
     }
 }

@@ -15,7 +15,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use super::{
-    DrawContext, DrawingStyle, DrawingToolImpl, Handles, ToolFamily, ToolShortcut,
+    Constrain, DrawContext, DrawingStyle, DrawingToolImpl, Handles, ToolFamily, ToolShortcut,
     distance_to_segment,
 };
 
@@ -93,6 +93,7 @@ impl DrawingToolImpl for Brush {
         _handle: usize,
         _to: egui::Pos2,
         _ctxt: &DrawContext<'_>,
+        _constrain: Constrain,
     ) -> Option<Handles> {
         // Unreachable: there are no handles to drag. Answered explicitly
         // because the port asks a tool that owns its handles to own their

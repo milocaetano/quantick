@@ -58,6 +58,12 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
 
+Landing with the toolbar usability goal (`fix/toolbar-usability`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_DRAWING_DRAFT=<anchors>` | the **half-placed** object: that many anchors of the tool armed by `QUANTICK_DRAWING_TOOL` already down, with the pointer parked where the next one would go. A draft's live preview is the whole feedback of a multi-anchor gesture, and it is the only surface that exists *between* two clicks — nothing else reaches it without a hand on the mouse. Clamped to one short of the tool's anchor count, so it always photographs a gesture in flight and never a finished object. `QUANTICK_DRAWING_TOOL=parallel-channel QUANTICK_DRAWING_DRAFT=2` is the channel mid-width, the state the "it draws a straight line" report was about |
+
 Landing with the drawing context bar goal (`feat/drawing-context-bar`):
 
 | Hook | Reaches |
