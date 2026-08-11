@@ -325,7 +325,7 @@ fn status_line(
     let mut status = format!(
         "vol {} · Δ {} · rows {}",
         fmt_qty(profile.total_volume()),
-        fmt_qty(profile.total_delta()),
+        fmt_signed_qty(profile.total_delta()),
         profile.group()
     );
     if profile.is_aggregated() {
@@ -509,6 +509,22 @@ fn row_height(profile: &VolumeProfile, ctxt: &DrawContext<'_>) -> f32 {
 
 fn fmt_qty(value: Decimal) -> String {
     crate::chart::compact_value(to_f64(value))
+}
+
+/// A signed quantity, with the `+` written out.
+///
+/// Delta's sign *is* the reading — buyers or sellers took the range — and a
+/// bare `214.24` against `-214.24` puts that entire meaning in a three-pixel
+/// hyphen, at 10 px, in one flat muted colour, with `delta_coloring` off by
+/// default. Two people already read the wrong side off this label. Zero is
+/// written unsigned: it took neither side.
+fn fmt_signed_qty(value: Decimal) -> String {
+    let body = fmt_qty(value);
+    if value > Decimal::ZERO {
+        format!("+{body}")
+    } else {
+        body
+    }
 }
 
 impl DrawingToolImpl for FixedRangeProfile {
@@ -1198,6 +1214,22 @@ mod tests {
         cache.key.include_partial = true;
         let status = status_line(&profile, &cache, &payload, false);
         assert!(status.contains(" · incl. forming bar"), "{status}");
+    }
+
+    /// Delta's sign is the whole reading, so it is written, not implied by
+    /// the absence of a hyphen. This is the label that sent two readers to
+    /// the wrong side of the tape.
+    #[test]
+    fn delta_writes_its_sign_on_both_sides_of_zero() {
+        assert_eq!(fmt_signed_qty(Decimal::from(214)), "+214.00");
+        assert_eq!(fmt_signed_qty(Decimal::from(-214)), "-214.00");
+        assert_eq!(fmt_signed_qty(Decimal::ZERO), "0.00", "zero took no side");
+        // Volume is unsigned and must not grow a `+`.
+        assert_eq!(fmt_qty(Decimal::from(985)), "985.00");
+
+        let payload = FrvpPayload::default();
+        let status = status_line(&some_profile(), &cache_for(85, 85, 0), &payload, false);
+        assert!(status.contains("Δ +"), "a buy-side delta is signed: {status}");
     }
 
     /// The status line slides left to keep its tail — where every caveat
