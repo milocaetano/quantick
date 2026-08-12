@@ -10,6 +10,7 @@ pub mod grouping;
 pub mod history;
 pub mod interaction;
 pub mod projection;
+pub mod scale;
 pub mod timeline;
 
 // This facade is intentionally wider than the first UI integration. Keeping
@@ -43,5 +44,7 @@ pub use projection::{
     LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PriceWindow, SettledProjection,
     project_live, project_settled,
 };
+#[allow(unused_imports)]
+pub use scale::SessionScale;
 #[allow(unused_imports)]
 pub use timeline::{BarTimeline, LiveEdge, TimelinePosition, reserved_span_ms};

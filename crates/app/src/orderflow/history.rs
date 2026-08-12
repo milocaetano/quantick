@@ -7,7 +7,8 @@ use quantick_engine::{Side, Trade};
 use quantick_orderbook::{ApplyOutcome, BookDelta, BookError, BookSide, BookSnapshot, OrderBook};
 use rust_decimal::Decimal;
 
-use super::config::HeatmapConfig;
+use super::config::{BubbleSizeReference, HeatmapConfig};
+use super::scale::{SessionScale, SummaryScale};
 
 /// Resting side represented by a liquidity run.
 pub type RestingSide = BookSide;
@@ -239,6 +240,8 @@ pub struct LiquidityHistory {
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
+    scale: SessionScale,
+    summary_scale: SummaryScale,
     coverage: VecDeque<CoverageSegment>,
     gaps: VecDeque<CoverageGap>,
     pending_gap: Option<usize>,
@@ -249,8 +252,11 @@ impl LiquidityHistory {
     /// Construct empty history from sanitized settings.
     #[must_use]
     pub fn new(config: HeatmapConfig) -> Self {
+        let config = config.sanitized();
         Self {
-            config: config.sanitized(),
+            scale: SessionScale::new(config.price_grouping, config.bubble_cluster_ms),
+            summary_scale: SummaryScale::new(config.price_grouping),
+            config,
             book: OrderBook::new(),
             generation: None,
             last_generation: None,
@@ -283,6 +289,17 @@ impl LiquidityHistory {
                 current: self.config.price_grouping,
                 requested: next.price_grouping,
             });
+        }
+        // A new clustering window changes what "one cluster" means, so the
+        // session scale restarts from the prints still retained — the honest
+        // best effort, since evicted prints cannot be replayed. Every other
+        // setting leaves the scale alone: it is an accumulation, not a view.
+        if next.bubble_cluster_ms != self.config.bubble_cluster_ms {
+            let mut scale = SessionScale::new(next.price_grouping, next.bubble_cluster_ms);
+            for trade in &self.aggressions {
+                scale.record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
+            }
+            self.scale = scale;
         }
         self.config = next;
         if let Some(now_ms) = self.latest_book_ms {
@@ -355,11 +372,14 @@ impl LiquidityHistory {
         self.active.len()
     }
 
-    /// Approximate bytes used by the bounded event history.
+    /// Approximate bytes used by the bounded event history — plus the session
+    /// scale, which is the one accumulation retention does *not* bound.
     #[must_use]
     pub fn approximate_history_bytes(&self) -> usize {
         self.archived.len() * size_of::<LiquidityRun>()
             + self.aggressions.len() * size_of::<Aggression>()
+            + self.scale.approximate_bytes()
+            + self.summary_scale.approximate_bytes()
     }
 
     /// Finalized runs followed by active runs (`end_ms == None`).
@@ -411,6 +431,43 @@ impl LiquidityHistory {
     /// Retained aggressive executions.
     pub fn aggressions(&self) -> impl Iterator<Item = &Aggression> {
         self.aggressions.iter()
+    }
+
+    /// Quantity that maps to a full-size bubble, on the session print scale.
+    ///
+    /// The automatic modes read the scale accumulated since the session (or
+    /// the last structural reset) began — see [`SessionScale`] for why the
+    /// answer deliberately ignores the viewport and retention alike. `Fixed`
+    /// reads the quantity the user pinned.
+    #[must_use]
+    pub fn bubble_size_reference(&self) -> Decimal {
+        match self.config.bubbles.size_reference {
+            BubbleSizeReference::VisibleP99 => self.scale.p99(),
+            BubbleSizeReference::VisibleMax => self.scale.max(),
+            BubbleSizeReference::Fixed => self
+                .config
+                .bubbles
+                .fixed_reference_decimal()
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Quantity that maps to a full-size summary pie, on the session scale of
+    /// per-minute level totals — see [`SummaryScale`] for why a pie is
+    /// measured against the busiest minute rather than against whatever pies
+    /// happen to be on screen. `Fixed` reads the pinned quantity, exactly as
+    /// the print scale does.
+    #[must_use]
+    pub fn bubble_summary_reference(&self) -> Decimal {
+        match self.config.bubbles.size_reference {
+            BubbleSizeReference::VisibleP99 => self.summary_scale.p99(),
+            BubbleSizeReference::VisibleMax => self.summary_scale.max(),
+            BubbleSizeReference::Fixed => self
+                .config
+                .bubbles
+                .fixed_reference_decimal()
+                .unwrap_or_default(),
+        }
     }
 
     /// Continuous synchronized intervals.
@@ -517,6 +574,10 @@ impl LiquidityHistory {
 
     /// Retain one trade for the aggression overlay without touching the book.
     pub fn record_aggression(&mut self, trade: &Trade) {
+        self.scale
+            .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
+        self.summary_scale
+            .record(trade.timestamp_ms, trade.price, trade.quantity);
         self.aggressions.push_back(Aggression {
             agg_id: trade.agg_id,
             timestamp_ms: trade.timestamp_ms,
@@ -550,6 +611,8 @@ impl LiquidityHistory {
             dropped_aggressions: self.aggressions.len(),
         };
         self.config.price_grouping = grouping;
+        self.scale = SessionScale::new(grouping, self.config.bubble_cluster_ms);
+        self.summary_scale = SummaryScale::new(grouping);
         self.book = OrderBook::new();
         self.generation = None;
         self.latest_book_ms = None;
@@ -1155,6 +1218,67 @@ mod tests {
             [2, 3]
         );
         assert_eq!(history.counters().aggressions_evicted, 1);
+    }
+
+    /// Retention bounds what the chart draws, never what a quantity means:
+    /// evicting the session's biggest print must not move the size scale, or
+    /// every bubble would quietly inflate as the big prints age out.
+    #[test]
+    fn evicting_a_print_never_moves_the_bubble_scale() {
+        let config = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            max_aggressions: 1,
+            bubble_cluster_ms: 0,
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(config);
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 100,
+            price: dec("101"),
+            quantity: dec("50"),
+            side: Side::Buy,
+        });
+        let anchored = history.bubble_size_reference();
+        assert_eq!(anchored, dec("50"));
+
+        // The cap evicts the big print; the scale still remembers it.
+        history.record_aggression(&trade(2, 200, Side::Sell));
+        assert_eq!(history.aggressions().count(), 1);
+        assert_eq!(history.counters().aggressions_evicted, 1);
+        assert_eq!(history.bubble_size_reference(), anchored);
+    }
+
+    /// Changing the clustering window changes what "one cluster" means, so
+    /// the scale rebuilds from the retained prints — and a structural
+    /// grouping reset starts it over with the history it just cleared.
+    #[test]
+    fn cluster_window_changes_rebuild_the_bubble_scale_from_retained_prints() {
+        let config = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            bubble_cluster_ms: 0,
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(config.clone());
+        // Two raw prints on one level, 500ms apart: separate clusters raw,
+        // one cluster of 4 once the window covers them.
+        history.record_aggression(&trade(1, 100, Side::Buy));
+        history.record_aggression(&trade(2, 600, Side::Buy));
+        assert_eq!(history.bubble_size_reference(), dec("2"));
+
+        history
+            .update_config(HeatmapConfig {
+                bubble_cluster_ms: 1_000,
+                ..config
+            })
+            .unwrap();
+        assert_eq!(history.bubble_size_reference(), dec("4"));
+
+        // A grouping reset drops the prints, and the scale with them.
+        history.reset_price_grouping(dec("2")).unwrap();
+        assert_eq!(history.bubble_size_reference(), Decimal::ZERO);
     }
 
     #[test]
