@@ -19,6 +19,7 @@
 //! asking the same question twice — the chart already has that control — and
 //! would let the four views disagree with one another.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -56,6 +57,15 @@ const BROKER_CLOCKS: [(i32, &str); 7] = [
     (3 * 3600, "+03:00"),
     (8 * 3600, "+08:00"),
 ];
+
+/// The month the calendar sits on before anything has been looked up.
+///
+/// It is never shown: the calendar only draws once a look-up has answered,
+/// and the answer moves it to the newest month that has data — which is where
+/// the trader wanted to be. A placeholder rather than "today" because this
+/// panel owns no clock, and reading one here would be the only wall-clock read
+/// on the path.
+const PLACEHOLDER_MONTH: (i64, u32) = (1970, 1);
 
 /// Rough prints per session for the estimate, when nothing better is known.
 ///
@@ -99,7 +109,13 @@ pub struct GetDataPanel {
     day: Option<String>,
     context_sessions: u32,
     /// Days the provider says it holds, or `None` before it was asked.
-    available: Option<Vec<String>>,
+    ///
+    /// A set, not a list: the calendar asks "is this day held?" once per cell
+    /// per frame, and a linear scan of four months of days would be ~3,700
+    /// string comparisons every frame to draw thirty-one numbers. Ordered
+    /// rather than hashed, following the repo's rule for anything whose
+    /// iteration can reach what is drawn.
+    available: Option<BTreeSet<String>>,
     /// The symbol `available` was measured for, so a retyped symbol invalidates
     /// the calendar instead of quietly showing another instrument's days.
     available_for: String,
@@ -126,10 +142,7 @@ impl GetDataPanel {
     pub fn new() -> Self {
         Self {
             symbol: String::new(),
-            // A calendar has to open somewhere and this struct owns no clock;
-            // the first probe moves it to the newest month with data, which is
-            // where the trader wanted to be anyway.
-            month: (2026, 1),
+            month: PLACEHOLDER_MONTH,
             day: None,
             context_sessions: DEFAULT_CONTEXT_SESSIONS,
             available: None,
@@ -217,7 +230,7 @@ impl GetDataPanel {
                     self.month = (newest.0, newest.1);
                 }
                 self.available_for = symbol;
-                self.available = Some(days);
+                self.available = Some(days.into_iter().collect());
                 self.phase = Phase::Idle;
                 None
             }
@@ -417,7 +430,10 @@ impl GetDataPanel {
         // instrument's days under the new name — the fastest way to download
         // the wrong contract.
         let stale = self.symbol.trim() != self.available_for;
-        let Some(available) = self.available.clone().filter(|_| !stale) else {
+        // Taken out and put back rather than cloned: this runs every frame,
+        // and copying four months of day strings to draw one month of numbers
+        // is an allocation per frame for nothing.
+        let Some(available) = self.available.take().filter(|_| !stale) else {
             egui::Frame::none()
                 .fill(egui::Color32::from_black_alpha(60))
                 .inner_margin(10.0)
@@ -470,16 +486,26 @@ impl GetDataPanel {
                         for _ in 0..lead {
                             ui.label("");
                         }
+                        // Built once for the month, not once per cell: the old
+                        // shape called `SessionDate::label` inside the scan,
+                        // which allocates a String per comparison — thirty-one
+                        // days times every session in the folder, every frame.
+                        let mut on_disk: BTreeSet<String> = BTreeSet::new();
+                        if let Some(library) = library {
+                            on_disk.extend(
+                                library
+                                    .sessions
+                                    .iter()
+                                    .filter_map(|s| s.date.map(|d| d.label())),
+                            );
+                        }
+
                         let mut column = lead;
                         for day in 1..=days_in_month(year, month) {
                             let iso = format!("{year:04}-{month:02}-{day:02}");
                             let held = available.contains(&iso);
-                            let on_disk = library.is_some_and(|l| {
-                                l.sessions
-                                    .iter()
-                                    .any(|s| s.date.is_some_and(|d| d.label() == iso))
-                            });
-                            self.draw_day_cell(ui, day, &iso, held, on_disk);
+                            let downloaded = on_disk.contains(&iso);
+                            draw_day_cell(ui, &mut self.day, day, &iso, held, downloaded);
                             column += 1;
                             if column.is_multiple_of(7) {
                                 ui.end_row();
@@ -501,35 +527,7 @@ impl GetDataPanel {
                     );
                 });
             });
-    }
-
-    fn draw_day_cell(&mut self, ui: &mut egui::Ui, day: u32, iso: &str, held: bool, on_disk: bool) {
-        if !held {
-            // Not a disabled button: there is nothing here to press, and a
-            // greyed number reads as "no data" faster than a dead control.
-            ui.label(
-                egui::RichText::new(format!("{day:2}"))
-                    .color(TEXT_MUTED)
-                    .weak(),
-            );
-            return;
-        }
-        let selected = self.day.as_deref() == Some(iso);
-        let text = if on_disk {
-            egui::RichText::new(format!("{day:2}")).color(AMBER)
-        } else {
-            egui::RichText::new(format!("{day:2}")).color(TEXT_PRIMARY)
-        };
-        let response = ui
-            .selectable_label(selected, text)
-            .on_hover_text(if on_disk {
-                format!("{iso} — already on disk; downloading again replaces it")
-            } else {
-                iso.to_string()
-            });
-        if response.clicked() {
-            self.day = Some(iso.to_string());
-        }
+        self.available = Some(available);
     }
 
     fn draw_context_row(&mut self, ui: &mut egui::Ui) {
@@ -699,6 +697,46 @@ impl GetDataPanel {
     }
 }
 
+/// One day in the calendar grid.
+///
+/// A free function taking the selection by reference rather than a method:
+/// the grid runs inside a closure that already borrows the panel's day set,
+/// and this is what lets the set be borrowed instead of copied every frame.
+fn draw_day_cell(
+    ui: &mut egui::Ui,
+    selected_day: &mut Option<String>,
+    day: u32,
+    iso: &str,
+    held: bool,
+    on_disk: bool,
+) {
+    if !held {
+        // Not a disabled button: there is nothing here to press, and a greyed
+        // number reads as "no data" faster than a dead control does.
+        ui.label(
+            egui::RichText::new(format!("{day:2}"))
+                .color(TEXT_MUTED)
+                .weak(),
+        );
+        return;
+    }
+    let selected = selected_day.as_deref() == Some(iso);
+    let colour = if on_disk { AMBER } else { TEXT_PRIMARY };
+    let response = ui
+        .selectable_label(
+            selected,
+            egui::RichText::new(format!("{day:2}")).color(colour),
+        )
+        .on_hover_text(if on_disk {
+            format!("{iso} — already on disk; downloading again replaces it")
+        } else {
+            iso.to_string()
+        });
+    if response.clicked() {
+        *selected_day = Some(iso.to_string());
+    }
+}
+
 /// `2026-08-12` → `(2026, 8, 12)`.
 fn parse_day(iso: &str) -> Option<(i64, u32, u32)> {
     let mut parts = iso.split('-');
@@ -865,7 +903,7 @@ mod tests {
         let mut panel = GetDataPanel::new();
         panel.symbol = "WINQ26".to_string();
         panel.available_for = "WINQ26".to_string();
-        panel.available = Some(vec!["2026-08-12".to_string()]);
+        panel.available = Some(BTreeSet::from(["2026-08-12".to_string()]));
         assert_eq!(panel.symbol.trim(), panel.available_for);
 
         panel.symbol = "WINV26".to_string();
