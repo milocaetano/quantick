@@ -2480,6 +2480,7 @@ dependencies = [
  "rfd",
  "rust_decimal",
  "serde",
+ "serde_json",
  "smallvec",
  "tokio",
  "toml 0.8.20",

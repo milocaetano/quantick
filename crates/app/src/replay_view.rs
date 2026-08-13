@@ -23,6 +23,7 @@ use quantick_replay::format::{self, UtcOffset};
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
 use crate::feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
+use crate::replay_get_data::{GetDataAction, GetDataPanel};
 use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
 
 /// The accent this feature owns: the same amber the chart already uses for the
@@ -36,6 +37,12 @@ pub const TRANSPORT_HEIGHT: f32 = 30.0;
 
 /// Environment variable naming the folder the browser opens on.
 pub const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
+
+/// Environment variable that opens the browser on its **Get data** tab.
+///
+/// `1` opens it empty; any other value pre-fills the symbol field, so a
+/// scripted run can reach the calendar from a fresh launch with no clicks.
+pub const GET_DATA_ENV: &str = "QUANTICK_REPLAY_GET_DATA";
 
 /// Height of the seek track, in pixels.
 const TRACK_HEIGHT: f32 = 6.0;
@@ -61,6 +68,19 @@ struct Loading {
     result: Receiver<Result<Session, SessionError>>,
 }
 
+/// The two halves of the browser.
+///
+/// One window, because for a trader "get me Wednesday" and "play Wednesday"
+/// are the same errand. A separate menu entry for downloading would be a
+/// feature shipped and never found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserTab {
+    /// Recordings already on disk.
+    Sessions,
+    /// Download a new one from a provider.
+    GetData,
+}
+
 /// The session browser's state. Owned by the app, drawn every frame.
 pub struct ReplayView {
     browser_open: bool,
@@ -79,6 +99,11 @@ pub struct ReplayView {
     /// proportional to the whole recording — so a drag shows this position and
     /// only commits it when the handle is let go. See [`seek_track`].
     scrub: Option<f32>,
+    /// Which half of the browser is showing.
+    tab: BrowserTab,
+    /// The download half's state, kept across tab switches so a running
+    /// download is not lost by looking at the session list.
+    get_data: GetDataPanel,
 }
 
 impl Default for ReplayView {
@@ -103,6 +128,8 @@ impl ReplayView {
             speed: 1.0,
             autoplay: true,
             scrub: None,
+            tab: BrowserTab::Sessions,
+            get_data: GetDataPanel::new(),
         }
     }
 
@@ -111,6 +138,22 @@ impl ReplayView {
         self.browser_open = true;
         if self.library.is_none() && !self.folder.trim().is_empty() {
             self.rescan();
+        }
+    }
+
+    /// Open the browser on its **Get data** tab, optionally with a symbol
+    /// already typed and looked up.
+    ///
+    /// The same states a click produces: the tab, the typed symbol, and — so
+    /// the calendar is reachable from a fresh launch with no hand on the mouse
+    /// — the day look-up that a press of **Look up days** would run.
+    pub fn open_get_data(&mut self, symbol: Option<&str>) {
+        self.open_browser();
+        self.tab = BrowserTab::GetData;
+        if let Some(symbol) = symbol {
+            self.get_data.set_symbol(symbol);
+            let folder = self.folder.clone();
+            self.get_data.look_up_days(&folder);
         }
     }
 
@@ -283,6 +326,7 @@ impl ReplayView {
         }
         let mut open = true;
         let mut load_clicked = false;
+        let mut downloaded = None;
 
         egui::Window::new("Market Replay")
             .open(&mut open)
@@ -293,20 +337,74 @@ impl ReplayView {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
+                self.draw_tab_strip(ui);
+                ui.add_space(8.0);
                 self.draw_folder_row(ui);
                 ui.add_space(10.0);
-                load_clicked = self.draw_session_list(ui);
-                ui.add_space(8.0);
-                self.draw_problems(ui);
-                self.draw_format_help(ui);
-                ui.add_space(6.0);
-                load_clicked |= self.draw_start_row(ui);
+                match self.tab {
+                    BrowserTab::Sessions => {
+                        load_clicked = self.draw_session_list(ui);
+                        ui.add_space(8.0);
+                        self.draw_problems(ui);
+                        self.draw_format_help(ui);
+                        ui.add_space(6.0);
+                        load_clicked |= self.draw_start_row(ui);
+                    }
+                    BrowserTab::GetData => {
+                        let folder = self.folder.clone();
+                        downloaded = self
+                            .get_data
+                            .draw(ui, &folder, self.library.as_ref())
+                            .map(|GetDataAction::Downloaded(tape)| tape);
+                    }
+                }
             });
 
         self.browser_open = open;
+        // A finished download lands the trader where the session now is: back
+        // on the list, with the new day scanned and already picked. Making
+        // them find it again would be the one avoidable step in the whole flow.
+        if let Some(tape) = downloaded {
+            self.rescan();
+            self.select_path(&tape);
+            self.tab = BrowserTab::Sessions;
+        }
         if load_clicked {
             self.load_selected();
         }
+    }
+
+    /// The two tabs. A download in flight is announced on its tab, so switching
+    /// to the session list never loses sight of it.
+    fn draw_tab_strip(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.tab == BrowserTab::Sessions, "My sessions")
+                .clicked()
+            {
+                self.tab = BrowserTab::Sessions;
+            }
+            let label = if self.get_data.is_busy() {
+                format!("Get data  {}", icons::ARROWS_CLOCKWISE)
+            } else {
+                "Get data".to_string()
+            };
+            if ui
+                .selectable_label(self.tab == BrowserTab::GetData, label)
+                .on_hover_text("Download a session from MetaTrader 5")
+                .clicked()
+            {
+                self.tab = BrowserTab::GetData;
+            }
+        });
+    }
+
+    /// Select the session at `path`, if the scan found it.
+    fn select_path(&mut self, path: &std::path::Path) {
+        let Some(library) = self.library.as_ref() else {
+            return;
+        };
+        self.selected = library.sessions.iter().position(|s| s.path == path);
     }
 
     fn draw_folder_row(&mut self, ui: &mut egui::Ui) {

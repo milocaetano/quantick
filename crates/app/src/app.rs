@@ -1103,6 +1103,25 @@ impl QuantickApp {
                 "market replay autostart"
             );
         }
+        // The download half of the same browser. Reached on its own because a
+        // scripted run has to photograph the Get data tab without a click, and
+        // it is a different screen from the session list beside it. Takes the
+        // same path the tab click takes; a symbol pre-fills the field so the
+        // calendar can be looked up from a fresh launch.
+        if let Ok(value) = std::env::var(crate::replay_view::GET_DATA_ENV) {
+            let symbol = match value.trim() {
+                "1" | "" => None,
+                symbol => Some(symbol.to_string()),
+            };
+            app.replay_view.open_get_data(symbol.as_deref());
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_GET_DATA_AUTOSTART",
+                symbol = symbol.as_deref().unwrap_or(""),
+                "opened the replay download tab"
+            );
+        }
         // Same convenience for the dock: open a named tab, so a scripted
         // validation run shows a panel without a click.
         if let Ok(name) = std::env::var("QUANTICK_DOCK_TAB") {
