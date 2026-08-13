@@ -12,9 +12,11 @@
 //! discipline the trait demands: kernels are cloned for the preview push so
 //! committed state never advances inside a forming bar.
 
+mod avwap;
 mod cvd;
 mod ema;
 
+pub use avwap::{AVWAP_BAND_PAIRS, AVWAP_PLOT_COUNT, AnchoredVwap};
 pub use cvd::Cvd;
 pub use ema::Ema;
 
@@ -31,6 +33,31 @@ pub(crate) const EMA_DEFAULT_LEN: i64 = 9;
 
 /// CVD pane color.
 pub(crate) const CVD_COLOR: Rgba8 = Rgba8::opaque(41, 182, 246);
+
+/// Anchored VWAP center line color — the same reserved cyan the chart's
+/// drawing tool opens in (`theme::DRAW_CYAN`), stated here so a panel or
+/// script consumer of the kernel shows one feature in one color.
+pub(crate) const AVWAP_COLOR: Rgba8 = Rgba8::opaque(77, 208, 225);
+
+/// Band line colors, pair 1..=3: same hue, fading with distance from vwap.
+pub(crate) const AVWAP_LINE_COLORS: [Rgba8; 3] = [
+    Rgba8::new(77, 208, 225, 150),
+    Rgba8::new(77, 208, 225, 110),
+    Rgba8::new(77, 208, 225, 80),
+];
+
+/// Translucent fills between each band pair; alphas chosen to stay legible
+/// when all three stack over candles.
+pub(crate) const AVWAP_FILL_COLORS: [Rgba8; 3] = [
+    Rgba8::new(77, 208, 225, 20),
+    Rgba8::new(77, 208, 225, 13),
+    Rgba8::new(77, 208, 225, 8),
+];
+
+/// Default σ multipliers a fresh Anchored VWAP declares for its three bands.
+/// Public: the chart's drawing tool seeds its own defaults from these, so
+/// the two surfaces cannot drift.
+pub const AVWAP_BAND_MULTS: [f64; 3] = [1.0, 2.0, 3.0];
 
 #[cfg(test)]
 mod tests {

@@ -118,6 +118,7 @@ mod tests {
             payload: &payload,
             anchors: &[],
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style,

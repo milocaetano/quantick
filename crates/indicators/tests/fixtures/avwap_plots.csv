@@ -1,0 +1,19 @@
+# Anchored VWAP over trades_avwap.csv — anchor 1700000001000, source hlc3,
+# band 1 on (x1.0), band 2 on (x2.0), band 3 off.
+#
+# Hand-computed (see the trade fixture header for the per-bar numbers):
+#   pv   = sum(hlc3 * vol)          v = sum(vol)      vwap = pv / v
+#   var  = sum(hlc3^2 * vol)/v - vwap^2   (clamped at 0)
+#   band = vwap +/- mult * sqrt(var)
+#
+#   bar1: pv 768,  v 8  -> 96;  var 0
+#   bar2: pv 1792, v 16 -> 112; var 204800/16 - 112^2 = 256 -> sigma 16
+#   bar3: pv 3072, v 32 -> 96;  var 307200/32 - 96^2  = 384 -> sigma sqrt(384)
+#
+# sqrt(384) in f64 is 19.595917942265423; the band rows below are the exact
+# f64 sums/differences of 96 with 1x and 2x that value.
+bar_index,vwap,upper_1,lower_1,upper_2,lower_2,upper_3,lower_3
+0,NaN,NaN,NaN,NaN,NaN,NaN,NaN
+1,96.0,96.0,96.0,96.0,96.0,NaN,NaN
+2,112.0,128.0,96.0,144.0,80.0,NaN,NaN
+3,96.0,115.59591794226543,76.40408205773457,135.19183588453086,56.808164115469154,NaN,NaN

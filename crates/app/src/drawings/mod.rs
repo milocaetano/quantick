@@ -189,6 +189,13 @@ pub struct DrawContext<'a> {
     pub payload: &'a dyn DrawingPayload,
     pub anchors: &'a [ChartPoint],
     pub scale: &'a PriceScale,
+    /// Screen pixels one bar slot occupies — the time axis's own scale, the
+    /// way `scale` is the value axis's. Almost every tool ignores it: their
+    /// anchors are already projected. A tool that paints a *series* (one
+    /// value per bar, like the anchored VWAP's line) needs it to place slots
+    /// its anchors never touched; `<= 0` means the pane could not say, and
+    /// such a tool draws nothing rather than guessing.
+    pub px_per_bar: f32,
     /// What `scale` measures on this band — see [`ValueUnit`].
     pub unit: ValueUnit<'a>,
     /// Whether this is the first band painting an object that crosses all of
@@ -366,6 +373,25 @@ trait DrawingToolImpl: Sync {
     fn default_color(&self) -> Option<egui::Color32> {
         None
     }
+    /// The stroke width a fresh object of this tool is born with, when the
+    /// stock hairline would be the wrong answer. The hairline rule (§D2) is
+    /// written for *annotations*; a tool that paints a derived **series** —
+    /// one value per bar competing with candle bodies — declares its weight
+    /// here instead of asking every trader to fix it by hand.
+    fn default_width_px(&self) -> Option<f32> {
+        None
+    }
+    /// The fill alpha a fresh object opens with, when the stock value would
+    /// read as "the fill is broken" for this tool's geometry.
+    fn default_fill_alpha(&self) -> Option<u8> {
+        None
+    }
+    /// The chart's right-click menu entry that places this tool at the
+    /// clicked bar, if the tool wants one. The pane sweeps the registry —
+    /// the next series tool docks with a declaration, not a pane.rs edit.
+    fn context_menu_label(&self) -> Option<&'static str> {
+        None
+    }
     /// The rail family this tool belongs to, if any. Consecutive registry
     /// entries with the same family id share one rail slot.
     fn family(&self) -> Option<ToolFamily> {
@@ -537,10 +563,17 @@ impl DrawingTool {
     /// own saved default is consulted.
     #[must_use]
     pub fn default_style(self) -> DrawingStyle {
+        let stock = DrawingStyle::default();
         DrawingStyle {
             color: self.0.default_color().unwrap_or(DEFAULT_DRAWING_COLOR),
-            ..DrawingStyle::default()
+            width_px: self.0.default_width_px().unwrap_or(stock.width_px),
+            fill_alpha: self.0.default_fill_alpha().unwrap_or(stock.fill_alpha),
         }
+    }
+
+    #[must_use]
+    pub fn context_menu_label(self) -> Option<&'static str> {
+        self.0.context_menu_label()
     }
 
     #[must_use]
@@ -797,6 +830,8 @@ register_drawing_tools!(
     price_range,
     date_range,
     fixed_range_profile,
+    // Series
+    anchored_vwap,
     // Annotation
     text,
 );
@@ -804,6 +839,13 @@ register_drawing_tools!(
 // The profile drawing's payload types, re-exported for `crate::frvp` — the
 // refresh pass that folds engine ladders into the cache the paint reads.
 pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
+
+// The anchored VWAP's payload types, re-exported for `crate::avwap` — the
+// refresh pass that replays the indicators-crate kernel into the cache.
+pub use anchored_vwap::{
+    AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPartialSig,
+    AvwapPayload,
+};
 
 /// One anchor of a drawing.
 ///
@@ -2114,6 +2156,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style: DrawingStyle::default(),
@@ -2202,6 +2245,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: 20.0,
                 unit: ValueUnit::Price,
                 primary_band: true,
                 style,
@@ -2502,6 +2546,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style: DrawingStyle::default(),
@@ -2598,6 +2643,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style: DrawingStyle::default(),
@@ -2665,6 +2711,43 @@ mod tests {
         );
     }
 
+    /// The style-default port is additive: a tool that declares nothing is
+    /// born in the stock look, and the one that declares (the anchored VWAP,
+    /// a series) is born in its own — colour, weight and fill together.
+    #[test]
+    fn style_defaults_are_per_tool_and_additive() {
+        let stock = DrawingStyle::default();
+        let mut declaring = 0;
+        for tool in DRAWING_TOOLS {
+            let style = tool.default_style();
+            if tool.id() == "anchored-vwap" {
+                assert_eq!(style.color, crate::theme::DRAW_CYAN);
+                assert!(style.width_px > stock.width_px, "a series outweighs a note");
+                assert!(style.fill_alpha > stock.fill_alpha);
+                declaring += 1;
+            } else {
+                assert_eq!(
+                    (style.width_px, style.fill_alpha),
+                    (stock.width_px, stock.fill_alpha),
+                    "{} must keep the stock weight and fill",
+                    tool.id()
+                );
+            }
+        }
+        assert_eq!(declaring, 1, "exactly one tool declares today");
+    }
+
+    /// The context-menu port is additive too: exactly the tools that declare
+    /// a label appear in the pane's right-click sweep.
+    #[test]
+    fn the_context_menu_port_is_declared_not_hardcoded() {
+        let labelled: Vec<&str> = DRAWING_TOOLS
+            .into_iter()
+            .filter_map(|tool| tool.context_menu_label())
+            .collect();
+        assert_eq!(labelled, vec!["Anchor VWAP here"]);
+    }
+
     /// The handle port is additive: a tool that does not declare handles is
     /// grabbed by its raw anchors, exactly as before the port existed. Only
     /// the channel opts out, and it opts out on purpose.
@@ -2680,6 +2763,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: 20.0,
                 unit: ValueUnit::Price,
                 primary_band: true,
                 style: DrawingStyle::default(),
@@ -2759,6 +2843,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: 20.0,
                 unit: ValueUnit::Price,
                 primary_band: true,
                 style: DrawingStyle::default(),

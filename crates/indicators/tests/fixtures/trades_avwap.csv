@@ -1,0 +1,22 @@
+# Twelve trades closing four tick(3) bars, designed so every accumulator is
+# binary-exact (powers of two) and the expected plots are checkable by hand:
+#
+#   bar0 (before the anchor): ignored by the indicator entirely.
+#   bar1: H=112 L=80  C=96  hlc3=96  vol=8   -> vwap 96,  sigma 0
+#   bar2: H=144 L=112 C=128 hlc3=128 vol=8   -> vwap 112, sigma 16 (exact)
+#   bar3: H=96  L=64  C=80  hlc3=80  vol=16  -> vwap 96,  sigma sqrt(384)
+#
+# The anchor is 1700000001000 = bar1's open_time; bar0 closes before it.
+agg_id,timestamp_ms,price,quantity,side
+1,1700000000000,100.0,1.0,buy
+2,1700000000100,100.0,1.0,sell
+3,1700000000200,100.0,1.0,buy
+4,1700000001000,112.0,2.0,buy
+5,1700000001100,80.0,2.0,sell
+6,1700000001200,96.0,4.0,buy
+7,1700000002000,144.0,2.0,buy
+8,1700000002100,112.0,2.0,sell
+9,1700000002200,128.0,4.0,buy
+10,1700000003000,96.0,4.0,sell
+11,1700000003100,64.0,4.0,buy
+12,1700000003200,80.0,8.0,sell
