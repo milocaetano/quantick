@@ -68,8 +68,9 @@ z_thr = input.float(2.0, "4 Trigger: aggression (sigmas)", minval=0.5, maxval=6.
 z_len = input.int(100, "4 Trigger: sigma window (bars)", minval=10, maxval=300)
 trigger_validity = input.int(6, "4 Trigger: bars the setup stays armed", minval=0, maxval=30)
 
-// signals — the near-miss layer can be silenced.
-show_near = input.bool(true, "Signals: show near-misses (3 of 4)")
+// signals — the near-miss layer can be silenced. Titled "Display:" like
+// the layer switches below, so the dialog groups all four together.
+show_near = input.bool(true, "Display: near-misses (3 of 4)")
 
 // advanced plumbing — rarely touched.
 atr_len = input.int(14, "Advanced: ATR length", minval=2, maxval=100)

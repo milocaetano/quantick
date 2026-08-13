@@ -177,6 +177,30 @@ fn draw_row(
             ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
                 .on_hover_text("showing un-applied settings — Apply keeps, Discard reverts");
         }
+        // A layer switched off in settings must not read like a broken
+        // indicator: a Copilot with everything off draws nothing, and a row
+        // that looks healthy over an empty chart says "bug", not "as asked"
+        // (trader-ux review). Counts the `Display:`-titled bools that are
+        // off — the same convention the settings dialog groups by.
+        let layers_off = view
+            .descriptor
+            .inputs
+            .iter()
+            .zip(view.input_values.iter())
+            .filter(|(spec, value)| {
+                crate::indicator_panel::split_section(spec.title()).0
+                    == crate::indicator_panel::DISPLAY_SECTION
+                    && **value == quantick_indicators::InputValue::Bool(false)
+            })
+            .count();
+        if layers_off > 0 {
+            ui.label(
+                egui::RichText::new(format!("{layers_off} off"))
+                    .small()
+                    .color(theme::TEXT_MUTED),
+            )
+            .on_hover_text("display layers switched off in settings");
+        }
         if ui
             .small_button(if view.hidden {
                 icons::EYE

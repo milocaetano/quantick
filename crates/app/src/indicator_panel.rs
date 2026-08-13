@@ -80,14 +80,26 @@ pub(crate) fn draw(
             let SettingsDialog {
                 draft, committed, ..
             } = dialog;
+            let order = row_order(specs);
             egui::Grid::new("indicator-settings-grid")
                 .num_columns(2)
                 .spacing([12.0, 8.0])
                 .show(ui, |ui| {
-                    for ((spec, value), applied) in
-                        specs.iter().zip(draft.iter_mut()).zip(committed.iter())
-                    {
-                        changed |= input_row(ui, spec, value, applied);
+                    let mut current_section: Option<&str> = None;
+                    for &index in &order {
+                        let spec = &specs[index];
+                        let (section, label) = split_section(spec.title());
+                        if !section.is_empty() && current_section != Some(section) {
+                            current_section = Some(section);
+                            ui.label(
+                                egui::RichText::new(section)
+                                    .strong()
+                                    .color(theme::TEXT_MUTED),
+                            );
+                            ui.label("");
+                            ui.end_row();
+                        }
+                        changed |= input_row(ui, spec, &mut draft[index], &committed[index], label);
                         ui.end_row();
                     }
                 });
@@ -124,7 +136,7 @@ pub(crate) fn draw(
                 // committed yet.
                 if previewed {
                     ui.label(
-                        egui::RichText::new("previewing — Apply keeps, Close reverts")
+                        egui::RichText::new("previewing — Apply keeps, Discard reverts")
                             .color(theme::TEXT_MUTED),
                     );
                 }
@@ -148,6 +160,32 @@ pub(crate) fn draw(
     outcome
 }
 
+/// The section whose rows are hoisted to the top of the dialog: the layer
+/// switches a trader reaches for mid-session must not sit below "Advanced"
+/// at the bottom of a long parameter list (trader-ux review). Scripts opt
+/// in by titling an input `Display: <layer>`.
+pub(crate) const DISPLAY_SECTION: &str = "Display";
+
+/// A title's section grammar, the one the built-in scripts already use:
+/// `"1 Context: window (bars)"` → section `"1 Context"`, label
+/// `"window (bars)"`. A title without the separator has no section.
+pub(crate) fn split_section(title: &str) -> (&str, &str) {
+    title
+        .split_once(": ")
+        .map_or(("", title), |(section, label)| (section, label))
+}
+
+/// Render order for the dialog's rows: script order, except the
+/// [`DISPLAY_SECTION`] rows, which move to the top as one block. Rendering
+/// order only — the draft/committed vectors stay in declaration order, so
+/// positional persistence never notices.
+fn row_order(specs: &[InputSpec]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..specs.len()).collect();
+    // Stable sort: within "display first, rest after", script order holds.
+    order.sort_by_key(|&index| split_section(specs[index].title()).0 != DISPLAY_SECTION);
+    order
+}
+
 /// One label + widget row. The value enum always matches its spec variant
 /// (both come from the same declaration); a mismatch draws nothing rather
 /// than panicking a frame. Returns whether the value changed this frame —
@@ -155,25 +193,19 @@ pub(crate) fn draw(
 /// widget that never reports a change: its intermediate states ("E", "EM")
 /// are not values anyone asked to run. `applied` is the last committed
 /// value: double-clicking a slider snaps back to it — the per-parameter
-/// undo a live preview owes the hand that slipped.
+/// undo a live preview owes the hand that slipped. `label` is the title
+/// with its section prefix stripped; widget ids keep using the full title,
+/// which is the stable name.
 fn input_row(
     ui: &mut egui::Ui,
     spec: &InputSpec,
     value: &mut InputValue,
     applied: &InputValue,
+    label: &str,
 ) -> bool {
     match (spec, value) {
-        (
-            InputSpec::Int {
-                title,
-                min,
-                max,
-                step,
-                ..
-            },
-            InputValue::Int(current),
-        ) => {
-            ui.label(title);
+        (InputSpec::Int { min, max, step, .. }, InputValue::Int(current)) => {
+            ui.label(label);
             // A declared range on both ends is the author saying "this axis
             // is worth sweeping" — render it as a slider. A half-open range
             // has no lower/upper anchor to draw, so it stays a DragValue.
@@ -205,17 +237,8 @@ fn input_row(
                 ui.add(drag).changed()
             }
         }
-        (
-            InputSpec::Float {
-                title,
-                min,
-                max,
-                step,
-                ..
-            },
-            InputValue::Float(current),
-        ) => {
-            ui.label(title);
+        (InputSpec::Float { min, max, step, .. }, InputValue::Float(current)) => {
+            ui.label(label);
             if let (Some(lo), Some(hi)) = (min, max) {
                 let mut slider = egui::Slider::new(current, *lo..=*hi);
                 if let Some(step) = step {
@@ -242,12 +265,12 @@ fn input_row(
                 ui.add(drag).changed()
             }
         }
-        (InputSpec::Bool { title, .. }, InputValue::Bool(current)) => {
-            ui.label(title);
+        (InputSpec::Bool { .. }, InputValue::Bool(current)) => {
+            ui.label(label);
             ui.checkbox(current, "").changed()
         }
-        (InputSpec::Color { title, .. }, InputValue::Color(current)) => {
-            ui.label(title);
+        (InputSpec::Color { .. }, InputValue::Color(current)) => {
+            ui.label(label);
             let mut rgba = [current.r, current.g, current.b, current.a];
             if ui.color_edit_button_srgba_unmultiplied(&mut rgba).changed() {
                 *current = Rgba8::new(rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -257,7 +280,7 @@ fn input_row(
             }
         }
         (InputSpec::Str { title, options, .. }, InputValue::Str(current)) => {
-            ui.label(title);
+            ui.label(label);
             if options.is_empty() {
                 ui.text_edit_singleline(current);
                 false
@@ -276,7 +299,7 @@ fn input_row(
             }
         }
         (InputSpec::Source { title, .. }, InputValue::Source(current)) => {
-            ui.label(title);
+            ui.label(label);
             let mut changed = false;
             egui::ComboBox::from_id_salt(("input-source", title))
                 .selected_text(current.as_str())
@@ -296,5 +319,85 @@ fn input_row(
             ui.label("");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indicator_worker::SlotId;
+
+    fn stepped_float(title: &str) -> InputSpec {
+        InputSpec::Float {
+            name: "x".to_owned(),
+            title: title.to_owned(),
+            default: 0.1,
+            min: Some(0.0),
+            max: Some(0.5),
+            step: Some(0.05),
+            options: Vec::new(),
+        }
+    }
+
+    fn display_bool() -> InputSpec {
+        InputSpec::Bool {
+            name: "show".to_owned(),
+            title: "Display: context semaphore".to_owned(),
+            default: true,
+        }
+    }
+
+    /// A stepped slider snaps a value that is not on its grid the moment it
+    /// first draws, and reports that as `changed`. Without the settle frame
+    /// the dialog opened already announcing a preview nobody asked for —
+    /// this test fails with `Preview` on frame 0 if that regresses.
+    #[test]
+    fn first_frame_widget_normalization_is_not_a_preview() {
+        let specs = vec![stepped_float("Advanced: min bar body (×ATR)")];
+        let mut dialog = SettingsDialog {
+            slot: SlotId(7),
+            title: "Copilot".to_owned(),
+            draft: vec![InputValue::Float(0.123)],
+            committed: vec![InputValue::Float(0.123)],
+            previewed: false,
+            settled: false,
+        };
+        let ctx = egui::Context::default();
+        for frame in 0..2 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                let outcome = draw(ctx, &mut dialog, &specs);
+                assert!(
+                    !matches!(outcome, SettingsOutcome::Preview),
+                    "frame {frame}: widget normalization must not announce a preview"
+                );
+            });
+        }
+        assert!(dialog.settled, "the first frame settles the dialog");
+        assert_eq!(
+            dialog.draft, dialog.committed,
+            "whatever the widgets normalized became the baseline"
+        );
+    }
+
+    /// Render order only: the Display rows move to the top as one block,
+    /// everything else keeps script order — and the indices still point at
+    /// the declaration positions the state file persists by.
+    #[test]
+    fn display_rows_hoist_to_the_top_in_render_order_only() {
+        let specs = vec![
+            stepped_float("1 Context: max height (×ATR)"),
+            display_bool(),
+            stepped_float("Advanced: min bar body (×ATR)"),
+        ];
+        assert_eq!(row_order(&specs), vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn titles_split_into_section_and_label() {
+        assert_eq!(
+            split_section("1 Context: window (bars)"),
+            ("1 Context", "window (bars)")
+        );
+        assert_eq!(split_section("Length"), ("", "Length"));
     }
 }

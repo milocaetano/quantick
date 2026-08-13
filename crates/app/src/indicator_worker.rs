@@ -364,6 +364,23 @@ impl IndicatorWorker {
     }
 }
 
+/// Latest-wins per slot for `SetInputs`, like the batch loop's own
+/// `PartialUpdated` coalescing: a slider drag enqueues one per UI frame, and
+/// each one is a full construct-anew + replay. Only the newest of the batch
+/// runs — the intermediate drafts were never going to be seen anyway.
+/// Skipping an earlier `SetInputs` is safe because applying one is
+/// position-independent: it replays the whole retained history no matter
+/// where in the batch it sits.
+fn latest_set_inputs(batch: &[IndicatorCommand]) -> BTreeMap<SlotId, usize> {
+    let mut latest = BTreeMap::new();
+    for (index, command) in batch.iter().enumerate() {
+        if let IndicatorCommand::SetInputs { slot, .. } = command {
+            latest.insert(*slot, index);
+        }
+    }
+    latest
+}
+
 fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
     let mut host = IndicatorHost::new();
     // BTreeMap: deterministic iteration order for event emission.
@@ -387,19 +404,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
         // redundant (the snapshot is taken after the whole batch).
         let mut rebuilt = false;
 
-        // Latest-wins per slot for SetInputs, like PartialUpdated above: a
-        // slider drag enqueues one per UI frame, and each one is a full
-        // construct-anew + replay. Only the newest of the batch runs — the
-        // intermediate drafts were never going to be seen anyway. Skipping
-        // an earlier SetInputs is safe because applying one is
-        // position-independent: it replays the whole retained history no
-        // matter where in the batch it sits.
-        let mut last_set_inputs: BTreeMap<SlotId, usize> = BTreeMap::new();
-        for (index, command) in batch.iter().enumerate() {
-            if let IndicatorCommand::SetInputs { slot, .. } = command {
-                last_set_inputs.insert(*slot, index);
-            }
-        }
+        let last_set_inputs = latest_set_inputs(&batch);
 
         for (index, command) in batch.into_iter().enumerate() {
             match command {
@@ -753,6 +758,29 @@ mod tests {
         let mut builder = TickBarBuilder::new(tick);
         let bars = engine_golden::replay(&mut builder, &trades);
         (bars, builder.partial().cloned())
+    }
+
+    /// A slider drag enqueues one `SetInputs` per UI frame; only the newest
+    /// per slot may run, and other slots' requests must survive untouched.
+    #[test]
+    fn set_inputs_coalesces_latest_wins_per_slot() {
+        let a = SlotId(1);
+        let b = SlotId(2);
+        let set = |slot, value| IndicatorCommand::SetInputs {
+            slot,
+            values: vec![quantick_indicators::InputValue::Int(value)],
+        };
+        let batch = vec![
+            set(a, 10),
+            IndicatorCommand::BarClosed(bars_and_partial(3, 2).0[0].clone()),
+            set(b, 20),
+            set(a, 11),
+            set(a, 12),
+        ];
+        let latest = latest_set_inputs(&batch);
+        assert_eq!(latest.get(&a), Some(&4), "slot A keeps only its newest");
+        assert_eq!(latest.get(&b), Some(&2), "slot B is untouched by A's burst");
+        assert_eq!(latest.len(), 2);
     }
 
     /// The §6 host/worker property: applying the delta-event stream to the

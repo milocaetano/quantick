@@ -1848,6 +1848,13 @@ impl QuantickApp {
     /// of a committed signal (trader-ux review). The legend chip says it in
     /// the corner; this says it where the signals are.
     fn draw_indicator_preview_watermark(&self, ctx: &egui::Context) {
+        /// Distance below the pane's top edge, in pixels — below the
+        /// top-centre toast lane ("loading venue history"), so the two never
+        /// overprint each other.
+        const WATERMARK_TOP_OFFSET_PX: f32 = 34.0;
+        /// Watermark font size, in pixels: larger than a legend chip, far
+        /// from a headline.
+        const WATERMARK_FONT_PX: f32 = 13.0;
         let Some(dialog) = self.indicator_settings.as_ref() else {
             return;
         };
@@ -1869,12 +1876,10 @@ impl QuantickApp {
             egui::Id::new("indicator-preview-watermark"),
         ));
         painter.text(
-            // Below the top-centre toast lane ("loading venue history"), so
-            // the two never overprint each other.
-            egui::pos2(rect.center().x, rect.top() + 34.0),
+            egui::pos2(rect.center().x, rect.top() + WATERMARK_TOP_OFFSET_PX),
             egui::Align2::CENTER_TOP,
             "PREVIEW — settings not applied",
-            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(WATERMARK_FONT_PX),
             theme::ACCENT,
         );
     }
