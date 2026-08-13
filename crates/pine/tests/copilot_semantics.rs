@@ -212,3 +212,29 @@ fn without_cvd_divergence_the_same_double_top_stays_silent() {
         "3-of-4 with divergence missing prints the near-miss on the confirmation bar"
     );
 }
+
+/// The same divergent double top, but the sell spike lands three bars
+/// AFTER the confirmation instead of inside its window: the structure must
+/// stay armed and the full signal fire on the bar the aggression arrives.
+#[test]
+fn an_armed_structure_fires_when_the_aggression_lands_late() {
+    let mut tape = double_top_tape(SELL_DRIFT);
+    tape[21] = CALM; // no aggression inside the confirmation window…
+    tape.extend([CALM, CALM]); // …bars 23-24 stay calm…
+    tape.push(Tape {
+        buy: 1.0,
+        sell: 30.0,
+        ..CALM
+    }); // …and the spike lands at bar 25, within the 4-bar armed window.
+    let indicator = run(&tape);
+    assert_eq!(
+        marker_rows(indicator.as_ref(), "Short setup"),
+        vec![25],
+        "the armed structure fires on the bar the spike lands"
+    );
+    assert_eq!(
+        marker_rows(indicator.as_ref(), "Short near-miss"),
+        Vec::<usize>::new(),
+        "a spike inside the armed window is a full signal, not a near-miss"
+    );
+}
