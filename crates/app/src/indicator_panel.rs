@@ -50,12 +50,21 @@ const PLOT_WIDTH_DRAG_SPEED: f64 = 0.02;
 /// position HUD and the order-flow key, the top-right by the book badge, and
 /// the right edge by the price axis. The bottom-left holds the least.
 ///
-/// Computed per frame from the live window rather than hardcoded, because a
-/// fixed `y` is only the bottom of one window size and the app's window is
-/// resizable down to 900x560. Only the *first* placement uses it; egui
-/// remembers wherever the trader drags it afterwards.
+/// Measured from [`Context::available_rect`], not from the whole window: the
+/// status bar is a panel along the bottom, and placing against the window's own
+/// edge put the dialog over the symbol and bar spec written there. Whatever
+/// panels the frame has claimed by the time this runs are excluded by
+/// construction, so the dialog cannot cover the toolbar or the status line
+/// however tall either grows.
+///
+/// Computed per frame rather than hardcoded, because a fixed `y` is only the
+/// bottom of one window size and the app's window is resizable down to 900x560.
+/// Only the *first* placement uses it; egui remembers wherever the trader drags
+/// it afterwards.
+///
+/// [`Context::available_rect`]: egui::Context::available_rect
 fn settings_default_position(ctx: &egui::Context) -> egui::Pos2 {
-    ctx.screen_rect().left_bottom() + egui::vec2(SETTINGS_MARGIN_PX, -SETTINGS_MARGIN_PX)
+    ctx.available_rect().left_bottom() + egui::vec2(SETTINGS_MARGIN_PX, -SETTINGS_MARGIN_PX)
 }
 
 /// Width of the preset-name field, in pixels — room for a MAX_NAME_LEN-ish
