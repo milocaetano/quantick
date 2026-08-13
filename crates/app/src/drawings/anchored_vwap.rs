@@ -33,12 +33,13 @@ pub(super) static TOOL: AnchoredVwapTool = AnchoredVwapTool;
 pub(super) struct AnchoredVwapTool;
 
 const PRESET_FORMAT_VERSION: u32 = 1;
-/// Number of optional σ-band pairs — the kernel's own count.
-pub const AVWAP_BAND_PAIRS: usize = 3;
-/// Plot values per cached row: vwap + (upper, lower) per pair.
-pub const AVWAP_ROW_WIDTH: usize = 1 + 2 * AVWAP_BAND_PAIRS;
-/// Default σ multipliers, pair 1..=3 (TradingView's 1σ/2σ/3σ convention).
-pub const AVWAP_DEFAULT_MULTS: [f64; AVWAP_BAND_PAIRS] = [1.0, 2.0, 3.0];
+/// The kernel's own counts and defaults, re-used rather than copied: a
+/// fourth band pair added there fails to compile here instead of silently
+/// mis-sizing every cached row.
+pub use quantick_indicators::native::{
+    AVWAP_BAND_MULTS as AVWAP_DEFAULT_MULTS, AVWAP_BAND_PAIRS,
+    AVWAP_PLOT_COUNT as AVWAP_ROW_WIDTH,
+};
 /// Band *lines* fade with distance from the vwap; the trader's colour keeps
 /// carrying the object, so these are alphas over `style.color`, not hues.
 const BAND_LINE_ALPHA: [f32; AVWAP_BAND_PAIRS] = [0.55, 0.40, 0.30];
@@ -48,6 +49,8 @@ const BAND_FILL_FRAC: [f32; AVWAP_BAND_PAIRS] = [1.0, 0.65, 0.40];
 /// Band line width relative to the vwap's own stroke: the hairline of an
 /// annotation — the bands frame, the vwap leads.
 const BAND_WIDTH_FRAC: f32 = 0.5;
+/// Thinnest a band line may be drawn, whatever the vwap's own stroke.
+const BAND_MIN_WIDTH_PX: f32 = 0.5;
 /// The anchor marker: a ring on the seed bar, a shade wider than the
 /// selection handles (3.5 px) so the two never blur into one blob.
 const ANCHOR_RADIUS_PX: f32 = 4.0;
@@ -356,6 +359,9 @@ impl DrawingToolImpl for AnchoredVwapTool {
     fn required_points(&self) -> usize {
         1
     }
+    fn context_menu_label(&self) -> Option<&'static str> {
+        Some("Anchor VWAP here")
+    }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
             key: egui::Key::W,
@@ -441,7 +447,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
                         continue;
                     }
                     let band_stroke = egui::Stroke::new(
-                        (style.width_px * BAND_WIDTH_FRAC).max(0.5),
+                        (style.width_px * BAND_WIDTH_FRAC).max(BAND_MIN_WIDTH_PX),
                         style.color.gamma_multiply(*line_alpha),
                     );
                     for column in [1 + 2 * pair, 2 + 2 * pair] {

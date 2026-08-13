@@ -5446,11 +5446,16 @@ impl QuantickApp {
     /// stack, the fills and the anchor marker in a single deterministic
     /// frame. Consumed once, like the drawings demo.
     fn apply_avwap_demo(&mut self) {
+        /// Fewest bars the demo waits for before anchoring — enough for the
+        /// average and one band pair to visibly develop.
+        const DEMO_AVWAP_MIN_SLOTS: usize = 12;
+        /// How far back of the newest bar the demo drops its anchor.
+        const DEMO_AVWAP_LOOKBACK_BARS: usize = 40;
         if !self.pending_avwap_demo {
             return;
         }
         let slots = self.active_tab_mut().flow_pane.slots();
-        if slots < 12 {
+        if slots < DEMO_AVWAP_MIN_SLOTS {
             return;
         }
         self.pending_avwap_demo = false;
@@ -5462,7 +5467,9 @@ impl QuantickApp {
         };
         let pane = &mut self.active_tab_mut().flow_pane;
         // Far enough back for the average to develop, on a bar that exists.
-        let anchor = slots.saturating_sub(40).min(slots - 1);
+        let anchor = slots
+            .saturating_sub(DEMO_AVWAP_LOOKBACK_BARS)
+            .min(slots - 1);
         let close = pane
             .closed_bar(anchor)
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))

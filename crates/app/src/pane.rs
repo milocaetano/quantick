@@ -1375,23 +1375,26 @@ impl ChartPane {
             chrome.paper.context_trade_actions(ui, price);
             ui.separator();
         }
-        // Anchor a VWAP at the bar under the right-click — the TradingView
-        // gesture, without reaching for the rail. Only where a bar exists:
-        // an average of the empty space right of the tape means nothing.
+        // Tools that place at the bar under the right-click (the anchored
+        // VWAP's TradingView gesture) declare their entry on the registry —
+        // the pane sweeps it, so the next series tool docks with a
+        // declaration, not an edit here. Only where a bar exists: an anchor
+        // in the empty space right of the tape means nothing.
         if let Some(anchor) = self.context_menu_anchor {
-            if ui
-                .button("Anchor VWAP here")
-                .on_hover_text("start an Anchored VWAP at this bar")
-                .clicked()
-            {
-                let tool = drawings::DRAWING_TOOLS
-                    .into_iter()
-                    .find(|tool| tool.id() == crate::avwap::TOOL_ID)
-                    .expect("the anchored VWAP is registered");
-                self.place_drawing_point(tool, &DrawingBand::Price, anchor, chrome);
-                ui.close_menu();
+            let mut placed = false;
+            for tool in drawings::DRAWING_TOOLS {
+                let Some(label) = tool.context_menu_label() else {
+                    continue;
+                };
+                if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
+                    self.place_drawing_point(tool, &DrawingBand::Price, anchor, chrome);
+                    ui.close_menu();
+                }
+                placed = true;
             }
-            ui.separator();
+            if placed {
+                ui.separator();
+            }
         }
         ui.label(
             egui::RichText::new("chart layers")

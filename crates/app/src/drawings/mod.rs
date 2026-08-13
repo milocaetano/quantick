@@ -386,6 +386,12 @@ trait DrawingToolImpl: Sync {
     fn default_fill_alpha(&self) -> Option<u8> {
         None
     }
+    /// The chart's right-click menu entry that places this tool at the
+    /// clicked bar, if the tool wants one. The pane sweeps the registry —
+    /// the next series tool docks with a declaration, not a pane.rs edit.
+    fn context_menu_label(&self) -> Option<&'static str> {
+        None
+    }
     /// The rail family this tool belongs to, if any. Consecutive registry
     /// entries with the same family id share one rail slot.
     fn family(&self) -> Option<ToolFamily> {
@@ -563,6 +569,11 @@ impl DrawingTool {
             width_px: self.0.default_width_px().unwrap_or(stock.width_px),
             fill_alpha: self.0.default_fill_alpha().unwrap_or(stock.fill_alpha),
         }
+    }
+
+    #[must_use]
+    pub fn context_menu_label(self) -> Option<&'static str> {
+        self.0.context_menu_label()
     }
 
     #[must_use]
@@ -2698,6 +2709,43 @@ mod tests {
             vec![handle],
             "the ring the trader sees is the point they can grab, not the anchor"
         );
+    }
+
+    /// The style-default port is additive: a tool that declares nothing is
+    /// born in the stock look, and the one that declares (the anchored VWAP,
+    /// a series) is born in its own — colour, weight and fill together.
+    #[test]
+    fn style_defaults_are_per_tool_and_additive() {
+        let stock = DrawingStyle::default();
+        let mut declaring = 0;
+        for tool in DRAWING_TOOLS {
+            let style = tool.default_style();
+            if tool.id() == "anchored-vwap" {
+                assert_eq!(style.color, crate::theme::DRAW_CYAN);
+                assert!(style.width_px > stock.width_px, "a series outweighs a note");
+                assert!(style.fill_alpha > stock.fill_alpha);
+                declaring += 1;
+            } else {
+                assert_eq!(
+                    (style.width_px, style.fill_alpha),
+                    (stock.width_px, stock.fill_alpha),
+                    "{} must keep the stock weight and fill",
+                    tool.id()
+                );
+            }
+        }
+        assert_eq!(declaring, 1, "exactly one tool declares today");
+    }
+
+    /// The context-menu port is additive too: exactly the tools that declare
+    /// a label appear in the pane's right-click sweep.
+    #[test]
+    fn the_context_menu_port_is_declared_not_hardcoded() {
+        let labelled: Vec<&str> = DRAWING_TOOLS
+            .into_iter()
+            .filter_map(|tool| tool.context_menu_label())
+            .collect();
+        assert_eq!(labelled, vec!["Anchor VWAP here"]);
     }
 
     /// The handle port is additive: a tool that does not declare handles is

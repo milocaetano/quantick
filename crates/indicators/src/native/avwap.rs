@@ -22,7 +22,9 @@ use crate::output::{FillSpec, PlotBuffer, PlotId, PlotSpec, PlotStyle, PreviewFr
 pub const AVWAP_BAND_PAIRS: usize = 3;
 
 /// One plot column per value: vwap + (upper, lower) per band pair.
-const PLOT_COUNT: usize = 1 + 2 * AVWAP_BAND_PAIRS;
+/// Public for the same reason as [`AVWAP_BAND_PAIRS`]: a consumer caching
+/// rows sizes them from here, never from a copied literal.
+pub const AVWAP_PLOT_COUNT: usize = 1 + 2 * AVWAP_BAND_PAIRS;
 
 /// The volume-weighted running state — three sums, nothing else.
 #[derive(Debug, Clone, Copy, Default)]
@@ -150,8 +152,8 @@ impl AnchoredVwap {
     }
 
     /// One evaluated row from the running sums; all-`na` before any volume.
-    fn row(&self, sums: Sums) -> [f64; PLOT_COUNT] {
-        let mut row = [f64::NAN; PLOT_COUNT];
+    fn row(&self, sums: Sums) -> [f64; AVWAP_PLOT_COUNT] {
+        let mut row = [f64::NAN; AVWAP_PLOT_COUNT];
         if sums.v <= 0.0 {
             return row;
         }
