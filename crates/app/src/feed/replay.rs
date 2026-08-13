@@ -262,21 +262,57 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         // A file on disk needs nothing started, and a session that failed to
         // parse never reaches this point: the browser that opened it reports.
         notices: super::silent_notices(),
-        // A recording is trades and nothing else: no depth in the file, no
-        // venue to page older history from, and no candles — the time pane
-        // shows exactly what the tape covers, which is the honest answer for a
-        // file. Synthesizing months of candles around a recorded hour would
-        // present data the recording never held. The sizes in it are the sizes
-        // that were captured, so anything measuring volume still works.
+        // A recording carries no depth and no venue to page trades from. It
+        // does carry candles when a context file was downloaded beside it —
+        // and only then. Synthesizing months of candles around a recorded hour
+        // would present data the recording never held, so the capability
+        // follows the file on disk rather than the fact that this is a replay.
+        // The sizes in it are the sizes that were captured, so anything
+        // measuring volume still works.
         capabilities: super::fixed_capabilities(FeedCapabilities {
             book_capture: false,
             history_paging: false,
             traded_volume: true,
-            ohlcv_history: false,
+            ohlcv_history: request.session.context.is_some(),
             ohlcv_generation: 0,
         }),
         commands: cmd_tx,
         replay: Some(link),
+    }
+}
+
+/// The candles to answer one `FetchOhlcv` with, from the session's context.
+///
+/// The span is measured back from the recording's first print, not from the
+/// wall clock: a session recorded in March is being replayed today, and "the
+/// last 90 days" has to mean 90 days of *the market's* time or the whole
+/// context would fall outside it.
+///
+/// A recording with no context file answers empty and complete — that is the
+/// whole truth about it, not a fetch that came up short.
+fn context_reply(session: &Session, span_ms: i64) -> FeedEvent {
+    let Some(context) = session.context.as_ref() else {
+        return FeedEvent::OhlcvHistory {
+            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            bars: Vec::new(),
+            complete: true,
+        };
+    };
+    let earliest = session.start_ms().saturating_sub(span_ms);
+    let bars: Vec<_> = context
+        .bars
+        .iter()
+        .filter(|bar| bar.open_time >= earliest)
+        .cloned()
+        .collect();
+    FeedEvent::OhlcvHistory {
+        interval_ms: context.interval_ms,
+        // Short for either of two reasons, and both are the same answer to the
+        // caller: the download itself was clipped, or this span does not reach
+        // the whole of what was downloaded. Either way there is more market
+        // before the first bar returned, which is what `complete: false` says.
+        complete: context.complete && bars.len() == context.bars.len(),
+        bars,
     }
 }
 
@@ -319,20 +355,11 @@ fn play(
         loop {
             match commands.try_recv() {
                 Ok(FeedCommand::Replay(control)) => drained.push(control),
-                // A recording holds no candles, but the request still has to be
-                // answered: every FetchOhlcv gets exactly one reply, or the
-                // pane waits for one that never comes. Empty is that answer.
-                Ok(FeedCommand::FetchOhlcv { .. }) => {
-                    if tx
-                        .blocking_send(FeedEvent::OhlcvHistory {
-                            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
-                            bars: Vec::new(),
-                            // Complete: a recording holds no candles at all, and
-                            // that is the whole truth rather than a short fetch.
-                            complete: true,
-                        })
-                        .is_err()
-                    {
+                // Answered from the context file beside the recording, or
+                // answered empty — but always answered exactly once, or the
+                // pane waits for a reply that never comes.
+                Ok(FeedCommand::FetchOhlcv { span_ms }) => {
+                    if tx.blocking_send(context_reply(&session, span_ms)).is_err() {
                         return; // UI gone
                     }
                 }
@@ -519,6 +546,111 @@ mod tests {
             )
             .expect("session"),
         )
+    }
+
+    /// The same session, with `minutes` of broker candles downloaded beside it.
+    ///
+    /// The candles sit in the hour before the tape starts, which is where a
+    /// real context file sits: the market's past, never overlapping the
+    /// recording.
+    fn session_with_context(count: usize, minutes: i64) -> Arc<Session> {
+        let mut session = Session::clone(&session(count));
+        let first = session.start_ms();
+        let mut text = String::from("# interval_ms=60000\nDate,Time,Open,High,Low,Close,Volume\n");
+        for i in 0..minutes {
+            // Counting backwards from the print before the tape opens.
+            let stamp = first - (minutes - i) * 60_000;
+            let (date, time) = quantick_replay::format::format_datetime(
+                stamp,
+                quantick_replay::format::UtcOffset::UTC,
+            );
+            text.push_str(&format!("{date},{time},100,110,90,105,7\n"));
+        }
+        session.context = Some(quantick_replay::parse_context(&text).expect("context fixture"));
+        Arc::new(session)
+    }
+
+    /// Drain the next candle reply, or fail the test rather than hang.
+    fn next_candles(handle: &mut FeedHandle) -> (i64, Vec<quantick_engine::Bar>, bool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "no reply: a pane would hang here"
+            );
+            match handle.events.try_recv() {
+                Ok(FeedEvent::OhlcvHistory {
+                    interval_ms,
+                    bars,
+                    complete,
+                }) => break (interval_ms, bars, complete),
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
+                Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_downloaded_context_answers_the_candle_request() {
+        let mut handle = spawn(ReplayRequest {
+            session: session_with_context(4, 90),
+            options: ReplayOptions {
+                speed: 1.0,
+                autoplay: false,
+                skip_idle_over_ms: None,
+            },
+        });
+        assert!(
+            handle.capabilities.borrow().ohlcv_history,
+            "the capability follows the file on disk, not the fact this is a replay"
+        );
+
+        handle
+            .commands
+            .blocking_send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            })
+            .expect("the worker is listening");
+
+        let (interval_ms, bars, complete) = next_candles(&mut handle);
+        assert_eq!(interval_ms, 60_000, "the interval is the file's, not assumed");
+        assert_eq!(bars.len(), 90);
+        assert!(complete, "the whole downloaded context fits in 90 days");
+        assert!(
+            bars.windows(2).all(|w| w[0].open_time < w[1].open_time),
+            "candles run forwards"
+        );
+        // Broker candles have no aggressor split, all the way to the chart.
+        assert!(bars.iter().all(|b| b.delta() == Decimal::ZERO));
+    }
+
+    #[test]
+    fn a_span_shorter_than_the_context_says_there_is_more_before_it() {
+        // The span is measured back from the recording's own first print, not
+        // from the wall clock: a session recorded in March is replayed today,
+        // and "the last hour" has to mean the market's hour.
+        let mut handle = spawn(ReplayRequest {
+            session: session_with_context(4, 90),
+            options: ReplayOptions {
+                speed: 1.0,
+                autoplay: false,
+                skip_idle_over_ms: None,
+            },
+        });
+        handle
+            .commands
+            .blocking_send(FeedCommand::FetchOhlcv {
+                span_ms: 30 * 60_000,
+            })
+            .expect("the worker is listening");
+
+        let (_, bars, complete) = next_candles(&mut handle);
+        assert_eq!(bars.len(), 30, "only the candles inside the span");
+        assert!(
+            !complete,
+            "there is more market before the first bar, and the pane must be told"
+        );
     }
 
     /// Drain events until `want` trades have arrived or the deadline passes.
