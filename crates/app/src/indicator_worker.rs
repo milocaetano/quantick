@@ -387,7 +387,21 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
         // redundant (the snapshot is taken after the whole batch).
         let mut rebuilt = false;
 
-        for command in batch {
+        // Latest-wins per slot for SetInputs, like PartialUpdated above: a
+        // slider drag enqueues one per UI frame, and each one is a full
+        // construct-anew + replay. Only the newest of the batch runs — the
+        // intermediate drafts were never going to be seen anyway. Skipping
+        // an earlier SetInputs is safe because applying one is
+        // position-independent: it replays the whole retained history no
+        // matter where in the batch it sits.
+        let mut last_set_inputs: BTreeMap<SlotId, usize> = BTreeMap::new();
+        for (index, command) in batch.iter().enumerate() {
+            if let IndicatorCommand::SetInputs { slot, .. } = command {
+                last_set_inputs.insert(*slot, index);
+            }
+        }
+
+        for (index, command) in batch.into_iter().enumerate() {
             match command {
                 IndicatorCommand::Backfilled(bars) => {
                     host.rebuild(&bars, None);
@@ -477,6 +491,9 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     }
                 },
                 IndicatorCommand::SetInputs { slot, values } => {
+                    if last_set_inputs.get(&slot) != Some(&index) {
+                        continue;
+                    }
                     if let Some(mirror) = slots.get_mut(&slot)
                         && let Some(host_id) = mirror.host_id
                     {

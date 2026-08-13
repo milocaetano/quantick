@@ -21,7 +21,7 @@ fn test_inputs() -> Vec<InputValue> {
         InputValue::Int(2),      // 2 structure: bars to confirm a pivot
         InputValue::Float(0.5),  // 2 structure: touch tolerance (×ATR)
         InputValue::Int(3),      // 2 structure: touches min bars apart
-        InputValue::Int(20), // 2 structure: touches max bars apart (fits the 23-bar tape's warmup)
+        InputValue::Int(17), // 2 structure: extreme lookback beyond min (was "max apart" 20 − min 3)
         InputValue::Float(1.2), // 3 proof: absorption min (×avg effort)
         InputValue::Int(10), // 3 proof: effort average window (bars)
         InputValue::Float(1.5), // 4 trigger: aggression (sigmas)
@@ -30,6 +30,9 @@ fn test_inputs() -> Vec<InputValue> {
         InputValue::Bool(true), // signals: show near-misses
         InputValue::Int(3),  // advanced: ATR length
         InputValue::Float(0.1), // advanced: min bar body (×ATR)
+        InputValue::Bool(true), // display: context semaphore
+        InputValue::Bool(true), // display: structure (DT/DB)
+        InputValue::Bool(true), // display: full signals + stop
     ]
 }
 
