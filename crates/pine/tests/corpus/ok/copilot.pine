@@ -42,32 +42,48 @@
 indicator("Copilot", overlay=true)
 
 // 1 — context: how wide may the recent window get before it is a trend?
-regime_len = input.int(80, "1 Context: window (bars)", minval=10)
-regime_k = input.float(6.0, "1 Context: max height (×ATR)", minval=1.0)
-regime_confirm = input.int(3, "1 Context: bars to confirm a flip", minval=1)
+regime_len = input.int(80, "1 Context: window (bars)", minval=10, maxval=300)
+regime_k = input.float(6.0, "1 Context: max height (×ATR)", minval=1.0, maxval=20.0, step=0.25)
+regime_confirm = input.int(3, "1 Context: bars to confirm a flip", minval=1, maxval=20)
 
 // 2 — structure: what counts as a retest of the extreme?
-pivot_l = input.int(5, "2 Structure: bars left of a pivot", minval=1)
-pivot_r = input.int(3, "2 Structure: bars to confirm a pivot", minval=1)
-tol_atr = input.float(0.5, "2 Structure: retest tolerance (×ATR)", minval=0.0)
-min_gap = input.int(5, "2 Structure: touches min bars apart", minval=1)
-max_gap = input.int(80, "2 Structure: touches max bars apart", minval=6)
+pivot_l = input.int(5, "2 Structure: bars left of a pivot", minval=1, maxval=20)
+pivot_r = input.int(3, "2 Structure: bars to confirm a pivot", minval=1, maxval=20)
+tol_atr = input.float(0.5, "2 Structure: retest tolerance (×ATR)", minval=0.05, maxval=2.0, step=0.05)
+min_gap = input.int(5, "2 Structure: touches min bars apart", minval=1, maxval=50)
+// The lookback is declared as a span BEYOND `min_gap`, not as an absolute
+// "max bars apart": two independent sliders for min and max would let one
+// drag push the window negative, and a coupled clamp in a generic dialog
+// would be per-indicator knowledge smuggled into the renderer. A span is
+// valid at every slider position by construction. (Was `max_gap`, default
+// 80 absolute = 75 beyond the min.)
+gap_span = input.int(75, "2 Structure: extreme lookback beyond min (bars)", minval=6, maxval=300)
 
 // 3 — proof: the second touch must be absorbed, not merely revisited.
-er_thr = input.float(1.5, "3 Proof: absorption min (×avg effort)", minval=1.0)
-er_len = input.int(100, "3 Proof: effort average window (bars)", minval=10)
+er_thr = input.float(1.5, "3 Proof: absorption min (×avg effort)", minval=1.0, maxval=5.0, step=0.1)
+er_len = input.int(100, "3 Proof: effort average window (bars)", minval=10, maxval=300)
 
 // 4 — trigger: how unusual must the aggression at the extreme be?
-z_thr = input.float(2.0, "4 Trigger: aggression (sigmas)", minval=0.5)
-z_len = input.int(100, "4 Trigger: sigma window (bars)", minval=10)
-trigger_validity = input.int(6, "4 Trigger: bars the setup stays armed", minval=0)
+z_thr = input.float(2.0, "4 Trigger: aggression (sigmas)", minval=0.5, maxval=6.0, step=0.1)
+z_len = input.int(100, "4 Trigger: sigma window (bars)", minval=10, maxval=300)
+trigger_validity = input.int(6, "4 Trigger: bars the setup stays armed", minval=0, maxval=30)
 
-// signals — the near-miss layer can be silenced.
-show_near = input.bool(true, "Signals: show near-misses (3 of 4)")
+// signals — the near-miss layer can be silenced. Titled "Display:" like
+// the layer switches below, so the dialog groups all four together.
+show_near = input.bool(true, "Display: near-misses (3 of 4)")
 
 // advanced plumbing — rarely touched.
-atr_len = input.int(14, "Advanced: ATR length", minval=2)
-rng_floor = input.float(0.1, "Advanced: min bar body (×ATR)", minval=0.01)
+atr_len = input.int(14, "Advanced: ATR length", minval=2, maxval=100)
+rng_floor = input.float(0.1, "Advanced: min bar body (×ATR)", minval=0.01, maxval=0.5, step=0.01)
+
+// display — one switch per drawn layer, gating draw sites only (the
+// scoring pipeline always runs, so flipping a layer back on never changes
+// what the copilot concluded). Appended AFTER every older input: the state
+// file stores values positionally, and an insertion mid-list would remap
+// every saved value one slot over.
+show_semaphore = input.bool(true, "Display: context semaphore")
+show_structure = input.bool(true, "Display: structure (DT/DB)")
+show_signals = input.bool(true, "Display: full signals + stop")
 
 atr = ta.atr(atr_len)
 
@@ -88,8 +104,8 @@ if not stand_down and nz(trend_run, regime_confirm) >= regime_confirm
 if stand_down and nz(range_run, regime_confirm) >= regime_confirm
     stand_down := false
 ribbon_y = hi_w + atr
-plotshape(stand_down ? na : ribbon_y, "Context OK", style=shape.circle, location=location.absolute, color=color.new(color.teal, 45))
-plotshape(stand_down ? ribbon_y : na, "Context: stand down", style=shape.cross, location=location.absolute, color=color.new(color.red, 25))
+plotshape(not show_semaphore or stand_down ? na : ribbon_y, "Context OK", style=shape.circle, location=location.absolute, color=color.new(color.teal, 45))
+plotshape(show_semaphore and stand_down ? ribbon_y : na, "Context: stand down", style=shape.cross, location=location.absolute, color=color.new(color.red, 25))
 
 // --- shared effort series ---------------------------------------------------
 // Sigmas of per-bar delta: "how unusual is this aggression?" relative to
@@ -105,18 +121,18 @@ er_rel = er / ta.sma(er, er_len)
 
 // --- 2. structure: a pivot that retests the window's extreme ----------------
 // The prior extreme is the highest high (lowest low) of the window that
-// ends `min_gap` bars before the touch and spans back to `max_gap` bars —
+// ends `min_gap` bars before the touch and spans `gap_span` bars beyond —
 // the level the tape remembers, not merely the previous pivot, so a minor
 // wiggle between the touches cannot steal the comparison. Every series is
 // read at the confirmation bar, `pivot_r` bars after the touch.
 ph = ta.pivothigh(high, pivot_l, pivot_r)
 top_now = not na(ph)
-prior_top = ta.highest(high, max_gap - min_gap)[pivot_r + min_gap]
-prior_top_off = ta.highestbars(high, max_gap - min_gap)[pivot_r + min_gap]
+prior_top = ta.highest(high, gap_span)[pivot_r + min_gap]
+prior_top_off = ta.highestbars(high, gap_span)[pivot_r + min_gap]
 pl = ta.pivotlow(low, pivot_l, pivot_r)
 bot_now = not na(pl)
-prior_bot = ta.lowest(low, max_gap - min_gap)[pivot_r + min_gap]
-prior_bot_off = ta.lowestbars(low, max_gap - min_gap)[pivot_r + min_gap]
+prior_bot = ta.lowest(low, gap_span)[pivot_r + min_gap]
+prior_bot_off = ta.lowestbars(low, gap_span)[pivot_r + min_gap]
 
 // Bars from the current (confirmation) bar back to the prior extreme:
 // the offsets from highestbars/lowestbars are negative within their
@@ -126,10 +142,10 @@ bot_prior_gap = pivot_r + min_gap - prior_bot_off
 
 double_top = top_now and not na(prior_top) and math.abs(ph - prior_top) <= tol_atr * atr
 double_bottom = bot_now and not na(prior_bot) and math.abs(pl - prior_bot) <= tol_atr * atr
-if double_top
+if show_structure and double_top
     line.new(bar_index - top_prior_gap, prior_top, bar_index - pivot_r, ph, color=color.red, width=2)
     label.new(bar_index - pivot_r, ph, text="DT", style=label.style_label_down, color=color.new(color.red, 20))
-if double_bottom
+if show_structure and double_bottom
     line.new(bar_index - bot_prior_gap, prior_bot, bar_index - pivot_r, pl, color=color.teal, width=2)
     label.new(bar_index - pivot_r, pl, text="DB", style=label.style_label_up, color=color.new(color.teal, 20))
 
@@ -204,14 +220,14 @@ if show_near and long_expired
 // stop line on full signals: the invalidation is the touch extreme.
 stop_top = short_setup_now ? ph : short_level
 stop_bot = long_setup_now ? pl : long_level
-if short_setup
+if show_signals and short_setup
     line.new(bar_index - pivot_r, stop_top, bar_index, stop_top, color=color.red, width=1)
     label.new(bar_index, stop_top, text="stop", style=label.style_none, textcolor=color.new(color.red, 20))
-if long_setup
+if show_signals and long_setup
     line.new(bar_index - pivot_r, stop_bot, bar_index, stop_bot, color=color.teal, width=1)
     label.new(bar_index, stop_bot, text="stop", style=label.style_none, textcolor=color.new(color.teal, 20))
 
-plotshape(short_setup, "Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")
-plotshape(long_setup, "Long setup", style=shape.triangleup, location=location.belowbar, color=color.teal, text="BUY")
+plotshape(show_signals and short_setup, "Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")
+plotshape(show_signals and long_setup, "Long setup", style=shape.triangleup, location=location.belowbar, color=color.teal, text="BUY")
 plotshape(short_near or (show_near and short_expired), "Short near-miss", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 65))
 plotshape(long_near or (show_near and long_expired), "Long near-miss", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal, 65))

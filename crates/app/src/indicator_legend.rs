@@ -93,6 +93,7 @@ pub(crate) fn draw(
     pane_id: u64,
     chart_rect: egui::Rect,
     views: &[IndicatorView],
+    preview_slot: Option<SlotId>,
 ) -> Vec<LegendAction> {
     let mut actions = Vec::new();
     if views.is_empty() {
@@ -112,7 +113,7 @@ pub(crate) fn draw(
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
                     for view in views {
-                        draw_row(ui, view, &mut actions);
+                        draw_row(ui, view, preview_slot == Some(view.slot), &mut actions);
                     }
                 });
         });
@@ -122,7 +123,12 @@ pub(crate) fn draw(
 /// One legend row. Status precedence matches the toolbar menu's dot:
 /// errored beats stale beats hidden — a broken indicator must never read as
 /// merely hidden.
-fn draw_row(ui: &mut egui::Ui, view: &IndicatorView, actions: &mut Vec<LegendAction>) {
+fn draw_row(
+    ui: &mut egui::Ui,
+    view: &IndicatorView,
+    previewing: bool,
+    actions: &mut Vec<LegendAction>,
+) {
     ui.horizontal(|ui| {
         draw_status_dot(ui, view);
         let name_color = if view.error.is_some() {
@@ -163,6 +169,37 @@ fn draw_row(ui: &mut egui::Ui, view: &IndicatorView, actions: &mut Vec<LegendAct
         } else if let Some(stale) = &view.stale {
             ui.label(egui::RichText::new("stale").small().color(theme::ACCENT))
                 .on_hover_text(stale.clone());
+        } else if previewing {
+            // The chart is showing settings the state file does not hold —
+            // said here, on the chart, not only inside the dialog that may
+            // be sitting behind it (trader-ux review). Error and stale
+            // outrank it: a broken indicator is not merely previewing.
+            ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
+                .on_hover_text("showing un-applied settings — Apply keeps, Discard reverts");
+        }
+        // A layer switched off in settings must not read like a broken
+        // indicator: a Copilot with everything off draws nothing, and a row
+        // that looks healthy over an empty chart says "bug", not "as asked"
+        // (trader-ux review). Counts the `Display:`-titled bools that are
+        // off — the same convention the settings dialog groups by.
+        let layers_off = view
+            .descriptor
+            .inputs
+            .iter()
+            .zip(view.input_values.iter())
+            .filter(|(spec, value)| {
+                crate::indicator_panel::split_section(spec.title()).0
+                    == crate::indicator_panel::DISPLAY_SECTION
+                    && **value == quantick_indicators::InputValue::Bool(false)
+            })
+            .count();
+        if layers_off > 0 {
+            ui.label(
+                egui::RichText::new(format!("{layers_off} off"))
+                    .small()
+                    .color(theme::TEXT_MUTED),
+            )
+            .on_hover_text("display layers switched off in settings");
         }
         if ui
             .small_button(if view.hidden {
@@ -272,7 +309,7 @@ mod tests {
         let mut text = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let actions = draw(ctx, 0, chart, views.all());
+                let actions = draw(ctx, 0, chart, views.all(), None);
                 assert!(actions.is_empty(), "no clicks, no actions");
             });
             text.clear();
@@ -311,7 +348,7 @@ mod tests {
             let mut bottom = f32::NEG_INFINITY;
             for _ in 0..2 {
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw(ctx, 0, chart, views.all());
+                    draw(ctx, 0, chart, views.all(), None);
                 });
                 bottom = f32::NEG_INFINITY;
                 for shape in output.shapes {

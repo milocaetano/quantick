@@ -31,6 +31,7 @@ use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
 use crate::indicators::library::ScriptLibrary;
+use crate::indicators::preset_file;
 use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind};
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
@@ -690,6 +691,11 @@ pub struct QuantickApp {
     /// Named tape-reading setups, and where they live.
     footprint_presets: crate::footprint_presets::PresetStore,
     footprint_presets_path: std::path::PathBuf,
+
+    // Named input setups per indicator kind, offered by the settings
+    // dialog's preset picker.
+    indicator_presets: preset_file::PresetStore,
+    indicator_presets_path: std::path::PathBuf,
     /// The settings window's "save preset" field, kept across frames.
     footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
@@ -697,6 +703,12 @@ pub struct QuantickApp {
     /// `QUANTICK_CANDLE_WIDTH`.
     scripted_footprint: bool,
     scripted_candle_width: Option<f32>,
+    /// `QUANTICK_INDICATOR_SETTINGS`: open the settings dialog for the
+    /// first indicator once its inputs have arrived from the worker. Armed
+    /// at boot, fired (and disarmed) by the first frame that can honour it —
+    /// the dialog needs a view whose `input_values` the Rebuilt event has
+    /// filled, which no boot-time code can guarantee.
+    scripted_indicator_settings: bool,
 
     // Candle appearance + whether the style panel is open.
     style: ChartStyle,
@@ -845,6 +857,7 @@ impl QuantickApp {
         // will write.
         let footprint_settings_path = crate::footprint_config::settings_path();
         let footprint_presets_path = crate::footprint_presets::default_path();
+        let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
             tabs: vec![tab],
             active_tab: 0,
@@ -911,8 +924,11 @@ impl QuantickApp {
             show_footprint_settings: false,
             footprint_presets: crate::footprint_presets::PresetStore::load(&footprint_presets_path),
             footprint_presets_path,
+            indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
+            indicator_presets_path,
             footprint_preset_draft: String::new(),
             scripted_footprint: false,
+            scripted_indicator_settings: false,
             scripted_candle_width: None,
             style: ChartStyle::default(),
             show_style: false,
@@ -1026,6 +1042,11 @@ impl QuantickApp {
         if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
             app.show_footprint_settings = true;
         }
+        // The indicator settings dialog (sliders + live preview): pair with
+        // an autostart hook that loads an indicator; the dialog opens for
+        // the first slot as soon as its inputs arrive from the worker.
+        app.scripted_indicator_settings =
+            std::env::var("QUANTICK_INDICATOR_SETTINGS").is_ok_and(|value| value == "1");
         // The zoom, scriptable: the footprint's detail levels are functions
         // of candle width, and a validation run cannot drag a scroll wheel.
         // Same clamp as the gesture (see Viewport::set_candle_width).
@@ -1688,6 +1709,11 @@ impl QuantickApp {
             slot: target.slot,
             title: view.label().to_owned(),
             draft: view.input_values.clone(),
+            committed: view.input_values.clone(),
+            previewed: false,
+            settled: false,
+            preset_label: None,
+            preset_name_draft: String::new(),
         });
         self.indicator_settings_target = target;
     }
@@ -1722,7 +1748,20 @@ impl QuantickApp {
                 pane.paper_hud_anchor().is_some()
                     && self.active_tab().paper.position_summary().is_some(),
             );
-            for action in indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all()) {
+            // The slot being live-previewed by the settings dialog, if it
+            // lives on this pane: its legend row wears a "preview" chip.
+            let preview_slot = self
+                .indicator_settings
+                .as_ref()
+                .filter(|dialog| dialog.previewed)
+                .filter(|_| {
+                    self.indicator_settings_target.tab == tab_id
+                        && self.indicator_settings_target.side == side
+                })
+                .map(|dialog| dialog.slot);
+            for action in
+                indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all(), preview_slot)
+            {
                 pending.push((side, action));
             }
         }
@@ -1750,7 +1789,41 @@ impl QuantickApp {
     /// the worker (construct anew, replace, replay) — the same path every
     /// input change takes, UI or not.
     fn draw_indicator_settings(&mut self, ctx: &egui::Context) {
+        // The boot hook's deferred half: fire once a slot can actually show
+        // a dialog (see `scripted_indicator_settings`).
+        if self.scripted_indicator_settings && self.indicator_settings.is_none() {
+            let tab_id = self.active_tab().id;
+            if let Some(slot) = self
+                .active_tab()
+                .flow_pane
+                .indicators
+                .all()
+                .iter()
+                .find(|view| !view.input_values.is_empty())
+                .map(|view| view.slot)
+            {
+                self.open_indicator_settings_at(TabSlot {
+                    tab: tab_id,
+                    side: PaneSide::Flow,
+                    slot,
+                });
+                self.scripted_indicator_settings = false;
+            }
+        }
         let target = self.indicator_settings_target;
+        // The preset shelf for this slot's kind. A slot with no registered
+        // kind (the natives autostart hook deliberately registers none) has
+        // nowhere to save to, and the dialog hides the picker.
+        let preset_names: Option<Vec<String>> = self
+            .slot_kinds
+            .iter()
+            .find(|(owner, _)| *owner == target)
+            .map(|(_, kind)| {
+                self.indicator_presets
+                    .names_for(kind)
+                    .map(str::to_owned)
+                    .collect()
+            });
         let outcome = {
             let Self {
                 indicator_settings,
@@ -1780,13 +1853,177 @@ impl QuantickApp {
             // indicator (`EMA(9)` → `EMA(21)`), and a dialog that stays open
             // must not keep announcing the old one.
             dialog.title = view.label().to_owned();
-            indicator_panel::draw(ctx, dialog, &view.descriptor.inputs)
+            indicator_panel::draw(
+                ctx,
+                dialog,
+                &view.descriptor.inputs,
+                preset_names.as_deref(),
+            )
         };
         match outcome {
             SettingsOutcome::Open => {}
-            SettingsOutcome::Close => self.indicator_settings = None,
+            SettingsOutcome::Close => {
+                self.revert_indicator_settings_preview();
+                self.indicator_settings = None;
+            }
             SettingsOutcome::Apply => self.apply_indicator_settings_draft(),
+            SettingsOutcome::Preview => self.preview_indicator_settings_draft(),
+            SettingsOutcome::LoadPreset(name) => self.load_indicator_preset(name),
+            SettingsOutcome::SavePreset(name) => self.save_indicator_preset(&name),
+            SettingsOutcome::DeletePreset(name) => self.delete_indicator_preset(&name),
         }
+        self.draw_indicator_preview_watermark(ctx);
+    }
+
+    /// Replace the dialog's draft with a preset (`None` = the declared
+    /// defaults) and preview it — the same nudge-and-look contract as a
+    /// slider: Apply commits, Discard reverts. A saved value whose type no
+    /// longer matches its input (the script evolved under the preset) falls
+    /// back to that input's default rather than being silently coerced.
+    fn load_indicator_preset(&mut self, name: Option<String>) {
+        let target = self.indicator_settings_target;
+        let Some(specs) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == target.tab)
+            .map(|tab| tab.pane(target.side))
+            .and_then(|pane| {
+                pane.indicators
+                    .all()
+                    .iter()
+                    .find(|view| view.slot == target.slot)
+            })
+            .map(|view| view.descriptor.inputs.clone())
+        else {
+            return;
+        };
+        let saved: Option<Vec<quantick_indicators::InputValue>> = match &name {
+            None => Some(Vec::new()),
+            Some(name) => {
+                let Some(kind) = self
+                    .slot_kinds
+                    .iter()
+                    .find(|(owner, _)| *owner == target)
+                    .map(|(_, kind)| kind)
+                else {
+                    return;
+                };
+                self.indicator_presets
+                    .get(kind, name)
+                    .map(|inputs| inputs.iter().filter_map(SavedInput::to_value).collect())
+            }
+        };
+        let Some(saved) = saved else {
+            return;
+        };
+        let draft: Vec<quantick_indicators::InputValue> = specs
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| {
+                let default = spec.default_value();
+                match saved.get(index) {
+                    Some(value)
+                        if std::mem::discriminant(value) == std::mem::discriminant(&default) =>
+                    {
+                        value.clone()
+                    }
+                    _ => default,
+                }
+            })
+            .collect();
+        let label = name.unwrap_or_else(|| indicator_panel::DEFAULT_PRESET.to_owned());
+        if let Some(dialog) = self.indicator_settings.as_mut() {
+            dialog.draft = draft;
+            dialog.preset_label = Some(label);
+        }
+        self.preview_indicator_settings_draft();
+    }
+
+    /// Save the dialog's current draft under `name` for this slot's kind.
+    /// Saving is a file write, never a chart change — the draft on screen
+    /// stays exactly as it was.
+    fn save_indicator_preset(&mut self, name: &str) {
+        let target = self.indicator_settings_target;
+        let Some(kind) = self
+            .slot_kinds
+            .iter()
+            .find(|(owner, _)| *owner == target)
+            .map(|(_, kind)| kind.clone())
+        else {
+            return;
+        };
+        let Some(dialog) = self.indicator_settings.as_mut() else {
+            return;
+        };
+        let inputs: Vec<SavedInput> = dialog.draft.iter().map(SavedInput::from_value).collect();
+        if self.indicator_presets.insert(&kind, name, inputs) {
+            self.indicator_presets.save(&self.indicator_presets_path);
+            dialog.preset_label = Some(name.trim().to_owned());
+            dialog.preset_name_draft.clear();
+        }
+    }
+
+    /// Forget a preset of this slot's kind. The values on screen stay —
+    /// deleting a name never touches the chart.
+    fn delete_indicator_preset(&mut self, name: &str) {
+        let target = self.indicator_settings_target;
+        let Some(kind) = self
+            .slot_kinds
+            .iter()
+            .find(|(owner, _)| *owner == target)
+            .map(|(_, kind)| kind.clone())
+        else {
+            return;
+        };
+        if self.indicator_presets.remove(&kind, name) {
+            self.indicator_presets.save(&self.indicator_presets_path);
+            if let Some(dialog) = self.indicator_settings.as_mut()
+                && dialog.preset_label.as_deref() == Some(name)
+            {
+                dialog.preset_label = None;
+            }
+        }
+    }
+
+    /// While a preview is live, stamp the pane it paints on: a full SELL
+    /// triangle drawn from a slider mid-drag must never wear the authority
+    /// of a committed signal (trader-ux review). The legend chip says it in
+    /// the corner; this says it where the signals are.
+    fn draw_indicator_preview_watermark(&self, ctx: &egui::Context) {
+        /// Distance below the pane's top edge, in pixels — below the
+        /// top-centre toast lane ("loading venue history"), so the two never
+        /// overprint each other.
+        const WATERMARK_TOP_OFFSET_PX: f32 = 34.0;
+        /// Watermark font size, in pixels: larger than a legend chip, far
+        /// from a headline.
+        const WATERMARK_FONT_PX: f32 = 13.0;
+        let Some(dialog) = self.indicator_settings.as_ref() else {
+            return;
+        };
+        if !dialog.previewed {
+            return;
+        }
+        let target = self.indicator_settings_target;
+        let Some(rect) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == target.tab)
+            .map(|tab| tab.pane(target.side))
+            .and_then(|pane| pane.last_chart_area)
+        else {
+            return;
+        };
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Middle,
+            egui::Id::new("indicator-preview-watermark"),
+        ));
+        painter.text(
+            egui::pos2(rect.center().x, rect.top() + WATERMARK_TOP_OFFSET_PX),
+            egui::Align2::CENTER_TOP,
+            "PREVIEW — settings not applied",
+            egui::FontId::proportional(WATERMARK_FONT_PX),
+            theme::ACCENT,
+        );
     }
 
     /// Send the open dialog's draft to the worker and keep the dialog open
@@ -1796,9 +2033,11 @@ impl QuantickApp {
     /// Apply must not retarget the edit.
     fn apply_indicator_settings_draft(&mut self) {
         let target = self.indicator_settings_target;
-        let Some(dialog) = self.indicator_settings.as_ref() else {
+        let Some(dialog) = self.indicator_settings.as_mut() else {
             return;
         };
+        dialog.committed = dialog.draft.clone();
+        dialog.previewed = false;
         let (slot, values) = (dialog.slot, dialog.draft.clone());
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
             tab.pane_mut(target.side)
@@ -1806,6 +2045,42 @@ impl QuantickApp {
                 .send(IndicatorCommand::SetInputs { slot, values });
         }
         self.mark_indicator_state_dirty();
+    }
+
+    /// Show the draft on the chart without committing it: same worker path
+    /// as Apply, but the state file is never marked dirty — what survives a
+    /// restart is always the last Apply, never a slider mid-drag. The worker
+    /// coalesces a burst of these to its own cadence.
+    fn preview_indicator_settings_draft(&mut self) {
+        let target = self.indicator_settings_target;
+        let Some(dialog) = self.indicator_settings.as_mut() else {
+            return;
+        };
+        dialog.previewed = true;
+        let (slot, values) = (dialog.slot, dialog.draft.clone());
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
+            tab.pane_mut(target.side)
+                .indicator_worker
+                .send(IndicatorCommand::SetInputs { slot, values });
+        }
+    }
+
+    /// Put the last committed values back on the chart. Close's half of the
+    /// preview contract: a dialog dismissed mid-tuning leaves no trace.
+    fn revert_indicator_settings_preview(&mut self) {
+        let target = self.indicator_settings_target;
+        let Some(dialog) = self.indicator_settings.as_ref() else {
+            return;
+        };
+        if !dialog.previewed {
+            return;
+        }
+        let (slot, values) = (dialog.slot, dialog.committed.clone());
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
+            tab.pane_mut(target.side)
+                .indicator_worker
+                .send(IndicatorCommand::SetInputs { slot, values });
+        }
     }
 
     /// Load a library script behind a fresh slot. A file that no longer

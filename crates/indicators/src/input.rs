@@ -221,6 +221,19 @@ impl InputSpec {
         }
     }
 
+    /// The label shown in the settings UI.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        match self {
+            InputSpec::Int { title, .. }
+            | InputSpec::Float { title, .. }
+            | InputSpec::Bool { title, .. }
+            | InputSpec::Color { title, .. }
+            | InputSpec::Str { title, .. }
+            | InputSpec::Source { title, .. } => title,
+        }
+    }
+
     /// The default as a value, for seeding a fresh instance's input set.
     #[must_use]
     pub fn default_value(&self) -> InputValue {
