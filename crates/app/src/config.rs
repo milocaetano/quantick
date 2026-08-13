@@ -1602,6 +1602,36 @@ mod tests {
         );
     }
 
+    /// An unknown preset name is ignored at runtime with only a log line as
+    /// its symptom — for the WIN$N declaration that would silently disable
+    /// the whole regional read. The shipped config and the shipped presets
+    /// file are held together here instead.
+    #[test]
+    fn every_declared_bubble_preset_resolves_in_the_shipped_presets_file() {
+        let presets = crate::bubble_presets::parse(include_str!("../config/bubbles.toml"))
+            .expect("shipped presets file");
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
+        for feed in &config.feeds {
+            let declared = feed
+                .bubble_preset
+                .iter()
+                .chain(feed.symbol_bubble_presets.values());
+            for name in declared {
+                assert!(
+                    presets.get(name).is_some(),
+                    "feed '{}' declares bubble preset '{name}', which the shipped \
+                     bubbles.toml does not define",
+                    feed.id
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_symbol_preset_for_an_unoffered_symbol_is_a_config_error() {
         let text = r#"

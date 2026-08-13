@@ -39,6 +39,13 @@ pub struct AggressionCluster {
     pub consumed_side: RestingSide,
     /// Inclusive lower edge of the visual price range.
     pub price_bucket: Decimal,
+    /// Exact price height this cluster's range covers, starting at
+    /// [`price_bucket`](Self::price_bucket): one visual row for a plain
+    /// cluster, the whole region for a regional fold. Consumers that draw the
+    /// range — the live strip's histogram — read this instead of assuming one
+    /// row, which is what keeps a four-row region from being drawn as one row
+    /// carrying four rows' quantity.
+    pub price_span: Decimal,
     /// Exact summed execution quantity.
     pub quantity: Decimal,
     /// The share of [`quantity`](Self::quantity) taken by buyers; the rest was
@@ -129,11 +136,17 @@ struct ClusterBuilder {
     quantity: Decimal,
     price_quantity: Decimal,
     first_price: Decimal,
+    price_span: Decimal,
     agg_ids: Vec<u64>,
 }
 
 impl ClusterBuilder {
-    fn new(trade: &Aggression, generation: Option<u64>, price_bucket: Decimal) -> ClusterBuilder {
+    fn new(
+        trade: &Aggression,
+        generation: Option<u64>,
+        price_bucket: Decimal,
+        price_span: Decimal,
+    ) -> ClusterBuilder {
         ClusterBuilder {
             key: ClusterKey {
                 generation,
@@ -146,6 +159,7 @@ impl ClusterBuilder {
             quantity: trade.quantity,
             price_quantity: trade.price * trade.quantity,
             first_price: trade.price,
+            price_span,
             agg_ids: vec![trade.agg_id],
         }
     }
@@ -179,6 +193,7 @@ impl ClusterBuilder {
             side: self.side,
             consumed_side: consumed_side(self.side),
             price_bucket: self.key.price_bucket,
+            price_span: self.price_span,
             quantity: self.quantity,
             buy_quantity,
             price,
@@ -271,7 +286,12 @@ pub fn cluster_aggressions<'a>(
         if let Some(cluster) = current.take() {
             clusters.push(cluster.finish());
         }
-        current = Some(ClusterBuilder::new(trade, key.generation, key.price_bucket));
+        current = Some(ClusterBuilder::new(
+            trade,
+            key.generation,
+            key.price_bucket,
+            grouping.bucket_width,
+        ));
     }
     if let Some(cluster) = current {
         clusters.push(cluster.finish());
@@ -299,15 +319,27 @@ pub fn cluster_aggressions<'a>(
 struct ClusterFold {
     cluster: AggressionCluster,
     price_quantity: Decimal,
+    /// Per original price bucket: summed quantity and price-weighted quantity.
+    ///
+    /// Only the regional finisher reads it — the point of control is where the
+    /// most volume traded, so a regional bubble anchors at that bucket's own
+    /// weighted price instead of the fold-wide average, which in a contested
+    /// region is often a price where nothing traded at all. `BTreeMap` so the
+    /// deterministic tie-break (lowest bucket wins) costs nothing. The dust
+    /// and summary folds accumulate one entry and ignore it.
+    buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal)>,
     count: usize,
 }
 
 impl ClusterFold {
     fn new(cluster: AggressionCluster) -> ClusterFold {
         let price_quantity = cluster.price * cluster.quantity;
+        let mut buckets = std::collections::BTreeMap::new();
+        buckets.insert(cluster.price_bucket, (cluster.quantity, price_quantity));
         ClusterFold {
             cluster,
             price_quantity,
+            buckets,
             count: 1,
         }
     }
@@ -318,10 +350,18 @@ impl ClusterFold {
     }
 
     fn push(&mut self, other: AggressionCluster) {
-        self.price_quantity += other.price * other.quantity;
+        let other_price_quantity = other.price * other.quantity;
+        self.price_quantity += other_price_quantity;
+        let entry = self
+            .buckets
+            .entry(other.price_bucket)
+            .or_insert((Decimal::ZERO, Decimal::ZERO));
+        entry.0 += other.quantity;
+        entry.1 += other_price_quantity;
         self.cluster.quantity += other.quantity;
         self.cluster.buy_quantity += other.buy_quantity;
         self.cluster.matched_quantity += other.matched_quantity;
+        self.cluster.price_span = self.cluster.price_span.max(other.price_span);
         self.cluster.agg_ids.extend(other.agg_ids);
         self.cluster
             .liquidity_event_ids
@@ -371,6 +411,104 @@ impl ClusterFold {
         }
         self.cluster
     }
+
+    /// Finish as one regional bubble: anchored at the point of control, spread
+    /// over the whole region.
+    ///
+    /// The anchor is the member bucket that took the most quantity — lowest
+    /// bucket on a tie, which the ascending map walk gives deterministically —
+    /// at that bucket's own volume-weighted price. A contested region is often
+    /// bimodal (two defended levels, a hole between them), and the fold-wide
+    /// average lands in the hole: a mark at a price where nothing traded.
+    /// `price_bucket` reports the region's lower edge and `price_span` its
+    /// full height, so range-drawing consumers stay honest.
+    fn finish_regional(self, region_width: Decimal) -> AggressionCluster {
+        let mut poc: Option<(Decimal, Decimal)> = None;
+        for &(bucket_quantity, bucket_price_quantity) in self.buckets.values() {
+            if poc.is_none_or(|(best, _)| bucket_quantity > best) {
+                poc = Some((bucket_quantity, bucket_price_quantity));
+            }
+        }
+        let region_bucket = self
+            .buckets
+            .first_key_value()
+            .map(|(&bucket, _)| (bucket / region_width).floor() * region_width);
+        let mut cluster = self.finish();
+        if let Some((quantity, price_quantity)) = poc
+            && quantity > Decimal::ZERO
+        {
+            cluster.price = price_quantity / quantity;
+        }
+        if let Some(region_bucket) = region_bucket {
+            cluster.price_bucket = region_bucket;
+        }
+        cluster.price_span = region_width;
+        cluster
+    }
+}
+
+/// One sorted, anchored-window, keyed fold — the single loop behind the dust
+/// merge, the regional fold and the closed-bar summary.
+///
+/// `key_of` decides what may fold together; a `None` key passes the cluster
+/// through untouched (the summary's live-lane rule). `stands_alone` lets a
+/// cluster refuse to fold while still closing any open fold of its key — the
+/// dust merge's contiguity rule. A fold is anchored at its first cluster and
+/// never spans more than `window_ms`. `finish` turns each completed fold into
+/// its bubble.
+fn fold_clusters<K: Ord>(
+    clusters: Vec<AggressionCluster>,
+    key_of: impl Fn(&AggressionCluster) -> Option<K>,
+    stands_alone: impl Fn(&AggressionCluster) -> bool,
+    window_ms: i64,
+    finish: impl Fn(ClusterFold) -> AggressionCluster,
+) -> Vec<AggressionCluster> {
+    let mut merged: Vec<AggressionCluster> = Vec::with_capacity(clusters.len());
+    let mut keyed: Vec<(K, AggressionCluster)> = Vec::with_capacity(clusters.len());
+    for cluster in clusters {
+        match key_of(&cluster) {
+            Some(key) => keyed.push((key, cluster)),
+            None => merged.push(cluster),
+        }
+    }
+    keyed.sort_by(|(a_key, a), (b_key, b)| {
+        a_key
+            .cmp(b_key)
+            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
+
+    let mut open: Option<(K, ClusterFold)> = None;
+    for (key, cluster) in keyed {
+        if stands_alone(&cluster) {
+            if let Some((_, pending)) = open.take() {
+                merged.push(finish(pending));
+            }
+            merged.push(cluster);
+            continue;
+        }
+        let accepts = open.as_ref().is_some_and(|(open_key, pending)| {
+            *open_key == key
+                && cluster
+                    .last_timestamp_ms
+                    .saturating_sub(pending.anchor().first_timestamp_ms)
+                    <= window_ms
+        });
+        match open.as_mut() {
+            Some((_, pending)) if accepts => pending.push(cluster),
+            _ => {
+                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
+                    merged.push(finish(pending));
+                }
+            }
+        }
+    }
+    if let Some((_, pending)) = open {
+        merged.push(finish(pending));
+    }
+
+    sort_clusters(&mut merged);
+    merged
 }
 
 /// Deterministic order every clustering and folding step emits its result in.
@@ -414,57 +552,19 @@ pub fn merge_dust_clusters(
     if dust_quantity <= Decimal::ZERO || window_ms <= 0 {
         return clusters;
     }
-
-    let mut keyed: Vec<(ClusterKey, AggressionCluster)> = clusters
-        .into_iter()
-        .map(|cluster| {
-            let key = ClusterKey {
+    fold_clusters(
+        clusters,
+        |cluster| {
+            Some(ClusterKey {
                 generation: cluster.generation,
                 side: aggressor_side_key(cluster.side),
                 price_bucket: cluster.price_bucket,
-            };
-            (key, cluster)
-        })
-        .collect();
-    keyed.sort_by(|(a_key, a), (b_key, b)| {
-        a_key
-            .cmp(b_key)
-            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
-            .then_with(|| a.agg_id.cmp(&b.agg_id))
-    });
-
-    let mut merged: Vec<AggressionCluster> = Vec::with_capacity(keyed.len());
-    let mut open: Option<(ClusterKey, ClusterFold)> = None;
-    for (key, cluster) in keyed {
-        if cluster.quantity >= dust_quantity {
-            if let Some((_, pending)) = open.take() {
-                merged.push(pending.finish());
-            }
-            merged.push(cluster);
-            continue;
-        }
-        let accepts = open.as_ref().is_some_and(|(open_key, pending)| {
-            *open_key == key
-                && cluster
-                    .last_timestamp_ms
-                    .saturating_sub(pending.anchor().first_timestamp_ms)
-                    <= window_ms
-        });
-        match open.as_mut() {
-            Some((_, pending)) if accepts => pending.push(cluster),
-            _ => {
-                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
-                    merged.push(pending.finish());
-                }
-            }
-        }
-    }
-    if let Some((_, pending)) = open {
-        merged.push(pending.finish());
-    }
-
-    sort_clusters(&mut merged);
-    merged
+            })
+        },
+        |cluster| cluster.quantity >= dust_quantity,
+        window_ms,
+        ClusterFold::finish,
+    )
 }
 
 /// Fold same-side clusters landing in one price region into a single bubble.
@@ -482,11 +582,16 @@ pub fn merge_dust_clusters(
 /// Side stays in the key: a buy region and a sell region at the same prices
 /// remain two marks, because one covering the other is exactly the absorption
 /// read this layer exists to show. The two-sided pie stays the closed-bar
-/// summary's job. Each fold's price is its volume-weighted average, so the
-/// mark sits where the quantity actually traded, and `price_bucket` reports
-/// the region's lower edge. Quantities, ids and matched evidence are summed:
-/// nothing is dropped, and the caller runs this after evidence association,
-/// so folding moves no evidence.
+/// summary's job. The bar stays in the key too: the WIN's tick bars close in
+/// seconds — often inside one region window — and a fold that crossed a bar
+/// boundary would credit its whole summed quantity to the bar its midpoint
+/// lands in, a mark claiming "this bar took X" about volume the neighbour
+/// traded. Clusters `bar_of` declines to place pass through untouched, the
+/// same rule the summary follows. Each fold anchors at its point of control
+/// ([`ClusterFold::finish_regional`]); `price_bucket` reports the region's
+/// lower edge and `price_span` its height. Quantities, ids and matched
+/// evidence are summed: nothing is dropped, and the caller runs this after
+/// evidence association, so folding moves no evidence.
 ///
 /// `window_ms <= 0` or a non-positive `region_width` folds nothing.
 #[must_use]
@@ -494,55 +599,27 @@ pub fn regionalize_clusters(
     clusters: Vec<AggressionCluster>,
     region_width: Decimal,
     window_ms: i64,
+    bar_of: impl Fn(&AggressionCluster) -> Option<usize>,
 ) -> Vec<AggressionCluster> {
     if region_width <= Decimal::ZERO || window_ms <= 0 {
         return clusters;
     }
-
-    let mut keyed: Vec<(ClusterKey, AggressionCluster)> = clusters
-        .into_iter()
-        .map(|mut cluster| {
-            cluster.price_bucket = (cluster.price_bucket / region_width).floor() * region_width;
-            let key = ClusterKey {
-                generation: cluster.generation,
-                side: aggressor_side_key(cluster.side),
-                price_bucket: cluster.price_bucket,
-            };
-            (key, cluster)
-        })
-        .collect();
-    keyed.sort_by(|(a_key, a), (b_key, b)| {
-        a_key
-            .cmp(b_key)
-            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
-            .then_with(|| a.agg_id.cmp(&b.agg_id))
-    });
-
-    let mut merged: Vec<AggressionCluster> = Vec::with_capacity(keyed.len());
-    let mut open: Option<(ClusterKey, ClusterFold)> = None;
-    for (key, cluster) in keyed {
-        let accepts = open.as_ref().is_some_and(|(open_key, pending)| {
-            *open_key == key
-                && cluster
-                    .last_timestamp_ms
-                    .saturating_sub(pending.anchor().first_timestamp_ms)
-                    <= window_ms
-        });
-        match open.as_mut() {
-            Some((_, pending)) if accepts => pending.push(cluster),
-            _ => {
-                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
-                    merged.push(pending.finish());
-                }
-            }
-        }
-    }
-    if let Some((_, pending)) = open {
-        merged.push(pending.finish());
-    }
-
-    sort_clusters(&mut merged);
-    merged
+    fold_clusters(
+        clusters,
+        |cluster| {
+            bar_of(cluster).map(|bar_index| {
+                (
+                    bar_index,
+                    cluster.generation,
+                    aggressor_side_key(cluster.side),
+                    (cluster.price_bucket / region_width).floor() * region_width,
+                )
+            })
+        },
+        |_| false,
+        window_ms,
+        |fold| fold.finish_regional(region_width),
+    )
 }
 
 /// Fold every print a closed bar left in one visual price range into a single
@@ -565,55 +642,16 @@ pub fn summarize_clusters(
     clusters: Vec<AggressionCluster>,
     bar_of: impl Fn(&AggressionCluster) -> Option<usize>,
 ) -> Vec<AggressionCluster> {
-    #[derive(PartialEq, Eq, PartialOrd, Ord)]
-    struct SummaryKey {
-        bar_index: usize,
-        generation: Option<u64>,
-        price_bucket: Decimal,
-    }
-
-    let mut passthrough: Vec<AggressionCluster> = Vec::new();
-    let mut keyed: Vec<(SummaryKey, AggressionCluster)> = Vec::with_capacity(clusters.len());
-    for cluster in clusters {
-        match bar_of(&cluster) {
-            Some(bar_index) => keyed.push((
-                SummaryKey {
-                    bar_index,
-                    generation: cluster.generation,
-                    price_bucket: cluster.price_bucket,
-                },
-                cluster,
-            )),
-            None => passthrough.push(cluster),
-        }
-    }
-    keyed.sort_by(|(a_key, a), (b_key, b)| {
-        a_key
-            .cmp(b_key)
-            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
-            .then_with(|| aggressor_side_key(a.side).cmp(&aggressor_side_key(b.side)))
-            .then_with(|| a.agg_id.cmp(&b.agg_id))
-    });
-
-    let mut merged = passthrough;
-    merged.reserve(keyed.len());
-    let mut open: Option<(SummaryKey, ClusterFold)> = None;
-    for (key, cluster) in keyed {
-        match open.as_mut() {
-            Some((open_key, pending)) if *open_key == key => pending.push(cluster),
-            _ => {
-                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
-                    merged.push(pending.finish());
-                }
-            }
-        }
-    }
-    if let Some((_, pending)) = open {
-        merged.push(pending.finish());
-    }
-
-    sort_clusters(&mut merged);
-    merged
+    // An unbounded window: the bar in the key is the whole admission rule.
+    fold_clusters(
+        clusters,
+        |cluster| {
+            bar_of(cluster).map(|bar_index| (bar_index, cluster.generation, cluster.price_bucket))
+        },
+        |_| false,
+        i64::MAX,
+        ClusterFold::finish,
+    )
 }
 
 /// Convert factual grouped transitions into reduction events.
@@ -979,27 +1017,50 @@ mod tests {
         assert_eq!(merge_dust_clusters(clusters, Decimal::ZERO, 5_000).len(), 2);
     }
 
+    /// Every unit fold here happens inside one bar; the bar-boundary rule has
+    /// its own test below.
+    fn one_bar(_: &AggressionCluster) -> Option<usize> {
+        Some(0)
+    }
+
     #[test]
-    fn regions_fold_same_side_rows_and_conserve_quantity_ids_and_vwap() {
+    fn regions_fold_same_side_rows_and_anchor_at_the_point_of_control() {
         let prints = [
             aggression(1, 0, "100", "1", Side::Buy, Some(3)),
             aggression(2, 100, "103", "2", Side::Buy, Some(3)),
             aggression(3, 200, "110", "3", Side::Buy, Some(3)),
         ];
-        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000);
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000, one_bar);
         assert_eq!(folded.len(), 2);
         assert_eq!(folded[0].agg_ids, [1, 2]);
         assert_eq!(folded[0].quantity, dec("3"));
         assert_eq!(folded[0].trade_count, 2);
         assert_eq!(folded[0].price_bucket, dec("100"));
-        // Volume-weighted: (100·1 + 103·2) / 3.
-        assert_eq!(folded[0].price, dec("102"));
+        assert_eq!(folded[0].price_span, dec("10"));
+        // The point of control, not the fold-wide average: the bucket at 102
+        // took 2 of the 3, so the mark anchors at that bucket's own weighted
+        // price — where the volume actually traded — instead of the 102 the
+        // average would land on.
+        assert_eq!(folded[0].price, dec("103"));
         // A cluster alone in its region passes through untouched except for
         // the bucket, which now names the region's lower edge — that rewrite
-        // is what lets the closed-bar summary key at region granularity.
+        // is what lets the closed-bar summary key at region granularity —
+        // and the span, which names the region's height.
         assert_eq!(folded[1].agg_ids, [3]);
         assert_eq!(folded[1].price, dec("110"));
         assert_eq!(folded[1].price_bucket, dec("110"));
+        assert_eq!(folded[1].price_span, dec("10"));
+    }
+
+    #[test]
+    fn a_regional_poc_tie_breaks_to_the_lower_bucket() {
+        let prints = [
+            aggression(1, 0, "101", "2", Side::Buy, Some(3)),
+            aggression(2, 100, "105", "2", Side::Buy, Some(3)),
+        ];
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000, one_bar);
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0].price, dec("101"));
     }
 
     #[test]
@@ -1008,8 +1069,40 @@ mod tests {
             aggression(1, 0, "100", "1", Side::Buy, Some(3)),
             aggression(2, 10, "102", "1", Side::Sell, Some(3)),
         ];
-        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000);
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000, one_bar);
         assert_eq!(folded.len(), 2);
+    }
+
+    #[test]
+    fn regions_never_fold_across_bars() {
+        // Same side, same region, 200 ms apart — inside any window — but the
+        // second print belongs to the next bar. One mark per bar, each
+        // carrying its own bar's quantity: a fold across the boundary would
+        // credit one bar with volume the neighbour traded.
+        let prints = [
+            aggression(1, 900, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 1_100, "102", "2", Side::Buy, Some(3)),
+        ];
+        let by_second = |cluster: &AggressionCluster| {
+            Some(usize::try_from(cluster.timestamp_ms / 1_000).unwrap_or(0))
+        };
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 5_000, by_second);
+        assert_eq!(folded.len(), 2);
+        assert_eq!(folded[0].quantity, dec("1"));
+        assert_eq!(folded[1].quantity, dec("2"));
+    }
+
+    #[test]
+    fn a_cluster_without_a_bar_passes_through_a_regional_fold_untouched() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 10, "102", "1", Side::Buy, Some(3)),
+        ];
+        let clusters = raw_clusters(&prints);
+        assert_eq!(
+            regionalize_clusters(clusters.clone(), dec("10"), 1_000, |_| None),
+            clusters
+        );
     }
 
     #[test]
@@ -1019,7 +1112,7 @@ mod tests {
             aggression(2, 400, "102", "1", Side::Buy, Some(3)),
             aggression(3, 2_000, "100", "1", Side::Buy, Some(3)),
         ];
-        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000);
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000, one_bar);
         assert_eq!(folded.len(), 2);
         assert_eq!(folded[0].agg_ids, [1, 2]);
         assert_eq!(folded[1].agg_ids, [3]);
@@ -1033,11 +1126,11 @@ mod tests {
         ];
         let clusters = raw_clusters(&prints);
         assert_eq!(
-            regionalize_clusters(clusters.clone(), dec("10"), 0),
+            regionalize_clusters(clusters.clone(), dec("10"), 0, one_bar),
             clusters
         );
         assert_eq!(
-            regionalize_clusters(clusters.clone(), Decimal::ZERO, 1_000),
+            regionalize_clusters(clusters.clone(), Decimal::ZERO, 1_000, one_bar),
             clusters
         );
     }

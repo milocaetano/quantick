@@ -64,6 +64,92 @@ BRIDGE_CACHE_PATH = (
 #: moves visibly on a slow export, large enough that reporting is not the cost.
 PROGRESS_EVERY = 250_000
 
+#: Below this many flagged prints a lopsided day proves nothing — a handful of
+#: trades can legitimately all be buys. A full session of them cannot.
+ONE_SIDED_PROOF_PRINTS = 1_000
+
+#: Largest share of the flagged prints the minority side may hold while the
+#: flags still count as one-sided. The B3 broker probed on 2026-07-23 stamped
+#: BUY on literally every tick, but a broker stamping 99.9% of one side is
+#: telling the same lie with a few typos in it.
+ONE_SIDED_MINORITY_MAX_SHARE = 0.005
+
+
+def flags_are_one_sided(flag_buys: int, flag_sells: int) -> bool:
+    """Whether a day's venue flags read as a stamped constant, not a market."""
+    flagged = flag_buys + flag_sells
+    if flagged < ONE_SIDED_PROOF_PRINTS:
+        return False
+    return min(flag_buys, flag_sells) <= flagged * ONE_SIDED_MINORITY_MAX_SHARE
+
+
+def spread_side(price: float, bid: float, ask: float) -> str:
+    """The side of the spread a price printed on, or "" without evidence."""
+    if ask > 0 and price >= ask:
+        return "B"
+    if bid > 0 and price <= bid:
+        return "S"
+    return ""
+
+
+def fill_missing_sides(prints: list) -> tuple[list, int]:
+    """Decide every print left without a side, honestly and deterministically.
+
+    An undecided print falls back to the price's side of the spread, then to
+    the last decided side; leading prints with nothing before them inherit the
+    first decided side. Returns the completed prints and how many were
+    inferred. Raises ``ValueError`` when no print at all can be decided — a
+    made-up side would chart a lie, so the caller must refuse to export.
+    """
+    filled = []
+    inferred = 0
+    carried = ""
+    for stamp, price, bid, ask, volume, side in prints:
+        if not side:
+            side = spread_side(price, bid, ask) or carried
+            if side:
+                inferred += 1
+        if side:
+            carried = side
+        filled.append((stamp, price, bid, ask, volume, side))
+    first_decided = next((side for *_, side in filled if side), "")
+    if not first_decided:
+        raise ValueError("no print carries a decidable side")
+    for index, (stamp, price, bid, ask, volume, side) in enumerate(filled):
+        if side:
+            break
+        inferred += 1
+        filled[index] = (stamp, price, bid, ask, volume, first_decided)
+    return filled, inferred
+
+
+def rederive_sides(prints: list) -> tuple[list, int]:
+    """Re-derive every side with the tick rule, ignoring the venue's flags.
+
+    Uptick bought, downtick sold, unchanged keeps the last direction — the
+    same policy the live bridge defaults to (`side_source = "tick_rule"` in
+    feeds.toml), so a replayed day and a lived day read the same. Prints
+    before any price movement fall back to the spread, then inherit the first
+    decided side. Raises ``ValueError`` when the whole day is undecidable.
+    """
+    rederived = []
+    previous_price = None
+    carried = ""
+    for stamp, price, bid, ask, volume, _ in prints:
+        if previous_price is None or price == previous_price:
+            side = carried or spread_side(price, bid, ask)
+        elif price > previous_price:
+            side = "B"
+        else:
+            side = "S"
+        if side:
+            carried = side
+        previous_price = price
+        rederived.append((stamp, price, bid, ask, volume, side))
+    filled, _ = fill_missing_sides(rederived)
+    inferred = sum(1 for *_, side in filled if side)
+    return filled, inferred
+
 
 def emit(event_code: str, **fields) -> None:
     """Print one structured JSON diagnostic line to stderr."""
@@ -313,17 +399,7 @@ def export_tape(
         )
         raise SystemExit(4)
 
-    #: Below this many flagged prints a one-sided day proves nothing — a
-    #: handful of trades can legitimately all be buys. A full session of them
-    #: cannot.
-    ONE_SIDED_PROOF_PRINTS = 1_000
-    flagged = flag_buys + flag_sells
-    one_sided_flags = flagged >= ONE_SIDED_PROOF_PRINTS and (
-        flag_buys == 0 or flag_sells == 0
-    )
-
-    inferred_sides = 0
-    if one_sided_flags:
+    if flags_are_one_sided(flag_buys, flag_sells):
         # The flags are untrustworthy for this whole day. Re-derive every side
         # with the tick rule — uptick bought, downtick sold, unchanged keeps
         # the last direction — the same safe default the live bridge charts
@@ -339,38 +415,9 @@ def export_tape(
             note="a whole session flagged on one side is a broker stamping a "
             "constant, not a market; sides are inferred like the live bridge does",
         )
-        rederived: list[tuple[datetime, float, float, float, float, str]] = []
-        previous_price: float | None = None
-        carried_side = ""
-        for stamp, price, bid, ask, volume, _ in prints:
-            if previous_price is None or price == previous_price:
-                side = carried_side
-            elif price > previous_price:
-                side = "B"
-            else:
-                side = "S"
-            if not side:
-                # No direction yet (the day's first prints at one price): the
-                # price's side of the spread is the only evidence there is.
-                side = (
-                    "B"
-                    if (ask > 0 and price >= ask)
-                    else "S"
-                    if (bid > 0 and price <= bid)
-                    else ""
-                )
-            if side:
-                carried_side = side
-                inferred_sides += 1
-            previous_price = price
-            rederived.append((stamp, price, bid, ask, volume, side))
-        # The day's leading prints can precede any price movement and any
-        # usable quote, and the format rightly refuses an empty side. The
-        # first decided side is the only evidence about them, so it reaches
-        # back — still an inference, which `side_source=tick_rule` already
-        # declares for the whole file.
-        first_decided = next((side for *_, side in rederived if side), "")
-        if not first_decided:
+        try:
+            prints, inferred_sides = rederive_sides(prints)
+        except ValueError:
             emit(
                 "EXPORT_TAPE_SIDES_UNDECIDABLE",
                 symbol=symbol,
@@ -378,36 +425,31 @@ def export_tape(
                 fix="the whole day traded at one price with no usable quotes; "
                 "sides cannot be inferred, and a made-up side would chart a lie",
             )
-            raise SystemExit(4)
-        for index, (stamp, price, bid, ask, volume, side) in enumerate(rederived):
-            if side:
-                break
-            inferred_sides += 1
-            rederived[index] = (stamp, price, bid, ask, volume, first_decided)
-        prints = rederived
+            raise SystemExit(4) from None
     else:
-        side_source = "venue_flags"
-        for index, (stamp, price, bid, ask, volume, side) in enumerate(prints):
-            if side:
-                continue
-            # The venue did not say. Falling back to the price's side of the
-            # spread is an inference, counted and declared below rather than
-            # passed off as the exchange's own answer.
-            inferred = (
-                "B"
-                if (ask > 0 and price >= ask)
-                else "S"
-                if (bid > 0 and price <= bid)
-                else ""
+        # The venue answered for most prints; the ones it skipped fall back to
+        # the price's side of the spread, then to the last decided side — an
+        # inference, counted and declared below rather than passed off as the
+        # exchange's own answer. The replay format rightly refuses an empty
+        # side, so a print no rule can decide must fail here, loudly, not
+        # hours later when the session is opened.
+        try:
+            prints, inferred_sides = fill_missing_sides(prints)
+        except ValueError:
+            emit(
+                "EXPORT_TAPE_SIDES_UNDECIDABLE",
+                symbol=symbol,
+                day=day,
+                fix="no print carries a venue flag or a usable quote; "
+                "sides cannot be inferred, and a made-up side would chart a lie",
             )
-            if inferred:
-                inferred_sides += 1
-                prints[index] = (stamp, price, bid, ask, volume, inferred)
-        if inferred_sides:
-            # Data honesty: the header must not claim the venue answered when
-            # it did not, so the whole file downgrades to the weaker
-            # declaration.
-            side_source = "venue_flags_with_bid_ask_fallback"
+            raise SystemExit(4) from None
+        # Data honesty: the header must not claim the venue answered when it
+        # did not, so any inference downgrades the whole file to the weaker
+        # declaration.
+        side_source = (
+            "venue_flags_with_bid_ask_fallback" if inferred_sides else "venue_flags"
+        )
 
     rows: list[str] = [
         "# quantick-replay 1",

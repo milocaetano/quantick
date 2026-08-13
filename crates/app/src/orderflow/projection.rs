@@ -96,6 +96,11 @@ pub struct AggressionPrimitive {
     pub live: bool,
     /// Inclusive lower edge of the visual price range.
     pub price_bucket: Decimal,
+    /// Exact price height the range covers, starting at
+    /// [`price_bucket`](Self::price_bucket): one visual row for a plain
+    /// bubble, the whole region for a regional fold. Range-drawing consumers
+    /// (the live strip's histogram) read this instead of assuming one row.
+    pub price_span: Decimal,
     /// Number of aggregate trades represented by this bubble.
     pub trade_count: usize,
     /// Earliest exchange timestamp represented by this bubble.
@@ -1175,12 +1180,21 @@ fn refine_tier(
     grouping: EffectiveGrouping,
     summarizing: bool,
 ) -> TierClusters {
+    let regionalizing = config.bubble_region_rows > 1;
+
     // Display floor for bubbles. Applied after association so a hidden small
     // print still counts as the evidence behind an aligned reduction: the
     // marker keeps saying "a trade ate this", the tape just stays readable.
+    // With the regional fold on, the slot's floor waits until after the fold:
+    // a region's area claims the zone's summed volume, and a floor applied to
+    // the members would silently thin the very sum the mark reports — small
+    // prints fold into their region, and only still-small *regions* are
+    // hidden.
     if let Some(floor) = config.bubbles.min_quantity_decimal() {
         tier.tape.retain(|cluster| cluster.quantity >= floor);
-        tier.slot.retain(|cluster| cluster.quantity >= floor);
+        if !regionalizing {
+            tier.slot.retain(|cluster| cluster.quantity >= floor);
+        }
     }
 
     // Readability floor, then the closed-bar summary. Association already
@@ -1194,13 +1208,22 @@ fn refine_tier(
         tier.slot = merge_dust_clusters(tier.slot, dust, config.bubble_dust_merge_ms);
     }
 
+    // Which bar slot a cluster falls in — the key the regional fold and the
+    // summary both group by, so a fold can never credit one bar with volume
+    // its neighbour traded.
+    let bar_of = |cluster: &AggressionCluster| {
+        timeline
+            .locate(cluster.timestamp_ms)
+            .map(|position| position.bar_index)
+    };
+
     // The regional fold, above one row: same-side clusters sharing a region
-    // `bubble_region_rows` rows tall become one bubble at their volume-weighted
-    // price. After association and after the dust merge for the same reason
-    // those run where they do — folding is a drawing decision, and by now it
-    // moves no evidence and rescales nothing. The summary below then works at
-    // region granularity, because the fold rewrote each cluster's bucket to
-    // its region's lower edge.
+    // `bubble_region_rows` rows tall, inside one bar, become one bubble
+    // anchored at the region's point of control. After association and after
+    // the dust merge for the same reason those run where they do — folding is
+    // a drawing decision, and by now it moves no evidence and rescales
+    // nothing. The summary below then works at region granularity, because
+    // the fold rewrote each cluster's bucket to its region's lower edge.
     //
     // Slots only, never the tape: the live lane draws prints one by one
     // because it has the room to, and a scalper reads the forming edge from
@@ -1208,9 +1231,12 @@ fn refine_tier(
     // hostage to a window that has not closed. The compressed history is
     // where per-row marks stack into bead necklaces, so the history is where
     // the fold pays.
-    if config.bubble_region_rows > 1 {
+    if regionalizing {
         let region_width = grouping.bucket_width * Decimal::from(config.bubble_region_rows);
-        tier.slot = regionalize_clusters(tier.slot, region_width, config.bubble_region_ms);
+        tier.slot = regionalize_clusters(tier.slot, region_width, config.bubble_region_ms, bar_of);
+        if let Some(floor) = config.bubbles.min_quantity_decimal() {
+            tier.slot.retain(|cluster| cluster.quantity >= floor);
+        }
     }
 
     // Every bar with prints in its slot gets one mark per price range, the
@@ -1220,11 +1246,6 @@ fn refine_tier(
     // exactly what the bar has taken so far — and the tape beside it still
     // shows those same prints one by one.
     if summarizing {
-        let bar_of = |cluster: &AggressionCluster| {
-            timeline
-                .locate(cluster.timestamp_ms)
-                .map(|position| position.bar_index)
-        };
         tier.slot = summarize_clusters(std::mem::take(&mut tier.slot), bar_of);
     }
     tier
@@ -1289,6 +1310,7 @@ fn aggression_primitive(
         buy_share,
         live,
         price_bucket: cluster.price_bucket,
+        price_span: cluster.price_span,
         trade_count: cluster.trade_count,
         first_timestamp_ms: cluster.first_timestamp_ms,
         last_timestamp_ms: cluster.last_timestamp_ms,
@@ -1583,6 +1605,61 @@ mod tests {
             .collect();
         assert_eq!(tape.len(), 2, "the tape stays print by print");
         assert!(tape.iter().all(|mark| mark.quantity == Decimal::ONE));
+    }
+
+    /// Two prints in one region but adjacent bars, inside one region window,
+    /// with the candle summary on: the WIN's tick bars close in seconds, and a
+    /// fold that crossed the boundary would credit the whole summed quantity
+    /// to the bar its midpoint lands in — a pie claiming volume the neighbour
+    /// traded. One mark per bar, each with its own bar's quantity.
+    #[test]
+    fn regions_never_move_volume_across_a_bar_boundary() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: 0,
+            bubble_region_rows: 3,
+            bubble_region_ms: 5_000,
+            bubble_candle_summary: true,
+            ..config()
+        });
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
+        for (agg_id, timestamp_ms, price, quantity) in
+            [(1_u64, 800_i64, "100", "1"), (2, 1_200, "102", "2")]
+        {
+            history.record_aggression(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: dec(price),
+                quantity: dec(quantity),
+                side: Side::Buy,
+            });
+        }
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 3_900,
+                window_ms: 1_500,
+                on_newest_bar: true,
+            }),
+        );
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        let mut settled: Vec<_> = projection
+            .aggressions
+            .iter()
+            .filter(|mark| !mark.live)
+            .collect();
+        settled.sort_by_key(|mark| mark.first_timestamp_ms);
+        assert_eq!(settled.len(), 2, "one mark per bar, never one for both");
+        assert_eq!(settled[0].quantity, dec("1"));
+        assert_eq!(settled[1].quantity, dec("2"));
     }
 
     /// The chart is built in two halves that meet at a bar's open time. This is

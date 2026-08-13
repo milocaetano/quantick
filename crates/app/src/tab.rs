@@ -1127,6 +1127,12 @@ impl Tab {
     /// between two symbols that declare nothing of their own keeps the user's
     /// panel tweaks, exactly as before per-symbol declarations existed: the
     /// declared look belongs to the feed, and to the symbols that state one.
+    ///
+    /// One asymmetry is deliberate: hopping *off* a declared symbol onto one
+    /// that declares nothing (on a feed that also declares nothing) keeps the
+    /// look just left on screen — nothing remembers what the panel wore
+    /// before the declaration applied, and inventing a "previous look" store
+    /// for that one hop would be a second owner for the panel's state.
     pub fn apply_feed_bubble_preset_after_switch(
         &mut self,
         config: &AppConfig,

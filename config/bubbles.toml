@@ -172,9 +172,10 @@ label_min_radius = 9.2
 #     cap.
 #   * max_radius 13 → 18 (ladder rungs recomputed) — fewer, bigger marks can
 #     afford the room; the label floor moves with it.
-#   * min_quantity 50 → 0 — the display floor runs before the fold, so any
-#     floor would silently thin the very sum a region's area claims to be.
-#     Regions absorb the small prints the floor existed to hide.
+#   * min_quantity stays 50, applied to *regions*: with the regional fold on
+#     the projection moves the display floor to after the fold, so small
+#     prints still sum into their zone and only still-small regions are
+#     hidden — the mark's area never claims a thinned sum.
 #   * side_offset 2 → 5 — at 18 px radii the sweeps separation left a buy
 #     region and a sell region at one zone almost fully covering each other,
 #     which is the absorption read lost (trader-ux-review, Rafa).
@@ -200,7 +201,7 @@ sphere_shading = 0.34
 sphere_highlight = 0.18
 size_reference = "fixed"
 size_reference_quantity = 1500.0
-min_quantity = 0.0
+min_quantity = 50.0
 side_offset = 5.0
 consumption_mark = "crown"
 front_width = 1.6

@@ -736,9 +736,15 @@ impl OrderflowView {
             let sell_fill = egui::Color32::from_rgb(colors.sell[0], colors.sell[1], colors.sell[2])
                 .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
             for row in &histogram {
-                let top = scale.y((row.price_bucket + bucket_width)
-                    .to_f64()
-                    .unwrap_or(f64::NAN));
+                // A plain row is one bucket tall; a regional mark declares the
+                // whole region it covers. Zero-span marks (older projections)
+                // fall back to the bucket width.
+                let row_span = if row.price_span > Decimal::ZERO {
+                    row.price_span
+                } else {
+                    bucket_width
+                };
+                let top = scale.y((row.price_bucket + row_span).to_f64().unwrap_or(f64::NAN));
                 let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
                 if !top.is_finite() || !bottom.is_finite() {
                     continue;
@@ -1737,7 +1743,8 @@ impl OrderflowView {
                                             self.config.bubble_region_ms,
                                         ))
                                         .show_ui(ui, |ui| {
-                                            for milliseconds in [500, 1_000, 2_000, 3_000, 5_000] {
+                                            for milliseconds in [500, 1_000, 1_500, 2_000, 3_000, 5_000]
+                                            {
                                                 ui.selectable_value(
                                                     &mut self.config.bubble_region_ms,
                                                     milliseconds,
