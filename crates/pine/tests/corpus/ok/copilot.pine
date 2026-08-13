@@ -47,9 +47,14 @@ band_lo = plot(in_range ? na : lo_w, "No-trade low", color=color.new(color.red, 
 fill(band_hi, band_lo, color.new(color.red, 92))
 
 // --- shared effort series ---
+// Every stateful ta.* call lives at top level: the dialect's `and` is
+// short-circuit and kernels have call-site identity, so a kernel on the
+// right of `and` would only warm up on bars where the left side is true.
 // z-score of per-bar delta: "large aggression" relative to the recent
 // tape, so the trigger survives calm and volatile days alike.
 z = (delta - ta.sma(delta, z_len)) / ta.stdev(delta, z_len)
+z_low = ta.lowest(z, pivot_r + 1)
+z_high = ta.highest(z, pivot_r + 1)
 // effort × result: volume per point of bar range. The floor keeps a doji
 // from dividing by zero (division by zero would poison the SMA window
 // with na); a bar narrower than the floor is measured as if it had it.
@@ -71,7 +76,10 @@ if double_top
     label.new(top_bar, ph, text="DT", style=label.style_label_down, color=color.new(color.red, 20))
 // second touch: same price, less buying (CVD divergence), touch bar
 // absorbing, and sell aggression between the touch and its confirmation.
-short_setup = double_top and in_range and top_cvd < top_cvd1 and top_er >= er_thr and ta.lowest(z, pivot_r + 1) <= -z_thr
+top_diverges = top_cvd < top_cvd1
+top_absorbed = top_er >= er_thr
+sell_hit = z_low <= -z_thr
+short_setup = double_top and in_range and top_diverges and top_absorbed and sell_hit
 plotshape(short_setup, "Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")
 
 // --- 2..4. double bottom -> long ---
@@ -87,5 +95,8 @@ double_bottom = bot_now and not na(bot_val1) and math.abs(pl - bot_val1) <= tol_
 if double_bottom
     line.new(bot_bar1, bot_val1, bot_bar, pl, color=color.teal, width=2)
     label.new(bot_bar, pl, text="DB", style=label.style_label_up, color=color.new(color.teal, 20))
-long_setup = double_bottom and in_range and bot_cvd > bot_cvd1 and bot_er >= er_thr and ta.highest(z, pivot_r + 1) >= z_thr
+bot_diverges = bot_cvd > bot_cvd1
+bot_absorbed = bot_er >= er_thr
+buy_hit = z_high >= z_thr
+long_setup = double_bottom and in_range and bot_diverges and bot_absorbed and buy_hit
 plotshape(long_setup, "Long setup", style=shape.triangleup, location=location.belowbar, color=color.teal, text="BUY")

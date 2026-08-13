@@ -38,6 +38,11 @@ by golden tests.
   builtins.
 - Operators: arithmetic (`+ - * / %`), comparison, `and or not` (short-
   circuit; `na` counts as false), ternary `? :`, history `[n]`.
+  **Divergence:** because `and`/`or` short-circuit and `ta.*` kernels have
+  call-site identity, a stateful call on the right side only advances on
+  bars where the left side lets it evaluate — it warms up late and reads a
+  gapped series. Hoist stateful calls to top-level assignments and combine
+  the resulting values instead.
 - `if` / `for … to … by` / `while` / `switch` are **expressions**; an
   indented block's value is its last statement's value. Loops are capped at
   10 000 iterations per bar (`PINE_LOOP_BUDGET`). `switch` takes both forms:
