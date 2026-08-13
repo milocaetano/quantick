@@ -971,6 +971,13 @@ pub struct ChartPane {
     /// bars again, rather than clamping every mark onto a series that is not
     /// there yet.
     pending_reanchor: Option<usize>,
+    /// The pane opened by a click on its own collapsed strip, carried to the
+    /// frame that may hold the second half of a double click.
+    ///
+    /// A collapsed strip changes shape the instant it is clicked, so a gesture
+    /// made *of* two clicks cannot be read from one frame's geometry. This is
+    /// the one piece of state that spans them.
+    strip_expanded: Option<SlotId>,
     /// An indicator whose settings a gesture on this pane asked for, waiting
     /// for the app to open the dialog.
     ///
@@ -1072,6 +1079,7 @@ impl ChartPane {
             shared_drag_pending_from: None,
             shared_pointer_mark: None,
             pending_reanchor: None,
+            strip_expanded: None,
             pending_settings: None,
         }
     }
@@ -3381,6 +3389,11 @@ impl ChartPane {
         // Collected here and parked on the pane below: the loop holds a mutable
         // borrow of `self.indicators`, and the dialog belongs to the app.
         let mut settings_request: Option<SlotId> = None;
+        // Which pane, if any, was opened by a click on its own collapsed strip
+        // on the last frame that had one — and what this frame decides to hand
+        // to the next. See the disclosure block below.
+        let strip_expanded = self.strip_expanded;
+        let mut opened_from_strip = strip_expanded;
         for ((view, gutter), body) in self
             .indicators
             .visible_panes_mut()
@@ -3423,18 +3436,11 @@ impl ChartPane {
             if disclosure.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
-            // The pane's own handle into its settings, in both states: the
-            // header row when the pane is open, and the strip itself when it is
-            // collapsed — which is the same rect as the disclosure, so the
-            // gesture is read off that response rather than from a second claim
-            // on the same pixels. Registered after the pan so it takes the
-            // double click the body would otherwise spend resetting the scale;
-            // the pan keeps every other pixel of the band.
-            if body.collapsed {
-                if disclosure.double_clicked() {
-                    settings_request = Some(view.slot);
-                }
-            } else {
+            // The pane's own handle into its settings when it is open: the
+            // header row. Registered after the pan so it takes the double click
+            // the body would otherwise spend resetting the scale; the pan keeps
+            // every other pixel of the band.
+            if !body.collapsed {
                 let header = ui.interact(
                     indicator_render::pane_header_rect(body.rect, body.collapsed),
                     egui::Id::new(("pane_header", pane_id, view.slot)),
@@ -3447,18 +3453,41 @@ impl ChartPane {
                     settings_request = Some(view.slot);
                 }
             }
-            if disclosure.clicked() {
-                view.sizing = if body.collapsed {
+            // A collapsed strip is the fourth handle, and it needs the two
+            // clicks of a double click read *across the frames between them*:
+            // the first one expands the pane, so by the time the second arrives
+            // the strip is gone, the pointer sits somewhere in the body of a
+            // pane that is now a hundred pixels tall, and `body.collapsed` is
+            // already false.
+            //
+            // Before this, that second click simply collapsed the pane again —
+            // so double-clicking a collapsed strip expanded it and put it back,
+            // and did nothing at all. It opens the settings instead, which is
+            // the only reading that leaves the gesture worth making. What
+            // carries it across the frames is `strip_expanded`: the slot whose
+            // strip opened this pane, set by the click that opened it and spent
+            // by the one that follows.
+            if disclosure.double_clicked() && strip_expanded == Some(view.slot) {
+                settings_request = Some(view.slot);
+                opened_from_strip = None;
+            } else if disclosure.clicked() {
+                // A plain click, which egui reports only when it is *not* half
+                // of a double one — so reaching here always means the previous
+                // gesture is over and any flag it left is spent.
+                opened_from_strip = None;
+                if body.collapsed {
                     // Manual, not Auto: the automatic rule is what collapsed
                     // it, so handing it back would undo the click on the very
                     // next frame. An explicit height is served before the
                     // automatic ones and therefore always fits.
-                    PaneSizing::Manual(MIN_PANE_HEIGHT_PX)
+                    view.sizing = PaneSizing::Manual(MIN_PANE_HEIGHT_PX);
+                    opened_from_strip = Some(view.slot);
                 } else {
-                    PaneSizing::Collapsed
-                };
+                    view.sizing = PaneSizing::Collapsed;
+                }
             }
         }
+        self.strip_expanded = opened_from_strip;
         if let Some(slot) = settings_request {
             self.pending_settings = Some(slot);
         }
@@ -5785,6 +5814,105 @@ mod tests {
             None,
             "the header took the gesture from the body, not the whole band"
         );
+    }
+
+    /// The fourth target, and the one that needed a behaviour change to exist:
+    /// a double click on a collapsed pane's strip.
+    ///
+    /// The two clicks straddle a change of geometry — the first expands the
+    /// pane, so the second arrives at a strip that is no longer there. Before
+    /// this, that second click collapsed the pane again, which made
+    /// double-clicking a collapsed strip expand it and put it back: a gesture
+    /// that did nothing at all. The pane now stays open and its settings are
+    /// what the second click asks for.
+    ///
+    /// The single click is untouched, and this asserts that too — a collapsed
+    /// pane still opens on one click, and an open one still closes.
+    #[test]
+    fn a_double_click_on_a_collapsed_strip_opens_it_and_asks_for_its_settings() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+        pane.indicators
+            .visible_panes_mut()
+            .next()
+            .expect("one pane")
+            .sizing = PaneSizing::Collapsed;
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let strip = test_areas(&pane, TEST_PLOT)
+            .indicator_panes
+            .first()
+            .copied()
+            .expect("one pane");
+        assert!(strip.collapsed, "the fixture pane is collapsed by hand");
+        let expected = pane.indicators.all()[0].slot;
+
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, strip.rect.center()),
+            Some(expected),
+            "the strip asks for the settings of the pane it belongs to"
+        );
+        assert!(
+            !matches!(pane.indicators.all()[0].sizing, PaneSizing::Collapsed),
+            "and leaves it open rather than putting it back, which is what \
+             made this gesture a no-op"
+        );
+
+        // The single click either way is exactly what it was.
+        let mut plain = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+        plain
+            .indicators
+            .visible_panes_mut()
+            .next()
+            .expect("one pane")
+            .sizing = PaneSizing::Collapsed;
+        let _ = drive_navigation(&mut plain, &ctx, TEST_PLOT, Vec::new());
+        let band = test_areas(&plain, TEST_PLOT)
+            .indicator_panes
+            .first()
+            .copied()
+            .expect("one pane");
+        single_click_at(&mut plain, &ctx, TEST_PLOT, band.rect.center());
+        assert!(
+            !matches!(plain.indicators.all()[0].sizing, PaneSizing::Collapsed),
+            "one click still opens a collapsed pane"
+        );
+        let open = test_areas(&plain, TEST_PLOT)
+            .indicator_panes
+            .first()
+            .copied()
+            .expect("one pane");
+        let chevron = indicator_render::pane_disclosure_rect(open.rect, open.collapsed).center();
+        single_click_at(&mut plain, &ctx, TEST_PLOT, chevron);
+        assert!(
+            matches!(plain.indicators.all()[0].sizing, PaneSizing::Collapsed),
+            "and one click on the chevron still closes an open one"
+        );
+    }
+
+    /// One press and release at `pos`, far enough apart in frames that egui
+    /// reports a plain click rather than half of a double one.
+    fn single_click_at(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        pos: egui::Pos2,
+    ) {
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ];
+            let _ = drive_navigation(pane, ctx, area, events);
+        }
+        // Idle frames, so the next click is not read as a double.
+        for _ in 0..30 {
+            let _ = drive_navigation(pane, ctx, area, Vec::new());
+        }
     }
 
     /// And on the candles: a double click on an overlay's own line asks for
