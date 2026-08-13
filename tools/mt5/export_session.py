@@ -364,6 +364,26 @@ def export_tape(
                 inferred_sides += 1
             previous_price = price
             rederived.append((stamp, price, bid, ask, volume, side))
+        # The day's leading prints can precede any price movement and any
+        # usable quote, and the format rightly refuses an empty side. The
+        # first decided side is the only evidence about them, so it reaches
+        # back — still an inference, which `side_source=tick_rule` already
+        # declares for the whole file.
+        first_decided = next((side for *_, side in rederived if side), "")
+        if not first_decided:
+            emit(
+                "EXPORT_TAPE_SIDES_UNDECIDABLE",
+                symbol=symbol,
+                day=day,
+                fix="the whole day traded at one price with no usable quotes; "
+                "sides cannot be inferred, and a made-up side would chart a lie",
+            )
+            raise SystemExit(4)
+        for index, (stamp, price, bid, ask, volume, side) in enumerate(rederived):
+            if side:
+                break
+            inferred_sides += 1
+            rederived[index] = (stamp, price, bid, ask, volume, first_decided)
         prints = rederived
     else:
         side_source = "venue_flags"

@@ -1201,9 +1201,15 @@ fn refine_tier(
     // moves no evidence and rescales nothing. The summary below then works at
     // region granularity, because the fold rewrote each cluster's bucket to
     // its region's lower edge.
+    //
+    // Slots only, never the tape: the live lane draws prints one by one
+    // because it has the room to, and a scalper reads the forming edge from
+    // exactly that granularity — a region there would hold the newest print
+    // hostage to a window that has not closed. The compressed history is
+    // where per-row marks stack into bead necklaces, so the history is where
+    // the fold pays.
     if config.bubble_region_rows > 1 {
         let region_width = grouping.bucket_width * Decimal::from(config.bubble_region_rows);
-        tier.tape = regionalize_clusters(tier.tape, region_width, config.bubble_region_ms);
         tier.slot = regionalize_clusters(tier.slot, region_width, config.bubble_region_ms);
     }
 
@@ -1513,6 +1519,70 @@ mod tests {
             "the three biggest prints survive, from whichever half"
         );
         assert_eq!(projection.dropped_aggressions, 3);
+    }
+
+    /// The regional fold compresses the settled history and never the tape:
+    /// prints in the live lane keep their own marks — a scalper reads the
+    /// forming edge print by print — while the same prices behind the seam
+    /// become one bubble per region carrying the exact summed quantity.
+    #[test]
+    fn regions_fold_the_settled_half_and_leave_the_tape_alone() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_cluster_ms: 0,
+            bubble_dust_merge_ms: 0,
+            bubble_region_rows: 3,
+            bubble_region_ms: 5_000,
+            ..config()
+        });
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
+        // Two prints in the settled half share the three-row region [99, 102);
+        // two prints on the tape land in that same region.
+        for (agg_id, timestamp_ms, price) in [
+            (1_u64, 100_i64, "100"),
+            (2, 300, "101"),
+            (3, 3_100, "100"),
+            (4, 3_300, "101"),
+        ] {
+            history.record_aggression(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: dec(price),
+                quantity: Decimal::ONE,
+                side: Side::Buy,
+            });
+        }
+        let closed: Vec<Bar> = (0..4).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            None,
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 3_900,
+                window_ms: 1_500,
+                on_newest_bar: true,
+            }),
+        );
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+        );
+
+        let settled: Vec<_> = projection
+            .aggressions
+            .iter()
+            .filter(|mark| !mark.live)
+            .collect();
+        assert_eq!(settled.len(), 1, "one region, one settled mark");
+        assert_eq!(settled[0].quantity, dec("2"));
+        assert_eq!(settled[0].trade_count, 2);
+        let tape: Vec<_> = projection
+            .aggressions
+            .iter()
+            .filter(|mark| mark.live)
+            .collect();
+        assert_eq!(tape.len(), 2, "the tape stays print by print");
+        assert!(tape.iter().all(|mark| mark.quantity == Decimal::ONE));
     }
 
     /// The chart is built in two halves that meet at a bar's open time. This is

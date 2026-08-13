@@ -175,6 +175,9 @@ label_min_radius = 9.2
 #   * min_quantity 50 → 0 — the display floor runs before the fold, so any
 #     floor would silently thin the very sum a region's area claims to be.
 #     Regions absorb the small prints the floor existed to hide.
+#   * side_offset 2 → 5 — at 18 px radii the sweeps separation left a buy
+#     region and a sell region at one zone almost fully covering each other,
+#     which is the absorption read lost (trader-ux-review, Rafa).
 [[presets]]
 name = "mini index regions"
 cluster_ms = 300
@@ -198,7 +201,7 @@ sphere_highlight = 0.18
 size_reference = "fixed"
 size_reference_quantity = 1500.0
 min_quantity = 0.0
-side_offset = 2.0
+side_offset = 5.0
 consumption_mark = "crown"
 front_width = 1.6
 front_length_scale = 0.618
