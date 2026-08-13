@@ -5672,6 +5672,155 @@ mod tests {
         pane
     }
 
+    /// Drive `handle_navigation` for one frame with the given pointer events,
+    /// and hand back whatever settings request the gestures raised.
+    ///
+    /// The pane's input pass needs a whole `PaneChrome` — the tool rail, the
+    /// preset store, the style, the simulator, the layer sink — which is why
+    /// none of these gestures had an end-to-end test before: there was nothing
+    /// to build one on. Everything here is a real default, and the preset store
+    /// is pointed at a path that does not exist, so the fixture reads nothing
+    /// off the developer's disk.
+    fn drive_navigation(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        events: Vec<egui::Event>,
+    ) -> Option<SlotId> {
+        let mut toolrail = crate::toolrail::ToolRail::new();
+        let presets =
+            drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
+        let mut open_settings = false;
+        let style = crate::style::ChartStyle::default();
+        let mut paper = crate::paper_trading::PaperTrading::new();
+        let footprint = crate::footprint_config::FootprintConfig::default();
+        let mut layers = crate::chart_layers::LayerActions::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                area.size() + egui::vec2(area.left(), area.top()),
+            )),
+            events,
+            ..egui::RawInput::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut chrome = PaneChrome {
+                    toolrail: &mut toolrail,
+                    presets: &presets,
+                    open_settings: &mut open_settings,
+                    style: &style,
+                    tz: crate::timezone::TzOffset::default(),
+                    symbol: "TESTUSDT",
+                    paper: &mut paper,
+                    paper_owns_input: false,
+                    shared_pick: None,
+                    shared: SharedInteraction::default(),
+                    capabilities: crate::config::FeedCapabilities::none(),
+                    side_inferred: false,
+                    footprint: &footprint,
+                    layers: &mut layers,
+                };
+                pane.handle_navigation(ui, area, &mut chrome);
+            });
+        });
+        pane.take_settings_request()
+    }
+
+    /// A double click at `pos`, as two press/release pairs in two frames —
+    /// egui reports the second as `double_clicked`.
+    fn double_click_at(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        pos: egui::Pos2,
+    ) -> Option<SlotId> {
+        let mut request = None;
+        for pressed in [true, false, true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ];
+            request = drive_navigation(pane, ctx, area, events).or(request);
+        }
+        request
+    }
+
+    /// Criterion 1, the pane's own targets: a double click on an open pane's
+    /// header asks for that indicator's settings, and the pane body still
+    /// means what it always did.
+    ///
+    /// This is the binding the geometry tests could not reach — a rect
+    /// registered before the pan gesture instead of after, or a `clicked()`
+    /// written where `double_clicked()` was meant, would leave every other
+    /// test green and the gesture dead.
+    #[test]
+    fn a_double_click_on_a_pane_header_asks_for_that_indicators_settings() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+        // One frame to lay the pane out, so the header rect is real.
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let areas = test_areas(&pane, TEST_PLOT);
+        let slot = areas.indicator_panes.first().copied().expect("one pane");
+        assert!(!slot.collapsed, "the fixture pane has room for its curve");
+        let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+        let expected = pane.indicators.all()[0].slot;
+
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, header.center()),
+            Some(expected),
+            "the header is the pane's handle into its settings"
+        );
+
+        // The body below it keeps its own meaning: a double click there resets
+        // that pane's scale and asks for no dialog.
+        let body = egui::pos2(slot.rect.center().x, slot.rect.bottom() - 8.0);
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, body),
+            None,
+            "the header took the gesture from the body, not the whole band"
+        );
+    }
+
+    /// And on the candles: a double click on an overlay's own line asks for
+    /// that overlay, while one in open chart still snaps back to the live edge
+    /// and asks for nothing.
+    ///
+    /// `overlay_plot_at` is unit-tested on its own; this is the wiring around
+    /// it — that the chart's double click consults it at all, and that it does
+    /// not swallow the gesture everywhere else.
+    #[test]
+    fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_overlay(vec![50.0; 8]);
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let expected = pane.indicators.all()[0].slot;
+        let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+        let (start, _) = pane.viewport.visible_range(chart.width(), total);
+        let on_the_line = egui::pos2(
+            pane.viewport.x_center(start + 1, right, total),
+            scale.y(50.0),
+        );
+
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, on_the_line),
+            Some(expected),
+            "pointing at a curve and double clicking is asking about the curve"
+        );
+
+        let open_chart = on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 10.0);
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, open_chart),
+            None,
+            "open chart still means the viewport"
+        );
+    }
+
     /// The fourth place a double click opens settings from, and the one that
     /// needs real geometry: the pointer is on an overlay's own line.
     ///
