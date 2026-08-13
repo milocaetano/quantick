@@ -193,6 +193,24 @@ impl ScriptLibrary {
 mod tests {
     use super::*;
 
+    /// The copilot ships twice: embedded here and as the pine crate's
+    /// semantics fixture (`copilot_semantics.rs` proves the marker logic
+    /// against the corpus copy). If the copies drift, the semantics test
+    /// silently proves a script the app no longer embeds — so pin them.
+    #[test]
+    fn the_embedded_copilot_matches_its_semantics_fixture() {
+        let embedded = EMBEDDED_SCRIPTS
+            .iter()
+            .find(|(name, _)| *name == "copilot.pine")
+            .expect("copilot.pine is embedded")
+            .1;
+        let fixture = include_str!("../../../pine/tests/corpus/ok/copilot.pine");
+        assert_eq!(
+            embedded, fixture,
+            "sync crates/pine/tests/corpus/ok/copilot.pine with crates/app/scripts/copilot.pine"
+        );
+    }
+
     #[test]
     fn embedded_scripts_compile_against_the_dialect() {
         for (name, source) in EMBEDDED_SCRIPTS {
