@@ -39,6 +39,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
@@ -62,6 +63,15 @@ const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 /// transition) and the UI drains every frame; this only has to outlast a
 /// burst of bridge output arriving while the chart is busy.
 const NOTICE_CHANNEL_CAPACITY: usize = 32;
+
+/// Gap between attempts to bind a listen port that refused to open.
+///
+/// A taken port is not a verdict, it is a moment: the holder is usually a tab
+/// being torn down, a quantick instance being closed, or a stale process the
+/// user is about to kill. Retrying is what turns "restart the tab once the
+/// port frees" into "the chart comes back on its own". Local binds cost
+/// microseconds, so the interval only decides how quickly recovery is noticed.
+const BIND_RETRY: Duration = Duration::from_secs(2);
 
 /// Start the MetaTrader feed for `symbol`: listen for the bridge on the
 /// configured address and translate its stream into [`FeedEvent`]s.
@@ -202,7 +212,10 @@ async fn feed_task(
     server_cfg.book_capture = book_capture.clone();
 
     let (mt5_tx, mut mt5_rx) = mpsc::channel::<Mt5Event>(4096);
-    let server = tokio::spawn(run_bridge_server(server_cfg, mt5_tx));
+    let mut server = tokio::spawn(run_bridge_server(server_cfg.clone(), mt5_tx));
+    // The bind error last reported to the user, so a port that stays taken
+    // produces one attention card rather than one per retry.
+    let mut reported_bind_error: Option<String> = None;
 
     // Whether any trade reached the UI yet: the first non-empty history block
     // may be prepended only into an empty chart (see module docs).
@@ -231,6 +244,9 @@ async fn feed_task(
             maybe_event = mt5_rx.recv() => {
                 match maybe_event {
                     Some(Mt5Event::Status(status)) => {
+                        // Any status proves the listener is up: a bind failure
+                        // that later repeats deserves a fresh report.
+                        reported_bind_error = None;
                         // The connection's own story, told where the user is
                         // looking. A connected bridge clears whatever the
                         // startup reported; a lost one replaces it.
@@ -409,10 +425,11 @@ async fn feed_task(
                         }
                     }
                     None => {
-                        // The server ended: either a fatal error (log it) or
-                        // we are shutting down. Keep serving UI commands so
-                        // the loader can never hang on a dead feed.
-                        match server.await {
+                        // The server ended: a bind failure (retry it — ports
+                        // free themselves when the holder goes away), a fatal
+                        // crash, or shutdown. Whatever happens, UI commands
+                        // keep being served so no loader hangs on a dead feed.
+                        match (&mut server).await {
                             Ok(Err(e)) => {
                                 error!(
                                     target: "quantick::app",
@@ -422,26 +439,54 @@ async fn feed_task(
                                     listen_addr = %endpoint.listen_addr,
                                     from_ports_map = endpoint.from_ports_map,
                                     %e,
-                                    "MT5 bridge listener failed; feed is idle (another quantick, \
-                                     or another symbol already listening on this port?)"
+                                    retry_in_s = BIND_RETRY.as_secs(),
+                                    "MT5 bridge listener could not bind (another quantick, or \
+                                     another symbol on this port?); retrying until it frees"
                                 );
                                 // A port already taken is the ordinary failure
                                 // once several symbols stream at once, and a
                                 // log line is not where the user is looking.
-                                let _ = notice_tx.send(bind_failure_notice(&symbol, &e)).await;
+                                // Reported once per distinct error, not once
+                                // per retry: the card would otherwise repaint
+                                // every few seconds while the holder lives.
+                                let message = e.to_string();
+                                if reported_bind_error.as_deref() != Some(message.as_str()) {
+                                    reported_bind_error = Some(message);
+                                    let _ = notice_tx.send(bind_failure_notice(&symbol, &e)).await;
+                                }
+                                if !serve_commands_for(
+                                    BIND_RETRY,
+                                    &symbol,
+                                    &tx,
+                                    &mut cmd_rx,
+                                    &book_capture,
+                                    candles.as_ref(),
+                                )
+                                .await
+                                {
+                                    break; // UI gone
+                                }
+                                let (mt5_tx, new_rx) = mpsc::channel::<Mt5Event>(4096);
+                                mt5_rx = new_rx;
+                                server = tokio::spawn(run_bridge_server(server_cfg.clone(), mt5_tx));
                             }
-                            Ok(Ok(())) => {}
-                            Err(e) => error!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_SERVER_PANIC",
-                                symbol = %symbol,
-                                %e,
-                                "MT5 bridge listener crashed"
-                            ),
+                            Ok(Ok(())) => {
+                                idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture, candles.as_ref()).await;
+                                return;
+                            }
+                            Err(e) => {
+                                error!(
+                                    target: "quantick::app",
+                                    schema_version = 1_u8,
+                                    event_code = "MT5_SERVER_PANIC",
+                                    symbol = %symbol,
+                                    %e,
+                                    "MT5 bridge listener crashed"
+                                );
+                                idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture, candles.as_ref()).await;
+                                return;
+                            }
                         }
-                        idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture, candles.as_ref()).await;
-                        return;
                     }
                 }
                 if tx.is_closed() {
@@ -490,9 +535,38 @@ fn bind_failure_notice(symbol: &str, error: &Mt5Error) -> FeedNotice {
             "Nothing can listen on {addr}. Most likely another tab in this window already \
              charts {symbol} — one port carries one symbol, so close it and this tab takes \
              over. Otherwise: another quantick instance is holding {addr}, or a different \
-             symbol is mapped to that port under [metatrader.ports]."
+             symbol is mapped to that port under [metatrader.ports]. quantick keeps \
+             retrying, so freeing the port is enough — the chart reconnects on its own."
         ),
     )
+}
+
+/// Answer UI commands for `duration`, then return `true`; `false` means the
+/// UI went away first. This is the wait between two bind attempts: a plain
+/// `sleep` here would leave a loader hanging for its length, and a loader that
+/// can hang is the thing this feed promises not to have.
+async fn serve_commands_for(
+    duration: Duration,
+    symbol: &str,
+    tx: &mpsc::Sender<FeedEvent>,
+    cmd_rx: &mut mpsc::Receiver<FeedCommand>,
+    book_capture: &BookCaptureSwitch,
+    candles: Option<&OhlcvBlock>,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        tokio::select! {
+            () = tokio::time::sleep_until(deadline) => return true,
+            maybe_cmd = cmd_rx.recv() => match maybe_cmd {
+                Some(cmd) => {
+                    if !answer_command(symbol, cmd, tx, book_capture, candles).await {
+                        return false;
+                    }
+                }
+                None => return false,
+            },
+        }
+    }
 }
 
 /// After a fatal listener error, keep answering UI commands honestly (empty
@@ -665,7 +739,6 @@ fn log_status(symbol: &str, status: &Mt5Status) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use tokio::io::AsyncWriteExt as _;
 
     async fn notice_matching(
@@ -1007,6 +1080,99 @@ mod tests {
             next_step.contains("[metatrader.ports]"),
             "and so is a mapped collision: {next_step}"
         );
+        assert!(
+            next_step.contains("keeps retrying"),
+            "the user must know freeing the port is enough: {next_step}"
+        );
+    }
+
+    /// The failure behind "I picked the new contract and it never connects":
+    /// the port is briefly held — an old tab tearing down, a stale instance —
+    /// and the feed used to give up on it forever. Now it retries until the
+    /// port frees and the chart comes back with no user action at all.
+    #[tokio::test]
+    async fn a_taken_port_is_retried_until_it_frees() {
+        // Hold the port before the feed spawns, so its first bind loses.
+        let holder = tokio::net::TcpListener::bind("127.0.0.1:19191")
+            .await
+            .expect("hold the port");
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19191".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        // The failure reaches the user, and names the way out.
+        let notice = notice_matching(&mut feed.notices, |notice| {
+            matches!(notice, FeedNotice::Attention { .. })
+        })
+        .await;
+        let FeedNotice::Attention { next_step, .. } = notice else {
+            unreachable!("the predicate matched an attention notice");
+        };
+        assert!(next_step.contains("127.0.0.1:19191"), "step: {next_step}");
+
+        // A dead feed still answers commands while the port is taken.
+        feed.commands
+            .send(FeedCommand::LoadOlder { count: 10 })
+            .await
+            .expect("the feed is listening");
+        let answered = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match feed.events.recv().await {
+                    Some(FeedEvent::HistoryPrepended(trades)) => return trades,
+                    Some(_) => {}
+                    None => panic!("feed closed"),
+                }
+            }
+        })
+        .await
+        .expect("a loader would hang here");
+        assert!(answered.is_empty());
+
+        // Free the port. Nothing else is done: no restart, no new tab.
+        drop(holder);
+
+        // The retry binds, and a bridge connects as if nothing happened.
+        let mut sock = None;
+        for _ in 0..100 {
+            match tokio::net::TcpStream::connect("127.0.0.1:19191").await {
+                Ok(s) => {
+                    sock = Some(s);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
+        let mut sock = sock.expect("the feed never rebound the freed port");
+
+        let script = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"WIN$N\",\"broker_symbol\":\"WINV26\",\"digits\":0,",
+            "\"server_utc_offset_s\":-10800}\n",
+            "{\"type\":\"tick\",\"seq\":1,\"time_ms\":1000,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"170000\",\"volume\":1,\"flags\":1080}\n",
+            "{\"type\":\"tick\",\"seq\":2,\"time_ms\":1001,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"170005\",\"volume\":1,\"flags\":1080}\n",
+        );
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match feed.events.recv().await {
+                    Some(FeedEvent::Live(trade)) => return trade,
+                    Some(_) => {}
+                    None => panic!("feed closed"),
+                }
+            }
+        })
+        .await
+        .expect("timed out: the freed port never streamed");
+        assert_eq!(event.agg_id, 2);
     }
 
     #[test]

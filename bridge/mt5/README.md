@@ -151,7 +151,9 @@ is fine as long as only one of them streams at a time.
 - *Two quantick feeds on one port.* Whoever bound it first keeps it; the second
   logs `MT5_BIND_FAILED` and puts a notice on that chart naming the address and
   pointing at `[metatrader.ports]`. Charting the same symbol twice hits this,
-  and so does forgetting to map a second symbol.
+  and so does forgetting to map a second symbol. The losing feed keeps retrying
+  the bind, so freeing the port — closing the other tab or instance — is
+  enough: that chart reconnects on its own.
 
 ## Diagnose
 
