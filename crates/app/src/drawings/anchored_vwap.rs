@@ -45,14 +45,19 @@ const BAND_LINE_ALPHA: [f32; AVWAP_BAND_PAIRS] = [0.55, 0.40, 0.30];
 /// Band fills as fractions of the style's own `fill_alpha`, so the existing
 /// fill slider governs the whole stack and three pairs never add up to paint.
 const BAND_FILL_FRAC: [f32; AVWAP_BAND_PAIRS] = [1.0, 0.65, 0.40];
-/// Band line width relative to the vwap's own stroke.
-const BAND_WIDTH_FRAC: f32 = 0.75;
-/// The anchor marker: a ring on the seed bar, scaled off the stroke width.
-const ANCHOR_RADIUS_PX: f32 = 3.5;
+/// Band line width relative to the vwap's own stroke: the hairline of an
+/// annotation — the bands frame, the vwap leads.
+const BAND_WIDTH_FRAC: f32 = 0.5;
+/// The anchor marker: a ring on the seed bar, a shade wider than the
+/// selection handles (3.5 px) so the two never blur into one blob.
+const ANCHOR_RADIUS_PX: f32 = 4.0;
 const ANCHOR_RING_PX: f32 = 1.5;
-/// The default look of a fresh anchored VWAP: TradingView ships it blue and
-/// clearly heavier than a hairline annotation — this is a series, not a note.
-const AVWAP_DEFAULT_COLOR: egui::Color32 = egui::Color32::from_rgb(124, 77, 255);
+/// A fresh anchored VWAP is a derived series, not a note: it opens in the
+/// palette's reserved cyan, heavier than the annotation hairline, and with
+/// enough fill for the one default band pair to actually read.
+const AVWAP_DEFAULT_COLOR: egui::Color32 = crate::theme::DRAW_CYAN;
+const AVWAP_DEFAULT_WIDTH_PX: f32 = 2.0;
+const AVWAP_DEFAULT_FILL_ALPHA: u8 = 24;
 
 /// The sources an anchored VWAP may average. Price-scaled only: a VWAP of
 /// delta or cvd would put a flow series on the price axis — the scale lie
@@ -367,6 +372,12 @@ impl DrawingToolImpl for AnchoredVwapTool {
     fn default_color(&self) -> Option<egui::Color32> {
         Some(AVWAP_DEFAULT_COLOR)
     }
+    fn default_width_px(&self) -> Option<f32> {
+        Some(AVWAP_DEFAULT_WIDTH_PX)
+    }
+    fn default_fill_alpha(&self) -> Option<u8> {
+        Some(AVWAP_DEFAULT_FILL_ALPHA)
+    }
     fn default_payload(&self) -> Box<dyn DrawingPayload> {
         Box::new(AvwapPayload::default())
     }
@@ -462,7 +473,10 @@ impl DrawingToolImpl for AnchoredVwapTool {
             );
         }
 
-        if !ctxt.halo {
+        // While selected, the shared anchor handle (same ring language, same
+        // point) is the one marker — two concentric rings half a pixel apart
+        // read as a smudge, not as an affordance.
+        if !ctxt.halo && !ctxt.selected {
             // The anchor marker: a ring on the bar that actually seeds the
             // sums, at the average's own first value — not on the raw click.
             // A click past the newest bar clamps to it, and the ring saying

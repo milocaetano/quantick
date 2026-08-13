@@ -373,6 +373,19 @@ trait DrawingToolImpl: Sync {
     fn default_color(&self) -> Option<egui::Color32> {
         None
     }
+    /// The stroke width a fresh object of this tool is born with, when the
+    /// stock hairline would be the wrong answer. The hairline rule (§D2) is
+    /// written for *annotations*; a tool that paints a derived **series** —
+    /// one value per bar competing with candle bodies — declares its weight
+    /// here instead of asking every trader to fix it by hand.
+    fn default_width_px(&self) -> Option<f32> {
+        None
+    }
+    /// The fill alpha a fresh object opens with, when the stock value would
+    /// read as "the fill is broken" for this tool's geometry.
+    fn default_fill_alpha(&self) -> Option<u8> {
+        None
+    }
     /// The rail family this tool belongs to, if any. Consecutive registry
     /// entries with the same family id share one rail slot.
     fn family(&self) -> Option<ToolFamily> {
@@ -544,9 +557,11 @@ impl DrawingTool {
     /// own saved default is consulted.
     #[must_use]
     pub fn default_style(self) -> DrawingStyle {
+        let stock = DrawingStyle::default();
         DrawingStyle {
             color: self.0.default_color().unwrap_or(DEFAULT_DRAWING_COLOR),
-            ..DrawingStyle::default()
+            width_px: self.0.default_width_px().unwrap_or(stock.width_px),
+            fill_alpha: self.0.default_fill_alpha().unwrap_or(stock.fill_alpha),
         }
     }
 
