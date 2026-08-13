@@ -454,6 +454,20 @@ pub struct FeedConfig {
     /// and ignored rather than silently altering the panel.
     #[serde(default)]
     pub bubble_preset: Option<String>,
+    /// Bubble presets applied per symbol, by exact symbol name — overriding
+    /// [`bubble_preset`](Self::bubble_preset) for the symbols named here.
+    ///
+    /// An instrument can dictate its read more precisely than its venue: the
+    /// B3 mini index wants regional aggregation that the mini dollar on the
+    /// same feed does not. A symbol with no entry falls back to the feed's
+    /// declared preset, and then to whatever the panel has active — exactly
+    /// the ladder [`bubble_preset`](Self::bubble_preset) already describes.
+    /// Keys must be symbols this feed offers (the added-symbols sidecar
+    /// included), because a key that matches nothing has silence as its only
+    /// symptom; whether the preset *name* resolves stays the presets file's
+    /// business, reported when it is applied.
+    #[serde(default)]
+    pub symbol_bubble_presets: BTreeMap<String, String>,
     /// The canvas layout a tab on this feed opens showing.
     ///
     /// Startup-scoped, like `default_feed`: it decides what a *new* tab looks
@@ -471,6 +485,19 @@ pub struct FeedConfig {
     /// existed.
     #[serde(default)]
     pub default_bars: Option<String>,
+}
+
+impl FeedConfig {
+    /// The bubble preset declared for `symbol` on this feed, if any: the
+    /// symbol's own entry when it has one, the feed-wide declaration
+    /// otherwise.
+    #[must_use]
+    pub fn bubble_preset_for(&self, symbol: &str) -> Option<&str> {
+        self.symbol_bubble_presets
+            .get(symbol)
+            .map(String::as_str)
+            .or(self.bubble_preset.as_deref())
+    }
 }
 
 /// Paper-trading options (`[paper]` in the TOML).
@@ -766,6 +793,25 @@ impl AppConfig {
                 .is_some_and(|name| name.trim().is_empty())
             {
                 return Err(format!("feed '{}' names an empty bubble_preset", feed.id));
+            }
+            // Same two rules, one entry at a time: a key that names no symbol
+            // of this feed would have silence as its only symptom, and an
+            // empty preset name is a config typo. Whether the name resolves
+            // stays the presets file's business.
+            for (symbol, preset) in &feed.symbol_bubble_presets {
+                if !feed.symbols.contains(symbol) {
+                    return Err(format!(
+                        "feed '{}' maps a bubble preset for symbol '{symbol}', which it does \
+                         not offer",
+                        feed.id
+                    ));
+                }
+                if preset.trim().is_empty() {
+                    return Err(format!(
+                        "feed '{}' names an empty bubble preset for symbol '{symbol}'",
+                        feed.id
+                    ));
+                }
             }
             // The same live-control rules apply to a declared opening spec: a
             // config must not open a chart no control could have produced,
@@ -1446,6 +1492,12 @@ mod tests {
         assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(binance.bubble_preset, None);
+        // The mini index alone reads regionally; the mini dollar beside it
+        // falls back to the feed-wide look. That ladder is the whole point of
+        // per-symbol declarations.
+        assert_eq!(b3.bubble_preset_for("WIN$N"), Some("mini index regions"));
+        assert_eq!(b3.bubble_preset_for("WDO$N"), Some("live lane pie"));
+        assert_eq!(binance.bubble_preset_for("BTCUSDT"), None);
 
         // The default open is the split: timeframe context beside the flow
         // chart (user decision 2026-08-06). The other feeds declare nothing
@@ -1547,6 +1599,76 @@ mod tests {
         assert!(
             err.to_string().contains("bubble_preset"),
             "the message names the field: {err}"
+        );
+    }
+
+    /// An unknown preset name is ignored at runtime with only a log line as
+    /// its symptom — for the WIN$N declaration that would silently disable
+    /// the whole regional read. The shipped config and the shipped presets
+    /// file are held together here instead.
+    #[test]
+    fn every_declared_bubble_preset_resolves_in_the_shipped_presets_file() {
+        let presets = crate::bubble_presets::parse(include_str!("../config/bubbles.toml"))
+            .expect("shipped presets file");
+        let config = parse(
+            EMBEDDED_DEFAULT,
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("embedded default");
+        for feed in &config.feeds {
+            let declared = feed
+                .bubble_preset
+                .iter()
+                .chain(feed.symbol_bubble_presets.values());
+            for name in declared {
+                assert!(
+                    presets.get(name).is_some(),
+                    "feed '{}' declares bubble preset '{name}', which the shipped \
+                     bubbles.toml does not define",
+                    feed.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_symbol_preset_for_an_unoffered_symbol_is_a_config_error() {
+        let text = r#"
+            default_feed = "b"
+            default_symbol = "AAA"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["AAA"]
+            symbol_bubble_presets = { "GHOST" = "default" }
+        "#;
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default())
+            .expect_err("key names no symbol of the feed");
+        assert!(
+            err.to_string().contains("GHOST"),
+            "the message names the key: {err}"
+        );
+    }
+
+    #[test]
+    fn an_empty_symbol_preset_name_is_a_config_error() {
+        let text = r#"
+            default_feed = "b"
+            default_symbol = "AAA"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["AAA"]
+            symbol_bubble_presets = { "AAA" = "  " }
+        "#;
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default())
+            .expect_err("blank preset name");
+        assert!(
+            err.to_string().contains("AAA"),
+            "the message names the symbol: {err}"
         );
     }
 

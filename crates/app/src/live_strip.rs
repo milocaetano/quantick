@@ -47,6 +47,11 @@ pub(crate) const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;
 pub(crate) struct HistogramRow {
     /// Inclusive lower price edge, in the projection's own bucket space.
     pub price_bucket: Decimal,
+    /// Price height the row covers from its lower edge — the widest span any
+    /// contributing mark declared. One visual row on a plain tape; a regional
+    /// fold's whole region when the regional fold is on, so a four-row
+    /// region's quantity is never drawn as one row's bar.
+    pub price_span: Decimal,
     /// Summed buy-aggression quantity in the bucket.
     pub buy: Decimal,
     /// Summed sell-aggression quantity in the bucket.
@@ -61,24 +66,28 @@ pub(crate) fn aggression_rows(
     aggressions: &[AggressionPrimitive],
     bar_open_ms: i64,
 ) -> Vec<HistogramRow> {
-    let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal)> =
+    let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal, Decimal)> =
         std::collections::BTreeMap::new();
     for cluster in aggressions {
         if cluster.last_timestamp_ms < bar_open_ms {
             continue;
         }
-        let entry = buckets
-            .entry(cluster.price_bucket)
-            .or_insert((Decimal::ZERO, Decimal::ZERO));
+        let entry = buckets.entry(cluster.price_bucket).or_insert((
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+        ));
         match cluster.side {
             Side::Buy => entry.0 += cluster.quantity,
             Side::Sell => entry.1 += cluster.quantity,
         }
+        entry.2 = entry.2.max(cluster.price_span);
     }
     buckets
         .into_iter()
-        .map(|(price_bucket, (buy, sell))| HistogramRow {
+        .map(|(price_bucket, (buy, sell, price_span))| HistogramRow {
             price_bucket,
+            price_span,
             buy,
             sell,
         })
@@ -122,6 +131,7 @@ mod tests {
             },
             live: false,
             price_bucket: dec(bucket),
+            price_span: Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: last_ms,
             last_timestamp_ms: last_ms,
@@ -150,11 +160,13 @@ mod tests {
             vec![
                 HistogramRow {
                     price_bucket: dec("99"),
+                    price_span: Decimal::ONE,
                     buy: Decimal::ZERO,
                     sell: dec("4"),
                 },
                 HistogramRow {
                     price_bucket: dec("100"),
+                    price_span: Decimal::ONE,
                     buy: dec("5"),
                     sell: Decimal::ZERO,
                 },

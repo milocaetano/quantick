@@ -736,9 +736,15 @@ impl OrderflowView {
             let sell_fill = egui::Color32::from_rgb(colors.sell[0], colors.sell[1], colors.sell[2])
                 .gamma_multiply(live_strip::HISTOGRAM_ALPHA);
             for row in &histogram {
-                let top = scale.y((row.price_bucket + bucket_width)
-                    .to_f64()
-                    .unwrap_or(f64::NAN));
+                // A plain row is one bucket tall; a regional mark declares the
+                // whole region it covers. Zero-span marks (older projections)
+                // fall back to the bucket width.
+                let row_span = if row.price_span > Decimal::ZERO {
+                    row.price_span
+                } else {
+                    bucket_width
+                };
+                let top = scale.y((row.price_bucket + row_span).to_f64().unwrap_or(f64::NAN));
                 let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
                 if !top.is_finite() || !bottom.is_finite() {
                     continue;
@@ -1632,6 +1638,8 @@ impl OrderflowView {
                         bubble_cluster_ms: self.config.bubble_cluster_ms,
                         bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
                         bubble_candle_summary: self.config.bubble_candle_summary,
+                        bubble_region_rows: self.config.bubble_region_rows,
+                        bubble_region_ms: self.config.bubble_region_ms,
                         bubbles: self.config.bubbles.clone(),
                         live_lane: self.config.live_lane.clone(),
                         ..HeatmapConfig::default()
@@ -1715,6 +1723,41 @@ impl OrderflowView {
                             .on_hover_text(
                                 "a second pass over the prints too small to read on their own: inside this window they fold into one bubble per price range. The threshold follows \"readable from px\" — quantities and trade counts are summed exactly",
                             );
+                            ui.horizontal(|ui| {
+                                ui.label("region height");
+                                egui::ComboBox::from_id_salt("heatmap_bubble_region")
+                                    .selected_text(region_label(self.config.bubble_region_rows))
+                                    .show_ui(ui, |ui| {
+                                        for rows in [1, 2, 3, 4, 6, 8, 12] {
+                                            ui.selectable_value(
+                                                &mut self.config.bubble_region_rows,
+                                                rows,
+                                                region_label(rows),
+                                            );
+                                        }
+                                    });
+                                if self.config.bubble_region_rows > 1 {
+                                    ui.label("window");
+                                    egui::ComboBox::from_id_salt("heatmap_bubble_region_ms")
+                                        .selected_text(region_window_label(
+                                            self.config.bubble_region_ms,
+                                        ))
+                                        .show_ui(ui, |ui| {
+                                            for milliseconds in [500, 1_000, 1_500, 2_000, 3_000, 5_000]
+                                            {
+                                                ui.selectable_value(
+                                                    &mut self.config.bubble_region_ms,
+                                                    milliseconds,
+                                                    region_window_label(milliseconds),
+                                                );
+                                            }
+                                        });
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "fold same-side bubbles landing in a price region this many rows tall into one bubble at their volume-weighted price — aggression read per zone, the Bookmap way, instead of one mark per row. Quantities, ids and matched evidence are summed exactly; buy and sell regions stay separate marks",
+                            );
                             ui.checkbox(
                                 &mut self.config.bubble_candle_summary,
                                 "summarize closed bars",
@@ -1756,6 +1799,8 @@ impl OrderflowView {
                             self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
                             self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
                             self.config.bubble_candle_summary = defaults.bubble_candle_summary;
+                            self.config.bubble_region_rows = defaults.bubble_region_rows;
+                            self.config.bubble_region_ms = defaults.bubble_region_ms;
                             self.config.bubbles = defaults.bubbles;
                             self.config.live_lane = defaults.live_lane;
                             // No stored preset is on screen any more, so the
@@ -1824,6 +1869,22 @@ fn lane_cluster_label(window: Option<i64>, inherited: i64) -> String {
         None => format!("Same as history · {}", dust_label(inherited)),
         Some(0) => "Raw · one bubble per print".to_owned(),
         Some(milliseconds) => dust_label(milliseconds),
+    }
+}
+
+fn region_label(rows: u32) -> String {
+    if rows <= 1 {
+        "Off · one mark per row".to_owned()
+    } else {
+        format!("{rows} rows")
+    }
+}
+
+fn region_window_label(milliseconds: i64) -> String {
+    if milliseconds % 1_000 == 0 {
+        format!("{} s", milliseconds / 1_000)
+    } else {
+        format!("{milliseconds} ms")
     }
 }
 
@@ -1937,6 +1998,8 @@ mod tests {
             cluster_ms: 100,
             dust_merge_ms: 3_000,
             candle_summary: true,
+            region_rows: 3,
+            region_ms: 2_000,
             bubbles: BubbleStyle {
                 max_radius: 42.0,
                 side_offset: 8.0,

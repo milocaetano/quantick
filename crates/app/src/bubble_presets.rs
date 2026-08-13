@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::orderflow::{
     BubbleStyle, HeatmapConfig, LiveLaneStyle,
-    config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS},
+    config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS, DEFAULT_BUBBLE_REGION_MS},
 };
 
 /// Environment variable naming an explicit presets file.
@@ -43,6 +43,14 @@ const fn default_cluster_ms() -> i64 {
 
 const fn default_dust_merge_ms() -> i64 {
     DEFAULT_BUBBLE_DUST_MERGE_MS
+}
+
+const fn default_region_rows() -> u32 {
+    1
+}
+
+const fn default_region_ms() -> i64 {
+    DEFAULT_BUBBLE_REGION_MS
 }
 
 /// One named snapshot of the aggression-bubble panel's *appearance*.
@@ -70,6 +78,14 @@ pub struct BubblePreset {
     /// reads as a tape or as a summary.
     #[serde(default)]
     pub candle_summary: bool,
+    /// Height of one aggression region in visual price rows; one is off. A
+    /// preset written before regions existed simply omits the key and keeps
+    /// per-row marks.
+    #[serde(default = "default_region_rows")]
+    pub region_rows: u32,
+    /// Temporal window of one regional fold, in milliseconds.
+    #[serde(default = "default_region_ms")]
+    pub region_ms: i64,
     /// Every visual choice for the bubbles themselves.
     #[serde(default)]
     pub bubbles: BubbleStyle,
@@ -87,6 +103,8 @@ impl BubblePreset {
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
+            region_rows: config.bubble_region_rows,
+            region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
             live_lane: config.live_lane.clone(),
         }
@@ -98,6 +116,8 @@ impl BubblePreset {
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
+        config.bubble_region_rows = self.region_rows;
+        config.bubble_region_ms = self.region_ms;
         config.bubbles = self.bubbles.clone();
         config.live_lane = self.live_lane.clone();
     }
@@ -159,6 +179,12 @@ impl BubblePresetFile {
             preset.cluster_ms = preset
                 .cluster_ms
                 .clamp(0, crate::orderflow::config::MAX_BUBBLE_CLUSTER_MS);
+            preset.region_rows = preset
+                .region_rows
+                .clamp(1, crate::orderflow::config::MAX_BUBBLE_REGION_ROWS);
+            preset.region_ms = preset
+                .region_ms
+                .clamp(0, crate::orderflow::config::MAX_BUBBLE_REGION_MS);
             preset.bubbles.sanitize();
             preset.live_lane.sanitize();
             true
@@ -633,6 +659,8 @@ mod tests {
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             candle_summary: false,
+            region_rows: 1,
+            region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubbles: BubbleStyle {
                 front_color: Some([255, 246, 205]),
                 ..BubbleStyle::default()

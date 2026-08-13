@@ -64,6 +64,92 @@ BRIDGE_CACHE_PATH = (
 #: moves visibly on a slow export, large enough that reporting is not the cost.
 PROGRESS_EVERY = 250_000
 
+#: Below this many flagged prints a lopsided day proves nothing — a handful of
+#: trades can legitimately all be buys. A full session of them cannot.
+ONE_SIDED_PROOF_PRINTS = 1_000
+
+#: Largest share of the flagged prints the minority side may hold while the
+#: flags still count as one-sided. The B3 broker probed on 2026-07-23 stamped
+#: BUY on literally every tick, but a broker stamping 99.9% of one side is
+#: telling the same lie with a few typos in it.
+ONE_SIDED_MINORITY_MAX_SHARE = 0.005
+
+
+def flags_are_one_sided(flag_buys: int, flag_sells: int) -> bool:
+    """Whether a day's venue flags read as a stamped constant, not a market."""
+    flagged = flag_buys + flag_sells
+    if flagged < ONE_SIDED_PROOF_PRINTS:
+        return False
+    return min(flag_buys, flag_sells) <= flagged * ONE_SIDED_MINORITY_MAX_SHARE
+
+
+def spread_side(price: float, bid: float, ask: float) -> str:
+    """The side of the spread a price printed on, or "" without evidence."""
+    if ask > 0 and price >= ask:
+        return "B"
+    if bid > 0 and price <= bid:
+        return "S"
+    return ""
+
+
+def fill_missing_sides(prints: list) -> tuple[list, int]:
+    """Decide every print left without a side, honestly and deterministically.
+
+    An undecided print falls back to the price's side of the spread, then to
+    the last decided side; leading prints with nothing before them inherit the
+    first decided side. Returns the completed prints and how many were
+    inferred. Raises ``ValueError`` when no print at all can be decided — a
+    made-up side would chart a lie, so the caller must refuse to export.
+    """
+    filled = []
+    inferred = 0
+    carried = ""
+    for stamp, price, bid, ask, volume, side in prints:
+        if not side:
+            side = spread_side(price, bid, ask) or carried
+            if side:
+                inferred += 1
+        if side:
+            carried = side
+        filled.append((stamp, price, bid, ask, volume, side))
+    first_decided = next((side for *_, side in filled if side), "")
+    if not first_decided:
+        raise ValueError("no print carries a decidable side")
+    for index, (stamp, price, bid, ask, volume, side) in enumerate(filled):
+        if side:
+            break
+        inferred += 1
+        filled[index] = (stamp, price, bid, ask, volume, first_decided)
+    return filled, inferred
+
+
+def rederive_sides(prints: list) -> tuple[list, int]:
+    """Re-derive every side with the tick rule, ignoring the venue's flags.
+
+    Uptick bought, downtick sold, unchanged keeps the last direction — the
+    same policy the live bridge defaults to (`side_source = "tick_rule"` in
+    feeds.toml), so a replayed day and a lived day read the same. Prints
+    before any price movement fall back to the spread, then inherit the first
+    decided side. Raises ``ValueError`` when the whole day is undecidable.
+    """
+    rederived = []
+    previous_price = None
+    carried = ""
+    for stamp, price, bid, ask, volume, _ in prints:
+        if previous_price is None or price == previous_price:
+            side = carried or spread_side(price, bid, ask)
+        elif price > previous_price:
+            side = "B"
+        else:
+            side = "S"
+        if side:
+            carried = side
+        previous_price = price
+        rederived.append((stamp, price, bid, ask, volume, side))
+    filled, _ = fill_missing_sides(rederived)
+    inferred = sum(1 for *_, side in filled if side)
+    return filled, inferred
+
 
 def emit(event_code: str, **fields) -> None:
     """Print one structured JSON diagnostic line to stderr."""
@@ -271,16 +357,16 @@ def export_tape(
         )
         raise SystemExit(4)
 
-    rows: list[str] = [
-        "# quantick-replay 1",
-        f"# symbol={symbol}",
-        f"# timezone={offset_label(offset_s)}",
-        "# side_source=venue_flags",
-        "# source=MetaTrader 5 COPY_TICKS_TRADE, exported by quantick",
-        "Date,Time,Price,Bid,Ask,Volume,Side",
-    ]
-    inferred_sides = 0
-    written = 0
+    # First pass: parse, keep every print. Sides are decided *after* the whole
+    # day is seen, because MT5 aggressor flags are broker-dependent: the B3
+    # broker probed on 2026-07-23 stamped BUY on every tick, and a whole
+    # session of flags on one side is that broker lying, not a market that
+    # never sold. The live bridge defaults to the tick rule for exactly this
+    # reason (see `[metatrader] side_source` in feeds.toml); an export that
+    # trusted those flags would replay a one-sided tape as if it were fact.
+    prints: list[tuple[datetime, float, float, float, float, str]] = []
+    flag_buys = 0
+    flag_sells = 0
     for tick in ticks:
         price = tick["last"]
         # A tick with no traded price is a quote update that COPY_TICKS_TRADE
@@ -292,15 +378,89 @@ def export_tape(
         bid, ask = tick["bid"], tick["ask"]
         if flags & TICK_FLAG_BUY:
             side = "B"
+            flag_buys += 1
         elif flags & TICK_FLAG_SELL:
             side = "S"
+            flag_sells += 1
         else:
-            # The venue did not say. Falling back to the price's side of the
-            # spread is an inference, counted and declared below rather than
-            # passed off as the exchange's own answer.
-            inferred_sides += 1
-            side = "B" if (ask > 0 and price >= ask) else "S" if (bid > 0 and price <= bid) else ""
+            side = ""
         volume = tick["volume_real"] or tick["volume"]
+        prints.append((stamp, price, bid, ask, volume, side))
+        if len(prints) % PROGRESS_EVERY == 0:
+            emit("EXPORT_TAPE_PROGRESS", symbol=symbol, day=day, ticks=len(prints))
+
+    if not prints:
+        emit(
+            "EXPORT_TAPE_EMPTY",
+            symbol=symbol,
+            day=day,
+            fix="this day has no executed trades — a holiday, a weekend, or "
+            "before the contract started trading. Pick another day.",
+        )
+        raise SystemExit(4)
+
+    if flags_are_one_sided(flag_buys, flag_sells):
+        # The flags are untrustworthy for this whole day. Re-derive every side
+        # with the tick rule — uptick bought, downtick sold, unchanged keeps
+        # the last direction — the same safe default the live bridge charts
+        # with, so a replayed day and a lived day read on one policy.
+        side_source = "tick_rule"
+        emit(
+            "EXPORT_TAPE_SIDES_ONE_SIDED",
+            symbol=symbol,
+            day=day,
+            flag_buys=flag_buys,
+            flag_sells=flag_sells,
+            action="infer_sides_by_tick_rule",
+            note="a whole session flagged on one side is a broker stamping a "
+            "constant, not a market; sides are inferred like the live bridge does",
+        )
+        try:
+            prints, inferred_sides = rederive_sides(prints)
+        except ValueError:
+            emit(
+                "EXPORT_TAPE_SIDES_UNDECIDABLE",
+                symbol=symbol,
+                day=day,
+                fix="the whole day traded at one price with no usable quotes; "
+                "sides cannot be inferred, and a made-up side would chart a lie",
+            )
+            raise SystemExit(4) from None
+    else:
+        # The venue answered for most prints; the ones it skipped fall back to
+        # the price's side of the spread, then to the last decided side — an
+        # inference, counted and declared below rather than passed off as the
+        # exchange's own answer. The replay format rightly refuses an empty
+        # side, so a print no rule can decide must fail here, loudly, not
+        # hours later when the session is opened.
+        try:
+            prints, inferred_sides = fill_missing_sides(prints)
+        except ValueError:
+            emit(
+                "EXPORT_TAPE_SIDES_UNDECIDABLE",
+                symbol=symbol,
+                day=day,
+                fix="no print carries a venue flag or a usable quote; "
+                "sides cannot be inferred, and a made-up side would chart a lie",
+            )
+            raise SystemExit(4) from None
+        # Data honesty: the header must not claim the venue answered when it
+        # did not, so any inference downgrades the whole file to the weaker
+        # declaration.
+        side_source = (
+            "venue_flags_with_bid_ask_fallback" if inferred_sides else "venue_flags"
+        )
+
+    rows: list[str] = [
+        "# quantick-replay 1",
+        f"# symbol={symbol}",
+        f"# timezone={offset_label(offset_s)}",
+        f"# side_source={side_source}",
+        "# source=MetaTrader 5 COPY_TICKS_TRADE, exported by quantick",
+        "Date,Time,Price,Bid,Ask,Volume,Side",
+    ]
+    written = 0
+    for stamp, price, bid, ask, volume, side in prints:
         rows.append(
             "{d},{t}.{ms:03d},{p},{b},{a},{v},{s}".format(
                 d=f"{stamp:%Y-%m-%d}",
@@ -316,28 +476,13 @@ def export_tape(
             )
         )
         written += 1
-        if written % PROGRESS_EVERY == 0:
-            emit("EXPORT_TAPE_PROGRESS", symbol=symbol, day=day, ticks=written)
 
-    if not written:
-        emit(
-            "EXPORT_TAPE_EMPTY",
-            symbol=symbol,
-            day=day,
-            fix="this day has no executed trades — a holiday, a weekend, or "
-            "before the contract started trading. Pick another day.",
-        )
-        raise SystemExit(4)
-
-    if inferred_sides:
-        # Data honesty: the header must not claim the venue answered when it
-        # did not, so the whole file downgrades to the weaker declaration.
-        rows[3] = "# side_source=venue_flags_with_bid_ask_fallback"
     emit(
         "EXPORT_TAPE_SIDES",
         symbol=symbol,
-        venue_flagged=written - inferred_sides,
-        inferred_from_bid_ask=inferred_sides,
+        side_source=side_source,
+        venue_flagged=0 if one_sided_flags else flagged,
+        inferred=inferred_sides,
     )
 
     path = out / symbol / f"{day}.csv"
