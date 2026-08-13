@@ -14,17 +14,19 @@ Branch: `feat/aggression-bubble-clusters` · worktree
 
 ## Acceptance criteria
 
-1. [ ] Bolhas agregadas por região (cluster preço×tempo), tamanho
+1. [x] Bolhas agregadas por região (cluster preço×tempo), tamanho
    proporcional ao volume agregado — fim do acúmulo tick a tick.
-2. [ ] Perfil de design específico para WIN$N via config, sem alterar o
+2. [x] Perfil de design específico para WIN$N via config, sem alterar o
    default de outros símbolos.
-3. [ ] `trader-ux-review` com personas de fluxo/Bookmap, nenhum Blocker não
+3. [x] `trader-ux-review` com personas de fluxo/Bookmap, nenhum Blocker não
    resolvido.
-4. [ ] Teste ao vivo WIN$N (MT5) com screenshot via `ui-harness`;
+4. [x] Teste ao vivo WIN$N (MT5) com screenshot via `ui-harness`;
    `visual-qa` com todas as superfícies PASS.
-5. [ ] Performance: fps/frame_avg (APP_HEALTH_SUMMARY) sob tape denso vs.
+5. [x] Performance: fps/frame_avg (APP_HEALTH_SUMMARY) sob tape denso vs.
    controle em `main` — números no corpo do PR; caminhos classificados por
    taxa.
-6. [ ] Quatro checks verdes após rebase em `main`; `arch-review` com todo
+6. [x] Quatro checks verdes após rebase em `main`; `arch-review` com todo
    Blocker/Should-fix resolvido ou deferido no corpo do PR.
-7. [ ] PR aberto (merge fora do escopo).
+7. [x] PR aberto (merge fora do escopo).
+
+PR: https://github.com/milocaetano/quantick/pull/172
