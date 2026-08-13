@@ -271,7 +271,13 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         // measuring volume still works.
         capabilities: super::fixed_capabilities(FeedCapabilities {
             book_capture: false,
-            history_paging: false,
+            // A recording pages *candles*, never trades: the tape in the file
+            // is the whole day, and there is no venue behind it to ask for
+            // more prints. The gesture is offered only when there is context
+            // on disk to pick up, and the reply is candles — which the chart
+            // marks as broker candles wherever it draws them, so the trader
+            // reads what they actually got.
+            history_paging: request.session.context.is_some(),
             traded_volume: true,
             ohlcv_history: request.session.context.is_some(),
             ohlcv_generation: 0,
@@ -290,15 +296,19 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
 ///
 /// A recording with no context file answers empty and complete — that is the
 /// whole truth about it, not a fetch that came up short.
-fn context_reply(session: &Session, span_ms: i64) -> FeedEvent {
-    let Some(context) = session.context.as_ref() else {
+fn context_reply(
+    context: Option<&quantick_replay::ContextSeries>,
+    first_print_ms: i64,
+    span_ms: i64,
+) -> FeedEvent {
+    let Some(context) = context else {
         return FeedEvent::OhlcvHistory {
             interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
             complete: true,
         };
     };
-    let earliest = session.start_ms().saturating_sub(span_ms);
+    let earliest = first_print_ms.saturating_sub(span_ms);
     let bars: Vec<_> = context
         .bars
         .iter()
@@ -313,6 +323,43 @@ fn context_reply(session: &Session, span_ms: i64) -> FeedEvent {
         // before the first bar returned, which is what `complete: false` says.
         complete: context.complete && bars.len() == context.bars.len(),
         bars,
+    }
+}
+
+/// Re-read the context file beside a recording.
+///
+/// Returns `None` when there is none, or when the one on disk will not parse.
+/// Either way the chart keeps whatever it was showing and the reason reaches
+/// the log: a download that produced a malformed file must not blank out
+/// context the trader was already reading.
+fn reload_context(session: &Session) -> Option<quantick_replay::ContextSeries> {
+    let path = quantick_replay::context_path(&session.path);
+    let text = std::fs::read_to_string(&path).ok()?;
+    match quantick_replay::parse_context(&text) {
+        Ok(series) => {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_CONTEXT_RELOADED",
+                file = %path.display(),
+                candles = series.bars.len(),
+                complete = series.complete,
+                "picked up context from disk"
+            );
+            Some(series)
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_CONTEXT_UNREADABLE",
+                file = %path.display(),
+                detail = %e,
+                advice = e.advice(),
+                "the context file beside this recording will not parse"
+            );
+            None
+        }
     }
 }
 
@@ -345,6 +392,9 @@ fn play(
     }
 
     let trades = &session.trades[..];
+    // Held apart from the session so "load older" can replace it without
+    // touching the playhead or the trades being released.
+    let mut context = session.context.clone();
     let mut last = Instant::now();
     let mut reported_finished = false;
 
@@ -359,7 +409,40 @@ fn play(
                 // answered empty — but always answered exactly once, or the
                 // pane waits for a reply that never comes.
                 Ok(FeedCommand::FetchOhlcv { span_ms }) => {
-                    if tx.blocking_send(context_reply(&session, span_ms)).is_err() {
+                    let reply = context_reply(context.as_ref(), session.start_ms(), span_ms);
+                    if tx.blocking_send(reply).is_err() {
+                        return; // UI gone
+                    }
+                }
+                // "Load older" on a recording cannot page a venue — there is
+                // none. What it *can* do is pick up context that was
+                // downloaded since this session opened, which is exactly what
+                // a trader means by it: show me more of the run-up.
+                //
+                // Re-read from disk rather than reopen the session, so the
+                // playhead never moves. A trader who asks for more history
+                // mid-replay does not expect to lose their place.
+                Ok(FeedCommand::LoadOlder { .. }) => {
+                    // Only replaced on success: a download that produced a
+                    // malformed file must not blank out context the trader is
+                    // already reading.
+                    if let Some(fresh) = reload_context(&session) {
+                        context = Some(fresh);
+                    }
+                    let reply = context_reply(
+                        context.as_ref(),
+                        session.start_ms(),
+                        crate::feed::TIME_HISTORY_SPAN_MS,
+                    );
+                    // Both replies, in this order: the candles, then the empty
+                    // trade batch that resolves the loading indicator. A
+                    // recording has no older *trades* — the tape is the whole
+                    // day — and leaving the spinner turning would be a lie.
+                    if tx.blocking_send(reply).is_err()
+                        || tx
+                            .blocking_send(FeedEvent::HistoryPrepended(Vec::new()))
+                            .is_err()
+                    {
                         return; // UI gone
                     }
                 }
@@ -614,7 +697,10 @@ mod tests {
             .expect("the worker is listening");
 
         let (interval_ms, bars, complete) = next_candles(&mut handle);
-        assert_eq!(interval_ms, 60_000, "the interval is the file's, not assumed");
+        assert_eq!(
+            interval_ms, 60_000,
+            "the interval is the file's, not assumed"
+        );
         assert_eq!(bars.len(), 90);
         assert!(complete, "the whole downloaded context fits in 90 days");
         assert!(
@@ -623,6 +709,48 @@ mod tests {
         );
         // Broker candles have no aggressor split, all the way to the chart.
         assert!(bars.iter().all(|b| b.delta() == Decimal::ZERO));
+    }
+
+    #[test]
+    fn load_older_picks_up_context_without_moving_the_playhead() {
+        let session = session_with_context(400, 90);
+        let mut handle = spawn(ReplayRequest {
+            session: Arc::clone(&session),
+            options: ReplayOptions {
+                speed: 1.0,
+                autoplay: true,
+                skip_idle_over_ms: None,
+            },
+        });
+        let link = handle.replay.clone().expect("replay link");
+        assert!(
+            handle.capabilities.borrow().history_paging,
+            "there is context on disk to pick up, so the gesture is offered"
+        );
+
+        // Let playback get under way, then ask for more history mid-replay.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while link.status.played() == 0 && Instant::now() < deadline {
+            std::thread::sleep(TICK_PLAYING);
+        }
+        let before = link.status.played();
+        assert!(before > 0, "playback started");
+
+        handle
+            .commands
+            .blocking_send(FeedCommand::LoadOlder { count: 1 })
+            .expect("the worker is listening");
+
+        let (_, bars, _) = next_candles(&mut handle);
+        assert!(!bars.is_empty(), "the reply carries candles, not trades");
+        assert!(
+            link.status.is_playing(),
+            "asking for history never pauses the tape"
+        );
+        assert!(
+            link.status.played() >= before,
+            "and never rewinds it: the trader keeps their place"
+        );
     }
 
     #[test]

@@ -20,6 +20,10 @@ rust_decimal = "1"
 # dialog never blocks a frame.
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 serde = { version = "1", features = ["derive"] }
+# The replay exporter reports progress as NDJSON, the same shape the MT5
+# bridge already speaks — read with the same parser rather than a second,
+# hand-rolled one.
+serde_json = "1"
 smallvec = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time", "process"] }
