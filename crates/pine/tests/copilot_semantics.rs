@@ -21,13 +21,15 @@ fn test_inputs() -> Vec<InputValue> {
         InputValue::Int(2),      // 2 structure: bars to confirm a pivot
         InputValue::Float(0.5),  // 2 structure: touch tolerance (×ATR)
         InputValue::Int(3),      // 2 structure: touches min bars apart
-        InputValue::Int(30),     // 2 structure: touches max bars apart
-        InputValue::Float(1.2),  // 3 proof: absorption min (×avg effort)
-        InputValue::Int(10),     // 3 proof: effort average window (bars)
-        InputValue::Float(1.5),  // 4 trigger: aggression (sigmas)
-        InputValue::Int(10),     // 4 trigger: sigma window (bars)
-        InputValue::Int(3),      // advanced: ATR length
-        InputValue::Float(0.1),  // advanced: min bar range (×ATR)
+        InputValue::Int(20), // 2 structure: touches max bars apart (fits the 23-bar tape's warmup)
+        InputValue::Float(1.2), // 3 proof: absorption min (×avg effort)
+        InputValue::Int(10), // 3 proof: effort average window (bars)
+        InputValue::Float(1.5), // 4 trigger: aggression (sigmas)
+        InputValue::Int(10), // 4 trigger: sigma window (bars)
+        InputValue::Int(4),  // 4 trigger: bars the setup stays armed
+        InputValue::Bool(true), // signals: show near-misses
+        InputValue::Int(3),  // advanced: ATR length
+        InputValue::Float(0.1), // advanced: min bar body (×ATR)
     ]
 }
 
@@ -199,6 +201,14 @@ fn without_cvd_divergence_the_same_double_top_stays_silent() {
     assert_eq!(
         marker_rows(indicator.as_ref(), "Short setup"),
         Vec::<usize>::new(),
-        "second touch on rising CVD is not the setup"
+        "second touch on rising CVD is not the full setup"
+    );
+    // …but it is exactly the tier the near-miss layer exists for: three of
+    // the four conditions hold (regime, absorption, aggression) and the
+    // translucent marker plus its note hand the call to the trader.
+    assert_eq!(
+        marker_rows(indicator.as_ref(), "Short near-miss"),
+        vec![22],
+        "3-of-4 with divergence missing prints the near-miss on the confirmation bar"
     );
 }
