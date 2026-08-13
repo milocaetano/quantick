@@ -37,6 +37,7 @@ pub(crate) const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
         "range_box.pine",
         include_str!("../../scripts/range_box.pine"),
     ),
+    ("copilot.pine", include_str!("../../scripts/copilot.pine")),
 ];
 
 /// One loadable script.
