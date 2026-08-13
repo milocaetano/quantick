@@ -75,7 +75,10 @@ History works on any expression (`ta.ema(close, 9)[1]`). Constant offsets
 size storage exactly; dynamic offsets are capped at 500 bars — deeper reads
 yield `na`. **Divergence:** an expression's history only records on bars
 where the expression actually evaluates; history across untaken `if`
-branches reads `na`.
+branches reads `na`. A dynamic offset that evaluates to `na` also skips the
+site's recording for that bar — a site whose offset only becomes real after
+a warmup wakes up with an empty ring. Guard dynamic offsets with
+`nz(offset, 0)`: offset 0 reads the current value *and* records.
 
 ## `ta.*` — stateful kernels
 

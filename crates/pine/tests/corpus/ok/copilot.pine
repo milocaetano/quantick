@@ -8,26 +8,37 @@
 //        red cross  -> stand down: the tape is trending, skip reversals
 //      No ribbon at all = the copilot is still warming up and holds no
 //      opinion yet. The ribbon never covers a candle.
-//   2. The structure — a line joining two matching pivots plus a DT chip
-//      (double top) or DB chip (double bottom). Structure draws even when
-//      the ribbon says stand down: it is context, not a signal.
-//   3. The signal — a SELL marker above (or BUY below) the bar that
-//      confirms the second touch, printed only when everything agrees:
-//      ribbon OK + double top/bottom + CVD lower on the retest of a high
-//      (higher on a low) + the touch bar absorbing + an aggression spike
-//      against the extreme. A thin line with a "stop" tag marks the
-//      touch extreme: the invalidation lives beyond that price, not at
-//      a fixed point count.
+//   2. The structure — a line joining the two touches plus a DT chip
+//      (double top) or DB chip (double bottom). A "touch" is a confirmed
+//      pivot that revisits the window's own extreme (the level the tape
+//      remembers), not merely the previous pivot. Structure draws even
+//      when the ribbon says stand down: it is context, not a signal.
+//   3. The signals — on the bar that confirms the second touch the
+//      copilot scores four conditions: regime OK, CVD divergence at the
+//      retest, absorption at the touch, and an aggression spike against
+//      the extreme (which may arrive up to `trigger_validity` bars later
+//      — the copilot stays armed and fires when it lands).
+//        FULL triangle (SELL above / BUY below, solid): all four agree.
+//        NEAR-MISS triangle (translucent, with a note): exactly one
+//        condition failed — the note names it. Information, not advice:
+//        the last decision belongs to the trader holding the checklist.
+//      A thin line with a "stop" tag marks the touch extreme on full
+//      signals: the invalidation lives beyond that price.
 //
-// A marker can appear while its confirming bar is still forming and
-// vanish if the close disproves it — live, but never repainted after the
-// bar commits.
+// Measured on 18 recorded WIN sessions (2026-07-21..08-12): the full
+// conjunction fires ~0-2 times per 18 days; near-misses ~2 per day. The
+// near-miss layer is the working surface; the full triangle is the rare
+// all-clear. A marker can appear while its bar is still forming and
+// vanish if the close disproves it — live, but never repainted after
+// the bar commits.
+//
+// Absorption is measured against the bar BODY (volume per point of
+// |close - open|): a rejection wick with a tiny body is absorption
+// shouting, and the old range-based measure punished exactly that.
 //
 // Inputs are numbered in reading order: 1 context, 2 structure, 3 proof,
-// 4 trigger. Defaults are starting points for index futures on activity
-// bars — calibrate them on recorded sessions, not on faith. There is no
-// divergence knob on purpose: a retest on rising CVD is simply not this
-// setup.
+// 4 trigger. Defaults are starting points — calibrate on recorded
+// sessions, not on faith.
 indicator("Copilot", overlay=true)
 
 // 1 — context: how wide may the recent window get before it is a trend?
@@ -35,12 +46,12 @@ regime_len = input.int(80, "1 Context: window (bars)", minval=10)
 regime_k = input.float(6.0, "1 Context: max height (×ATR)", minval=1.0)
 regime_confirm = input.int(3, "1 Context: bars to confirm a flip", minval=1)
 
-// 2 — structure: what counts as a double top / double bottom?
+// 2 — structure: what counts as a retest of the extreme?
 pivot_l = input.int(5, "2 Structure: bars left of a pivot", minval=1)
 pivot_r = input.int(3, "2 Structure: bars to confirm a pivot", minval=1)
-tol_atr = input.float(0.25, "2 Structure: touch tolerance (×ATR)", minval=0.0)
+tol_atr = input.float(0.5, "2 Structure: retest tolerance (×ATR)", minval=0.0)
 min_gap = input.int(5, "2 Structure: touches min bars apart", minval=1)
-max_gap = input.int(80, "2 Structure: touches max bars apart", minval=2)
+max_gap = input.int(80, "2 Structure: touches max bars apart", minval=6)
 
 // 3 — proof: the second touch must be absorbed, not merely revisited.
 er_thr = input.float(1.5, "3 Proof: absorption min (×avg effort)", minval=1.0)
@@ -49,10 +60,14 @@ er_len = input.int(100, "3 Proof: effort average window (bars)", minval=10)
 // 4 — trigger: how unusual must the aggression at the extreme be?
 z_thr = input.float(2.0, "4 Trigger: aggression (sigmas)", minval=0.5)
 z_len = input.int(100, "4 Trigger: sigma window (bars)", minval=10)
+trigger_validity = input.int(6, "4 Trigger: bars the setup stays armed", minval=0)
+
+// signals — the near-miss layer can be silenced.
+show_near = input.bool(true, "Signals: show near-misses (3 of 4)")
 
 // advanced plumbing — rarely touched.
 atr_len = input.int(14, "Advanced: ATR length", minval=2)
-rng_floor = input.float(0.1, "Advanced: min bar range (×ATR)", minval=0.01)
+rng_floor = input.float(0.1, "Advanced: min bar body (×ATR)", minval=0.01)
 
 atr = ta.atr(atr_len)
 
@@ -72,9 +87,6 @@ if not stand_down and nz(trend_run, regime_confirm) >= regime_confirm
     stand_down := true
 if stand_down and nz(range_run, regime_confirm) >= regime_confirm
     stand_down := false
-// The ribbon floats above the recent highs: readable from the corner of
-// the eye, never over price. Its absence during warmup is honest — no
-// data, no opinion.
 ribbon_y = hi_w + atr
 plotshape(stand_down ? na : ribbon_y, "Context OK", style=shape.circle, location=location.absolute, color=color.new(color.teal, 45))
 plotshape(stand_down ? ribbon_y : na, "Context: stand down", style=shape.cross, location=location.absolute, color=color.new(color.red, 25))
@@ -85,55 +97,121 @@ plotshape(stand_down ? ribbon_y : na, "Context: stand down", style=shape.cross, 
 z = (delta - ta.sma(delta, z_len)) / ta.stdev(delta, z_len)
 z_low = ta.lowest(z, pivot_r + 1)
 z_high = ta.highest(z, pivot_r + 1)
-// Effort × result: volume per point of bar range. The floor keeps a doji
-// from dividing by zero (division by zero would poison the SMA window
-// with na); a bar narrower than the floor is measured as if it had it.
-er = volume / math.max(high - low, atr * rng_floor)
+// Effort × result against the BODY: volume per point of |close - open|.
+// The floor keeps a doji from dividing by zero; a rejection wick with a
+// small body is exactly the absorption signature this must reward.
+er = volume / math.max(math.abs(close - open), atr * rng_floor)
 er_rel = er / ta.sma(er, er_len)
 
-// --- 2..4. double top -> SELL ----------------------------------------------
+// --- 2. structure: a pivot that retests the window's extreme ----------------
+// The prior extreme is the highest high (lowest low) of the window that
+// ends `min_gap` bars before the touch and spans back to `max_gap` bars —
+// the level the tape remembers, not merely the previous pivot, so a minor
+// wiggle between the touches cannot steal the comparison. Every series is
+// read at the confirmation bar, `pivot_r` bars after the touch.
 ph = ta.pivothigh(high, pivot_l, pivot_r)
 top_now = not na(ph)
-top_bar = ta.valuewhen(top_now, bar_index - pivot_r, 0)
-top_bar1 = ta.valuewhen(top_now, bar_index - pivot_r, 1)
-top_val1 = ta.valuewhen(top_now, ph, 1)
-top_cvd = ta.valuewhen(top_now, cvd[pivot_r], 0)
-top_cvd1 = ta.valuewhen(top_now, cvd[pivot_r], 1)
-top_er = ta.valuewhen(top_now, er_rel[pivot_r], 0)
-double_top = top_now and not na(top_val1) and math.abs(ph - top_val1) <= tol_atr * atr and top_bar - top_bar1 >= min_gap and top_bar - top_bar1 <= max_gap
-if double_top
-    line.new(top_bar1, top_val1, top_bar, ph, color=color.red, width=2)
-    label.new(top_bar, ph, text="DT", style=label.style_label_down, color=color.new(color.red, 20))
-// The second touch must disagree with price: less buying into the same
-// high (CVD divergence), the touch bar absorbing, and a sell aggression
-// spike between the touch and its confirmation.
-top_diverges = top_cvd < top_cvd1
-top_absorbed = top_er >= er_thr
-sell_hit = z_low <= -z_thr
-short_setup = double_top and not stand_down and top_diverges and top_absorbed and sell_hit
-if short_setup
-    line.new(top_bar, ph, bar_index, ph, color=color.red, width=1)
-    label.new(bar_index, ph, text="stop", style=label.style_none, textcolor=color.new(color.red, 20))
-plotshape(short_setup, "Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")
-
-// --- 2..4. double bottom -> BUY ---------------------------------------------
+prior_top = ta.highest(high, max_gap - min_gap)[pivot_r + min_gap]
+prior_top_off = ta.highestbars(high, max_gap - min_gap)[pivot_r + min_gap]
 pl = ta.pivotlow(low, pivot_l, pivot_r)
 bot_now = not na(pl)
-bot_bar = ta.valuewhen(bot_now, bar_index - pivot_r, 0)
-bot_bar1 = ta.valuewhen(bot_now, bar_index - pivot_r, 1)
-bot_val1 = ta.valuewhen(bot_now, pl, 1)
-bot_cvd = ta.valuewhen(bot_now, cvd[pivot_r], 0)
-bot_cvd1 = ta.valuewhen(bot_now, cvd[pivot_r], 1)
-bot_er = ta.valuewhen(bot_now, er_rel[pivot_r], 0)
-double_bottom = bot_now and not na(bot_val1) and math.abs(pl - bot_val1) <= tol_atr * atr and bot_bar - bot_bar1 >= min_gap and bot_bar - bot_bar1 <= max_gap
+prior_bot = ta.lowest(low, max_gap - min_gap)[pivot_r + min_gap]
+prior_bot_off = ta.lowestbars(low, max_gap - min_gap)[pivot_r + min_gap]
+
+// Bars from the current (confirmation) bar back to the prior extreme:
+// the offsets from highestbars/lowestbars are negative within their
+// window, which itself sits `pivot_r + min_gap` bars back.
+top_prior_gap = pivot_r + min_gap - prior_top_off
+bot_prior_gap = pivot_r + min_gap - prior_bot_off
+
+double_top = top_now and not na(prior_top) and math.abs(ph - prior_top) <= tol_atr * atr
+double_bottom = bot_now and not na(prior_bot) and math.abs(pl - prior_bot) <= tol_atr * atr
+if double_top
+    line.new(bar_index - top_prior_gap, prior_top, bar_index - pivot_r, ph, color=color.red, width=2)
+    label.new(bar_index - pivot_r, ph, text="DT", style=label.style_label_down, color=color.new(color.red, 20))
 if double_bottom
-    line.new(bot_bar1, bot_val1, bot_bar, pl, color=color.teal, width=2)
-    label.new(bot_bar, pl, text="DB", style=label.style_label_up, color=color.new(color.teal, 20))
-bot_diverges = bot_cvd > bot_cvd1
-bot_absorbed = bot_er >= er_thr
+    line.new(bar_index - bot_prior_gap, prior_bot, bar_index - pivot_r, pl, color=color.teal, width=2)
+    label.new(bar_index - pivot_r, pl, text="DB", style=label.style_label_up, color=color.new(color.teal, 20))
+
+// --- 3..4. scoring, arming, and the two signal tiers -------------------------
+// Every history read lives at top level for the same reason the kernels
+// do: a `[n]` site only records on bars where it evaluates, so one hidden
+// behind a short-circuit `and` would wake up empty on the bar it matters.
+cvd_touch = cvd[pivot_r]
+// nz() on the dynamic offsets: the interpreter skips recording a history
+// site whose offset is na, so a site first read after warmup would wake
+// up with an empty ring. Offset 0 reads the current bar AND records.
+cvd_prior_top = cvd[nz(top_prior_gap, 0)]
+cvd_prior_bot = cvd[nz(bot_prior_gap, 0)]
+er_touch = er_rel[pivot_r]
+top_diverges = double_top and cvd_touch < cvd_prior_top
+bot_diverges = double_bottom and cvd_touch > cvd_prior_bot
+top_absorbed = double_top and not na(er_touch) and er_touch >= er_thr
+bot_absorbed = double_bottom and not na(er_touch) and er_touch >= er_thr
+
+// A structure whose only missing piece is the aggression stays ARMED for
+// `trigger_validity` bars: on the measured tape the spike often lands a
+// few bars after confirmation, not inside it.
+var int short_armed = 0
+var float short_level = na
+var int long_armed = 0
+var float long_level = na
+
+sell_hit = z_low <= -z_thr
 buy_hit = z_high >= z_thr
-long_setup = double_bottom and not stand_down and bot_diverges and bot_absorbed and buy_hit
+
+// full signal on the confirmation bar itself…
+short_setup_now = double_top and not stand_down and top_diverges and top_absorbed and sell_hit
+long_setup_now = double_bottom and not stand_down and bot_diverges and bot_absorbed and buy_hit
+// …or when the spike lands while a fully-proven structure is still armed.
+short_setup_armed = short_armed > 0 and not stand_down and sell_hit
+long_setup_armed = long_armed > 0 and not stand_down and buy_hit
+short_setup = short_setup_now or short_setup_armed
+long_setup = long_setup_now or long_setup_armed
+
+// near-miss: exactly one of the four conditions failed at confirmation.
+// An "aggression missing" near-miss is only declared once the armed
+// window has expired without a spike — see the bookkeeping below.
+top_score = (stand_down ? 0 : 1) + (top_diverges ? 1 : 0) + (top_absorbed ? 1 : 0) + (sell_hit ? 1 : 0)
+bot_score = (stand_down ? 0 : 1) + (bot_diverges ? 1 : 0) + (bot_absorbed ? 1 : 0) + (buy_hit ? 1 : 0)
+short_near = show_near and double_top and not short_setup_now and top_score == 3 and not (top_diverges and top_absorbed and not stand_down)
+long_near = show_near and double_bottom and not long_setup_now and bot_score == 3 and not (bot_diverges and bot_absorbed and not stand_down)
+
+// arming bookkeeping — after the reads above, so this bar's scores win.
+short_expired = short_armed == 1 and not short_setup_armed
+long_expired = long_armed == 1 and not long_setup_armed
+if double_top and not stand_down and top_diverges and top_absorbed and not sell_hit
+    short_armed := trigger_validity
+    short_level := ph
+else if short_armed > 0
+    short_armed := short_setup_armed ? 0 : short_armed - 1
+if double_bottom and not stand_down and bot_diverges and bot_absorbed and not buy_hit
+    long_armed := trigger_validity
+    long_level := pl
+else if long_armed > 0
+    long_armed := long_setup_armed ? 0 : long_armed - 1
+
+// the near-miss note names the missing condition, on the chart.
+if short_near
+    label.new(bar_index, high, text=stand_down ? "3/4 trending" : not top_diverges ? "3/4 no divergence" : "3/4 no absorption", style=label.style_none, textcolor=color.new(color.red, 45))
+if long_near
+    label.new(bar_index, low, text=stand_down ? "3/4 trending" : not bot_diverges ? "3/4 no divergence" : "3/4 no absorption", style=label.style_none, textcolor=color.new(color.teal, 45))
+if show_near and short_expired
+    label.new(bar_index, high, text="3/4 aggression never came", style=label.style_none, textcolor=color.new(color.red, 45))
+if show_near and long_expired
+    label.new(bar_index, low, text="3/4 aggression never came", style=label.style_none, textcolor=color.new(color.teal, 45))
+
+// stop line on full signals: the invalidation is the touch extreme.
+stop_top = short_setup_now ? ph : short_level
+stop_bot = long_setup_now ? pl : long_level
+if short_setup
+    line.new(bar_index - pivot_r, stop_top, bar_index, stop_top, color=color.red, width=1)
+    label.new(bar_index, stop_top, text="stop", style=label.style_none, textcolor=color.new(color.red, 20))
 if long_setup
-    line.new(bot_bar, pl, bar_index, pl, color=color.teal, width=1)
-    label.new(bar_index, pl, text="stop", style=label.style_none, textcolor=color.new(color.teal, 20))
+    line.new(bar_index - pivot_r, stop_bot, bar_index, stop_bot, color=color.teal, width=1)
+    label.new(bar_index, stop_bot, text="stop", style=label.style_none, textcolor=color.new(color.teal, 20))
+
+plotshape(short_setup, "Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")
 plotshape(long_setup, "Long setup", style=shape.triangleup, location=location.belowbar, color=color.teal, text="BUY")
+plotshape(short_near or (show_near and short_expired), "Short near-miss", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 65))
+plotshape(long_near or (show_near and long_expired), "Long near-miss", style=shape.triangleup, location=location.belowbar, color=color.new(color.teal, 65))
