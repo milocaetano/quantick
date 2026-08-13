@@ -36,6 +36,7 @@ is the source of truth, this table is the index):
 | `QUANTICK_FOOTPRINT_DEBUG=1` | appends the layer's own inputs to its legend (`[w<candle px> row<base row px> g<capture group> lvl<level> n<ladders>]`). The zoom-boundary bugs were all invisible from outside — this is the chart telling you which number it decided on |
 | `QUANTICK_INDICATORS_AUTOSTART` / `QUANTICK_INDICATOR_SCRIPTS_AUTOSTART` | indicator panes / pine scripts |
 | `QUANTICK_INDICATOR_SETTINGS=1` | the indicator settings dialog (sliders + live preview), opened for the first indicator once its inputs arrive from the worker. Pair with an autostart hook (or a seeded state file) that loads an indicator |
+| `QUANTICK_INDICATOR_PRESETS=<toml>` | where the settings dialog's named input presets live. **Point at a scratchpad file**; seeding it is how the preset picker is photographed populated |
 | `QUANTICK_INDICATORS_STATE=<toml>` | where the persisted indicator set lives. **Always point this at a scratchpad file** — without it a validation run reads (and, after an Apply, rewrites) the trader's real `indicators-state.toml`. Seeding it is also how a specific input state (a layer toggled off, a tuned window) is photographed without a click |
 | `QUANTICK_REPLAY_DIR` + `QUANTICK_REPLAY_AUTOSTART=1` + `QUANTICK_REPLAY_SPEED` | recorded session playback (deterministic tape → deterministic screen) |
 | `QUANTICK_BUBBLES=<bubbles.toml>` | bubble preset override without touching tracked config |

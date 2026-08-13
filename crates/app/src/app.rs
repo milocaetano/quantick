@@ -31,6 +31,7 @@ use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
 use crate::indicators::library::ScriptLibrary;
+use crate::indicators::preset_file;
 use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind};
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
@@ -690,6 +691,11 @@ pub struct QuantickApp {
     /// Named tape-reading setups, and where they live.
     footprint_presets: crate::footprint_presets::PresetStore,
     footprint_presets_path: std::path::PathBuf,
+
+    // Named input setups per indicator kind, offered by the settings
+    // dialog's preset picker.
+    indicator_presets: preset_file::PresetStore,
+    indicator_presets_path: std::path::PathBuf,
     /// The settings window's "save preset" field, kept across frames.
     footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
@@ -851,6 +857,7 @@ impl QuantickApp {
         // will write.
         let footprint_settings_path = crate::footprint_config::settings_path();
         let footprint_presets_path = crate::footprint_presets::default_path();
+        let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
             tabs: vec![tab],
             active_tab: 0,
@@ -917,6 +924,8 @@ impl QuantickApp {
             show_footprint_settings: false,
             footprint_presets: crate::footprint_presets::PresetStore::load(&footprint_presets_path),
             footprint_presets_path,
+            indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
+            indicator_presets_path,
             footprint_preset_draft: String::new(),
             scripted_footprint: false,
             scripted_indicator_settings: false,
@@ -1703,6 +1712,8 @@ impl QuantickApp {
             committed: view.input_values.clone(),
             previewed: false,
             settled: false,
+            preset_label: None,
+            preset_name_draft: String::new(),
         });
         self.indicator_settings_target = target;
     }
@@ -1800,6 +1811,19 @@ impl QuantickApp {
             }
         }
         let target = self.indicator_settings_target;
+        // The preset shelf for this slot's kind. A slot with no registered
+        // kind (the natives autostart hook deliberately registers none) has
+        // nowhere to save to, and the dialog hides the picker.
+        let preset_names: Option<Vec<String>> = self
+            .slot_kinds
+            .iter()
+            .find(|(owner, _)| *owner == target)
+            .map(|(_, kind)| {
+                self.indicator_presets
+                    .names_for(kind)
+                    .map(str::to_owned)
+                    .collect()
+            });
         let outcome = {
             let Self {
                 indicator_settings,
@@ -1829,7 +1853,12 @@ impl QuantickApp {
             // indicator (`EMA(9)` → `EMA(21)`), and a dialog that stays open
             // must not keep announcing the old one.
             dialog.title = view.label().to_owned();
-            indicator_panel::draw(ctx, dialog, &view.descriptor.inputs)
+            indicator_panel::draw(
+                ctx,
+                dialog,
+                &view.descriptor.inputs,
+                preset_names.as_deref(),
+            )
         };
         match outcome {
             SettingsOutcome::Open => {}
@@ -1839,8 +1868,121 @@ impl QuantickApp {
             }
             SettingsOutcome::Apply => self.apply_indicator_settings_draft(),
             SettingsOutcome::Preview => self.preview_indicator_settings_draft(),
+            SettingsOutcome::LoadPreset(name) => self.load_indicator_preset(name),
+            SettingsOutcome::SavePreset(name) => self.save_indicator_preset(&name),
+            SettingsOutcome::DeletePreset(name) => self.delete_indicator_preset(&name),
         }
         self.draw_indicator_preview_watermark(ctx);
+    }
+
+    /// Replace the dialog's draft with a preset (`None` = the declared
+    /// defaults) and preview it — the same nudge-and-look contract as a
+    /// slider: Apply commits, Discard reverts. A saved value whose type no
+    /// longer matches its input (the script evolved under the preset) falls
+    /// back to that input's default rather than being silently coerced.
+    fn load_indicator_preset(&mut self, name: Option<String>) {
+        let target = self.indicator_settings_target;
+        let Some(specs) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == target.tab)
+            .map(|tab| tab.pane(target.side))
+            .and_then(|pane| {
+                pane.indicators
+                    .all()
+                    .iter()
+                    .find(|view| view.slot == target.slot)
+            })
+            .map(|view| view.descriptor.inputs.clone())
+        else {
+            return;
+        };
+        let saved: Option<Vec<quantick_indicators::InputValue>> = match &name {
+            None => Some(Vec::new()),
+            Some(name) => {
+                let Some(kind) = self
+                    .slot_kinds
+                    .iter()
+                    .find(|(owner, _)| *owner == target)
+                    .map(|(_, kind)| kind)
+                else {
+                    return;
+                };
+                self.indicator_presets
+                    .get(kind, name)
+                    .map(|inputs| inputs.iter().filter_map(SavedInput::to_value).collect())
+            }
+        };
+        let Some(saved) = saved else {
+            return;
+        };
+        let draft: Vec<quantick_indicators::InputValue> = specs
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| {
+                let default = spec.default_value();
+                match saved.get(index) {
+                    Some(value)
+                        if std::mem::discriminant(value) == std::mem::discriminant(&default) =>
+                    {
+                        value.clone()
+                    }
+                    _ => default,
+                }
+            })
+            .collect();
+        let label = name.unwrap_or_else(|| indicator_panel::DEFAULT_PRESET.to_owned());
+        if let Some(dialog) = self.indicator_settings.as_mut() {
+            dialog.draft = draft;
+            dialog.preset_label = Some(label);
+        }
+        self.preview_indicator_settings_draft();
+    }
+
+    /// Save the dialog's current draft under `name` for this slot's kind.
+    /// Saving is a file write, never a chart change — the draft on screen
+    /// stays exactly as it was.
+    fn save_indicator_preset(&mut self, name: &str) {
+        let target = self.indicator_settings_target;
+        let Some(kind) = self
+            .slot_kinds
+            .iter()
+            .find(|(owner, _)| *owner == target)
+            .map(|(_, kind)| kind.clone())
+        else {
+            return;
+        };
+        let Some(dialog) = self.indicator_settings.as_mut() else {
+            return;
+        };
+        let inputs: Vec<SavedInput> = dialog.draft.iter().map(SavedInput::from_value).collect();
+        if self.indicator_presets.insert(&kind, name, inputs) {
+            self.indicator_presets.save(&self.indicator_presets_path);
+            dialog.preset_label = Some(name.trim().to_owned());
+            dialog.preset_name_draft.clear();
+        }
+    }
+
+    /// Forget a preset of this slot's kind. The values on screen stay —
+    /// deleting a name never touches the chart.
+    fn delete_indicator_preset(&mut self, name: &str) {
+        let target = self.indicator_settings_target;
+        let Some(kind) = self
+            .slot_kinds
+            .iter()
+            .find(|(owner, _)| *owner == target)
+            .map(|(_, kind)| kind.clone())
+        else {
+            return;
+        };
+        if self.indicator_presets.remove(&kind, name) {
+            self.indicator_presets.save(&self.indicator_presets_path);
+            if let Some(dialog) = self.indicator_settings.as_mut()
+                && dialog.preset_label.as_deref() == Some(name)
+            {
+                dialog.preset_label = None;
+            }
+        }
     }
 
     /// While a preview is live, stamp the pane it paints on: a full SELL

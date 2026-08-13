@@ -8,6 +8,7 @@
 //! [`IndicatorHost`]: quantick_indicators::IndicatorHost
 
 pub(crate) mod library;
+pub(crate) mod preset_file;
 pub(crate) mod state_file;
 
 use eframe::egui;

@@ -25,6 +25,10 @@ const DEFAULT_FLOAT_DRAG_SPEED: f64 = 0.1;
 /// centre default landing under the still-open menu (audit M3/QW2).
 const SETTINGS_DEFAULT_POSITION: egui::Pos2 = egui::pos2(120.0, 150.0);
 
+/// Width of the preset-name field, in pixels — room for a MAX_NAME_LEN-ish
+/// name without pushing the save button off the row.
+const PRESET_NAME_FIELD_WIDTH_PX: f32 = 110.0;
+
 /// An open settings dialog: which slot, and the in-flight draft values.
 pub(crate) struct SettingsDialog {
     /// The slot being edited.
@@ -45,7 +49,17 @@ pub(crate) struct SettingsDialog {
     /// widget normalization, not a user edit. The first frame adopts it as
     /// the baseline instead of announcing a preview nobody asked for.
     pub settled: bool,
+    /// What the preset picker shows: a preset name, [`DEFAULT_PRESET`], or
+    /// `None` for "custom" — any hand-edit diverges from whatever was
+    /// picked, and claiming the name would be the picker lying.
+    pub preset_label: Option<String>,
+    /// The name typed into the save-preset field.
+    pub preset_name_draft: String,
 }
+
+/// The built-in preset every indicator has: its declared defaults. Not
+/// stored anywhere — the script is its own source of truth.
+pub(crate) const DEFAULT_PRESET: &str = "Default";
 
 /// What the dialog asked for this frame.
 pub(crate) enum SettingsOutcome {
@@ -58,28 +72,55 @@ pub(crate) enum SettingsOutcome {
     /// A widget changed this frame: show the draft on the chart without
     /// committing it (no state-file write; Close still reverts).
     Preview,
+    /// Replace the draft with a saved preset's values (`None` = the
+    /// declared defaults) and preview them. Apply still commits.
+    LoadPreset(Option<String>),
+    /// Save the current draft under this name.
+    SavePreset(String),
+    /// Forget the preset of this name.
+    DeletePreset(String),
 }
 
 /// Draw the dialog; the caller owns the state and executes the outcome.
+/// `presets` is the saved-setup list for this indicator's kind — `None`
+/// hides the picker entirely (a slot whose kind was never registered has
+/// no shelf to save to).
 pub(crate) fn draw(
     ctx: &egui::Context,
     dialog: &mut SettingsDialog,
     specs: &[InputSpec],
+    presets: Option<&[String]>,
 ) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::Open;
     let mut open = true;
     let mut changed = false;
     let previewed = dialog.previewed;
+    let slot_id = dialog.slot.0;
     egui::Window::new(format!("Settings — {}", dialog.title))
-        .id(egui::Id::new(("indicator-settings", dialog.slot.0)))
+        .id(egui::Id::new(("indicator-settings", slot_id)))
         .default_pos(SETTINGS_DEFAULT_POSITION)
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .show(ctx, |ui| {
             let SettingsDialog {
-                draft, committed, ..
+                draft,
+                committed,
+                preset_label,
+                preset_name_draft,
+                ..
             } = dialog;
+            if let Some(names) = presets {
+                preset_row(
+                    ui,
+                    slot_id,
+                    names,
+                    preset_label,
+                    preset_name_draft,
+                    &mut outcome,
+                );
+                ui.separator();
+            }
             let order = row_order(specs);
             egui::Grid::new("indicator-settings-grid")
                 .num_columns(2)
@@ -152,12 +193,74 @@ pub(crate) fn draw(
         }
     }
     if changed && matches!(outcome, SettingsOutcome::Open) {
+        // A hand-edit diverges from whatever preset was picked: the picker
+        // says "custom" from here on instead of wearing a stale name.
+        dialog.preset_label = None;
         outcome = SettingsOutcome::Preview;
     }
     if !open {
         outcome = SettingsOutcome::Close;
     }
     outcome
+}
+
+/// The preset picker: "Default" (the declared defaults) plus every saved
+/// setup for this indicator's kind, a name field and a save button.
+/// Picking one is a *preview*, exactly like dragging a slider — Apply is
+/// still the only commit, so browsing presets mid-session is free.
+fn preset_row(
+    ui: &mut egui::Ui,
+    slot_id: u64,
+    names: &[String],
+    preset_label: &Option<String>,
+    preset_name_draft: &mut String,
+    outcome: &mut SettingsOutcome,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Preset")
+                .strong()
+                .color(theme::TEXT_MUTED),
+        );
+        egui::ComboBox::from_id_salt(("indicator-preset", slot_id))
+            .selected_text(preset_label.as_deref().unwrap_or("custom"))
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(
+                        preset_label.as_deref() == Some(DEFAULT_PRESET),
+                        DEFAULT_PRESET,
+                    )
+                    .on_hover_text("the script's declared defaults")
+                    .clicked()
+                {
+                    *outcome = SettingsOutcome::LoadPreset(None);
+                }
+                for name in names {
+                    let row = ui
+                        .selectable_label(preset_label.as_deref() == Some(name.as_str()), name)
+                        .on_hover_text("click previews; right-click deletes");
+                    if row.clicked() {
+                        *outcome = SettingsOutcome::LoadPreset(Some(name.clone()));
+                    }
+                    if row.secondary_clicked() {
+                        *outcome = SettingsOutcome::DeletePreset(name.clone());
+                    }
+                }
+            });
+        ui.add(
+            egui::TextEdit::singleline(preset_name_draft)
+                .desired_width(PRESET_NAME_FIELD_WIDTH_PX)
+                .hint_text("preset name"),
+        );
+        let name_ok = !preset_name_draft.trim().is_empty();
+        if ui
+            .add_enabled(name_ok, egui::Button::new("save"))
+            .on_hover_text("save the current values under this name")
+            .clicked()
+        {
+            *outcome = SettingsOutcome::SavePreset(preset_name_draft.trim().to_owned());
+        }
+    });
 }
 
 /// The section whose rows are hoisted to the top of the dialog: the layer
@@ -361,11 +464,13 @@ mod tests {
             committed: vec![InputValue::Float(0.123)],
             previewed: false,
             settled: false,
+            preset_label: None,
+            preset_name_draft: String::new(),
         };
         let ctx = egui::Context::default();
         for frame in 0..2 {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                let outcome = draw(ctx, &mut dialog, &specs);
+                let outcome = draw(ctx, &mut dialog, &specs, None);
                 assert!(
                     !matches!(outcome, SettingsOutcome::Preview),
                     "frame {frame}: widget normalization must not announce a preview"
