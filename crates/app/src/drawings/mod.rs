@@ -189,6 +189,13 @@ pub struct DrawContext<'a> {
     pub payload: &'a dyn DrawingPayload,
     pub anchors: &'a [ChartPoint],
     pub scale: &'a PriceScale,
+    /// Screen pixels one bar slot occupies — the time axis's own scale, the
+    /// way `scale` is the value axis's. Almost every tool ignores it: their
+    /// anchors are already projected. A tool that paints a *series* (one
+    /// value per bar, like the anchored VWAP's line) needs it to place slots
+    /// its anchors never touched; `<= 0` means the pane could not say, and
+    /// such a tool draws nothing rather than guessing.
+    pub px_per_bar: f32,
     /// What `scale` measures on this band — see [`ValueUnit`].
     pub unit: ValueUnit<'a>,
     /// Whether this is the first band painting an object that crosses all of
@@ -797,6 +804,8 @@ register_drawing_tools!(
     price_range,
     date_range,
     fixed_range_profile,
+    // Series
+    anchored_vwap,
     // Annotation
     text,
 );
@@ -804,6 +813,12 @@ register_drawing_tools!(
 // The profile drawing's payload types, re-exported for `crate::frvp` — the
 // refresh pass that folds engine ladders into the cache the paint reads.
 pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
+
+// The anchored VWAP's payload types, re-exported for `crate::avwap` — the
+// refresh pass that replays the indicators-crate kernel into the cache.
+pub use anchored_vwap::{
+    AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPayload,
+};
 
 /// One anchor of a drawing.
 ///
@@ -2114,6 +2129,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style: DrawingStyle::default(),
@@ -2202,6 +2218,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: 20.0,
                 unit: ValueUnit::Price,
                 primary_band: true,
                 style,
@@ -2502,6 +2519,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style: DrawingStyle::default(),
@@ -2598,6 +2616,7 @@ mod tests {
             payload: payload.as_ref(),
             anchors: &anchors,
             scale: &scale,
+            px_per_bar: 20.0,
             unit: ValueUnit::Price,
             primary_band: true,
             style: DrawingStyle::default(),
@@ -2680,6 +2699,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: 20.0,
                 unit: ValueUnit::Price,
                 primary_band: true,
                 style: DrawingStyle::default(),
@@ -2759,6 +2779,7 @@ mod tests {
                 payload: payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: 20.0,
                 unit: ValueUnit::Price,
                 primary_band: true,
                 style: DrawingStyle::default(),

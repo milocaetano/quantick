@@ -899,6 +899,10 @@ pub struct ChartPane {
     /// Price under the right-click that opened the layer menu — the trade
     /// section's anchor. Refreshed by every secondary click on the canvas.
     context_menu_price: Option<f64>,
+    /// The full chart point under that same right-click — bar, price and
+    /// market time — the "Anchor VWAP here" entry's seed. Separate from the
+    /// price because it exists only where a bar does.
+    context_menu_anchor: Option<ChartPoint>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1040,6 +1044,7 @@ impl ChartPane {
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
             context_menu_price: None,
+            context_menu_anchor: None,
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_band_hint: None,
@@ -1368,6 +1373,24 @@ impl ChartPane {
             && let Some(price) = self.context_menu_price
         {
             chrome.paper.context_trade_actions(ui, price);
+            ui.separator();
+        }
+        // Anchor a VWAP at the bar under the right-click — the TradingView
+        // gesture, without reaching for the rail. Only where a bar exists:
+        // an average of the empty space right of the tape means nothing.
+        if let Some(anchor) = self.context_menu_anchor {
+            if ui
+                .button("Anchor VWAP here")
+                .on_hover_text("start an Anchored VWAP at this bar")
+                .clicked()
+            {
+                let tool = drawings::DRAWING_TOOLS
+                    .into_iter()
+                    .find(|tool| tool.id() == crate::avwap::TOOL_ID)
+                    .expect("the anchored VWAP is registered");
+                self.place_drawing_point(tool, &DrawingBand::Price, anchor, chrome);
+                ui.close_menu();
+            }
             ui.separator();
         }
         ui.label(
@@ -2541,6 +2564,7 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &drawing.points,
                     scale,
+                    px_per_bar: self.viewport.candle_width(),
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
@@ -2576,6 +2600,7 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &drawing.points,
                     scale,
+                    px_per_bar: self.viewport.candle_width(),
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
@@ -2623,6 +2648,7 @@ impl ChartPane {
             payload: drawing.payload.as_ref(),
             anchors: &drawing.points,
             scale,
+            px_per_bar: self.viewport.candle_width(),
             unit: band.unit(),
             primary_band: true,
             style: drawing.style,
@@ -2674,6 +2700,7 @@ impl ChartPane {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
+                px_per_bar: self.viewport.candle_width(),
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
@@ -2798,6 +2825,15 @@ impl ChartPane {
             && let Some(scale) = drawing_scale.as_ref()
         {
             self.context_menu_price = Some(scale.price_at(position.y));
+            // The same click, as a chart point: the bar under the pointer and
+            // its market time, for the anchored-VWAP entry. The inverse of
+            // the projection `drawing_point_at` uses.
+            let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+            let bar = self.viewport.right_edge_bar(total) + 0.5
+                - (history_right - position.x) / self.viewport.candle_width();
+            self.context_menu_anchor = (total > 0).then(|| {
+                ChartPoint::at_time(bar, scale.price_at(position.y), self.anchor_time(bar))
+            });
         }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
@@ -3693,6 +3729,16 @@ impl ChartPane {
                 partial_bucket_slot,
             },
         );
+        // The anchored-VWAP objects' cached rows, same pass discipline: a key
+        // comparison per object on the common frame, a replay only when the
+        // tape or the config moved (see `crate::avwap`).
+        crate::avwap::refresh(
+            &mut self.drawings,
+            &crate::avwap::RefreshInputs {
+                state: &self.state,
+                prefix: &self.history_prefix,
+            },
+        );
 
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
@@ -4536,6 +4582,7 @@ impl ChartPane {
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
+                px_per_bar: self.viewport.candle_width(),
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
@@ -4706,6 +4753,7 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &anchors,
                     scale: &scale,
+                    px_per_bar: self.viewport.candle_width(),
                     unit: band.unit(),
                     primary_band: drawing.band != DrawingBand::AllBands || band_index == 0,
                     style,
@@ -4841,6 +4889,7 @@ impl ChartPane {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
+                px_per_bar: self.viewport.candle_width(),
                 unit: band.unit(),
                 primary_band,
                 style,
@@ -4884,6 +4933,7 @@ impl ChartPane {
                 payload: draft.payload.as_ref(),
                 anchors: &anchors,
                 scale,
+                px_per_bar: self.viewport.candle_width(),
                 unit: band.unit(),
                 primary_band: draft.band != DrawingBand::AllBands || band_index == 0,
                 style: draft.style,

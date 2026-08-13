@@ -1300,10 +1300,10 @@ mod tests {
     fn stage_lengths_match_the_spec_for_the_shipped_registry() {
         let slots = tool_slots().len();
         assert_eq!(
-            slots, 8,
-            "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure and Text"
+            slots, 9,
+            "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Anchored VWAP and Text"
         );
-        assert_eq!(full_length(slots), 597.0);
+        assert_eq!(full_length(slots), 633.0);
         assert_eq!(compact_length(), 381.0);
         assert_eq!(minimal_length(), 191.0);
     }
@@ -1677,7 +1677,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut rail = ToolRail::new();
         let mut drawings = Drawings::default();
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+        // Tall enough for the Full stage (633 px since the anchored VWAP).
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
         rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
 
         let retracement = DRAWING_TOOLS
@@ -1734,15 +1735,15 @@ mod tests {
     #[test]
     fn stages_are_pure_functions_of_extent() {
         let slots = tool_slots().len();
-        for extent in [100.0_f32, 200.0, 380.9, 381.0, 596.9, 597.0, 1000.0] {
+        for extent in [100.0_f32, 200.0, 380.9, 381.0, 632.9, 633.0, 1000.0] {
             let first = stage_for(extent, slots);
             let second = stage_for(extent, slots);
             assert_eq!(first, second);
         }
-        // The full stage costs two slots more since Marks and Freehand
-        // landed: 525 -> 597.
-        assert_eq!(stage_for(597.0, slots), RailStage::Full);
-        assert_eq!(stage_for(596.9, slots), RailStage::Compact);
+        // The full stage grows one slot per registry addition; the anchored
+        // VWAP took it from 597 to 633.
+        assert_eq!(stage_for(633.0, slots), RailStage::Full);
+        assert_eq!(stage_for(632.9, slots), RailStage::Compact);
         assert_eq!(stage_for(381.0, slots), RailStage::Compact);
         assert_eq!(stage_for(380.9, slots), RailStage::Minimal);
     }
