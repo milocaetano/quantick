@@ -109,26 +109,43 @@ show_quantity_labels = false
 show_trade_count = false
 label_min_radius = 9.9
 
+# Calibrated against a real WIN session (WINQ26 2026-08-12, 389 622 prints).
+# What the floor filters is the *cluster* (one side, one price bucket, one
+# 300 ms window — a sweep is one ball), so the numbers that matter are the
+# cluster-quantity quantiles of that tape: p50=6, p90=35, p95=56, p99=120,
+# max=3415 contracts. The old thresholds (min_quantity 10 per cluster,
+# reference 200, max radius 22) still drew ~36% of all clusters and drowned
+# the candles; these draw roughly the top quarter, and never go dark at
+# lunch (~37 marks/min at the day's quietest hour):
+#   * min_quantity 15 per cluster — the mark means "someone swept", not
+#     "someone printed".
+#   * fixed reference 250 ≈ cluster p99.9 — a full-size ball keeps one
+#     meaning all session long instead of rescaling with what is visible.
+#   * quantity labels only on whales (label radius 0.9·max ≈ 200+ lots).
+#   * summary windows set explicitly: one sweep is one ball (300 ms), dust
+#     folds (1500 ms), closed bars summarize into pies.
 [[presets]]
 name = "mini index sweeps"
-cluster_ms = 200
+cluster_ms = 300
+dust_merge_ms = 1500
+candle_summary = true
 
 [presets.bubbles]
-min_radius = 3.2098
-max_radius = 22.0
-opacity = 0.92
+min_radius = 2.0426
+max_radius = 14.0
+opacity = 0.85
 outline_width = 0.0
-halo_strength = 0.16
-detail_min_radius = 5.1935
-readable_min_radius = 8.4033
+halo_strength = 0.1
+detail_min_radius = 3.3049
+readable_min_radius = 5.3475
 hollow_small_buys = false
 render_mode = "sphere"
 sphere_shading = 0.34
 sphere_highlight = 0.18
 size_reference = "fixed"
-size_reference_quantity = 200.0
-min_quantity = 10.0
-side_offset = 5.0
+size_reference_quantity = 250.0
+min_quantity = 15.0
+side_offset = 4.0
 consumption_mark = "crown"
 front_width = 1.6
 front_length_scale = 0.618
@@ -137,8 +154,8 @@ impact_ring_width = 1.4
 trail_length = 0.0
 trail_opacity = 0.45
 show_quantity_labels = true
-show_trade_count = true
-label_min_radius = 19.8
+show_trade_count = false
+label_min_radius = 12.6
 
 # The one preset that keeps the older vertical front and the trail, because
 # that is what it is for: a slow tape where the question is which levels got
