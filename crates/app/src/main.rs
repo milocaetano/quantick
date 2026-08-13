@@ -30,6 +30,7 @@ mod frvp;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
+mod indicator_style;
 mod indicator_worker;
 mod indicators;
 mod live_strip;

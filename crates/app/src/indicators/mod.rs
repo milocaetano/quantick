@@ -18,6 +18,7 @@ use quantick_indicators::{
 
 use std::sync::Arc;
 
+use crate::indicator_style::ResolvedPlot;
 use crate::indicator_worker::{IndicatorEvent, LaneSample, SlotId};
 use crate::price_view::PriceView;
 
@@ -94,6 +95,16 @@ pub(crate) struct IndicatorView {
     /// same reason: a removed indicator takes its height with it, so a later
     /// pane can never inherit a size someone set for a different series.
     pub sizing: PaneSizing,
+    /// Per-plot style the trader set in the settings dialog, layered over what
+    /// the indicator declared.
+    ///
+    /// Render-side state like `hidden`, `scale` and `sizing`, and on the view
+    /// for the same reason: a removed indicator takes its colours with it, so a
+    /// later pane can never inherit a palette someone chose for a different
+    /// series. It also survives the rebuild an input edit triggers, which
+    /// replaces `descriptor` wholesale — styling an EMA and then changing its
+    /// period must not throw the colour away.
+    pub style: crate::indicator_style::StyleOverride,
     /// The auto-fitted `(lo, hi)` the last frame drew this pane with.
     ///
     /// The gesture that zooms the pane runs before the frame that draws it,
@@ -119,6 +130,18 @@ impl IndicatorView {
             .as_ref()
             .and_then(|frame| frame.objects.as_ref())
             .unwrap_or(&self.objects)
+    }
+
+    /// The style plot `index` draws with right now: the declaration with the
+    /// trader's layer applied, or `None` when this indicator has no such plot.
+    ///
+    /// The one door between the style layer and the renderer — every plot the
+    /// chart draws is resolved through here, so a colour changed in the dialog
+    /// cannot reach one drawing path and miss another. Two `Vec` lookups and a
+    /// few `Option`s: it runs once per plot per frame and allocates nothing.
+    pub(crate) fn plot_style(&self, index: usize) -> Option<ResolvedPlot> {
+        let spec = self.descriptor.plots.get(index)?;
+        Some(self.style.resolve(index, spec))
     }
 
     /// The label the UI shows for this indicator.
@@ -258,6 +281,7 @@ impl IndicatorViews {
                         stale,
                         scale: PriceView::new(),
                         sizing: PaneSizing::Auto,
+                        style: crate::indicator_style::StyleOverride::default(),
                         last_auto: None,
                     });
                 }
@@ -306,7 +330,7 @@ impl IndicatorViews {
         }
     }
 
-    fn view_mut(&mut self, slot: SlotId) -> Option<&mut IndicatorView> {
+    pub(crate) fn view_mut(&mut self, slot: SlotId) -> Option<&mut IndicatorView> {
         self.views.iter_mut().find(|v| v.slot == slot)
     }
 
