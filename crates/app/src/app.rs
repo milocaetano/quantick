@@ -6656,6 +6656,7 @@ mod tests {
                 provider: ProviderKind::Binance,
                 symbols: vec!["TESTUSDT".to_string(), "ETHUSDT".to_string()],
                 bubble_preset: None,
+                symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
             }],
@@ -12324,6 +12325,7 @@ plot(close)
                     provider: ProviderKind::Binance,
                     symbols: vec!["AAA".to_string()],
                     bubble_preset: None,
+                    symbol_bubble_presets: Default::default(),
                     default_layout: None,
                     default_bars: None,
                 },
@@ -12333,6 +12335,7 @@ plot(close)
                     provider: ProviderKind::Binance,
                     symbols: vec!["BBB".to_string()],
                     bubble_preset: None,
+                    symbol_bubble_presets: Default::default(),
                     default_layout: None,
                     default_bars: None,
                 },
@@ -12439,6 +12442,7 @@ plot(close)
             provider: ProviderKind::MetaTrader,
             symbols: vec!["WINQ26".to_string()],
             bubble_preset: Some("live lane pie".to_string()),
+            symbol_bubble_presets: Default::default(),
             default_layout: None,
             default_bars: None,
         });
@@ -12452,7 +12456,7 @@ plot(close)
         // The switch path runs this after installing the new feed handle.
         app.active_tab_mut().feed_id = "mt".to_string();
         with_config(&mut app, |tab, config| {
-            tab.apply_feed_bubble_preset_after_switch(config, "binance")
+            tab.apply_feed_bubble_preset_after_switch(config, "binance", "TESTUSDT")
         });
         assert_eq!(
             app.active_tab().tape().active_preset_for_test(),
@@ -12475,7 +12479,7 @@ plot(close)
         // ...then hops symbols inside the same feed: the hand-picked look
         // survives — the declared preset belongs to the feed, not the symbol.
         with_config(&mut app, |tab, config| {
-            tab.apply_feed_bubble_preset_after_switch(config, "binance")
+            tab.apply_feed_bubble_preset_after_switch(config, "binance", "OTHERUSDT")
         });
         assert_eq!(
             app.active_tab().tape().active_preset_for_test(),
@@ -12484,7 +12488,43 @@ plot(close)
 
         // Arriving from another feed is what re-applies the declared look.
         with_config(&mut app, |tab, config| {
-            tab.apply_feed_bubble_preset_after_switch(config, "other-feed")
+            tab.apply_feed_bubble_preset_after_switch(config, "other-feed", "TESTUSDT")
+        });
+        assert_eq!(
+            app.active_tab().tape().active_preset_for_test(),
+            "live lane pie"
+        );
+    }
+
+    #[test]
+    fn a_symbol_hop_onto_a_symbol_declared_preset_applies_it() {
+        // The feed declares the pie look; one of its symbols reads
+        // differently and says so. Hopping onto that symbol applies its
+        // look; hopping back applies the feed-wide one again, because the
+        // resolved declarations differ in both directions.
+        let mut config = test_config();
+        config.feeds[0].bubble_preset = Some("live lane pie".to_string());
+        config.feeds[0]
+            .symbol_bubble_presets
+            .insert("ETHUSDT".to_string(), "dense tape".to_string());
+        let mut app = app_on(config, "binance", "TESTUSDT");
+        assert_eq!(
+            app.active_tab().tape().active_preset_for_test(),
+            "live lane pie"
+        );
+
+        app.active_tab_mut().symbol = "ETHUSDT".to_string();
+        with_config(&mut app, |tab, config| {
+            tab.apply_feed_bubble_preset_after_switch(config, "binance", "TESTUSDT")
+        });
+        assert_eq!(
+            app.active_tab().tape().active_preset_for_test(),
+            "dense tape"
+        );
+
+        app.active_tab_mut().symbol = "TESTUSDT".to_string();
+        with_config(&mut app, |tab, config| {
+            tab.apply_feed_bubble_preset_after_switch(config, "binance", "ETHUSDT")
         });
         assert_eq!(
             app.active_tab().tape().active_preset_for_test(),
@@ -13867,6 +13907,7 @@ plot(close)
             provider: ProviderKind::MetaTrader,
             symbols: vec!["WINQ26".to_string()],
             bubble_preset: None,
+            symbol_bubble_presets: Default::default(),
             default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
             default_bars: Some("tick:7".to_string()),
         });
@@ -15531,6 +15572,7 @@ plot(close)
                     provider: ProviderKind::MetaTrader,
                     symbols: vec!["US500".to_string()],
                     bubble_preset: None,
+                    symbol_bubble_presets: Default::default(),
                     default_layout: None,
                     default_bars: None,
                 },
@@ -15540,6 +15582,7 @@ plot(close)
                     provider: ProviderKind::MetaTrader,
                     symbols: vec!["WIN$N".to_string()],
                     bubble_preset: None,
+                    symbol_bubble_presets: Default::default(),
                     default_layout: None,
                     default_bars: None,
                 },

@@ -1055,7 +1055,7 @@ impl Tab {
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
             return;
         }
-        let previous_feed = self.active.0.clone();
+        let (previous_feed, previous_symbol) = self.active.clone();
         let Some(provider) = config.provider_of(&self.feed_id) else {
             tracing::warn!(
                 target: "quantick::app",
@@ -1119,33 +1119,44 @@ impl Tab {
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.refresh_chip_label(config);
         self.ensure_book_capture(config);
-        self.apply_feed_bubble_preset_after_switch(config, &previous_feed);
+        self.apply_feed_bubble_preset_after_switch(config, &previous_feed, &previous_symbol);
     }
 
-    /// Apply the arrived-at feed's declared preset — only when the switch
-    /// actually crossed feeds. A symbol hop inside one feed keeps the user's
-    /// panel tweaks: the declared look belongs to the feed, not the symbol.
+    /// Apply the arrived-at declared preset — when the switch crossed feeds,
+    /// or when it crossed symbols whose declared looks differ. A symbol hop
+    /// between two symbols that declare nothing of their own keeps the user's
+    /// panel tweaks, exactly as before per-symbol declarations existed: the
+    /// declared look belongs to the feed, and to the symbols that state one.
     pub fn apply_feed_bubble_preset_after_switch(
         &mut self,
         config: &AppConfig,
         previous_feed: &str,
+        previous_symbol: &str,
     ) {
         if previous_feed == self.feed_id {
-            return;
+            let feed = config.feed(&self.feed_id);
+            let arrived = feed.and_then(|feed| feed.bubble_preset_for(&self.symbol));
+            let left = feed.and_then(|feed| feed.bubble_preset_for(previous_symbol));
+            if arrived.is_none() || arrived == left {
+                return;
+            }
         }
         self.apply_feed_bubble_preset(config);
     }
 
-    /// Apply the bubble preset the current feed declares, if it declares one.
+    /// Apply the bubble preset declared for the current feed and symbol, if
+    /// one is declared ([`FeedConfig::bubble_preset_for`]'s ladder: the
+    /// symbol's own entry first, the feed-wide declaration behind it).
     ///
-    /// A feed with no `bubble_preset` changes nothing: the panel keeps the look
-    /// the user last chose. An unknown name is reported and ignored — the
-    /// presets file is user-edited, and a typo there must not silently restyle
-    /// the chart.
+    /// A feed declaring nothing changes nothing: the panel keeps the look the
+    /// user last chose. An unknown name is reported and ignored — the presets
+    /// file is user-edited, and a typo there must not silently restyle the
+    /// chart.
     pub fn apply_feed_bubble_preset(&mut self, config: &AppConfig) {
         let Some(name) = config
             .feed(&self.feed_id)
-            .and_then(|feed| feed.bubble_preset.clone())
+            .and_then(|feed| feed.bubble_preset_for(&self.symbol))
+            .map(str::to_owned)
         else {
             return;
         };
@@ -1156,6 +1167,7 @@ impl Tab {
                 schema_version = 1_u8,
                 event_code = "FEED_BUBBLE_PRESET",
                 feed = %self.feed_id,
+                symbol = %self.symbol,
                 preset = name.as_str(),
                 action = "apply_preset",
                 "feed declares a bubble preset; applied"
@@ -1166,6 +1178,7 @@ impl Tab {
                 schema_version = 1_u8,
                 event_code = "FEED_BUBBLE_PRESET_UNKNOWN",
                 feed = %self.feed_id,
+                symbol = %self.symbol,
                 preset = name.as_str(),
                 action = "keep_current_look",
                 "feed declares a bubble preset that is not in the presets file; ignoring"

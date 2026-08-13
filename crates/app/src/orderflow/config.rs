@@ -36,6 +36,18 @@ pub const MAX_BUBBLE_CLUSTER_MS: i64 = 2_000;
 pub const DEFAULT_BUBBLE_DUST_MERGE_MS: i64 = 1_500;
 /// Largest window accepted for folding unreadable prints together.
 pub const MAX_BUBBLE_DUST_MERGE_MS: i64 = 30_000;
+/// Widest regional fold accepted, in visual price rows per region.
+///
+/// One row is off — a region the width of a bucket is the bucket. The cap is
+/// a sanity bound, not a tuning value: past a few dozen rows a "region"
+/// spans more than a screen of prices and the mark stops pointing anywhere.
+pub const MAX_BUBBLE_REGION_ROWS: u32 = 64;
+/// Default temporal window of one regional fold. Wide enough to gather a
+/// sweep walking through a level band, short enough that two separate pushes
+/// at the same prices stay two marks.
+pub const DEFAULT_BUBBLE_REGION_MS: i64 = 1_000;
+/// Largest temporal window accepted for the regional fold.
+pub const MAX_BUBBLE_REGION_MS: i64 = 10_000;
 /// Default distance accepted when correlating a depth reduction and aggression.
 pub const DEFAULT_LIQUIDITY_CORRELATION_MS: i64 = 250;
 /// Safe upper bound for depth/aggression correlation.
@@ -858,6 +870,23 @@ pub struct HeatmapConfig {
     /// [`BubbleStyle::readable_min_radius`], so widening the radius range
     /// moves the floor with it.
     pub bubble_dust_merge_ms: i64,
+    /// Height of one aggression region, in adjacent visual price rows.
+    ///
+    /// One (the default) keeps today's per-row marks. Above one, clusters that
+    /// share a side land in regions `bubble_region_rows` rows tall and fold
+    /// into one bubble per region within
+    /// [`bubble_region_ms`](Self::bubble_region_ms), placed at the fold's
+    /// volume-weighted price. A dense tape then reads as pressure on a price
+    /// *area* — the Bookmap read — instead of a bead necklace of per-tick
+    /// marks. Folding happens after evidence association and sums exact
+    /// quantities, so nothing is dropped or re-attributed; with the candle
+    /// summary on, closed bars show one buy/sell pie per region.
+    pub bubble_region_rows: u32,
+    /// Temporal window of one regional fold, anchored at its first cluster.
+    ///
+    /// Only read when [`bubble_region_rows`](Self::bubble_region_rows) is
+    /// above one.
+    pub bubble_region_ms: i64,
     /// Whether the prints of a closed bar are summarized into one bubble per
     /// visual price range, with buy and sell shown as sectors of a pie.
     ///
@@ -961,6 +990,8 @@ impl Default for HeatmapConfig {
             projection_demand: false,
             bubble_cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             bubble_dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
+            bubble_region_rows: 1,
+            bubble_region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubble_candle_summary: false,
             bubbles: BubbleStyle::default(),
             live_lane: LiveLaneStyle::default(),
@@ -1054,6 +1085,8 @@ impl HeatmapConfig {
         self.min_unattributed_pull_share = self.min_unattributed_pull_share.clamp(0.0, 1.0);
         self.bubble_cluster_ms = self.bubble_cluster_ms.clamp(0, MAX_BUBBLE_CLUSTER_MS);
         self.bubble_dust_merge_ms = self.bubble_dust_merge_ms.clamp(0, MAX_BUBBLE_DUST_MERGE_MS);
+        self.bubble_region_rows = self.bubble_region_rows.clamp(1, MAX_BUBBLE_REGION_ROWS);
+        self.bubble_region_ms = self.bubble_region_ms.clamp(0, MAX_BUBBLE_REGION_MS);
         self.bubbles.sanitize();
         self.live_lane.sanitize();
         self.liquidity_correlation_ms = self

@@ -13,7 +13,7 @@ use super::history::{AggressorSide, CoverageSegment, LiquidityHistory, RestingSi
 pub use super::interaction::LiquidityEvidence;
 use super::interaction::{
     AggressionCluster, LiquidityEvent, cluster_aggressions, correlate_liquidity, liquidity_events,
-    merge_dust_clusters, summarize_clusters,
+    merge_dust_clusters, regionalize_clusters, summarize_clusters,
 };
 use super::timeline::BarTimeline;
 
@@ -734,7 +734,14 @@ pub fn project_settled(
     correlate_tier(&mut events, &mut settled, config, summarizing);
     let dropped_liquidity_events = filter_events(&mut events, config, liquidity_reference);
 
-    let settled_marks = refine_tier(settled, config, aggression_reference, timeline, summarizing);
+    let settled_marks = refine_tier(
+        settled,
+        config,
+        aggression_reference,
+        timeline,
+        effective_grouping,
+        summarizing,
+    );
     // While every mark is a raw print they share the session print scale
     // above, so an area means the same thing everywhere. The summary breaks
     // that premise: a pie carries a whole bar and a tape mark carries one
@@ -907,6 +914,7 @@ pub fn project_live(
         config,
         settled.aggression_reference,
         timeline,
+        settled.effective_grouping,
         summarizing,
     );
     LiveMarks {
@@ -1164,6 +1172,7 @@ fn refine_tier(
     config: &HeatmapConfig,
     print_reference: Decimal,
     timeline: &BarTimeline,
+    grouping: EffectiveGrouping,
     summarizing: bool,
 ) -> TierClusters {
     // Display floor for bubbles. Applied after association so a hidden small
@@ -1183,6 +1192,19 @@ fn refine_tier(
     if let Some(dust) = config.bubbles.dust_quantity(print_reference) {
         tier.tape = merge_dust_clusters(tier.tape, dust, config.bubble_dust_merge_ms);
         tier.slot = merge_dust_clusters(tier.slot, dust, config.bubble_dust_merge_ms);
+    }
+
+    // The regional fold, above one row: same-side clusters sharing a region
+    // `bubble_region_rows` rows tall become one bubble at their volume-weighted
+    // price. After association and after the dust merge for the same reason
+    // those run where they do — folding is a drawing decision, and by now it
+    // moves no evidence and rescales nothing. The summary below then works at
+    // region granularity, because the fold rewrote each cluster's bucket to
+    // its region's lower edge.
+    if config.bubble_region_rows > 1 {
+        let region_width = grouping.bucket_width * Decimal::from(config.bubble_region_rows);
+        tier.tape = regionalize_clusters(tier.tape, region_width, config.bubble_region_ms);
+        tier.slot = regionalize_clusters(tier.slot, region_width, config.bubble_region_ms);
     }
 
     // Every bar with prints in its slot gets one mark per price range, the

@@ -467,6 +467,84 @@ pub fn merge_dust_clusters(
     merged
 }
 
+/// Fold same-side clusters landing in one price region into a single bubble.
+///
+/// A region is `region_width` tall — a whole number of visual price rows, the
+/// caller's choice — and a fold is anchored at its first cluster and never
+/// spans more than `window_ms`, the same admission rule the dust merge above
+/// uses. The difference is what qualifies: *every* cluster folds, not only the
+/// unreadable ones, because the point is the region itself. A dense tape
+/// stacks one mark per row into a bead necklace that hides the candles; folded
+/// by region the same prints become one mark per price area whose size carries
+/// the summed quantity — pressure on a zone, read the way a Bookmap trader
+/// reads it.
+///
+/// Side stays in the key: a buy region and a sell region at the same prices
+/// remain two marks, because one covering the other is exactly the absorption
+/// read this layer exists to show. The two-sided pie stays the closed-bar
+/// summary's job. Each fold's price is its volume-weighted average, so the
+/// mark sits where the quantity actually traded, and `price_bucket` reports
+/// the region's lower edge. Quantities, ids and matched evidence are summed:
+/// nothing is dropped, and the caller runs this after evidence association,
+/// so folding moves no evidence.
+///
+/// `window_ms <= 0` or a non-positive `region_width` folds nothing.
+#[must_use]
+pub fn regionalize_clusters(
+    clusters: Vec<AggressionCluster>,
+    region_width: Decimal,
+    window_ms: i64,
+) -> Vec<AggressionCluster> {
+    if region_width <= Decimal::ZERO || window_ms <= 0 {
+        return clusters;
+    }
+
+    let mut keyed: Vec<(ClusterKey, AggressionCluster)> = clusters
+        .into_iter()
+        .map(|mut cluster| {
+            cluster.price_bucket = (cluster.price_bucket / region_width).floor() * region_width;
+            let key = ClusterKey {
+                generation: cluster.generation,
+                side: aggressor_side_key(cluster.side),
+                price_bucket: cluster.price_bucket,
+            };
+            (key, cluster)
+        })
+        .collect();
+    keyed.sort_by(|(a_key, a), (b_key, b)| {
+        a_key
+            .cmp(b_key)
+            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+            .then_with(|| a.agg_id.cmp(&b.agg_id))
+    });
+
+    let mut merged: Vec<AggressionCluster> = Vec::with_capacity(keyed.len());
+    let mut open: Option<(ClusterKey, ClusterFold)> = None;
+    for (key, cluster) in keyed {
+        let accepts = open.as_ref().is_some_and(|(open_key, pending)| {
+            *open_key == key
+                && cluster
+                    .last_timestamp_ms
+                    .saturating_sub(pending.anchor().first_timestamp_ms)
+                    <= window_ms
+        });
+        match open.as_mut() {
+            Some((_, pending)) if accepts => pending.push(cluster),
+            _ => {
+                if let Some((_, pending)) = open.replace((key, ClusterFold::new(cluster))) {
+                    merged.push(pending.finish());
+                }
+            }
+        }
+    }
+    if let Some((_, pending)) = open {
+        merged.push(pending.finish());
+    }
+
+    sort_clusters(&mut merged);
+    merged
+}
+
 /// Fold every print a closed bar left in one visual price range into a single
 /// bubble carrying both sides.
 ///
@@ -899,6 +977,69 @@ mod tests {
         let clusters = raw_clusters(&prints);
         assert_eq!(merge_dust_clusters(clusters.clone(), dec("10"), 0).len(), 2);
         assert_eq!(merge_dust_clusters(clusters, Decimal::ZERO, 5_000).len(), 2);
+    }
+
+    #[test]
+    fn regions_fold_same_side_rows_and_conserve_quantity_ids_and_vwap() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 100, "103", "2", Side::Buy, Some(3)),
+            aggression(3, 200, "110", "3", Side::Buy, Some(3)),
+        ];
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000);
+        assert_eq!(folded.len(), 2);
+        assert_eq!(folded[0].agg_ids, [1, 2]);
+        assert_eq!(folded[0].quantity, dec("3"));
+        assert_eq!(folded[0].trade_count, 2);
+        assert_eq!(folded[0].price_bucket, dec("100"));
+        // Volume-weighted: (100·1 + 103·2) / 3.
+        assert_eq!(folded[0].price, dec("102"));
+        // A cluster alone in its region passes through untouched except for
+        // the bucket, which now names the region's lower edge — that rewrite
+        // is what lets the closed-bar summary key at region granularity.
+        assert_eq!(folded[1].agg_ids, [3]);
+        assert_eq!(folded[1].price, dec("110"));
+        assert_eq!(folded[1].price_bucket, dec("110"));
+    }
+
+    #[test]
+    fn regions_never_fold_across_sides() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 10, "102", "1", Side::Sell, Some(3)),
+        ];
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000);
+        assert_eq!(folded.len(), 2);
+    }
+
+    #[test]
+    fn a_regional_fold_never_spans_more_than_its_window() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 400, "102", "1", Side::Buy, Some(3)),
+            aggression(3, 2_000, "100", "1", Side::Buy, Some(3)),
+        ];
+        let folded = regionalize_clusters(raw_clusters(&prints), dec("10"), 1_000);
+        assert_eq!(folded.len(), 2);
+        assert_eq!(folded[0].agg_ids, [1, 2]);
+        assert_eq!(folded[1].agg_ids, [3]);
+    }
+
+    #[test]
+    fn a_disabled_region_fold_changes_nothing() {
+        let prints = [
+            aggression(1, 0, "100", "1", Side::Buy, Some(3)),
+            aggression(2, 10, "102", "1", Side::Buy, Some(3)),
+        ];
+        let clusters = raw_clusters(&prints);
+        assert_eq!(
+            regionalize_clusters(clusters.clone(), dec("10"), 0),
+            clusters
+        );
+        assert_eq!(
+            regionalize_clusters(clusters.clone(), Decimal::ZERO, 1_000),
+            clusters
+        );
     }
 
     /// The closed-bar summary is the one fold that mixes the two sides, so it

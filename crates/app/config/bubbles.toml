@@ -157,6 +157,59 @@ show_quantity_labels = true
 show_trade_count = false
 label_min_radius = 9.2
 
+# The regional read of the same WIN tape "mini index sweeps" was calibrated
+# on: same 300 ms clusters, then same-side clusters landing in a region four
+# visual rows tall fold into one bubble at their volume-weighted price within
+# a 1.5 s window (`region_rows` / `region_ms`). On the mini index — 5-point
+# ticks, sweeps that walk a band of levels in one push — the per-row marks of
+# a violent minute stack into bead necklaces; folded by region the same
+# prints become one mark per zone whose area says how much the zone took.
+# Numbers that moved relative to "sweeps", and why:
+#   * size_reference_quantity 600 → 1500 — a region sums what four rows and
+#     1.5 s took, so the sweeps reference would cap most real folds at max
+#     radius and flatten the hierarchy the fold exists to show. 1500 keeps a
+#     600-contract whale reading ~11 px while a full regional sweep earns the
+#     cap.
+#   * max_radius 13 → 18 (ladder rungs recomputed) — fewer, bigger marks can
+#     afford the room; the label floor moves with it.
+#   * min_quantity 50 → 0 — the display floor runs before the fold, so any
+#     floor would silently thin the very sum a region's area claims to be.
+#     Regions absorb the small prints the floor existed to hide.
+[[presets]]
+name = "mini index regions"
+cluster_ms = 300
+dust_merge_ms = 1500
+candle_summary = true
+region_rows = 4
+region_ms = 1500
+
+[presets.bubbles]
+min_radius = 2.6262
+max_radius = 18.0
+opacity = 0.75
+outline_width = 1.0
+halo_strength = 0.15
+detail_min_radius = 4.2492
+readable_min_radius = 6.8754
+hollow_small_buys = false
+render_mode = "flat"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "fixed"
+size_reference_quantity = 1500.0
+min_quantity = 0.0
+side_offset = 2.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = false
+label_min_radius = 12.6
+
 # The one preset that keeps the older vertical front and the trail, because
 # that is what it is for: a slow tape where the question is which levels got
 # eaten and whether they came back, and where both marks have room to be read.

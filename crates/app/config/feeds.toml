@@ -103,6 +103,12 @@ symbols = ["WIN$N", "WDO$N"]
 # and the candle summary keeps the last bars carrying marks instead of leaving
 # the lane window bare.
 bubble_preset = "live lane pie"
+# The mini index itself goes one step further: its dense 5-point tape reads
+# as aggression per price *region*, not per row — the "mini index regions"
+# preset folds same-side marks landing in a four-row zone into one bubble
+# sized by the zone's summed volume. Per symbol because WDO$N on this same
+# feed keeps the feed-wide look above.
+symbol_bubble_presets = { "WIN$N" = "mini index regions" }
 
 # MetaTrader bridge settings (defaults shown; the section is optional).
 #   listen_addr — where quantick listens for any symbol `ports` does not name;

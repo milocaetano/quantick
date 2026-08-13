@@ -271,16 +271,16 @@ def export_tape(
         )
         raise SystemExit(4)
 
-    rows: list[str] = [
-        "# quantick-replay 1",
-        f"# symbol={symbol}",
-        f"# timezone={offset_label(offset_s)}",
-        "# side_source=venue_flags",
-        "# source=MetaTrader 5 COPY_TICKS_TRADE, exported by quantick",
-        "Date,Time,Price,Bid,Ask,Volume,Side",
-    ]
-    inferred_sides = 0
-    written = 0
+    # First pass: parse, keep every print. Sides are decided *after* the whole
+    # day is seen, because MT5 aggressor flags are broker-dependent: the B3
+    # broker probed on 2026-07-23 stamped BUY on every tick, and a whole
+    # session of flags on one side is that broker lying, not a market that
+    # never sold. The live bridge defaults to the tick rule for exactly this
+    # reason (see `[metatrader] side_source` in feeds.toml); an export that
+    # trusted those flags would replay a one-sided tape as if it were fact.
+    prints: list[tuple[datetime, float, float, float, float, str]] = []
+    flag_buys = 0
+    flag_sells = 0
     for tick in ticks:
         price = tick["last"]
         # A tick with no traded price is a quote update that COPY_TICKS_TRADE
@@ -292,15 +292,113 @@ def export_tape(
         bid, ask = tick["bid"], tick["ask"]
         if flags & TICK_FLAG_BUY:
             side = "B"
+            flag_buys += 1
         elif flags & TICK_FLAG_SELL:
             side = "S"
+            flag_sells += 1
         else:
+            side = ""
+        volume = tick["volume_real"] or tick["volume"]
+        prints.append((stamp, price, bid, ask, volume, side))
+        if len(prints) % PROGRESS_EVERY == 0:
+            emit("EXPORT_TAPE_PROGRESS", symbol=symbol, day=day, ticks=len(prints))
+
+    if not prints:
+        emit(
+            "EXPORT_TAPE_EMPTY",
+            symbol=symbol,
+            day=day,
+            fix="this day has no executed trades — a holiday, a weekend, or "
+            "before the contract started trading. Pick another day.",
+        )
+        raise SystemExit(4)
+
+    #: Below this many flagged prints a one-sided day proves nothing — a
+    #: handful of trades can legitimately all be buys. A full session of them
+    #: cannot.
+    ONE_SIDED_PROOF_PRINTS = 1_000
+    flagged = flag_buys + flag_sells
+    one_sided_flags = flagged >= ONE_SIDED_PROOF_PRINTS and (
+        flag_buys == 0 or flag_sells == 0
+    )
+
+    inferred_sides = 0
+    if one_sided_flags:
+        # The flags are untrustworthy for this whole day. Re-derive every side
+        # with the tick rule — uptick bought, downtick sold, unchanged keeps
+        # the last direction — the same safe default the live bridge charts
+        # with, so a replayed day and a lived day read on one policy.
+        side_source = "tick_rule"
+        emit(
+            "EXPORT_TAPE_SIDES_ONE_SIDED",
+            symbol=symbol,
+            day=day,
+            flag_buys=flag_buys,
+            flag_sells=flag_sells,
+            action="infer_sides_by_tick_rule",
+            note="a whole session flagged on one side is a broker stamping a "
+            "constant, not a market; sides are inferred like the live bridge does",
+        )
+        rederived: list[tuple[datetime, float, float, float, float, str]] = []
+        previous_price: float | None = None
+        carried_side = ""
+        for stamp, price, bid, ask, volume, _ in prints:
+            if previous_price is None or price == previous_price:
+                side = carried_side
+            elif price > previous_price:
+                side = "B"
+            else:
+                side = "S"
+            if not side:
+                # No direction yet (the day's first prints at one price): the
+                # price's side of the spread is the only evidence there is.
+                side = (
+                    "B"
+                    if (ask > 0 and price >= ask)
+                    else "S"
+                    if (bid > 0 and price <= bid)
+                    else ""
+                )
+            if side:
+                carried_side = side
+                inferred_sides += 1
+            previous_price = price
+            rederived.append((stamp, price, bid, ask, volume, side))
+        prints = rederived
+    else:
+        side_source = "venue_flags"
+        for index, (stamp, price, bid, ask, volume, side) in enumerate(prints):
+            if side:
+                continue
             # The venue did not say. Falling back to the price's side of the
             # spread is an inference, counted and declared below rather than
             # passed off as the exchange's own answer.
-            inferred_sides += 1
-            side = "B" if (ask > 0 and price >= ask) else "S" if (bid > 0 and price <= bid) else ""
-        volume = tick["volume_real"] or tick["volume"]
+            inferred = (
+                "B"
+                if (ask > 0 and price >= ask)
+                else "S"
+                if (bid > 0 and price <= bid)
+                else ""
+            )
+            if inferred:
+                inferred_sides += 1
+                prints[index] = (stamp, price, bid, ask, volume, inferred)
+        if inferred_sides:
+            # Data honesty: the header must not claim the venue answered when
+            # it did not, so the whole file downgrades to the weaker
+            # declaration.
+            side_source = "venue_flags_with_bid_ask_fallback"
+
+    rows: list[str] = [
+        "# quantick-replay 1",
+        f"# symbol={symbol}",
+        f"# timezone={offset_label(offset_s)}",
+        f"# side_source={side_source}",
+        "# source=MetaTrader 5 COPY_TICKS_TRADE, exported by quantick",
+        "Date,Time,Price,Bid,Ask,Volume,Side",
+    ]
+    written = 0
+    for stamp, price, bid, ask, volume, side in prints:
         rows.append(
             "{d},{t}.{ms:03d},{p},{b},{a},{v},{s}".format(
                 d=f"{stamp:%Y-%m-%d}",
@@ -316,28 +414,13 @@ def export_tape(
             )
         )
         written += 1
-        if written % PROGRESS_EVERY == 0:
-            emit("EXPORT_TAPE_PROGRESS", symbol=symbol, day=day, ticks=written)
 
-    if not written:
-        emit(
-            "EXPORT_TAPE_EMPTY",
-            symbol=symbol,
-            day=day,
-            fix="this day has no executed trades — a holiday, a weekend, or "
-            "before the contract started trading. Pick another day.",
-        )
-        raise SystemExit(4)
-
-    if inferred_sides:
-        # Data honesty: the header must not claim the venue answered when it
-        # did not, so the whole file downgrades to the weaker declaration.
-        rows[3] = "# side_source=venue_flags_with_bid_ask_fallback"
     emit(
         "EXPORT_TAPE_SIDES",
         symbol=symbol,
-        venue_flagged=written - inferred_sides,
-        inferred_from_bid_ask=inferred_sides,
+        side_source=side_source,
+        venue_flagged=0 if one_sided_flags else flagged,
+        inferred=inferred_sides,
     )
 
     path = out / symbol / f"{day}.csv"

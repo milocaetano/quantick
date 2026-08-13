@@ -694,6 +694,7 @@ mod tests {
                 provider: crate::config::ProviderKind::Binance,
                 symbols: vec!["BTCUSDT".to_owned(), "ETHUSDT".to_owned()],
                 bubble_preset: None,
+                symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
             }],
