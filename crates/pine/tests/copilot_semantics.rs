@@ -14,19 +14,20 @@ const COPILOT: &str = include_str!("corpus/ok/copilot.pine");
 /// need 100-bar warmups; the logic under test is identical at any length.
 fn test_inputs() -> Vec<InputValue> {
     vec![
-        InputValue::Int(10),     // regime_len
-        InputValue::Float(50.0), // regime_k — wide open: regime is not under test here
-        InputValue::Int(3),      // atr_len
-        InputValue::Int(2),      // pivot_l
-        InputValue::Int(2),      // pivot_r
-        InputValue::Float(0.5),  // tol_atr
-        InputValue::Int(3),      // min_gap
-        InputValue::Int(30),     // max_gap
-        InputValue::Int(10),     // z_len
-        InputValue::Float(1.5),  // z_thr
-        InputValue::Int(10),     // er_len
-        InputValue::Float(1.2),  // er_thr
-        InputValue::Float(0.1),  // rng_floor
+        InputValue::Int(10),     // 1 context: window (bars)
+        InputValue::Float(50.0), // 1 context: max height — wide open: regime is not under test here
+        InputValue::Int(1),      // 1 context: bars to confirm a flip (1 = immediate)
+        InputValue::Int(2),      // 2 structure: bars left of a pivot
+        InputValue::Int(2),      // 2 structure: bars to confirm a pivot
+        InputValue::Float(0.5),  // 2 structure: touch tolerance (×ATR)
+        InputValue::Int(3),      // 2 structure: touches min bars apart
+        InputValue::Int(30),     // 2 structure: touches max bars apart
+        InputValue::Float(1.2),  // 3 proof: absorption min (×avg effort)
+        InputValue::Int(10),     // 3 proof: effort average window (bars)
+        InputValue::Float(1.5),  // 4 trigger: aggression (sigmas)
+        InputValue::Int(10),     // 4 trigger: sigma window (bars)
+        InputValue::Int(3),      // advanced: ATR length
+        InputValue::Float(0.1),  // advanced: min bar range (×ATR)
     ]
 }
 
@@ -178,6 +179,17 @@ fn the_sell_marker_fires_on_the_confirmed_divergent_double_top() {
         marker_rows(indicator.as_ref(), "Long setup"),
         Vec::<usize>::new(),
         "a double top arms no long"
+    );
+    // The context ribbon: with the regime wide open this tape never stands
+    // down, so the OK dots run from the end of warmup and no cross prints.
+    assert!(
+        !marker_rows(indicator.as_ref(), "Context OK").is_empty(),
+        "the OK ribbon paints once the windows are warm"
+    );
+    assert_eq!(
+        marker_rows(indicator.as_ref(), "Context: stand down"),
+        Vec::<usize>::new(),
+        "a wide-open regime never stands down"
     );
 }
 

@@ -1,67 +1,97 @@
 //@version=5
-// Copilot — "should I be trading?" context filter for range-reversal
-// order flow. Four layers, from context to trigger; a marker prints only
-// when all of them agree, and every cutoff is an input:
+// Copilot — a "can I trade this?" companion for range-reversal order flow.
 //
-//   1. Regime — the last `regime_len` bars must fit inside `regime_k`
-//      ATRs, otherwise the market is trending and a red band paints the
-//      no-trade window (mean reversion bleeds in trends).
-//   2. Structure — double top / double bottom: two pivots within
-//      `tol_atr`×ATR of each other, `min_gap`..`max_gap` bars apart,
-//      drawn with a line and a DT/DB label when confirmed.
-//   3. Effort — the second touch must disagree with price: CVD lower on
-//      a retest of the high (higher on a retest of the low), and the
-//      touch bar absorbing — volume per point of range at least
-//      `er_thr`× its own average.
-//   4. Trigger — aggression against the extreme: a delta z-score beyond
-//      `z_thr` between the touch and its confirmation bar.
+// HOW TO READ THE CHART (three layers, calmest to loudest):
 //
-// Defaults are starting points for WIN-style index futures on activity
-// bars, not tuned truths: regime 80 bars / 6 ATRs flags a drifting tape,
-// pivots 5/5 skip micro-wiggles, touch tolerance 0.25 ATR, z 2.0 is "top
-// ~2% of recent aggression", absorption 1.5× average effort per point.
+//   1. The ribbon — small marks floating one ATR above the recent highs:
+//        teal dot   -> context OK: sideways tape, reversals may be armed
+//        red cross  -> stand down: the tape is trending, skip reversals
+//      No ribbon at all = the copilot is still warming up and holds no
+//      opinion yet. The ribbon never covers a candle.
+//   2. The structure — a line joining two matching pivots plus a DT chip
+//      (double top) or DB chip (double bottom). Structure draws even when
+//      the ribbon says stand down: it is context, not a signal.
+//   3. The signal — a SELL marker above (or BUY below) the bar that
+//      confirms the second touch, printed only when everything agrees:
+//      ribbon OK + double top/bottom + CVD lower on the retest of a high
+//      (higher on a low) + the touch bar absorbing + an aggression spike
+//      against the extreme. A thin line with a "stop" tag marks the
+//      touch extreme: the invalidation lives beyond that price, not at
+//      a fixed point count.
+//
+// A marker can appear while its confirming bar is still forming and
+// vanish if the close disproves it — live, but never repainted after the
+// bar commits.
+//
+// Inputs are numbered in reading order: 1 context, 2 structure, 3 proof,
+// 4 trigger. Defaults are starting points for index futures on activity
+// bars — calibrate them on recorded sessions, not on faith. There is no
+// divergence knob on purpose: a retest on rising CVD is simply not this
+// setup.
 indicator("Copilot", overlay=true)
 
-regime_len = input.int(80, "Regime: lookback (bars)", minval=10)
-regime_k = input.float(6.0, "Regime: max range width (×ATR)", minval=1.0)
-atr_len = input.int(14, "ATR length", minval=2)
-pivot_l = input.int(5, "Pivot: bars left", minval=1)
-pivot_r = input.int(5, "Pivot: bars right (confirmation)", minval=1)
-tol_atr = input.float(0.25, "Touches: max distance (×ATR)", minval=0.0)
-min_gap = input.int(5, "Touches: min bars apart", minval=1)
-max_gap = input.int(80, "Touches: max bars apart", minval=2)
-z_len = input.int(100, "Aggression: delta z-score window", minval=10)
-z_thr = input.float(2.0, "Aggression: |z-score| threshold", minval=0.5)
-er_len = input.int(100, "Absorption: effort/result window", minval=10)
-er_thr = input.float(1.5, "Absorption: min effort (×average)", minval=1.0)
-rng_floor = input.float(0.1, "Absorption: min bar range (×ATR)", minval=0.01)
+// 1 — context: how wide may the recent window get before it is a trend?
+regime_len = input.int(80, "1 Context: window (bars)", minval=10)
+regime_k = input.float(6.0, "1 Context: max height (×ATR)", minval=1.0)
+regime_confirm = input.int(3, "1 Context: bars to confirm a flip", minval=1)
+
+// 2 — structure: what counts as a double top / double bottom?
+pivot_l = input.int(5, "2 Structure: bars left of a pivot", minval=1)
+pivot_r = input.int(3, "2 Structure: bars to confirm a pivot", minval=1)
+tol_atr = input.float(0.25, "2 Structure: touch tolerance (×ATR)", minval=0.0)
+min_gap = input.int(5, "2 Structure: touches min bars apart", minval=1)
+max_gap = input.int(80, "2 Structure: touches max bars apart", minval=2)
+
+// 3 — proof: the second touch must be absorbed, not merely revisited.
+er_thr = input.float(1.5, "3 Proof: absorption min (×avg effort)", minval=1.0)
+er_len = input.int(100, "3 Proof: effort average window (bars)", minval=10)
+
+// 4 — trigger: how unusual must the aggression at the extreme be?
+z_thr = input.float(2.0, "4 Trigger: aggression (sigmas)", minval=0.5)
+z_len = input.int(100, "4 Trigger: sigma window (bars)", minval=10)
+
+// advanced plumbing — rarely touched.
+atr_len = input.int(14, "Advanced: ATR length", minval=2)
+rng_floor = input.float(0.1, "Advanced: min bar range (×ATR)", minval=0.01)
 
 atr = ta.atr(atr_len)
 
-// --- 1. regime: paint the window where reversion must NOT be traded ---
-hi_w = ta.highest(high, regime_len)
-lo_w = ta.lowest(low, regime_len)
-in_range = hi_w - lo_w < regime_k * atr
-band_hi = plot(in_range ? na : hi_w, "No-trade high", color=color.new(color.red, 60))
-band_lo = plot(in_range ? na : lo_w, "No-trade low", color=color.new(color.red, 60))
-fill(band_hi, band_lo, color.new(color.red, 92))
-
-// --- shared effort series ---
+// --- 1. context -----------------------------------------------------------
 // Every stateful ta.* call lives at top level: the dialect's `and` is
 // short-circuit and kernels have call-site identity, so a kernel on the
 // right of `and` would only warm up on bars where the left side is true.
-// z-score of per-bar delta: "large aggression" relative to the recent
-// tape, so the trigger survives calm and volatile days alike.
+hi_w = ta.highest(high, regime_len)
+lo_w = ta.lowest(low, regime_len)
+trending = hi_w - lo_w > regime_k * atr
+// The verdict flips only after `regime_confirm` bars agree — one opinion,
+// held, instead of a light that flickers on every borderline bar.
+trend_run = ta.barssince(not trending)
+range_run = ta.barssince(trending)
+var bool stand_down = false
+if not stand_down and nz(trend_run, regime_confirm) >= regime_confirm
+    stand_down := true
+if stand_down and nz(range_run, regime_confirm) >= regime_confirm
+    stand_down := false
+// The ribbon floats above the recent highs: readable from the corner of
+// the eye, never over price. Its absence during warmup is honest — no
+// data, no opinion.
+ribbon_y = hi_w + atr
+plotshape(stand_down ? na : ribbon_y, "Context OK", style=shape.circle, location=location.absolute, color=color.new(color.teal, 45))
+plotshape(stand_down ? ribbon_y : na, "Context: stand down", style=shape.cross, location=location.absolute, color=color.new(color.red, 25))
+
+// --- shared effort series ---------------------------------------------------
+// Sigmas of per-bar delta: "how unusual is this aggression?" relative to
+// the recent tape, so the trigger survives calm and violent days alike.
 z = (delta - ta.sma(delta, z_len)) / ta.stdev(delta, z_len)
 z_low = ta.lowest(z, pivot_r + 1)
 z_high = ta.highest(z, pivot_r + 1)
-// effort × result: volume per point of bar range. The floor keeps a doji
+// Effort × result: volume per point of bar range. The floor keeps a doji
 // from dividing by zero (division by zero would poison the SMA window
 // with na); a bar narrower than the floor is measured as if it had it.
 er = volume / math.max(high - low, atr * rng_floor)
 er_rel = er / ta.sma(er, er_len)
 
-// --- 2..4. double top -> short ---
+// --- 2..4. double top -> SELL ----------------------------------------------
 ph = ta.pivothigh(high, pivot_l, pivot_r)
 top_now = not na(ph)
 top_bar = ta.valuewhen(top_now, bar_index - pivot_r, 0)
@@ -74,15 +104,19 @@ double_top = top_now and not na(top_val1) and math.abs(ph - top_val1) <= tol_atr
 if double_top
     line.new(top_bar1, top_val1, top_bar, ph, color=color.red, width=2)
     label.new(top_bar, ph, text="DT", style=label.style_label_down, color=color.new(color.red, 20))
-// second touch: same price, less buying (CVD divergence), touch bar
-// absorbing, and sell aggression between the touch and its confirmation.
+// The second touch must disagree with price: less buying into the same
+// high (CVD divergence), the touch bar absorbing, and a sell aggression
+// spike between the touch and its confirmation.
 top_diverges = top_cvd < top_cvd1
 top_absorbed = top_er >= er_thr
 sell_hit = z_low <= -z_thr
-short_setup = double_top and in_range and top_diverges and top_absorbed and sell_hit
+short_setup = double_top and not stand_down and top_diverges and top_absorbed and sell_hit
+if short_setup
+    line.new(top_bar, ph, bar_index, ph, color=color.red, width=1)
+    label.new(bar_index, ph, text="stop", style=label.style_none, textcolor=color.new(color.red, 20))
 plotshape(short_setup, "Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")
 
-// --- 2..4. double bottom -> long ---
+// --- 2..4. double bottom -> BUY ---------------------------------------------
 pl = ta.pivotlow(low, pivot_l, pivot_r)
 bot_now = not na(pl)
 bot_bar = ta.valuewhen(bot_now, bar_index - pivot_r, 0)
@@ -98,5 +132,8 @@ if double_bottom
 bot_diverges = bot_cvd > bot_cvd1
 bot_absorbed = bot_er >= er_thr
 buy_hit = z_high >= z_thr
-long_setup = double_bottom and in_range and bot_diverges and bot_absorbed and buy_hit
+long_setup = double_bottom and not stand_down and bot_diverges and bot_absorbed and buy_hit
+if long_setup
+    line.new(bot_bar, pl, bar_index, pl, color=color.teal, width=1)
+    label.new(bar_index, pl, text="stop", style=label.style_none, textcolor=color.new(color.teal, 20))
 plotshape(long_setup, "Long setup", style=shape.triangleup, location=location.belowbar, color=color.teal, text="BUY")
