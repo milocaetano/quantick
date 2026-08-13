@@ -42,6 +42,21 @@ const CONTEXT_CHOICES: [u32; 5] = [1, 3, 5, 10, 20];
 /// estimate shown before a download starts, and labelled as approximate.
 const BYTES_PER_TICK: u64 = 49;
 
+/// Broker clocks a trader can state, when the provider cannot measure one.
+///
+/// Whole hours only, and only the ones a retail terminal is actually set to.
+/// B3 brokers run at −03:00; the MetaQuotes demo servers and most European
+/// brokers at +02:00/+03:00.
+const BROKER_CLOCKS: [(i32, &str); 7] = [
+    (-3 * 3600, "-03:00"),
+    (-5 * 3600, "-05:00"),
+    (0, "UTC"),
+    (3600, "+01:00"),
+    (2 * 3600, "+02:00"),
+    (3 * 3600, "+03:00"),
+    (8 * 3600, "+08:00"),
+];
+
 /// Rough prints per session for the estimate, when nothing better is known.
 ///
 /// A busy WIN day is over a million; this is deliberately a round,
@@ -90,6 +105,13 @@ pub struct GetDataPanel {
     available_for: String,
     job: Option<DownloadJob>,
     phase: Phase,
+    /// The broker clock the trader stated, once the provider said it could not
+    /// measure one. `None` means the provider is still doing the measuring.
+    declared_clock: Option<i32>,
+    /// Whether to show the clock control at all. Raised only after a request
+    /// failed for want of one — nobody should have to think about broker
+    /// timezones until the machine admits it cannot work one out.
+    clock_needed: bool,
 }
 
 impl Default for GetDataPanel {
@@ -114,7 +136,22 @@ impl GetDataPanel {
             available_for: String::new(),
             job: None,
             phase: Phase::Idle,
+            declared_clock: None,
+            clock_needed: false,
         }
+    }
+
+    /// Type a symbol into the field, as the keyboard would.
+    pub fn set_symbol(&mut self, symbol: &str) {
+        self.symbol = symbol.to_string();
+    }
+
+    /// Run the day look-up, as pressing **Look up days** would.
+    ///
+    /// Exposed so a scripted run reaches the calendar with no hand on the
+    /// mouse — the same call the button makes, never a parallel path.
+    pub fn look_up_days(&mut self, out_dir: &str) {
+        self.probe(out_dir);
     }
 
     /// Whether a download or probe is running.
@@ -132,69 +169,101 @@ impl GetDataPanel {
         let job = self.job.as_ref()?;
         let mut action = None;
         let mut ended = false;
+        let mut absorbed = Vec::new();
         loop {
             match job.events.try_recv() {
-                Ok(DownloadEvent::DaysAvailable { symbol, days }) => {
-                    if let Some(newest) = days.last().and_then(|d| parse_day(d)) {
-                        self.month = (newest.0, newest.1);
-                    }
-                    self.available_for = symbol;
-                    self.available = Some(days);
-                    self.phase = Phase::Idle;
-                    ended = true;
-                }
-                Ok(DownloadEvent::Progress { ticks }) => self.phase = Phase::Running { ticks },
-                Ok(DownloadEvent::TapeWritten { ticks, .. }) => {
-                    self.phase = Phase::Running { ticks };
-                }
-                Ok(DownloadEvent::ContextWritten { sessions, complete }) => {
-                    let ticks = match self.phase {
-                        Phase::Running { ticks } => ticks,
-                        _ => 0,
-                    };
-                    self.phase = Phase::Finished {
-                        ticks,
-                        sessions,
-                        complete,
-                    };
-                }
-                Ok(DownloadEvent::Done { tape }) => {
-                    if let Phase::Running { ticks } = self.phase {
-                        self.phase = Phase::Finished {
-                            ticks,
-                            sessions: 0,
-                            complete: true,
-                        };
-                    }
-                    action = Some(GetDataAction::Downloaded(tape));
-                    ended = true;
-                }
-                Ok(DownloadEvent::Failed { headline, fix }) => {
-                    self.phase = Phase::Failed { headline, fix };
-                    ended = true;
-                }
+                Ok(event) => absorbed.push(event),
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // The worker is gone. If it never said why, say so rather
-                    // than leaving a spinner turning forever.
-                    if matches!(self.phase, Phase::Probing | Phase::Running { .. }) {
-                        self.phase = Phase::Failed {
-                            headline: "the download stopped without finishing".to_string(),
-                            fix: Some(
-                                "Check the MetaTrader 5 terminal is still open, then try again."
-                                    .to_string(),
-                            ),
-                        };
-                    }
                     ended = true;
                     break;
                 }
             }
         }
+        let disconnected = ended;
+        for event in absorbed {
+            if let Some(finished) = self.absorb(event) {
+                action = Some(finished);
+                ended = true;
+            } else if !matches!(self.phase, Phase::Probing | Phase::Running { .. }) {
+                ended = true;
+            }
+        }
+        // The worker is gone and never said why. Say so rather than leaving a
+        // spinner turning forever.
+        if disconnected && matches!(self.phase, Phase::Probing | Phase::Running { .. }) {
+            self.phase = Phase::Failed {
+                headline: "the download stopped without finishing".to_string(),
+                fix: Some(
+                    "Check the MetaTrader 5 terminal is still open, then try again.".to_string(),
+                ),
+            };
+        }
         if ended {
             self.job = None;
         }
         action
+    }
+
+    /// Fold one event into the panel's state.
+    ///
+    /// Split out from the channel drain so every state this interface can be
+    /// in is reachable from a test with no process, no MetaTrader and no
+    /// network — which is the only way the failure paths get exercised at all.
+    fn absorb(&mut self, event: DownloadEvent) -> Option<GetDataAction> {
+        match event {
+            DownloadEvent::DaysAvailable { symbol, days } => {
+                if let Some(newest) = days.last().and_then(|d| parse_day(d)) {
+                    self.month = (newest.0, newest.1);
+                }
+                self.available_for = symbol;
+                self.available = Some(days);
+                self.phase = Phase::Idle;
+                None
+            }
+            DownloadEvent::Progress { ticks } | DownloadEvent::TapeWritten { ticks, .. } => {
+                self.phase = Phase::Running { ticks };
+                None
+            }
+            DownloadEvent::ContextWritten { sessions, complete } => {
+                let ticks = match self.phase {
+                    Phase::Running { ticks } => ticks,
+                    _ => 0,
+                };
+                self.phase = Phase::Finished {
+                    ticks,
+                    sessions,
+                    complete,
+                };
+                None
+            }
+            DownloadEvent::Done { tape } => {
+                if let Phase::Running { ticks } = self.phase {
+                    self.phase = Phase::Finished {
+                        ticks,
+                        sessions: 0,
+                        complete: true,
+                    };
+                }
+                Some(GetDataAction::Downloaded(tape))
+            }
+            DownloadEvent::Failed { headline, mut fix } => {
+                // The one failure the trader can answer here rather than in a
+                // terminal: raise the control instead of handing them advice
+                // about a command-line flag they have nowhere to type.
+                if headline.contains("clock offset") {
+                    self.clock_needed = true;
+                    if self.declared_clock.is_none() {
+                        self.declared_clock = Some(BROKER_CLOCKS[0].0);
+                    }
+                    fix = Some(
+                        "Pick the broker clock above, then look up the days again.".to_string(),
+                    );
+                }
+                self.phase = Phase::Failed { headline, fix };
+                None
+            }
+        }
     }
 
     /// Ask the provider which days it holds for the typed symbol.
@@ -209,6 +278,7 @@ impl GetDataPanel {
                 day: None,
                 context_sessions: 0,
                 out_dir: PathBuf::from(out_dir),
+                utc_offset_s: self.declared_clock,
             },
             Phase::Probing,
         );
@@ -225,6 +295,7 @@ impl GetDataPanel {
                 day: Some(day),
                 context_sessions: self.context_sessions,
                 out_dir: PathBuf::from(out_dir),
+                utc_offset_s: self.declared_clock,
             },
             Phase::Running { ticks: 0 },
         );
@@ -279,6 +350,7 @@ impl GetDataPanel {
         self.draw_calendar(ui, library);
         ui.add_space(8.0);
         self.draw_context_row(ui);
+        self.draw_clock_row(ui);
         ui.add_space(10.0);
         self.draw_estimate_and_button(ui, out_dir);
 
@@ -489,6 +561,45 @@ impl GetDataPanel {
             egui::RichText::new(
                 "1m, 2m, 5m and 15m all come from these. Broker candles carry no \
                  order flow, so the chart shows none before the tape starts.",
+            )
+            .color(TEXT_MUTED)
+            .small(),
+        );
+    }
+
+    /// The broker-clock control, shown only once the provider has said it
+    /// cannot measure one.
+    ///
+    /// Measuring needs a fresh tick, which needs an open market — and a replay
+    /// is downloaded after the close. Rather than send the trader to a command
+    /// line for a flag, the question is asked here, in the one place they are
+    /// already standing, and the answer is labelled as *stated* rather than
+    /// measured: the timestamps in the file are only as right as this is.
+    fn draw_clock_row(&mut self, ui: &mut egui::Ui) {
+        if !self.clock_needed {
+            return;
+        }
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Broker clock")
+                .color(TEXT_MUTED)
+                .small(),
+        );
+        ui.horizontal(|ui| {
+            for (offset, label) in BROKER_CLOCKS {
+                if ui
+                    .selectable_label(self.declared_clock == Some(offset), label)
+                    .clicked()
+                {
+                    self.declared_clock = Some(offset);
+                }
+            }
+        });
+        ui.label(
+            egui::RichText::new(
+                "quantick could not measure it — the market is closed. This is what \
+                 the times in the file will be written in, so it is stated, not measured. \
+                 B3 brokers run at -03:00.",
             )
             .color(TEXT_MUTED)
             .small(),
@@ -712,6 +823,39 @@ mod tests {
         assert_eq!(previous_month(2026, 1), (2025, 12));
         assert_eq!(next_month(2026, 12), (2027, 1));
         assert_eq!(next_month(2026, 8), (2026, 9));
+    }
+
+    #[test]
+    fn an_unmeasurable_clock_raises_the_control_that_answers_it() {
+        // The provider's own advice names a command-line flag. Someone
+        // standing in a window cannot act on that, so the question is asked
+        // where they are — and the advice is rewritten to point at it.
+        let mut panel = GetDataPanel::new();
+        assert!(
+            !panel.clock_needed,
+            "nobody thinks about this until it fails"
+        );
+
+        panel.absorb(DownloadEvent::Failed {
+            headline: "quantick does not know this broker's clock offset yet".to_string(),
+            fix: Some("pass --utc-offset-s (B3 brokers use -10800)".to_string()),
+        });
+
+        assert!(panel.clock_needed, "the control comes up");
+        assert_eq!(
+            panel.declared_clock,
+            Some(-10_800),
+            "defaulting to B3, the market this was built for"
+        );
+        let Phase::Failed { fix, .. } = &panel.phase else {
+            panic!("the failure is still shown");
+        };
+        let fix = fix.as_deref().unwrap_or_default();
+        assert!(
+            !fix.contains("--utc-offset-s"),
+            "no command-line flags in a window: {fix}"
+        );
+        assert!(fix.contains("above"), "it points at the control: {fix}");
     }
 
     #[test]

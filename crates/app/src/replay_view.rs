@@ -38,6 +38,12 @@ pub const TRANSPORT_HEIGHT: f32 = 30.0;
 /// Environment variable naming the folder the browser opens on.
 pub const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
 
+/// Environment variable that opens the browser on its **Get data** tab.
+///
+/// `1` opens it empty; any other value pre-fills the symbol field, so a
+/// scripted run can reach the calendar from a fresh launch with no clicks.
+pub const GET_DATA_ENV: &str = "QUANTICK_REPLAY_GET_DATA";
+
 /// Height of the seek track, in pixels.
 const TRACK_HEIGHT: f32 = 6.0;
 
@@ -132,6 +138,22 @@ impl ReplayView {
         self.browser_open = true;
         if self.library.is_none() && !self.folder.trim().is_empty() {
             self.rescan();
+        }
+    }
+
+    /// Open the browser on its **Get data** tab, optionally with a symbol
+    /// already typed and looked up.
+    ///
+    /// The same states a click produces: the tab, the typed symbol, and — so
+    /// the calendar is reachable from a fresh launch with no hand on the mouse
+    /// — the day look-up that a press of **Look up days** would run.
+    pub fn open_get_data(&mut self, symbol: Option<&str>) {
+        self.open_browser();
+        self.tab = BrowserTab::GetData;
+        if let Some(symbol) = symbol {
+            self.get_data.set_symbol(symbol);
+            let folder = self.folder.clone();
+            self.get_data.look_up_days(&folder);
         }
     }
 

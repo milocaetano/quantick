@@ -55,6 +55,15 @@ pub struct DownloadRequest {
     pub context_sessions: u32,
     /// Replay folder to write into.
     pub out_dir: PathBuf,
+    /// The broker's clock, as seconds ahead of UTC, when the trader had to
+    /// state it.
+    ///
+    /// `None` asks the provider to measure it. Measuring needs a fresh tick,
+    /// which needs an open market — and replays are downloaded after the
+    /// close, which is exactly when there is none. So the interface can hand
+    /// the answer over instead of failing, and says that it was declared
+    /// rather than measured.
+    pub utc_offset_s: Option<i32>,
 }
 
 impl DownloadRequest {
@@ -300,6 +309,10 @@ impl Mt5SessionSource {
             "--out".to_string(),
             request.out_dir.display().to_string(),
         ];
+        if let Some(offset) = request.utc_offset_s {
+            args.push("--utc-offset-s".to_string());
+            args.push(offset.to_string());
+        }
         match &request.day {
             Some(day) => {
                 args.push("--day".to_string());
@@ -488,7 +501,27 @@ mod tests {
             day: Some("2026-08-12".to_string()),
             context_sessions: 5,
             out_dir: PathBuf::from("/replay"),
+            utc_offset_s: None,
         }
+    }
+
+    #[test]
+    fn a_declared_broker_clock_reaches_the_exporter() {
+        // Measuring needs an open market; replays are downloaded after the
+        // close. Handing the answer over is what keeps the flow usable at the
+        // hour a trader actually prepares.
+        let declared = DownloadRequest {
+            utc_offset_s: Some(-10_800),
+            ..request()
+        };
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &declared);
+        assert!(args.windows(2).any(|w| w == ["--utc-offset-s", "-10800"]));
+
+        let measured = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request());
+        assert!(
+            !measured.iter().any(|a| a == "--utc-offset-s"),
+            "left out entirely when the provider should measure it"
+        );
     }
 
     #[test]
