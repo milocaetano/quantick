@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::any::Any;
 
 use super::{
-    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost,
+    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost, ToolShortcut,
     drawing_stroke,
 };
 
@@ -79,30 +79,43 @@ pub struct AvwapBand {
 /// recompute can never read as a user edit to the undo history.
 #[derive(Debug, Clone)]
 pub struct AvwapCache {
-    /// The inputs the rows were computed from; `avwap::refresh` skips the
-    /// replay while it matches.
+    /// The **closed-state** inputs the rows were computed from;
+    /// `avwap::refresh` replays only when this misses. The forming bar has
+    /// its own signature ([`AvwapCache::partial`]) precisely so a live tick
+    /// re-evaluates one row, never the anchored span.
     pub key: AvwapCacheKey,
+    /// The forming bar the last row describes, when one is on the tape.
+    pub partial: Option<AvwapPartialSig>,
     /// The slot the first row belongs to — the anchor's own bar.
     pub first_slot: usize,
-    /// One row per bar from the anchor to the newest (forming bar included
-    /// when `key.include_partial`): `[vwap, u1, l1, u2, l2, u3, l3]`, `NaN`
-    /// where the kernel answered `na` or the pair is off.
+    /// One row per bar from the anchor to the newest — the forming bar's
+    /// row last, when `partial` is set: `[vwap, u1, l1, u2, l2, u3, l3]`,
+    /// `NaN` where the kernel answered `na` or the pair is off.
     pub rows: Vec<[f64; AVWAP_ROW_WIDTH]>,
+    /// The kernel as of the last **closed** bar — the accumulators the next
+    /// bar close extends and the next forming-bar tick previews against,
+    /// so neither replays the anchored span.
+    pub(crate) kernel: quantick_indicators::native::AnchoredVwap,
 }
 
-/// Everything the replay depends on. An anchor drag changes the slot, a bar
-/// close bumps `closed_len`, the live edge bumps `partial_version`, a config
-/// edit changes source/bands, a rebuild bumps the revision.
+/// The forming bar's exact signature — its last-trade instant and trade
+/// count — so the live row recomputes when (and only when) it changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvwapPartialSig {
+    pub close_time: i64,
+    pub trades: u64,
+}
+
+/// Everything the **closed-bar** replay depends on. An anchor drag changes
+/// the slot, a bar close bumps `closed_len`, a config edit changes
+/// source/bands, a rebuild bumps the revision, a backfill page grows the
+/// prefix.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AvwapCacheKey {
     pub anchor_slot: usize,
     pub timeline_revision: u64,
     pub closed_len: usize,
-    pub include_partial: bool,
-    /// The forming bar's exact signature — its last-trade instant and trade
-    /// count — so the live row recomputes when (and only when) it changed.
-    pub partial_close_time: i64,
-    pub partial_trades: u64,
+    pub prefix_len: usize,
     pub source: SourceId,
     pub bands: [AvwapBand; AVWAP_BAND_PAIRS],
 }
@@ -333,10 +346,16 @@ impl DrawingToolImpl for AnchoredVwapTool {
         icons::ANCHOR_SIMPLE
     }
     fn hover_text(&self) -> &'static str {
-        "Anchored VWAP - click the bar the average starts at"
+        "Anchored VWAP - click the bar the average starts at (W)"
     }
     fn required_points(&self) -> usize {
         1
+    }
+    fn shortcut(&self) -> Option<ToolShortcut> {
+        Some(ToolShortcut {
+            key: egui::Key::W,
+            shift: false,
+        })
     }
     fn supports_fill(&self) -> bool {
         true
@@ -443,15 +462,32 @@ impl DrawingToolImpl for AnchoredVwapTool {
             );
         }
 
-        if !ctxt.halo && chart_rect.contains(anchor) {
-            // The anchor marker: a ring on the seed bar. Painted after the
-            // series so it stays findable — it is the handle that re-anchors.
-            painter.circle_filled(anchor, ANCHOR_RADIUS_PX, crate::theme::CANVAS);
-            painter.circle_stroke(
-                anchor,
-                ANCHOR_RADIUS_PX,
-                egui::Stroke::new(ANCHOR_RING_PX, style.color),
-            );
+        if !ctxt.halo {
+            // The anchor marker: a ring on the bar that actually seeds the
+            // sums, at the average's own first value — not on the raw click.
+            // A click past the newest bar clamps to it, and the ring saying
+            // so is the honesty the marker owes. Falls back to the clicked
+            // point only while no cache exists yet.
+            let marker = match (payload.cache.as_ref(), anchor_bar) {
+                (Some(cache), Some(anchor_bar))
+                    if ctxt.px_per_bar > 0.0
+                        && cache.rows.first().is_some_and(|row| !row[0].is_nan()) =>
+                {
+                    egui::pos2(
+                        slot_x(anchor.x, anchor_bar, ctxt.px_per_bar, cache.first_slot),
+                        ctxt.scale.y(cache.rows[0][0]),
+                    )
+                }
+                _ => anchor,
+            };
+            if chart_rect.contains(marker) {
+                painter.circle_filled(marker, ANCHOR_RADIUS_PX, crate::theme::CANVAS);
+                painter.circle_stroke(
+                    marker,
+                    ANCHOR_RADIUS_PX,
+                    egui::Stroke::new(ANCHOR_RING_PX, style.color),
+                );
+            }
         }
     }
     fn hit_test(
@@ -535,7 +571,11 @@ fn draw_vwap_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Preset
     for (pair, band) in payload.bands.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             edited |= ui
-                .checkbox(&mut band.on, format!("band #{}", pair + 1))
+                .checkbox(&mut band.on, format!("{}σ band", pair + 1))
+                .on_hover_text(
+                    "standard-deviation band around the anchored VWAP; \
+                     the multiplier scales how far from the average it sits",
+                )
                 .changed();
             let drag = egui::DragValue::new(&mut band.mult)
                 .range(0.0..=f64::MAX)
@@ -615,14 +655,14 @@ mod tests {
                 anchor_slot: first_slot,
                 timeline_revision: 0,
                 closed_len: first_slot + rows.len(),
-                include_partial: false,
-                partial_close_time: 0,
-                partial_trades: 0,
+                prefix_len: 0,
                 source: SourceId::Hlc3,
                 bands: AvwapPayload::default().bands,
             },
+            partial: None,
             first_slot,
             rows,
+            kernel: quantick_indicators::native::AnchoredVwap::default(),
         }
     }
 

@@ -61,6 +61,14 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
 
+Landing with the anchored VWAP goal (`feat/anchored-vwap`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_AVWAP_DEMO=1` | one anchored VWAP on the flow pane, anchored ~40 bars back with the 1σ and 2σ band pairs on — the band stack, its layered fills and the anchor marker in a single deterministic frame. The tool itself is registry-driven, so `QUANTICK_DRAWING_TOOL=anchored-vwap` arms it, `QUANTICK_DRAWINGS_DEMO=1` includes it, `QUANTICK_DRAWINGS_DEMO_SELECT=anchored-vwap` selects it (context bar + anchor handle), and `QUANTICK_DRAWING_INSPECTOR=1` opens the settings panel whose VWAP tab holds source and bands |
+
+Once merged, move it into the table above.
+
 Landing with the toolbar usability goal (`fix/toolbar-usability`):
 
 | Hook | Reaches |

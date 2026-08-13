@@ -2831,6 +2831,11 @@ impl ChartPane {
             let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
             let bar = self.viewport.right_edge_bar(total) + 0.5
                 - (history_right - position.x) / self.viewport.candle_width();
+            // Clamped to the newest bar at creation: the refresh clamps the
+            // math anyway, and a marker sitting where the average cannot
+            // start would be the dishonesty the clamp exists to avoid.
+            #[allow(clippy::cast_precision_loss)]
+            let bar = bar.min(total.saturating_sub(1) as f32);
             self.context_menu_anchor = (total > 0).then(|| {
                 ChartPoint::at_time(bar, scale.price_at(position.y), self.anchor_time(bar))
             });

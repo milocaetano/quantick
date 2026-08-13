@@ -627,6 +627,10 @@ pub struct QuantickApp {
     // Scripted-validation hook: one fixed-range volume profile straddling the
     // venue-prefix seam (when there is one). Consumed once.
     pending_frvp_demo: bool,
+    /// `QUANTICK_AVWAP_DEMO`: one anchored VWAP placed on the flow pane once
+    /// it has bars — the band stack and anchor marker, photographable from a
+    /// fresh launch. Consumed once, like the other demos.
+    pending_avwap_demo: bool,
     // Scripted-validation hook: how many anchors of the armed tool are already
     // placed when the run opens, with the pointer parked where the next one
     // would go. Consumed once.
@@ -896,6 +900,7 @@ impl QuantickApp {
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             pending_frvp_demo: false,
+            pending_avwap_demo: false,
             pending_drawing_draft: None,
             inspector_pos: None,
             inspector_size: None,
@@ -1009,6 +1014,10 @@ impl QuantickApp {
         // surface, and this is how a validation run photographs it.
         app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO")
             .is_ok_and(|value| matches!(value.trim(), "1" | "compare"));
+        // One anchored VWAP, anchored a stretch back so the average and its
+        // band stack have room to develop on screen.
+        app.pending_avwap_demo =
+            std::env::var("QUANTICK_AVWAP_DEMO").is_ok_and(|value| value.trim() == "1");
         // The object manager is where a mark that cannot be trusted says so —
         // the "off series", "other market" and band badges live there, and a
         // mark clamped to an edge may be nowhere near the visible window,
@@ -5432,6 +5441,61 @@ impl QuantickApp {
         }
     }
 
+    /// The `QUANTICK_AVWAP_DEMO` hook: one anchored VWAP on the flow pane,
+    /// anchored a stretch back with the first two band pairs on — the band
+    /// stack, the fills and the anchor marker in a single deterministic
+    /// frame. Consumed once, like the drawings demo.
+    fn apply_avwap_demo(&mut self) {
+        if !self.pending_avwap_demo {
+            return;
+        }
+        let slots = self.active_tab_mut().flow_pane.slots();
+        if slots < 12 {
+            return;
+        }
+        self.pending_avwap_demo = false;
+        let Some(tool) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::avwap::TOOL_ID)
+        else {
+            return;
+        };
+        let pane = &mut self.active_tab_mut().flow_pane;
+        // Far enough back for the average to develop, on a bar that exists.
+        let anchor = slots.saturating_sub(40).min(slots - 1);
+        let close = pane
+            .closed_bar(anchor)
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+            .unwrap_or(1.0);
+        pane.drawings.place_with(
+            tool,
+            &drawings::DrawingBand::Price,
+            drawings::ChartPoint::at_time(anchor as f32, close, pane.slot_open_time(anchor)),
+            |tool| {
+                let mut payload = tool.default_payload();
+                if let Some(avwap) = payload
+                    .as_any_mut()
+                    .downcast_mut::<drawings::AvwapPayload>()
+                {
+                    // 1σ ships on; the demo also opens 2σ so the stack and
+                    // its fill layering are on screen.
+                    avwap.bands[1].on = true;
+                }
+                drawings::NewDrawing {
+                    style: tool.default_style(),
+                    payload,
+                }
+            },
+        );
+        // The demo's placement is a selection change, and a selection change
+        // closes the inspector (`note_selection`). When the launch asked for
+        // the panel too, re-request it through the same door a placing tool
+        // uses, so the pair of hooks photographs object + settings together.
+        if self.inspector_open {
+            self.pending_open_settings = true;
+        }
+    }
+
     /// The `bands` half of the demo hook: on every indicator pane, a level on
     /// the band's own value and a diagonal across it.
     ///
@@ -5544,6 +5608,7 @@ impl QuantickApp {
         self.apply_drawing_demo();
         self.apply_drawing_draft();
         self.apply_frvp_demo();
+        self.apply_avwap_demo();
         self.maybe_emit_summary(now);
         self.maintain_workspace(ctx);
 

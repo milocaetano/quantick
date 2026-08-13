@@ -74,6 +74,34 @@ fn bar_at<'a>(inputs: &'a RefreshInputs<'_>, slot: usize) -> Option<&'a Bar> {
         .flatten()
 }
 
+/// One committed plot row, read back as the cache's array shape.
+fn plot_row(kernel: &AnchoredVwap, row: usize) -> [f64; AVWAP_ROW_WIDTH] {
+    let plots = kernel.plots();
+    let mut values = [f64::NAN; AVWAP_ROW_WIDTH];
+    for (column, value) in values.iter_mut().enumerate() {
+        *value = plots.value(PlotId::new(column), row);
+    }
+    values
+}
+
+/// The forming bar's row, previewed against the committed accumulators —
+/// the kernel's own rollback contract, so a live tick costs one preview and
+/// never a replay.
+fn live_row(kernel: &mut AnchoredVwap, partial: &Bar) -> Option<[f64; AVWAP_ROW_WIDTH]> {
+    let mut ctx = Ctx {
+        bar_index: kernel.plots().len(),
+        cvd: &[],
+    };
+    let frame = kernel
+        .preview(&IndicatorBar::from(partial), &mut ctx)
+        .ok()?;
+    let mut values = [f64::NAN; AVWAP_ROW_WIDTH];
+    for (column, value) in values.iter_mut().enumerate() {
+        *value = frame.values.get(column).copied().unwrap_or(f64::NAN);
+    }
+    Some(values)
+}
+
 fn refresh_one(payload: &mut AvwapPayload, anchor_bar: f32, inputs: &RefreshInputs<'_>) {
     let closed_len = inputs.state.bars().len();
     let closed_total = inputs.prefix.len() + closed_len;
@@ -96,24 +124,82 @@ fn refresh_one(payload: &mut AvwapPayload, anchor_bar: f32, inputs: &RefreshInpu
         return;
     };
 
-    let include_partial = partial.is_some();
     let key = AvwapCacheKey {
         anchor_slot,
         timeline_revision: inputs.state.timeline_revision(),
         closed_len,
-        include_partial,
-        partial_close_time: partial.map_or(0, |bar| bar.close_time),
-        partial_trades: partial.map_or(0, |bar| bar.trade_count),
+        prefix_len: inputs.prefix.len(),
         source: payload.source,
         bands: payload.bands,
     };
-    if payload.cache.as_ref().is_some_and(|cache| cache.key == key) {
+    let partial_sig = partial.map(|bar| crate::drawings::AvwapPartialSig {
+        close_time: bar.close_time,
+        trades: bar.trade_count,
+    });
+
+    // Closed-state hit: at most the live row moves. A tick on the forming
+    // bar previews one row against the retained accumulators — O(1),
+    // whatever the anchored span.
+    if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
+        if cache.partial != partial_sig {
+            if cache.partial.is_some() {
+                cache.rows.pop();
+            }
+            if let Some(bar) = partial
+                && let Some(row) = live_row(&mut cache.kernel, bar)
+            {
+                cache.rows.push(row);
+            }
+            cache.partial = partial_sig;
+        }
         return;
     }
 
-    // Replay the kernel from the anchor bar. The anchor instant is that
-    // bar's own open, so every bar from it onward participates — the same
-    // `close_time >= anchor` rule the kernel's golden fixture pins.
+    // A bar close with everything else unchanged extends the retained
+    // kernel over the new closed bars — O(new bars), never the whole span.
+    if let Some(cache) = payload.cache.as_mut().filter(|cache| {
+        cache.key
+            == AvwapCacheKey {
+                closed_len: cache.key.closed_len,
+                ..key
+            }
+            && cache.key.closed_len < closed_len
+    }) {
+        if cache.partial.is_some() {
+            cache.rows.pop();
+        }
+        let done = anchor_slot + cache.kernel.plots().len();
+        for slot in done..closed_total {
+            let Some(bar) = bar_at(inputs, slot) else {
+                break;
+            };
+            let mut ctx = Ctx {
+                bar_index: cache.kernel.plots().len(),
+                cvd: &[],
+            };
+            if cache
+                .kernel
+                .on_close(&IndicatorBar::from(bar), &mut ctx)
+                .is_err()
+            {
+                break;
+            }
+            cache.rows.push(plot_row(&cache.kernel, cache.rows.len()));
+        }
+        if let Some(bar) = partial
+            && let Some(row) = live_row(&mut cache.kernel, bar)
+        {
+            cache.rows.push(row);
+        }
+        cache.partial = partial_sig;
+        cache.key = key;
+        return;
+    }
+
+    // Full replay from the anchor bar — an anchor drag, a config edit or a
+    // timeline rebuild. The anchor instant is that bar's own open, so every
+    // bar from it onward participates — the same `close_time >= anchor`
+    // rule the kernel's golden fixture pins.
     let Some(anchor_ms) = bar_at(inputs, anchor_slot).map(|bar| bar.open_time) else {
         payload.cache = None;
         return;
@@ -121,33 +207,36 @@ fn refresh_one(payload: &mut AvwapPayload, anchor_bar: f32, inputs: &RefreshInpu
     let bands: [(bool, f64); AVWAP_BAND_PAIRS] =
         payload.bands.map(|band: AvwapBand| (band.on, band.mult));
     let mut kernel = AnchoredVwap::new(anchor_ms, payload.source, bands);
-    for (index, slot) in (anchor_slot..=last_slot).enumerate() {
+    let mut rows = Vec::with_capacity(last_slot - anchor_slot + 1);
+    for slot in anchor_slot..closed_total.max(anchor_slot) {
+        if slot > last_slot {
+            break;
+        }
         let Some(bar) = bar_at(inputs, slot) else {
             break;
         };
         // No cross-bar series is read: every anchored source is price-scaled,
         // so the host-maintained cvd can honestly stay empty here.
         let mut ctx = Ctx {
-            bar_index: index,
+            bar_index: kernel.plots().len(),
             cvd: &[],
         };
         if kernel.on_close(&IndicatorBar::from(bar), &mut ctx).is_err() {
             break;
         }
+        rows.push(plot_row(&kernel, rows.len()));
     }
-    let plots = kernel.plots();
-    let mut rows = Vec::with_capacity(plots.len());
-    for row in 0..plots.len() {
-        let mut values = [f64::NAN; AVWAP_ROW_WIDTH];
-        for (column, value) in values.iter_mut().enumerate() {
-            *value = plots.value(PlotId::new(column), row);
-        }
-        rows.push(values);
+    if let Some(bar) = partial
+        && let Some(row) = live_row(&mut kernel, bar)
+    {
+        rows.push(row);
     }
     payload.cache = Some(AvwapCache {
         key,
+        partial: partial_sig,
         first_slot: anchor_slot,
         rows,
+        kernel,
     });
 }
 
@@ -297,7 +386,7 @@ mod tests {
             .downcast_ref::<AvwapPayload>()
             .unwrap();
         let cache = payload.cache.as_ref().unwrap();
-        assert!(cache.key.include_partial);
+        assert!(cache.partial.is_some());
         assert_eq!(cache.rows.len(), 2, "the anchor bar and the live row");
         // (80·16 + 200·2) / 18 = 1680 / 18 = 93.333…
         assert_eq!(cache.rows[1][0], 1680.0 / 18.0);

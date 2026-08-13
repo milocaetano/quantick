@@ -45,6 +45,12 @@ impl Sums {
 
 /// Volume-weighted average price anchored at a user-chosen instant, with up
 /// to three σ-band pairs.
+///
+/// `Clone` is part of the contract: a consumer that snapshots committed
+/// state (the chart's per-object cache does, for undo records) clones the
+/// whole indicator — plots and sums together, so the copy can keep
+/// evaluating from where the original stood.
+#[derive(Debug, Clone)]
 pub struct AnchoredVwap {
     descriptor: IndicatorDescriptor,
     plots: PlotBuffer,

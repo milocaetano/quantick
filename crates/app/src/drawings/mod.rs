@@ -817,7 +817,8 @@ pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
 // The anchored VWAP's payload types, re-exported for `crate::avwap` — the
 // refresh pass that replays the indicators-crate kernel into the cache.
 pub use anchored_vwap::{
-    AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPayload,
+    AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPartialSig,
+    AvwapPayload,
 };
 
 /// One anchor of a drawing.
