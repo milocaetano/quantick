@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use quantick_engine::Trade;
 
+use crate::context::{self, ContextSeries};
 use crate::format::{self, FileHeader, FormatError, ParseOptions, Quote, UtcOffset};
 
 /// The calendar day a session file covers, taken from its file name.
@@ -119,6 +120,20 @@ pub struct Session {
     pub trades: Vec<Trade>,
     /// Quotes parallel to `trades`, when the caller asked to keep them.
     pub quotes: Vec<Quote>,
+    /// Broker candles for the sessions before this one, from the sibling
+    /// context file when there is one. `None` means the recording has no
+    /// context — an honest absence, and the chart simply opens at the first
+    /// print.
+    pub context: Option<ContextSeries>,
+    /// Why the sibling context file was not used, when one exists but could
+    /// not be read.
+    ///
+    /// A broken context never fails the load: the tape is the recording, and
+    /// refusing to replay a good day because the candles beside it are
+    /// malformed would cost the trader the session over the decoration. The
+    /// problem is carried so the interface can say so rather than showing
+    /// blank space and letting it pass for "no context was downloaded".
+    pub context_problem: Option<FormatError>,
 }
 
 impl Session {
@@ -134,7 +149,25 @@ impl Session {
             path: path.to_path_buf(),
             message: e.to_string(),
         })?;
-        Self::from_text(path, &text, options)
+        let mut session = Self::from_text(path, &text, options)?;
+        session.attach_context(&context::context_path(path));
+        Ok(session)
+    }
+
+    /// Read the sibling context file into this session, if it is there.
+    ///
+    /// Absent is not a problem: most recordings have no context, and the chart
+    /// opens at the first print. Present-but-unreadable *is* a problem, and it
+    /// is recorded in [`context_problem`](Self::context_problem) rather than
+    /// failing the load — see that field.
+    fn attach_context(&mut self, path: &Path) {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
+        match context::parse_context(&text) {
+            Ok(series) => self.context = Some(series),
+            Err(error) => self.context_problem = Some(error),
+        }
     }
 
     /// Parse an already-read session file. Split out so the whole load path is
@@ -161,6 +194,8 @@ impl Session {
             header: parsed.header,
             trades: parsed.trades,
             quotes: parsed.quotes,
+            context: None,
+            context_problem: None,
         })
     }
 
@@ -227,6 +262,65 @@ pub fn date_from_path(path: &Path) -> Option<SessionDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::scratch::Scratch;
+
+    const CONTEXT: &str = "\
+# quantick-context 1
+# symbol=WINJ26
+# timezone=-03:00
+# interval_ms=60000
+Date,Time,Open,High,Low,Close,Volume
+2026-03-13,17:00:00.000,181900,182000,181850,181950,4200
+";
+
+    #[test]
+    fn a_context_file_beside_the_tape_is_loaded_with_it() {
+        let scratch = Scratch::new("session-context");
+        let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
+        scratch.write("WINJ26/20260316.context.csv", CONTEXT);
+
+        let session = Session::load(&tape, ParseOptions::default()).unwrap();
+        let context = session
+            .context
+            .as_ref()
+            .expect("the sibling file is picked up");
+        assert_eq!(context.bars.len(), 1);
+        assert_eq!(context.interval_ms, 60_000);
+        assert!(session.context_problem.is_none());
+        // The context sits before the tape, which is the whole point of it.
+        assert!(context.end_ms().unwrap() < session.start_ms());
+    }
+
+    #[test]
+    fn a_session_with_no_context_file_loads_unchanged() {
+        let scratch = Scratch::new("session-no-context");
+        let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
+
+        let session = Session::load(&tape, ParseOptions::default()).unwrap();
+        assert!(session.context.is_none(), "absent is not a problem");
+        assert!(session.context_problem.is_none());
+        assert_eq!(session.trades.len(), 2);
+    }
+
+    #[test]
+    fn a_broken_context_never_costs_the_trader_the_session() {
+        let scratch = Scratch::new("session-bad-context");
+        let tape = scratch.write("WINJ26/20260316.csv", SAMPLE);
+        // No `# interval_ms=`, so the candles cannot be folded to anything.
+        scratch.write(
+            "WINJ26/20260316.context.csv",
+            "Date,Time,Open,High,Low,Close,Volume\n",
+        );
+
+        let session = Session::load(&tape, ParseOptions::default()).expect("the tape still plays");
+        assert_eq!(session.trades.len(), 2);
+        assert!(session.context.is_none());
+        let problem = session
+            .context_problem
+            .expect("and the interface can say why the space is blank");
+        assert!(!problem.advice().is_empty());
+    }
 
     const SAMPLE: &str = "\
 # quantick-replay 1

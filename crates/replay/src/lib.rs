@@ -12,6 +12,9 @@
 //!   everything that is not one instead of silently skipping it.
 //! - [`clock`] — the deterministic playhead: given how much real time passed, it
 //!   says which trades fall due.
+//! - [`context`] — the sibling file of broker candles that fills the empty
+//!   space to the left of a recording, so a replay opens with the market's
+//!   recent past visible instead of blank canvas.
 //!
 //! Like [`quantick_engine`], this crate is headless and deterministic: no UI, no
 //! network, no async, and no wall-clock read anywhere. The playhead is *told*
@@ -48,11 +51,15 @@
 //! belongs in a sibling file per session, not smuggled into the trade rows.
 
 pub mod clock;
+pub mod context;
 pub mod format;
 pub mod library;
+#[cfg(test)]
+mod scratch;
 pub mod session;
 
 pub use clock::{Batch, PlaybackConfig, Playhead, SPEEDS};
+pub use context::{ContextHeader, ContextSeries, context_path, parse_context, write_context};
 pub use format::{
     FORMAT_HELP, FORMAT_NAME, FORMAT_VERSION, FormatError, FormatErrorKind, ParseOptions, Quote,
     UtcOffset,

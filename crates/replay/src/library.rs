@@ -12,6 +12,7 @@
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+use crate::context;
 use crate::format::{self, FormatError, FormatErrorKind, UtcOffset};
 use crate::session::{self, SessionDate};
 
@@ -312,6 +313,14 @@ fn visit(dir: &Path, depth: usize, library: &mut Library) {
 
 /// Decide what one file is, reading only its head.
 fn classify(path: &Path, size_bytes: u64, library: &mut Library) {
+    // A context file is not a session that failed to load — it belongs to one,
+    // and `Session::load` picks it up from beside the tape. Listing it would
+    // double every downloaded day in the browser; reporting it as a problem
+    // would accuse the user of a mistake they did not make.
+    if context::is_context_file(path) {
+        return;
+    }
+
     let extension = path
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
@@ -416,43 +425,7 @@ fn read_head(path: &Path) -> std::io::Result<String> {
 mod tests {
     use super::*;
 
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    /// A unique scratch folder per test, cleaned up on the way out.
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(name: &str) -> Self {
-            static COUNTER: AtomicU32 = AtomicU32::new(0);
-            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "quantick-replay-{name}-{}-{id}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-
-        fn write(&self, relative: &str, contents: &str) -> PathBuf {
-            let path = self.0.join(relative);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).unwrap();
-            }
-            std::fs::write(&path, contents).unwrap();
-            path
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::scratch::Scratch;
 
     const GOOD: &str = "\
 # quantick-replay 1
@@ -541,6 +514,28 @@ Date,Time,Price,Bid,Ask,Volume,Side
             .expect("needs-import problem");
         assert!(problem.advice().contains("import_mt5_ndjson"));
         assert_eq!(problem.subject(), "mt5_orderflow_20260316.ndjson");
+    }
+
+    #[test]
+    fn a_context_file_is_neither_a_session_nor_a_complaint() {
+        let scratch = Scratch::new("context-passed-over");
+        scratch.write("WINQ26/20260316.csv", GOOD);
+        scratch.write(
+            "WINQ26/20260316.context.csv",
+            "# interval_ms=60000\nDate,Time,Open,High,Low,Close,Volume\n",
+        );
+
+        let library = scan(scratch.path());
+        assert_eq!(
+            library.sessions.len(),
+            1,
+            "the day is listed once, not twice"
+        );
+        assert!(
+            library.problems.is_empty(),
+            "a context file is not the user's mistake: {:?}",
+            library.problems
+        );
     }
 
     #[test]

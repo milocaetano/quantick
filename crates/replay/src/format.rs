@@ -189,6 +189,9 @@ pub enum FormatErrorKind {
     OutOfOrder,
     /// `# timezone=` does not name a fixed UTC offset.
     Timezone,
+    /// `# interval_ms=` is missing, or does not name a positive whole number
+    /// of milliseconds. Context files only (see [`crate::context`]).
+    Interval,
 }
 
 impl FormatErrorKind {
@@ -207,6 +210,7 @@ impl FormatErrorKind {
             FormatErrorKind::Side => "bad_side",
             FormatErrorKind::OutOfOrder => "out_of_order",
             FormatErrorKind::Timezone => "bad_timezone",
+            FormatErrorKind::Interval => "bad_interval",
         }
     }
 
@@ -238,6 +242,9 @@ impl FormatErrorKind {
             }
             FormatErrorKind::Timezone => {
                 "Declare the offset as `# timezone=-03:00`, or drop the line to mean UTC."
+            }
+            FormatErrorKind::Interval => {
+                "Declare what one candle covers as `# interval_ms=60000`; it is never assumed."
             }
         }
     }
@@ -463,6 +470,7 @@ pub struct FileHeader {
 /// [`FormatErrorKind::Timezone`] on an undecodable offset, plus anything
 /// [`ColumnMap::parse`] rejects.
 pub fn parse_header(text: &str) -> Result<FileHeader, FormatError> {
+    let text = strip_bom(text);
     let mut version = None;
     let mut symbol = None;
     let mut timezone = UtcOffset::UTC;
@@ -566,6 +574,7 @@ pub struct ParseOptions {
 ///
 /// The first [`FormatError`] encountered, carrying its 1-based line number.
 pub fn parse_file(text: &str, options: ParseOptions) -> Result<ParsedFile, FormatError> {
+    let text = strip_bom(text);
     let header = parse_header(text)?;
     let columns = &header.columns;
     let needed = columns.needed_width();
@@ -671,8 +680,23 @@ pub fn parse_file(text: &str, options: ParseOptions) -> Result<ParsedFile, Forma
     })
 }
 
+/// Drop a UTF-8 byte-order mark, if the file opens with one.
+///
+/// Windows puts one on everything: PowerShell's `Set-Content -Encoding utf8`,
+/// Excel's "CSV UTF-8", most editors' default save. It is invisible, it sits in
+/// front of the first `#`, and without this the file is rejected for a missing
+/// `Date` column — the single most baffling way a valid recording could fail to
+/// load. Stripping it costs one comparison per file.
+pub(crate) fn strip_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 /// Milliseconds at midnight UTC of a `YYYY-MM-DD` date.
-fn parse_date(text: &str, line_no: usize) -> Result<i64, FormatError> {
+///
+/// Shared with [`crate::context`]: a date means the same thing in a context
+/// file as in a tape row, and two spellings of "what is a valid date" would be
+/// two answers waiting to drift.
+pub(crate) fn parse_date(text: &str, line_no: usize) -> Result<i64, FormatError> {
     let err = || {
         FormatError::at(
             line_no,
@@ -694,7 +718,7 @@ fn parse_date(text: &str, line_no: usize) -> Result<i64, FormatError> {
 }
 
 /// Milliseconds since midnight of a `HH:MM:SS[.mmm]` time.
-fn parse_time(text: &str, line_no: usize) -> Result<i64, FormatError> {
+pub(crate) fn parse_time(text: &str, line_no: usize) -> Result<i64, FormatError> {
     let err = || {
         FormatError::at(
             line_no,
@@ -734,7 +758,11 @@ fn parse_time(text: &str, line_no: usize) -> Result<i64, FormatError> {
     Ok(((hours * 60 + minutes) * 60 + seconds.min(59)) * 1000 + millis)
 }
 
-fn parse_decimal(text: &str, column: &str, line_no: usize) -> Result<Decimal, FormatError> {
+pub(crate) fn parse_decimal(
+    text: &str,
+    column: &str,
+    line_no: usize,
+) -> Result<Decimal, FormatError> {
     Decimal::from_str(text).map_err(|e| {
         FormatError::at(
             line_no,
@@ -983,6 +1011,19 @@ Date,Time,Price,Bid,Ask,Volume,Side
         assert_eq!(header.side_source.as_deref(), Some("bid_ask"));
         assert_eq!(header.header_line, 5);
         assert!(header.columns.has_quotes());
+    }
+
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_first_line() {
+        // A recording saved by PowerShell, Excel or most Windows editors opens
+        // with a BOM. Rejecting it would fail the file for a missing `Date`
+        // column it plainly has — the most baffling possible rejection.
+        let with_bom = format!("\u{feff}{SAMPLE}");
+        let header = parse_header(&with_bom).expect("the BOM is invisible, not fatal");
+        assert_eq!(header.symbol.as_deref(), Some("WINJ26"));
+
+        let parsed = parse_file(&with_bom, ParseOptions::default()).unwrap();
+        assert!(!parsed.trades.is_empty());
     }
 
     #[test]
