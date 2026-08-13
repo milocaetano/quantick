@@ -39,6 +39,12 @@ pub(crate) struct SettingsDialog {
     /// Whether a preview has been sent since the last commit: the chart may
     /// be showing values the state file does not hold.
     pub previewed: bool,
+    /// Whether the widgets have had their first frame. A slider with a
+    /// `step` snaps a not-quite-aligned value (0.1 is not a binary multiple
+    /// of 0.01) the moment it first draws, and that snap reports `changed` —
+    /// widget normalization, not a user edit. The first frame adopts it as
+    /// the baseline instead of announcing a preview nobody asked for.
+    pub settled: bool,
 }
 
 /// What the dialog asked for this frame.
@@ -62,6 +68,7 @@ pub(crate) fn draw(
 ) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::Open;
     let mut open = true;
+    let mut changed = false;
     let previewed = dialog.previewed;
     egui::Window::new(format!("Settings — {}", dialog.title))
         .id(egui::Id::new(("indicator-settings", dialog.slot.0)))
@@ -70,7 +77,6 @@ pub(crate) fn draw(
         .collapsible(false)
         .resizable(false)
         .show(ctx, |ui| {
-            let mut changed = false;
             let SettingsDialog {
                 draft, committed, ..
             } = dialog;
@@ -85,9 +91,6 @@ pub(crate) fn draw(
                         ui.end_row();
                     }
                 });
-            if changed {
-                outcome = SettingsOutcome::Preview;
-            }
             if specs.is_empty() {
                 ui.label(
                     egui::RichText::new("this indicator declares no settings")
@@ -127,6 +130,18 @@ pub(crate) fn draw(
                 }
             });
         });
+    // First-frame settle: adopt widget normalization as the baseline (see
+    // `SettingsDialog::settled`) instead of reporting it as an edit.
+    if !dialog.settled {
+        dialog.settled = true;
+        if changed {
+            dialog.committed = dialog.draft.clone();
+            changed = false;
+        }
+    }
+    if changed && matches!(outcome, SettingsOutcome::Open) {
+        outcome = SettingsOutcome::Preview;
+    }
     if !open {
         outcome = SettingsOutcome::Close;
     }

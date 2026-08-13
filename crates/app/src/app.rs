@@ -1702,6 +1702,7 @@ impl QuantickApp {
             draft: view.input_values.clone(),
             committed: view.input_values.clone(),
             previewed: false,
+            settled: false,
         });
         self.indicator_settings_target = target;
     }
@@ -1868,7 +1869,9 @@ impl QuantickApp {
             egui::Id::new("indicator-preview-watermark"),
         ));
         painter.text(
-            egui::pos2(rect.center().x, rect.top() + 10.0),
+            // Below the top-centre toast lane ("loading venue history"), so
+            // the two never overprint each other.
+            egui::pos2(rect.center().x, rect.top() + 34.0),
             egui::Align2::CENTER_TOP,
             "PREVIEW — settings not applied",
             egui::FontId::proportional(13.0),
