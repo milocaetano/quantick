@@ -109,21 +109,21 @@ show_quantity_labels = false
 show_trade_count = false
 label_min_radius = 9.9
 
-# Calibrated against a real WIN session (WINQ26 2026-08-12, 389 622 prints).
-# What the floor filters is the *cluster* (one side, one price bucket, one
-# 300 ms window — a sweep is one ball), so the numbers that matter are the
-# cluster-quantity quantiles of that tape: p50=6, p90=35, p95=56, p99=120,
-# max=3415 contracts. The old thresholds (min_quantity 10 per cluster,
-# reference 200, max radius 22) still drew ~36% of all clusters and drowned
-# the candles; these draw roughly the top quarter, and never go dark at
-# lunch (~37 marks/min at the day's quietest hour):
-#   * min_quantity 15 per cluster — the mark means "someone swept", not
-#     "someone printed".
-#   * fixed reference 250 ≈ cluster p99.9 — a full-size ball keeps one
-#     meaning all session long instead of rescaling with what is visible.
-#   * quantity labels only on whales (label radius 0.9·max ≈ 200+ lots).
-#   * summary windows set explicitly: one sweep is one ball (300 ms), dust
-#     folds (1500 ms), closed bars summarize into pies.
+# Calibrated against a real WIN session (WINQ26 2026-08-12, 389 622 prints;
+# cluster = one side, one price bucket, one 300 ms window — quantiles p50=6,
+# p90=35, p95=56, p99=120, max=3415 contracts) and then tuned live on that
+# replay with the trader watching. Three readings drove every number:
+#   * hierarchy — area is quantity against a FIXED 600-contract reference
+#     (~cluster p99.97), so dust (50) reads ~4 px, real pressure (200)
+#     ~7.5 px and a whale (600+) caps at 13 px wearing halo and label;
+#     a visible-window reference would re-teach the eye at every zoom.
+#   * separation — flat discs with a 1 px rim: a red disc stays a disc on
+#     a red candle, and a stack reads as countable circles, not a blob.
+#   * the fight at a level — 2 px side separation keeps buy and sell
+#     clusters at the same price both visible (4 px doubled the path; 0 px
+#     let one side cover the other, which is the absorption read lost).
+# The 50-contract floor keeps the top ~sixth of clusters: ~16 marks/min at
+# the violent open, ~5/min at lunch — informative, never soup, never dark.
 [[presets]]
 name = "mini index sweeps"
 cluster_ms = 300
@@ -131,21 +131,21 @@ dust_merge_ms = 1500
 candle_summary = true
 
 [presets.bubbles]
-min_radius = 2.0426
-max_radius = 14.0
-opacity = 0.85
-outline_width = 0.0
-halo_strength = 0.1
-detail_min_radius = 3.3049
-readable_min_radius = 5.3475
+min_radius = 1.8967
+max_radius = 13.0
+opacity = 0.7
+outline_width = 1.0
+halo_strength = 0.15
+detail_min_radius = 3.0689
+readable_min_radius = 4.9656
 hollow_small_buys = false
-render_mode = "sphere"
+render_mode = "flat"
 sphere_shading = 0.34
 sphere_highlight = 0.18
 size_reference = "fixed"
-size_reference_quantity = 250.0
-min_quantity = 15.0
-side_offset = 4.0
+size_reference_quantity = 600.0
+min_quantity = 50.0
+side_offset = 2.0
 consumption_mark = "crown"
 front_width = 1.6
 front_length_scale = 0.618
@@ -155,7 +155,7 @@ trail_length = 0.0
 trail_opacity = 0.45
 show_quantity_labels = true
 show_trade_count = false
-label_min_radius = 12.6
+label_min_radius = 9.2
 
 # The one preset that keeps the older vertical front and the trail, because
 # that is what it is for: a slow tape where the question is which levels got
