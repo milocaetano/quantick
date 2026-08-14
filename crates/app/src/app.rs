@@ -787,10 +787,21 @@ pub struct QuantickApp {
     /// The settings window's "save preset" field, kept across frames.
     footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
-    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART` and
-    /// `QUANTICK_CANDLE_WIDTH`.
+    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART`,
+    /// `QUANTICK_CANDLE_WIDTH` and `QUANTICK_PAN_PX`.
     scripted_footprint: bool,
     scripted_candle_width: Option<f32>,
+    /// `QUANTICK_PAN_PX`: a drag on the candles, in pixels, applied every
+    /// frame until it lands. Negative pushes the chart left into the
+    /// projection margin; positive walks back into history.
+    ///
+    /// Every frame, and not once at boot, because the gesture it stands for
+    /// needs bars to move over: at boot the series is empty, `pan_pixels` is
+    /// a no-op on it, and a hook that fired then would validate nothing. It
+    /// re-applies while the view can still move, and stops as soon as the
+    /// per-frame clamp holds it — which is exactly the state a projection
+    /// screenshot wants.
+    scripted_pan_px: Option<f32>,
     /// `QUANTICK_INDICATOR_SETTINGS`: open the settings dialog for the
     /// first indicator once its inputs have arrived from the worker. Armed
     /// at boot, fired (and disarmed) by the first frame that can honour it —
@@ -1039,6 +1050,7 @@ impl QuantickApp {
             scripted_footprint: false,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
+            scripted_pan_px: None,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -1232,6 +1244,19 @@ impl QuantickApp {
             app.scripted_candle_width = Some(px);
             app.active_tab_mut().flow_pane.viewport.set_candle_width(px);
         }
+        // The pan, scriptable, for the same reason: the projection margin and
+        // the way back from history are states a screenshot cannot otherwise
+        // reach. `QUANTICK_PAN_PX=-9000` is "shove the chart as far left as it
+        // goes" — the margin then holds it exactly where the gesture would.
+        if let Ok(value) = std::env::var("QUANTICK_PAN_PX")
+            && let Ok(px) = value.trim().parse::<f32>()
+            && px.is_finite()
+        {
+            app.scripted_pan_px = Some(px);
+        }
+        // The appearance dialog, reachable without a pointer — where the
+        // candle gap and the rest of the candle style are edited.
+        app.show_style = std::env::var("QUANTICK_STYLE_PANEL").is_ok_and(|value| value == "1");
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
         // menu takes, so a scripted validation run needs no clicks.
@@ -5477,6 +5502,27 @@ impl eframe::App for QuantickApp {
 }
 
 impl QuantickApp {
+    /// The `QUANTICK_PAN_PX` hook: a scripted drag on the candles, re-applied
+    /// each frame until the view stops moving.
+    ///
+    /// Held rather than fired once because a pan needs bars to move over, and
+    /// at boot there are none. Repeating it is also what makes
+    /// `QUANTICK_PAN_PX=-9000` mean "as far left as it goes" whatever the
+    /// zoom: each frame pushes, the per-frame clamp holds, and the view
+    /// settles on the projection margin — the state a screenshot of a
+    /// projected channel needs, reached the way the gesture reaches it.
+    fn apply_scripted_pan(&mut self) {
+        let Some(dx) = self.scripted_pan_px else {
+            return;
+        };
+        let pane = &mut self.active_tab_mut().flow_pane;
+        let slots = pane.slots();
+        if slots == 0 {
+            return;
+        }
+        pane.viewport.pan_pixels(dx, slots);
+    }
+
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
     /// the flow pane, spread across the visible bars, the last one selected
     /// so the inspector is on screen too.
@@ -6033,6 +6079,7 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
+        self.apply_scripted_pan();
         self.apply_drawing_demo();
         self.apply_drawing_draft();
         self.apply_venue_history_demo();
@@ -13174,6 +13221,37 @@ plot(close)
             !texts.iter().any(|text| text.contains("no bars in view")),
             "and it must be showing bars, not an empty window: {texts:?}"
         );
+    }
+
+    /// The scripted pan (`QUANTICK_PAN_PX`) is the gesture, not a teleport: it
+    /// re-applies every frame and settles exactly where the projection margin
+    /// holds it, which is how a screenshot reaches that state at all.
+    #[test]
+    fn the_scripted_pan_settles_on_the_projection_margin() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let slots = app.active_tab().flow_pane.slots();
+        let newest = (slots - 1) as f32;
+
+        app.scripted_pan_px = Some(-9_000.0);
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let settled = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+        assert!(!app.active_tab().flow_pane.viewport.follows_live());
+        assert!(
+            settled > newest + 1.0,
+            "the chart is out in the empty canvas: {settled}"
+        );
+
+        // And it stays there. The margin is a wall, not a slope — a hook that
+        // kept sliding would screenshot a different chart every frame.
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let again = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+        assert!((again - settled).abs() < 0.001, "{again} vs {settled}");
     }
 
     /// "Zoom in for numbers" with no number is why the footprint read as slow
