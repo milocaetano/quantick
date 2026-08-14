@@ -444,7 +444,10 @@ mod tests {
         let root = scratch();
         let source = root.join("source");
         let dest = root.join("dest");
-        write(&source.join("loose.csv"), &history::write_header("WDO$"));
+        write(
+            &source.join("loose.csv"),
+            &history::write_header("WDO$", history::SessionSource::Live),
+        );
         write(&source.join("junk.csv"), "not a history file at all\n");
 
         let summary = consolidate_into(&dest, std::slice::from_ref(&source));

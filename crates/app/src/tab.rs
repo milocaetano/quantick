@@ -452,6 +452,13 @@ impl Tab {
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
+        // The journal records where a session's trades came from; the
+        // attached handle is the single truth for that.
+        self.paper.set_session_source(if self.replay.is_some() {
+            quantick_sim::history::SessionSource::Replay
+        } else {
+            quantick_sim::history::SessionSource::Live
+        });
         self.book_channel_closed_reported = false;
     }
 

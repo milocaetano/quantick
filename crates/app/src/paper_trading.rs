@@ -126,6 +126,9 @@ const REPORT_MIN_HEIGHT_PX: f32 = 360.0;
 const REPORT_FOOTER_RESERVE_PX: f32 = 64.0;
 /// Width of the typed-period field beside the pills — room for "999h".
 const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
+/// How many `.rerun-N` session names one venue-time stamp may try — far
+/// beyond any real journal, a backstop against a pathological folder.
+const MAX_SESSION_RERUNS: usize = 999;
 /// The grids' readable floor inside a squeezed window.
 const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
@@ -340,6 +343,7 @@ fn fmt_period_ms(period_ms: i64) -> String {
 /// order, their aggregation, and the anchor the period was measured from.
 struct ReportView {
     period: ReportPeriod,
+    source: SourceFilter,
     /// The display timezone the view was cut with — "Today" moves with it.
     tz: TzOffset,
     /// Newest closing time in scope — what the period counts back from.
@@ -347,20 +351,78 @@ struct ReportView {
     /// Saved trades older than the window — the honest answer to "where
     /// did my old trades go": they exist, the period just stops short.
     hidden_before: usize,
+    /// Saved trades the Source filter keeps out of this view.
+    hidden_by_source: usize,
     trades: Vec<ClosedTrade>,
     report: PerformanceReport,
+}
+
+/// One journal row loaded from disk: the trade, the symbol folder it came
+/// from, and the session source its file recorded.
+#[derive(Clone)]
+struct HistoryRow {
+    symbol: String,
+    /// `None` — a file from before the source was recorded. The report's
+    /// Real view includes it: that era *was* live trading, and hiding it
+    /// would "lose" the user's history all over again.
+    source: Option<history::SessionSource>,
+    trade: ClosedTrade,
 }
 
 /// Journal rows loaded from disk, each remembering the symbol folder it
 /// came from, merged into one closing-order timeline.
 struct LoadedHistory {
-    /// `(symbol, trade)` in closing order across every file read.
-    rows: Vec<(String, ClosedTrade)>,
+    /// Rows in closing order across every file read.
+    rows: Vec<HistoryRow>,
     files: usize,
     /// Files that were not readable quantick-trades files.
     unreadable_files: usize,
     /// Rows the parser had to report as unreadable (torn tails and such).
     problem_rows: usize,
+}
+
+/// The report's session-source filter. Default `Real`: practice runs must
+/// never inflate the real track record unasked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceFilter {
+    /// Live sessions, plus files from before the source was recorded.
+    Real,
+    /// Replay-driven practice sessions only.
+    Replay,
+    /// Everything, mixed.
+    All,
+}
+
+impl SourceFilter {
+    /// Every filter, in pill order.
+    const PILLS: [Self; 3] = [Self::Real, Self::Replay, Self::All];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Real => "Real",
+            Self::Replay => "Replay",
+            Self::All => "All",
+        }
+    }
+
+    fn hover(self) -> &'static str {
+        match self {
+            Self::Real => {
+                "live sessions - files saved before quantick recorded a source count as real"
+            }
+            Self::Replay => "practice sessions driven by a market-replay recording",
+            Self::All => "live and replay together - mixed on purpose",
+        }
+    }
+
+    /// Whether a row with this recorded source belongs to the filter.
+    fn admits(self, source: Option<history::SessionSource>) -> bool {
+        match self {
+            Self::Real => source != Some(history::SessionSource::Replay),
+            Self::Replay => source == Some(history::SessionSource::Replay),
+            Self::All => true,
+        }
+    }
 }
 
 /// What the Trading tab asked of its host.
@@ -423,6 +485,9 @@ pub struct PaperTrading {
     journal_path: Option<PathBuf>,
     /// A failed journal write warns once, not once per trade.
     journal_warned: bool,
+    /// Where this session's trades come from — the tab's feed sets it,
+    /// the journal header records it.
+    session_source: history::SessionSource,
     // Order-entry form.
     qty_text: String,
     order_type: EntryKind,
@@ -447,6 +512,8 @@ pub struct PaperTrading {
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
     report_symbol: Option<String>,
     report_period: ReportPeriod,
+    /// The report's session-source scope; opens on `Real`.
+    report_source: SourceFilter,
     /// What the typed-period field holds; applied on Enter, kept verbatim
     /// so a refused entry stays visible for fixing.
     report_custom_text: String,
@@ -512,6 +579,7 @@ impl PaperTrading {
             dir,
             journal_path: None,
             journal_warned: false,
+            session_source: history::SessionSource::Live,
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -526,6 +594,7 @@ impl PaperTrading {
             report_open: false,
             report_symbol: None,
             report_period: ReportPeriod::All,
+            report_source: SourceFilter::Real,
             report_custom_text: String::new(),
             report_symbols: Vec::new(),
             report: None,
@@ -575,6 +644,17 @@ impl PaperTrading {
     pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
         let events = self.sim.apply(command);
         self.handle_events(events);
+    }
+
+    /// Follow the tab's feed: a session is wholly live or wholly a
+    /// replay, and the journal's header records which. A change retargets
+    /// the journal so the next close opens a file honest about its
+    /// source.
+    pub fn set_session_source(&mut self, source: history::SessionSource) {
+        if self.session_source != source {
+            self.session_source = source;
+            self.journal_path = None;
+        }
     }
 
     /// Follow the app's active symbol. A change retargets the journal; the
@@ -2269,7 +2349,7 @@ impl PaperTrading {
                     .rows
                     .iter()
                     .rev()
-                    .map(|(symbol, trade)| (symbol.as_str(), trade))
+                    .map(|row| (row.symbol.as_str(), &row.trade))
                     .collect()
             })
             .unwrap_or_default();
@@ -2446,14 +2526,13 @@ impl PaperTrading {
         self.report_symbols = list_symbol_folders(&self.dir);
     }
 
-    /// Rebuild the filtered view when the period, timezone or the loaded
-    /// history changed. The anchor is the newest trade in scope, never a
-    /// clock.
+    /// Rebuild the filtered view when the period, source, timezone or the
+    /// loaded history changed. The anchor is the newest trade in scope —
+    /// after the Source filter, never a clock.
     fn ensure_report_view(&mut self, tz: TzOffset) {
-        let fresh = self
-            .report_view
-            .as_ref()
-            .is_some_and(|view| view.period == self.report_period && view.tz == tz);
+        let fresh = self.report_view.as_ref().is_some_and(|view| {
+            view.period == self.report_period && view.source == self.report_source && view.tz == tz
+        });
         if fresh {
             return;
         }
@@ -2461,22 +2540,29 @@ impl PaperTrading {
             self.report_view = None;
             return;
         };
-        let anchor_ms = history.rows.last().map(|(_, trade)| trade.closed_ms);
-        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor, tz));
-        let trades: Vec<ClosedTrade> = history
+        let in_scope: Vec<&HistoryRow> = history
             .rows
             .iter()
-            .map(|(_, trade)| trade)
+            .filter(|row| self.report_source.admits(row.source))
+            .collect();
+        let hidden_by_source = history.rows.len().saturating_sub(in_scope.len());
+        let anchor_ms = in_scope.last().map(|row| row.trade.closed_ms);
+        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor, tz));
+        let trades: Vec<ClosedTrade> = in_scope
+            .iter()
+            .map(|row| &row.trade)
             .filter(|trade| cutoff.is_none_or(|cutoff| trade.closed_ms >= cutoff))
             .cloned()
             .collect();
-        let hidden_before = history.rows.len().saturating_sub(trades.len());
+        let hidden_before = in_scope.len().saturating_sub(trades.len());
         let report = PerformanceReport::from_trades(&trades);
         self.report_view = Some(ReportView {
             period: self.report_period,
+            source: self.report_source,
             tz,
             anchor_ms,
             hidden_before,
+            hidden_by_source,
             trades,
             report,
         });
@@ -2636,6 +2722,19 @@ impl PaperTrading {
                 });
             ui.separator();
             ui.label(
+                egui::RichText::new("Source")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            for source in SourceFilter::PILLS {
+                let on = self.report_source == source;
+                if pill_toggle(ui, source.label(), on, source.hover()).clicked() && !on {
+                    self.report_source = source;
+                    self.report_view = None;
+                }
+            }
+            ui.separator();
+            ui.label(
                 egui::RichText::new("Period")
                     .color(theme::TEXT_MUTED)
                     .small(),
@@ -2707,6 +2806,12 @@ impl PaperTrading {
                         text.push_str(&format!(
                             " - {} older saved trade(s) before this window",
                             view.hidden_before,
+                        ));
+                    }
+                    if view.hidden_by_source > 0 {
+                        text.push_str(&format!(
+                            " - {} trade(s) behind the Source filter",
+                            view.hidden_by_source,
                         ));
                     }
                     text
@@ -2822,17 +2927,16 @@ impl PaperTrading {
         if self.history_cache.is_none() {
             self.reload_ledger();
         }
-        let mut rows: Vec<(String, ClosedTrade)> = Vec::new();
+        let mut rows: Vec<HistoryRow> = Vec::new();
         if let Some(cache) = &self.history_cache {
             rows.extend(cache.rows.iter().cloned());
         }
-        rows.extend(
-            self.sim
-                .closed_trades()
-                .iter()
-                .map(|trade| (self.symbol.clone(), trade.clone())),
-        );
-        rows.sort_by_key(|row| (row.1.closed_ms, row.1.opened_ms));
+        rows.extend(self.sim.closed_trades().iter().map(|trade| HistoryRow {
+            symbol: self.symbol.clone(),
+            source: Some(self.session_source),
+            trade: trade.clone(),
+        }));
+        rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
         if rows.is_empty() {
             self.show_toast("SIM: nothing to export yet - close a trade first.".to_owned());
             return;
@@ -2946,16 +3050,12 @@ impl PaperTrading {
             return;
         }
         let folder = self.dir.join(sanitize_symbol(&self.symbol));
-        let path = self.journal_path.get_or_insert_with(|| {
-            folder.join(format!(
-                "{}.{}",
-                utc_compact(trade.closed_ms),
-                history::FILE_EXTENSION
-            ))
-        });
+        let path = self
+            .journal_path
+            .get_or_insert_with(|| free_session_path(&folder, &utc_compact(trade.closed_ms)));
         let mut text = String::new();
         if !path.exists() {
-            text.push_str(&history::write_header(&self.symbol));
+            text.push_str(&history::write_header(&self.symbol, self.session_source));
         }
         text.push_str(&history::write_trade(trade));
         let written = std::fs::create_dir_all(&folder).and_then(|()| {
@@ -3708,12 +3808,12 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
                     Ok(parsed) => {
                         problem_rows += parsed.problems.len();
                         let symbol = parsed.symbol.unwrap_or_else(|| folder_symbol.clone());
-                        rows.extend(
-                            parsed
-                                .trades
-                                .into_iter()
-                                .map(|trade| (symbol.clone(), trade)),
-                        );
+                        let source = parsed.source;
+                        rows.extend(parsed.trades.into_iter().map(|trade| HistoryRow {
+                            symbol: symbol.clone(),
+                            source,
+                            trade,
+                        }));
                     }
                     Err(_) => unreadable_files += 1,
                 },
@@ -3723,7 +3823,7 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
     }
     // Files are per-session; merge into one closing-order timeline so the
     // drawdown walk is honest across sessions.
-    rows.sort_by_key(|row| (row.1.closed_ms, row.1.opened_ms));
+    rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
     LoadedHistory {
         rows,
         files,
@@ -3736,11 +3836,7 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
 /// disk to a report.
 #[cfg(test)]
 fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
-    let trades: Vec<ClosedTrade> = history
-        .rows
-        .iter()
-        .map(|(_, trade)| trade.clone())
-        .collect();
+    let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
     PerformanceReport::from_trades(&trades)
 }
 
@@ -4544,24 +4640,25 @@ fn reveal_folder(path: &Path) {
 /// the machine-readable source of truth. Human-readable UTC stamps ride
 /// beside the venue epoch, decimals always use `.`, and the running
 /// equity is a column so a spreadsheet shows it without a formula.
-fn export_csv(rows: &[(String, ClosedTrade)]) -> String {
+fn export_csv(rows: &[HistoryRow]) -> String {
     let mut text = String::from(
         "symbol,side,quantity,opened_ms,opened_utc,entry_price,closed_ms,closed_utc,\
          exit_price,pnl_points,cum_pnl_points,duration_ms,exit_reason,entry_agg_id,\
-         exit_agg_id,mae_points,mfe_points\n",
+         exit_agg_id,mae_points,mfe_points,source\n",
     );
     let mut cumulative = Decimal::ZERO;
     let opt_u64 = |value: Option<u64>| value.map(|value| value.to_string()).unwrap_or_default();
     let opt_points = |value: Option<Decimal>| value.map(fmt_decimal).unwrap_or_default();
-    for (symbol, trade) in rows {
+    for row in rows {
+        let trade = &row.trade;
         cumulative = cumulative.saturating_add(trade.pnl_points);
         let side = match trade.side {
             Side::Buy => "long",
             Side::Sell => "short",
         };
         text.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            symbol.replace(',', "_"),
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            row.symbol.replace(',', "_"),
             side,
             fmt_decimal(trade.quantity),
             trade.opened_ms,
@@ -4578,6 +4675,8 @@ fn export_csv(rows: &[(String, ClosedTrade)]) -> String {
             opt_u64(trade.exit_agg_id),
             opt_points(trade.mae_points),
             opt_points(trade.mfe_points),
+            // Empty when the file never recorded one — unknown, not live.
+            row.source.map(history::SessionSource::as_str).unwrap_or(""),
         ));
     }
     text
@@ -4599,6 +4698,28 @@ fn elide_path(path: &Path) -> String {
     path.file_name().map_or(text, |name| {
         format!("…{}{}", std::path::MAIN_SEPARATOR, name.to_string_lossy())
     })
+}
+
+/// The session file for `stamp` under `folder`: the plain name when free,
+/// else `stamp.rerun-N` — file names derive from venue time, so replaying
+/// the same recording twice reproduces the same stamp, and the second run
+/// must land beside the first instead of appending duplicate trades into
+/// it.
+fn free_session_path(folder: &Path, stamp: &str) -> PathBuf {
+    let plain = folder.join(format!("{stamp}.{}", history::FILE_EXTENSION));
+    if !plain.exists() {
+        return plain;
+    }
+    for rerun in 1..=MAX_SESSION_RERUNS {
+        let candidate = folder.join(format!("{stamp}.rerun-{rerun}.{}", history::FILE_EXTENSION));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // A folder with a thousand same-stamp sessions is not a real journal;
+    // appending to the plain file keeps the trades at the cost of
+    // duplicates, which beats losing them.
+    plain
 }
 
 /// A journal folder of its own per host under test — tests must never
@@ -4638,6 +4759,14 @@ mod tests {
             price: Decimal::from(price),
             quantity: Decimal::ONE,
             side: Side::Buy,
+        }
+    }
+
+    fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
+        HistoryRow {
+            symbol: symbol.to_owned(),
+            source,
+            trade,
         }
     }
 
@@ -4901,7 +5030,7 @@ mod tests {
             mae_points: Some(Decimal::ZERO),
             mfe_points: Some(Decimal::from(5)),
         };
-        let mut text = history::write_header("LEDGX");
+        let mut text = history::write_header("LEDGX", history::SessionSource::Live);
         text.push_str(&history::write_trade(&trade));
         std::fs::write(dir.join("LEDGX").join("20200101-000000.csv"), text)
             .expect("the earlier session file writes");
@@ -4913,9 +5042,111 @@ mod tests {
             1,
             "the live session's file is excluded, the earlier one loads"
         );
-        assert_eq!(cache.rows[0].0, "LEDGX");
-        assert_eq!(cache.rows[0].1, trade);
+        assert_eq!(cache.rows[0].symbol, "LEDGX");
+        assert_eq!(cache.rows[0].trade, trade);
+        assert_eq!(cache.rows[0].source, Some(history::SessionSource::Live));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_replay_rerun_lands_beside_its_first_run_never_inside_it() {
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-rerun-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // The same recording replayed twice: identical prints, identical
+        // venue times, so both sessions derive the same file stamp.
+        for _ in 0..2 {
+            let mut paper = PaperTrading::new();
+            paper.dir.clone_from(&dir);
+            paper.set_symbol("RERUN");
+            paper.set_session_source(history::SessionSource::Replay);
+            paper.seed(&print(0, 100));
+            paper.market(Side::Buy);
+            paper.on_trade(&print(1, 100));
+            let events = paper.sim.apply(Command::ClosePosition);
+            paper.handle_events(events);
+            paper.on_trade(&print(2, 103));
+        }
+
+        let folder = dir.join("RERUN");
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        names.sort();
+        assert_eq!(
+            names.len(),
+            2,
+            "the second run opened its own file instead of appending duplicates"
+        );
+        assert!(names[1].contains(".rerun-1."), "{names:?}");
+        let history = load_history(&dir, Some("RERUN"), None);
+        assert_eq!(history.rows.len(), 2);
+        assert!(
+            history
+                .rows
+                .iter()
+                .all(|row| row.source == Some(history::SessionSource::Replay)),
+            "both files carry the replay source"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
+        let utc = TzOffset::new(0);
+        let day = 86_400_000_i64;
+        let mut paper = PaperTrading::new();
+        assert_eq!(
+            paper.report_source,
+            SourceFilter::Real,
+            "practice runs never inflate the real track record unasked"
+        );
+        paper.report = Some(LoadedHistory {
+            rows: vec![
+                row("X", Some(history::SessionSource::Live), trade_at(day, 5)),
+                row("X", None, trade_at(2 * day, 3)),
+                row(
+                    "X",
+                    Some(history::SessionSource::Replay),
+                    trade_at(3 * day, 100),
+                ),
+            ],
+            files: 3,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("view built");
+        assert_eq!(
+            view.trades.len(),
+            2,
+            "live + unrecorded-legacy count as real"
+        );
+        assert_eq!(
+            view.hidden_by_source, 1,
+            "the replay trade sits behind the filter"
+        );
+        assert_eq!(
+            view.anchor_ms,
+            Some(2 * day),
+            "the anchor comes from the filtered scope, not the replay trade"
+        );
+        assert_eq!(view.report.net_points, Decimal::from(8));
+
+        paper.report_source = SourceFilter::Replay;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("rebuilt");
+        assert_eq!(view.trades.len(), 1, "the practice run, alone");
+        assert_eq!(view.report.net_points, Decimal::from(100));
+        assert_eq!(view.hidden_by_source, 2);
+
+        paper.report_source = SourceFilter::All;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("rebuilt");
+        assert_eq!(view.trades.len(), 3, "All mixes on purpose");
+        assert_eq!(view.hidden_by_source, 0);
     }
 
     #[test]
@@ -4935,27 +5166,32 @@ mod tests {
             mfe_points: mae.map(Decimal::from),
         };
         let rows = vec![
-            ("BTCUSDT".to_owned(), trade(1_773_666_068_000, 5, Some(2))),
-            ("WINQ26".to_owned(), trade(1_773_666_368_000, -2, None)),
+            row(
+                "BTCUSDT",
+                Some(history::SessionSource::Live),
+                trade(1_773_666_068_000, 5, Some(2)),
+            ),
+            row("WINQ26", None, trade(1_773_666_368_000, -2, None)),
         ];
         let text = export_csv(&rows);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "header plus two rows");
         assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
+        assert!(lines[0].ends_with(",source"), "{}", lines[0]);
         assert!(
             lines[1].contains("2026-03-16T13:01:08Z"),
             "human-readable UTC beside the epoch: {}",
             lines[1]
         );
-        assert!(lines[1].ends_with(",manual,1,2,2,2"), "{}", lines[1]);
+        assert!(lines[1].ends_with(",manual,1,2,2,2,live"), "{}", lines[1]);
         assert!(
             lines[2].contains(",3,"),
             "running equity 5 + (-2): {}",
             lines[2]
         );
         assert!(
-            lines[2].ends_with(",manual,,,,"),
-            "unknown v1 fields stay empty, never zero: {}",
+            lines[2].ends_with(",manual,,,,,"),
+            "unknown v1 fields and an unrecorded source stay empty: {}",
             lines[2]
         );
     }
@@ -5041,9 +5277,9 @@ mod tests {
         let mut paper = PaperTrading::new();
         paper.report = Some(LoadedHistory {
             rows: vec![
-                ("X".to_owned(), trade_at(10 * day, 5)),
-                ("X".to_owned(), trade_at(18 * day, -2)),
-                ("X".to_owned(), trade_at(20 * day + 3_600_000, 7)),
+                row("X", None, trade_at(10 * day, 5)),
+                row("X", None, trade_at(18 * day, -2)),
+                row("X", None, trade_at(20 * day + 3_600_000, 7)),
             ],
             files: 1,
             unreadable_files: 0,
@@ -5077,8 +5313,8 @@ mod tests {
         let mut paper = PaperTrading::new();
         paper.report = Some(LoadedHistory {
             rows: vec![
-                ("OLDSYM".to_owned(), trade_at(day, 5)),
-                ("NEWSYM".to_owned(), trade_at(60 * day, 7)),
+                row("OLDSYM", None, trade_at(day, 5)),
+                row("NEWSYM", None, trade_at(60 * day, 7)),
             ],
             files: 2,
             unreadable_files: 0,
@@ -5097,7 +5333,7 @@ mod tests {
         // Narrowing the combo re-anchors on the old market's own newest
         // trade — the "my trades came back" behaviour, now spelled out.
         paper.report = Some(LoadedHistory {
-            rows: vec![("OLDSYM".to_owned(), trade_at(day, 5))],
+            rows: vec![row("OLDSYM", None, trade_at(day, 5))],
             files: 1,
             unreadable_files: 0,
             problem_rows: 0,
@@ -5107,6 +5343,41 @@ mod tests {
         let view = paper.report_view.as_ref().expect("rebuilt");
         assert_eq!(view.trades.len(), 1, "its own scope shows the old market");
         assert_eq!(view.hidden_before, 0);
+    }
+
+    #[test]
+    fn the_report_scopes_by_symbol_folder_on_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-symbols-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (symbol, id0, price) in [("AAAUSDT", 0, 100), ("BBBUSDT", 100, 200)] {
+            let mut paper = PaperTrading::new();
+            paper.dir.clone_from(&dir);
+            paper.set_symbol(symbol);
+            paper.seed(&print(id0, price));
+            paper.market(Side::Buy);
+            paper.on_trade(&print(id0 + 1, price));
+            let events = paper.sim.apply(Command::ClosePosition);
+            paper.handle_events(events);
+            paper.on_trade(&print(id0 + 2, price + 5));
+        }
+
+        assert_eq!(
+            list_symbol_folders(&dir),
+            vec!["AAAUSDT".to_owned(), "BBBUSDT".to_owned()],
+            "the combo lists every traded asset"
+        );
+        let all = load_history(&dir, None, None);
+        assert_eq!(all.rows.len(), 2, "All symbols reads both journals");
+        let symbols: Vec<&str> = all.rows.iter().map(|row| row.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["AAAUSDT", "BBBUSDT"]);
+        let one = load_history(&dir, Some("BBBUSDT"), None);
+        assert_eq!(one.rows.len(), 1, "a symbol scope reads only its folder");
+        assert_eq!(one.rows[0].symbol, "BBBUSDT");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
