@@ -55,6 +55,9 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// the magnet to take the anchor. Generous enough to catch the swing you
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
+/// The candle magnet has no reach: [`drawings::AnchorSnap::NearestOhlc`]
+/// never lets go, however far the pointer floats from the candle.
+const MAGNET_REACH_UNLIMITED_PX: f32 = f32::INFINITY;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 
 /// How far a press must travel before its release counts as "the trader
@@ -899,10 +902,11 @@ pub struct ChartPane {
     /// Price under the right-click that opened the layer menu — the trade
     /// section's anchor. Refreshed by every secondary click on the canvas.
     context_menu_price: Option<f64>,
-    /// The full chart point under that same right-click — bar, price and
-    /// market time — the "Anchor VWAP here" entry's seed. Separate from the
-    /// price because it exists only where a bar does.
-    context_menu_anchor: Option<ChartPoint>,
+    /// The placing entries of the last right-click: each registry tool that
+    /// declares a `context_menu_label`, with the chart point *its own*
+    /// `anchor_snap` resolved for that click — so the menu never re-derives
+    /// a projection and a new tool's snap rule needs no edit here.
+    context_menu_places: Vec<(drawings::DrawingTool, ChartPoint)>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1044,7 +1048,7 @@ impl ChartPane {
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
             context_menu_price: None,
-            context_menu_anchor: None,
+            context_menu_places: Vec::new(),
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_band_hint: None,
@@ -1376,25 +1380,22 @@ impl ChartPane {
             ui.separator();
         }
         // Tools that place at the bar under the right-click (the anchored
-        // VWAP's TradingView gesture) declare their entry on the registry —
-        // the pane sweeps it, so the next series tool docks with a
-        // declaration, not an edit here. Only where a bar exists: an anchor
-        // in the empty space right of the tape means nothing.
-        if let Some(anchor) = self.context_menu_anchor {
-            let mut placed = false;
-            for tool in drawings::DRAWING_TOOLS {
-                let Some(label) = tool.context_menu_label() else {
-                    continue;
-                };
+        // VWAP's TradingView gesture) declare their entry on the registry;
+        // the click was already resolved per tool, snap rules included, so
+        // the menu only offers what the capture could honestly anchor.
+        if !self.context_menu_places.is_empty() {
+            let places = std::mem::take(&mut self.context_menu_places);
+            for &(tool, point) in &places {
+                let label = tool
+                    .context_menu_label()
+                    .expect("only declaring tools were captured");
                 if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    self.place_drawing_point(tool, &DrawingBand::Price, anchor, chrome);
+                    self.place_drawing_point(tool, &DrawingBand::Price, point, chrome);
                     ui.close_menu();
                 }
-                placed = true;
             }
-            if placed {
-                ui.separator();
-            }
+            self.context_menu_places = places;
+            ui.separator();
         }
         ui.label(
             egui::RichText::new("chart layers")
@@ -1913,10 +1914,9 @@ impl ChartPane {
         let bar = self.viewport.right_edge_bar(total) + 0.5
             - (history_right - pos.x) / self.viewport.candle_width();
         // A candle-magnet anchor cannot land where no candle is: the bar
-        // clamps to the tape before the snap reads it (`total > 0` above).
-        #[allow(clippy::cast_precision_loss)]
+        // clamps to the tape before the snap reads it.
         let bar = if snap == drawings::AnchorSnap::NearestOhlc {
-            bar.clamp(0.0, (total - 1) as f32)
+            snap_bar_to_tape(bar, total)
         } else {
             bar
         };
@@ -1955,10 +1955,15 @@ impl ChartPane {
         // The extreme is read at the instant of the click. A low that
         // deepens afterwards leaves the mark where the bar was when it was
         // marked, which is what the mark is a record of.
-        let candle = self
-            .closed_bar(slot)
-            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)?;
+        let candle = self.candle_at_slot(slot)?;
         if high { candle.high } else { candle.low }.to_f64()
+    }
+
+    /// The candle behind a slot, the forming bar included — the one lookup
+    /// every candle-reading snap shares.
+    fn candle_at_slot(&self, slot: usize) -> Option<&quantick_engine::Bar> {
+        self.closed_bar(slot)
+            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)
     }
 
     /// Work a shared mark that lives on the other pane, from this one.
@@ -2153,10 +2158,8 @@ impl ChartPane {
             return None;
         }
         let slot = bar.floor() as usize;
-        let candle = self
-            .closed_bar(slot)
-            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)?;
-        magnet_price_of(candle, pointer_y, scale, f32::INFINITY)
+        let candle = self.candle_at_slot(slot)?;
+        magnet_price_of(candle, pointer_y, scale, MAGNET_REACH_UNLIMITED_PX)
     }
 
     /// The market time behind a fractional bar slot, for anchors that may have
@@ -2860,26 +2863,26 @@ impl ChartPane {
             && let Some(scale) = drawing_scale.as_ref()
         {
             self.context_menu_price = Some(scale.price_at(position.y));
-            // The same click, as a chart point: the bar under the pointer and
-            // its market time, for the anchored-VWAP entry. The inverse of
-            // the projection `drawing_point_at` uses.
+            // The same click, resolved once per placing tool through the
+            // projection `drawing_point_at` owns, each with the tool's own
+            // snap — the anchored VWAP's candle magnet included.
             let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
-            let bar = self.viewport.right_edge_bar(total) + 0.5
-                - (history_right - position.x) / self.viewport.candle_width();
-            // Clamped to the newest bar at creation: the refresh clamps the
-            // math anyway, and a marker sitting where the average cannot
-            // start would be the dishonesty the clamp exists to avoid.
-            #[allow(clippy::cast_precision_loss)]
-            let bar = bar.min(total.saturating_sub(1) as f32);
-            // The menu's one placing entry today is the anchored VWAP, whose
-            // snap rule is the candle magnet — captured here so the ball the
-            // click creates is already on the candle, however far the
-            // right-click landed from it.
-            let price = self
-                .candle_nearest_ohlc(price_band, bar, position.y, scale)
-                .unwrap_or_else(|| scale.price_at(position.y));
-            self.context_menu_anchor =
-                (total > 0).then(|| ChartPoint::at_time(bar, price, self.anchor_time(bar)));
+            self.context_menu_places.clear();
+            for tool in drawings::DRAWING_TOOLS {
+                if tool.context_menu_label().is_none() {
+                    continue;
+                }
+                if let Some(point) = self.drawing_point_at(
+                    position,
+                    history_right,
+                    total,
+                    false,
+                    tool.anchor_snap(),
+                    price_band,
+                ) {
+                    self.context_menu_places.push((tool, point));
+                }
+            }
         }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
@@ -5197,6 +5200,14 @@ fn paint_placement_hint(
 /// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Nothing in
 /// reach returns `None` and the free price is used — a magnet that always
 /// snaps is a magnet you cannot draw a diagonal with.
+/// Clamp a fractional bar coordinate onto the bars that exist:
+/// `0 ..= total - 1`. The candle magnet's time half — a snap that reads a
+/// candle must stand on one.
+fn snap_bar_to_tape(bar: f32, total: usize) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    bar.clamp(0.0, total.saturating_sub(1) as f32)
+}
+
 fn magnet_price_of(
     candle: &quantick_engine::Bar,
     pointer_y: f32,
@@ -5924,6 +5935,17 @@ mod tests {
             magnet_price_of(&candle, scale.y(105.0), &scale, MAGNET_REACH_PX),
             None
         );
+    }
+
+    /// The candle magnet's time half: a bar right of the tape lands on the
+    /// newest bar, left of it on the oldest, and a one-bar tape is slot 0.
+    #[test]
+    fn the_candle_magnet_clamps_the_bar_onto_the_tape() {
+        assert_eq!(snap_bar_to_tape(99.9, 20), 19.0);
+        assert_eq!(snap_bar_to_tape(-3.0, 20), 0.0);
+        assert_eq!(snap_bar_to_tape(7.25, 20), 7.25, "inside stays put");
+        assert_eq!(snap_bar_to_tape(5.0, 1), 0.0);
+        assert_eq!(snap_bar_to_tape(5.0, 0), 0.0, "an empty tape never panics");
     }
 
     /// The candle magnet has no reach: however far the pointer floats above
