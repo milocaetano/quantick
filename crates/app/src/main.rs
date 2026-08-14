@@ -46,6 +46,7 @@ mod pane;
 mod paper_hud;
 mod paper_state;
 mod paper_trading;
+mod popup;
 mod price_view;
 mod replay_download;
 mod replay_get_data;

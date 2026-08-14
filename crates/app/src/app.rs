@@ -112,7 +112,8 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// mark. Any distance the tab cannot possibly hold would do; an hour is
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
-/// Initial position of the selected-drawing inspector.
+/// Initial position of the selected-drawing inspector, before
+/// [`inspector_placement`] has a size and a bbox to place it from.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
 /// generated from `InputSpec` replaces this in M4).
@@ -1713,14 +1714,23 @@ impl QuantickApp {
         // hidden flags do: the indicator is born from the worker's first
         // Rebuilt, which is several frames after the window opens.
         if let Some((index, tab)) = self.settings_autostart {
-            let side = self.active_tab().focused_side();
-            if let Some(slot) = self
-                .tabs
-                .iter()
-                .find(|candidate| candidate.id == tab_id)
-                .map(|candidate| candidate.pane(side))
-                .and_then(|pane| pane.indicators.all().get(index).map(|view| view.slot))
-            {
+            // The focused pane first, then the flow pane. A split tab can open
+            // with the *time* pane focused while every indicator — the ones the
+            // other autostart hook adds, and the ones the state file restores —
+            // lives on the flow pane, and a hook that only asked the focused
+            // side then waited for a view that was never coming. Silence is the
+            // worst failure a validation hook can have: the run captures a
+            // chart with no dialog on it and nothing says why.
+            let focused = self.active_tab().focused_side();
+            let found = [focused, PaneSide::Flow].into_iter().find_map(|side| {
+                self.tabs
+                    .iter()
+                    .find(|candidate| candidate.id == tab_id)
+                    .map(|candidate| candidate.pane(side))
+                    .and_then(|pane| pane.indicators.all().get(index))
+                    .map(|view| (side, view.slot))
+            });
+            if let Some((side, slot)) = found {
                 self.settings_autostart = None;
                 self.open_indicator_settings_at(TabSlot {
                     tab: tab_id,
@@ -14531,6 +14541,54 @@ plot(close)
             restored,
             app.active_tab().flow_pane.indicators.all()[0].style,
             "the layer survives the round trip exactly"
+        );
+    }
+
+    /// The harness hook has to find the indicators wherever they are.
+    ///
+    /// A split tab can open with the *time* pane focused while every indicator
+    /// — the ones `QUANTICK_INDICATORS_AUTOSTART` adds and the ones the state
+    /// file restores — lives on the flow pane. Asking only the focused side
+    /// meant the hook waited for a view that was never coming, and a scripted
+    /// run captured a chart with no dialog on it and nothing saying why. Caught
+    /// by launching the real app and finding the dialog absent.
+    #[test]
+    fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_focus() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        // Indicators on the flow pane...
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+
+        // ...and the focus on the other one, which is how a split tab can open.
+        let time_point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, time_point);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Time,
+            "the fixture has to actually focus the pane without indicators"
+        );
+
+        app.settings_autostart = Some((0, crate::indicator_panel::SettingsTab::Style));
+        app.open_requested_indicator_settings();
+
+        let dialog = app
+            .indicator_settings
+            .as_ref()
+            .expect("the hook found the indicator on the pane that has one");
+        assert_eq!(dialog.slot, slot);
+        assert_eq!(
+            app.indicator_settings_target.side,
+            PaneSide::Flow,
+            "and addressed it on the pane it really lives on"
+        );
+        assert_eq!(dialog.tab, crate::indicator_panel::SettingsTab::Style);
+        assert!(
+            app.settings_autostart.is_none(),
+            "spent by the first open, so closing the dialog leaves it closed"
         );
     }
 

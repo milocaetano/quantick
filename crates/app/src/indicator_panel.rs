@@ -19,9 +19,6 @@ use crate::theme;
 
 /// Drag sensitivity of a float input that declares no `step`.
 const DEFAULT_FLOAT_DRAG_SPEED: f64 = 0.1;
-
-/// Gap between the dialog and the window's own edges when it first opens.
-const SETTINGS_MARGIN_PX: f32 = 12.0;
 /// Width of a numeric input with no declared range, in pixels. Wide enough to
 /// look like a box you can type into and to hold a five-figure value.
 const NUMBER_FIELD_WIDTH_PX: f32 = 72.0;
@@ -37,35 +34,6 @@ const PREVIEW_OFF_WIDTH_PX: f32 = 1.0;
 /// Drag sensitivity of a plot's width, in pixels per pointer pixel. The whole
 /// usable range is eight pixels wide, so a 1:1 drag would cross it in a flick.
 const PLOT_WIDTH_DRAG_SPEED: f64 = 0.02;
-
-/// Where the dialog first opens: the window's **bottom-left**, anchored by its
-/// own bottom-left corner so it grows upward.
-///
-/// It used to open near the top-left at a fixed `(120, 150)`, which put it over
-/// the price action and — worse — straight over the drawings and volume
-/// profiles a trader opens an indicator's settings *to look at*. The dialog
-/// previews live; one that covers the thing being previewed defeats the point.
-///
-/// Bottom-left specifically: the top-left corner is claimed by the legend, the
-/// position HUD and the order-flow key, the top-right by the book badge, and
-/// the right edge by the price axis. The bottom-left holds the least.
-///
-/// Measured from [`Context::available_rect`], not from the whole window: the
-/// status bar is a panel along the bottom, and placing against the window's own
-/// edge put the dialog over the symbol and bar spec written there. Whatever
-/// panels the frame has claimed by the time this runs are excluded by
-/// construction, so the dialog cannot cover the toolbar or the status line
-/// however tall either grows.
-///
-/// Computed per frame rather than hardcoded, because a fixed `y` is only the
-/// bottom of one window size and the app's window is resizable down to 900x560.
-/// Only the *first* placement uses it; egui remembers wherever the trader drags
-/// it afterwards.
-///
-/// [`Context::available_rect`]: egui::Context::available_rect
-fn settings_default_position(ctx: &egui::Context) -> egui::Pos2 {
-    ctx.available_rect().left_bottom() + egui::vec2(SETTINGS_MARGIN_PX, -SETTINGS_MARGIN_PX)
-}
 
 /// Width of the preset-name field, in pixels — room for a MAX_NAME_LEN-ish
 /// name without pushing the save button off the row.
@@ -173,11 +141,8 @@ pub(crate) fn draw(
     }
     egui::Window::new(format!("Settings — {}", dialog.title))
         .id(egui::Id::new(("indicator-settings", slot_id)))
-        .default_pos(settings_default_position(ctx))
-        // Anchored by its own bottom-left, so it grows *upward* from the
-        // corner: placed by its top-left at the same point it would push Apply
-        // and Close off the bottom of the window.
-        .pivot(egui::Align2::LEFT_BOTTOM)
+        .default_pos(crate::popup::position(ctx))
+        .pivot(crate::popup::anchor())
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
