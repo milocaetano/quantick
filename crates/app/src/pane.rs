@@ -1912,12 +1912,21 @@ impl ChartPane {
         }
         let bar = self.viewport.right_edge_bar(total) + 0.5
             - (history_right - pos.x) / self.viewport.candle_width();
+        // A candle-magnet anchor cannot land where no candle is: the bar
+        // clamps to the tape before the snap reads it (`total > 0` above).
+        #[allow(clippy::cast_precision_loss)]
+        let bar = if snap == drawings::AnchorSnap::NearestOhlc {
+            bar.clamp(0.0, (total - 1) as f32)
+        } else {
+            bar
+        };
         let value = match snap {
             // A mark's own rule beats the magnet toggle in both directions:
             // it snaps with the magnet off, and it snaps to *its* extreme
             // rather than to whichever of the four OHLC prices is nearest.
             drawings::AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
             drawings::AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
+            drawings::AnchorSnap::NearestOhlc => self.candle_nearest_ohlc(band, bar, pos.y, scale),
             drawings::AnchorSnap::Pointer => magnet
                 .then(|| self.magnet_value(band, bar, pos.y, scale))
                 .flatten(),
@@ -2115,7 +2124,9 @@ impl ChartPane {
         }
         let row = bar.floor() as usize;
         match &band.key {
-            DrawingBand::Price => magnet_price_of(self.closed_bar(row)?, pointer_y, scale),
+            DrawingBand::Price => {
+                magnet_price_of(self.closed_bar(row)?, pointer_y, scale, MAGNET_REACH_PX)
+            }
             // A time-only object has no value to snap.
             DrawingBand::AllBands => None,
             DrawingBand::Indicator(_) => {
@@ -2125,6 +2136,27 @@ impl ChartPane {
                 bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
         }
+    }
+
+    /// The unconditional candle magnet: the nearest of the bar's OHLC with
+    /// no reach limit, the forming bar included — [`AnchorSnap::NearestOhlc`]'s
+    /// value rule. Price band only; a band with no candles answers `None`
+    /// and the caller keeps the pointer's own value.
+    fn candle_nearest_ohlc(
+        &self,
+        band: &Band,
+        bar: f32,
+        pointer_y: f32,
+        scale: &PriceScale,
+    ) -> Option<f64> {
+        if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
+            return None;
+        }
+        let slot = bar.floor() as usize;
+        let candle = self
+            .closed_bar(slot)
+            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)?;
+        magnet_price_of(candle, pointer_y, scale, f32::INFINITY)
     }
 
     /// The market time behind a fractional bar slot, for anchors that may have
@@ -2839,9 +2871,15 @@ impl ChartPane {
             // start would be the dishonesty the clamp exists to avoid.
             #[allow(clippy::cast_precision_loss)]
             let bar = bar.min(total.saturating_sub(1) as f32);
-            self.context_menu_anchor = (total > 0).then(|| {
-                ChartPoint::at_time(bar, scale.price_at(position.y), self.anchor_time(bar))
-            });
+            // The menu's one placing entry today is the anchored VWAP, whose
+            // snap rule is the candle magnet — captured here so the ball the
+            // click creates is already on the candle, however far the
+            // right-click landed from it.
+            let price = self
+                .candle_nearest_ohlc(price_band, bar, position.y, scale)
+                .unwrap_or_else(|| scale.price_at(position.y));
+            self.context_menu_anchor =
+                (total > 0).then(|| ChartPoint::at_time(bar, price, self.anchor_time(bar)));
         }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
@@ -5163,13 +5201,14 @@ fn magnet_price_of(
     candle: &quantick_engine::Bar,
     pointer_y: f32,
     scale: &PriceScale,
+    reach_px: f32,
 ) -> Option<f64> {
     [candle.open, candle.high, candle.low, candle.close]
         .into_iter()
         .filter_map(|price| {
             let price = price.to_f64()?;
             let distance = (scale.y(price) - pointer_y).abs();
-            (distance <= MAGNET_REACH_PX).then_some((distance, price))
+            (distance <= reach_px).then_some((distance, price))
         })
         .min_by(|left, right| left.0.total_cmp(&right.0))
         .map(|(_, price)| price)
@@ -5864,12 +5903,12 @@ mod tests {
         let scale = magnet_scale();
         let high_y = scale.y(102.0);
         assert_eq!(
-            magnet_price_of(&candle, high_y, &scale),
+            magnet_price_of(&candle, high_y, &scale, MAGNET_REACH_PX),
             Some(102.0),
             "exactly on the high"
         );
         assert_eq!(
-            magnet_price_of(&candle, high_y + 4.0, &scale),
+            magnet_price_of(&candle, high_y + 4.0, &scale, MAGNET_REACH_PX),
             Some(102.0),
             "inside the reach, and still nearer the high than the close"
         );
@@ -5881,7 +5920,30 @@ mod tests {
     fn the_magnet_lets_go_outside_its_reach() {
         let candle = magnet_candle();
         let scale = magnet_scale();
-        assert_eq!(magnet_price_of(&candle, scale.y(105.0), &scale), None);
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(105.0), &scale, MAGNET_REACH_PX),
+            None
+        );
+    }
+
+    /// The candle magnet has no reach: however far the pointer floats above
+    /// or below the candle, the anchor lands on its nearest level — the rule
+    /// [`AnchorSnap::NearestOhlc`] glues the anchored VWAP's ball with.
+    #[test]
+    fn the_candle_magnet_never_lets_go() {
+        let candle = magnet_candle();
+        let scale = magnet_scale();
+        // Far above every level (y of 110, the top of the scale).
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(110.0), &scale, f32::INFINITY),
+            Some(102.0),
+            "way above the candle still lands on its high"
+        );
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(90.0), &scale, f32::INFINITY),
+            Some(98.0),
+            "way below still lands on its low"
+        );
     }
 
     /// Near-ties resolve to the genuinely nearest level, never to the first
@@ -5891,10 +5953,13 @@ mod tests {
         let candle = magnet_candle();
         let scale = magnet_scale();
         // Just under the low: 98 is nearer than the open at 100.
-        assert_eq!(magnet_price_of(&candle, scale.y(97.6), &scale), Some(98.0));
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(97.6), &scale, MAGNET_REACH_PX),
+            Some(98.0)
+        );
         // Just over the close: 101 is nearer than the high at 102.
         assert_eq!(
-            magnet_price_of(&candle, scale.y(101.2), &scale),
+            magnet_price_of(&candle, scale.y(101.2), &scale, MAGNET_REACH_PX),
             Some(101.0)
         );
     }
