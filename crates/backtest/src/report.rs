@@ -15,6 +15,7 @@
 
 use std::fmt::Write as _;
 
+use quantick_engine::Side;
 use quantick_sim::{ExitReason, PerformanceReport};
 use rust_decimal::Decimal;
 
@@ -22,6 +23,16 @@ use crate::run::{Anomalies, RunOutcome, SessionRun};
 
 /// What an absent ratio prints. Not `0`, not `-`, not an empty cell.
 pub const NOT_AVAILABLE: &str = "n/a";
+
+/// Decimal places every figure is shown at. Points on B3 index futures are
+/// whole numbers, so two places is enough for the ratios and never turns a
+/// price into a wall of digits.
+const DISPLAY_PLACES: u32 = 2;
+/// Column widths of the two-metrics-per-line block: label, value, label,
+/// value. Kept as constants because eight `writeln!` calls have to agree for
+/// the block to read as a table at all.
+const LABEL_WIDTH: usize = 18;
+const VALUE_WIDTH: usize = 16;
 
 /// The full run: a header, one block per session, then the aggregate.
 #[must_use]
@@ -61,11 +72,16 @@ pub fn render_session(run: &SessionRun) -> String {
         push_metrics(&mut out, &run.report);
     }
     push_anomalies(&mut out, &run.anomalies);
-    if run.open_at_end {
+    if let Some((side, quantity)) = run.open_at_end {
+        let held = match side {
+            Side::Buy => "long",
+            Side::Sell => "short",
+        };
         let _ = writeln!(
             out,
-            "  a position was still open at the last print — excluded from the metrics \
-             above, because no print proves its exit"
+            "  {held} {} still open at the last print — excluded from the metrics \
+             above, because no print proves its exit",
+            quantity.normalize()
         );
     }
     out
@@ -90,7 +106,7 @@ pub fn render_aggregate(outcome: &RunOutcome) -> String {
         push_metrics(&mut out, &outcome.aggregate);
         let _ = writeln!(
             out,
-            "  {:<18}{} up · {} down · {} flat",
+            "  {:<LABEL_WIDTH$}{} up · {} down · {} flat",
             "sessions", spread.up, spread.down, spread.flat,
         );
         if spread.without_trades > 0 {
@@ -104,7 +120,7 @@ pub fn render_aggregate(outcome: &RunOutcome) -> String {
         push_extreme(&mut out, "worst", spread.worst.as_ref());
         let _ = writeln!(
             out,
-            "  {:<18}{}",
+            "  {:<LABEL_WIDTH$}{}",
             "median session",
             maybe_signed(spread.median_net)
         );
@@ -122,15 +138,22 @@ pub fn render_aggregate(outcome: &RunOutcome) -> String {
 
 fn push_extreme(out: &mut String, label: &str, extreme: Option<&(String, Decimal)>) {
     let _ = match extreme {
-        Some((session, net)) => writeln!(out, "  {label:<18}{:<14}{session}", signed(*net)),
-        None => writeln!(out, "  {label:<18}{NOT_AVAILABLE}"),
+        Some((session, net)) => writeln!(
+            out,
+            "  {label:<LABEL_WIDTH$}{:<VALUE_WIDTH$}{session}",
+            signed(*net)
+        ),
+        None => writeln!(out, "  {label:<LABEL_WIDTH$}{NOT_AVAILABLE}"),
     };
 }
 
 /// The metric block shared by a session and the aggregate.
 fn push_metrics(out: &mut String, report: &PerformanceReport) {
     let mut row = |left_label: &str, left: String, right_label: &str, right: String| {
-        let _ = writeln!(out, "  {left_label:<18}{left:<16}{right_label:<18}{right}");
+        let _ = writeln!(
+            out,
+            "  {left_label:<LABEL_WIDTH$}{left:<VALUE_WIDTH$}{right_label:<LABEL_WIDTH$}{right}"
+        );
     };
     row(
         "net points",
@@ -206,7 +229,7 @@ fn push_metrics(out: &mut String, report: &PerformanceReport) {
                 )
             })
             .collect();
-        let _ = writeln!(out, "  {:<18}{}", "exits", exits.join(" · "));
+        let _ = writeln!(out, "  {:<LABEL_WIDTH$}{}", "exits", exits.join(" · "));
     }
 }
 
@@ -224,7 +247,7 @@ fn push_anomalies(out: &mut String, anomalies: &Anomalies) {
     if !anomalies.rejected.is_empty() {
         let _ = writeln!(
             out,
-            "  {:<18}{} ({})",
+            "  {:<LABEL_WIDTH$}{} ({})",
             "rejections",
             anomalies.rejections(),
             detail(&anomalies.rejected)
@@ -233,7 +256,7 @@ fn push_anomalies(out: &mut String, anomalies: &Anomalies) {
     if !anomalies.brackets_dropped.is_empty() {
         let _ = writeln!(
             out,
-            "  {:<18}{} ({})",
+            "  {:<LABEL_WIDTH$}{} ({})",
             "brackets dropped",
             anomalies.dropped_brackets(),
             detail(&anomalies.brackets_dropped)
@@ -247,7 +270,7 @@ fn exit_label(reason: ExitReason) -> &'static str {
 
 /// A decimal at two places, trailing zeros trimmed.
 fn decimal(value: Decimal) -> String {
-    value.round_dp(2).normalize().to_string()
+    value.round_dp(DISPLAY_PLACES).normalize().to_string()
 }
 
 /// As [`decimal`], with an explicit `+` on positives so a column of results

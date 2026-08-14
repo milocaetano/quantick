@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use quantick_engine::Side;
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, SimEvent, Simulator};
@@ -119,12 +120,15 @@ pub struct SessionRun {
     pub trades: Vec<ClosedTrade>,
     /// What the tape refused.
     pub anomalies: Anomalies,
-    /// A position was still open when the recording ended.
+    /// The position still open when the recording ended — its side and
+    /// quantity — or `None` if the session ended flat.
     ///
     /// It is **not** counted in `report`: no print proves an exit, and
-    /// flattening at the last mark would invent a fill. The report says so
-    /// instead of quietly rounding the day off.
-    pub open_at_end: bool,
+    /// flattening at the last mark would invent a fill. The report names it
+    /// instead of quietly rounding the day off, and names which way it was
+    /// facing, because "a trade was left open" and "a *short* was left open
+    /// into a rally" are not the same warning.
+    pub open_at_end: Option<(Side, Decimal)>,
 }
 
 /// Run one strategy over one recorded session.
@@ -200,7 +204,9 @@ pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy
         report: PerformanceReport::from_trades(&trades),
         trades,
         anomalies,
-        open_at_end: sim.position().is_some(),
+        open_at_end: sim
+            .position()
+            .map(|position| (position.side, position.quantity)),
     }
 }
 
@@ -267,7 +273,7 @@ impl RunOutcome {
         for session in &sessions {
             all_trades.extend(session.trades.iter().cloned());
             anomalies.absorb(&session.anomalies);
-            if session.open_at_end {
+            if session.open_at_end.is_some() {
                 distribution.open_at_end += 1;
             }
             if session.trades.is_empty() {

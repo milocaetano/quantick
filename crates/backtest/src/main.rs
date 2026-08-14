@@ -34,6 +34,7 @@ use quantick_backtest::report::render_run;
 use quantick_backtest::run::{RunOutcome, SessionRun, run_session};
 use quantick_backtest::strategies::{EmaCross, PlotSignal, Protection};
 use quantick_backtest::strategy::Strategy;
+use quantick_engine::Side;
 use quantick_replay::format::ParseOptions;
 use quantick_replay::library::{self, ProblemKind, SessionEntry};
 use quantick_replay::session::{Session, SessionDate};
@@ -49,12 +50,61 @@ const EXIT_BAD_ARGUMENTS: u8 = 2;
 /// Ran, but produced no output at all (no session to run).
 const EXIT_NOTHING_PRODUCED: u8 = 3;
 
+/// Bar rule a run uses when none is named. Tick bars because they are the
+/// one rule every instrument supports — a volume default would be wrong on
+/// any feed that does not report traded size.
+const DEFAULT_BARS: BarSpec = BarSpec::Tick(100);
+/// Fast EMA length of the built-in cross.
+const DEFAULT_FAST_EMA: usize = 9;
+/// Slow EMA length of the built-in cross.
+const DEFAULT_SLOW_EMA: usize = 21;
+/// Contracts per entry. One, so a run reports points per contract and the
+/// reader multiplies by whatever size they actually trade.
+const DEFAULT_QUANTITY: Decimal = Decimal::ONE;
+
+/// The strategies this binary can run, by the name `--strategy` takes.
+///
+/// This is the registration point: a rule implementing
+/// [`quantick_backtest::strategy::Strategy`] docks by adding one row here
+/// and one arm to [`build_strategy`], with no other file touched. WP-03's
+/// operational rules arrive that way.
+const STRATEGIES: &[(&str, &str)] = &[
+    (
+        "ema-cross",
+        "fast/slow EMA cross, optionally confirmed by cumulative delta",
+    ),
+    (
+        "script",
+        "signal from a compiled .pine plot column (needs --script)",
+    ),
+];
+
+/// Which strategy a run uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrategyKind {
+    EmaCross,
+    Script,
+}
+
+impl StrategyKind {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "ema-cross" => Some(Self::EmaCross),
+            "script" => Some(Self::Script),
+            _ => None,
+        }
+    }
+}
+
 struct Args {
     dir: Option<PathBuf>,
     symbol: Option<String>,
     from: Option<Day>,
     to: Option<Day>,
     bars: BarSpec,
+    /// `None` until resolved: an explicit `--strategy` wins, a bare
+    /// `--script` implies `script`, and the default is the EMA cross.
+    strategy: Option<StrategyKind>,
     fast: usize,
     slow: usize,
     confirm_flow: bool,
@@ -89,6 +139,10 @@ impl Day {
 }
 
 fn usage() -> String {
+    let strategies: String = STRATEGIES
+        .iter()
+        .map(|(name, what)| format!("\n                           {name} — {what}"))
+        .collect();
     format!(
         "usage: quantick-backtest --dir <replay folder> [options]
 
@@ -99,17 +153,20 @@ fn usage() -> String {
   --limit <n>              stop after n sessions
   --bars <kind:parameter>  tick:100 (default), volume:5, dollar:500000,
                            time:1m, imbalance:2500
-  --fast <n> --slow <n>    EMA lengths for the built-in cross (9 / 21)
+  --strategy <name>        which rule to run (default {default}):{strategies}
+  --fast <n> --slow <n>    EMA lengths for the built-in cross \
+({DEFAULT_FAST_EMA} / {DEFAULT_SLOW_EMA})
   --confirm-flow           require CVD to agree with the cross
-  --script <file.pine>     take the signal from a script's plot instead
+  --script <file.pine>     the script the `script` strategy reads
   --plot <n>               which plot column of that script (default 0)
-  --quantity <n>           contracts per entry (default 1)
+  --quantity <n>           contracts per entry (default {DEFAULT_QUANTITY})
   --stop <points>          protective stop distance from the entry mark
   --target <points>        protective target distance from the entry mark
   --write-trades <folder>  write one quantick-trades CSV per session
   --help
 
-exit codes: 0 ran, 2 bad arguments, 3 ran but found nothing to run, 1 failed"
+exit codes: 0 ran, 2 bad arguments, 3 ran but found nothing to run, 1 failed",
+        default = STRATEGIES[0].0,
     )
 }
 
@@ -119,13 +176,14 @@ fn parse_args() -> Result<Args, String> {
         symbol: None,
         from: None,
         to: None,
-        bars: BarSpec::Tick(100),
-        fast: 9,
-        slow: 21,
+        bars: DEFAULT_BARS,
+        strategy: None,
+        fast: DEFAULT_FAST_EMA,
+        slow: DEFAULT_SLOW_EMA,
         confirm_flow: false,
         script: None,
         plot: 0,
-        quantity: Decimal::ONE,
+        quantity: DEFAULT_QUANTITY,
         protection: Protection::default(),
         write_trades: None,
         limit: None,
@@ -149,6 +207,13 @@ fn parse_args() -> Result<Args, String> {
             }
             "--limit" => args.limit = Some(positive_count("--limit", &value()?)?),
             "--bars" => args.bars = BarSpec::parse(&value()?)?,
+            "--strategy" => {
+                let name = value()?;
+                args.strategy = Some(StrategyKind::parse(&name).ok_or_else(|| {
+                    let known: Vec<&str> = STRATEGIES.iter().map(|(name, _)| *name).collect();
+                    format!("--strategy `{name}`; one of {}", known.join(", "))
+                })?);
+            }
             "--fast" => args.fast = positive_count("--fast", &value()?)?,
             "--slow" => args.slow = positive_count("--slow", &value()?)?,
             "--confirm-flow" => args.confirm_flow = true,
@@ -173,7 +238,9 @@ fn parse_args() -> Result<Args, String> {
     if args.dir.is_none() {
         args.dir = std::env::var_os(REPLAY_DIR_ENV).map(PathBuf::from);
     }
-    if args.script.is_none() && args.fast >= args.slow {
+    args.strategy = Some(resolve_strategy(args.strategy, args.script.is_some())?);
+
+    if args.strategy == Some(StrategyKind::EmaCross) && args.fast >= args.slow {
         return Err(format!(
             "--fast {} must be shorter than --slow {}: a cross of the longer over the \
              shorter is the same signal read backwards",
@@ -186,6 +253,29 @@ fn parse_args() -> Result<Args, String> {
         return Err("--from is after --to: the window is empty".to_string());
     }
     Ok(args)
+}
+
+/// Settle `--strategy` against `--script`.
+///
+/// A bare `--script` means the script strategy, because naming a file and
+/// then not running it is never what was meant. Every other combination is
+/// either explicit or a contradiction, and a contradiction is refused rather
+/// than resolved by precedence — silently ignoring one of two flags a person
+/// typed on purpose is how a run measures something nobody asked for.
+fn resolve_strategy(asked: Option<StrategyKind>, has_script: bool) -> Result<StrategyKind, String> {
+    match (asked, has_script) {
+        (None, false) => Ok(StrategyKind::EmaCross),
+        (None, true) => Ok(StrategyKind::Script),
+        (Some(StrategyKind::Script), false) => {
+            Err("--strategy script needs --script <file.pine> to read a signal from".to_string())
+        }
+        (Some(StrategyKind::EmaCross), true) => Err(
+            "--strategy ema-cross ignores --script; drop one of them so the run measures \
+             the rule you meant"
+                .to_string(),
+        ),
+        (Some(kind), _) => Ok(kind),
+    }
 }
 
 fn positive_count(flag: &str, text: &str) -> Result<usize, String> {
@@ -329,7 +419,15 @@ fn run(args: &Args) -> Result<usize, String> {
             .decimal("max_drawdown_points", outcome.report.max_drawdown_points)
             .count("rejections", outcome.anomalies.rejections())
             .count("brackets_dropped", outcome.anomalies.dropped_brackets())
-            .flag("open_at_end", outcome.open_at_end)
+            .flag("open_at_end", outcome.open_at_end.is_some())
+            .text(
+                "open_side",
+                match outcome.open_at_end {
+                    Some((Side::Buy, _)) => "long",
+                    Some((Side::Sell, _)) => "short",
+                    None => "",
+                },
+            )
             .integer("elapsed_ms", elapsed.as_millis() as i64)
             .integer("prints_per_second", rate(outcome.prints as u64, elapsed))
             .emit();
@@ -369,16 +467,28 @@ fn rate(prints: u64, elapsed: std::time::Duration) -> i64 {
     i64::try_from(u128::from(prints) * 1_000_000 / micros).unwrap_or(i64::MAX)
 }
 
+/// Build the named strategy. One arm per row of [`STRATEGIES`] — this is the
+/// whole registration surface a new rule has to touch.
 fn build_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
-    let Some(path) = args.script.as_deref() else {
-        return Ok(Box::new(EmaCross::new(
+    match args.strategy.unwrap_or(StrategyKind::EmaCross) {
+        StrategyKind::EmaCross => Ok(Box::new(EmaCross::new(
             args.fast,
             args.slow,
             args.quantity,
             args.protection,
             args.confirm_flow,
-        )));
-    };
+        ))),
+        StrategyKind::Script => build_script_strategy(args),
+    }
+}
+
+fn build_script_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
+    // `resolve_strategy` refuses `script` without a file, so this is
+    // unreachable through the CLI; the message covers a future caller.
+    let path = args
+        .script
+        .as_deref()
+        .ok_or("the script strategy needs --script <file.pine>")?;
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let name = path.file_stem().map_or_else(
@@ -453,6 +563,23 @@ fn output_stem(symbol: &str, path: &Path) -> String {
     }
 }
 
+/// Claim an unused output path for `stem`, suffixing on collision.
+///
+/// Two session files can reduce to one name — a real folder holds the same
+/// day as both `2026-08-11.csv` and `WINQ26-2026-08-11.csv`. Writing one
+/// over the other would lose a whole day's trades and leave a folder that
+/// looks complete, so the second one gets `-2` and the caller says so.
+fn reserve_path(folder: &Path, stem: &str, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
+    let mut path = folder.join(format!("{stem}.{}", history::FILE_EXTENSION));
+    let mut attempt = 1u32;
+    while taken.contains(&path) {
+        attempt += 1;
+        path = folder.join(format!("{stem}-{attempt}.{}", history::FILE_EXTENSION));
+    }
+    taken.insert(path.clone());
+    path
+}
+
 /// One `quantick-trades` CSV per session, in the format `sim::history`
 /// defines — the same file the chart's paper trading writes, so a backtest's
 /// output opens wherever a live session's does.
@@ -467,17 +594,9 @@ fn write_trades(
     std::fs::create_dir_all(folder)
         .map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
     let stem = output_stem(&run.symbol, &run.path);
-    // Two session files can label alike (the same day recorded twice under
-    // different names). Silently writing one over the other would lose a
-    // whole day's trades and leave a folder that looks complete, so a
-    // collision gets a suffix and says so.
-    let mut path = folder.join(format!("{stem}.{}", history::FILE_EXTENSION));
-    let mut attempt = 1u32;
-    while written.contains(&path) {
-        attempt += 1;
-        path = folder.join(format!("{stem}-{attempt}.{}", history::FILE_EXTENSION));
-    }
-    if attempt > 1 {
+    let plain = folder.join(format!("{stem}.{}", history::FILE_EXTENSION));
+    let path = reserve_path(folder, &stem, written);
+    if path != plain {
         Event::new("BACKTEST_TRADES_NAME_TAKEN")
             .text("session", &run.label)
             .text("file", &path.display().to_string())
@@ -488,7 +607,6 @@ fn write_trades(
             )
             .emit();
     }
-    written.insert(path.clone());
 
     let mut text = history::write_header(&run.symbol);
     for trade in &run.trades {
@@ -549,5 +667,62 @@ mod tests {
         assert_eq!(rate(1_000, std::time::Duration::ZERO), 0);
         assert_eq!(rate(1_000, std::time::Duration::from_secs(1)), 1_000);
         assert_eq!(rate(500, std::time::Duration::from_millis(250)), 2_000);
+    }
+
+    #[test]
+    fn strategy_selection_refuses_contradictions_instead_of_picking_one() {
+        assert_eq!(resolve_strategy(None, false), Ok(StrategyKind::EmaCross));
+        assert_eq!(
+            resolve_strategy(None, true),
+            Ok(StrategyKind::Script),
+            "a bare --script means the script strategy"
+        );
+        assert_eq!(
+            resolve_strategy(Some(StrategyKind::Script), true),
+            Ok(StrategyKind::Script)
+        );
+        // Both of these would otherwise run a rule the operator did not ask
+        // for, and the report would look perfectly ordinary while doing it.
+        assert!(resolve_strategy(Some(StrategyKind::Script), false).is_err());
+        assert!(resolve_strategy(Some(StrategyKind::EmaCross), true).is_err());
+    }
+
+    #[test]
+    fn every_registered_strategy_name_parses() {
+        // The usage text and the parser read the same table; a row added to
+        // one and not the other would advertise a name that does not work.
+        for (name, _) in STRATEGIES {
+            assert!(
+                StrategyKind::parse(name).is_some(),
+                "`{name}` is advertised in --help but not accepted"
+            );
+        }
+        assert!(StrategyKind::parse("nope").is_none());
+        assert!(usage().contains(STRATEGIES[0].0));
+        assert!(usage().contains(STRATEGIES[1].0));
+    }
+
+    #[test]
+    fn two_sessions_that_name_alike_do_not_overwrite_each_other() {
+        // A real folder holds the same day twice, once as `2026-08-11.csv`
+        // and once as `WINQ26-2026-08-11.csv`. Both reduce to one output
+        // name, and losing a whole day's trades to a silent overwrite would
+        // leave a folder that looks complete.
+        let folder = Path::new("out");
+        let mut taken = BTreeSet::new();
+        let first = reserve_path(folder, "WINQ26-2026-08-11", &mut taken);
+        let second = reserve_path(folder, "WINQ26-2026-08-11", &mut taken);
+        let third = reserve_path(folder, "WINQ26-2026-08-11", &mut taken);
+        assert_eq!(first, folder.join("WINQ26-2026-08-11.csv"));
+        assert_eq!(second, folder.join("WINQ26-2026-08-11-2.csv"));
+        assert_eq!(third, folder.join("WINQ26-2026-08-11-3.csv"));
+        assert_eq!(taken.len(), 3, "every name was kept");
+
+        let other = reserve_path(folder, "WINQ26-2026-08-12", &mut taken);
+        assert_eq!(
+            other,
+            folder.join("WINQ26-2026-08-12.csv"),
+            "an unrelated session keeps its plain name"
+        );
     }
 }

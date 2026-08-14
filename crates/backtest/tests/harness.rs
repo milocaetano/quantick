@@ -11,7 +11,7 @@ use std::path::Path;
 use quantick_backtest::bars::BarSpec;
 use quantick_backtest::report::{NOT_AVAILABLE, render_run, render_session};
 use quantick_backtest::run::{RunOutcome, run_session};
-use quantick_backtest::strategies::{EmaCross, Protection};
+use quantick_backtest::strategies::{EmaCross, PlotSignal, Protection};
 use quantick_backtest::strategy::{BarView, Strategy};
 use quantick_engine::{Side, Trade};
 use quantick_indicators::{
@@ -166,7 +166,7 @@ fn a_foreign_strategy_docks_reads_indicators_and_reaches_the_tape() {
     assert_eq!(trade.pnl_points, Decimal::from(20));
     assert_eq!(trade.exit_reason, ExitReason::Manual);
     assert_eq!(run.report.net_points, Decimal::from(20));
-    assert!(!run.open_at_end);
+    assert!(run.open_at_end.is_none());
     assert!(run.anomalies.is_clean(), "{:?}", run.anomalies);
 }
 
@@ -188,7 +188,7 @@ fn a_position_left_open_is_reported_rather_than_flattened() {
     let run = run_session(&session, BarSpec::Tick(10), &mut strategy);
     assert_eq!(run.report.trades, 0, "an unfilled entry is not a trade");
     assert!(
-        !run.open_at_end,
+        run.open_at_end.is_none(),
         "the entry never filled, so nothing is open either"
     );
 
@@ -203,7 +203,7 @@ fn a_position_left_open_is_reported_rather_than_flattened() {
         },
     )]);
     let run = run_session(&session, BarSpec::Tick(10), &mut strategy);
-    assert!(run.open_at_end, "the fill happened on print 61");
+    assert!(run.open_at_end.is_some(), "the fill happened on print 61");
     assert_eq!(run.report.trades, 0, "an open position is not a round trip");
     let text = render_session(&run);
     assert!(
@@ -412,6 +412,127 @@ fn the_aggregate_keeps_the_spread_the_average_hides() {
     // The aggregate is not a zero-drawdown flat line: the losing session is
     // inside the same equity curve.
     assert_eq!(outcome.aggregate.max_drawdown_points, Decimal::from(20));
+}
+
+#[test]
+fn a_pine_script_supplies_the_signal_and_rust_places_the_orders() {
+    // The division of labour the dialect enforces: `strategy.*` is rejected
+    // by the compiler, so a script can only plot a number. `PlotSignal`
+    // reads that column and Rust decides size, protection and reversals.
+    // On a tape that only rises, a "close above its own EMA" script is long
+    // from warmup onwards — one entry, held to the end, never reversed.
+    let source = "//@version=5\n\
+                  indicator(\"Signal\", overlay=false)\n\
+                  plot(close > ta.ema(close, 5) ? 1 : -1, title=\"signal\")\n";
+    let mut strategy =
+        PlotSignal::compile("rising", source, 0, Decimal::ONE, Protection::default())
+            .expect("the script compiles");
+
+    let session = synthetic(&rising_tape(100, 200));
+    let run = run_session(&session, BarSpec::Tick(10), &mut strategy);
+
+    assert_eq!(run.bars, 20);
+    assert_eq!(
+        run.open_at_end.map(|(side, _)| side),
+        Some(Side::Buy),
+        "a rising tape leaves the script long"
+    );
+    // The script plots `-1` while `ta.ema` is still `na`: a comparison
+    // against na is false, so the ternary takes its else branch. The run
+    // therefore opens short on warmup and reverses once the EMA exists —
+    // one closed round trip, and a standing reminder that handling na is
+    // the script author's job, not the harness's.
+    assert_eq!(run.report.trades, 1, "{:?}", run.trades);
+    assert_eq!(run.trades[0].side, Side::Sell, "the warmup short");
+    assert!(run.anomalies.is_clean(), "{:?}", run.anomalies);
+
+    // The mirror: a falling tape puts the same script short. Same code, and
+    // the only thing that changed is what the script plotted.
+    let mut falling = String::new();
+    falling.push_str(&format::write_header(&WriteHeader {
+        symbol: "WINQ26".to_string(),
+        timezone: UtcOffset::UTC,
+        side_source: "flags".to_string(),
+        source: Some("synthetic".to_string()),
+    }));
+    for step in 0..200i64 {
+        format::write_trade(
+            &mut falling,
+            &Trade {
+                agg_id: (step + 1) as u64,
+                timestamp_ms: 1_786_233_600_000 + step * 1_000,
+                price: Decimal::from(400 - step),
+                quantity: Decimal::ONE,
+                side: Side::Sell,
+            },
+            None,
+            UtcOffset::UTC,
+        );
+    }
+    let mut strategy =
+        PlotSignal::compile("falling", source, 0, Decimal::ONE, Protection::default())
+            .expect("the script compiles");
+    let run = run_session(&synthetic(&falling), BarSpec::Tick(10), &mut strategy);
+    assert_eq!(
+        run.open_at_end.map(|(side, _)| side),
+        Some(Side::Sell),
+        "a falling tape leaves the same script short"
+    );
+}
+
+#[test]
+fn an_ema_cross_turns_a_crossing_into_an_order() {
+    // A tape that rises then falls crosses the fast EMA back under the slow
+    // one, and the harness has to turn that into a round trip. Without this
+    // the only proof `EmaCross` works is that the determinism test does not
+    // crash.
+    let mut text = format::write_header(&WriteHeader {
+        symbol: "WINQ26".to_string(),
+        timezone: UtcOffset::UTC,
+        side_source: "flags".to_string(),
+        source: Some("synthetic".to_string()),
+    });
+    // Up 100 → 300, back down to 100, up again: 600 prints, 60 bars of 10.
+    // Two crossings, because only a reversal closes a round trip — one
+    // crossing would leave the position open and the report empty.
+    for step in 0..600i64 {
+        let price = match step {
+            s if s < 200 => 100 + s,
+            s if s < 400 => 300 - (s - 200),
+            s => 100 + (s - 400),
+        };
+        format::write_trade(
+            &mut text,
+            &Trade {
+                agg_id: (step + 1) as u64,
+                timestamp_ms: 1_786_233_600_000 + step * 1_000,
+                price: Decimal::from(price),
+                quantity: Decimal::ONE,
+                side: if step % 2 == 0 { Side::Buy } else { Side::Sell },
+            },
+            None,
+            UtcOffset::UTC,
+        );
+    }
+    let session = synthetic(&text);
+    let mut strategy = EmaCross::new(3, 9, Decimal::ONE, Protection::default(), false);
+    let run = run_session(&session, BarSpec::Tick(10), &mut strategy);
+
+    assert!(
+        run.report.trades >= 1,
+        "the two turns produce at least one round trip: {:?}",
+        run.trades
+    );
+    assert!(
+        run.trades.iter().any(|t| t.side == Side::Sell),
+        "the fall is taken short: {:?}",
+        run.trades
+    );
+    assert!(
+        run.open_at_end.is_some(),
+        "the final rise leaves a position open"
+    );
+    assert!(run.anomalies.is_clean(), "{:?}", run.anomalies);
 }
 
 #[test]
