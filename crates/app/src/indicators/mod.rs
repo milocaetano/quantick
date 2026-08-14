@@ -13,7 +13,8 @@ pub(crate) mod state_file;
 
 use eframe::egui;
 use quantick_indicators::{
-    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame,
+    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8,
+    resolve_bar_paint,
 };
 
 use std::sync::Arc;
@@ -57,6 +58,16 @@ pub(crate) struct IndicatorView {
     /// Committed plot columns, one per descriptor plot, kept in lockstep
     /// with the worker via Rebuilt/Appended deltas.
     pub columns: Vec<Vec<f64>>,
+    /// Committed rows, tracked rather than derived from `columns`: an
+    /// indicator whose whole output is candle paint declares no plots at all,
+    /// and `columns.first()` would answer 0 for every bar it ever evaluated.
+    pub rows: usize,
+    /// The candle paint of each committed bar (`barcolor`), mirrored from the
+    /// worker. Empty for the indicators that never paint — which is all of
+    /// them until a script asks — and otherwise as long as the last painted
+    /// bar; reads past the end are "no paint", exactly as in the buffer this
+    /// mirrors.
+    pub bar_paint: Vec<Option<Rgba8>>,
     /// Latest forming-bar frame, if a bar is forming.
     pub preview: Option<PreviewFrame>,
     /// The forming bar sampled across the live lane's window, oldest rung
@@ -114,12 +125,30 @@ pub(crate) struct IndicatorView {
 }
 
 impl IndicatorView {
-    /// Rows committed so far (columns are always the same length).
-    /// Exercised by the worker equivalence tests today; the M4 progress
-    /// readout reads it live.
+    /// Rows committed so far.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn rows(&self) -> usize {
-        self.columns.first().map_or(0, Vec::len)
+        self.rows
+    }
+
+    /// The candle paint this indicator asks for on one committed bar.
+    ///
+    /// A hidden indicator asks for nothing: the eye toggle is the trader
+    /// saying "not now", and a pane that vanished while its colours stayed on
+    /// the candles would be unexplainable from the screen.
+    pub(crate) fn bar_paint(&self, row: usize) -> Option<Rgba8> {
+        if self.hidden {
+            return None;
+        }
+        self.bar_paint.get(row).copied().flatten()
+    }
+
+    /// The paint this indicator asks for on the bar that is forming.
+    pub(crate) fn forming_paint(&self) -> Option<Rgba8> {
+        if self.hidden {
+            return None;
+        }
+        self.preview.as_ref().and_then(|frame| frame.paint)
     }
 
     /// The draw objects to render right now: the forming bar's transient
@@ -238,13 +267,17 @@ impl IndicatorViews {
                 slot,
                 descriptor,
                 columns,
+                bar_paint,
                 inputs,
+                rows,
                 stale,
             } => {
                 if let Some(view) = self.view_mut(slot) {
                     view.label = IndicatorView::label_of(&descriptor);
                     view.descriptor = descriptor;
                     view.columns = columns;
+                    view.rows = rows;
+                    view.bar_paint = bar_paint;
                     view.input_values = inputs;
                     view.preview = None;
                     view.lane.clear();
@@ -272,6 +305,8 @@ impl IndicatorViews {
                         label: IndicatorView::label_of(&descriptor),
                         descriptor,
                         columns,
+                        rows,
+                        bar_paint,
                         preview: None,
                         lane: Vec::new(),
                         error: None,
@@ -286,11 +321,19 @@ impl IndicatorViews {
                     });
                 }
             }
-            IndicatorEvent::Appended { slot, row } => {
+            IndicatorEvent::Appended { slot, row, paint } => {
                 if let Some(view) = self.view_mut(slot) {
                     for (column, value) in view.columns.iter_mut().zip(&row) {
                         column.push(*value);
                     }
+                    if let Some(color) = paint {
+                        // Bars between the previous painted one and this one
+                        // asked for nothing; filled in only now, so a chart
+                        // where nothing paints never allocates the channel.
+                        view.bar_paint.resize(view.rows, None);
+                        view.bar_paint.push(Some(color));
+                    }
+                    view.rows += 1;
                     // The old preview described the bar that just closed;
                     // drawing it one slot further right would be a lie. The
                     // next Preview event replaces it within the same batch.
@@ -334,6 +377,59 @@ impl IndicatorViews {
         self.views.iter_mut().find(|v| v.slot == slot)
     }
 
+    /// Whether any visible indicator paints candles at all.
+    ///
+    /// One question per frame instead of one per visible bar: on the ordinary
+    /// chart, where nothing paints, this is the whole cost of the feature.
+    pub(crate) fn paints_any(&self) -> bool {
+        self.views.iter().any(|view| {
+            !view.hidden
+                && (!view.bar_paint.is_empty()
+                    || view.preview.as_ref().is_some_and(|f| f.paint.is_some()))
+        })
+    }
+
+    /// The candle paint for one committed bar, resolved across every visible
+    /// indicator.
+    ///
+    /// Goes through [`resolve_bar_paint`] — the same function the host uses
+    /// for the backtest and the bot — so a trader and a bot reading the same
+    /// chart can never be shown different colours.
+    pub(crate) fn bar_paint(&self, row: usize) -> Option<Rgba8> {
+        resolve_bar_paint(self.views.iter().map(|view| view.bar_paint(row)))
+    }
+
+    /// The same, for the bar that is forming.
+    pub(crate) fn forming_paint(&self) -> Option<Rgba8> {
+        resolve_bar_paint(self.views.iter().map(IndicatorView::forming_paint))
+    }
+
+    /// The paint of one *drawn slot*, which past a certain zoom is several
+    /// bars folded into one candle (`resample::for_each_group`).
+    ///
+    /// **The newest painted bar of the fold wins** — the channel's own
+    /// last-one-wins rule, applied along time instead of across indicators.
+    /// A compressed chart is a coarser record of the same tape, so a mark
+    /// inside the fold stays visible rather than vanishing at exactly the
+    /// zoom a trader reaches for to see the whole session. The colour then
+    /// describes one of the bars in the slot, not the folded candle — which
+    /// is the same bargain the fold itself already makes.
+    ///
+    /// `includes_forming` puts the forming bar at the newest end of the fold,
+    /// where it outranks every committed bar sharing the slot.
+    pub(crate) fn slot_paint(
+        &self,
+        rows: std::ops::Range<usize>,
+        includes_forming: bool,
+    ) -> Option<Rgba8> {
+        if includes_forming
+            && let Some(paint) = self.forming_paint()
+        {
+            return Some(paint);
+        }
+        rows.rev().find_map(|row| self.bar_paint(row))
+    }
+
     /// Drop a slot UI-side (the worker gets the Remove command separately).
     pub(crate) fn remove(&mut self, slot: SlotId) {
         self.views.retain(|v| v.slot != slot);
@@ -356,6 +452,15 @@ impl IndicatorViews {
             for column in &mut view.columns {
                 column.splice(0..0, std::iter::repeat_n(f64::NAN, added));
             }
+            // The paint channel is indexed by the same bar numbers, so it
+            // shifts with them or every colour lands `added` candles to the
+            // left of the bar that earned it. Only when it exists: an empty
+            // channel has nothing to shift.
+            if !view.bar_paint.is_empty() {
+                view.bar_paint
+                    .splice(0..0, std::iter::repeat_n(None, added));
+            }
+            view.rows += added;
             // The forming bar moved with the candles; its frame is stale.
             view.preview = None;
         }
@@ -597,17 +702,12 @@ mod tests {
     fn deltas_reconstruct_the_columns() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::Rebuilt {
+        views.apply(IndicatorEvent::rebuilt(
             slot,
-            descriptor: descriptor(true, 2),
-            columns: vec![vec![1.0], vec![10.0]],
-            inputs: Vec::new(),
-            stale: None,
-        });
-        views.apply(IndicatorEvent::Appended {
-            slot,
-            row: vec![2.0, 20.0],
-        });
+            descriptor(true, 2),
+            vec![vec![1.0], vec![10.0]],
+        ));
+        views.apply(IndicatorEvent::appended(slot, vec![2.0, 20.0]));
         let view = &views.all()[0];
         assert_eq!(view.rows(), 2);
         assert_eq!(view.columns[0], vec![1.0, 2.0]);
@@ -618,44 +718,169 @@ mod tests {
     fn appended_row_invalidates_the_preview() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::Rebuilt {
+        views.apply(IndicatorEvent::rebuilt(
             slot,
-            descriptor: descriptor(true, 1),
-            columns: vec![vec![]],
-            inputs: Vec::new(),
-            stale: None,
-        });
+            descriptor(true, 1),
+            vec![vec![]],
+        ));
         views.apply(IndicatorEvent::Preview {
             slot,
             frame: Some(PreviewFrame::new(vec![5.0])),
         });
         assert!(views.all()[0].preview.is_some());
-        views.apply(IndicatorEvent::Appended {
-            slot,
-            row: vec![1.0],
-        });
+        views.apply(IndicatorEvent::appended(slot, vec![1.0]));
         assert!(
             views.all()[0].preview.is_none(),
             "a frame describing the closed bar must not draw one slot further right"
         );
     }
 
+    const RED: Rgba8 = Rgba8::opaque(255, 0, 0);
+    const BLUE: Rgba8 = Rgba8::opaque(0, 0, 255);
+
+    /// A paint-only indicator: no plots at all, which is exactly the shape
+    /// `force_bar.pine` has and the shape a row count derived from `columns`
+    /// would get wrong.
+    fn paint_only(views: &mut IndicatorViews, rows: usize) -> SlotId {
+        let slot = views.allocate_slot("script.force_bar");
+        views.apply(IndicatorEvent::Rebuilt {
+            slot,
+            descriptor: descriptor(true, 0),
+            columns: Vec::new(),
+            bar_paint: Vec::new(),
+            rows,
+            inputs: Vec::new(),
+            stale: None,
+        });
+        slot
+    }
+
+    #[test]
+    fn a_late_first_paint_lands_on_the_bar_that_asked_for_it() {
+        // The trap: an indicator with no plots and no paint yet has nothing
+        // to count rows from, and a colour arriving at bar 7 would land on
+        // bar 0 — the wrong candle, silently.
+        let mut views = IndicatorViews::new();
+        let slot = paint_only(&mut views, 7);
+        views.apply(IndicatorEvent::Appended {
+            slot,
+            row: Vec::new(),
+            paint: Some(RED),
+        });
+
+        assert_eq!(views.bar_paint(7), Some(RED), "the bar that asked");
+        assert_eq!(views.bar_paint(0), None, "and no other");
+        assert_eq!(views.all()[0].rows(), 8);
+    }
+
+    #[test]
+    fn a_hidden_indicator_paints_nothing() {
+        let mut views = IndicatorViews::new();
+        let slot = paint_only(&mut views, 0);
+        views.apply(IndicatorEvent::Appended {
+            slot,
+            row: Vec::new(),
+            paint: Some(RED),
+        });
+        views.apply(IndicatorEvent::Preview {
+            slot,
+            frame: Some(PreviewFrame {
+                paint: Some(RED),
+                ..PreviewFrame::new(Vec::new())
+            }),
+        });
+        assert_eq!(views.bar_paint(0), Some(RED));
+        assert_eq!(views.forming_paint(), Some(RED));
+
+        views.toggle_hidden(slot);
+        assert_eq!(
+            views.bar_paint(0),
+            None,
+            "the eye is the trader saying not now; colours left on the \
+             candles would be unexplainable from the screen"
+        );
+        assert_eq!(views.forming_paint(), None);
+        assert!(!views.paints_any());
+    }
+
+    #[test]
+    fn the_last_view_to_ask_paints_the_bar() {
+        let mut views = IndicatorViews::new();
+        let lower = paint_only(&mut views, 0);
+        let upper = paint_only(&mut views, 0);
+        views.apply(IndicatorEvent::Appended {
+            slot: lower,
+            row: Vec::new(),
+            paint: Some(RED),
+        });
+        views.apply(IndicatorEvent::Appended {
+            slot: upper,
+            row: Vec::new(),
+            paint: Some(BLUE),
+        });
+        assert_eq!(views.bar_paint(0), Some(BLUE));
+
+        // Bar 1: only the lower one asks, so it shows through.
+        views.apply(IndicatorEvent::Appended {
+            slot: lower,
+            row: Vec::new(),
+            paint: Some(RED),
+        });
+        views.apply(IndicatorEvent::Appended {
+            slot: upper,
+            row: Vec::new(),
+            paint: None,
+        });
+        assert_eq!(views.bar_paint(1), Some(RED));
+    }
+
+    #[test]
+    fn prepended_history_carries_the_paint_with_it() {
+        let mut views = IndicatorViews::new();
+        let slot = paint_only(&mut views, 0);
+        views.apply(IndicatorEvent::Appended {
+            slot,
+            row: Vec::new(),
+            paint: Some(RED),
+        });
+        assert_eq!(views.bar_paint(0), Some(RED));
+
+        views.shift_rows(3);
+        assert_eq!(
+            views.bar_paint(3),
+            Some(RED),
+            "older bars arrived in front; the colour moved with its bar"
+        );
+        assert_eq!(views.bar_paint(0), None);
+    }
+
+    #[test]
+    fn an_ordinary_chart_never_looks_up_paint() {
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot("native.ema");
+        views.apply(IndicatorEvent::rebuilt(
+            slot,
+            descriptor(true, 1),
+            vec![vec![1.0, 2.0]],
+        ));
+        assert!(
+            !views.paints_any(),
+            "no indicator paints, so the renderer skips the channel entirely"
+        );
+        assert_eq!(views.bar_paint(0), None);
+    }
+
     #[test]
     fn events_for_removed_slots_are_dropped() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::Rebuilt {
+        views.apply(IndicatorEvent::rebuilt(
             slot,
-            descriptor: descriptor(true, 1),
-            columns: vec![vec![]],
-            inputs: Vec::new(),
-            stale: None,
-        });
+            descriptor(true, 1),
+            vec![vec![]],
+        ));
         views.remove(slot);
-        views.apply(IndicatorEvent::Appended {
-            slot,
-            row: vec![1.0],
-        });
+        views.apply(IndicatorEvent::appended(slot, vec![1.0]));
         assert!(views.all().is_empty(), "the remove always wins the race");
     }
 
@@ -669,13 +894,11 @@ mod tests {
             (false, false, true),  // errored pane
         ] {
             let slot = views.allocate_slot("test.indicator");
-            views.apply(IndicatorEvent::Rebuilt {
+            views.apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor: descriptor(overlay, 1),
-                columns: vec![vec![]],
-                inputs: Vec::new(),
-                stale: None,
-            });
+                descriptor(overlay, 1),
+                vec![vec![]],
+            ));
             if hidden {
                 views.toggle_hidden(slot);
             }
@@ -700,13 +923,11 @@ mod tests {
     fn a_removed_pane_takes_its_scale_with_it() {
         let mut views = IndicatorViews::new();
         let first = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::Rebuilt {
-            slot: first,
-            descriptor: descriptor(false, 1),
-            columns: vec![vec![1.0]],
-            inputs: Vec::new(),
-            stale: None,
-        });
+        views.apply(IndicatorEvent::rebuilt(
+            first,
+            descriptor(false, 1),
+            vec![vec![1.0]],
+        ));
         let view = views.view_mut(first).expect("the pane is there");
         view.last_auto = Some((0.0, 10.0));
         view.scale.zoom(0.5, (0.0, 10.0));
@@ -714,13 +935,11 @@ mod tests {
 
         views.remove(first);
         let second = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::Rebuilt {
-            slot: second,
-            descriptor: descriptor(false, 1),
-            columns: vec![vec![1.0]],
-            inputs: Vec::new(),
-            stale: None,
-        });
+        views.apply(IndicatorEvent::rebuilt(
+            second,
+            descriptor(false, 1),
+            vec![vec![1.0]],
+        ));
         let fresh = &views.all()[0];
         assert!(fresh.scale.is_auto(), "a new pane fits its own values");
         assert!(fresh.last_auto.is_none(), "and has not been drawn yet");

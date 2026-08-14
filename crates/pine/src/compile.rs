@@ -522,14 +522,17 @@ impl Compiler {
                     ));
                 }
                 Some(Builtin::Fill) => self.pending_fills.push((expr, args.clone())),
-                Some(kind @ (Builtin::Bgcolor | Builtin::Barcolor)) => {
+                // `barcolor` is live: it writes the bar paint channel at eval
+                // time and needs nothing registered here. `bgcolor` still has
+                // nowhere to land — the canvas behind the bars is not an
+                // indicator output — so it stays accepted and inert, and says
+                // so rather than looking like it worked.
+                Some(Builtin::Bgcolor) => {
                     let span = self.span(expr);
                     self.warnings.push(PineError::new(
                         ErrorCode::PineUnsupported,
                         span,
-                        format!(
-                            "{kind:?} is accepted but not drawn yet (per-bar                              color columns land with a later milestone)"
-                        ),
+                        "bgcolor() is accepted but not drawn (barcolor() paints the candles)",
                     ));
                 }
                 Some(Builtin::AlertCondition) => {

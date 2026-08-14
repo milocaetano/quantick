@@ -358,6 +358,42 @@ impl CandleStyle {
             ),
         }
     }
+
+    /// Resolve with an indicator's bar paint (`barcolor`) standing in for the
+    /// direction colours. `None` is exactly [`resolved`](CandleStyle::resolved).
+    ///
+    /// The paint decides **which** colour, never **how much** of it: body
+    /// mode, widths, radius and the forming dimming stay the trader's, and
+    /// the two opacities are multiplied rather than replaced. An indicator
+    /// saying "this bar is exhaustion" must not also mean "make my candles
+    /// opaque" — that would punch a hole through the heatmap the OrderFlow
+    /// preset exists to keep visible. A script that asks for a translucent
+    /// colour still gets a fainter candle than one that asks for a solid one;
+    /// both stay inside the ceiling the trader set.
+    #[must_use]
+    pub fn resolved_painted(
+        &self,
+        up: bool,
+        forming: bool,
+        paint: Option<[u8; 4]>,
+    ) -> ResolvedCandlePaint {
+        let base = self.resolved(up, forming);
+        let Some([r, g, b, paint_alpha]) = paint else {
+            return base;
+        };
+        // u8 * u8 / 255 in u16: 255 is the identity, and no intermediate
+        // rounds away a visible step.
+        let scale = |alpha: u8| ((u16::from(alpha) * u16::from(paint_alpha)) / 255) as u8;
+        ResolvedCandlePaint {
+            fill: base.fill.map(|[.., a]| [r, g, b, scale(a)]),
+            outline: {
+                let [.., a] = base.outline;
+                [r, g, b, scale(a)]
+            },
+            wick: base.wick.map(|[.., a]| [r, g, b, scale(a)]),
+            ..base
+        }
+    }
 }
 
 impl Default for CandleStyle {
@@ -826,6 +862,25 @@ mod tests {
     }
 
     #[test]
+    fn no_bar_paint_is_exactly_the_unpainted_candle() {
+        // The default-preserving half of the feature: a chart where nothing
+        // paints must draw byte-for-byte what it drew before the channel
+        // existed.
+        for preset in CandlePreset::ALL {
+            let style = preset.style();
+            for up in [true, false] {
+                for forming in [true, false] {
+                    assert_eq!(
+                        style.resolved_painted(up, forming, None),
+                        style.resolved(up, forming),
+                        "{preset:?} up={up} forming={forming}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_hostile_gap_still_draws_a_candle() {
         for gap in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -10.0, 1_000.0] {
             let style = CandleStyle {
@@ -847,5 +902,80 @@ mod tests {
                 "slot {slot}"
             );
         }
+    }
+
+    #[test]
+    fn bar_paint_replaces_the_colour_and_keeps_the_geometry() {
+        let style = CandlePreset::Classic.style();
+        let plain = style.resolved(true, false);
+        let painted = style.resolved_painted(true, false, Some([10, 20, 30, 255]));
+
+        assert_eq!(painted.fill.unwrap()[..3], [10, 20, 30]);
+        assert_eq!(painted.outline[..3], [10, 20, 30]);
+        assert_eq!(painted.wick.unwrap()[..3], [10, 20, 30]);
+        assert_eq!(
+            (
+                painted.outline_width,
+                painted.wick_width,
+                painted.corner_radius,
+                painted.min_body_height
+            ),
+            (
+                plain.outline_width,
+                plain.wick_width,
+                plain.corner_radius,
+                plain.min_body_height
+            ),
+            "an indicator says which colour, never how thick"
+        );
+    }
+
+    #[test]
+    fn an_opaque_paint_still_respects_the_traders_opacity() {
+        // OrderFlow keeps bodies at 20% so the heatmap shows through. A
+        // painted candle must not become the one solid block on the chart.
+        let style = CandlePreset::OrderFlow.style();
+        let plain = style.resolved(true, false);
+        let painted = style.resolved_painted(true, false, Some([10, 20, 30, 255]));
+        assert_eq!(painted.fill.unwrap()[3], plain.fill.unwrap()[3]);
+        assert_eq!(painted.outline[3], plain.outline[3]);
+    }
+
+    #[test]
+    fn a_translucent_paint_dims_further_and_never_brightens() {
+        let style = CandlePreset::Classic.style();
+        let plain = style.resolved(true, false);
+        let half = style.resolved_painted(true, false, Some([10, 20, 30, 128]));
+        assert!(
+            half.fill.unwrap()[3] < plain.fill.unwrap()[3],
+            "color.new(c, 50) asks for a fainter candle and gets one"
+        );
+
+        let invisible = style.resolved_painted(true, false, Some([10, 20, 30, 0]));
+        assert_eq!(invisible.fill.unwrap()[3], 0);
+        assert_eq!(invisible.outline[3], 0);
+    }
+
+    #[test]
+    fn an_outline_only_candle_stays_outline_only_when_painted() {
+        let style = CandlePreset::OutlineOnly.style();
+        let painted = style.resolved_painted(true, false, Some([10, 20, 30, 255]));
+        assert!(
+            painted.fill.is_none(),
+            "the body mode is the trader's choice, not the indicator's"
+        );
+        assert_eq!(painted.outline[..3], [10, 20, 30]);
+    }
+
+    #[test]
+    fn a_forming_painted_candle_keeps_its_dimming() {
+        let style = CandlePreset::Classic.style();
+        let paint = Some([10, 20, 30, 255]);
+        let closed = style.resolved_painted(true, false, paint);
+        let forming = style.resolved_painted(true, true, paint);
+        assert!(
+            forming.outline[3] < closed.outline[3],
+            "a forming bar reads as unfinished whatever colour it wears"
+        );
     }
 }

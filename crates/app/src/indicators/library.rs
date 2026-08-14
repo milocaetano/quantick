@@ -38,6 +38,10 @@ pub(crate) const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
         include_str!("../../scripts/range_box.pine"),
     ),
     ("copilot.pine", include_str!("../../scripts/copilot.pine")),
+    (
+        "force_bar.pine",
+        include_str!("../../scripts/force_bar.pine"),
+    ),
 ];
 
 /// One loadable script.
@@ -193,21 +197,36 @@ impl ScriptLibrary {
 mod tests {
     use super::*;
 
+    fn embedded(name: &str) -> &'static str {
+        EMBEDDED_SCRIPTS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("{name} is embedded"))
+            .1
+    }
+
     /// The copilot ships twice: embedded here and as the pine crate's
     /// semantics fixture (`copilot_semantics.rs` proves the marker logic
     /// against the corpus copy). If the copies drift, the semantics test
     /// silently proves a script the app no longer embeds — so pin them.
     #[test]
     fn the_embedded_copilot_matches_its_semantics_fixture() {
-        let embedded = EMBEDDED_SCRIPTS
-            .iter()
-            .find(|(name, _)| *name == "copilot.pine")
-            .expect("copilot.pine is embedded")
-            .1;
-        let fixture = include_str!("../../../pine/tests/corpus/ok/copilot.pine");
         assert_eq!(
-            embedded, fixture,
+            embedded("copilot.pine"),
+            include_str!("../../../pine/tests/corpus/ok/copilot.pine"),
             "sync crates/pine/tests/corpus/ok/copilot.pine with crates/app/scripts/copilot.pine"
+        );
+    }
+
+    /// Same pin, same reason: `force_bar_semantics.rs` proves the three
+    /// classifications against the corpus copy, and a drift would leave it
+    /// proving a script nobody ships.
+    #[test]
+    fn the_embedded_force_bar_matches_its_semantics_fixture() {
+        assert_eq!(
+            embedded("force_bar.pine"),
+            include_str!("../../../pine/tests/corpus/ok/force_bar.pine"),
+            "sync crates/pine/tests/corpus/ok/force_bar.pine with crates/app/scripts/force_bar.pine"
         );
     }
 

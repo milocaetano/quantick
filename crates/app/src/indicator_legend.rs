@@ -356,13 +356,11 @@ mod tests {
         let mut views = IndicatorViews::new();
         for rows in 1..=3_usize {
             let slot = views.allocate_slot("test.indicator");
-            views.apply(IndicatorEvent::Rebuilt {
+            views.apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor: descriptor(&format!("EMA({rows}, close)")),
-                columns: vec![vec![101.5, 1_234.0]],
-                inputs: Vec::new(),
-                stale: None,
-            });
+                descriptor(&format!("EMA({rows}, close)")),
+                vec![vec![101.5, 1_234.0]],
+            ));
 
             let mut bottom = f32::NEG_INFINITY;
             for _ in 0..2 {
@@ -397,13 +395,11 @@ mod tests {
     fn double_clicking_anywhere_on_a_row_opens_its_settings() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::Rebuilt {
+            views.apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor: descriptor("EMA(9, close)"),
-                columns: vec![vec![101.5, 1_234.0]],
-                inputs: Vec::new(),
-                stale: None,
-            });
+                descriptor("EMA(9, close)"),
+                vec![vec![101.5, 1_234.0]],
+            ));
         });
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
 
@@ -452,13 +448,11 @@ mod tests {
     fn the_legend_names_the_indicator_and_its_last_value() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::Rebuilt {
+            views.apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor: descriptor("EMA(9, close)"),
-                columns: vec![vec![101.5, 1_234.0]],
-                inputs: Vec::new(),
-                stale: None,
-            });
+                descriptor("EMA(9, close)"),
+                vec![vec![101.5, 1_234.0]],
+            ));
         });
         let text = painted(&ctx, &views);
         assert!(text.contains("EMA(9, close)"), "painted: {text}");
@@ -471,13 +465,11 @@ mod tests {
     fn an_errored_indicator_states_its_error_on_the_chart() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::Rebuilt {
+            views.apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor: descriptor("zigzag.pine"),
-                columns: vec![vec![1.0]],
-                inputs: Vec::new(),
-                stale: None,
-            });
+                descriptor("zigzag.pine"),
+                vec![vec![1.0]],
+            ));
             views.apply(IndicatorEvent::Error {
                 slot,
                 error: EvalError {
@@ -500,6 +492,8 @@ mod tests {
                 slot,
                 descriptor: descriptor("cvd.pine"),
                 columns: vec![vec![2.0]],
+                bar_paint: Vec::new(),
+                rows: 1,
                 inputs: Vec::new(),
                 stale: Some("edit has errors; running the previous version".to_owned()),
             });

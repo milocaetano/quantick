@@ -16,6 +16,11 @@ const EMA_SCRIPT: &str =
 
 const FLOW_SCRIPT: &str = "//@version=5\nindicator(\"flow\")\nfast = ta.ema(close, 9)\nslow = ta.ema(close, 21)\nup = ta.crossover(fast, slow)\nstrength = math.abs(delta) / math.max(volume, 1)\nscore = if up\n    strength * 2\nelse\n    strength\nplot(fast)\nplot(slow)\nplot(score)\nplot(cvd)\n";
 
+/// The embedded `force_bar.pine`, byte for byte: what the paint channel
+/// actually costs on the commit path, measured on the script that ships
+/// rather than on a sketch of it.
+const FORCE_BAR: &str = include_str!("../tests/corpus/ok/force_bar.pine");
+
 fn make_bars(n: usize) -> Vec<IndicatorBar> {
     (0..n)
         .map(|i| {
@@ -69,4 +74,5 @@ fn main() {
     let bars = make_bars(n);
     bench("ema.pine", EMA_SCRIPT, &bars);
     bench("flow.pine", FLOW_SCRIPT, &bars);
+    bench("force_bar", FORCE_BAR, &bars);
 }

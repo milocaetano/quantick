@@ -2587,6 +2587,8 @@ impl QuantickApp {
                         inputs: Vec::new(),
                     },
                     columns: Vec::new(),
+                    bar_paint: Vec::new(),
+                    rows: 0,
                     inputs: Vec::new(),
                     stale: None,
                 });
@@ -6919,9 +6921,9 @@ mod tests {
         app.active_tab_mut()
             .flow_pane
             .indicators
-            .apply(IndicatorEvent::Rebuilt {
+            .apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor: quantick_indicators::IndicatorDescriptor {
+                quantick_indicators::IndicatorDescriptor {
                     title: title.to_owned(),
                     short_title: None,
                     overlay: false,
@@ -6937,10 +6939,8 @@ mod tests {
                     inputs: Vec::new(),
                     fills: Vec::new(),
                 },
-                columns: vec![values],
-                inputs: Vec::new(),
-                stale: None,
-            });
+                vec![values],
+            ));
     }
 
     /// The `(lo, hi)` a pane is drawing with right now: its manual range if the

@@ -1,0 +1,119 @@
+//@version=5
+// Force bar — paints the candles the tape had to work for.
+//
+// Three rulers, three answers, one candle. A bar wears at most one colour,
+// and the priority is fixed: biggest > exhaustion > force.
+//
+// HOW TO READ THE CHART:
+//
+//   yellow / orange   BIGGEST BAR — its range (high-low) equals the widest
+//                     of the last N bars. The window's own extreme; it says
+//                     nothing about the body.
+//   aqua / purple     EXHAUSTION — body more than `factor` times the average
+//                     body of the bars BEFORE it. The move that overreached.
+//   lime / red        FORCE — body between the min and max multiples of the
+//                     average body. Deliberately a *band*: a bar bigger than
+//                     the max is no longer force, it is exhaustion, and the
+//                     two never wear the same colour.
+//   no colour         An ordinary bar. Most bars are ordinary, and a chart
+//                     where everything is painted has told you nothing.
+//
+// The bright colour of each pair is the bullish bar (close >= open), the
+// darker one the bearish bar.
+//
+// Two rulers, not one: force and exhaustion measure the BODY (|close-open|,
+// what the tape actually carried); biggest measures the RANGE (high-low,
+// what it reached and gave back). That is why the third mark is not a louder
+// version of the first two — a long wick with no body is the widest bar of
+// the window and no force at all.
+//
+// Exhaustion compares against `body[1]` — the average of the bars *before*
+// this one — so a huge bar cannot inflate the average that is judging it.
+// Force compares against the average including itself, which is the milder,
+// more forgiving test of the two, on purpose.
+//
+// HONEST ABOUT THE FORMING BAR: the bar being built is painted from its
+// preview and may change colour — or lose it — until it closes. That is the
+// state of an unfinished bar, not a promise about the closed one. Once a bar
+// commits, its colour never changes again.
+//
+// Warm-up: no bar is painted before its rulers have history — the averages
+// need their window, and the biggest-bar test needs N bars to compare. An
+// unpainted opening stretch is the indicator saying it does not know yet.
+//
+// Ties count: "biggest" is >= , so if several bars in the window share the
+// widest range they are all painted. On a flat, low-activity stretch where
+// bars come out the same size that can colour a run of them at once — the
+// honest reading of "nothing here stands out", not a signal each time.
+//
+// (The TradingView original used fuchsia for bearish exhaustion; this
+// dialect's palette has no fuchsia, so purple stands in for it.)
+indicator("Force bar", overlay=true)
+
+// 1 — force: the band of "worked for it" bodies.
+show_force = input.bool(true, "1 Force: paint force bars")
+force_len = input.int(20, "1 Force: average body window (bars)", minval=1, maxval=500)
+force_min = input.float(1.5, "1 Force: min body (×average)", minval=0.1, maxval=20.0, step=0.1)
+force_max = input.float(2.5, "1 Force: max body (×average)", minval=0.1, maxval=20.0, step=0.1)
+force_bull = input.color(color.lime, "1 Force: bullish colour")
+force_bear = input.color(color.red, "1 Force: bearish colour")
+
+// 2 — exhaustion: past the band, measured against the bars before it.
+show_exhaustion = input.bool(true, "2 Exhaustion: paint exhaustion bars")
+exhaustion_len = input.int(20, "2 Exhaustion: average body window (bars)", minval=1, maxval=500)
+exhaustion_factor = input.float(2.5, "2 Exhaustion: min body (×average)", minval=0.1, maxval=20.0, step=0.1)
+exhaustion_bull = input.color(color.aqua, "2 Exhaustion: bullish colour")
+exhaustion_bear = input.color(color.purple, "2 Exhaustion: bearish colour")
+
+// 3 — biggest: the widest range of the window.
+show_biggest = input.bool(true, "3 Biggest: paint the widest bar")
+biggest_len = input.int(20, "3 Biggest: window (bars)", minval=2, maxval=500)
+biggest_bull = input.color(color.yellow, "3 Biggest: bullish colour")
+biggest_bear = input.color(color.orange, "3 Biggest: bearish colour")
+
+// ---------------------------------------------------------------- measures
+
+body = math.abs(close - open)
+bar_range = high - low
+
+// Every kernel is hoisted to the top level and fed on every bar, whatever the
+// toggles say: a `ta.*` gated behind a display switch would carry a different
+// history the moment the trader flipped it, and the same tape would then
+// classify differently depending on when a checkbox was clicked.
+avg_body = ta.sma(body, force_len)
+avg_body_before = ta.sma(body[1], exhaustion_len)
+widest_range = ta.highest(bar_range, biggest_len)
+
+// The two multiples are read in whichever order they were typed; a min above
+// the max would otherwise silently mean "never".
+force_lo = math.min(force_min, force_max)
+force_hi = math.max(force_min, force_max)
+
+// A zero average is warm-up (or a dead tape): na, not a division by zero, and
+// `not na(...)` below is what keeps those bars unpainted.
+force_ratio = avg_body > 0 ? body / avg_body : na
+exhaustion_ratio = avg_body_before > 0 ? body / avg_body_before : na
+
+// The widest-of-N test is meaningless until N bars exist: without this every
+// one of the first bars is trivially the widest so far.
+has_window = bar_index >= biggest_len - 1
+
+is_force = show_force and not na(force_ratio) and force_ratio >= force_lo and force_ratio <= force_hi
+is_exhaustion = show_exhaustion and not na(exhaustion_ratio) and exhaustion_ratio > exhaustion_factor
+is_biggest = show_biggest and has_window and bar_range >= widest_range
+
+bullish = close >= open
+
+// ------------------------------------------------------------------ paint
+
+// One colour per bar, decided in priority order. A bar that matches nothing
+// falls through with `na` and keeps the chart's own candle colours.
+paint = na
+if is_biggest
+    paint := bullish ? biggest_bull : biggest_bear
+else if is_exhaustion
+    paint := bullish ? exhaustion_bull : exhaustion_bear
+else if is_force
+    paint := bullish ? force_bull : force_bear
+
+barcolor(paint)

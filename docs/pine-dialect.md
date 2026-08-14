@@ -153,9 +153,18 @@ carries the last non-na value).
   character as marker text.
 - `fill(p1, p2, color?)` — a band between two `plot()` results; both
   arguments must be plot handles resolvable at load time.
-- `bgcolor(...)`, `barcolor(...)` — accepted but inert until per-bar color
-  columns land (each warns at load). `alertcondition(...)` is accepted and
-  inert (no alerts).
+- `barcolor(color)` — paints the candle of the bar being evaluated. Callable
+  anywhere (not top-level only), so the idiomatic form is a `barcolor` inside
+  the `if` that decides. Each call settles the bar: a colour paints it, `na`
+  leaves it unpainted, and the last call of the bar wins; a bar that never
+  calls it keeps the chart's own colours. The forming bar is painted from its
+  preview and may change colour until it closes. Where two indicators paint
+  the same bar, the later one on the chart wins — the same rule as any other
+  overlay drawing over an earlier one. Anything that is not a colour or `na`
+  is a `PINE_TYPE` error.
+- `bgcolor(...)` — accepted but inert (warns at load): the canvas behind the
+  bars is not an indicator output. `alertcondition(...)` is accepted and inert
+  (no alerts).
 - **Draw objects** — `line.new(x1, y1, x2, y2, color?, width?)`,
   `box.new(left, top, right, bottom, border_color?, bgcolor?)`,
   `label.new(x, y, text?, color?, textcolor?, style?)` with styles

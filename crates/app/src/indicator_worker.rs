@@ -19,7 +19,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
-    ObjectSnapshot, PreviewFrame, SourceId,
+    ObjectSnapshot, PreviewFrame, Rgba8, SourceId,
     native::{Cvd, Ema},
 };
 
@@ -225,6 +225,14 @@ pub(crate) enum IndicatorEvent {
         slot: SlotId,
         descriptor: IndicatorDescriptor,
         columns: Vec<Vec<f64>>,
+        /// The candle paint of each committed bar (`barcolor`), or empty when
+        /// this indicator paints nothing — which is every indicator that does
+        /// not ask.
+        bar_paint: Vec<Option<Rgba8>>,
+        /// Committed rows. Carried rather than counted from `columns`: an
+        /// indicator whose whole output is candle paint declares no plots, and
+        /// there would be no column to count.
+        rows: usize,
         /// The values currently bound to the declared inputs (defaults on
         /// first load) — what the settings dialog opens with.
         inputs: Vec<InputValue>,
@@ -235,8 +243,13 @@ pub(crate) enum IndicatorEvent {
         /// quietly clear an amber dot while the stale code is still running.
         stale: Option<String>,
     },
-    /// One committed row (one closed bar) for one slot.
-    Appended { slot: SlotId, row: Vec<f64> },
+    /// One committed row (one closed bar) for one slot, with the candle paint
+    /// that bar asked for (`None`: none).
+    Appended {
+        slot: SlotId,
+        row: Vec<f64>,
+        paint: Option<Rgba8>,
+    },
     /// Latest forming-bar frame for one slot (`None`: partial vanished).
     Preview {
         slot: SlotId,
@@ -260,6 +273,41 @@ pub(crate) enum IndicatorEvent {
     /// A hot reload failed to compile; the previous version keeps running
     /// ("stale — edit has errors").
     ReloadFailed { slot: SlotId, message: String },
+}
+
+#[cfg(test)]
+impl IndicatorEvent {
+    /// A `Rebuilt` carrying only the shape a test cares about: no paint, no
+    /// bound inputs, not stale, and the row count taken from the columns.
+    ///
+    /// The row count is a field rather than a derivation in production
+    /// precisely because a paint-only indicator has no column to count — but
+    /// every test here declares plots, so deriving it is exact for them and
+    /// keeps the fixtures readable.
+    pub(crate) fn rebuilt(
+        slot: SlotId,
+        descriptor: IndicatorDescriptor,
+        columns: Vec<Vec<f64>>,
+    ) -> Self {
+        Self::Rebuilt {
+            slot,
+            descriptor,
+            rows: columns.first().map_or(0, Vec::len),
+            columns,
+            bar_paint: Vec::new(),
+            inputs: Vec::new(),
+            stale: None,
+        }
+    }
+
+    /// An `Appended` row that asks for no candle paint.
+    pub(crate) fn appended(slot: SlotId, row: Vec<f64>) -> Self {
+        Self::Appended {
+            slot,
+            row,
+            paint: None,
+        }
+    }
 }
 
 /// Worker-side bookkeeping for one slot: the host id plus what the UI is
@@ -508,6 +556,8 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                                 fills: Vec::new(),
                             },
                             columns: Vec::new(),
+                            bar_paint: Vec::new(),
+                            rows: 0,
                             inputs: Vec::new(),
                             stale: None,
                         });
@@ -707,10 +757,20 @@ fn publish_deltas(
                 .iter()
                 .map(|spec| plots.column(spec.id).to_vec())
                 .collect();
+            // Left empty for the indicators that never paint, which is all of
+            // them until a script calls `barcolor`: a rebuild of a 100k-bar
+            // chart must not carry a column of `None`s per indicator.
+            let bar_paint: Vec<Option<Rgba8>> = if plots.paints_any() {
+                (0..rows).map(|row| plots.bar_paint(row)).collect()
+            } else {
+                Vec::new()
+            };
             let _ = events.send(IndicatorEvent::Rebuilt {
                 slot,
                 descriptor: descriptor.clone(),
                 columns,
+                bar_paint,
+                rows,
                 stale: mirror.stale.clone(),
                 inputs: mirror.values.clone(),
             });
@@ -724,7 +784,11 @@ fn publish_deltas(
                     .iter()
                     .map(|spec| plots.value(spec.id, row_index))
                     .collect();
-                let _ = events.send(IndicatorEvent::Appended { slot, row });
+                let _ = events.send(IndicatorEvent::Appended {
+                    slot,
+                    row,
+                    paint: plots.bar_paint(row_index),
+                });
             }
             mirror.known_rows = rows;
         }
@@ -1568,6 +1632,103 @@ mod reload_tests {
             view.rows(),
             bars.len(),
             "and the healed instance caught up over the existing history"
+        );
+    }
+}
+
+/// The bar paint channel end to end: the embedded script, the real worker,
+/// the real delta events, the views the renderer reads.
+///
+/// Every other test in this change proves one link — the buffer, the
+/// interpreter, the script's rules, the resolution across views. This is the
+/// chain: a trader loading `force_bar.pine` from the menu gets colours on
+/// candles, with the script's own defaults, and nothing here stubs a step.
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use crate::indicators::IndicatorViews;
+    use crate::indicators::library::EMBEDDED_SCRIPTS;
+    use quantick_engine::{Side, TickBarBuilder, Trade, golden as engine_golden};
+    use rust_decimal::Decimal;
+
+    /// `color.yellow` in the dialect's palette — what a bullish biggest bar
+    /// wears with the script's declared defaults.
+    const YELLOW: Rgba8 = Rgba8::new(0xFD, 0xD8, 0x35, 0xFF);
+
+    fn print(id: u64, price: i64) -> Trade {
+        Trade {
+            agg_id: id,
+            timestamp_ms: 1_000 + id as i64 * 100,
+            price: Decimal::from(price),
+            quantity: Decimal::ONE,
+            side: Side::Buy,
+        }
+    }
+
+    /// 22 tick(2) bars: twenty quiet ones (body and range 1), then one ten
+    /// times as wide, then quiet again.
+    ///
+    /// The script's default windows are 20 bars, so bar 20 is the first that
+    /// can be judged at all — and it is the widest of its window by a factor
+    /// of ten, which is the least ambiguous thing a tape can say.
+    fn tape() -> Vec<Bar> {
+        let mut trades = Vec::new();
+        for bar in 0..20u64 {
+            trades.push(print(bar * 2 + 1, 100));
+            trades.push(print(bar * 2 + 2, 101));
+        }
+        trades.push(print(41, 100));
+        trades.push(print(42, 110));
+        trades.push(print(43, 100));
+        trades.push(print(44, 101));
+        engine_golden::replay(&mut TickBarBuilder::new(2), &trades)
+    }
+
+    #[test]
+    fn the_embedded_force_bar_paints_candles_through_the_whole_chain() {
+        let bars = tape();
+        assert_eq!(bars.len(), 22, "fixture shape");
+
+        let source = EMBEDDED_SCRIPTS
+            .iter()
+            .find(|(name, _)| *name == "force_bar.pine")
+            .expect("force_bar.pine is embedded")
+            .1;
+
+        let worker = IndicatorWorker::spawn();
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot("script.force_bar");
+        worker.send(IndicatorCommand::Add {
+            slot,
+            source: IndicatorSource::Script {
+                name: "force_bar.pine".to_owned(),
+                text: source.to_owned(),
+            },
+        });
+        worker.send(IndicatorCommand::Backfilled(bars.clone()));
+        worker.flush();
+        for event in worker.drain_events() {
+            views.apply(event);
+        }
+
+        assert!(views.all()[0].error.is_none(), "the script loaded");
+        assert_eq!(
+            views.all()[0].rows(),
+            bars.len(),
+            "a script with no plots still commits a row per bar — the row \
+             count cannot come from a column that does not exist"
+        );
+        assert!(views.paints_any(), "the chart now has paint to look up");
+        assert_eq!(
+            views.bar_paint(20),
+            Some(YELLOW),
+            "the widest bar of its window, bullish, with the declared defaults"
+        );
+        assert_eq!(views.bar_paint(0), None, "warm-up paints nothing");
+        assert_eq!(
+            views.bar_paint(21),
+            None,
+            "and the quiet bar after the big one is ordinary again"
         );
     }
 }

@@ -22,7 +22,7 @@ use quantick_engine::Bar;
 
 use crate::bar::IndicatorBar;
 use crate::indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
-use crate::output::{PlotBuffer, PreviewFrame};
+use crate::output::{PlotBuffer, PreviewFrame, Rgba8, resolve_bar_paint};
 
 /// Stable handle to one hosted indicator instance. Ids are never reused
 /// within a host's lifetime, so a stale id simply misses instead of hitting
@@ -362,6 +362,50 @@ impl IndicatorHost {
     #[must_use]
     pub fn error(&self, id: InstanceId) -> Option<&EvalError> {
         self.instance(id).and_then(|i| i.error.as_ref())
+    }
+
+    /// Whether any hosted indicator paints candles at all.
+    ///
+    /// One check for a whole frame: on the ordinary chart, where nothing
+    /// paints, it lets a renderer skip the per-bar lookup entirely instead of
+    /// asking every visible bar a question whose answer is always `None`.
+    #[must_use]
+    pub fn paints_any(&self) -> bool {
+        self.instances
+            .iter()
+            .any(|i| i.indicator.plots().paints_any())
+    }
+
+    /// The candle paint requested for one committed bar, resolved across
+    /// every hosted indicator by [`resolve_bar_paint`] — last one to ask
+    /// wins.
+    ///
+    /// An instance in its error state is not skipped here. The rows it
+    /// committed before failing are real evaluations of real bars, and
+    /// [`plots`](IndicatorHost::plots) hands them out for the same reason;
+    /// hiding only their colour would make the two disagree.
+    #[must_use]
+    pub fn bar_paint(&self, row: usize) -> Option<Rgba8> {
+        resolve_bar_paint(
+            self.instances
+                .iter()
+                .map(|i| i.indicator.plots().bar_paint(row)),
+        )
+    }
+
+    /// The candle paint for the bar that is forming, taken from the latest
+    /// preview frames and resolved by the same rule.
+    ///
+    /// `None` when no bar is forming, when no instance paints it, or when the
+    /// instances that would have painted are in their error state — a failed
+    /// indicator has no preview, and so nothing to say about this instant.
+    #[must_use]
+    pub fn forming_paint(&self) -> Option<Rgba8> {
+        resolve_bar_paint(
+            self.instances
+                .iter()
+                .map(|i| i.preview.as_ref().and_then(|frame| frame.paint)),
+        )
     }
 
     /// Latest preview frame of one instance, if a bar is forming.

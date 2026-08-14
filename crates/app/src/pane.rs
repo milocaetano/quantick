@@ -4152,6 +4152,10 @@ impl ChartPane {
         // invented one, and the cost of a frame stops growing with the zoom.
         // The forming bar folds into the slot it belongs to, and that slot is
         // drawn as forming.
+        // Asked once for the whole frame: on a chart where no indicator paints
+        // — every chart until a script calls `barcolor` — the per-slot lookup
+        // below never runs at all.
+        let painted = self.indicators.paints_any();
         crate::resample::for_each_group(
             visible_closed().chain(partial_visible),
             closed_start,
@@ -4159,7 +4163,25 @@ impl ChartPane {
             |index, bar| {
                 let xc = viewport.slot_center_x(index, right, total);
                 let forming = forming_slot == Some(index / per_slot);
-                draw_candle(&clip, xc, half, &scale, bar, forming, candles);
+                // Plot rows map 1:1 onto bars (see `PlotX`), so a drawn slot
+                // covers the rows its fold covers: `index` is the first bar of
+                // the group and the bucket ends where the next one starts.
+                let slot_end = (index / per_slot + 1) * per_slot;
+                let paint = painted
+                    .then(|| self.indicators.slot_paint(index..slot_end, forming))
+                    .flatten();
+                draw_candle(
+                    &clip,
+                    crate::candle_view::BarSlot {
+                        xc,
+                        half_width: half,
+                    },
+                    &scale,
+                    bar,
+                    forming,
+                    candles,
+                    paint,
+                );
             },
         );
         // The footprint rides directly on the candles, before everything
@@ -5975,30 +5997,26 @@ mod tests {
 
     fn add_indicator_view(pane: &mut ChartPane, kind: &str, columns: Vec<Vec<f64>>) -> SlotId {
         let slot = pane.indicators.allocate_slot(kind);
-        pane.indicators.apply(IndicatorEvent::Rebuilt {
-            slot,
-            descriptor: quantick_indicators::IndicatorDescriptor {
-                title: kind.to_owned(),
-                short_title: None,
-                overlay: false,
-                plots: (0..columns.len().max(1))
-                    .map(|i| quantick_indicators::PlotSpec {
-                        id: quantick_indicators::PlotId::new(i),
-                        title: format!("p{i}"),
-                        style: quantick_indicators::PlotStyle::Line,
-                        base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
-                        width: 1.0,
-                        offset: 0,
-                        marker: None,
-                    })
-                    .collect(),
-                fills: Vec::new(),
-                inputs: Vec::new(),
-            },
-            columns,
+        let descriptor = quantick_indicators::IndicatorDescriptor {
+            title: kind.to_owned(),
+            short_title: None,
+            overlay: false,
+            plots: (0..columns.len().max(1))
+                .map(|i| quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(i),
+                    title: format!("p{i}"),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                })
+                .collect(),
+            fills: Vec::new(),
             inputs: Vec::new(),
-            stale: None,
-        });
+        };
+        pane.indicators
+            .apply(IndicatorEvent::rebuilt(slot, descriptor, columns));
         slot
     }
 
@@ -6075,28 +6093,24 @@ mod tests {
             })
             .collect();
         let slot = pane.indicators.allocate_slot("native.ema");
-        pane.indicators.apply(IndicatorEvent::Rebuilt {
-            slot,
-            descriptor: quantick_indicators::IndicatorDescriptor {
-                title: "EMA(9)".to_owned(),
-                short_title: None,
-                overlay: true,
-                plots: vec![quantick_indicators::PlotSpec {
-                    id: quantick_indicators::PlotId::new(0),
-                    title: "ema".to_owned(),
-                    style: quantick_indicators::PlotStyle::Line,
-                    base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
-                    width: 1.0,
-                    offset: 0,
-                    marker: None,
-                }],
-                fills: Vec::new(),
-                inputs: Vec::new(),
-            },
-            columns: vec![values],
+        let descriptor = quantick_indicators::IndicatorDescriptor {
+            title: "EMA(9)".to_owned(),
+            short_title: None,
+            overlay: true,
+            plots: vec![quantick_indicators::PlotSpec {
+                id: quantick_indicators::PlotId::new(0),
+                title: "ema".to_owned(),
+                style: quantick_indicators::PlotStyle::Line,
+                base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
+                width: 1.0,
+                offset: 0,
+                marker: None,
+            }],
+            fills: Vec::new(),
             inputs: Vec::new(),
-            stale: None,
-        });
+        };
+        pane.indicators
+            .apply(IndicatorEvent::rebuilt(slot, descriptor, vec![values]));
         pane.last_chart_area = Some(TEST_PLOT);
         pane.last_chart_top = TEST_PLOT.top();
         pane.last_chart_height = TEST_PLOT.height();

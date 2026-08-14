@@ -1,0 +1,14 @@
+# Expected output of the PaintedDirection test indicator over
+# trades_small.csv with tick(2) bars. Three bars close:
+#
+#   bar 0: trades 100.0 -> 101.0   bullish
+#   bar 1: trades 102.0 -> 103.0   bullish
+#   bar 2: trades 102.5 -> 102.0   bearish
+#
+# The indicator deliberately leaves bar 0 unpainted, so the fixture pins all
+# three answers the channel can give: no request, green, red. `na` is a bar
+# that asked for no paint; the colours are packed 0xRRGGBBAA.
+bar_index,close,bar_paint
+0,101.0,na
+1,103.0,#00C853FF
+2,102.0,#D50000FF
