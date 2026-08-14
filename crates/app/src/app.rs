@@ -1094,11 +1094,17 @@ impl QuantickApp {
         // Park the scrolling tool band mid-travel. Only the middle of the
         // run shows both chevrons live at once, and a screenshot cannot
         // click an arrow to get there.
+        // Nonsense is refused rather than guessed, like the dock above: a
+        // typo that silently parked the band at zero would photograph the
+        // wrong state and call it the right one.
         if let Ok(offset) = std::env::var("QUANTICK_TOOLBAR_SCROLL") {
-            app.toolrail.set_band_offset(match offset.trim() {
-                "end" => f32::INFINITY,
-                other => other.parse().unwrap_or(0.0),
-            });
+            let parked = match offset.trim() {
+                "end" => Some(f32::INFINITY),
+                other => other.parse::<f32>().ok().filter(|at| at.is_finite()),
+            };
+            if let Some(parked) = parked {
+                app.toolrail.set_band_offset(parked);
+            }
         }
         // Open a family flyout on the first frame — the star column lives
         // there, and a screenshot cannot click a caret.

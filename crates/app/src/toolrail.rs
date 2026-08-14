@@ -2919,6 +2919,41 @@ mod tests {
         );
     }
 
+    /// The wheel scrolls the same band the chevrons do. A trader whose hand
+    /// is already on the mouse should not have to find a 14 px arrow.
+    #[test]
+    fn the_wheel_scrolls_the_band() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        let over = rail.band_rect.expect("the band renders").center();
+        assert_eq!(rail.band_offset, 0.0, "the band starts at the top");
+
+        for _ in 0..4 {
+            rail_frame_with(
+                &mut rail,
+                &mut drawings,
+                &ctx,
+                screen,
+                vec![
+                    egui::Event::PointerMoved(over),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -40.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(
+            rail.band_offset > 0.0,
+            "the wheel moved the band, offset={}",
+            rail.band_offset
+        );
+    }
+
     /// "I cannot get it back to how it was": unstarring down to a rail that
     /// fits must leave no scroll residue behind.
     #[test]
