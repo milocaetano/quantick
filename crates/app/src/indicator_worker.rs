@@ -381,6 +381,42 @@ fn latest_set_inputs(batch: &[IndicatorCommand]) -> BTreeMap<SlotId, usize> {
     latest
 }
 
+/// Keep only the last `SetInputs` per slot in a drained batch.
+///
+/// The settings dialog previews as you drag, so a slow replay can leave a queue
+/// of supersessions behind it — sixty of them for a second on a slider — and
+/// every one would construct an indicator anew and replay the whole history to
+/// produce a chart the next command overwrites. Dropping them is not a
+/// shortcut: a value that a later command in the *same batch* replaces was
+/// never on screen, so nothing observable is lost.
+///
+/// Each survivor keeps the position of its last occurrence, so ordering against
+/// `Add` and `Remove` for the same slot is untouched — which is what stops this
+/// from resurrecting inputs for a slot the same batch removed.
+fn drop_superseded_inputs(batch: &mut Vec<IndicatorCommand>) {
+    if batch.len() < 2 {
+        return;
+    }
+    let mut newest: BTreeMap<SlotId, usize> = BTreeMap::new();
+    for (index, command) in batch.iter().enumerate() {
+        if let IndicatorCommand::SetInputs { slot, .. } = command {
+            newest.insert(*slot, index);
+        }
+    }
+    if newest.is_empty() {
+        return;
+    }
+    let mut index = 0;
+    batch.retain(|command| {
+        let keep = match command {
+            IndicatorCommand::SetInputs { slot, .. } => newest[slot] == index,
+            _ => true,
+        };
+        index += 1;
+        keep
+    });
+}
+
 fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
     let mut host = IndicatorHost::new();
     // BTreeMap: deterministic iteration order for event emission.
@@ -391,6 +427,8 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
         while let Ok(next) = rx.try_recv() {
             batch.push(next);
         }
+
+        drop_superseded_inputs(&mut batch);
 
         let mut flushes: Vec<Sender<()>> = Vec::new();
         // Latest-wins; `Some(None)` means "partial vanished" must be applied.
@@ -1299,6 +1337,71 @@ plot(close * k)
             format!("{:?}", reference.plots(id).unwrap().column(PlotId::new(0))),
             "SetInputs must replay as if the new inputs had always been set"
         );
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use quantick_indicators::InputValue;
+
+    fn set(slot: u64, value: i64) -> IndicatorCommand {
+        IndicatorCommand::SetInputs {
+            slot: SlotId(slot),
+            values: vec![InputValue::Int(value)],
+        }
+    }
+
+    fn values(command: &IndicatorCommand) -> Option<(u64, i64)> {
+        match command {
+            IndicatorCommand::SetInputs { slot, values } => match values.first() {
+                Some(InputValue::Int(v)) => Some((slot.0, *v)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The cost control under applying edits live: a drag that outruns the
+    /// replay leaves a queue of supersessions, and each one would rebuild and
+    /// replay the whole history to draw a chart the next command overwrites.
+    /// Only the last per slot is worth running, and only per *slot* — two
+    /// indicators tuned in the same batch must both survive.
+    #[test]
+    fn only_the_last_input_change_per_slot_survives_a_batch() {
+        let mut batch = vec![set(0, 9), set(1, 3), set(0, 20), set(0, 21)];
+        drop_superseded_inputs(&mut batch);
+        let kept: Vec<_> = batch.iter().filter_map(values).collect();
+        assert_eq!(
+            kept,
+            vec![(1, 3), (0, 21)],
+            "one survivor per slot, each at its last position"
+        );
+    }
+
+    /// Position is preserved, so coalescing cannot reorder an input change
+    /// past the Remove that came after it — which would resurrect a slot the
+    /// same batch deleted.
+    #[test]
+    fn coalescing_never_moves_an_edit_past_a_remove() {
+        let mut batch = vec![
+            set(0, 9),
+            set(0, 21),
+            IndicatorCommand::Remove(SlotId(0)),
+            set(0, 50),
+        ];
+        drop_superseded_inputs(&mut batch);
+        assert_eq!(batch.len(), 2, "one survivor plus the remove");
+        assert!(
+            matches!(batch[0], IndicatorCommand::Remove(SlotId(0))),
+            "the remove still comes first"
+        );
+        assert_eq!(values(&batch[1]), Some((0, 50)));
+
+        // Nothing to coalesce is left exactly as it came.
+        let mut untouched = vec![IndicatorCommand::Remove(SlotId(0))];
+        drop_superseded_inputs(&mut untouched);
+        assert_eq!(untouched.len(), 1);
     }
 }
 

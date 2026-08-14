@@ -2,8 +2,10 @@
 //! `docs/ux/ui-design-model.md` §9 and never built): one row per indicator
 //! on the pane, pinned to the chart's top-left — colour dot, name, last
 //! value, and the eye / gear / remove controls beside it. Double-clicking
-//! the name opens settings, the TradingView gesture the audit's pain 3
-//! found nowhere to happen.
+//! the row — all of it, not only the name — opens settings, the TradingView
+//! gesture the audit's pain 3 found nowhere to happen. The three buttons sit
+//! outside that region rather than under it, so a click on the eye is never
+//! also a click on the row.
 //!
 //! Error and stale rows say so *on the chart*, red and amber, with the full
 //! message on hover. An errored indicator used to disappear from the render
@@ -130,76 +132,93 @@ fn draw_row(
     actions: &mut Vec<LegendAction>,
 ) {
     ui.horizontal(|ui| {
-        draw_status_dot(ui, view);
-        let name_color = if view.error.is_some() {
-            theme::SELL
-        } else if view.stale.is_some() {
-            theme::ACCENT
-        } else if view.hidden {
-            theme::TEXT_MUTED
-        } else {
-            theme::TEXT_PRIMARY
-        };
-        let name = ui
-            .add(
-                egui::Label::new(egui::RichText::new(view.label()).color(name_color).small())
-                    .sense(egui::Sense::click()),
-            )
-            .on_hover_text("double-click to open settings");
-        if name.double_clicked() {
-            actions.push(LegendAction::OpenSettings(view.slot));
-        }
-        // The last committed value of the first plot — the number a trader
-        // reads an overlay by. Withheld while hidden or errored: a value
-        // from a line that is not on screen answers nothing.
-        if !view.hidden
-            && view.error.is_none()
-            && let Some(value) = view.columns.first().and_then(|column| column.last())
-        {
-            ui.label(
-                egui::RichText::new(chart::compact_value(*value))
-                    .monospace()
-                    .small()
-                    .color(theme::TEXT_MUTED),
-            );
-        }
-        if let Some(error) = &view.error {
-            ui.label(egui::RichText::new("error").small().color(theme::SELL))
-                .on_hover_text(error.to_string());
-        } else if let Some(stale) = &view.stale {
-            ui.label(egui::RichText::new("stale").small().color(theme::ACCENT))
-                .on_hover_text(stale.clone());
-        } else if previewing {
-            // The chart is showing settings the state file does not hold —
-            // said here, on the chart, not only inside the dialog that may
-            // be sitting behind it (trader-ux review). Error and stale
-            // outrank it: a broken indicator is not merely previewing.
-            ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
-                .on_hover_text("showing un-applied settings — Apply keeps, Discard reverts");
-        }
-        // A layer switched off in settings must not read like a broken
-        // indicator: a Copilot with everything off draws nothing, and a row
-        // that looks healthy over an empty chart says "bug", not "as asked"
-        // (trader-ux review). Counts the `Display:`-titled bools that are
-        // off — the same convention the settings dialog groups by.
-        let layers_off = view
-            .descriptor
-            .inputs
-            .iter()
-            .zip(view.input_values.iter())
-            .filter(|(spec, value)| {
-                crate::indicator_panel::split_section(spec.title()).0
-                    == crate::indicator_panel::DISPLAY_SECTION
-                    && **value == quantick_indicators::InputValue::Bool(false)
+        // Everything that *names* the indicator — dot, label, value, status,
+        // preview and "N off" chips — laid out as one region so the whole of
+        // it answers a double click. Only the text used to, which meant the
+        // gesture worked on a word and did nothing on the pixel beside it. The
+        // three buttons stay outside the region rather than under it, so a
+        // click on the eye is never also a click on the row.
+        let identity = ui
+            .scope(|ui| {
+                ui.horizontal(|ui| {
+                    draw_status_dot(ui, view);
+                    let name_color = if view.error.is_some() {
+                        theme::SELL
+                    } else if view.stale.is_some() {
+                        theme::ACCENT
+                    } else if view.hidden {
+                        theme::TEXT_MUTED
+                    } else {
+                        theme::TEXT_PRIMARY
+                    };
+                    ui.label(egui::RichText::new(view.label()).color(name_color).small());
+                    // The last committed value of the first plot — the number a trader
+                    // reads an overlay by. Withheld while hidden or errored: a value
+                    // from a line that is not on screen answers nothing.
+                    if !view.hidden
+                        && view.error.is_none()
+                        && let Some(value) = view.columns.first().and_then(|column| column.last())
+                    {
+                        ui.label(
+                            egui::RichText::new(chart::compact_value(*value))
+                                .monospace()
+                                .small()
+                                .color(theme::TEXT_MUTED),
+                        );
+                    }
+                    if let Some(error) = &view.error {
+                        ui.label(egui::RichText::new("error").small().color(theme::SELL))
+                            .on_hover_text(error.to_string());
+                    } else if let Some(stale) = &view.stale {
+                        ui.label(egui::RichText::new("stale").small().color(theme::ACCENT))
+                            .on_hover_text(stale.clone());
+                    } else if previewing {
+                        // The chart is showing settings the state file does not hold —
+                        // said here, on the chart, not only inside the dialog that may
+                        // be sitting behind it (trader-ux review). Error and stale
+                        // outrank it: a broken indicator is not merely previewing.
+                        ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
+                            .on_hover_text(
+                                "showing un-applied settings — Apply keeps, Discard reverts",
+                            );
+                    }
+                    // A layer switched off in settings must not read like a broken
+                    // indicator: a Copilot with everything off draws nothing, and a row
+                    // that looks healthy over an empty chart says "bug", not "as asked"
+                    // (trader-ux review). Counts the `Display:`-titled bools that are
+                    // off — the same convention the settings dialog groups by.
+                    let layers_off = view
+                        .descriptor
+                        .inputs
+                        .iter()
+                        .zip(view.input_values.iter())
+                        .filter(|(spec, value)| {
+                            crate::indicator_panel::split_section(spec.title()).0
+                                == crate::indicator_panel::DISPLAY_SECTION
+                                && **value == quantick_indicators::InputValue::Bool(false)
+                        })
+                        .count();
+                    if layers_off > 0 {
+                        ui.label(
+                            egui::RichText::new(format!("{layers_off} off"))
+                                .small()
+                                .color(theme::TEXT_MUTED),
+                        )
+                        .on_hover_text("display layers switched off in settings");
+                    }
+                });
             })
-            .count();
-        if layers_off > 0 {
-            ui.label(
-                egui::RichText::new(format!("{layers_off} off"))
-                    .small()
-                    .color(theme::TEXT_MUTED),
+            .response;
+        if ui
+            .interact(
+                identity.rect,
+                ui.id().with(("legend-row", view.slot.0)),
+                egui::Sense::click(),
             )
-            .on_hover_text("display layers switched off in settings");
+            .on_hover_text("double-click to open settings")
+            .double_clicked()
+        {
+            actions.push(LegendAction::OpenSettings(view.slot));
         }
         if ui
             .small_button(if view.hidden {
@@ -249,11 +268,11 @@ fn draw_status_dot(ui: &mut egui::Ui, view: &IndicatorView) {
         );
         return;
     }
+    // Resolved, not declared: the dot exists so the row and the line it names
+    // can never disagree, which a restyled plot would break instantly.
     let color = view
-        .descriptor
-        .plots
-        .first()
-        .map_or(theme::TEXT_MUTED, |plot| rgba(plot.base_color));
+        .plot_style(0)
+        .map_or(theme::TEXT_MUTED, |plot| rgba(plot.color));
     let color = if view.hidden {
         color.gamma_multiply(HIDDEN_DOT_FADE)
     } else {
@@ -364,6 +383,67 @@ mod tests {
                 "{rows} row(s): the legend reaches {bottom}, the prediction claims {claimed}"
             );
         }
+    }
+
+    /// Criterion 1, the legend's target: the *row* opens settings, not just
+    /// the word.
+    ///
+    /// The gesture used to be sensed on the label alone, so it worked on the
+    /// text and failed on the value beside it and on the dot in front of it —
+    /// a double click that lands a few pixels off and does nothing reads as a
+    /// broken feature, not as a near miss. Driven at the last value, which is
+    /// where the old implementation would have missed.
+    #[test]
+    fn double_clicking_anywhere_on_a_row_opens_its_settings() {
+        let ctx = egui::Context::default();
+        let views = views_with(|views, slot| {
+            views.apply(IndicatorEvent::Rebuilt {
+                slot,
+                descriptor: descriptor("EMA(9, close)"),
+                columns: vec![vec![101.5, 1_234.0]],
+                inputs: Vec::new(),
+                stale: None,
+            });
+        });
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+
+        // Lay the legend out, then aim at the last value's glyphs: the
+        // right-hand end of the identity region, well past the name.
+        let mut target = None;
+        for _ in 0..2 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                draw(ctx, 0, chart, views.all(), None);
+            });
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(galley) = &shape.shape
+                    && galley.galley.text().contains("1.23K")
+                {
+                    target = Some(galley.visual_bounding_rect().center());
+                }
+            }
+        }
+        let target = target.expect("the row paints its last value");
+
+        let mut actions = Vec::new();
+        for pressed in [true, false, true, false] {
+            let mut input = egui::RawInput::default();
+            input.events.push(egui::Event::PointerMoved(target));
+            input.events.push(egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+            let _ = ctx.run(input, |ctx| {
+                actions.extend(draw(ctx, 0, chart, views.all(), None));
+            });
+        }
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, LegendAction::OpenSettings(_))),
+            "a double click on the row's value must open settings: {actions:?}"
+        );
     }
 
     /// A healthy row reaches pixels: name and last value, in the axis'

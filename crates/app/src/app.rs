@@ -30,9 +30,10 @@ use crate::feed::{self, FeedCommand, FeedHandle};
 use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
+use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
-use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind};
+use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -111,7 +112,8 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// mark. Any distance the tab cannot possibly hold would do; an hour is
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
-/// Initial position of the selected-drawing inspector.
+/// Initial position of the selected-drawing inspector, before
+/// [`inspector_placement`] has a size and a bbox to place it from.
 const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
 /// generated from `InputSpec` replaces this in M4).
@@ -616,6 +618,14 @@ pub struct QuantickApp {
     /// persisted tab's flow pane only, because restoring is (see
     /// [`Self::maintain_indicator_state`]).
     pending_hidden: Vec<SlotId>,
+    /// Per-plot style layers restored from disk, applied when their Rebuilt
+    /// lands — the same deferral [`Self::pending_hidden`] performs, on the
+    /// same pane, for the same reason.
+    pending_styles: Vec<(SlotId, crate::indicator_style::StyleOverride)>,
+    /// `QUANTICK_INDICATOR_SETTINGS`: which indicator to open the dialog on,
+    /// and on which tab, once its view exists. Cleared by the first open, so a
+    /// dialog the run then closes stays closed.
+    settings_autostart: Option<(usize, indicator_panel::SettingsTab)>,
     /// Where the indicator set persists.
     indicator_state_path: std::path::PathBuf,
     /// Set by any add/remove/hide/inputs change; drained by the debounced
@@ -936,6 +946,8 @@ impl QuantickApp {
             script_files: Vec::new(),
             slot_kinds: Vec::new(),
             pending_hidden: Vec::new(),
+            pending_styles: Vec::new(),
+            settings_autostart: None,
             indicator_state_path: state_file::default_path(),
             indicator_state_dirty: false,
             last_indicator_change: None,
@@ -1135,6 +1147,14 @@ impl QuantickApp {
         // Restore the persisted indicator set before any autostart hook:
         // the file is what the user actually had open.
         app.restore_indicator_state();
+        // The settings dialog, reachable without a pointer: the index of the
+        // indicator to open it on, among the focused pane's views in add
+        // order, and optionally the tab (`0` or `inputs`, `1` or `style`).
+        // Every UI surface owes the harness a hook, and a dialog that can only
+        // be reached by double-clicking is a dialog no visual capture can see.
+        app.settings_autostart = std::env::var("QUANTICK_INDICATOR_SETTINGS")
+            .ok()
+            .and_then(|value| Self::parse_settings_hook(&value));
         // Scripted validation runs can open with library scripts loaded:
         // a comma-separated list of script names, each through the same
         // code path the INDICATORS menu takes.
@@ -1728,6 +1748,84 @@ impl QuantickApp {
     /// Flip a slot's render-side eye, wherever the slot lives. Addressed by
     /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
     /// on, and the toolbar path builds its target from focus before calling.
+    /// Parse `QUANTICK_INDICATOR_SETTINGS`: `<index>` or `<index>:<tab>`,
+    /// where the tab is `inputs`/`0` or `style`/`1`.
+    ///
+    /// Nonsense is no hook at all rather than a guessed one: a validation run
+    /// that captured the wrong tab because a typo silently defaulted would be
+    /// a screenshot claiming to show something it does not.
+    fn parse_settings_hook(value: &str) -> Option<(usize, indicator_panel::SettingsTab)> {
+        let (index, tab) = value.split_once(':').unwrap_or((value, "inputs"));
+        let index = index.trim().parse::<usize>().ok()?;
+        let tab = match tab.trim().to_ascii_lowercase().as_str() {
+            "inputs" | "0" => indicator_panel::SettingsTab::Inputs,
+            "style" | "1" => indicator_panel::SettingsTab::Style,
+            _ => return None,
+        };
+        Some((index, tab))
+    }
+
+    /// Open the dialog for whichever indicator a gesture on a pane asked
+    /// about: the pane header, a collapsed strip, or an overlay's own line.
+    ///
+    /// Drained here rather than acted on where it was read, because the dialog
+    /// belongs to the window and the gestures are read deep inside a pane's
+    /// input pass. Both sides of a split are asked, and each request resolves
+    /// against the pane that raised it — the legend's rule (MAJOR-4), applied
+    /// to the same problem one layer down.
+    fn open_requested_indicator_settings(&mut self) {
+        let tab_id = self.active_tab().id;
+        // The harness hook waits for the view it names, exactly as the restored
+        // hidden flags do: the indicator is born from the worker's first
+        // Rebuilt, which is several frames after the window opens.
+        if let Some((index, tab)) = self.settings_autostart {
+            // The focused pane first, then the flow pane. A split tab can open
+            // with the *time* pane focused while every indicator — the ones the
+            // other autostart hook adds, and the ones the state file restores —
+            // lives on the flow pane, and a hook that only asked the focused
+            // side then waited for a view that was never coming. Silence is the
+            // worst failure a validation hook can have: the run captures a
+            // chart with no dialog on it and nothing says why.
+            let focused = self.active_tab().focused_side();
+            let found = [focused, PaneSide::Flow].into_iter().find_map(|side| {
+                self.tabs
+                    .iter()
+                    .find(|candidate| candidate.id == tab_id)
+                    .map(|candidate| candidate.pane(side))
+                    .and_then(|pane| pane.indicators.all().get(index))
+                    .map(|view| (side, view.slot))
+            });
+            if let Some((side, slot)) = found {
+                self.settings_autostart = None;
+                self.open_indicator_settings_at(TabSlot {
+                    tab: tab_id,
+                    side,
+                    slot,
+                });
+                if let Some(dialog) = self.indicator_settings.as_mut() {
+                    dialog.tab = tab;
+                }
+            }
+        }
+        for side in [PaneSide::Flow, PaneSide::Time] {
+            let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+                return;
+            };
+            let requested = match (side, tab.time_pane.as_mut()) {
+                (PaneSide::Flow, _) => tab.flow_pane.take_settings_request(),
+                (PaneSide::Time, Some(pane)) => pane.take_settings_request(),
+                (PaneSide::Time, None) => None,
+            };
+            if let Some(slot) = requested {
+                self.open_indicator_settings_at(TabSlot {
+                    tab: tab_id,
+                    side,
+                    slot,
+                });
+            }
+        }
+    }
+
     fn toggle_indicator_hidden_at(&mut self, target: TabSlot) {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
@@ -1773,6 +1871,7 @@ impl QuantickApp {
         self.indicator_settings = Some(SettingsDialog {
             slot: target.slot,
             title: view.label().to_owned(),
+            tab: indicator_panel::SettingsTab::default(),
             draft: view.input_values.clone(),
             committed: view.input_values.clone(),
             previewed: false,
@@ -1900,15 +1999,10 @@ impl QuantickApp {
             };
             // The tab the dialog was opened on may have been closed under it.
             let Some(view) = tabs
-                .iter()
+                .iter_mut()
                 .find(|tab| tab.id == target.tab)
-                .map(|tab| tab.pane(target.side))
-                .and_then(|pane| {
-                    pane.indicators
-                        .all()
-                        .iter()
-                        .find(|view| view.slot == dialog.slot)
-                })
+                .map(|tab| tab.pane_mut(target.side))
+                .and_then(|pane| pane.indicators.view_mut(dialog.slot))
             else {
                 // The indicator was removed under the dialog.
                 *indicator_settings = None;
@@ -1918,10 +2012,18 @@ impl QuantickApp {
             // indicator (`EMA(9)` → `EMA(21)`), and a dialog that stays open
             // must not keep announcing the old one.
             dialog.title = view.label().to_owned();
+            // The descriptor is read while the style layer beside it is
+            // written, so the two halves are split off the same view here
+            // rather than borrowed twice.
+            let IndicatorView {
+                descriptor, style, ..
+            } = view;
             indicator_panel::draw(
                 ctx,
                 dialog,
-                &view.descriptor.inputs,
+                &descriptor.inputs,
+                &descriptor.plots,
+                style,
                 preset_names.as_deref(),
             )
         };
@@ -1936,6 +2038,12 @@ impl QuantickApp {
             SettingsOutcome::LoadPreset(name) => self.load_indicator_preset(name),
             SettingsOutcome::SavePreset(name) => self.save_indicator_preset(&name),
             SettingsOutcome::DeletePreset(name) => self.delete_indicator_preset(&name),
+            // Style is render-side: the chart already shows it and there is
+            // nothing to preview or commit, so all that is owed is the file.
+            // Deliberately unlike an input edit — it takes no rebuild and no
+            // replay, and it follows the legend's eye, which is also instant
+            // and also persisted without an Apply.
+            SettingsOutcome::StyleChanged => self.mark_indicator_state_dirty(),
         }
         self.draw_indicator_preview_watermark(ctx);
     }
@@ -2434,6 +2542,22 @@ impl QuantickApp {
             if entry.hidden {
                 self.pending_hidden.push(slot);
             }
+            if !entry.plot_styles.is_empty() {
+                // Same deferral as `hidden`, and for the same reason: the view
+                // is born from the worker's first `Rebuilt`, which has not
+                // arrived yet, so the layer waits with it.
+                self.pending_styles.push((
+                    slot,
+                    crate::indicator_style::StyleOverride::from_plots(
+                        entry
+                            .plot_styles
+                            .iter()
+                            .copied()
+                            .map(SavedPlotStyle::to_override)
+                            .collect(),
+                    ),
+                ));
+            }
         }
         // Restoring is not a change; only user edits dirty the file.
         self.indicator_state_dirty = false;
@@ -2473,6 +2597,20 @@ impl QuantickApp {
                 pane.indicators.toggle_hidden(*slot);
             }
             self.pending_hidden.retain(|slot| !existing.contains(slot));
+        }
+        if !self.pending_styles.is_empty()
+            && let Some(index) = self
+                .persisted_tab
+                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
+        {
+            let pane = &mut self.tabs[index].flow_pane;
+            self.pending_styles.retain(|(slot, style)| {
+                let Some(view) = pane.indicators.view_mut(*slot) else {
+                    return true;
+                };
+                view.style = style.clone();
+                false
+            });
         }
         let settled = self
             .last_indicator_change
@@ -2530,6 +2668,16 @@ impl QuantickApp {
                         kind,
                         hidden: view.hidden,
                         inputs,
+                        // Unlike the inputs, a broken slot's style is still
+                        // the trader's: styling survives in the view across
+                        // the error, so there is nothing to rescue from disk.
+                        plot_styles: view
+                            .style
+                            .plots()
+                            .iter()
+                            .copied()
+                            .map(SavedPlotStyle::from_override)
+                            .collect(),
                     })
                 })
                 .collect();
@@ -5717,6 +5865,9 @@ impl QuantickApp {
         self.draw_toolbar(ctx);
         self.draw_source_picker(ctx);
         self.draw_workspace_name_box(ctx);
+        // Before the dialog is drawn, so a double click on a pane or a curve
+        // opens it on the same frame the gesture happened rather than the next.
+        self.open_requested_indicator_settings();
         self.draw_indicator_settings(ctx);
         self.draw_indicator_legends(ctx);
         self.poll_script_files();
@@ -7249,11 +7400,13 @@ plot(close)
                     kind: SavedKind::NativeEma,
                     hidden: false,
                     inputs: vec![SavedInput::Int(21), SavedInput::Source("close".to_owned())],
+                    plot_styles: Vec::new(),
                 },
                 SavedIndicator {
                     kind: SavedKind::NativeCvd,
                     hidden: true,
                     inputs: Vec::new(),
+                    plot_styles: Vec::new(),
                 },
                 SavedIndicator {
                     kind: SavedKind::Script {
@@ -7261,6 +7414,7 @@ plot(close)
                     },
                     hidden: false,
                     inputs: Vec::new(),
+                    plot_styles: Vec::new(),
                 },
             ],
         );
@@ -14546,6 +14700,165 @@ plot(close)
             label.contains("21"),
             "the applied draft rebuilt the indicator: {label}"
         );
+    }
+
+    /// The four doors into the dialog have to be one door: whichever gesture a
+    /// trader used, the dialog opens on the indicator they pointed at, holding
+    /// that indicator's own values. A pane that asks is drained exactly once —
+    /// a request left behind would re-open the dialog every frame, over
+    /// whatever the trader did next.
+    #[test]
+    fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+
+        app.active_tab_mut().flow_pane.request_settings(slot);
+        app.open_requested_indicator_settings();
+        let dialog = app.indicator_settings.as_ref().expect("the dialog opened");
+        assert_eq!(dialog.slot, slot, "on the indicator the gesture named");
+        assert_eq!(
+            dialog.draft,
+            app.active_tab().flow_pane.indicators.all()[0].input_values,
+            "holding that indicator's own values"
+        );
+
+        app.indicator_settings = None;
+        app.open_requested_indicator_settings();
+        assert!(
+            app.indicator_settings.is_none(),
+            "the request was taken, not left to fire again next frame"
+        );
+    }
+
+    /// A restyled plot survives a restart, and travels with its own indicator.
+    ///
+    /// The style layer is written beside the inputs and restored the same way
+    /// the hidden flag is — deferred until the view the worker builds exists.
+    /// Without that deferral the layer lands on nothing and the trader's
+    /// colours are silently dropped on every launch.
+    #[test]
+    fn a_restyled_plot_comes_back_after_a_restart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+        app.active_tab_mut()
+            .flow_pane
+            .indicators
+            .view_mut(slot)
+            .expect("the view")
+            .style
+            .set(
+                0,
+                crate::indicator_style::PlotOverride {
+                    color: Some(quantick_indicators::Rgba8::opaque(255, 0, 0)),
+                    width: Some(3.0),
+                    ..crate::indicator_style::PlotOverride::default()
+                },
+            );
+
+        // What the save path would write, and what a fresh launch reads back.
+        let saved: Vec<_> = app.active_tab().flow_pane.indicators.all()[0]
+            .style
+            .plots()
+            .iter()
+            .copied()
+            .map(SavedPlotStyle::from_override)
+            .collect();
+        assert_eq!(saved.len(), 1, "one plot carries an override");
+        let restored = crate::indicator_style::StyleOverride::from_plots(
+            saved
+                .iter()
+                .copied()
+                .map(SavedPlotStyle::to_override)
+                .collect(),
+        );
+        assert_eq!(
+            restored,
+            app.active_tab().flow_pane.indicators.all()[0].style,
+            "the layer survives the round trip exactly"
+        );
+    }
+
+    /// The harness hook has to find the indicators wherever they are.
+    ///
+    /// A split tab can open with the *time* pane focused while every indicator
+    /// — the ones `QUANTICK_INDICATORS_AUTOSTART` adds and the ones the state
+    /// file restores — lives on the flow pane. Asking only the focused side
+    /// meant the hook waited for a view that was never coming, and a scripted
+    /// run captured a chart with no dialog on it and nothing saying why. Caught
+    /// by launching the real app and finding the dialog absent.
+    #[test]
+    fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_focus() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        // Indicators on the flow pane...
+        let point = pane_point(&app, PaneSide::Flow);
+        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+
+        // ...and the focus on the other one, which is how a split tab can open.
+        let time_point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, time_point);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Time,
+            "the fixture has to actually focus the pane without indicators"
+        );
+
+        app.settings_autostart = Some((0, crate::indicator_panel::SettingsTab::Style));
+        app.open_requested_indicator_settings();
+
+        let dialog = app
+            .indicator_settings
+            .as_ref()
+            .expect("the hook found the indicator on the pane that has one");
+        assert_eq!(dialog.slot, slot);
+        assert_eq!(
+            app.indicator_settings_target.side,
+            PaneSide::Flow,
+            "and addressed it on the pane it really lives on"
+        );
+        assert_eq!(dialog.tab, crate::indicator_panel::SettingsTab::Style);
+        assert!(
+            app.settings_autostart.is_none(),
+            "spent by the first open, so closing the dialog leaves it closed"
+        );
+    }
+
+    /// The harness hook is the only way a scripted capture can see this
+    /// dialog, so it has to name both halves — and refuse nonsense rather than
+    /// guess, which would produce a screenshot of the wrong tab.
+    #[test]
+    fn the_settings_hook_names_an_indicator_and_a_tab() {
+        use crate::indicator_panel::SettingsTab;
+        assert_eq!(
+            QuantickApp::parse_settings_hook("0"),
+            Some((0, SettingsTab::Inputs)),
+            "a bare index opens on Inputs"
+        );
+        assert_eq!(
+            QuantickApp::parse_settings_hook("2:style"),
+            Some((2, SettingsTab::Style))
+        );
+        assert_eq!(
+            QuantickApp::parse_settings_hook("1:1"),
+            Some((1, SettingsTab::Style)),
+            "the numeric spelling works too"
+        );
+        assert_eq!(QuantickApp::parse_settings_hook("0:colours"), None);
+        assert_eq!(QuantickApp::parse_settings_hook("first"), None);
+        assert_eq!(QuantickApp::parse_settings_hook(""), None);
     }
 
     /// A legend row acts on the pane it is drawn on, never the focused one —

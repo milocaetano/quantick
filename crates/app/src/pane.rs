@@ -276,6 +276,16 @@ fn lane_rungs(lane_width_px: f32) -> usize {
 /// strike.
 const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
 
+/// How near an overlay's plotted line a double click has to land to be read as
+/// a click on *that line* rather than on the chart behind it.
+///
+/// The same order as the drawings' own pick tolerance, and for the same
+/// reason: a one-pixel line needs a grab band wider than itself or it can only
+/// be hit by luck. Kept modest so that a double click in open chart still means
+/// "back to the live edge" — the gesture only changes meaning where a curve
+/// actually is.
+const PLOT_PICK_TOLERANCE_PX: f32 = 5.0;
+
 /// Pixels of drag on a vertical axis that change its span by a factor of `e`.
 ///
 /// One number for the price gutter and for every indicator pane's gutter: the
@@ -969,6 +979,21 @@ pub struct ChartPane {
     /// bars again, rather than clamping every mark onto a series that is not
     /// there yet.
     pending_reanchor: Option<usize>,
+    /// The pane opened by a click on its own collapsed strip, carried to the
+    /// frame that may hold the second half of a double click.
+    ///
+    /// A collapsed strip changes shape the instant it is clicked, so a gesture
+    /// made *of* two clicks cannot be read from one frame's geometry. This is
+    /// the one piece of state that spans them.
+    strip_expanded: Option<SlotId>,
+    /// An indicator whose settings a gesture on this pane asked for, waiting
+    /// for the app to open the dialog.
+    ///
+    /// Parked rather than acted on: the dialog is the app's — one dialog for
+    /// the whole window — and the gestures that ask for it are read deep inside
+    /// this pane's input pass, holding borrows the app's state cannot cross.
+    /// The same shape `pending_spec` uses for the other direction.
+    pending_settings: Option<SlotId>,
 }
 
 impl ChartPane {
@@ -1063,6 +1088,8 @@ impl ChartPane {
             shared_drag_pending_from: None,
             shared_pointer_mark: None,
             pending_reanchor: None,
+            strip_expanded: None,
+            pending_settings: None,
         }
     }
 
@@ -1758,6 +1785,20 @@ impl ChartPane {
 
     /// Re-anchor as soon as there are bars to anchor to, after a reset left
     /// the pane empty. Cheap enough to ask every frame: it is a flag test.
+    /// The indicator a gesture on this pane asked to configure, if any, taken
+    /// so a request is acted on exactly once.
+    pub fn take_settings_request(&mut self) -> Option<SlotId> {
+        self.pending_settings.take()
+    }
+
+    /// Stand in for the gesture that raises a settings request, so the app's
+    /// side of the wiring can be tested without driving egui through a pane
+    /// layout it would have to re-derive.
+    #[cfg(test)]
+    pub fn request_settings(&mut self, slot: SlotId) {
+        self.pending_settings = Some(slot);
+    }
+
     pub fn settle_pending_reanchor(&mut self) {
         let Some(old_slots) = self.pending_reanchor else {
             return;
@@ -3262,8 +3303,21 @@ impl ChartPane {
         // Not while a tool is armed: two placement clicks in a row are two
         // anchors, never a request to jump back to the live edge.
         if chart.double_clicked() && primary_free {
-            self.viewport.snap_to_live();
-            self.price_view.reset();
+            // On an overlay's own line the gesture means that line: a trader
+            // pointing at a curve and double clicking is asking about the
+            // curve, not about the viewport. Everywhere else on the canvas it
+            // still snaps back to the live edge, which is the only reading a
+            // double click on empty chart can have.
+            match chart
+                .interact_pointer_pos()
+                .and_then(|pos| self.overlay_plot_at(pos))
+            {
+                Some(slot) => self.pending_settings = Some(slot),
+                None => {
+                    self.viewport.snap_to_live();
+                    self.price_view.reset();
+                }
+            }
         }
         if chart.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
@@ -3417,6 +3471,14 @@ impl ChartPane {
         // would make one pane's axis answer for the other's.
         let pane_id = self.id;
         let mut pane_time_gesture = PaneGesture::default();
+        // Collected here and parked on the pane below: the loop holds a mutable
+        // borrow of `self.indicators`, and the dialog belongs to the app.
+        let mut settings_request: Option<SlotId> = None;
+        // Which pane, if any, was opened by a click on its own collapsed strip
+        // on the last frame that had one — and what this frame decides to hand
+        // to the next. See the disclosure block below.
+        let strip_expanded = self.strip_expanded;
+        let mut opened_from_strip = strip_expanded;
         for ((view, gutter), body) in self
             .indicators
             .visible_panes_mut()
@@ -3459,17 +3521,60 @@ impl ChartPane {
             if disclosure.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
-            if disclosure.clicked() {
-                view.sizing = if body.collapsed {
+            // The pane's own handle into its settings when it is open: the
+            // header row. Registered after the pan so it takes the double click
+            // the body would otherwise spend resetting the scale; the pan keeps
+            // every other pixel of the band.
+            if !body.collapsed {
+                let header = ui.interact(
+                    indicator_render::pane_header_rect(body.rect, body.collapsed),
+                    egui::Id::new(("pane_header", pane_id, view.slot)),
+                    egui::Sense::click(),
+                );
+                if header.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if header.double_clicked() {
+                    settings_request = Some(view.slot);
+                }
+            }
+            // A collapsed strip is the fourth handle, and it needs the two
+            // clicks of a double click read *across the frames between them*:
+            // the first one expands the pane, so by the time the second arrives
+            // the strip is gone, the pointer sits somewhere in the body of a
+            // pane that is now a hundred pixels tall, and `body.collapsed` is
+            // already false.
+            //
+            // Before this, that second click simply collapsed the pane again —
+            // so double-clicking a collapsed strip expanded it and put it back,
+            // and did nothing at all. It opens the settings instead, which is
+            // the only reading that leaves the gesture worth making. What
+            // carries it across the frames is `strip_expanded`: the slot whose
+            // strip opened this pane, set by the click that opened it and spent
+            // by the one that follows.
+            if disclosure.double_clicked() && strip_expanded == Some(view.slot) {
+                settings_request = Some(view.slot);
+                opened_from_strip = None;
+            } else if disclosure.clicked() {
+                // A plain click, which egui reports only when it is *not* half
+                // of a double one — so reaching here always means the previous
+                // gesture is over and any flag it left is spent.
+                opened_from_strip = None;
+                if body.collapsed {
                     // Manual, not Auto: the automatic rule is what collapsed
                     // it, so handing it back would undo the click on the very
                     // next frame. An explicit height is served before the
                     // automatic ones and therefore always fits.
-                    PaneSizing::Manual(MIN_PANE_HEIGHT_PX)
+                    view.sizing = PaneSizing::Manual(MIN_PANE_HEIGHT_PX);
+                    opened_from_strip = Some(view.slot);
                 } else {
-                    PaneSizing::Collapsed
-                };
+                    view.sizing = PaneSizing::Collapsed;
+                }
             }
+        }
+        self.strip_expanded = opened_from_strip;
+        if let Some(slot) = settings_request {
+            self.pending_settings = Some(slot);
         }
         // Time, once, whichever pane the pointer was over: the panes share the
         // candles' x axis, so a sideways drag or a scroll there has to move the
@@ -4541,6 +4646,9 @@ impl ChartPane {
     fn pane_chrome_hit(areas: &PlotAreas, pos: egui::Pos2) -> bool {
         areas.indicator_panes.iter().any(|slot| {
             indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed).contains(pos)
+                // The header opens the pane's settings; like the chevron and
+                // the divider, arming a drawing tool must not silently kill it.
+                || indicator_render::pane_header_rect(slot.rect, slot.collapsed).contains(pos)
                 || (pos.y - slot.rect.top()).abs() <= PANE_DIVIDER_HANDLE_PX
         })
     }
@@ -4590,6 +4698,63 @@ impl ChartPane {
         );
         let history_right = self.last_lane_divider_x.unwrap_or(chart.right());
         Some((self.drawing_area(chart), history_right, self.slots(), scale))
+    }
+
+    /// Which overlay indicator's plotted line a pointer at `pos` is sitting
+    /// on, if any — the fourth place a double click opens settings from, and
+    /// the most direct one: the thing the trader wants to change is the line
+    /// they are looking at.
+    ///
+    /// Measured against the projection the *last* frame drew (§D8: no gesture
+    /// re-measures a world it moved), and against the resolved style rather
+    /// than the declared one, so a plot the trader switched off in the dialog
+    /// cannot be picked where it is no longer drawn.
+    ///
+    /// Cost: nothing per frame — this runs on a double click only, and is then
+    /// bounded by the visible bars of each overlay's plots, the same span the
+    /// renderer already walks every frame.
+    fn overlay_plot_at(&self, pos: egui::Pos2) -> Option<SlotId> {
+        let (chart, right, total, scale) = self.last_projection()?;
+        let (start, end) = self.viewport.visible_range(chart.width(), total);
+        let mut best: Option<(f32, SlotId)> = None;
+        for view in self.indicators.visible_overlays() {
+            for index in 0..view.descriptor.plots.len() {
+                let Some(resolved) = view.plot_style(index) else {
+                    continue;
+                };
+                if !resolved.visible {
+                    continue;
+                }
+                let Some(column) = view.columns.get(index) else {
+                    continue;
+                };
+                // The segments the renderer joins, tested as segments: at a
+                // wide zoom a fast series climbs further between two bars than
+                // any point tolerance would forgive, and a line you can only
+                // grab directly over a bar is a line that ignores most clicks.
+                let stop = end.min(column.len());
+                let mut previous: Option<egui::Pos2> = None;
+                for (row, value) in column[start..stop].iter().copied().enumerate() {
+                    let row = row + start;
+                    if value.is_nan() {
+                        previous = None;
+                        continue;
+                    }
+                    let point =
+                        egui::pos2(self.viewport.x_center(row, right, total), scale.y(value));
+                    if let Some(from) = previous {
+                        let distance = drawings::distance_to_segment(pos, from, point);
+                        if distance <= PLOT_PICK_TOLERANCE_PX
+                            && best.is_none_or(|(closest, _)| distance < closest)
+                        {
+                            best = Some((distance, view.slot));
+                        }
+                    }
+                    previous = Some(point);
+                }
+            }
+        }
+        best.map(|(_, slot)| slot)
     }
 
     /// What a pointer at `pos` grabs among `source`'s shared marks: a handle
@@ -5592,6 +5757,406 @@ mod tests {
             resolved,
             "the band projects through the range the curve was drawn with"
         );
+    }
+
+    /// Build a pane holding one *overlay* indicator, with the projection a
+    /// frame would have cached, so the pick can be asked where its line is.
+    fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        // Plot rows map 1:1 onto bar slots, so the fixture needs the bars the
+        // columns describe — without them the x mapping has nothing to place
+        // the curve on, which is exactly what a chart before its first bar is.
+        pane.history_prefix = (0..values.len())
+            .map(|_| quantick_engine::Bar {
+                open_time: 0,
+                close_time: 0,
+                open: rust_decimal::Decimal::ONE,
+                high: rust_decimal::Decimal::ONE,
+                low: rust_decimal::Decimal::ONE,
+                close: rust_decimal::Decimal::ONE,
+                buy_volume: rust_decimal::Decimal::ZERO,
+                sell_volume: rust_decimal::Decimal::ZERO,
+                trade_count: 1,
+            })
+            .collect();
+        let slot = pane.indicators.allocate_slot("native.ema");
+        pane.indicators.apply(IndicatorEvent::Rebuilt {
+            slot,
+            descriptor: quantick_indicators::IndicatorDescriptor {
+                title: "EMA(9)".to_owned(),
+                short_title: None,
+                overlay: true,
+                plots: vec![quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(0),
+                    title: "ema".to_owned(),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(255, 255, 255),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                }],
+                fills: Vec::new(),
+                inputs: Vec::new(),
+            },
+            columns: vec![values],
+            inputs: Vec::new(),
+            stale: None,
+        });
+        pane.last_chart_area = Some(TEST_PLOT);
+        pane.last_chart_top = TEST_PLOT.top();
+        pane.last_chart_height = TEST_PLOT.height();
+        pane.last_auto_range = Some((0.0, 100.0));
+        pane
+    }
+
+    /// Drive `handle_navigation` for one frame with the given pointer events,
+    /// and hand back whatever settings request the gestures raised.
+    ///
+    /// The pane's input pass needs a whole `PaneChrome` — the tool rail, the
+    /// preset store, the style, the simulator, the layer sink — which is why
+    /// none of these gestures had an end-to-end test before: there was nothing
+    /// to build one on. Everything here is a real default, and the preset store
+    /// is pointed at a path that does not exist, so the fixture reads nothing
+    /// off the developer's disk.
+    fn drive_navigation(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        events: Vec<egui::Event>,
+    ) -> Option<SlotId> {
+        let mut toolrail = crate::toolrail::ToolRail::new();
+        let presets =
+            drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
+        let mut open_settings = false;
+        let style = crate::style::ChartStyle::default();
+        let mut paper = crate::paper_trading::PaperTrading::new();
+        let footprint = crate::footprint_config::FootprintConfig::default();
+        let mut layers = crate::chart_layers::LayerActions::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                area.size() + egui::vec2(area.left(), area.top()),
+            )),
+            events,
+            ..egui::RawInput::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut chrome = PaneChrome {
+                    toolrail: &mut toolrail,
+                    presets: &presets,
+                    open_settings: &mut open_settings,
+                    style: &style,
+                    tz: crate::timezone::TzOffset::default(),
+                    symbol: "TESTUSDT",
+                    paper: &mut paper,
+                    paper_owns_input: false,
+                    shared_pick: None,
+                    shared: SharedInteraction::default(),
+                    capabilities: crate::config::FeedCapabilities::none(),
+                    side_inferred: false,
+                    footprint: &footprint,
+                    layers: &mut layers,
+                };
+                pane.handle_navigation(ui, area, &mut chrome);
+            });
+        });
+        pane.take_settings_request()
+    }
+
+    /// A double click at `pos`, as two press/release pairs in two frames —
+    /// egui reports the second as `double_clicked`.
+    fn double_click_at(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        pos: egui::Pos2,
+    ) -> Option<SlotId> {
+        let mut request = None;
+        for pressed in [true, false, true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ];
+            request = drive_navigation(pane, ctx, area, events).or(request);
+        }
+        request
+    }
+
+    /// Criterion 1, the pane's own targets: a double click on an open pane's
+    /// header asks for that indicator's settings, and the pane body still
+    /// means what it always did.
+    ///
+    /// This is the binding the geometry tests could not reach — a rect
+    /// registered before the pan gesture instead of after, or a `clicked()`
+    /// written where `double_clicked()` was meant, would leave every other
+    /// test green and the gesture dead.
+    #[test]
+    fn a_double_click_on_a_pane_header_asks_for_that_indicators_settings() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+        // One frame to lay the pane out, so the header rect is real.
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let areas = test_areas(&pane, TEST_PLOT);
+        let slot = areas.indicator_panes.first().copied().expect("one pane");
+        assert!(!slot.collapsed, "the fixture pane has room for its curve");
+        let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+        let expected = pane.indicators.all()[0].slot;
+
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, header.center()),
+            Some(expected),
+            "the header is the pane's handle into its settings"
+        );
+
+        // The body below it keeps its own meaning: a double click there resets
+        // that pane's scale and asks for no dialog.
+        let body = egui::pos2(slot.rect.center().x, slot.rect.bottom() - 8.0);
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, body),
+            None,
+            "the header took the gesture from the body, not the whole band"
+        );
+    }
+
+    /// The fourth target, and the one that needed a behaviour change to exist:
+    /// a double click on a collapsed pane's strip.
+    ///
+    /// The two clicks straddle a change of geometry — the first expands the
+    /// pane, so the second arrives at a strip that is no longer there. Before
+    /// this, that second click collapsed the pane again, which made
+    /// double-clicking a collapsed strip expand it and put it back: a gesture
+    /// that did nothing at all. The pane now stays open and its settings are
+    /// what the second click asks for.
+    ///
+    /// The single click is untouched, and this asserts that too — a collapsed
+    /// pane still opens on one click, and an open one still closes.
+    #[test]
+    fn a_double_click_on_a_collapsed_strip_opens_it_and_asks_for_its_settings() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+        pane.indicators
+            .visible_panes_mut()
+            .next()
+            .expect("one pane")
+            .sizing = PaneSizing::Collapsed;
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let strip = test_areas(&pane, TEST_PLOT)
+            .indicator_panes
+            .first()
+            .copied()
+            .expect("one pane");
+        assert!(strip.collapsed, "the fixture pane is collapsed by hand");
+        let expected = pane.indicators.all()[0].slot;
+
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, strip.rect.center()),
+            Some(expected),
+            "the strip asks for the settings of the pane it belongs to"
+        );
+        assert!(
+            !matches!(pane.indicators.all()[0].sizing, PaneSizing::Collapsed),
+            "and leaves it open rather than putting it back, which is what \
+             made this gesture a no-op"
+        );
+
+        // The single click either way is exactly what it was.
+        let mut plain = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+        plain
+            .indicators
+            .visible_panes_mut()
+            .next()
+            .expect("one pane")
+            .sizing = PaneSizing::Collapsed;
+        let _ = drive_navigation(&mut plain, &ctx, TEST_PLOT, Vec::new());
+        let band = test_areas(&plain, TEST_PLOT)
+            .indicator_panes
+            .first()
+            .copied()
+            .expect("one pane");
+        single_click_at(&mut plain, &ctx, TEST_PLOT, band.rect.center());
+        assert!(
+            !matches!(plain.indicators.all()[0].sizing, PaneSizing::Collapsed),
+            "one click still opens a collapsed pane"
+        );
+        let open = test_areas(&plain, TEST_PLOT)
+            .indicator_panes
+            .first()
+            .copied()
+            .expect("one pane");
+        let chevron = indicator_render::pane_disclosure_rect(open.rect, open.collapsed).center();
+        single_click_at(&mut plain, &ctx, TEST_PLOT, chevron);
+        assert!(
+            matches!(plain.indicators.all()[0].sizing, PaneSizing::Collapsed),
+            "and one click on the chevron still closes an open one"
+        );
+    }
+
+    /// One press and release at `pos`, far enough apart in frames that egui
+    /// reports a plain click rather than half of a double one.
+    fn single_click_at(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        pos: egui::Pos2,
+    ) {
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ];
+            let _ = drive_navigation(pane, ctx, area, events);
+        }
+        // Idle frames, so the next click is not read as a double.
+        for _ in 0..30 {
+            let _ = drive_navigation(pane, ctx, area, Vec::new());
+        }
+    }
+
+    /// And on the candles: a double click on an overlay's own line asks for
+    /// that overlay, while one in open chart still snaps back to the live edge
+    /// and asks for nothing.
+    ///
+    /// `overlay_plot_at` is unit-tested on its own; this is the wiring around
+    /// it — that the chart's double click consults it at all, and that it does
+    /// not swallow the gesture everywhere else.
+    #[test]
+    fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_overlay(vec![50.0; 8]);
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let expected = pane.indicators.all()[0].slot;
+        let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+        let (start, _) = pane.viewport.visible_range(chart.width(), total);
+        let on_the_line = egui::pos2(
+            pane.viewport.x_center(start + 1, right, total),
+            scale.y(50.0),
+        );
+
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, on_the_line),
+            Some(expected),
+            "pointing at a curve and double clicking is asking about the curve"
+        );
+
+        let open_chart = on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 10.0);
+        assert_eq!(
+            double_click_at(&mut pane, &ctx, TEST_PLOT, open_chart),
+            None,
+            "open chart still means the viewport"
+        );
+    }
+
+    /// The fourth place a double click opens settings from, and the one that
+    /// needs real geometry: the pointer is on an overlay's own line.
+    ///
+    /// Both halves matter. Landing on the curve has to name *that* indicator,
+    /// or the gesture opens the wrong dialog; landing in open chart has to name
+    /// nothing, or the double click that snaps back to the live edge — the one
+    /// every trader already uses — quietly stops working.
+    #[test]
+    fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
+        let mut pane = pane_with_overlay(vec![50.0; 6]);
+        let slot = pane.indicators.all()[0].slot;
+        let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+        let (start, _) = pane.viewport.visible_range(chart.width(), total);
+        let on_the_line = egui::pos2(pane.viewport.x_center(start, right, total), scale.y(50.0));
+
+        assert_eq!(
+            pane.overlay_plot_at(on_the_line),
+            Some(slot),
+            "the pointer is on the curve"
+        );
+        assert_eq!(
+            pane.overlay_plot_at(on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 8.0)),
+            None,
+            "open chart still means the viewport, not the indicator"
+        );
+
+        // A plot the trader switched off in the Style tab is not drawn, so it
+        // cannot be picked where it used to be.
+        pane.indicators.view_mut(slot).expect("the view").style.set(
+            0,
+            crate::indicator_style::PlotOverride {
+                visible: Some(false),
+                ..crate::indicator_style::PlotOverride::default()
+            },
+        );
+        assert_eq!(
+            pane.overlay_plot_at(on_the_line),
+            None,
+            "a line nobody is drawing cannot be grabbed"
+        );
+    }
+
+    /// A hidden indicator is not on the chart either, and a gap in a series is
+    /// a gap in what can be grabbed — the NaN break the renderer honours.
+    #[test]
+    fn the_pick_honours_hidden_indicators_and_nan_gaps() {
+        let mut pane = pane_with_overlay(vec![50.0, f64::NAN, 50.0, 50.0]);
+        let slot = pane.indicators.all()[0].slot;
+        let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+        let (start, _) = pane.viewport.visible_range(chart.width(), total);
+        // Midway across the NaN cell: the renderer draws no segment here.
+        let gap_x = (pane.viewport.x_center(start, right, total)
+            + pane.viewport.x_center(start + 1, right, total))
+            / 2.0;
+        assert_eq!(
+            pane.overlay_plot_at(egui::pos2(gap_x, scale.y(50.0))),
+            None,
+            "a gap in the data is a gap in what can be picked"
+        );
+
+        let joined_x = (pane.viewport.x_center(start + 2, right, total)
+            + pane.viewport.x_center(start + 3, right, total))
+            / 2.0;
+        let on_the_line = egui::pos2(joined_x, scale.y(50.0));
+        assert_eq!(pane.overlay_plot_at(on_the_line), Some(slot));
+
+        pane.indicators.toggle_hidden(slot);
+        assert_eq!(
+            pane.overlay_plot_at(on_the_line),
+            None,
+            "the legend's eye takes the line off the chart, pick included"
+        );
+    }
+
+    /// The pane's header is its handle into its own settings, so — like the
+    /// chevron and the divider before it — arming a drawing tool must not
+    /// silently take it away, and it must not overlap the chevron, which means
+    /// something else.
+    #[test]
+    fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
+        let pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0]]);
+        let areas = test_areas(&pane, TEST_PLOT);
+        let slot = areas.indicator_panes.first().expect("one pane");
+        let header = indicator_render::pane_header_rect(slot.rect, slot.collapsed);
+        let chevron = indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed);
+
+        assert!(header.is_positive(), "an open pane has a header row");
+        assert!(
+            !header.intersects(chevron) || header.left() >= chevron.right(),
+            "one rect, one meaning: {header:?} vs {chevron:?}"
+        );
+        assert!(
+            slot.rect.contains(header.center()),
+            "the header is inside its own pane"
+        );
+        assert!(ChartPane::pane_chrome_hit(&areas, header.center()));
+
+        // A collapsed strip has no header of its own: the strip *is* the
+        // disclosure, and reads its double click from there.
+        assert!(!indicator_render::pane_header_rect(slot.rect, true).is_positive());
     }
 
     /// A CVD level and a price level can be one pixel apart on screen and

@@ -98,6 +98,36 @@ pub(crate) fn pane_disclosure_rect(band: Rect, collapsed: bool) -> Rect {
     )
 }
 
+/// The row along a pane's top that carries its name and its live value — the
+/// pane's title bar, and the handle its settings open from.
+///
+/// A geometric division rather than a measured one: the title is painted in
+/// the paint pass and the gesture is read in the input pass, so a hit box cut
+/// to the text would be a frame behind the text it claims to cover, and would
+/// change size as an indicator retitled itself (`EMA(9)` → `EMA(200)`). The
+/// whole row is the target instead, which is also what makes it findable —
+/// a trader aims at the header, not at a word.
+///
+/// The disclosure square is carved out on the left: that corner already means
+/// "open/close this pane", and one rect must mean one thing. Empty for a
+/// collapsed pane, whose whole strip *is* the disclosure and which therefore
+/// reads its double click from there.
+#[must_use]
+pub(crate) fn pane_header_rect(band: Rect, collapsed: bool) -> Rect {
+    if collapsed {
+        return Rect::NOTHING;
+    }
+    let disclosure = pane_disclosure_rect(band, collapsed);
+    let left = disclosure.right().min(band.right());
+    Rect::from_min_max(
+        egui::pos2(left, band.top()),
+        egui::pos2(
+            band.right(),
+            (band.top() + disclosure.height()).min(band.bottom()),
+        ),
+    )
+}
+
 fn color32(c: Rgba8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
@@ -425,7 +455,15 @@ fn draw_lane_plots(
         let Some(column) = view.columns.get(index) else {
             continue;
         };
-        let stroke = Stroke::new(spec.width, color32(spec.base_color));
+        // Same resolution the history pane uses, so a restyled plot cannot
+        // look like one series on the chart and another in the live lane.
+        let Some(resolved) = view.plot_style(index) else {
+            continue;
+        };
+        if !resolved.visible {
+            continue;
+        }
+        let stroke = Stroke::new(resolved.width, color32(resolved.color));
         let mut segment: Vec<Pos2> = Vec::new();
         // The value a closed bar committed holds until the next close: the
         // horizontal-then-vertical corner is the shape of "this was the value
@@ -609,8 +647,17 @@ fn draw_view_plots(
             end,
             preview,
         };
-        let color = color32(spec.base_color);
-        let stroke = Stroke::new(spec.width, color);
+        // The trader's style layer over the author's declaration. A plot they
+        // switched off draws nothing at all — the eye in the legend hides the
+        // whole indicator, this hides one series of several.
+        let Some(resolved) = view.plot_style(index) else {
+            continue;
+        };
+        if !resolved.visible {
+            continue;
+        }
+        let color = color32(resolved.color);
+        let stroke = Stroke::new(resolved.width, color);
         if let Some(marker) = &spec.marker {
             draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
             continue;
@@ -1091,6 +1138,7 @@ mod tests {
             slot: SlotId(0),
             kind: std::sync::Arc::from("test.indicator"),
             ordinal: 0,
+            style: crate::indicator_style::StyleOverride::default(),
             label: std::sync::Arc::from("test"),
             descriptor: IndicatorDescriptor {
                 title: "test".to_owned(),
