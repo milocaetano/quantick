@@ -4199,6 +4199,7 @@ impl ChartPane {
                 canvas_background,
                 lane_width_px,
                 legend_inset,
+                per_bar_layers,
             );
         }
 
