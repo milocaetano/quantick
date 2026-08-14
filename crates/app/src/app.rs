@@ -938,16 +938,15 @@ impl QuantickApp {
         feed: FeedHandle,
         workspace: ui_state::Workspace,
     ) -> Self {
-        let (trades_dir, consolidated) = {
-            let state_path = crate::paper_state::default_path();
-            let stored = crate::paper_state::load(&state_path);
-            crate::paper_home::startup_home(
-                config.paper.trades_dir.as_deref(),
-                stored.as_deref(),
-                &state_path,
-            )
-        };
-        let tab = Tab::new(
+        let state_path = crate::paper_state::default_path();
+        let paper_state = crate::paper_state::load(&state_path);
+        let cmd_trading = crate::paper_trading::CmdTradingSettings::from_state(&paper_state);
+        let (trades_dir, consolidated) = crate::paper_home::startup_home(
+            config.paper.trades_dir.as_deref(),
+            paper_state.trades_dir.as_deref(),
+            &state_path,
+        );
+        let mut tab = Tab::new(
             FIRST_TAB_ID,
             pane_ids(FIRST_TAB_ID),
             feed_id.into(),
@@ -956,6 +955,7 @@ impl QuantickApp {
             feed,
             trades_dir.clone(),
         );
+        tab.paper.set_cmd_trading(cmd_trading);
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
@@ -1432,14 +1432,29 @@ impl QuantickApp {
         };
         self.trades_dir_picker = None;
         let Some(dir) = choice else { return };
-        crate::paper_state::save(
-            &crate::paper_state::default_path(),
-            &dir.display().to_string(),
-        );
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.trades_dir = Some(dir.display().to_string());
+        crate::paper_state::save(&path, &state);
         self.trades_dir = dir;
         for tab in &mut self.tabs {
             tab.paper.set_trades_dir(self.trades_dir.clone());
         }
+    }
+
+    /// Persist the active tab's cmd-trading settings and fan them out —
+    /// one gesture, one meaning, every tab (the trades-dir rule).
+    fn persist_cmd_trading(&mut self) {
+        let settings = self.active_tab().paper.cmd_trading();
+        for tab in &mut self.tabs {
+            tab.paper.set_cmd_trading(settings);
+        }
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.cmd_trading_enabled = Some(settings.enabled);
+        state.cmd_buy_modifier = Some(settings.buy.as_str().to_owned());
+        state.cmd_sell_modifier = Some(settings.sell.as_str().to_owned());
+        crate::paper_state::save(&path, &state);
     }
 
     /// The active tab beside the config it reads.
@@ -1564,15 +1579,12 @@ impl QuantickApp {
                 .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone())
         });
         let trades_dir = self.trades_dir.clone();
-        self.tabs.push(Tab::new(
-            id,
-            pane_ids(id),
-            feed_id,
-            symbol,
-            spec,
-            feed,
-            trades_dir,
-        ));
+        // Cmd trading is app-wide (the trades-dir rule): a new tab starts
+        // with the settings every other tab already carries.
+        let cmd_trading = self.active_tab().paper.cmd_trading();
+        let mut tab = Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed, trades_dir);
+        tab.paper.set_cmd_trading(cmd_trading);
+        self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
         self.active_tab_mut().refresh_chip_label(&config);
@@ -6141,6 +6153,9 @@ impl QuantickApp {
         }
         if dock_response.pick_trades_dir {
             self.open_trades_dir_picker();
+        }
+        if dock_response.cmd_trading_changed {
+            self.persist_cmd_trading();
         }
         self.poll_trades_dir_picker();
         // The pinned inspector is chrome: declared before the central canvas

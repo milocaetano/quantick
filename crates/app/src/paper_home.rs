@@ -100,7 +100,7 @@ pub(crate) fn startup_home(
     sources.push(PathBuf::from(LEGACY_TRADES_DIR));
     let summary = consolidate_into(&dest, &sources);
     if stored.is_some() {
-        crate::paper_state::clear(state_path);
+        crate::paper_state::clear_trades_dir(state_path);
     }
     (dest, Some(summary))
 }

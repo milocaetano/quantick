@@ -129,6 +129,26 @@ const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
 /// How many `.rerun-N` session names one venue-time stamp may try — far
 /// beyond any real journal, a backstop against a pathological folder.
 const MAX_SESSION_RERUNS: usize = 999;
+/// `=buy`/`=sell` forces the cmd-trading preview for a capture run — the
+/// held modifier is the one input a run with nobody at the keyboard
+/// cannot supply (the ParkedHand rule).
+const CMD_PREVIEW_ENV: &str = "QUANTICK_CMD_PREVIEW";
+/// Cmd-trading preview line, as a fraction of the chart width…
+const CMD_LINE_FRACTION: f32 = 0.2;
+/// …no shorter than this (a narrow pane must still show a line)…
+const CMD_LINE_MIN_PX: f32 = 120.0;
+/// …and no longer than this (a wide chart must not paint a bar across
+/// half the plot). Whether fraction or fixed reads better is a
+/// trader-ux-review question; the clamp serves both answers.
+const CMD_LINE_MAX_PX: f32 = 320.0;
+/// The preview label's fixed width: paint and press share this exact
+/// rect, so the two can never disagree (the overlay-controls rule).
+const CMD_LABEL_WIDTH_PX: f32 = 116.0;
+/// Gap between the label and the left end of its line.
+const CMD_LABEL_GAP_PX: f32 = 6.0;
+/// The label's fill while the pointer is elsewhere; hover paints it full,
+/// so the brightening itself says "clickable".
+const CMD_LABEL_RESTING_ALPHA: f32 = 0.72;
 /// The grids' readable floor inside a squeezed window.
 const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
@@ -432,6 +452,9 @@ pub enum TradingTabAction {
     /// app-wide (every tab journals there) and remembered, so the app
     /// owns the dialog and the fan-out.
     PickTradesDir,
+    /// Cmd-trading settings changed — app-wide like the trades dir: the
+    /// app persists them and fans them out to every tab.
+    CmdTradingChanged,
 }
 
 /// What the Trades ledger asked of its host.
@@ -472,6 +495,120 @@ pub struct ChartInput<'a> {
     pub primary_pressed: bool,
     pub primary_down: bool,
     pub primary_released: bool,
+    /// The frame's held modifiers — what the cmd-trading gesture reads.
+    pub modifiers: egui::Modifiers,
+}
+
+/// A modifier key the cmd-trading gesture can bind to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmdModifier {
+    Shift,
+    Ctrl,
+    Alt,
+}
+
+impl CmdModifier {
+    /// Every binding the selectors offer.
+    pub const ALL: [Self; 3] = [Self::Shift, Self::Ctrl, Self::Alt];
+
+    /// Stable token for the state file.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shift => "shift",
+            Self::Ctrl => "ctrl",
+            Self::Alt => "alt",
+        }
+    }
+
+    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "shift" => Some(Self::Shift),
+            "ctrl" => Some(Self::Ctrl),
+            "alt" => Some(Self::Alt),
+            _ => None,
+        }
+    }
+
+    /// Display label for the selector.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Shift => "Shift",
+            Self::Ctrl => "Ctrl",
+            Self::Alt => "Alt",
+        }
+    }
+
+    /// Whether the key is held. `Ctrl` reads the platform command key, so
+    /// the binding keeps meaning "the control-ish key" on every OS.
+    fn is_down(self, modifiers: egui::Modifiers) -> bool {
+        match self {
+            Self::Shift => modifiers.shift,
+            Self::Ctrl => modifiers.command,
+            Self::Alt => modifiers.alt,
+        }
+    }
+}
+
+/// Cmd trading: hold a key over the chart and a dashed line shows exactly
+/// where the order will rest; click its label to place. Safer than the
+/// right-click menu because the price is visible before anything commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CmdTradingSettings {
+    pub enabled: bool,
+    pub buy: CmdModifier,
+    pub sell: CmdModifier,
+}
+
+impl Default for CmdTradingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            buy: CmdModifier::Shift,
+            sell: CmdModifier::Ctrl,
+        }
+    }
+}
+
+impl CmdTradingSettings {
+    /// The settings the sidecar remembers, with the defaults wherever it
+    /// never spoke — or spoke a token this build does not know.
+    #[must_use]
+    pub(crate) fn from_state(state: &crate::paper_state::PaperState) -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: state.cmd_trading_enabled.unwrap_or(defaults.enabled),
+            buy: state
+                .cmd_buy_modifier
+                .as_deref()
+                .and_then(CmdModifier::parse)
+                .unwrap_or(defaults.buy),
+            sell: state
+                .cmd_sell_modifier
+                .as_deref()
+                .and_then(CmdModifier::parse)
+                .unwrap_or(defaults.sell),
+        }
+    }
+}
+
+/// The frame's cmd-trading preview: computed by `handle_chart_input`,
+/// painted by `draw_layer`, clicked through the same geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CmdPreview {
+    side: Side,
+    kind: EntryKind,
+    /// Snapped price, for the label and the gutter chip.
+    price: Decimal,
+    /// Raw pointer price — what a click hands to `place_resting`, which
+    /// snaps for itself (the armed-click path's contract).
+    raw_price: f64,
+    y: f32,
+    /// Pointer on the label — highlight, hand cursor, click places.
+    hover: bool,
 }
 
 /// The app-side paper-trading host: simulator, order-entry form state,
@@ -488,6 +625,15 @@ pub struct PaperTrading {
     /// Where this session's trades come from — the tab's feed sets it,
     /// the journal header records it.
     session_source: history::SessionSource,
+    /// Cmd trading: the toggle and its two key bindings (app-wide; the
+    /// app persists and fans out changes).
+    cmd_trading: CmdTradingSettings,
+    /// This frame's cmd preview — input computes, paint reads, one
+    /// geometry both sides.
+    cmd_preview: Option<CmdPreview>,
+    /// Harness override: paint the preview for this side with nobody at
+    /// the keyboard (`QUANTICK_CMD_PREVIEW`).
+    cmd_preview_force: Option<Side>,
     // Order-entry form.
     qty_text: String,
     order_type: EntryKind,
@@ -580,6 +726,24 @@ impl PaperTrading {
             journal_path: None,
             journal_warned: false,
             session_source: history::SessionSource::Live,
+            cmd_trading: CmdTradingSettings::default(),
+            cmd_preview: None,
+            cmd_preview_force: std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
+                match value.as_str() {
+                    "buy" => Some(Side::Buy),
+                    "sell" => Some(Side::Sell),
+                    other => {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
+                            value = %other,
+                            "QUANTICK_CMD_PREVIEW wants `buy` or `sell`"
+                        );
+                        None
+                    }
+                }
+            }),
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -644,6 +808,27 @@ impl PaperTrading {
     pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
         let events = self.sim.apply(command);
         self.handle_events(events);
+    }
+
+    /// The cmd-trading settings, for the app to persist.
+    #[must_use]
+    pub fn cmd_trading(&self) -> CmdTradingSettings {
+        self.cmd_trading
+    }
+
+    /// Install cmd-trading settings — the app's fan-out on boot and on a
+    /// change made in any tab (one gesture, one meaning, everywhere).
+    pub fn set_cmd_trading(&mut self, settings: CmdTradingSettings) {
+        self.cmd_trading = settings;
+        if !settings.enabled {
+            self.cmd_preview = None;
+        }
+    }
+
+    /// Drop the frame's preview — the pane calls this when a drawing tool
+    /// owns the hand, so a stale line never keeps painting.
+    pub fn clear_cmd_preview(&mut self) {
+        self.cmd_preview = None;
     }
 
     /// Follow the tab's feed: a session is wholly live or wholly a
@@ -1134,6 +1319,72 @@ impl PaperTrading {
                 theme::ACCENT,
             );
         }
+
+        // On top of every order line: the cmd preview is the thing being
+        // aimed right now.
+        self.draw_cmd_preview(&ctx);
+    }
+
+    /// The cmd-trading preview: a short dashed line at the pointer's
+    /// price, hugging the right edge, with the clickable label off its
+    /// left end and the exact price on the gutter — the trader reads
+    /// where the order will rest *before* anything commits, which is the
+    /// safety the right-click menu cannot offer.
+    fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>) {
+        let Some(preview) = self.cmd_preview else {
+            return;
+        };
+        // Only the pane that owns paper input paints the aim — except in
+        // a harness run, whose panes never own a pointer at all.
+        if ctx.pointer.is_none() && self.cmd_preview_force.is_none() {
+            return;
+        }
+        if !ctx.in_range(preview.y) {
+            return;
+        }
+        let color = side_color(preview.side);
+        let (start, end, label) = cmd_preview_layout(ctx.chart_rect, preview.y);
+        let width = if preview.hover {
+            LINE_HOVER_WIDTH_PX
+        } else {
+            LINE_WIDTH_PX
+        };
+        ctx.painter.extend(egui::Shape::dashed_line(
+            &[start, end],
+            egui::Stroke::new(width, color),
+            ORDER_DASH_PX,
+            ORDER_GAP_PX,
+        ));
+        ctx.gutter_chip(preview.y, color, &fmt_decimal(preview.price));
+        // The label: fixed geometry (paint and press share it), hover
+        // brightens the fill — the click target must say it is one.
+        let fill = if preview.hover {
+            color
+        } else {
+            color.gamma_multiply(CMD_LABEL_RESTING_ALPHA)
+        };
+        ctx.painter
+            .rect_filled(label, egui::Rounding::same(3.0), fill);
+        let quantity = self
+            .quantity_preview()
+            .map_or_else(|| "?".to_owned(), fmt_decimal);
+        let text = format!(
+            "{} {} {}",
+            side_word_upper(preview.side),
+            kind_word(preview.kind),
+            quantity,
+        );
+        let galley =
+            ctx.painter
+                .layout_no_wrap(text, egui::FontId::monospace(11.0), theme::CHIP_INK);
+        ctx.painter.galley(
+            egui::pos2(
+                label.center().x - galley.size().x / 2.0,
+                label.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            theme::CHIP_INK,
+        );
     }
 
     /// One protective leg: its resting line and tag, the drag that reprices
@@ -1223,6 +1474,10 @@ impl PaperTrading {
     }
 
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
+        // The cmd preview is a per-frame fact: recomputed here, painted by
+        // `draw_layer`, and cleared the instant the key lifts.
+        self.cmd_preview = self.compute_cmd_preview(input);
+
         // An overlay control (a tag's ✕, a bracket handle) takes the press
         // before *everything*: before the armed click — arming an order must
         // never eat the ✕ under the pointer — and before the line grab,
@@ -1253,6 +1508,18 @@ impl PaperTrading {
                     self.drag_price = Some(scale.price_at(pointer.y));
                 }
             }
+            return true;
+        }
+
+        // The preview's label takes the press after the ✕s (they are
+        // rarer and smaller) and before everything else: clicking it *is*
+        // the gesture.
+        if input.primary_pressed
+            && self.drag == PaperDrag::None
+            && let Some(preview) = self.cmd_preview
+            && preview.hover
+        {
+            self.place_resting(preview.side, preview.kind, preview.raw_price);
             return true;
         }
 
@@ -1411,6 +1678,56 @@ impl PaperTrading {
         None
     }
 
+    /// The preview the pointer and the held key describe this frame;
+    /// `None` hides the overlay. Both keys down at once is ambiguous and
+    /// shows nothing — so a shared binding degrades to "off", never to a
+    /// wrong side.
+    fn compute_cmd_preview(&self, input: &ChartInput<'_>) -> Option<CmdPreview> {
+        if !self.cmd_trading.enabled {
+            return None;
+        }
+        let scale = input.scale?;
+        let (pointer, side) = match self.cmd_preview_force {
+            // The harness has no hand; park the pointer mid-chart.
+            Some(side) => (input.pointer.unwrap_or(input.chart.center()), side),
+            None => {
+                let pointer = input.pointer?;
+                let buy = self.cmd_trading.buy.is_down(input.modifiers);
+                let sell = self.cmd_trading.sell.is_down(input.modifiers);
+                let side = match (buy, sell) {
+                    (true, false) => Side::Buy,
+                    (false, true) => Side::Sell,
+                    _ => return None,
+                };
+                (pointer, side)
+            }
+        };
+        if !input.chart.contains(pointer) {
+            return None;
+        }
+        let mark = self.sim.mark_price()?;
+        let raw_price = scale.price_at(pointer.y);
+        let price = self.snap(raw_price);
+        // The context menu's own validity table: above the mark a buy
+        // stops in, below it a buy waits at a limit; a sell mirrors. On
+        // the mark exactly nothing can rest.
+        let kind = match (price > mark, price < mark, side) {
+            (true, _, Side::Buy) | (_, true, Side::Sell) => EntryKind::Stop,
+            (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
+            _ => return None,
+        };
+        let (_, _, label) = cmd_preview_layout(input.chart, pointer.y);
+        let hover = input.pointer.is_some_and(|pointer| label.contains(pointer));
+        Some(CmdPreview {
+            side,
+            kind,
+            price,
+            raw_price,
+            y: pointer.y,
+            hover,
+        })
+    }
+
     /// Turn a pending entry-line press into the leg the pull chose, once it
     /// travelled far enough to mean it.
     fn decide_pending_leg(&mut self, pointer_y: f32, scale: &PriceScale) {
@@ -1456,6 +1773,11 @@ impl PaperTrading {
         scale: &PriceScale,
     ) -> Option<egui::CursorIcon> {
         if self.control_at(pointer, chart, scale).is_some() {
+            return Some(egui::CursorIcon::PointingHand);
+        }
+        // The cmd preview's label announces its click like every painted
+        // control.
+        if self.cmd_preview.is_some_and(|preview| preview.hover) {
             return Some(egui::CursorIcon::PointingHand);
         }
         match self.line_at(pointer, scale)? {
@@ -1646,11 +1968,17 @@ impl PaperTrading {
 
         self.draw_position_card(ui);
         ui.separator();
-        self.draw_order_entry(ui);
+        let cmd_changed = self.draw_order_entry(ui);
         ui.separator();
         self.draw_pending_orders(ui);
         ui.separator();
-        self.draw_session_summary(ui)
+        let action = self.draw_session_summary(ui);
+        if action.is_none() && cmd_changed {
+            // Same-frame collision with another action is a picker click;
+            // the settings change persists on its next touch.
+            return Some(TradingTabAction::CmdTradingChanged);
+        }
+        action
     }
 
     /// A quiet action button — the HUD's control grammar, sized to share a
@@ -1925,7 +2253,7 @@ impl PaperTrading {
         }
     }
 
-    fn draw_order_entry(&mut self, ui: &mut egui::Ui) {
+    fn draw_order_entry(&mut self, ui: &mut egui::Ui) -> bool {
         ui.label(caption("ORDER"));
         // Qty: free decimal text (empty must keep meaning "fix me"), with
         // steppers beside it; Shift steps by ten.
@@ -2063,6 +2391,69 @@ impl PaperTrading {
             .color(theme::TEXT_SUPPORT)
             .small(),
         );
+        self.draw_cmd_trading_settings(ui)
+    }
+
+    /// The cmd-trading block of the ticket: the enable pill and the two
+    /// key bindings. Returns whether anything changed, so the host can
+    /// persist and fan out.
+    fn draw_cmd_trading_settings(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.add_space(4.0);
+        ui.label(caption("CMD TRADING"));
+        ui.horizontal(|ui| {
+            if pill_toggle(
+                ui,
+                "Enabled",
+                self.cmd_trading.enabled,
+                "hold a key over the chart: a dashed line shows exactly where the order \
+                 will rest - click its label to place it",
+            )
+            .clicked()
+            {
+                self.cmd_trading.enabled = !self.cmd_trading.enabled;
+                changed = true;
+            }
+            for (word, slot) in [("Buy", true), ("Sell", false)] {
+                ui.label(egui::RichText::new(word).color(theme::TEXT_MUTED).small());
+                let current = if slot {
+                    self.cmd_trading.buy
+                } else {
+                    self.cmd_trading.sell
+                };
+                egui::ComboBox::from_id_salt(("cmd_trading_modifier", word))
+                    .width(64.0)
+                    .selected_text(current.label())
+                    .show_ui(ui, |ui| {
+                        for modifier in CmdModifier::ALL {
+                            if ui
+                                .selectable_label(current == modifier, modifier.label())
+                                .clicked()
+                                && current != modifier
+                            {
+                                if slot {
+                                    self.cmd_trading.buy = modifier;
+                                } else {
+                                    self.cmd_trading.sell = modifier;
+                                }
+                                changed = true;
+                            }
+                        }
+                    });
+            }
+        });
+        if self.cmd_trading.enabled && self.cmd_trading.buy == self.cmd_trading.sell {
+            // A shared key is ambiguous, so the gesture shows nothing —
+            // said here rather than discovered over the chart.
+            ui.label(
+                egui::RichText::new(
+                    "buy and sell share a key - the gesture stays hidden until they differ",
+                )
+                .color(theme::AMBER)
+                .small(),
+            );
+        }
+        changed
     }
 
     /// Step the quantity field by `delta`, never below a positive value;
@@ -4700,6 +5091,26 @@ fn elide_path(path: &Path) -> String {
     })
 }
 
+/// The cmd preview's geometry from the chart frame and the pointer's y:
+/// the dashed line hugging the right edge and the clickable label off its
+/// left end. One function for paint and press alike, so a painted label
+/// and its hit-test can never disagree (the overlay-controls rule).
+fn cmd_preview_layout(chart: egui::Rect, y: f32) -> (egui::Pos2, egui::Pos2, egui::Rect) {
+    let length = (chart.width() * CMD_LINE_FRACTION).clamp(CMD_LINE_MIN_PX, CMD_LINE_MAX_PX);
+    let end = egui::pos2(chart.right(), y);
+    let start = egui::pos2((chart.right() - length).max(chart.left()), y);
+    let center_y = clamp_tag_center(y, chart.top(), chart.bottom());
+    let half = TAG_HEIGHT_PX / 2.0;
+    let label = egui::Rect::from_min_max(
+        egui::pos2(
+            start.x - CMD_LABEL_GAP_PX - CMD_LABEL_WIDTH_PX,
+            center_y - half,
+        ),
+        egui::pos2(start.x - CMD_LABEL_GAP_PX, center_y + half),
+    );
+    (start, end, label)
+}
+
 /// The session file for `stamp` under `folder`: the plain name when free,
 /// else `stamp.rerun-N` — file names derive from venue time, so replaying
 /// the same recording twice reproduces the same stamp, and the second run
@@ -5456,6 +5867,27 @@ mod tests {
             primary_pressed: pressed,
             primary_down: down,
             primary_released: released,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    /// A `frame` with held modifiers and a free pointer — the cmd-trading
+    /// gesture's shape of input.
+    fn cmd_frame<'a>(
+        chart: egui::Rect,
+        scale: &'a PriceScale,
+        pointer: egui::Pos2,
+        modifiers: egui::Modifiers,
+        pressed: bool,
+    ) -> ChartInput<'a> {
+        ChartInput {
+            chart,
+            scale: Some(scale),
+            pointer: Some(pointer),
+            primary_pressed: pressed,
+            primary_down: pressed,
+            primary_released: false,
+            modifiers,
         }
     }
 
@@ -5550,6 +5982,149 @@ mod tests {
             paper.hover_cursor(egui::pos2(400.0, 40.0), chart, &scale),
             None,
             "empty tape belongs to the chart"
+        );
+    }
+
+    #[test]
+    fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let ctrl = egui::Modifiers {
+            command: true,
+            ..Default::default()
+        };
+        let both = egui::Modifiers {
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+
+        // Hold buy above the mark: a stop. Below: a limit.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            shift,
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("preview above the mark");
+        assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Stop));
+        assert_eq!(preview.price, Decimal::from(110));
+        assert!(!preview.hover, "mid-chart is not the label");
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 300.0),
+            shift,
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("preview below the mark");
+        assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Limit));
+
+        // The sell key mirrors the table.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            ctrl,
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("sell above the mark");
+        assert_eq!((preview.side, preview.kind), (Side::Sell, EntryKind::Limit));
+
+        // Both keys is ambiguous, no key is no gesture.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            both,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_none(), "ambiguity shows nothing");
+        paper.handle_chart_input(&frame(chart, &scale, 100.0, false, false, false));
+        assert!(paper.cmd_preview.is_none(), "no key, no line");
+
+        // Clicking the label places exactly what the preview said, through
+        // the same path as the right-click menu.
+        let (_, _, label) = cmd_preview_layout(chart, 300.0);
+        let on_label = egui::pos2(label.center().x, 300.0);
+        paper.handle_chart_input(&cmd_frame(chart, &scale, on_label, shift, false));
+        assert!(
+            paper.cmd_preview.expect("hovering").hover,
+            "the label knows the pointer is on it"
+        );
+        assert!(
+            paper.handle_chart_input(&cmd_frame(chart, &scale, on_label, shift, true)),
+            "the click is the gesture's"
+        );
+        let orders = paper.working_orders();
+        assert_eq!(orders.len(), 1, "the click rested the order");
+        assert_eq!(orders[0].side, Side::Buy);
+        assert_eq!(orders[0].price, Some(Decimal::from(90)));
+
+        // Disabled means invisible.
+        paper.set_cmd_trading(CmdTradingSettings {
+            enabled: false,
+            ..Default::default()
+        });
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            shift,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_none(), "the toggle hides the gesture");
+    }
+
+    #[test]
+    fn the_cmd_layout_hugs_the_right_edge_with_the_label_off_the_line() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let (start, end, label) = cmd_preview_layout(chart, 250.0);
+        assert_eq!(end.x, 800.0, "the line ends at the right edge");
+        assert_eq!(start.x, 640.0, "20% of an 800px chart");
+        assert!(label.right() < start.x, "the label sits clear of the line");
+        assert_eq!(label.center().y, 250.0);
+        let narrow = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(300.0, 400.0));
+        let (start, end, _) = cmd_preview_layout(narrow, 250.0);
+        assert_eq!(
+            end.x - start.x,
+            CMD_LINE_MIN_PX,
+            "a narrow pane keeps a line"
+        );
+        let wide = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(4000.0, 400.0));
+        let (start, end, _) = cmd_preview_layout(wide, 250.0);
+        assert_eq!(
+            end.x - start.x,
+            CMD_LINE_MAX_PX,
+            "a huge chart is not painted across"
+        );
+    }
+
+    #[test]
+    fn cmd_modifier_tokens_round_trip_and_state_defaults_fill_gaps() {
+        for modifier in CmdModifier::ALL {
+            assert_eq!(CmdModifier::parse(modifier.as_str()), Some(modifier));
+        }
+        assert_eq!(CmdModifier::parse("hyper"), None);
+        let state = crate::paper_state::PaperState {
+            cmd_trading_enabled: Some(false),
+            cmd_buy_modifier: Some("alt".to_owned()),
+            cmd_sell_modifier: Some("hyper".to_owned()),
+            ..Default::default()
+        };
+        let settings = CmdTradingSettings::from_state(&state);
+        assert!(!settings.enabled);
+        assert_eq!(settings.buy, CmdModifier::Alt);
+        assert_eq!(
+            settings.sell,
+            CmdModifier::Ctrl,
+            "an unknown token falls back to the default"
         );
     }
 
@@ -5672,6 +6247,7 @@ mod tests {
             primary_pressed: true,
             primary_down: true,
             primary_released: false,
+            modifiers: egui::Modifiers::default(),
         };
         assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
         assert!(
@@ -5705,6 +6281,7 @@ mod tests {
             primary_pressed: true,
             primary_down: true,
             primary_released: false,
+            modifiers: egui::Modifiers::default(),
         };
         assert!(
             paper.handle_chart_input(&press),

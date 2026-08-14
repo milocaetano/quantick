@@ -2967,16 +2967,24 @@ impl ChartPane {
         // can only be handed out once. Without this gate a click meant to
         // drop an anchor would *also* reach an order's ✕ and cancel it —
         // the early return this replaced used to hide that.
-        let paper_gesture = chrome.paper_owns_input
-            && !tool_armed
-            && chrome.paper.handle_chart_input(&ChartInput {
+        let paper_gesture = if chrome.paper_owns_input && !tool_armed {
+            chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
                 scale: drawing_scale.as_ref(),
                 pointer: pointer_position,
                 primary_pressed: primary_pressed && !over_chrome,
                 primary_down,
                 primary_released,
-            });
+                modifiers: ui.input(|input| input.modifiers),
+            })
+        } else {
+            if chrome.paper_owns_input {
+                // A drawing tool owns the hand this frame; a stale cmd
+                // preview must not keep painting under it.
+                chrome.paper.clear_cmd_preview();
+            }
+            false
+        };
         // The paper lines announce their grabbability (audit paper M3/M4):
         // drawings get hover cursors below, and a draggable stop must not
         // feel deader than an annotation — nor may the entry line's blocked
