@@ -1830,6 +1830,37 @@ mod tests {
         assert_eq!(rect.painted_bounds(anchors, chart), anchors);
     }
 
+    /// The vector-icon port's contract: every declared polyline has at
+    /// least two points and stays inside the unit square, so the paint
+    /// helper never has to clamp. The tools that replaced a lying glyph
+    /// must actually declare strokes — an accidental `&[]` would silently
+    /// bring the lozenge back.
+    #[test]
+    fn icon_strokes_have_two_points_each_and_stay_in_the_unit_square() {
+        for tool in DRAWING_TOOLS {
+            for polyline in tool.icon_strokes() {
+                assert!(
+                    polyline.len() >= 2,
+                    "{}: an icon stroke needs at least two points",
+                    tool.id()
+                );
+                for (x, y) in *polyline {
+                    assert!(
+                        (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y),
+                        "{}: icon point ({x}, {y}) leaves the unit square",
+                        tool.id()
+                    );
+                }
+            }
+        }
+        for id in ["parallel-channel", "fib-retracement", "fib-extension"] {
+            assert!(
+                !tool(id).icon_strokes().is_empty(),
+                "{id} replaced its glyph and must keep vector strokes"
+            );
+        }
+    }
+
     #[test]
     fn every_registered_tool_has_metadata_and_a_valid_point_count() {
         let mut ids = Vec::with_capacity(DRAWING_TOOLS.len());

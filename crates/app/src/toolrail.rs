@@ -50,9 +50,12 @@ const FLYOUT_HEADER_TEXT_PX: f32 = 11.0;
 /// The favorite star riding the top-right of a flyout row's tool icon:
 /// glyph size, its centre offset from the icon centre, and the square click
 /// zone around it — bigger than the glyph, a 9 px star is no hit target.
+/// Offset 8 with a 12 px hit keeps the zone clear of the glyph's own centre
+/// (x = 12): a click on the icon must arm, never silently star — the star
+/// only wins clicks that land on the star.
 const FLYOUT_STAR_PX: f32 = 9.0;
-const FLYOUT_STAR_OFFSET_PX: f32 = 7.0;
-const FLYOUT_STAR_HIT_PX: f32 = 14.0;
+const FLYOUT_STAR_OFFSET_PX: f32 = 8.0;
+const FLYOUT_STAR_HIT_PX: f32 = 12.0;
 /// The corner star badge marking a pinned button in the rail's favorites
 /// section.
 const FAVORITE_BADGE_PX: f32 = 8.0;
@@ -1987,6 +1990,34 @@ mod tests {
         assert!(
             rail.flyout.is_some(),
             "the flyout stayed open to keep curating"
+        );
+    }
+
+    /// A click on the row's own icon arms the tool — the star's hit zone
+    /// must never swallow the natural arming gesture (trader review).
+    #[test]
+    fn a_click_on_the_flyout_icon_arms_and_never_stars() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        let members = first_family();
+        open_flyout(&mut rail, &mut drawings, &ctx, screen, members);
+
+        let row = rail
+            .flyout_row_rect(members[1])
+            .expect("the flyout lists the member");
+        let glyph_center = egui::pos2(row.left() + FLYOUT_GLYPH_CENTER_X_PX, row.center().y);
+        click_at(&mut rail, &mut drawings, &ctx, screen, glyph_center);
+
+        assert_eq!(
+            rail.tool(),
+            Tool::Drawing(members[1]),
+            "the icon click armed the tool"
+        );
+        assert!(
+            !rail.is_favorite(members[1]),
+            "an arming click must never silently star"
         );
     }
 
