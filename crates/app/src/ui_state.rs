@@ -87,6 +87,13 @@ impl From<SavedFocus> for crate::pane::PaneSide {
 }
 
 /// Where the drawing rail was docked, in the file's vocabulary.
+///
+/// `Right` survives here as a *reading* vocabulary only: the rail no longer
+/// offers the right edge (see [`crate::toolrail::ToolboxDock`]), but a
+/// `ui-state.toml` written before that still says `right`, and refusing to
+/// parse it would throw away the whole file — every other remembered panel
+/// with it. It loads as `Left` and is written back as `left`, so the
+/// migration happens once and is visible in the file afterwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SavedRailDock {
@@ -100,7 +107,6 @@ impl From<crate::toolrail::ToolboxDock> for SavedRailDock {
     fn from(dock: crate::toolrail::ToolboxDock) -> Self {
         match dock {
             crate::toolrail::ToolboxDock::Left => Self::Left,
-            crate::toolrail::ToolboxDock::Right => Self::Right,
             crate::toolrail::ToolboxDock::Top => Self::Top,
             crate::toolrail::ToolboxDock::Bottom => Self::Bottom,
         }
@@ -110,8 +116,7 @@ impl From<crate::toolrail::ToolboxDock> for SavedRailDock {
 impl From<SavedRailDock> for crate::toolrail::ToolboxDock {
     fn from(dock: SavedRailDock) -> Self {
         match dock {
-            SavedRailDock::Left => Self::Left,
-            SavedRailDock::Right => Self::Right,
+            SavedRailDock::Left | SavedRailDock::Right => Self::Left,
             SavedRailDock::Top => Self::Top,
             SavedRailDock::Bottom => Self::Bottom,
         }
@@ -198,6 +203,11 @@ pub struct SavedChrome {
     pub rail_dock: SavedRailDock,
     /// Whether the status bar showed fps/frame time.
     pub perf_readings: bool,
+    /// Starred drawing tools pinned to the rail, by tool id, in the order
+    /// the trader starred them. Default empty — a file from before the
+    /// feature simply has no pinned section.
+    #[serde(default)]
+    pub favorite_tools: Vec<String>,
 }
 
 /// The workspace as a whole: what the app opens on.
@@ -645,6 +655,7 @@ mod tests {
                 rail_visible: true,
                 rail_dock: SavedRailDock::Left,
                 perf_readings: true,
+                favorite_tools: vec!["parallel-channel".to_owned()],
             }),
             saved: Vec::new(),
         }

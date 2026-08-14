@@ -36,6 +36,7 @@ pub(super) const LINES_FAMILY: ToolFamily = ToolFamily {
     id: "lines",
     title: "Lines",
     icon: icons::LINE_SEGMENT,
+    icon_strokes: &[],
 };
 
 /// How far a line runs past the anchors that define it.

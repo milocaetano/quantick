@@ -44,10 +44,14 @@ pub const FOCUS_RING_WIDTH_PX: f32 = 1.5;
 
 /// Which outer edge of the button the active marker hugs — the edge facing
 /// the window border the owning rail is docked against.
+///
+/// Three edges, not four, because no rail docks against the right border:
+/// that side of the window belongs to the price axis and the live column
+/// (see [`crate::toolrail::ToolboxDock`]). A `Right` arm here would be a
+/// marker nothing can ever ask for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerEdge {
     Left,
-    Right,
     Top,
     Bottom,
 }
@@ -63,10 +67,6 @@ impl MarkerEdge {
             Self::Left => egui::Rect::from_min_max(
                 egui::pos2(rect.left(), rect.top() + inset),
                 egui::pos2(rect.left() + width, rect.bottom() - inset),
-            ),
-            Self::Right => egui::Rect::from_min_max(
-                egui::pos2(rect.right() - width, rect.top() + inset),
-                egui::pos2(rect.right(), rect.bottom() - inset),
             ),
             Self::Top => egui::Rect::from_min_max(
                 egui::pos2(rect.left() + inset, rect.top()),
@@ -143,6 +143,7 @@ pub fn icon_paint(
 /// A chrome icon button: one Phosphor glyph, four states, fixed hit target.
 pub struct IconButton<'a> {
     glyph: &'a str,
+    strokes: crate::drawings::IconStrokes,
     size: IconSize,
     active: bool,
     enabled: bool,
@@ -158,6 +159,7 @@ impl<'a> IconButton<'a> {
     pub fn new(glyph: &'a str, size: IconSize) -> Self {
         Self {
             glyph,
+            strokes: &[],
             size,
             active: false,
             enabled: true,
@@ -166,6 +168,15 @@ impl<'a> IconButton<'a> {
             disabled_text: "",
             marker_edge: None,
         }
+    }
+
+    /// Paint these vector strokes instead of the glyph when non-empty —
+    /// registry data from [`crate::drawings::IconStrokes`], so the button
+    /// stays one code path for every tool.
+    #[must_use]
+    pub fn strokes(mut self, strokes: crate::drawings::IconStrokes) -> Self {
+        self.strokes = strokes;
+        self
     }
 
     /// Paint a 2 px accent bar on this outer edge while the button is active
@@ -234,13 +245,19 @@ impl<'a> IconButton<'a> {
             if let Some(fill) = paint.fill {
                 painter.rect_filled(rect, egui::Rounding::same(CORNER_RADIUS), fill);
             }
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                self.glyph,
-                egui::FontId::proportional(self.size.glyph),
-                paint.glyph,
-            );
+            if self.strokes.is_empty() {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    self.glyph,
+                    egui::FontId::proportional(self.size.glyph),
+                    paint.glyph,
+                );
+            } else {
+                let box_rect =
+                    egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(self.size.glyph));
+                paint_icon_strokes(painter, box_rect, self.strokes, paint.glyph);
+            }
             if self.active
                 && let Some(edge) = self.marker_edge
             {
@@ -264,6 +281,34 @@ impl<'a> IconButton<'a> {
         } else {
             response.on_hover_text(hover)
         }
+    }
+}
+
+/// Stroke width of a vector icon, chosen to sit near the visual weight of a
+/// Phosphor regular glyph at the rail's glyph size.
+const ICON_STROKE_WIDTH_PX: f32 = 1.4;
+
+/// Paint a vector icon: each polyline's unit-square points scaled into
+/// `rect`. A handful of line segments — cheaper than tesselating a text
+/// glyph, so safe on the per-frame rail.
+pub fn paint_icon_strokes(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    strokes: crate::drawings::IconStrokes,
+    color: egui::Color32,
+) {
+    let stroke = egui::Stroke::new(ICON_STROKE_WIDTH_PX, color);
+    for polyline in strokes {
+        let points: Vec<egui::Pos2> = polyline
+            .iter()
+            .map(|(x, y)| {
+                egui::pos2(
+                    rect.left() + x * rect.width(),
+                    rect.top() + y * rect.height(),
+                )
+            })
+            .collect();
+        painter.add(egui::Shape::line(points, stroke));
     }
 }
 
@@ -344,8 +389,6 @@ mod tests {
         let top = MarkerEdge::Top.bar(rect);
         assert_eq!(top.top(), rect.top());
         assert_eq!(top.height(), ACTIVE_MARKER_WIDTH_PX);
-        let right = MarkerEdge::Right.bar(rect);
-        assert_eq!(right.right(), rect.right());
         let bottom = MarkerEdge::Bottom.bar(rect);
         assert_eq!(bottom.bottom(), rect.bottom());
     }

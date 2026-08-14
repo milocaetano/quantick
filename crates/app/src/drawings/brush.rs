@@ -29,6 +29,7 @@ pub(super) const BRUSH_FAMILY: ToolFamily = ToolFamily {
     id: "brush",
     title: "Freehand",
     icon: icons::SCRIBBLE,
+    icon_strokes: &[],
 };
 
 impl DrawingToolImpl for Brush {

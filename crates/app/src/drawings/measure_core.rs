@@ -21,6 +21,7 @@ pub(super) const MEASURE_FAMILY: ToolFamily = ToolFamily {
     id: "measure",
     title: "Measure",
     icon: icons::RULER,
+    icon_strokes: &[],
 };
 
 /// Which axes a measurement reports. Price range suppresses time, date range
