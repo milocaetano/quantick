@@ -47,15 +47,17 @@ const FLYOUT_GLYPH_PX: f32 = 18.0;
 const FLYOUT_NAME_TEXT_PX: f32 = 12.0;
 const FLYOUT_SHORTCUT_TEXT_PX: f32 = 11.0;
 const FLYOUT_HEADER_TEXT_PX: f32 = 11.0;
-/// The favorite star riding the top-right of a flyout row's tool icon:
-/// glyph size, its centre offset from the icon centre, and the square click
-/// zone around it — bigger than the glyph, a 9 px star is no hit target.
-/// Offset 8 with a 12 px hit keeps the zone clear of the glyph's own centre
-/// (x = 12): a click on the icon must arm, never silently star — the star
-/// only wins clicks that land on the star.
+/// The favorite star holds the row's right edge (trader feedback: beside
+/// the name, not on the icon), with the shortcut label stepped one slot
+/// left so the two never collide. The hit zone is bigger than the glyph —
+/// a 9 px star is no hit target — and stays clear of the icon and name, so
+/// an arming click can never silently star.
 const FLYOUT_STAR_PX: f32 = 9.0;
-const FLYOUT_STAR_OFFSET_PX: f32 = 8.0;
-const FLYOUT_STAR_HIT_PX: f32 = 12.0;
+const FLYOUT_STAR_RIGHT_INSET_PX: f32 = 10.0;
+const FLYOUT_STAR_HIT_PX: f32 = 14.0;
+/// Width the star column reserves at the row's right end; the shortcut
+/// label right-aligns just left of it.
+const FLYOUT_STAR_SLOT_PX: f32 = 20.0;
 /// The corner star badge marking a pinned button in the rail's favorites
 /// section.
 const FAVORITE_BADGE_PX: f32 = 8.0;
@@ -1278,12 +1280,9 @@ impl ToolRail {
             egui::vec2(width, TOOLBOX_FLYOUT_ROW_HEIGHT_PX),
             egui::Sense::click(),
         );
-        // The star rides the icon's top-right corner. Its hit zone outranks
-        // the row: a click there curates favorites, everywhere else arms.
-        let star_center = egui::pos2(
-            rect.left() + FLYOUT_GLYPH_CENTER_X_PX + FLYOUT_STAR_OFFSET_PX,
-            rect.center().y - FLYOUT_STAR_OFFSET_PX,
-        );
+        // The star holds the row's right edge. Its hit zone outranks the
+        // row: a click there curates favorites, everywhere else arms.
+        let star_center = egui::pos2(rect.right() - FLYOUT_STAR_RIGHT_INSET_PX, rect.center().y);
         let star_zone =
             egui::Rect::from_center_size(star_center, egui::Vec2::splat(FLYOUT_STAR_HIT_PX));
         let favorite = self.is_favorite(member);
@@ -1356,7 +1355,10 @@ impl ToolRail {
             );
             if let Some(shortcut) = Tool::Drawing(member).shortcut_label() {
                 ui.painter().text(
-                    egui::pos2(rect.right() - FLYOUT_SHORTCUT_INSET_PX, rect.center().y),
+                    egui::pos2(
+                        rect.right() - FLYOUT_STAR_SLOT_PX - FLYOUT_SHORTCUT_INSET_PX,
+                        rect.center().y,
+                    ),
                     egui::Align2::RIGHT_CENTER,
                     shortcut,
                     egui::FontId::proportional(FLYOUT_SHORTCUT_TEXT_PX),
