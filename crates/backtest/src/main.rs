@@ -608,7 +608,11 @@ fn write_trades(
             .emit();
     }
 
-    let mut text = history::write_header(&run.symbol);
+    // `Replay`, always: a backtest's tape is a recording, and the whole
+    // point of the field is that practice runs stay out of the real track
+    // record. There is no flag to override it, because there is no honest
+    // reason for a backtest to claim it traded live.
+    let mut text = history::write_header(&run.symbol, history::SessionSource::Replay);
     for trade in &run.trades {
         text.push_str(&history::write_trade(trade));
     }
