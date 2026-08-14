@@ -136,7 +136,21 @@ def tick(time_ms, price, flags, bid=0.0, ask=0.0, volume=1.0):
     }
 
 
+#: The clock every B3 broker's server runs on, seconds from UTC.
+B3_UTC_OFFSET_S = -10_800
+
+#: Price decimals for the mini index: it trades in whole points.
+WIN_PRICE_DIGITS = 0
+
 Export = namedtuple("Export", "body written events relative")
+Refusal = namedtuple("Refusal", "exit_code events files_written")
+
+
+def read_events(captured):
+    """The JSON diagnostics from a captured stderr, in order."""
+    return [
+        json.loads(line) for line in captured.getvalue().splitlines() if line.strip()
+    ]
 
 
 def run_export(ticks, symbol="WINV26", day="2026-08-12"):
@@ -150,13 +164,34 @@ def run_export(ticks, symbol="WINV26", day="2026-08-12"):
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp)
         with contextlib.redirect_stderr(captured):
-            path, written = export_tape(FakeMt5(ticks), symbol, day, -10_800, 0, out)
+            path, written = export_tape(
+                FakeMt5(ticks), symbol, day, B3_UTC_OFFSET_S, WIN_PRICE_DIGITS, out
+            )
         body = path.read_text(encoding="utf-8")
         relative = path.relative_to(out).as_posix()
-    events = [
-        json.loads(line) for line in captured.getvalue().splitlines() if line.strip()
-    ]
-    return Export(body, written, events, relative)
+    return Export(body, written, read_events(captured), relative)
+
+
+def run_refusal(ticks, symbol="WINV26", day="2026-08-12"):
+    """Drive `export_tape` on a day it must refuse.
+
+    Returns the exit code it stopped with, what it said, and every file it
+    left behind — which has to be none: a refusal that writes half a tape is
+    a day the session browser would offer and the trader could not use.
+    """
+    captured = io.StringIO()
+    exit_code = None
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp)
+        with contextlib.redirect_stderr(captured):
+            try:
+                export_tape(
+                    FakeMt5(ticks), symbol, day, B3_UTC_OFFSET_S, WIN_PRICE_DIGITS, out
+                )
+            except SystemExit as stop:
+                exit_code = stop.code
+        files_written = sorted(path.name for path in out.rglob("*") if path.is_file())
+    return Refusal(exit_code, read_events(captured), files_written)
 
 
 def one_event(events, code):
@@ -167,8 +202,9 @@ def one_event(events, code):
 
 
 def data_rows(body):
-    """The tape's rows, without its six header lines."""
-    return [line for line in body.splitlines() if line and not line.startswith("#")][1:]
+    """The tape's prints: everything past the `#` block and the column line."""
+    declared = [line for line in body.splitlines() if line and not line.startswith("#")]
+    return declared[1:]
 
 
 def test_a_flagged_day_reaches_disk_with_its_sides_declared():
@@ -224,12 +260,28 @@ def test_a_stamped_day_is_rederived_and_credits_the_venue_with_nothing():
 
 def test_a_day_with_no_prints_refuses_instead_of_writing_an_empty_tape():
     # A quote-only day (COPY_TICKS_TRADE lets those through) is not a session.
-    try:
-        run_export([tick(1_786_000_000_000, 0.0, TICK_FLAG_BUY, 172255.0, 172260.0)])
-    except SystemExit as exit_code:
-        assert exit_code.code == 4
-    else:
-        raise AssertionError("a tape with no print must not be written")
+    refusal = run_refusal(
+        [tick(1_786_000_000_000, 0.0, TICK_FLAG_BUY, 172255.0, 172260.0)]
+    )
+
+    assert refusal.exit_code == 4
+    assert refusal.files_written == [], "a refused day must leave nothing behind"
+    assert one_event(refusal.events, "EXPORT_TAPE_EMPTY")["fix"]
+
+
+def test_a_terminal_that_serves_no_ticks_names_the_day_and_the_next_step():
+    # `copy_ticks_range` answers None when the terminal holds no tick history
+    # for the symbol — the likeliest remaining failure on a contract that has
+    # just started trading, and the one a trader can actually act on by
+    # opening its chart once.
+    refusal = run_refusal(None)
+
+    assert refusal.exit_code == 4
+    assert refusal.files_written == []
+    failure = one_event(refusal.events, "EXPORT_TAPE_FAILED")
+    assert failure["day"] == "2026-08-12"
+    assert failure["symbol"] == "WINV26"
+    assert "chart" in failure["fix"], "the fix must be something to go and do"
 
 
 if __name__ == "__main__":
