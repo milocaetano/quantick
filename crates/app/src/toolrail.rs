@@ -72,9 +72,21 @@ const BADGE_RADIUS_PX: f32 = 3.0;
 const BADGE_TEXT_PX: f32 = 9.0;
 const BADGE_PAD_X_PX: f32 = 3.0;
 const BADGE_CORNER_INSET_PX: f32 = 2.0;
+/// The band chevron: a slim button at each end of the scrolling tool band.
+/// Shorter than a tool button on purpose — it is chrome, not a tool, and a
+/// full 32 px slot each end would cost a tool's worth of band.
+const BAND_ARROW_LENGTH_PX: f32 = 14.0;
+/// Chevron glyph size, and the inset of the band's fade hint from its edge.
+const BAND_ARROW_GLYPH_PX: f32 = 12.0;
+/// Fewest tool buttons the band must be able to show before the rail gives
+/// up scrolling and falls back to Compact. A band showing one icon at a time
+/// is worse than the More menu it would replace.
+const BAND_MIN_VISIBLE_ITEMS: usize = 4;
 /// A separator block along the long axis: the hairline; its 4 px clear space
 /// each side comes from the cluster's item spacing.
 const SEPARATOR_BLOCK_PX: f32 = 2.0 * TOOLBOX_ITEM_GAP_PX + 1.0;
+/// A chevron block along the long axis: the arrow plus the gap after it.
+const BAND_ARROW_BLOCK_PX: f32 = BAND_ARROW_LENGTH_PX + TOOLBOX_ITEM_GAP_PX;
 /// The grip block: its extent plus the item gap that follows.
 const GRIP_BLOCK_PX: f32 = TOOLBOX_GRIP_LENGTH_PX + TOOLBOX_ITEM_GAP_PX;
 #[cfg(test)]
@@ -214,6 +226,9 @@ impl ToolboxDock {
 enum RailStage {
     /// Every tool slot visible.
     Full,
+    /// Every tool still reachable, but the run scrolls between two chevrons.
+    /// Grip, Pointer, Crosshair and the pinned favorites stay anchored.
+    Scroll,
     /// Pointer, Crosshair, the armed tool and More; full trailing cluster.
     Compact,
     /// Pointer, the armed tool, More and Objects.
@@ -263,24 +278,99 @@ fn tool_slots() -> &'static [RailSlot] {
     })
 }
 
-/// Long-axis length of the full rail (§2.8 of the spec). The favorites
-/// section — a separator plus one slot per starred tool — only exists when
-/// something is starred, so an empty list costs no length.
-fn full_length(tool_slot_count: usize, favorite_count: usize) -> f32 {
-    let n = tool_slot_count as f32;
-    let favorites = if favorite_count == 0 {
+/// Long-axis length of a run of `count` rail buttons, gaps between them.
+fn run_length(count: usize) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    let n = count as f32;
+    n * TOOLRAIL_ICON.hit + (n - 1.0) * TOOLBOX_ITEM_GAP_PX
+}
+
+/// The anchored head of the leading cluster: grip, Pointer, Crosshair, the
+/// separator, and the pinned favorites behind a separator of their own. This
+/// never scrolls — the trader starred these to keep them under the pointer,
+/// and the two navigation tools are the way out of any drawing mode.
+fn leading_anchor_length(anchored_favorites: usize) -> f32 {
+    let favorites = if anchored_favorites == 0 {
         0.0
     } else {
-        SEPARATOR_BLOCK_PX + favorite_count as f32 * (TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX)
+        SEPARATOR_BLOCK_PX + anchored_favorites as f32 * (TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX)
     };
+    GRIP_BLOCK_PX + (2.0 * TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX) + SEPARATOR_BLOCK_PX + favorites
+}
+
+/// Everything the tool band cannot spend: margins, the anchored head, the
+/// minimum cluster gap and the trailing cluster.
+fn fixed_length(anchored_favorites: usize) -> f32 {
     2.0 * TOOLBOX_MARGIN_PX
-        + GRIP_BLOCK_PX
-        + (2.0 * TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX)
-        + SEPARATOR_BLOCK_PX
-        + (n * TOOLRAIL_ICON.hit + (n - 1.0) * TOOLBOX_ITEM_GAP_PX)
-        + favorites
+        + leading_anchor_length(anchored_favorites)
         + TOOLBOX_MIN_CLUSTER_GAP_PX
         + trailing_length()
+}
+
+/// Long-axis length of the full rail (§2.8 of the spec): the fixed chrome
+/// plus every tool slot, no scrolling. The favorites section only exists
+/// when something is starred, so an empty list costs no length.
+fn full_length(tool_slot_count: usize, favorite_count: usize) -> f32 {
+    fixed_length(favorite_count) + run_length(tool_slot_count)
+}
+
+/// Long-axis length at the Scroll stage: the fixed chrome, both chevrons and
+/// the band's floor of visible tools.
+fn scroll_length(anchored_favorites: usize) -> f32 {
+    fixed_length(anchored_favorites)
+        + 2.0 * BAND_ARROW_BLOCK_PX
+        + run_length(BAND_MIN_VISIBLE_ITEMS)
+}
+
+/// How many favorites stay anchored outside the band. A pin is only worth
+/// anchoring while the band keeps its floor of visible tools; past that the
+/// surplus spills into the band's head — still star-badged, still reachable
+/// by scrolling — rather than pushing the whole rail into Compact, which is
+/// what used to make the fourth star swallow the toolbar.
+fn anchored_favorites(available: f32, favorite_count: usize) -> usize {
+    let mut anchored = favorite_count;
+    while anchored > 0 && available < scroll_length(anchored) {
+        anchored -= 1;
+    }
+    anchored
+}
+
+/// Long-axis extent the band itself gets, chevrons excluded — snapped down
+/// to a whole number of buttons.
+///
+/// A toolbar button is atomic: half an icon is not readable, not clickable
+/// with confidence, and reads as a rendering fault rather than as "there is
+/// more below". Sizing the viewport to whole slots makes every offset a
+/// chevron can reach a multiple of one slot too, because the surplus
+/// `content - viewport` then divides exactly. The leftover px are spent by
+/// the flexible gap between the clusters, where nothing is drawn.
+fn band_viewport(available: f32, anchored_favorites: usize) -> f32 {
+    let raw = (available - fixed_length(anchored_favorites) - 2.0 * BAND_ARROW_BLOCK_PX).max(0.0);
+    if raw < TOOLRAIL_ICON.hit {
+        return raw;
+    }
+    run_length(band_visible_items(raw))
+}
+
+/// How far the band can scroll: zero when everything already fits.
+fn band_max_offset(viewport: f32, item_count: usize) -> f32 {
+    (run_length(item_count) - viewport).max(0.0)
+}
+
+/// Whole buttons visible in `viewport` — at least one, so a chevron click
+/// always moves.
+fn band_visible_items(viewport: f32) -> usize {
+    let slot = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+    (((viewport + TOOLBOX_ITEM_GAP_PX) / slot).floor() as usize).max(1)
+}
+
+/// One chevron click: a page less one button, so the tool the trader was
+/// looking at stays on screen to anchor where they landed.
+fn band_scroll_step(viewport: f32) -> f32 {
+    let page = band_visible_items(viewport).saturating_sub(1).max(1);
+    page as f32 * (TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX)
 }
 
 /// Long-axis length at the Compact stage: the tool run gives way to the
@@ -318,9 +408,14 @@ fn trailing_length() -> f32 {
 }
 
 /// Resolve the stage for an available long-axis extent (margins included).
+/// The Scroll boundary is measured with no favorite anchored, because
+/// [`anchored_favorites`] gives pins up one at a time before the band is
+/// ever asked to give up its floor.
 fn stage_for(available: f32, tool_slot_count: usize, favorite_count: usize) -> RailStage {
     if available >= full_length(tool_slot_count, favorite_count) {
         RailStage::Full
+    } else if available >= scroll_length(0) {
+        RailStage::Scroll
     } else if available >= compact_length() {
         RailStage::Compact
     } else {
@@ -348,6 +443,20 @@ pub struct ToolRail {
     /// section at the rail's tool end. Star order, not registry order, so a
     /// favorite keeps the position the trader learned.
     favorites: Vec<DrawingTool>,
+    /// Scroll offset of the tool band along the rail's long axis, in px.
+    /// Only the Scroll stage spends it; every other stage clamps it back to
+    /// zero, so unstarring back down to a rail that fits leaves no residue.
+    band_offset: f32,
+    /// An offset a chevron click asked for, handed to the band on the next
+    /// frame. `None` leaves the band to the wheel and to drag scrolling.
+    band_target: Option<f32>,
+    /// The armed tool changed and the band has not yet been asked to show
+    /// it. The spec's standing promise is that the armed tool always keeps a
+    /// real slot (§2.8); a keyboard shortcut can arm a tool the band has
+    /// scrolled past, and a trader who cannot see what is armed does not
+    /// know what their next click will draw. Set on arming only, never held,
+    /// so scrolling away from the armed tool by hand stays where it was put.
+    reveal_armed: bool,
     /// Currently-nearest drop edge while a grip drag is live.
     drag_preview: Option<ToolboxDock>,
     dragging: bool,
@@ -379,6 +488,15 @@ pub struct ToolRail {
     flyout_star_rects: Vec<(DrawingTool, egui::Rect)>,
     #[cfg(test)]
     favorite_rects: Vec<(DrawingTool, egui::Rect)>,
+    /// The band chevrons and whether each one had somewhere to go.
+    #[cfg(test)]
+    band_leading_arrow: Option<(egui::Rect, bool)>,
+    #[cfg(test)]
+    band_trailing_arrow: Option<(egui::Rect, bool)>,
+    /// The band's viewport. A button is only *reachable* if it lands inside
+    /// this — allocation alone proves nothing once the band clips.
+    #[cfg(test)]
+    band_rect: Option<egui::Rect>,
 }
 
 impl Default for ToolRail {
@@ -391,6 +509,9 @@ impl Default for ToolRail {
             magnet: false,
             last_family_member: BTreeMap::new(),
             favorites: Vec::new(),
+            band_offset: 0.0,
+            band_target: None,
+            reveal_armed: false,
             drag_preview: None,
             dragging: false,
             drag_cancelled: false,
@@ -418,6 +539,12 @@ impl Default for ToolRail {
             flyout_star_rects: Vec::new(),
             #[cfg(test)]
             favorite_rects: Vec::new(),
+            #[cfg(test)]
+            band_leading_arrow: None,
+            #[cfg(test)]
+            band_trailing_arrow: None,
+            #[cfg(test)]
+            band_rect: None,
         }
     }
 }
@@ -477,6 +604,9 @@ impl ToolRail {
         {
             self.last_family_member.insert(family.id, drawing_tool);
         }
+        if self.tool != tool {
+            self.reveal_armed = true;
+        }
         self.tool = tool;
     }
 
@@ -514,6 +644,14 @@ impl ToolRail {
                 self.favorites.push(tool);
             }
         }
+    }
+
+    /// Park the scrolling tool band at `offset` px along the rail — the
+    /// validation hook for a state that otherwise takes a chevron click.
+    /// The band clamps it on the next frame, so `f32::INFINITY` means "the
+    /// far end" and a rail that does not scroll ignores it entirely.
+    pub fn set_band_offset(&mut self, offset: f32) {
+        self.band_target = Some(offset.max(0.0));
     }
 
     /// Whether the repeat pin keeps the tool armed after an object completes.
@@ -656,6 +794,9 @@ impl ToolRail {
             self.flyout_rects.clear();
             self.flyout_star_rects.clear();
             self.favorite_rects.clear();
+            self.band_leading_arrow = None;
+            self.band_trailing_arrow = None;
+            self.band_rect = None;
         }
 
         let vertical = self.dock.is_vertical();
@@ -665,7 +806,8 @@ impl ToolRail {
             ui.available_width()
         } + 2.0 * TOOLBOX_MARGIN_PX;
         let slots = tool_slots();
-        let stage = stage_for(available, slots.len(), self.favorites.len());
+        let favorite_count = self.favorites.len();
+        let stage = stage_for(available, slots.len(), favorite_count);
 
         // Chart-facing hairline: the only stroke the rail paints — a
         // four-sided stroke would draw a seam against the window edge.
@@ -700,6 +842,9 @@ impl ToolRail {
             }
             match stage {
                 RailStage::Full => {
+                    self.band_offset = 0.0;
+                    self.band_target = None;
+                    self.draw_favorites_section(ui, vertical, drawings, 0..favorite_count);
                     for slot in slots {
                         match slot {
                             RailSlot::Single(tool) => {
@@ -710,9 +855,15 @@ impl ToolRail {
                             }
                         }
                     }
-                    self.draw_favorites_section(ui, vertical, drawings);
+                }
+                RailStage::Scroll => {
+                    let anchored = anchored_favorites(available, favorite_count);
+                    self.draw_favorites_section(ui, vertical, drawings, 0..anchored);
+                    self.draw_band(ui, vertical, drawings, slots, anchored, available);
                 }
                 RailStage::Compact | RailStage::Minimal => {
+                    self.band_offset = 0.0;
+                    self.band_target = None;
                     if let Some(armed) = self.tool.drawing_tool() {
                         self.draw_button(ui, Tool::Drawing(armed), drawings);
                     }
@@ -1059,14 +1210,31 @@ impl ToolRail {
     /// button per starred tool in star order. One click arms; unstarring
     /// lives only on the star in the tool's own flyout row, so a pinned
     /// button can never be destroyed by the click meant to use it.
-    fn draw_favorites_section(&mut self, ui: &mut egui::Ui, vertical: bool, drawings: &Drawings) {
-        if self.favorites.is_empty() {
+    fn draw_favorites_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        vertical: bool,
+        drawings: &Drawings,
+        range: std::ops::Range<usize>,
+    ) {
+        if range.is_empty() {
             return;
         }
         self.draw_separator(ui, vertical);
+        self.draw_favorite_buttons(ui, drawings, range);
+    }
+
+    /// The pinned buttons themselves, without the section separator — the
+    /// band reuses this for favorites that spilled past the anchored head.
+    fn draw_favorite_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        drawings: &Drawings,
+        range: std::ops::Range<usize>,
+    ) {
         // Indexed so the loop never clones the list on the per-frame path;
         // `DrawingTool` is `Copy` and arming cannot reorder favorites.
-        for index in 0..self.favorites.len() {
+        for index in range {
             let tool = self.favorites[index];
             let armed = self.tool == Tool::Drawing(tool);
             let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
@@ -1096,6 +1264,216 @@ impl ToolRail {
                 self.arm(Tool::Drawing(tool));
             }
         }
+    }
+
+    /// The scrolling tool band: a chevron at each end and, between them, the
+    /// favorites that spilled past the anchored head followed by every tool
+    /// slot. Nothing leaves the inventory — the band is a window onto it, so
+    /// a fourth star can no longer swallow the toolbar.
+    fn draw_band(
+        &mut self,
+        ui: &mut egui::Ui,
+        vertical: bool,
+        drawings: &Drawings,
+        slots: &'static [RailSlot],
+        anchored: usize,
+        available: f32,
+    ) {
+        let viewport = band_viewport(available, anchored);
+        let spilled = self.favorites.len() - anchored;
+        let max_offset = band_max_offset(viewport, spilled + slots.len());
+        // Arming a tool the band has scrolled past pulls it back into view,
+        // so the rail keeps the spec's promise that the armed tool always
+        // has a real slot. Only on the frame it was armed: past that, the
+        // band stays wherever the trader put it.
+        if self.reveal_armed {
+            self.reveal_armed = false;
+            if let Some(index) = self.armed_band_index(slots, spilled) {
+                let span = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+                let visible = band_visible_items(viewport);
+                let first = (self.band_offset / span).round() as usize;
+                if index < first {
+                    self.band_target = Some(index as f32 * span);
+                } else if index >= first + visible {
+                    self.band_target = Some((index + 1 - visible) as f32 * span);
+                }
+            }
+        }
+        // A pending chevron click is resolved before anything is drawn, so
+        // both chevrons and the band read one offset. Taking it from last
+        // frame instead would leave the way-back arrow a frame stale — dead
+        // on the very click that opened it.
+        let target = self.band_target.take().map(|at| at.clamp(0.0, max_offset));
+        let offset = target.unwrap_or(self.band_offset).clamp(0.0, max_offset);
+        self.band_offset = offset;
+        let step = band_scroll_step(viewport);
+
+        if self.draw_chevron(ui, vertical, true, offset > 0.0) {
+            self.band_target = Some(offset - step);
+        }
+
+        let mut area = egui::ScrollArea::new([!vertical, vertical])
+            .id_salt("toolrail_band")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .auto_shrink([false, false]);
+        area = if vertical {
+            area.max_height(viewport)
+        } else {
+            area.max_width(viewport)
+        };
+        if let Some(target) = target {
+            area = if vertical {
+                area.vertical_scroll_offset(target)
+            } else {
+                area.horizontal_scroll_offset(target)
+            };
+        }
+        let inner = if vertical {
+            egui::Layout::top_down(egui::Align::Center)
+        } else {
+            egui::Layout::left_to_right(egui::Align::Center)
+        };
+        // The band is handed its extent rather than left to ask for one:
+        // told only a maximum, a scroll area still claims whatever the
+        // parent has left, and the far cluster needs that room. Its bar is
+        // also denied a lane across the rail's short axis, because a hidden
+        // bar still books one and 44 px has none to spare.
+        let band_size = if vertical {
+            egui::vec2(ui.available_width(), viewport)
+        } else {
+            egui::vec2(viewport, ui.available_height())
+        };
+        let output = ui
+            .allocate_ui_with_layout(band_size, inner, |ui| {
+                let scroll = &mut ui.spacing_mut().scroll;
+                scroll.floating = true;
+                scroll.bar_width = 0.0;
+                scroll.floating_allocated_width = 0.0;
+                area.show(ui, |ui| {
+                    ui.with_layout(inner, |ui| {
+                        ui.spacing_mut().item_spacing =
+                            egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
+                        let favorites = self.favorites.len();
+                        self.draw_favorite_buttons(ui, drawings, anchored..favorites);
+                        for slot in slots {
+                            match slot {
+                                RailSlot::Single(tool) => {
+                                    self.draw_button(ui, Tool::Drawing(*tool), drawings);
+                                }
+                                RailSlot::Family { family, members } => {
+                                    self.draw_family_slot(ui, *family, members, drawings);
+                                }
+                            }
+                        }
+                    });
+                })
+            })
+            .inner;
+        #[cfg(test)]
+        {
+            self.band_rect = Some(output.inner_rect);
+        }
+        // The wheel moves the band without asking us, so the offset is read
+        // back rather than assumed.
+        let scrolled = if vertical {
+            output.state.offset.y
+        } else {
+            output.state.offset.x
+        };
+        self.band_offset = scrolled.clamp(0.0, max_offset);
+
+        if self.draw_chevron(ui, vertical, false, self.band_offset < max_offset) {
+            self.band_target = Some(self.band_offset + step);
+        }
+        // The trailing chevron sits past the band, so its click can only be
+        // honoured next frame. Ask for that frame: without it a click on a
+        // still chart reads as a dead button.
+        if self.band_target.is_some() {
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// Where the armed tool sits among the band's items: the spilled
+    /// favorites first, then the tool slots in registry order. `None` when
+    /// nothing is armed, or when the armed tool is anchored outside the band
+    /// and therefore already on screen.
+    fn armed_band_index(&self, slots: &[RailSlot], spilled: usize) -> Option<usize> {
+        let armed = self.tool.drawing_tool()?;
+        let anchored = self.favorites.len() - spilled;
+        if let Some(offset) = self.favorites[anchored..]
+            .iter()
+            .position(|pinned| *pinned == armed)
+        {
+            return Some(offset);
+        }
+        let slot = slots.iter().position(|slot| match slot {
+            RailSlot::Single(tool) => *tool == armed,
+            RailSlot::Family { members, .. } => members.contains(&armed),
+        })?;
+        Some(spilled + slot)
+    }
+
+    /// One end of the band's navigation pair. Both ends keep their slot for
+    /// as long as the band scrolls: a chevron that vanished at the end of
+    /// travel would shift every tool under the pointer by its own length.
+    /// A dead end dims and stops sensing clicks instead.
+    fn draw_chevron(
+        &mut self,
+        ui: &mut egui::Ui,
+        vertical: bool,
+        leading: bool,
+        live: bool,
+    ) -> bool {
+        let size = if vertical {
+            egui::vec2(TOOLRAIL_ICON.hit, BAND_ARROW_LENGTH_PX)
+        } else {
+            egui::vec2(BAND_ARROW_LENGTH_PX, TOOLRAIL_ICON.hit)
+        };
+        let sense = if live {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(size, sense);
+        #[cfg(test)]
+        if leading {
+            self.band_leading_arrow = Some((rect, live));
+        } else {
+            self.band_trailing_arrow = Some((rect, live));
+        }
+        if ui.is_rect_visible(rect) {
+            let glyph = match (vertical, leading) {
+                (true, true) => icons::CARET_UP,
+                (true, false) => icons::CARET_DOWN,
+                (false, true) => icons::CARET_LEFT,
+                (false, false) => icons::CARET_RIGHT,
+            };
+            let color = if !live {
+                theme::TEXT_FAINT
+            } else if response.hovered() {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            };
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                glyph,
+                egui::FontId::proportional(BAND_ARROW_GLYPH_PX),
+                color,
+            );
+        }
+        // A dimmed control with no reason reads as a bug, so the dead end
+        // says which end it is rather than saying nothing.
+        let hint = match (vertical, leading, live) {
+            (true, true, true) => "Scroll tools up",
+            (true, false, true) => "Scroll tools down",
+            (false, true, true) => "Scroll tools left",
+            (false, false, true) => "Scroll tools right",
+            (_, true, false) => "Start of the tool list",
+            (_, false, false) => "End of the tool list",
+        };
+        live && response.on_hover_text(hint).clicked()
     }
 
     /// A family's shown member: the last-armed one, or `None` before any
@@ -1503,8 +1881,13 @@ mod tests {
             "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Anchored VWAP and Text"
         );
         assert_eq!(full_length(slots, 0), 633.0);
+        assert_eq!(scroll_length(0), 489.0);
         assert_eq!(compact_length(), 381.0);
         assert_eq!(minimal_length(), 191.0);
+        // The band sits strictly between Full and Compact. Overlapping
+        // either neighbour would make the rail ambiguous at that extent.
+        assert!(scroll_length(0) < full_length(slots, 0));
+        assert!(scroll_length(0) > compact_length());
     }
 
     #[test]
@@ -2094,7 +2477,9 @@ mod tests {
     }
 
     /// The favorites section costs rail length only when it exists, and the
-    /// stage math knows about it — pins cannot silently overflow the rail.
+    /// stage math knows about it. Overflowing pins hand the rail to the
+    /// scrolling band — never to Compact, which is what used to make a
+    /// handful of stars swallow the whole toolbar.
     #[test]
     fn favorites_lengthen_the_full_stage_only_when_present() {
         let slots = tool_slots().len();
@@ -2103,8 +2488,8 @@ mod tests {
         assert_eq!(stage_for(extent, slots, 0), RailStage::Full);
         assert_eq!(
             stage_for(extent, slots, 2),
-            RailStage::Compact,
-            "two pins no longer fit the bare-full extent"
+            RailStage::Scroll,
+            "two pins overflow the bare-full extent into the band, not into Compact"
         );
     }
 
@@ -2128,9 +2513,13 @@ mod tests {
             assert_eq!(first, second);
         }
         // The full stage grows one slot per registry addition; the anchored
-        // VWAP took it from 597 to 633.
+        // VWAP took it from 597 to 633. Below it the band takes over, and
+        // only below the band's own floor does the rail fall to Compact.
+        let band_floor = scroll_length(0);
         assert_eq!(stage_for(633.0, slots, 0), RailStage::Full);
-        assert_eq!(stage_for(632.9, slots, 0), RailStage::Compact);
+        assert_eq!(stage_for(632.9, slots, 0), RailStage::Scroll);
+        assert_eq!(stage_for(band_floor, slots, 0), RailStage::Scroll);
+        assert_eq!(stage_for(band_floor - 0.1, slots, 0), RailStage::Compact);
         assert_eq!(stage_for(381.0, slots, 0), RailStage::Compact);
         assert_eq!(stage_for(380.9, slots, 0), RailStage::Minimal);
     }
@@ -2355,5 +2744,396 @@ mod tests {
             1,
             "global protections must never delete"
         );
+    }
+
+    /// A screen short enough to push the rail into the band, tall enough to
+    /// stay clear of Compact.
+    fn scrolling_screen() -> egui::Rect {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 560.0));
+        let slots = tool_slots().len();
+        assert_eq!(
+            stage_for(560.0, slots, 0),
+            RailStage::Scroll,
+            "the fixture height must exercise the band"
+        );
+        screen
+    }
+
+    /// Click a chevron and let the rail settle. The trailing one is drawn
+    /// past the band, so it lands on the frame the rail requests next.
+    fn click_chevron(
+        rail: &mut ToolRail,
+        drawings: &mut Drawings,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        arrow: egui::Rect,
+    ) {
+        click_at(rail, drawings, ctx, screen, arrow.center());
+        rail_frame_with(rail, drawings, ctx, screen, Vec::new());
+    }
+
+    /// Ids of the first `count` registry tools, for starring in bulk.
+    fn tool_ids(count: usize) -> Vec<String> {
+        DRAWING_TOOLS
+            .iter()
+            .take(count)
+            .map(|tool| tool.id().to_owned())
+            .collect()
+    }
+
+    /// Every tool the band actually showed this frame — allocated *and*
+    /// inside the viewport, which is what "reachable" means once it clips.
+    fn tools_on_screen(rail: &ToolRail) -> Vec<DrawingTool> {
+        let Some(band) = rail.band_rect else {
+            return Vec::new();
+        };
+        rail.button_rects
+            .iter()
+            .flatten()
+            .filter(|(_, rect)| band.contains_rect(*rect))
+            .filter_map(|(tool, _)| tool.drawing_tool())
+            .collect()
+    }
+
+    /// The offset can never leave the content: no blank band at either end,
+    /// which is the state a trader reads as "the toolbar is lost".
+    #[test]
+    fn the_band_offset_never_leaves_the_content() {
+        let viewport = run_length(BAND_MIN_VISIBLE_ITEMS);
+        assert_eq!(
+            band_max_offset(viewport, BAND_MIN_VISIBLE_ITEMS),
+            0.0,
+            "content that fits cannot scroll"
+        );
+        assert_eq!(
+            band_max_offset(viewport, 2),
+            0.0,
+            "less content than viewport still cannot scroll"
+        );
+        let max = band_max_offset(viewport, BAND_MIN_VISIBLE_ITEMS + 3);
+        assert!(max > 0.0, "surplus content scrolls");
+        assert_eq!(
+            max,
+            run_length(BAND_MIN_VISIBLE_ITEMS + 3) - viewport,
+            "the last button lands flush with the band's far edge"
+        );
+    }
+
+    /// The band never shows half a button. The viewport is whole slots, so
+    /// the travel divides into whole slots too and every position a chevron
+    /// can reach lands on a button boundary — no star badge floating beside
+    /// a sliced icon, which is what the first capture of the spill state
+    /// showed.
+    #[test]
+    fn the_band_never_shows_a_sliced_button() {
+        let slot = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+        for extent in [489.0_f32, 500.0, 517.3, 560.0, 599.9, 632.9] {
+            for pins in 0..8 {
+                let anchored = anchored_favorites(extent, pins);
+                let viewport = band_viewport(extent, anchored);
+                let items = band_visible_items(viewport);
+                assert_eq!(
+                    viewport,
+                    run_length(items),
+                    "viewport is whole buttons at {extent} px with {pins} pins"
+                );
+                let max = band_max_offset(viewport, items + 5);
+                let steps = max / slot;
+                assert!(
+                    (steps - steps.round()).abs() < 1e-3,
+                    "travel divides into whole buttons at {extent} px with {pins} pins"
+                );
+            }
+        }
+    }
+
+    /// A chevron click leaves one button of overlap, so the trader keeps a
+    /// landmark across the jump instead of a fresh screen of icons.
+    #[test]
+    fn a_chevron_step_keeps_one_button_of_overlap() {
+        let slot = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+        let viewport = run_length(5);
+        assert_eq!(band_visible_items(viewport), 5);
+        assert_eq!(band_scroll_step(viewport), 4.0 * slot);
+        // Even a band down to its last button must still move on a click.
+        assert!(band_scroll_step(TOOLRAIL_ICON.hit) >= slot);
+        assert!(band_scroll_step(0.0) >= slot);
+    }
+
+    /// Pins are anchored while the band keeps its floor, and spill into the
+    /// band after that — a star can cost a pin its anchor, never its
+    /// existence.
+    #[test]
+    fn favorites_spill_into_the_band_instead_of_evicting_the_toolbar() {
+        let extent = scroll_length(0);
+        assert_eq!(anchored_favorites(extent, 0), 0);
+        assert_eq!(
+            anchored_favorites(extent, 4),
+            0,
+            "the band's floor outranks the anchor"
+        );
+        let roomy = scroll_length(3);
+        assert_eq!(anchored_favorites(roomy, 3), 3, "all three fit anchored");
+        assert_eq!(
+            anchored_favorites(roomy, 6),
+            3,
+            "the surplus spills rather than shrinking the band past its floor"
+        );
+    }
+
+    /// The bug this branch closes: starring past the rail's height used to
+    /// drop the entire tool run for the More menu. Now every tool is still
+    /// reachable by scrolling, and every pin still exists.
+    #[test]
+    fn no_tool_is_unreachable_once_favorites_overflow_the_rail() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        rail.set_favorites(&tool_ids(6));
+        assert_eq!(rail.favorites().len(), 6, "six pins are live");
+
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        assert!(
+            rail.band_rect.is_some(),
+            "the rail scrolls instead of collapsing to Compact"
+        );
+        assert!(rail.more_rect.is_none(), "no tool was swallowed into More");
+
+        let mut seen: Vec<DrawingTool> = tools_on_screen(&rail);
+        for _ in 0..40 {
+            let Some((arrow, live)) = rail.band_trailing_arrow else {
+                break;
+            };
+            if !live {
+                break;
+            }
+            click_chevron(&mut rail, &mut drawings, &ctx, screen, arrow);
+            for tool in tools_on_screen(&rail) {
+                if !seen.contains(&tool) {
+                    seen.push(tool);
+                }
+            }
+        }
+
+        for tool in DRAWING_TOOLS {
+            let folded = tool_slots().iter().any(|slot| match slot {
+                RailSlot::Family { members, .. } => {
+                    members.contains(&tool) && members.first() != Some(&tool)
+                }
+                RailSlot::Single(_) => false,
+            });
+            assert!(
+                folded || seen.contains(&tool),
+                "{} never became reachable by scrolling",
+                tool.id()
+            );
+        }
+    }
+
+    /// Both ends of the band travel, and each chevron is live only while its
+    /// own direction has somewhere to go.
+    #[test]
+    fn each_chevron_is_live_only_while_its_end_has_travel() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+
+        let (_, up_live) = rail.band_leading_arrow.expect("leading chevron rendered");
+        let (down, down_live) = rail.band_trailing_arrow.expect("trailing chevron rendered");
+        assert!(!up_live, "nothing above the band at rest");
+        assert!(down_live, "the run overflows, so the band can descend");
+
+        click_chevron(&mut rail, &mut drawings, &ctx, screen, down);
+        assert!(rail.band_offset > 0.0, "the click moved the band");
+        let (_, up_live) = rail.band_leading_arrow.expect("leading chevron rendered");
+        assert!(up_live, "the way back opens as soon as the band moves");
+
+        for _ in 0..40 {
+            let Some((arrow, live)) = rail.band_trailing_arrow else {
+                break;
+            };
+            if !live {
+                break;
+            }
+            click_chevron(&mut rail, &mut drawings, &ctx, screen, arrow);
+        }
+        let (_, down_live) = rail.band_trailing_arrow.expect("trailing chevron rendered");
+        assert!(!down_live, "the chevron dies at the end of travel");
+        assert!(
+            rail.band_leading_arrow.is_some_and(|(_, live)| live),
+            "and the way back stays open"
+        );
+    }
+
+    /// Arming a tool by shortcut pulls the band to it. Without this the
+    /// rail can show a scrolled-away run while a tool the trader cannot see
+    /// is armed — they would not know what the next click draws.
+    #[test]
+    fn arming_a_scrolled_away_tool_brings_it_back_into_view() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+
+        // The last registry tool is past the band's floor by construction.
+        let last = *DRAWING_TOOLS.last().expect("the registry is not empty");
+        assert!(
+            !tools_on_screen(&rail).contains(&last),
+            "the fixture must start with that tool out of view"
+        );
+
+        rail.arm(Tool::Drawing(last));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        assert!(
+            tools_on_screen(&rail).contains(&last),
+            "arming scrolled the band to the armed tool"
+        );
+
+        // And the band stays put afterwards: a reveal is a one-frame event,
+        // never a magnet that fights the trader scrolling away.
+        let settled = rail.band_offset;
+        let up = rail.band_leading_arrow.expect("leading chevron").0;
+        click_chevron(&mut rail, &mut drawings, &ctx, screen, up);
+        assert!(
+            rail.band_offset < settled,
+            "the band scrolled away and was not dragged back"
+        );
+    }
+
+    /// The wheel scrolls the same band the chevrons do. A trader whose hand
+    /// is already on the mouse should not have to find a 14 px arrow.
+    #[test]
+    fn the_wheel_scrolls_the_band() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        let over = rail.band_rect.expect("the band renders").center();
+        assert_eq!(rail.band_offset, 0.0, "the band starts at the top");
+
+        for _ in 0..4 {
+            rail_frame_with(
+                &mut rail,
+                &mut drawings,
+                &ctx,
+                screen,
+                vec![
+                    egui::Event::PointerMoved(over),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -40.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(
+            rail.band_offset > 0.0,
+            "the wheel moved the band, offset={}",
+            rail.band_offset
+        );
+    }
+
+    /// "I cannot get it back to how it was": unstarring down to a rail that
+    /// fits must leave no scroll residue behind.
+    #[test]
+    fn unstarring_back_to_a_rail_that_fits_leaves_no_residue() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        rail.set_favorites(&tool_ids(6));
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        let down = rail.band_trailing_arrow.expect("trailing chevron").0;
+        click_chevron(&mut rail, &mut drawings, &ctx, screen, down);
+        assert!(rail.band_offset > 0.0, "the band is scrolled");
+
+        for tool in DRAWING_TOOLS.iter().take(6) {
+            rail.toggle_favorite(*tool);
+        }
+        assert!(rail.favorites().is_empty(), "every pin was removed");
+
+        let tall = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, tall, Vec::new());
+        assert_eq!(rail.band_offset, 0.0, "the offset went home");
+        assert!(
+            rail.band_leading_arrow.is_none() && rail.band_trailing_arrow.is_none(),
+            "a rail that fits shows no navigation chrome"
+        );
+        assert!(rail.band_rect.is_none(), "and no band");
+    }
+
+    /// The band follows the rail's long axis, so a horizontal dock scrolls
+    /// left/right — the chevrons are not hardcoded to up/down.
+    #[test]
+    fn the_band_scrolls_along_the_long_axis_in_every_dock() {
+        let ctx = egui::Context::default();
+        let mut drawings = Drawings::default();
+        for (dock, screen) in [
+            (
+                ToolboxDock::Left,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 560.0)),
+            ),
+            (
+                ToolboxDock::Top,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(560.0, 900.0)),
+            ),
+            (
+                ToolboxDock::Bottom,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(560.0, 900.0)),
+            ),
+        ] {
+            let mut rail = ToolRail::new();
+            rail.set_dock(dock);
+            rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+            let band = rail.band_rect.expect("the band renders in every dock");
+            let (leading, _) = rail.band_leading_arrow.expect("leading chevron");
+            let (trailing, _) = rail.band_trailing_arrow.expect("trailing chevron");
+            // The band is a window onto the tools, not a claim on the rail:
+            // it must never eat the far cluster's room. Measured along the
+            // long axis only — the trailing cluster's short-axis placement
+            // on a horizontal dock is wrong on `main` too, in every stage,
+            // and fixing that is not this change's job.
+            let objects = rail
+                .objects_rect
+                .unwrap_or_else(|| panic!("{dock:?} kept its Objects button"));
+            let rail_rect = rail.rail_rect.expect("rail rendered");
+            assert!(
+                rail.magnet_rect.is_some() && rail.lock_all_rect.is_some(),
+                "{dock:?} kept its trailing cluster"
+            );
+            if dock.is_vertical() {
+                assert!(
+                    objects.top() > trailing.bottom() && objects.bottom() <= rail_rect.bottom(),
+                    "{dock:?} keeps Objects past the band, inside the rail"
+                );
+            } else {
+                assert!(
+                    objects.left() > trailing.right() && objects.right() <= rail_rect.right(),
+                    "{dock:?} keeps Objects past the band, inside the rail"
+                );
+            }
+            if dock.is_vertical() {
+                assert!(leading.bottom() <= band.top() + 1.0, "{dock:?} up chevron");
+                assert!(
+                    trailing.top() >= band.bottom() - 1.0,
+                    "{dock:?} down chevron"
+                );
+            } else {
+                assert!(
+                    leading.right() <= band.left() + 1.0,
+                    "{dock:?} left chevron"
+                );
+                assert!(
+                    trailing.left() >= band.right() - 1.0,
+                    "{dock:?} right chevron"
+                );
+            }
+        }
     }
 }

@@ -1078,6 +1078,34 @@ impl QuantickApp {
                 .collect();
             app.toolrail.set_favorites(&ids);
         }
+        // Dock the rail against a named edge, so a validation run can shoot
+        // the horizontal band without editing the workspace file.
+        if let Ok(edge) = std::env::var("QUANTICK_TOOLBOX_DOCK") {
+            let dock = match edge.trim() {
+                "left" => Some(ToolboxDock::Left),
+                "top" => Some(ToolboxDock::Top),
+                "bottom" => Some(ToolboxDock::Bottom),
+                _ => None,
+            };
+            if let Some(dock) = dock {
+                app.toolrail.set_dock(dock);
+            }
+        }
+        // Park the scrolling tool band mid-travel. Only the middle of the
+        // run shows both chevrons live at once, and a screenshot cannot
+        // click an arrow to get there.
+        // Nonsense is refused rather than guessed, like the dock above: a
+        // typo that silently parked the band at zero would photograph the
+        // wrong state and call it the right one.
+        if let Ok(offset) = std::env::var("QUANTICK_TOOLBAR_SCROLL") {
+            let parked = match offset.trim() {
+                "end" => Some(f32::INFINITY),
+                other => other.parse::<f32>().ok().filter(|at| at.is_finite()),
+            };
+            if let Some(parked) = parked {
+                app.toolrail.set_band_offset(parked);
+            }
+        }
         // Open a family flyout on the first frame — the star column lives
         // there, and a screenshot cannot click a caret.
         if let Ok(family_id) = std::env::var("QUANTICK_TOOLBOX_FLYOUT") {

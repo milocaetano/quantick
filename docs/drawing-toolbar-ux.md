@@ -297,32 +297,73 @@ extends to the two new docks unchanged in spirit.
 
 ### 2.8 Length budget and overflow
 
-The rail never wraps and never scrolls. It has three stages, chosen from the
-available **long-axis** extent — the same rule in both orientations, so one
-function serves all four docks.
+The rail never wraps. It has four stages, chosen from the available
+**long-axis** extent — the same rule in both orientations, so one function
+serves all four docks.
+
+Between Full and Compact sits the **scrolling band**. It exists because the
+old Full → Compact step was a cliff: starring a fourth tool grew the rail past
+the window, the whole tool run vanished into the More menu in one frame, and
+the pins the trader had just made went with it. Nothing announced the trade,
+and nothing offered a way back. The band replaces that step with travel —
+every tool stays in the inventory and the rail scrolls to reach it.
+
+What never scrolls, in any stage:
+
+- the **grip, Pointer and Crosshair** at the leading end — the way out of a
+  drawing mode cannot itself be scrolled off screen;
+- the **pinned favorites**, right behind them. A star means "keep this under
+  my pointer", so anchoring them is the whole point of having starred them;
+- the **trailing cluster** — magnet, repeat, hide-all, lock-all, Objects.
+
+Only the tool run moves, between a chevron at each end. Both chevrons keep
+their slot for as long as the band scrolls and dim at the end of travel: an
+arrow that vanished would shift every tool under the pointer by its own
+length. The wheel scrolls the same band, and one chevron click is a page less
+one button, so a landmark survives the jump.
+
+When the pins themselves would eat the band's floor, the surplus spills into
+the head of the band — still star-badged, still reachable — rather than
+shrinking the band below four visible tools. A star can cost a pin its
+anchor; it can never cost it its existence.
 
 Slot arithmetic: one button slot is `32 + 4 = 36` px; a separator block is
-`4 + 1 + 4 = 9` px; the grip block is `18 + 4 = 22` px.
+`4 + 1 + 4 = 9` px; the grip block is `18 + 4 = 22` px; a chevron block is
+`14 + 4 = 18` px.
 
 ```
-full_length(n_tool_slots) =
+fixed_length(k_anchored_pins) =                       # the band cannot spend this
       MARGIN(6) + grip(22)
     + modes(32 + 4 + 32 = 68) + sep(9)
-    + tools(n*32 + (n-1)*4)
+    + pins(k > 0 ? sep(9) + k*36 : 0)
     + MIN_CLUSTER_GAP(12)
     + sep(9) + globals(32 + 4 + 32 + 4 + 32 = 104) + sep(9) + objects(32)
     + MARGIN(6)
+
+full_length(n_tool_slots, k) = fixed_length(k) + n*32 + (n-1)*4
+scroll_length(k)             = fixed_length(k) + 2*chevron(18) + floor(4 slots = 140)
 ```
 
-For today's registry (`n = 4`: horizontal, rectangle, channel, fib family):
+For today's registry (`n = 9`, no pins). The numbers are pinned by
+`stage_lengths_match_the_spec_for_the_shipped_registry`:
 
 | Stage | Trigger | Rail shows | Length |
 |---|---|---|---|
-| **Full** | available ≥ `417` | everything above | 417 px |
-| **Compact** | `345` ≤ available < `417` | Pointer, Crosshair, armed tool, More; full trailing cluster | 345 px |
-| **Minimal** | available < `345` | Pointer, armed tool, More, Objects | 191 px |
+| **Full** | available ≥ `633` | everything above, no chevrons | 633 px |
+| **Scroll** | `489` ≤ available < `633` | anchored head + pins, the tool run scrolling between two chevrons, full trailing cluster | 489 px |
+| **Compact** | `381` ≤ available < `489` | Pointer, Crosshair, armed tool, More; full trailing cluster | 381 px |
+| **Minimal** | available < `381` | Pointer, armed tool, More, Objects | 191 px |
+
+The Scroll trigger is measured with **no** pin anchored, because pins are
+given up one at a time — into the band, never out of existence — before the
+band is ever asked to give up its four-tool floor.
 
 - The armed tool always keeps a real slot; it is never buried in the flyout.
+  In the scrolling band that promise is kept by pulling the band to the tool
+  on the frame it is armed — a shortcut can arm a tool the band has scrolled
+  past, and a trader who cannot see what is armed does not know what their
+  next click will draw. It is a one-frame reveal, not a magnet: scrolling
+  away from the armed tool afterwards stays where the trader put it.
 - The More flyout (`DOTS_THREE`, replacing today's misleading `PLUS`) lists
   everything the stage swallowed, by name and shortcut, in registry order:
   Crosshair and the unarmed tools at Compact, plus repeat / hide-all /
@@ -331,6 +372,9 @@ For today's registry (`n = 4`: horizontal, rectangle, channel, fib family):
   the intermediate stage and makes the budget axis-aware.
 - Stage changes are hysteresis-free: pure functions of available extent, so a
   window resize gives the same rail whichever direction it was dragged from.
+- The band's offset is state, not layout: every stage that is not Scroll
+  clamps it back to zero, so unstarring down to a rail that fits leaves no
+  residue — no stranded scroll position, no leftover chevrons.
 - **Minimum:** 191 px. The app opens at `1100 × 650` and sets no minimum
   window size; add `with_min_inner_size([900.0, 560.0])` in `main.rs` so a
   horizontal rail (191 px of a 900 px window) and a vertical rail (191 px of
