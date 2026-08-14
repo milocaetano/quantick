@@ -42,7 +42,11 @@ is the source of truth, this table is the index):
 | `QUANTICK_UI_STATE=<toml>` | the saved workspace — the tab strip, each tab's layout/split/focus/bar specs, the dock, the rail, the timezone, the window size. **Always point this at a scratchpad file.** Without it a validation run reads the user's real `ui-state.toml` and, on exit, overwrites it: the run both inherits yesterday's cockpit and destroys it. Point it at a path that does not exist to force the configured default; write one by hand to open on an exact arrangement. |
 | `QUANTICK_WORKSPACE_SAVE=1` | takes `Workspace → Save workspace` at startup, through the menu entry's own path — the save really happens, so the status-line confirmation is on screen to capture. Pair with `QUANTICK_UI_STATE` pointed at a scratchpad. |
 | `QUANTICK_BACKFILL` / `QUANTICK_BOOK_DEPTH` | history paging / depth size |
-| `QUANTICK_TRADES_DIR` | paper-trading journal location (point at scratch) |
+| `QUANTICK_TRADES_DIR` | paper-trading journal location (point at scratch — and note the absent-default is now the user's documents folder, `Documents/Quantick/paper-trades`, so an unhooked run touches real history) |
+| `QUANTICK_PAPER_STATE=<toml>` | the paper sidecar: the picked journal folder and the cmd-trading settings. **Point at a scratchpad file** — an unhooked run reads and rewrites the trader's real `paper-state.toml`, and startup consolidation may clear their stored folder pick. |
+| `QUANTICK_DOCK_TAB=<l2\|bubbles\|session\|trading\|trades>` | the dock open on that tab — `trading` is the ticket (with the CMD TRADING block), `trades` the ledger |
+| `QUANTICK_PAPER_REPORT_AUTOSTART=1` | the Simulated performance window (Source/Period filter rows, typed period, import button) |
+| `QUANTICK_PAPER_DEMO=1` | scripted deterministic trade sequence — real journaled trades for every paper surface; pair with `QUANTICK_TRADES_DIR` at scratch |
 
 Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 
@@ -105,10 +109,13 @@ freehand path for the pencil, which declares no anchor count of its own.
 
 Once merged, move them into the table above.
 
-Landing with PR #127 (paper trading v2): `QUANTICK_DOCK_TAB`
-(`l2|bubbles|session|trading|trades`), `QUANTICK_PAPER_REPORT_AUTOSTART=1`,
-`QUANTICK_PAPER_DEMO=1` (scripted deterministic trade sequence). Once merged,
-move them into the table above.
+Landing with the paper-trading overhaul (`feat/paper-trading-overhaul`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_CMD_PREVIEW=<buy\|sell>` | the cmd-trading preview painted with nobody at the keyboard: the dashed y-locked line, its clickable side/kind/qty label and the gutter price chip, parked mid-chart for that side. The held modifier is the one input a capture run cannot supply (the ParkedHand rule). Needs prints on the tape for a mark — pair with a live feed or `QUANTICK_PAPER_DEMO=1`. |
+
+Once merged, move it into the table above.
 
 For a screen that represents the user's real setup, enable the trio:
 `QUANTICK_BOOK_AUTOSTART` + `QUANTICK_BUBBLES_AUTOSTART` +

@@ -421,7 +421,10 @@ impl SourceFilter {
         match self {
             Self::Real => "Real",
             Self::Replay => "Replay",
-            Self::All => "All",
+            // Not "All": the period pills own that word on the same row,
+            // and two identical pills a hand-width apart invite the wrong
+            // click.
+            Self::All => "Both",
         }
     }
 
@@ -2452,6 +2455,20 @@ impl PaperTrading {
                 .color(theme::AMBER)
                 .small(),
             );
+        } else if self.cmd_trading.enabled {
+            // The gesture is invisible until a key is held; its one line
+            // of instructions lives where the toggle does, not in a
+            // tooltip a newcomer never hovers.
+            ui.label(
+                egui::RichText::new(format!(
+                    "hold {} over the chart to buy, {} to sell - the dashed line shows \
+                     where; click its label to place",
+                    self.cmd_trading.buy.label(),
+                    self.cmd_trading.sell.label(),
+                ))
+                .color(theme::TEXT_SUPPORT)
+                .small(),
+            );
         }
         changed
     }
@@ -3152,16 +3169,22 @@ impl PaperTrading {
                         .hint_text("2d"),
                 )
                 .on_hover_text("type a period - 45m, 12h, 2d or 1w - and press Enter");
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            if response.lost_focus() {
                 match parse_period(&self.report_custom_text) {
+                    // A valid entry applies on blur as well as on Enter —
+                    // a typed "2d" must never do nothing quietly.
                     Some(period_ms) => {
                         self.report_period = ReportPeriod::Custom(period_ms);
                         self.report_view = None;
                     }
-                    None => self.show_toast(format!(
-                        "SIM: could not read `{}` as a period - use 45m, 12h, 2d or 1w",
-                        self.report_custom_text.trim(),
-                    )),
+                    // Only Enter earns the refusal toast: clicking away
+                    // from an abandoned half-entry is not a submission.
+                    None if ui.input(|input| input.key_pressed(egui::Key::Enter)) => self
+                        .show_toast(format!(
+                            "SIM: could not read `{}` as a period - use 45m, 12h, 2d or 1w",
+                            self.report_custom_text.trim(),
+                        )),
+                    None => {}
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -6080,6 +6103,54 @@ mod tests {
             false,
         ));
         assert!(paper.cmd_preview.is_none(), "the toggle hides the gesture");
+    }
+
+    /// Off-screen render proof (for environments where no window can
+    /// present): the preview paints a dashed line, a label carrying
+    /// side+kind+qty, and the gutter chip with the snapped price.
+    #[test]
+    fn the_cmd_preview_paints_line_label_and_price_chip() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 300.0),
+            shift,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_some(), "the held key builds a preview");
+
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let paint = PaintCtx {
+                painter: &painter,
+                chart_rect: chart,
+                tag_right: chart.right(),
+                axis_x: chart.right(),
+                scale: &scale,
+                reserved_chip_y: None,
+                pointer: Some(egui::pos2(400.0, 300.0)),
+            };
+            paper.draw_cmd_preview(&paint);
+        });
+        let shapes = format!("{:?}", output.shapes);
+        assert!(shapes.contains("BUY"), "the label names the side: {shapes}");
+        assert!(
+            shapes.contains("90"),
+            "the gutter chip carries the snapped price"
+        );
+        let segments = shapes.matches("LineSegment").count();
+        assert!(
+            segments >= 8,
+            "a dashed line paints as many short segments, got {segments}"
+        );
     }
 
     #[test]
