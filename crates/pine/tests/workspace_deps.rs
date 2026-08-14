@@ -55,19 +55,34 @@ fn feeds_depend_on_the_domain_crates_only() {
     }
 }
 
+/// Each crate under a dependency rule, and everything it is allowed to
+/// reach.
+///
+/// `backtest` is not a domain crate — it is the headless consumer — but it is
+/// listed for the same reason the domain crates are: the edge that must never
+/// appear is `backtest → app`, and this entry is what fails the build if one
+/// is ever added.
+const ALLOWED: &[(&str, &[&str])] = &[
+    ("engine", &[]),
+    ("orderbook", &[]),
+    ("replay", &["engine"]),
+    ("sim", &["engine"]),
+    ("indicators", &["engine"]),
+    ("pine", &["indicators"]),
+    (
+        "backtest",
+        &["engine", "indicators", "pine", "replay", "sim"],
+    ),
+];
+
+/// The one crate above the graph: everything may be linked from it, so there
+/// is no upward edge for it to take.
+const TOP_OF_THE_GRAPH: &str = "app";
+
 #[test]
 fn the_domain_crates_never_depend_upwards() {
     let root = workspace_root().join("crates");
-    // Each crate and everything it is allowed to reach.
-    let allowed: &[(&str, &[&str])] = &[
-        ("engine", &[]),
-        ("orderbook", &[]),
-        ("replay", &["engine"]),
-        ("sim", &["engine"]),
-        ("indicators", &["engine"]),
-        ("pine", &["indicators"]),
-    ];
-    for (crate_name, may_depend_on) in allowed {
+    for (crate_name, may_depend_on) in ALLOWED {
         let dir = root.join(crate_name);
         for dependency in path_dependencies(&dir) {
             assert!(
@@ -77,6 +92,37 @@ fn the_domain_crates_never_depend_upwards() {
             );
         }
     }
+}
+
+#[test]
+fn every_crate_is_covered_by_a_dependency_rule() {
+    // `the_domain_crates_never_depend_upwards` iterates the whitelist, not
+    // the directory, so a new crate that nobody remembers to list is not a
+    // failure there — it is simply unguarded, which is worse than a failure
+    // because it looks green. This test is the reminder.
+    let root = workspace_root().join("crates");
+    let mut unguarded = Vec::new();
+    for entry in std::fs::read_dir(&root).expect("crates/ is readable") {
+        let dir = entry.expect("entry is readable").path();
+        if !dir.join("Cargo.toml").exists() {
+            continue;
+        }
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let covered = name == TOP_OF_THE_GRAPH
+            || name.starts_with("feed-")
+            || ALLOWED.iter().any(|(listed, _)| *listed == name);
+        if !covered {
+            unguarded.push(name);
+        }
+    }
+    assert!(
+        unguarded.is_empty(),
+        "crates with no dependency rule: {unguarded:?} — add each to ALLOWED with \
+         exactly what it may reach, or the one-way direction is unenforced for it"
+    );
 }
 
 #[test]

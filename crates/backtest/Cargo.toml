@@ -1,0 +1,22 @@
+[package]
+name = "quantick-backtest"
+description = "Headless backtest harness: recorded sessions in, per-session and aggregate performance out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The second of the three consumers CLAUDE.md names. It links the domain
+# crates and nothing else: no UI, no network, no async, no CLI framework —
+# argument parsing is thirty lines of `match` (see `src/main.rs`), which is
+# cheaper than a dependency the workspace would then carry forever.
+[dependencies]
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+quantick-pine = { path = "../pine" }
+quantick-replay = { path = "../replay" }
+quantick-sim = { path = "../sim" }
+rust_decimal = "1"
+
+[[bin]]
+name = "quantick-backtest"
+path = "src/main.rs"

@@ -2518,6 +2518,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-backtest"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-pine",
+ "quantick-replay",
+ "quantick-sim",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quantick-engine"
 version = "0.1.0"
 dependencies = [
