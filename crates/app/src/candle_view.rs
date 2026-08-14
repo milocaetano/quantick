@@ -9,7 +9,8 @@ use quantick_engine::Bar;
 
 use crate::chart::{PriceScale, VerticalSegment, candle_geometry};
 use crate::style::{
-    CandleBodyMode, CandlePreset, CandleStyle, ChartStyle, ResolvedCandlePaint, WickColorMode,
+    CandleBodyMode, CandlePreset, CandleStyle, ChartStyle, MAX_CANDLE_GAP, MIN_CANDLE_GAP,
+    ResolvedCandlePaint, WickColorMode,
 };
 
 /// What changed while drawing the appearance window.
@@ -233,6 +234,18 @@ fn draw_body_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &mut 
             egui::Slider::new(&mut style.body_width_frac, 0.1..=1.0)
                 .text("body width")
                 .step_by(0.01),
+        )
+        .on_hover_text("how much of its slot a candle body fills — the look while zoomed in")
+        .changed();
+    *changed |= ui
+        .add(
+            egui::Slider::new(&mut style.gap_px, MIN_CANDLE_GAP..=MAX_CANDLE_GAP)
+                .text("gap between candles px")
+                .step_by(0.5),
+        )
+        .on_hover_text(
+            "air kept between neighbouring candles at every zoom — \
+             raise it if zoomed-out bars read as one solid band",
         )
         .changed();
     *changed |= ui

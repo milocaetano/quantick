@@ -1,17 +1,43 @@
 //! The scrollable/zoomable viewport over the bar series (TradingView-style).
 //!
-//! Candles have a **fixed pixel width** (the zoom); the newest bar sits near the
+//! Bars have a **fixed pixel width** (the zoom); the newest bar sits near the
 //! right edge, and the view is a window that can pan freely — through history and
 //! into empty space past the newest bar — so dragging always moves the chart,
 //! even when there are only a handful of bars. This is the pure state behind
-//! that (candle width + the fractional bar index at the right edge + a follow
+//! that (pixels per bar + the fractional bar index at the right edge + a follow
 //! flag), unit-tested in CI with no egui or input handling.
+//!
+//! Two things it owns that a plain "one bar, one candle" window would not:
+//!
+//! - **Room to project into.** How far past the newest bar the view may go is
+//!   derived from the window ([`Viewport::projection_margin_bars`]), so pushing
+//!   the chart left always clears about a screen of empty canvas — enough for a
+//!   channel or a Fibonacci extension drawn out in front of the market.
+//! - **Grouping.** Squeezed past the point where a bar can be drawn on its own,
+//!   several bars share one candle ([`Viewport::bars_per_slot`]) instead of the
+//!   zoom simply stopping. Bars keep getting narrower; what is drawn for them
+//!   does not, so more history arrives without the chart turning into a band.
 //!
 //! It owns the candles' pane only. The live lane is a band of screen beside it
 //! with a clock of its own, so nothing here reaches the tape.
 
-/// Narrowest a candle slot can be, in pixels (max zoom-out).
-pub const MIN_CANDLE_WIDTH: f32 = 2.0;
+/// Narrowest a single **bar** can be, in pixels — the zoom-out floor.
+///
+/// A fifth of a pixel: a 1600 px chart holds 8 000 bars there, ten times what
+/// the old 2 px floor allowed. That floor was a floor on *drawing* — two pixels
+/// is about the least a candle can be and still be one — and using it as the
+/// zoom limit tied how much history a trader could see to how small a candle
+/// can be drawn. Grouping ([`Viewport::bars_per_slot`]) separates the two: bars
+/// keep shrinking, the thing drawn for them does not.
+pub const MIN_PX_PER_BAR: f32 = 0.2;
+/// The slot width grouping aims for, in pixels.
+///
+/// Four pixels is a two-pixel body with the default two-pixel gap around it —
+/// the narrowest candle that still reads as a candle rather than a smear. It is
+/// a *target*, not a floor: the multiple is the nearest whole number of bars to
+/// it, so the slot drifts between roughly three and five pixels as the zoom
+/// moves instead of doubling at every threshold, which a hard floor would do.
+pub const TARGET_SLOT_PX: f32 = 4.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
 ///
 /// Sized for the footprint's Detailed level: a `sell × buy` ladder cell is
@@ -19,14 +45,24 @@ pub const MIN_CANDLE_WIDTH: f32 = 2.0;
 /// most detailed view of the tape permanently out of reach. 160 px shows a
 /// handful of bars with full ladders — the "read these five candles" zoom.
 pub const MAX_CANDLE_WIDTH: f32 = 160.0;
-/// How many empty bar-slots past the newest bar you may pan into.
-const FUTURE_MARGIN_BARS: f32 = 40.0;
+/// Fewest bars left on screen when the chart is pushed as far left as it goes.
+///
+/// One bar is the honest floor: however much empty canvas a trader wants in
+/// front of the market, the view is still a chart *of this series*, and the
+/// newest bar is what every projection is drawn from.
+const MIN_BARS_ON_SCREEN: f32 = 1.0;
+/// Smallest projection margin, in bar slots, when there is no usable window
+/// width to derive one from (mid-layout, or a pane a few pixels wide). Small
+/// enough to mean nothing on a real chart, large enough that the gesture is
+/// never dead.
+const MIN_PROJECTION_BARS: f32 = 8.0;
 
 /// The visible window over a bar series.
 #[derive(Debug, Clone, Copy)]
 pub struct Viewport {
-    /// Pixels per bar slot — the zoom.
-    candle_width: f32,
+    /// Pixels per **bar** — the zoom. Below [`TARGET_SLOT_PX`] several bars
+    /// share one drawn slot; see [`Viewport::bars_per_slot`].
+    px_per_bar: f32,
     /// Fractional bar index at the right edge (used when not following). May
     /// exceed `total - 1` to show empty space past the newest bar.
     right_bar: f32,
@@ -37,7 +73,7 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            candle_width: 8.0,
+            px_per_bar: 8.0,
             right_bar: 0.0,
             follow: true,
         }
@@ -51,10 +87,52 @@ impl Viewport {
         Self::default()
     }
 
-    /// Pixels per bar slot (drives candle width and the pan/zoom maths).
+    /// Pixels per bar — how far apart two neighbouring bars sit.
+    ///
+    /// This is the zoom, and the number every pixel↔bar conversion uses. It is
+    /// [`Self::candle_width`] only while one bar owns one slot; zoomed out past
+    /// that, a bar is a fraction of the candle drawn over it.
+    #[must_use]
+    pub fn px_per_bar(&self) -> f32 {
+        self.px_per_bar
+    }
+
+    /// How many bars are merged into one drawn candle.
+    ///
+    /// One until the zoom takes a bar below [`TARGET_SLOT_PX`], then the whole
+    /// number of bars that brings a slot back closest to that target. This is
+    /// what lets zoom-out keep going without the chart turning into a solid
+    /// band: past this point, squeezing shows *more history at the same
+    /// legibility* instead of thinner and thinner candles.
+    ///
+    /// Nearest rather than "at least", so the slot drifts gently (roughly
+    /// three to five pixels) instead of doubling every time the multiple
+    /// steps. Bars group from index 0 up, so a group is the same group from
+    /// frame to frame and prepended history shifts every index by a count the
+    /// viewport already knows how to absorb.
+    #[must_use]
+    pub fn bars_per_slot(&self) -> usize {
+        if !self.px_per_bar.is_finite() || self.px_per_bar <= 0.0 {
+            return 1;
+        }
+        let nearest = (TARGET_SLOT_PX / self.px_per_bar).round();
+        if nearest.is_finite() && nearest >= 2.0 {
+            nearest as usize
+        } else {
+            1
+        }
+    }
+
+    /// Whether several bars share one drawn candle at this zoom.
+    #[must_use]
+    pub fn grouped(&self) -> bool {
+        self.bars_per_slot() > 1
+    }
+
+    /// Width of one drawn candle slot, in pixels.
     #[must_use]
     pub fn candle_width(&self) -> f32 {
-        self.candle_width
+        self.px_per_bar * self.bars_per_slot() as f32
     }
 
     /// Whether the right edge is pinned to the newest bar.
@@ -63,22 +141,21 @@ impl Viewport {
         self.follow
     }
 
-    /// Zoom by a multiplicative factor on the candle width: `> 1` widens the
-    /// candles (zoom in), `< 1` narrows them (zoom out). Anchored to the right
-    /// edge — the newest bar stays put.
+    /// Zoom by a multiplicative factor: `> 1` widens the candles (zoom in),
+    /// `< 1` narrows them (zoom out). Anchored to the right edge — the newest
+    /// bar stays put.
     pub fn zoom(&mut self, factor: f32) {
         if factor > 0.0 && factor.is_finite() {
-            self.candle_width =
-                (self.candle_width * factor).clamp(MIN_CANDLE_WIDTH, MAX_CANDLE_WIDTH);
+            self.px_per_bar = (self.px_per_bar * factor).clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);
         }
     }
 
-    /// Set the zoom directly to `px` per slot, clamped to the same bounds
-    /// the gesture obeys. This is the scripted entry (`QUANTICK_CANDLE_WIDTH`)
-    /// to the zoom the scroll gesture reaches — one clamp, two doors.
+    /// Set the zoom directly to `px` per bar, clamped to the same bounds the
+    /// gesture obeys. This is the scripted entry (`QUANTICK_CANDLE_WIDTH`) to
+    /// the zoom the scroll gesture reaches — one clamp, two doors.
     pub fn set_candle_width(&mut self, px: f32) {
         if px.is_finite() && px > 0.0 {
-            self.candle_width = px.clamp(MIN_CANDLE_WIDTH, MAX_CANDLE_WIDTH);
+            self.px_per_bar = px.clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);
         }
     }
 
@@ -95,18 +172,62 @@ impl Viewport {
     /// Pan by `dx` pixels (a drag delta). Positive `dx` (drag right) reveals
     /// older bars — the right edge moves into the past; negative moves toward
     /// the present. Reaching the newest bar resumes following.
+    ///
+    /// The past end stops at the oldest bar loaded; the future end is left
+    /// open here and bounded once per frame by [`Self::clamp_to_window`],
+    /// which is the only place that knows how wide the window is.
     pub fn pan_pixels(&mut self, dx: f32, total: usize) {
-        if total == 0 || self.candle_width <= 0.0 || dx == 0.0 {
+        if total == 0 || self.px_per_bar <= 0.0 || dx == 0.0 {
             return;
         }
         let newest = (total - 1) as f32;
         let current = self.right_edge_bar(total);
-        let next = current - dx / self.candle_width;
-        let max_right = newest + FUTURE_MARGIN_BARS;
-        self.right_bar = next.clamp(0.0, max_right);
+        let next = current - dx / self.px_per_bar;
+        self.right_bar = next.max(0.0);
         // Follow only when the right edge is essentially *at* the newest bar.
         // Panning into the empty future keeps that margin instead of snapping
         // back to live.
+        self.follow = (self.right_bar - newest).abs() <= 0.5;
+    }
+
+    /// How far past the newest bar the right edge may sit, in bar slots, for a
+    /// candle area `window_px` wide.
+    ///
+    /// The margin *is* the window, less the bars that stay on screen: pushed
+    /// all the way left, the newest bar sits at the left edge and the rest of
+    /// the window is empty canvas — a full screen to project a channel or a
+    /// Fibonacci extension into, which is what the gesture is for.
+    ///
+    /// A fixed slot count cannot do that job, and the old one (40 slots) is
+    /// why the margin read as short: it is two thirds of a screen at 2 px per
+    /// candle and a fifth of one at 8 px, so the same drag bought a different
+    /// amount of room at every zoom, and least of all where a trader is most
+    /// likely to be projecting.
+    #[must_use]
+    pub fn projection_margin_bars(&self, window_px: f32) -> f32 {
+        if !window_px.is_finite() || window_px <= 0.0 || self.px_per_bar <= 0.0 {
+            return MIN_PROJECTION_BARS;
+        }
+        // One *slot* stays on screen, not one bar: grouped, a single bar is a
+        // fraction of a pixel and leaving that much behind is leaving nothing.
+        let on_screen = MIN_BARS_ON_SCREEN * self.bars_per_slot() as f32;
+        (window_px / self.px_per_bar - on_screen).max(MIN_PROJECTION_BARS)
+    }
+
+    /// Hold the view inside what a `window_px`-wide candle area may show.
+    ///
+    /// Called once per frame after the gestures, because two of them leave the
+    /// view outside its bounds by construction: [`Self::pan_pixels`] lets the
+    /// future end run free, and [`Self::zoom`] does not know the window at all
+    /// — zooming in while pushed fully left would otherwise multiply the empty
+    /// space and walk the candles off the screen.
+    pub fn clamp_to_window(&mut self, window_px: f32, total: usize) {
+        if self.follow || total == 0 {
+            return;
+        }
+        let newest = (total - 1) as f32;
+        let max_right = newest + self.projection_margin_bars(window_px);
+        self.right_bar = self.right_bar.clamp(0.0, max_right);
         self.follow = (self.right_bar - newest).abs() <= 0.5;
     }
 
@@ -120,11 +241,11 @@ impl Viewport {
     /// margin: nothing to centre on out there), so centring an object near
     /// the live edge lands on it and resumes following.
     pub fn center_on_bar(&mut self, bar: f32, width_px: f32, total: usize) {
-        if total == 0 || self.candle_width <= 0.0 {
+        if total == 0 || self.px_per_bar <= 0.0 {
             return;
         }
         let newest = (total - 1) as f32;
-        let half_window = 0.5 * width_px / self.candle_width;
+        let half_window = 0.5 * width_px / self.px_per_bar;
         self.right_bar = (bar + half_window).clamp(0.0, newest);
         self.follow = (self.right_bar - newest).abs() <= 0.5;
     }
@@ -187,27 +308,65 @@ impl Viewport {
 
     /// Map a fractional bar-centre coordinate to x pixels.
     ///
-    /// Integer positions are candle centres, `index - 0.5` is the left edge of
-    /// a slot and `index + 0.5` is its right edge. Order-book timestamps use
-    /// these fractional positions so several depth updates can be shown inside
-    /// one activity-sampled bar without changing candle spacing.
+    /// Integer positions are bar centres, and half a slot of clearance keeps
+    /// the bar at the right edge fully on screen. Order-book timestamps use
+    /// fractional positions so several depth updates can be shown inside one
+    /// activity-sampled bar without changing candle spacing.
+    ///
+    /// Grouped, neighbouring bars land a fraction of a pixel apart — the
+    /// projection stays continuous in *bars*, and it is only what is drawn
+    /// (candles, one per slot) that steps.
     #[must_use]
     pub fn x_at_bar_position(&self, bar_position: f32, chart_right: f32, total: usize) -> f32 {
         let right_bar = self.right_edge_bar(total);
-        chart_right - (right_bar - bar_position + 0.5) * self.candle_width
+        chart_right - (right_bar - bar_position) * self.px_per_bar - 0.5 * self.candle_width()
+    }
+
+    /// The fractional bar index under `x` pixels — the inverse of
+    /// [`Self::x_at_bar_position`], and the only one.
+    ///
+    /// Placing a drawing and drawing it are the same projection read in
+    /// opposite directions; written out twice they would disagree the first
+    /// time the projection changed, and grouping is exactly such a change.
+    #[must_use]
+    pub fn bar_at_x(&self, x: f32, chart_right: f32, total: usize) -> f32 {
+        if self.px_per_bar <= 0.0 {
+            return self.right_edge_bar(total);
+        }
+        self.right_edge_bar(total) - (chart_right - x - 0.5 * self.candle_width()) / self.px_per_bar
+    }
+
+    /// The x-pixel centre of the slot holding bar `index` — where the candle
+    /// drawn for that bar actually sits.
+    ///
+    /// The same point as [`Self::x_center`] while one bar owns one slot. Once
+    /// grouped, it is the centre of the whole group, so a candle and anything
+    /// anchored to a bar inside it agree about where that bar is on screen.
+    #[must_use]
+    pub fn slot_center_x(&self, index: usize, chart_right: f32, total: usize) -> f32 {
+        let per_slot = self.bars_per_slot();
+        let first = (index / per_slot * per_slot) as f32;
+        let middle = first + (per_slot as f32 - 1.0) / 2.0;
+        self.x_at_bar_position(middle, chart_right, total)
     }
 
     /// The `[start, end)` bar indices at least partly visible in a chart `width`
     /// pixels wide over `total` bars. Generous by up to a bar at each edge (the
     /// caller clips), so nothing pops in late.
+    ///
+    /// Grouped, the start is pulled back to the first bar of its slot: a slot
+    /// is drawn from every bar in it, and starting mid-group would draw a
+    /// candle from part of one.
     #[must_use]
     pub fn visible_range(&self, width: f32, total: usize) -> (usize, usize) {
-        if total == 0 || self.candle_width <= 0.0 {
+        if total == 0 || self.px_per_bar <= 0.0 {
             return (0, 0);
         }
         let right_bar = self.right_edge_bar(total);
-        let bars_across = width / self.candle_width;
+        let bars_across = width / self.px_per_bar;
         let start = (right_bar - bars_across).floor().max(0.0) as usize;
+        let per_slot = self.bars_per_slot();
+        let start = start / per_slot * per_slot;
         let end = (right_bar.floor() as i64 + 2).clamp(0, total as i64) as usize;
         let start = start.min(end);
         (start, end)
@@ -245,11 +404,11 @@ mod tests {
     fn scripted_candle_width_shares_the_gestures_clamp() {
         let mut v = Viewport::new();
         v.set_candle_width(1000.0);
-        assert!((v.candle_width() - MAX_CANDLE_WIDTH).abs() < 0.001);
-        v.set_candle_width(0.5);
-        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        assert!((v.px_per_bar() - MAX_CANDLE_WIDTH).abs() < 0.001);
+        v.set_candle_width(0.01);
+        assert!((v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001);
         v.set_candle_width(f32::NAN);
-        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        assert!((v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001);
         assert!(MAX_CANDLE_WIDTH >= 160.0);
     }
 
@@ -259,11 +418,11 @@ mod tests {
         for _ in 0..100 {
             v.zoom(2.0);
         }
-        assert!((v.candle_width() - MAX_CANDLE_WIDTH).abs() < 0.001);
+        assert!((v.px_per_bar() - MAX_CANDLE_WIDTH).abs() < 0.001);
         for _ in 0..100 {
             v.zoom(0.5);
         }
-        assert!((v.candle_width() - MIN_CANDLE_WIDTH).abs() < 0.001);
+        assert!((v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001);
     }
 
     #[test]
@@ -308,15 +467,183 @@ mod tests {
         assert!(v.follows_live());
     }
 
+    /// Pushed as far left as it goes, the newest bar lands at the left edge and
+    /// the rest of the window is empty canvas — the room a projected channel or
+    /// a Fibonacci extension needs to be drawn into.
     #[test]
-    fn can_pan_into_empty_space_past_the_newest() {
-        let mut v = Viewport::new();
-        // Drag left hard (toward the future) — the right edge can move a bounded
-        // margin past the newest bar.
+    fn pushing_left_clears_a_whole_window_of_projection_room() {
+        let mut v = Viewport::new(); // 8 px per candle
+        let window = 800.0; // 100 bars across
         v.pan_pixels(-10_000.0, 10);
+        v.clamp_to_window(window, 10);
         let edge = v.right_edge_bar(10);
-        assert!(edge > 9.0, "panned into empty future: {edge}");
-        assert!(edge <= 9.0 + FUTURE_MARGIN_BARS + 0.001);
+        assert!(!v.follows_live());
+        assert!((edge - (9.0 + 99.0)).abs() < 0.001, "edge = {edge}");
+        // Which is the same statement in pixels: the newest bar is half a slot
+        // from the left edge, and everything right of it is empty.
+        let x = v.x_center(9, window, 10);
+        assert!((x - 4.0).abs() < 0.001, "newest bar at the left edge: {x}");
+    }
+
+    /// The margin is derived from the window, so it is worth the same *screen*
+    /// at every zoom. The fixed 40-slot margin it replaces was worth two thirds
+    /// of a screen zoomed out and a fifth of one zoomed in.
+    #[test]
+    fn the_projection_margin_scales_with_the_window() {
+        let mut v = Viewport::new();
+        let zoomed_out = v.projection_margin_bars(1600.0);
+        assert!((zoomed_out - (1600.0 / 8.0 - 1.0)).abs() < 0.001);
+        v.set_candle_width(32.0);
+        let zoomed_in = v.projection_margin_bars(1600.0);
+        assert!((zoomed_in - (1600.0 / 32.0 - 1.0)).abs() < 0.001);
+        // Both come to one window of room, minus the bar left on screen.
+        assert!((zoomed_out * 8.0 - (1600.0 - 8.0)).abs() < 0.001);
+        assert!((zoomed_in * 32.0 - (1600.0 - 32.0)).abs() < 0.001);
+    }
+
+    /// The regression the per-frame clamp exists for: the same margin in *bars*
+    /// is a wider margin in pixels once the candles grow, so zooming in while
+    /// pushed fully left used to walk the series off the left of the screen.
+    #[test]
+    fn zooming_in_while_pushed_left_keeps_the_candles_on_screen() {
+        let mut v = Viewport::new();
+        v.pan_pixels(-10_000.0, 10);
+        v.clamp_to_window(800.0, 10);
+        v.zoom(4.0); // 32 px per candle: 25 bars across, not 100
+        v.clamp_to_window(800.0, 10);
+        let edge = v.right_edge_bar(10);
+        assert!((edge - (9.0 + 24.0)).abs() < 0.001, "edge = {edge}");
+        let x = v.x_center(9, 800.0, 10);
+        assert!(
+            (0.0..=800.0).contains(&x),
+            "newest bar still on screen: {x}"
+        );
+    }
+
+    #[test]
+    fn clamping_leaves_a_following_view_alone() {
+        let mut v = Viewport::new();
+        v.clamp_to_window(800.0, 10);
+        assert!(v.follows_live());
+        assert_eq!(v.right_edge_bar(10), 9.0);
+    }
+
+    /// Zoomed out past the point where a bar can be drawn on its own, the chart
+    /// stops shrinking candles and starts grouping bars — which is what keeps
+    /// the extra history readable instead of turning it into a solid band.
+    #[test]
+    fn squeezing_past_a_drawable_candle_groups_bars_instead() {
+        let mut v = Viewport::new();
+        assert_eq!(v.bars_per_slot(), 1, "8 px per bar is one bar per candle");
+        assert!(!v.grouped());
+
+        v.set_candle_width(2.0); // where zooming out used to stop
+        assert_eq!(v.bars_per_slot(), 2);
+        assert!(v.grouped());
+        assert!((v.candle_width() - 4.0).abs() < 0.001, "a drawable slot");
+
+        v.set_candle_width(MIN_PX_PER_BAR); // as far out as it goes
+        assert_eq!(v.bars_per_slot(), 20);
+        assert!(
+            (v.candle_width() - TARGET_SLOT_PX).abs() < 0.001,
+            "still a drawable slot: {}",
+            v.candle_width()
+        );
+    }
+
+    /// What the floor buys, stated as the trader feels it: ten times the
+    /// history on the same screen.
+    #[test]
+    fn the_zoom_out_floor_holds_ten_times_the_bars_the_old_one_did() {
+        let mut v = Viewport::new();
+        v.set_candle_width(MIN_PX_PER_BAR);
+        let (start, end) = v.visible_range(1600.0, 100_000);
+        let bars = (end - start) as f32;
+        // The old floor was 2 px per bar: 800 bars across a 1600 px chart.
+        assert!(bars >= 10.0 * (1600.0 / 2.0), "bars across = {bars}");
+    }
+
+    /// A candle is drawn from a whole group, so the window starts on a group
+    /// boundary — starting mid-group would draw a candle from part of one.
+    #[test]
+    fn a_grouped_window_starts_on_a_group_boundary() {
+        let mut v = Viewport::new();
+        v.set_candle_width(0.5);
+        assert_eq!(v.bars_per_slot(), 8);
+        let (start, _) = v.visible_range(800.0, 100_000);
+        assert_eq!(start % 8, 0, "start = {start}");
+    }
+
+    /// Grouped, the candle for a group is drawn at the middle of it and every
+    /// bar in the group reports that same slot — which is what keeps a drawing
+    /// anchored to a bar sitting on the candle that stands for it.
+    #[test]
+    fn every_bar_of_a_group_shares_the_slot_its_candle_is_drawn_at() {
+        let mut v = Viewport::new();
+        v.set_candle_width(1.0);
+        assert_eq!(v.bars_per_slot(), 4);
+        let right = 1000.0;
+        let slot = v.slot_center_x(40, right, 100);
+        for bar in 40..44 {
+            assert!(
+                (v.slot_center_x(bar, right, 100) - slot).abs() < 0.001,
+                "bar {bar} belongs to the same candle"
+            );
+            // And its own position never leaves the candle drawn over it.
+            let x = v.x_center(bar, right, 100);
+            assert!(
+                (x - slot).abs() <= v.candle_width() / 2.0 + 0.001,
+                "bar {bar}"
+            );
+        }
+        let next = v.slot_center_x(44, right, 100);
+        assert!(
+            (next - slot - v.candle_width()).abs() < 0.001,
+            "neighbouring candles are one slot apart"
+        );
+    }
+
+    /// Placing a drawing and drawing it are one projection read in both
+    /// directions — including grouped, where the two easily drift apart.
+    #[test]
+    fn x_and_bar_are_inverses_at_every_zoom() {
+        for px in [8.0_f32, 2.0, 0.5, MIN_PX_PER_BAR] {
+            let mut v = Viewport::new();
+            v.set_candle_width(px);
+            for bar in [0.0_f32, 12.5, 99.0] {
+                let x = v.x_at_bar_position(bar, 1000.0, 200);
+                let back = v.bar_at_x(x, 1000.0, 200);
+                assert!((back - bar).abs() < 0.01, "px {px}, bar {bar}: got {back}");
+            }
+        }
+    }
+
+    /// Ungrouped — every zoom a trader spends their day at — nothing about the
+    /// projection moved: one bar, one slot, the same pixels as before.
+    #[test]
+    fn an_ungrouped_projection_is_unchanged() {
+        let v = Viewport::new();
+        assert_eq!(v.bars_per_slot(), 1);
+        assert!((v.candle_width() - v.px_per_bar()).abs() < f32::EPSILON);
+        for bar in [0_usize, 5, 9] {
+            assert!((v.slot_center_x(bar, 1000.0, 10) - v.x_center(bar, 1000.0, 10)).abs() < 0.001);
+        }
+    }
+
+    /// A window with no usable width is mid-layout, not a decision to take the
+    /// gesture away: the margin falls back to a floor rather than to zero.
+    #[test]
+    fn a_window_with_no_width_still_leaves_room_to_pan_into() {
+        for window in [0.0, -50.0, f32::NAN, f32::INFINITY] {
+            let mut v = Viewport::new();
+            v.pan_pixels(-10_000.0, 10);
+            v.clamp_to_window(window, 10);
+            let edge = v.right_edge_bar(10);
+            assert!(
+                (edge - (9.0 + MIN_PROJECTION_BARS)).abs() < 0.001,
+                "window {window}: edge = {edge}"
+            );
+        }
     }
 
     #[test]

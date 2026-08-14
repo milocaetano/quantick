@@ -1952,8 +1952,7 @@ impl ChartPane {
         if total == 0 || band.rect.height() <= 1.0 {
             return None;
         }
-        let bar = self.viewport.right_edge_bar(total) + 0.5
-            - (history_right - pos.x) / self.viewport.candle_width();
+        let bar = self.viewport.bar_at_x(pos.x, history_right, total);
         // A candle-magnet anchor cannot land where no candle is: the bar
         // clamps to the tape before the snap reads it.
         let bar = if snap == drawings::AnchorSnap::NearestOhlc {
@@ -2643,7 +2642,7 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &drawing.points,
                     scale,
-                    px_per_bar: self.viewport.candle_width(),
+                    px_per_bar: self.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
@@ -2679,7 +2678,7 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &drawing.points,
                     scale,
-                    px_per_bar: self.viewport.candle_width(),
+                    px_per_bar: self.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
@@ -2727,7 +2726,7 @@ impl ChartPane {
             payload: drawing.payload.as_ref(),
             anchors: &drawing.points,
             scale,
-            px_per_bar: self.viewport.candle_width(),
+            px_per_bar: self.viewport.px_per_bar(),
             unit: band.unit(),
             primary_band: true,
             style: drawing.style,
@@ -2779,7 +2778,7 @@ impl ChartPane {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
-                px_per_bar: self.viewport.candle_width(),
+                px_per_bar: self.viewport.px_per_bar(),
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
@@ -3212,7 +3211,7 @@ impl ChartPane {
                             && let Some(scale) = band.scale
                         {
                             let (lo, hi) = scale.range();
-                            let delta_bar = travel.x / self.viewport.candle_width();
+                            let delta_bar = travel.x / self.viewport.px_per_bar();
                             // Per *band* height: a pane is a fraction of the
                             // chart's, and dividing by the candles' would move
                             // a CVD level by a fraction of the distance the
@@ -3595,7 +3594,6 @@ impl ChartPane {
             self.viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }
-
         // The dividers last of all: registered after every pane body so the
         // grab band takes the drag that would otherwise pan the pane behind
         // it, exactly as the canvas split's divider is registered after both
@@ -3751,6 +3749,15 @@ impl ChartPane {
             ),
         );
 
+        // The projection margin is enforced here, against the rect the candles
+        // are actually drawn in, rather than in the input handler: panning
+        // leaves the future end open and zooming knows nothing about the
+        // window, and the window itself moves without any gesture at all (the
+        // app resizing, the lane divider dragged, a pane collapsed). Painting
+        // is the one place that sees all of it, so it is the one place the
+        // rule holds — pushed fully left, the newest bar stops at the left
+        // edge and the rest of the window is empty canvas to project into.
+        self.viewport.clamp_to_window(history_rect.width(), total);
         let (start, end) = self.viewport.visible_range(history_rect.width(), total);
 
         // The visible closed bars, plus the partial if it falls in view. With
@@ -3789,7 +3796,7 @@ impl ChartPane {
         let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
 
         let cw = self.viewport.candle_width();
-        let half = (cw * chrome.style.candles.clamped_width_frac() / 2.0).max(0.5);
+        let half = chrome.style.candles.body_half_width(cw);
         let right = history_rect.right();
 
         // With the footprint on, the candle cedes its interior to the ladder
@@ -3911,6 +3918,12 @@ impl ChartPane {
         // sends the newest bars off the right of it, and they scroll out of
         // sight behind the tape instead of being drawn over it.
         let clip = painter.with_clip_rect(history_rect);
+        // How many bars share one drawn candle, and which slot holds the bar
+        // still forming. Both are read once here and used by every pass over
+        // the candles below.
+        let per_slot = self.viewport.bars_per_slot();
+        let forming_slot = partial_visible.map(|_| closed_total / per_slot);
+        let viewport = &self.viewport;
         // Clear the heat behind each candle's high–low span so a translucent
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
@@ -3933,25 +3946,31 @@ impl ChartPane {
                     canvas_background,
                 );
             };
-            for (offset, bar) in visible_closed().enumerate() {
-                clear_bar(
-                    self.viewport.x_center(closed_start + offset, right, total),
-                    bar,
-                );
-            }
-            if let Some(partial) = partial_visible {
-                clear_bar(self.viewport.x_center(closed_total, right, total), partial);
-            }
+            crate::resample::for_each_group(
+                visible_closed().chain(partial_visible),
+                closed_start,
+                per_slot,
+                |index, bar| clear_bar(viewport.slot_center_x(index, right, total), bar),
+            );
         }
-        for (offset, bar) in visible_closed().enumerate() {
-            let index = closed_start + offset;
-            let xc = self.viewport.x_center(index, right, total);
-            draw_candle(&clip, xc, half, &scale, bar, false, candles);
-        }
-        if let Some(partial) = partial_visible {
-            let xc = self.viewport.x_center(closed_total, right, total);
-            draw_candle(&clip, xc, half, &scale, partial, true, candles);
-        }
+        // One candle per drawn slot. Ungrouped — every zoom a trader works at —
+        // that is one bar, borrowed and drawn exactly as before. Squeezed past
+        // the point where a bar can be drawn on its own, it is the exact fold
+        // of the bars sharing the slot (`Viewport::bars_per_slot`), so a
+        // compressed chart is a coarser record of the same tape rather than an
+        // invented one, and the cost of a frame stops growing with the zoom.
+        // The forming bar folds into the slot it belongs to, and that slot is
+        // drawn as forming.
+        crate::resample::for_each_group(
+            visible_closed().chain(partial_visible),
+            closed_start,
+            per_slot,
+            |index, bar| {
+                let xc = viewport.slot_center_x(index, right, total);
+                let forming = forming_slot == Some(index / per_slot);
+                draw_candle(&clip, xc, half, &scale, bar, forming, candles);
+            },
+        );
         // The footprint rides directly on the candles, before everything
         // drawn over them: it is a representation of the bars themselves,
         // not an annotation. Prefix (venue) candles carry no tape and draw
@@ -4311,6 +4330,20 @@ impl ChartPane {
                 theme::TEXT_MUTED,
             );
         }
+        // Squeezed past the grouping zoom, one candle stands for several bars.
+        // A chart that did that quietly would be misreporting its own
+        // resolution — every candle a reader counts, every wick they measure,
+        // would be a different thing from what the bar rule says it is. So it
+        // says the factor, in the corner and in the reader's own units.
+        if self.viewport.grouped() {
+            painter.text(
+                egui::pos2(history_rect.left() + 8.0, history_rect.bottom() - 6.0),
+                egui::Align2::LEFT_BOTTOM,
+                format!("×{} bars per candle", self.viewport.bars_per_slot()),
+                egui::FontId::proportional(11.0),
+                theme::TEXT_FAINT,
+            );
+        }
         if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
             self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
         }
@@ -4369,7 +4402,10 @@ impl ChartPane {
         };
         let format = crate::chart::time_label_format(history_strip.width(), width_of);
         let label_width = width_of(format);
-        let stride = crate::chart::time_label_stride(self.viewport.candle_width(), label_width);
+        // Per *bar*, not per slot: the walk below steps a bar at a time and
+        // labels the bar it lands on, so how far apart two labels end up is
+        // how far apart two bars are.
+        let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), label_width);
 
         let mut index = start;
         while index < end {
@@ -4804,7 +4840,7 @@ impl ChartPane {
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
-                px_per_bar: self.viewport.candle_width(),
+                px_per_bar: self.viewport.px_per_bar(),
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
@@ -4975,7 +5011,7 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &anchors,
                     scale: &scale,
-                    px_per_bar: self.viewport.candle_width(),
+                    px_per_bar: self.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: drawing.band != DrawingBand::AllBands || band_index == 0,
                     style,
@@ -5111,7 +5147,7 @@ impl ChartPane {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,
                 scale,
-                px_per_bar: self.viewport.candle_width(),
+                px_per_bar: self.viewport.px_per_bar(),
                 unit: band.unit(),
                 primary_band,
                 style,
@@ -5155,7 +5191,7 @@ impl ChartPane {
                 payload: draft.payload.as_ref(),
                 anchors: &anchors,
                 scale,
-                px_per_bar: self.viewport.candle_width(),
+                px_per_bar: self.viewport.px_per_bar(),
                 unit: band.unit(),
                 primary_band: draft.band != DrawingBand::AllBands || band_index == 0,
                 style: draft.style,
