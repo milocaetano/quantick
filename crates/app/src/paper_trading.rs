@@ -28,9 +28,6 @@ use crate::chart::PriceScale;
 use crate::theme;
 use crate::timezone::TzOffset;
 
-/// Overrides the history folder (cwd-relative otherwise, like every
-/// quantick path).
-const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 /// `=1` runs a fixed sequence of ordinary sim commands driven by print
 /// count, so a screenshot or demo run shows every trading surface without
 /// a click — the autostart family's member for paper trading. The trades
@@ -38,8 +35,6 @@ const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 /// `QUANTICK_TRADES_DIR` somewhere scratch to keep a demo out of your
 /// journal.
 const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
-/// Default history folder, relative to the working directory.
-const TRADES_DIR: &str = "paper-trades";
 /// How long a paper toast stays on screen.
 const TOAST_MS: u64 = 4_000;
 /// Grab distance for order lines — the drawings' select radius, so the two
@@ -129,6 +124,31 @@ const REPORT_MIN_WIDTH_PX: f32 = 440.0;
 const REPORT_MIN_HEIGHT_PX: f32 = 360.0;
 /// Height the report keeps for its honesty footer under the grids.
 const REPORT_FOOTER_RESERVE_PX: f32 = 64.0;
+/// Width of the typed-period field beside the pills — room for "999h".
+const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
+/// How many `.rerun-N` session names one venue-time stamp may try — far
+/// beyond any real journal, a backstop against a pathological folder.
+const MAX_SESSION_RERUNS: usize = 999;
+/// `=buy`/`=sell` forces the cmd-trading preview for a capture run — the
+/// held modifier is the one input a run with nobody at the keyboard
+/// cannot supply (the ParkedHand rule).
+const CMD_PREVIEW_ENV: &str = "QUANTICK_CMD_PREVIEW";
+/// Cmd-trading preview line, as a fraction of the chart width…
+const CMD_LINE_FRACTION: f32 = 0.2;
+/// …no shorter than this (a narrow pane must still show a line)…
+const CMD_LINE_MIN_PX: f32 = 120.0;
+/// …and no longer than this (a wide chart must not paint a bar across
+/// half the plot). Whether fraction or fixed reads better is a
+/// trader-ux-review question; the clamp serves both answers.
+const CMD_LINE_MAX_PX: f32 = 320.0;
+/// The preview label's fixed width: paint and press share this exact
+/// rect, so the two can never disagree (the overlay-controls rule).
+const CMD_LABEL_WIDTH_PX: f32 = 116.0;
+/// Gap between the label and the left end of its line.
+const CMD_LABEL_GAP_PX: f32 = 6.0;
+/// The label's fill while the pointer is elsewhere; hover paints it full,
+/// so the brightening itself says "clickable".
+const CMD_LABEL_RESTING_ALPHA: f32 = 0.72;
 /// The grids' readable floor inside a squeezed window.
 const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
@@ -238,11 +258,14 @@ enum ReportPeriod {
     Month,
     Quarter,
     All,
+    /// A typed span (`2d`, `12h`…) in milliseconds back from the anchor —
+    /// the text box beside the pills.
+    Custom(i64),
 }
 
 impl ReportPeriod {
-    /// Every period, in pill order.
-    const ALL: [Self; 5] = [
+    /// Every fixed period, in pill order; `Custom` rides the text box.
+    const PILLS: [Self; 5] = [
         Self::Today,
         Self::Week,
         Self::Month,
@@ -257,54 +280,178 @@ impl ReportPeriod {
             Self::Month => "30d",
             Self::Quarter => "90d",
             Self::All => "All",
+            Self::Custom(_) => "custom",
         }
     }
 
     /// The anchor-relative phrase the support line reads.
-    fn phrase(self) -> &'static str {
+    fn phrase(self) -> String {
         match self {
-            Self::Today => "the newest trade's day",
-            Self::Week => "the last 7 days",
-            Self::Month => "the last 30 days",
-            Self::Quarter => "the last 90 days",
-            Self::All => "everything saved",
+            Self::Today => "the newest trade's day".to_owned(),
+            Self::Week => "the last 7 days".to_owned(),
+            Self::Month => "the last 30 days".to_owned(),
+            Self::Quarter => "the last 90 days".to_owned(),
+            Self::All => "everything saved".to_owned(),
+            Self::Custom(period_ms) => format!("the last {}", fmt_period_ms(period_ms)),
         }
     }
 
     /// Oldest closing time still inside the period, measured back from
-    /// `anchor_ms`; `None` keeps everything.
-    fn cutoff_ms(self, anchor_ms: i64) -> Option<i64> {
+    /// `anchor_ms`; `None` keeps everything. "Today" is the anchor's civil
+    /// day in the chart's display timezone — the ledger renders local
+    /// times, so the day must break where the user sees midnight, not
+    /// where UTC does.
+    fn cutoff_ms(self, anchor_ms: i64, tz: TzOffset) -> Option<i64> {
         const DAY_MS: i64 = 86_400_000;
         match self {
-            Self::Today => Some(anchor_ms.div_euclid(DAY_MS) * DAY_MS),
+            Self::Today => {
+                let local = anchor_ms.saturating_add(tz.offset_ms());
+                let local_day_start = local.div_euclid(DAY_MS) * DAY_MS;
+                Some(local_day_start.saturating_sub(tz.offset_ms()))
+            }
             Self::Week => Some(anchor_ms.saturating_sub(7 * DAY_MS)),
             Self::Month => Some(anchor_ms.saturating_sub(30 * DAY_MS)),
             Self::Quarter => Some(anchor_ms.saturating_sub(90 * DAY_MS)),
             Self::All => None,
+            Self::Custom(period_ms) => Some(anchor_ms.saturating_sub(period_ms)),
         }
     }
+}
+
+/// Parse a typed period: a positive whole number and a unit — `m`
+/// (minutes), `h`, `d`, `w` — any case, blanks tolerated. `None` is a
+/// refusal the caller must say out loud: a silently-empty report is
+/// exactly the confusion the typed field exists to end.
+fn parse_period(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let unit = text.chars().last()?;
+    let count = text.get(..text.len() - unit.len_utf8())?.trim_end();
+    let count: i64 = count.parse().ok()?;
+    if count <= 0 {
+        return None;
+    }
+    let unit_ms: i64 = match unit.to_ascii_lowercase() {
+        'm' => 60_000,
+        'h' => 3_600_000,
+        'd' => 86_400_000,
+        'w' => 7 * 86_400_000,
+        _ => return None,
+    };
+    count.checked_mul(unit_ms)
+}
+
+/// `45m`, `36h`, `2d`, `1w` — the canonical spelling of a custom period,
+/// largest whole unit first.
+fn fmt_period_ms(period_ms: i64) -> String {
+    const MINUTE_MS: i64 = 60_000;
+    const HOUR_MS: i64 = 3_600_000;
+    const DAY_MS: i64 = 86_400_000;
+    const WEEK_MS: i64 = 7 * DAY_MS;
+    let (value, unit) = if period_ms % WEEK_MS == 0 {
+        (period_ms / WEEK_MS, 'w')
+    } else if period_ms % DAY_MS == 0 {
+        (period_ms / DAY_MS, 'd')
+    } else if period_ms % HOUR_MS == 0 {
+        (period_ms / HOUR_MS, 'h')
+    } else {
+        (period_ms / MINUTE_MS, 'm')
+    };
+    format!("{value}{unit}")
 }
 
 /// The report as filtered for display: the period's trades in closing
 /// order, their aggregation, and the anchor the period was measured from.
 struct ReportView {
     period: ReportPeriod,
+    source: SourceFilter,
+    /// The display timezone the view was cut with — "Today" moves with it.
+    tz: TzOffset,
     /// Newest closing time in scope — what the period counts back from.
     anchor_ms: Option<i64>,
+    /// Saved trades older than the window — the honest answer to "where
+    /// did my old trades go": they exist, the period just stops short.
+    hidden_before: usize,
+    /// Saved trades the Source filter keeps out of this view.
+    hidden_by_source: usize,
     trades: Vec<ClosedTrade>,
     report: PerformanceReport,
+}
+
+/// One journal row loaded from disk: the trade, the symbol folder it came
+/// from, and the session source its file recorded.
+#[derive(Clone)]
+struct HistoryRow {
+    symbol: String,
+    /// `None` — a file from before the source was recorded. The report's
+    /// Real view includes it: that era *was* live trading, and hiding it
+    /// would "lose" the user's history all over again.
+    source: Option<history::SessionSource>,
+    trade: ClosedTrade,
 }
 
 /// Journal rows loaded from disk, each remembering the symbol folder it
 /// came from, merged into one closing-order timeline.
 struct LoadedHistory {
-    /// `(symbol, trade)` in closing order across every file read.
-    rows: Vec<(String, ClosedTrade)>,
+    /// Rows in closing order across every file read.
+    rows: Vec<HistoryRow>,
     files: usize,
     /// Files that were not readable quantick-trades files.
     unreadable_files: usize,
     /// Rows the parser had to report as unreadable (torn tails and such).
     problem_rows: usize,
+}
+
+/// The report's session-source filter. Default `Real`: practice runs must
+/// never inflate the real track record unasked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceFilter {
+    /// Live sessions, plus files from before the source was recorded.
+    Real,
+    /// Replay-driven practice sessions only.
+    Replay,
+    /// Everything, mixed.
+    All,
+}
+
+impl SourceFilter {
+    /// Every filter, in pill order.
+    const PILLS: [Self; 3] = [Self::Real, Self::Replay, Self::All];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Real => "Real",
+            Self::Replay => "Replay",
+            // Not "All": the period pills own that word on the same row,
+            // and two identical pills a hand-width apart invite the wrong
+            // click.
+            Self::All => "Both",
+        }
+    }
+
+    fn hover(self) -> &'static str {
+        match self {
+            Self::Real => {
+                "live sessions - files saved before quantick recorded a source count as real"
+            }
+            Self::Replay => "practice sessions driven by a market-replay recording",
+            Self::All => "live and replay together - mixed on purpose",
+        }
+    }
+
+    /// Whether a row with this recorded source belongs to the filter.
+    fn admits(self, source: Option<history::SessionSource>) -> bool {
+        match self {
+            // Exhaustive on purpose: a future source variant must not fall
+            // into the real track record by default — adding one forces
+            // this match to say where it belongs.
+            Self::Real => match source {
+                None | Some(history::SessionSource::Live) => true,
+                Some(history::SessionSource::Replay) => false,
+            },
+            Self::Replay => source == Some(history::SessionSource::Replay),
+            Self::All => true,
+        }
+    }
 }
 
 /// What the Trading tab asked of its host.
@@ -314,6 +461,9 @@ pub enum TradingTabAction {
     /// app-wide (every tab journals there) and remembered, so the app
     /// owns the dialog and the fan-out.
     PickTradesDir,
+    /// Cmd-trading settings changed — app-wide like the trades dir: the
+    /// app persists them and fans them out to every tab.
+    CmdTradingChanged,
 }
 
 /// What the Trades ledger asked of its host.
@@ -354,6 +504,120 @@ pub struct ChartInput<'a> {
     pub primary_pressed: bool,
     pub primary_down: bool,
     pub primary_released: bool,
+    /// The frame's held modifiers — what the cmd-trading gesture reads.
+    pub modifiers: egui::Modifiers,
+}
+
+/// A modifier key the cmd-trading gesture can bind to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmdModifier {
+    Shift,
+    Ctrl,
+    Alt,
+}
+
+impl CmdModifier {
+    /// Every binding the selectors offer.
+    pub const ALL: [Self; 3] = [Self::Shift, Self::Ctrl, Self::Alt];
+
+    /// Stable token for the state file.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shift => "shift",
+            Self::Ctrl => "ctrl",
+            Self::Alt => "alt",
+        }
+    }
+
+    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "shift" => Some(Self::Shift),
+            "ctrl" => Some(Self::Ctrl),
+            "alt" => Some(Self::Alt),
+            _ => None,
+        }
+    }
+
+    /// Display label for the selector.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Shift => "Shift",
+            Self::Ctrl => "Ctrl",
+            Self::Alt => "Alt",
+        }
+    }
+
+    /// Whether the key is held. `Ctrl` reads the platform command key, so
+    /// the binding keeps meaning "the control-ish key" on every OS.
+    fn is_down(self, modifiers: egui::Modifiers) -> bool {
+        match self {
+            Self::Shift => modifiers.shift,
+            Self::Ctrl => modifiers.command,
+            Self::Alt => modifiers.alt,
+        }
+    }
+}
+
+/// Cmd trading: hold a key over the chart and a dashed line shows exactly
+/// where the order will rest; click its label to place. Safer than the
+/// right-click menu because the price is visible before anything commits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CmdTradingSettings {
+    pub enabled: bool,
+    pub buy: CmdModifier,
+    pub sell: CmdModifier,
+}
+
+impl Default for CmdTradingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            buy: CmdModifier::Shift,
+            sell: CmdModifier::Ctrl,
+        }
+    }
+}
+
+impl CmdTradingSettings {
+    /// The settings the sidecar remembers, with the defaults wherever it
+    /// never spoke — or spoke a token this build does not know.
+    #[must_use]
+    pub(crate) fn from_state(state: &crate::paper_state::PaperState) -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: state.cmd_trading_enabled.unwrap_or(defaults.enabled),
+            buy: state
+                .cmd_buy_modifier
+                .as_deref()
+                .and_then(CmdModifier::parse)
+                .unwrap_or(defaults.buy),
+            sell: state
+                .cmd_sell_modifier
+                .as_deref()
+                .and_then(CmdModifier::parse)
+                .unwrap_or(defaults.sell),
+        }
+    }
+}
+
+/// The frame's cmd-trading preview: computed by `handle_chart_input`,
+/// painted by `draw_layer`, clicked through the same geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CmdPreview {
+    side: Side,
+    kind: EntryKind,
+    /// Snapped price, for the label and the gutter chip.
+    price: Decimal,
+    /// Raw pointer price — what a click hands to `place_resting`, which
+    /// snaps for itself (the armed-click path's contract).
+    raw_price: f64,
+    y: f32,
+    /// Pointer on the label — highlight, hand cursor, click places.
+    hover: bool,
 }
 
 /// The app-side paper-trading host: simulator, order-entry form state,
@@ -365,8 +629,29 @@ pub struct PaperTrading {
     dir: PathBuf,
     /// Current session file, named after the first closed trade.
     journal_path: Option<PathBuf>,
+    /// Every file this host has journaled to. The ledger excludes them
+    /// all — their trades are still in the simulator, which keeps closed
+    /// trades across every retarget; excluding only the current file
+    /// double-counted after a symbol or source switch.
+    session_journal_paths: Vec<PathBuf>,
+    /// The session source each of the simulator's closed trades closed
+    /// under, index-aligned with `sim.closed_trades()` — the export must
+    /// not stamp a pre-switch trade with the current source.
+    session_trade_sources: Vec<history::SessionSource>,
     /// A failed journal write warns once, not once per trade.
     journal_warned: bool,
+    /// Where this session's trades come from — the tab's feed sets it,
+    /// the journal header records it.
+    session_source: history::SessionSource,
+    /// Cmd trading: the toggle and its two key bindings (app-wide; the
+    /// app persists and fans out changes).
+    cmd_trading: CmdTradingSettings,
+    /// This frame's cmd preview — input computes, paint reads, one
+    /// geometry both sides.
+    cmd_preview: Option<CmdPreview>,
+    /// Harness override: paint the preview for this side with nobody at
+    /// the keyboard (`QUANTICK_CMD_PREVIEW`).
+    cmd_preview_force: Option<Side>,
     // Order-entry form.
     qty_text: String,
     order_type: EntryKind,
@@ -382,11 +667,20 @@ pub struct PaperTrading {
     hovered_order: Option<OrderId>,
     /// The in-flight export, if any; resolved by `draw_toast`'s poll.
     export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
+    /// The in-flight history-folder import, if any; resolved by
+    /// `draw_toast`'s poll. Imports copy — the picked folder keeps its
+    /// files.
+    import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
     toast: Option<Toast>,
     report_open: bool,
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
     report_symbol: Option<String>,
     report_period: ReportPeriod,
+    /// The report's session-source scope; opens on `Real`.
+    report_source: SourceFilter,
+    /// What the typed-period field holds; applied on Enter, kept verbatim
+    /// so a refused entry stays visible for fixing.
+    report_custom_text: String,
     /// Symbol folders on disk, for the report's combo box.
     report_symbols: Vec<String>,
     /// The report's history in scope, loaded fresh from disk.
@@ -420,18 +714,23 @@ impl PaperTrading {
     /// through [`Self::with_trades_dir`] with the configured folder.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_trades_dir(Self::resolve_trades_dir(TRADES_DIR, None))
+        if cfg!(test) {
+            // Tests must never journal into a real documents folder — the
+            // same scratch discipline `paper_state::default_path` applies.
+            return Self::with_trades_dir(test_scratch_dir());
+        }
+        Self::with_trades_dir(Self::resolve_trades_dir(None, None))
     }
 
     /// The journal folder for this run: the environment override wins (an
     /// env var is an explicit request for one run, like every autostart
     /// hook), then `stored` — the folder the user last picked with the
-    /// panel's button — then `configured`, the `[paper] trades_dir` key,
-    /// defaulting to `paper-trades`.
+    /// panel's button — then `configured`, the `[paper] trades_dir` key
+    /// when the config carries one, and finally the documents home
+    /// ([`crate::paper_home::default_trades_dir`]).
     #[must_use]
-    pub fn resolve_trades_dir(configured: &str, stored: Option<&str>) -> PathBuf {
-        std::env::var_os(TRADES_DIR_ENV)
-            .map_or_else(|| chosen_trades_dir(configured, stored), PathBuf::from)
+    pub fn resolve_trades_dir(configured: Option<&str>, stored: Option<&str>) -> PathBuf {
+        crate::paper_home::resolve(configured, stored)
     }
 
     /// A host journaling to `dir`, already resolved from config and
@@ -443,7 +742,28 @@ impl PaperTrading {
             symbol: String::new(),
             dir,
             journal_path: None,
+            session_journal_paths: Vec::new(),
+            session_trade_sources: Vec::new(),
             journal_warned: false,
+            session_source: history::SessionSource::Live,
+            cmd_trading: CmdTradingSettings::default(),
+            cmd_preview: None,
+            cmd_preview_force: std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
+                match value.as_str() {
+                    "buy" => Some(Side::Buy),
+                    "sell" => Some(Side::Sell),
+                    other => {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
+                            value = %other,
+                            "QUANTICK_CMD_PREVIEW wants `buy` or `sell`"
+                        );
+                        None
+                    }
+                }
+            }),
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -453,10 +773,13 @@ impl PaperTrading {
             drag_price: None,
             hovered_order: None,
             export_rx: None,
+            import_rx: None,
             toast: None,
             report_open: false,
             report_symbol: None,
             report_period: ReportPeriod::All,
+            report_source: SourceFilter::Real,
+            report_custom_text: String::new(),
             report_symbols: Vec::new(),
             report: None,
             report_view: None,
@@ -495,6 +818,12 @@ impl PaperTrading {
         self.history_cache = None;
         self.report = None;
         self.report_view = None;
+        if self.report_open {
+            // An open report must answer for the new folder now — cleared
+            // caches alone left it claiming "no saved trades" until a
+            // manual refresh.
+            self.reload_report();
+        }
         self.show_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
     }
 
@@ -505,6 +834,38 @@ impl PaperTrading {
     pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
         let events = self.sim.apply(command);
         self.handle_events(events);
+    }
+
+    /// The cmd-trading settings, for the app to persist.
+    #[must_use]
+    pub fn cmd_trading(&self) -> CmdTradingSettings {
+        self.cmd_trading
+    }
+
+    /// Install cmd-trading settings — the app's fan-out on boot and on a
+    /// change made in any tab (one gesture, one meaning, everywhere).
+    pub fn set_cmd_trading(&mut self, settings: CmdTradingSettings) {
+        self.cmd_trading = settings;
+        if !settings.enabled {
+            self.cmd_preview = None;
+        }
+    }
+
+    /// Drop the frame's preview — the pane calls this when a drawing tool
+    /// owns the hand, so a stale line never keeps painting.
+    pub fn clear_cmd_preview(&mut self) {
+        self.cmd_preview = None;
+    }
+
+    /// Follow the tab's feed: a session is wholly live or wholly a
+    /// replay, and the journal's header records which. A change retargets
+    /// the journal so the next close opens a file honest about its
+    /// source.
+    pub fn set_session_source(&mut self, source: history::SessionSource) {
+        if self.session_source != source {
+            self.session_source = source;
+            self.journal_path = None;
+        }
     }
 
     /// Follow the app's active symbol. A change retargets the journal; the
@@ -585,19 +946,25 @@ impl PaperTrading {
         let had_position = self.sim.position().is_some();
         let had_orders = !self.sim.orders().is_empty() || !self.sim.queued().is_empty();
         let events = self.sim.reset();
+        let mut all_saved = true;
         for event in &events {
             if let SimEvent::Closed(trade) = event {
-                self.journal(&trade.clone());
+                all_saved &= self.journal(&trade.clone());
             }
         }
+        // A reset ends the tape session, so it ends the file session too:
+        // the next close opens a fresh file (same venue stamp lands as
+        // `.rerun-N`). Without this, replaying the same recording again
+        // without leaving replay appended run 2 into run 1's file.
+        self.journal_path = None;
         self.armed = None;
         self.drag = PaperDrag::None;
         self.drag_price = None;
-        if had_position {
+        if had_position && all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),
             );
-        } else if had_orders {
+        } else if had_orders && all_saved {
             self.show_toast(
                 "SIM orders cancelled - the timeline was rebuilt under them.".to_owned(),
             );
@@ -984,6 +1351,84 @@ impl PaperTrading {
                 theme::ACCENT,
             );
         }
+
+        // On top of every order line: the cmd preview is the thing being
+        // aimed right now.
+        self.draw_cmd_preview(&ctx);
+    }
+
+    /// The cmd-trading preview: a short dashed line at the pointer's
+    /// price, hugging the right edge, with the clickable label off its
+    /// left end and the exact price on the gutter — the trader reads
+    /// where the order will rest *before* anything commits, which is the
+    /// safety the right-click menu cannot offer.
+    fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>) {
+        let Some(preview) = self.cmd_preview else {
+            return;
+        };
+        // Only the pane that owns paper input paints the aim — except in
+        // a harness run, whose panes never own a pointer at all.
+        if ctx.pointer.is_none() && self.cmd_preview_force.is_none() {
+            return;
+        }
+        if !ctx.in_range(preview.y) {
+            return;
+        }
+        let color = side_color(preview.side);
+        // Lay out against the band the input hit-tests (its right edge is
+        // the lane divider when the live tape lane is up), never the full
+        // chart rect — a label painted right of the divider would be a
+        // click target the press could not find (the overlay-controls
+        // rule).
+        let band = egui::Rect::from_min_max(
+            ctx.chart_rect.min,
+            egui::pos2(
+                ctx.tag_right.min(ctx.chart_rect.right()),
+                ctx.chart_rect.max.y,
+            ),
+        );
+        let (start, end, label) = cmd_preview_layout(band, preview.y);
+        let width = if preview.hover {
+            LINE_HOVER_WIDTH_PX
+        } else {
+            LINE_WIDTH_PX
+        };
+        ctx.painter.extend(egui::Shape::dashed_line(
+            &[start, end],
+            egui::Stroke::new(width, color),
+            ORDER_DASH_PX,
+            ORDER_GAP_PX,
+        ));
+        ctx.gutter_chip(preview.y, color, &fmt_decimal(preview.price));
+        // The label: fixed geometry (paint and press share it), hover
+        // brightens the fill — the click target must say it is one.
+        let fill = if preview.hover {
+            color
+        } else {
+            color.gamma_multiply(CMD_LABEL_RESTING_ALPHA)
+        };
+        ctx.painter
+            .rect_filled(label, egui::Rounding::same(3.0), fill);
+        let quantity = self
+            .quantity_preview()
+            .map_or_else(|| "?".to_owned(), fmt_decimal);
+        let text = format!(
+            "{} {} {}",
+            side_word_upper(preview.side),
+            kind_word(preview.kind),
+            quantity,
+        );
+        let galley =
+            ctx.painter
+                .layout_no_wrap(text, egui::FontId::monospace(11.0), theme::CHIP_INK);
+        ctx.painter.galley(
+            egui::pos2(
+                label.center().x - galley.size().x / 2.0,
+                label.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            theme::CHIP_INK,
+        );
     }
 
     /// One protective leg: its resting line and tag, the drag that reprices
@@ -1073,6 +1518,10 @@ impl PaperTrading {
     }
 
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
+        // The cmd preview is a per-frame fact: recomputed here, painted by
+        // `draw_layer`, and cleared the instant the key lifts.
+        self.cmd_preview = self.compute_cmd_preview(input);
+
         // An overlay control (a tag's ✕, a bracket handle) takes the press
         // before *everything*: before the armed click — arming an order must
         // never eat the ✕ under the pointer — and before the line grab,
@@ -1103,6 +1552,18 @@ impl PaperTrading {
                     self.drag_price = Some(scale.price_at(pointer.y));
                 }
             }
+            return true;
+        }
+
+        // The preview's label takes the press after the ✕s (they are
+        // rarer and smaller) and before everything else: clicking it *is*
+        // the gesture.
+        if input.primary_pressed
+            && self.drag == PaperDrag::None
+            && let Some(preview) = self.cmd_preview
+            && preview.hover
+        {
+            self.place_resting(preview.side, preview.kind, preview.raw_price);
             return true;
         }
 
@@ -1261,6 +1722,56 @@ impl PaperTrading {
         None
     }
 
+    /// The preview the pointer and the held key describe this frame;
+    /// `None` hides the overlay. Both keys down at once is ambiguous and
+    /// shows nothing — so a shared binding degrades to "off", never to a
+    /// wrong side.
+    fn compute_cmd_preview(&self, input: &ChartInput<'_>) -> Option<CmdPreview> {
+        if !self.cmd_trading.enabled {
+            return None;
+        }
+        let scale = input.scale?;
+        let (pointer, side) = match self.cmd_preview_force {
+            // The harness has no hand; park the pointer mid-chart.
+            Some(side) => (input.pointer.unwrap_or(input.chart.center()), side),
+            None => {
+                let pointer = input.pointer?;
+                let buy = self.cmd_trading.buy.is_down(input.modifiers);
+                let sell = self.cmd_trading.sell.is_down(input.modifiers);
+                let side = match (buy, sell) {
+                    (true, false) => Side::Buy,
+                    (false, true) => Side::Sell,
+                    _ => return None,
+                };
+                (pointer, side)
+            }
+        };
+        if !input.chart.contains(pointer) {
+            return None;
+        }
+        let mark = self.sim.mark_price()?;
+        let raw_price = scale.price_at(pointer.y);
+        let price = self.snap(raw_price);
+        // The context menu's own validity table: above the mark a buy
+        // stops in, below it a buy waits at a limit; a sell mirrors. On
+        // the mark exactly nothing can rest.
+        let kind = match (price > mark, price < mark, side) {
+            (true, _, Side::Buy) | (_, true, Side::Sell) => EntryKind::Stop,
+            (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
+            _ => return None,
+        };
+        let (_, _, label) = cmd_preview_layout(input.chart, pointer.y);
+        let hover = input.pointer.is_some_and(|pointer| label.contains(pointer));
+        Some(CmdPreview {
+            side,
+            kind,
+            price,
+            raw_price,
+            y: pointer.y,
+            hover,
+        })
+    }
+
     /// Turn a pending entry-line press into the leg the pull chose, once it
     /// travelled far enough to mean it.
     fn decide_pending_leg(&mut self, pointer_y: f32, scale: &PriceScale) {
@@ -1306,6 +1817,11 @@ impl PaperTrading {
         scale: &PriceScale,
     ) -> Option<egui::CursorIcon> {
         if self.control_at(pointer, chart, scale).is_some() {
+            return Some(egui::CursorIcon::PointingHand);
+        }
+        // The cmd preview's label announces its click like every painted
+        // control.
+        if self.cmd_preview.is_some_and(|preview| preview.hover) {
             return Some(egui::CursorIcon::PointingHand);
         }
         match self.line_at(pointer, scale)? {
@@ -1496,11 +2012,17 @@ impl PaperTrading {
 
         self.draw_position_card(ui);
         ui.separator();
-        self.draw_order_entry(ui);
+        let cmd_changed = self.draw_order_entry(ui);
         ui.separator();
         self.draw_pending_orders(ui);
         ui.separator();
-        self.draw_session_summary(ui)
+        let action = self.draw_session_summary(ui);
+        if action.is_none() && cmd_changed {
+            // Same-frame collision with another action is a picker click;
+            // the settings change persists on its next touch.
+            return Some(TradingTabAction::CmdTradingChanged);
+        }
+        action
     }
 
     /// A quiet action button — the HUD's control grammar, sized to share a
@@ -1775,7 +2297,7 @@ impl PaperTrading {
         }
     }
 
-    fn draw_order_entry(&mut self, ui: &mut egui::Ui) {
+    fn draw_order_entry(&mut self, ui: &mut egui::Ui) -> bool {
         ui.label(caption("ORDER"));
         // Qty: free decimal text (empty must keep meaning "fix me"), with
         // steppers beside it; Shift steps by ten.
@@ -1913,6 +2435,83 @@ impl PaperTrading {
             .color(theme::TEXT_SUPPORT)
             .small(),
         );
+        self.draw_cmd_trading_settings(ui)
+    }
+
+    /// The cmd-trading block of the ticket: the enable pill and the two
+    /// key bindings. Returns whether anything changed, so the host can
+    /// persist and fan out.
+    fn draw_cmd_trading_settings(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.add_space(4.0);
+        ui.label(caption("CMD TRADING"));
+        ui.horizontal(|ui| {
+            if pill_toggle(
+                ui,
+                "Enabled",
+                self.cmd_trading.enabled,
+                "hold a key over the chart: a dashed line shows exactly where the order \
+                 will rest - click its label to place it",
+            )
+            .clicked()
+            {
+                self.cmd_trading.enabled = !self.cmd_trading.enabled;
+                changed = true;
+            }
+            for (word, slot) in [("Buy", true), ("Sell", false)] {
+                ui.label(egui::RichText::new(word).color(theme::TEXT_MUTED).small());
+                let current = if slot {
+                    self.cmd_trading.buy
+                } else {
+                    self.cmd_trading.sell
+                };
+                egui::ComboBox::from_id_salt(("cmd_trading_modifier", word))
+                    .width(64.0)
+                    .selected_text(current.label())
+                    .show_ui(ui, |ui| {
+                        for modifier in CmdModifier::ALL {
+                            if ui
+                                .selectable_label(current == modifier, modifier.label())
+                                .clicked()
+                                && current != modifier
+                            {
+                                if slot {
+                                    self.cmd_trading.buy = modifier;
+                                } else {
+                                    self.cmd_trading.sell = modifier;
+                                }
+                                changed = true;
+                            }
+                        }
+                    });
+            }
+        });
+        if self.cmd_trading.enabled && self.cmd_trading.buy == self.cmd_trading.sell {
+            // A shared key is ambiguous, so the gesture shows nothing —
+            // said here rather than discovered over the chart.
+            ui.label(
+                egui::RichText::new(
+                    "buy and sell share a key - the gesture stays hidden until they differ",
+                )
+                .color(theme::AMBER)
+                .small(),
+            );
+        } else if self.cmd_trading.enabled {
+            // The gesture is invisible until a key is held; its one line
+            // of instructions lives where the toggle does, not in a
+            // tooltip a newcomer never hovers.
+            ui.label(
+                egui::RichText::new(format!(
+                    "hold {} over the chart to buy, {} to sell - the dashed line shows \
+                     where; click its label to place",
+                    self.cmd_trading.buy.label(),
+                    self.cmd_trading.sell.label(),
+                ))
+                .color(theme::TEXT_SUPPORT)
+                .small(),
+            );
+        }
+        changed
     }
 
     /// Step the quantity field by `delta`, never below a positive value;
@@ -2110,11 +2709,7 @@ impl PaperTrading {
             ReportScope::Symbol => Some(self.symbol.as_str()),
             ReportScope::All => None,
         };
-        self.history_cache = Some(load_history(
-            &self.dir,
-            symbol,
-            self.journal_path.as_deref(),
-        ));
+        self.history_cache = Some(load_history(&self.dir, symbol, &self.session_journal_paths));
     }
 
     /// The Trades dock tab: the ledger of closed simulated trades — the
@@ -2199,7 +2794,7 @@ impl PaperTrading {
                     .rows
                     .iter()
                     .rev()
-                    .map(|(symbol, trade)| (symbol.as_str(), trade))
+                    .map(|row| (row.symbol.as_str(), &row.trade))
                     .collect()
             })
             .unwrap_or_default();
@@ -2371,18 +2966,18 @@ impl PaperTrading {
     }
 
     fn reload_report(&mut self) {
-        self.report = Some(load_history(&self.dir, self.report_symbol.as_deref(), None));
+        self.report = Some(load_history(&self.dir, self.report_symbol.as_deref(), &[]));
         self.report_view = None;
         self.report_symbols = list_symbol_folders(&self.dir);
     }
 
-    /// Rebuild the filtered view when the period (or the loaded history)
-    /// changed. The anchor is the newest trade in scope, never a clock.
-    fn ensure_report_view(&mut self) {
-        let fresh = self
-            .report_view
-            .as_ref()
-            .is_some_and(|view| view.period == self.report_period);
+    /// Rebuild the filtered view when the period, source, timezone or the
+    /// loaded history changed. The anchor is the newest trade in scope —
+    /// after the Source filter, never a clock.
+    fn ensure_report_view(&mut self, tz: TzOffset) {
+        let fresh = self.report_view.as_ref().is_some_and(|view| {
+            view.period == self.report_period && view.source == self.report_source && view.tz == tz
+        });
         if fresh {
             return;
         }
@@ -2390,19 +2985,29 @@ impl PaperTrading {
             self.report_view = None;
             return;
         };
-        let anchor_ms = history.rows.last().map(|(_, trade)| trade.closed_ms);
-        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor));
-        let trades: Vec<ClosedTrade> = history
+        let in_scope: Vec<&HistoryRow> = history
             .rows
             .iter()
-            .map(|(_, trade)| trade)
+            .filter(|row| self.report_source.admits(row.source))
+            .collect();
+        let hidden_by_source = history.rows.len().saturating_sub(in_scope.len());
+        let anchor_ms = in_scope.last().map(|row| row.trade.closed_ms);
+        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor, tz));
+        let trades: Vec<ClosedTrade> = in_scope
+            .iter()
+            .map(|row| &row.trade)
             .filter(|trade| cutoff.is_none_or(|cutoff| trade.closed_ms >= cutoff))
             .cloned()
             .collect();
+        let hidden_before = in_scope.len().saturating_sub(trades.len());
         let report = PerformanceReport::from_trades(&trades);
         self.report_view = Some(ReportView {
             period: self.report_period,
+            source: self.report_source,
+            tz,
             anchor_ms,
+            hidden_before,
+            hidden_by_source,
             trades,
             report,
         });
@@ -2411,11 +3016,11 @@ impl PaperTrading {
     /// The performance report, computed from what is actually on disk.
     /// Non-modal by the app's contract — dimming the chart while a
     /// simulated position is open would be dangerous.
-    pub fn draw_report_window(&mut self, ctx: &egui::Context) {
+    pub fn draw_report_window(&mut self, ctx: &egui::Context, tz: TzOffset) {
         if !self.report_open {
             return;
         }
-        self.ensure_report_view();
+        self.ensure_report_view(tz);
         let mut open = true;
         let mut reload = false;
         egui::Window::new("Simulated performance")
@@ -2463,14 +3068,24 @@ impl PaperTrading {
                             .as_deref()
                             .unwrap_or("any symbol")
                             .to_owned();
-                        ui.label(
-                            egui::RichText::new(format!(
+                        let hidden_by_source = self
+                            .report_view
+                            .as_ref()
+                            .map_or(0, |view| view.hidden_by_source);
+                        let text = if hidden_by_source > 0 {
+                            // The trades exist; the one control that would
+                            // reveal them must be named, not implied.
+                            format!(
+                                "{scope} has {hidden_by_source} trade(s) behind the Source \
+                                 filter. Try Source \"Both\".",
+                            )
+                        } else {
+                            format!(
                                 "{scope} has no trades in {}. Try \"All\", or another symbol.",
                                 self.report_period.phrase(),
-                            ))
-                            .color(theme::TEXT_SUPPORT)
-                            .small(),
-                        );
+                            )
+                        };
+                        ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
                         let default_symbol = (!self.symbol.is_empty()).then(|| self.symbol.clone());
                         if (self.report_period != ReportPeriod::All
                             || self.report_symbol != default_symbol)
@@ -2481,6 +3096,7 @@ impl PaperTrading {
                         {
                             self.report_symbol = default_symbol;
                             self.report_period = ReportPeriod::All;
+                            self.report_source = SourceFilter::Real;
                             reload = true;
                         }
                     }
@@ -2562,11 +3178,24 @@ impl PaperTrading {
                 });
             ui.separator();
             ui.label(
+                egui::RichText::new("Source")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            for source in SourceFilter::PILLS {
+                let on = self.report_source == source;
+                if pill_toggle(ui, source.label(), on, source.hover()).clicked() && !on {
+                    self.report_source = source;
+                    self.report_view = None;
+                }
+            }
+            ui.separator();
+            ui.label(
                 egui::RichText::new("Period")
                     .color(theme::TEXT_MUTED)
                     .small(),
             );
-            for period in ReportPeriod::ALL {
+            for period in ReportPeriod::PILLS {
                 let on = self.report_period == period;
                 if pill_toggle(
                     ui,
@@ -2581,6 +3210,31 @@ impl PaperTrading {
                     self.report_view = None;
                 }
             }
+            let response = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.report_custom_text)
+                        .desired_width(CUSTOM_PERIOD_FIELD_PX)
+                        .hint_text("2d"),
+                )
+                .on_hover_text("type a period - 45m, 12h, 2d or 1w - and press Enter");
+            if response.lost_focus() {
+                match parse_period(&self.report_custom_text) {
+                    // A valid entry applies on blur as well as on Enter —
+                    // a typed "2d" must never do nothing quietly.
+                    Some(period_ms) => {
+                        self.report_period = ReportPeriod::Custom(period_ms);
+                        self.report_view = None;
+                    }
+                    // Only Enter earns the refusal toast: clicking away
+                    // from an abandoned half-entry is not a submission.
+                    None if ui.input(|input| input.key_pressed(egui::Key::Enter)) => self
+                        .show_toast(format!(
+                            "SIM: could not read `{}` as a period - use 45m, 12h, 2d or 1w",
+                            self.report_custom_text.trim(),
+                        )),
+                    None => {}
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button(icons::ARROWS_CLOCKWISE)
@@ -2589,14 +3243,45 @@ impl PaperTrading {
                 {
                     reload = true;
                 }
+                if ui
+                    .small_button(icons::DOWNLOAD_SIMPLE)
+                    .on_hover_text(
+                        "import trades from another folder - copies, the folder keeps its files",
+                    )
+                    .clicked()
+                {
+                    self.start_import();
+                }
             });
         });
         if let Some(view) = &self.report_view {
             let text = match view.anchor_ms {
-                Some(anchor) => format!(
-                    "{} up to {} (newest saved trade, not the wall clock)",
-                    view.period.phrase(),
-                    fmt_utc_date(anchor),
+                Some(anchor) => {
+                    let mut text = format!(
+                        "{} up to {} (newest saved trade, not the wall clock)",
+                        view.period.phrase(),
+                        fmt_offset_date(anchor, view.tz),
+                    );
+                    if view.hidden_before > 0 {
+                        // "Where did my old trades go" gets a literal
+                        // answer: they are saved, before this window.
+                        text.push_str(&format!(
+                            " - {} older saved trade(s) before this window",
+                            view.hidden_before,
+                        ));
+                    }
+                    if view.hidden_by_source > 0 {
+                        text.push_str(&format!(
+                            " - {} trade(s) behind the Source filter",
+                            view.hidden_by_source,
+                        ));
+                    }
+                    text
+                }
+                None if view.hidden_by_source > 0 => format!(
+                    "no saved trades in this scope - {} trade(s) sit behind the Source \
+                     filter (try Both)",
+                    view.hidden_by_source,
                 ),
                 None => "no saved trades in this scope".to_owned(),
             };
@@ -2616,6 +3301,7 @@ impl PaperTrading {
     pub fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
         self.hovered_order = None;
         self.poll_export();
+        self.poll_import();
         let Some(toast) = &self.toast else {
             return;
         };
@@ -2638,11 +3324,59 @@ impl PaperTrading {
             });
     }
 
-    fn show_toast(&mut self, message: String) {
+    pub(crate) fn show_toast(&mut self, message: String) {
         self.toast = Some(Toast {
             message,
             shown_at: Instant::now(),
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Import
+    // ------------------------------------------------------------------
+
+    /// Ask for a folder whose trades should be copied into the journal
+    /// home, off the UI thread — the manual way in for legacy folders the
+    /// startup consolidation cannot reach (an old working directory, a
+    /// backup). One dialog at a time.
+    fn start_import(&mut self) {
+        if self.import_rx.is_some() {
+            self.show_toast("SIM: an import is already running.".to_owned());
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let start = self.dir.clone();
+        std::thread::Builder::new()
+            .name("quantick-trades-import-picker".into())
+            .spawn(move || {
+                let mut dialog =
+                    rfd::FileDialog::new().set_title("Import trades from a folder (copies)");
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let _ = sender.send(dialog.pick_folder());
+            })
+            .expect("spawn trades-import picker thread");
+        self.import_rx = Some(receiver);
+    }
+
+    /// Land the picked folder: copy its history into the journal home and
+    /// re-read, so the report answers with the merged truth.
+    fn poll_import(&mut self) {
+        let Some(receiver) = &self.import_rx else {
+            return;
+        };
+        let Ok(choice) = receiver.try_recv() else {
+            return;
+        };
+        self.import_rx = None;
+        let Some(source) = choice else { return };
+        let summary = crate::paper_home::consolidate_into(&self.dir, &[source]);
+        self.show_toast(crate::paper_home::import_toast(&summary));
+        self.history_cache = None;
+        if self.report_open {
+            self.reload_report();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -2660,7 +3394,7 @@ impl PaperTrading {
         if self.history_cache.is_none() {
             self.reload_ledger();
         }
-        let mut rows: Vec<(String, ClosedTrade)> = Vec::new();
+        let mut rows: Vec<HistoryRow> = Vec::new();
         if let Some(cache) = &self.history_cache {
             rows.extend(cache.rows.iter().cloned());
         }
@@ -2668,9 +3402,21 @@ impl PaperTrading {
             self.sim
                 .closed_trades()
                 .iter()
-                .map(|trade| (self.symbol.clone(), trade.clone())),
+                .enumerate()
+                .map(|(index, trade)| HistoryRow {
+                    symbol: self.symbol.clone(),
+                    // The source the trade actually closed under — the
+                    // session may have flipped live/replay since.
+                    source: Some(
+                        self.session_trade_sources
+                            .get(index)
+                            .copied()
+                            .unwrap_or(self.session_source),
+                    ),
+                    trade: trade.clone(),
+                }),
         );
-        rows.sort_by_key(|row| (row.1.closed_ms, row.1.opened_ms));
+        rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
         if rows.is_empty() {
             self.show_toast("SIM: nothing to export yet - close a trade first.".to_owned());
             return;
@@ -2755,14 +3501,25 @@ impl PaperTrading {
                     }
                 }
                 SimEvent::Closed(trade) => {
-                    self.journal(&trade);
-                    self.show_toast(format!(
-                        "SIM closed: {} {} → {} pts ({})",
-                        position_word(trade.side),
-                        fmt_decimal(trade.quantity),
-                        fmt_signed_points(trade.pnl_points),
-                        trade.exit_reason.as_str().replace('_', " "),
-                    ));
+                    let saved = self.journal(&trade);
+                    if self.report_open {
+                        // The report reads from disk and the close just
+                        // wrote to disk; re-read now or the window shows
+                        // yesterday until the manual refresh — the "my
+                        // trade is missing" report.
+                        self.reload_report();
+                    }
+                    // The toast slot holds one message: a healthy "closed"
+                    // must not paint over the could-not-save warning.
+                    if saved {
+                        self.show_toast(format!(
+                            "SIM closed: {} {} → {} pts ({})",
+                            position_word(trade.side),
+                            fmt_decimal(trade.quantity),
+                            fmt_signed_points(trade.pnl_points),
+                            trade.exit_reason.as_str().replace('_', " "),
+                        ));
+                    }
                 }
                 _ => {}
             }
@@ -2770,23 +3527,26 @@ impl PaperTrading {
     }
 
     /// Append one closed trade to the session's history file, creating the
-    /// file (with its header) on the first close. A failed write warns once
-    /// and never crashes a trading session.
-    fn journal(&mut self, trade: &ClosedTrade) {
+    /// file (with its header) on the first close. Also records the source
+    /// the trade closed under, for the export. Returns whether the write
+    /// landed — a failed write warns once and never crashes a trading
+    /// session, but its caller must not paint a healthy toast over the
+    /// warning.
+    fn journal(&mut self, trade: &ClosedTrade) -> bool {
+        self.session_trade_sources.push(self.session_source);
         if self.symbol.is_empty() {
-            return;
+            return false;
         }
         let folder = self.dir.join(sanitize_symbol(&self.symbol));
-        let path = self.journal_path.get_or_insert_with(|| {
-            folder.join(format!(
-                "{}.{}",
-                utc_compact(trade.closed_ms),
-                history::FILE_EXTENSION
-            ))
-        });
+        let path = self
+            .journal_path
+            .get_or_insert_with(|| free_session_path(&folder, &utc_compact(trade.closed_ms)));
+        if self.session_journal_paths.last() != Some(path) {
+            self.session_journal_paths.push(path.clone());
+        }
         let mut text = String::new();
         if !path.exists() {
-            text.push_str(&history::write_header(&self.symbol));
+            text.push_str(&history::write_header(&self.symbol, self.session_source));
         }
         text.push_str(&history::write_trade(trade));
         let written = std::fs::create_dir_all(&folder).and_then(|()| {
@@ -2797,7 +3557,7 @@ impl PaperTrading {
                 .open(&*path)
                 .and_then(|mut file| file.write_all(text.as_bytes()))
         });
-        if let Err(error) = written
+        if let Err(error) = &written
             && !self.journal_warned
         {
             self.journal_warned = true;
@@ -2814,6 +3574,7 @@ impl PaperTrading {
                 "SIM: could not save the trade history - see the log for the path.".to_owned(),
             );
         }
+        written.is_ok()
     }
 
     fn parse_quantity(&mut self) -> Option<Decimal> {
@@ -3489,10 +4250,10 @@ fn draw_exit_reason_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
 }
 
 /// Read every history file under `dir` (one symbol's folder, or all of
-/// them), remembering each row's symbol and skipping `exclude` (the live
-/// session's own file — its trades are already in the simulator). Missing
-/// folders are simply empty, not an error.
-fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> LoadedHistory {
+/// them), remembering each row's symbol and skipping every path in
+/// `exclude` (the live session's own files — their trades are already in
+/// the simulator). Missing folders are simply empty, not an error.
+fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> LoadedHistory {
     let mut folders = Vec::new();
     match symbol {
         Some(symbol) => folders.push(dir.join(sanitize_symbol(symbol))),
@@ -3530,7 +4291,7 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
             .collect();
         paths.sort();
         for path in paths {
-            if exclude.is_some_and(|exclude| exclude == path) {
+            if exclude.contains(&path) {
                 continue;
             }
             files += 1;
@@ -3539,12 +4300,12 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
                     Ok(parsed) => {
                         problem_rows += parsed.problems.len();
                         let symbol = parsed.symbol.unwrap_or_else(|| folder_symbol.clone());
-                        rows.extend(
-                            parsed
-                                .trades
-                                .into_iter()
-                                .map(|trade| (symbol.clone(), trade)),
-                        );
+                        let source = parsed.source;
+                        rows.extend(parsed.trades.into_iter().map(|trade| HistoryRow {
+                            symbol: symbol.clone(),
+                            source,
+                            trade,
+                        }));
                     }
                     Err(_) => unreadable_files += 1,
                 },
@@ -3554,7 +4315,7 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
     }
     // Files are per-session; merge into one closing-order timeline so the
     // drawdown walk is honest across sessions.
-    rows.sort_by_key(|row| (row.1.closed_ms, row.1.opened_ms));
+    rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
     LoadedHistory {
         rows,
         files,
@@ -3567,11 +4328,7 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
 /// disk to a report.
 #[cfg(test)]
 fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
-    let trades: Vec<ClosedTrade> = history
-        .rows
-        .iter()
-        .map(|(_, trade)| trade.clone())
-        .collect();
+    let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
     PerformanceReport::from_trades(&trades)
 }
 
@@ -4272,7 +5029,7 @@ pub(crate) fn fmt_signed_points(value: Decimal) -> String {
 /// Keep the characters real venue symbols use (`WDO$`, `WIN@N`… stay
 /// recognizable); anything else becomes `_` so a symbol can never traverse
 /// paths.
-fn sanitize_symbol(symbol: &str) -> String {
+pub(crate) fn sanitize_symbol(symbol: &str) -> String {
     let cleaned: String = symbol
         .chars()
         .map(|character| {
@@ -4325,8 +5082,17 @@ fn utc_compact(timestamp_ms: i64) -> String {
 }
 
 /// `YYYY-MM-DD` in UTC — the report's anchor date.
+#[cfg(test)]
 fn fmt_utc_date(timestamp_ms: i64) -> String {
     let (year, month, day, ..) = civil_utc(timestamp_ms);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// `YYYY-MM-DD` in the display timezone — the anchor date on the same
+/// calendar every other trade surface shows; a UTC date here named a day
+/// no displayed trade carried for anyone west of Greenwich after 21:00.
+fn fmt_offset_date(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (year, month, day, ..) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
     format!("{year:04}-{month:02}-{day:02}")
 }
 
@@ -4375,24 +5141,25 @@ fn reveal_folder(path: &Path) {
 /// the machine-readable source of truth. Human-readable UTC stamps ride
 /// beside the venue epoch, decimals always use `.`, and the running
 /// equity is a column so a spreadsheet shows it without a formula.
-fn export_csv(rows: &[(String, ClosedTrade)]) -> String {
+fn export_csv(rows: &[HistoryRow]) -> String {
     let mut text = String::from(
         "symbol,side,quantity,opened_ms,opened_utc,entry_price,closed_ms,closed_utc,\
          exit_price,pnl_points,cum_pnl_points,duration_ms,exit_reason,entry_agg_id,\
-         exit_agg_id,mae_points,mfe_points\n",
+         exit_agg_id,mae_points,mfe_points,source\n",
     );
     let mut cumulative = Decimal::ZERO;
     let opt_u64 = |value: Option<u64>| value.map(|value| value.to_string()).unwrap_or_default();
     let opt_points = |value: Option<Decimal>| value.map(fmt_decimal).unwrap_or_default();
-    for (symbol, trade) in rows {
+    for row in rows {
+        let trade = &row.trade;
         cumulative = cumulative.saturating_add(trade.pnl_points);
         let side = match trade.side {
             Side::Buy => "long",
             Side::Sell => "short",
         };
         text.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            symbol.replace(',', "_"),
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            row.symbol.replace(',', "_"),
             side,
             fmt_decimal(trade.quantity),
             trade.opened_ms,
@@ -4409,6 +5176,8 @@ fn export_csv(rows: &[(String, ClosedTrade)]) -> String {
             opt_u64(trade.exit_agg_id),
             opt_points(trade.mae_points),
             opt_points(trade.mfe_points),
+            // Empty when the file never recorded one — unknown, not live.
+            row.source.map(history::SessionSource::as_str).unwrap_or(""),
         ));
     }
     text
@@ -4432,12 +5201,58 @@ fn elide_path(path: &Path) -> String {
     })
 }
 
-/// The trades folder before the environment has its say: the user's own
-/// in-app pick when one is stored, else the configured base.
-fn chosen_trades_dir(configured: &str, stored: Option<&str>) -> PathBuf {
-    stored
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(configured))
+/// The cmd preview's geometry from the chart frame and the pointer's y:
+/// the dashed line hugging the right edge and the clickable label off its
+/// left end. One function for paint and press alike, so a painted label
+/// and its hit-test can never disagree (the overlay-controls rule).
+fn cmd_preview_layout(chart: egui::Rect, y: f32) -> (egui::Pos2, egui::Pos2, egui::Rect) {
+    let length = (chart.width() * CMD_LINE_FRACTION).clamp(CMD_LINE_MIN_PX, CMD_LINE_MAX_PX);
+    let end = egui::pos2(chart.right(), y);
+    let start = egui::pos2((chart.right() - length).max(chart.left()), y);
+    let center_y = clamp_tag_center(y, chart.top(), chart.bottom());
+    let half = TAG_HEIGHT_PX / 2.0;
+    let label = egui::Rect::from_min_max(
+        egui::pos2(
+            start.x - CMD_LABEL_GAP_PX - CMD_LABEL_WIDTH_PX,
+            center_y - half,
+        ),
+        egui::pos2(start.x - CMD_LABEL_GAP_PX, center_y + half),
+    );
+    (start, end, label)
+}
+
+/// The session file for `stamp` under `folder`: the plain name when free,
+/// else `stamp.rerun-N` — file names derive from venue time, so replaying
+/// the same recording twice reproduces the same stamp, and the second run
+/// must land beside the first instead of appending duplicate trades into
+/// it.
+fn free_session_path(folder: &Path, stamp: &str) -> PathBuf {
+    let plain = folder.join(format!("{stamp}.{}", history::FILE_EXTENSION));
+    if !plain.exists() {
+        return plain;
+    }
+    for rerun in 1..=MAX_SESSION_RERUNS {
+        let candidate = folder.join(format!("{stamp}.rerun-{rerun}.{}", history::FILE_EXTENSION));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // A folder with a thousand same-stamp sessions is not a real journal;
+    // appending to the plain file keeps the trades at the cost of
+    // duplicates, which beats losing them.
+    plain
+}
+
+/// A journal folder of its own per host under test — tests must never
+/// touch a real documents folder, nor see one another's files.
+fn test_scratch_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "quantick-paper-host-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// The symbol folders under the history dir, for the report's combo box.
@@ -4465,6 +5280,31 @@ mod tests {
             price: Decimal::from(price),
             quantity: Decimal::ONE,
             side: Side::Buy,
+        }
+    }
+
+    fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
+        HistoryRow {
+            symbol: symbol.to_owned(),
+            source,
+            trade,
+        }
+    }
+
+    fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
+        ClosedTrade {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            entry_price: Decimal::from(100),
+            exit_price: Decimal::from(100 + pnl),
+            opened_ms: closed_ms - 1000,
+            closed_ms,
+            pnl_points: Decimal::from(pnl),
+            exit_reason: quantick_sim::ExitReason::Manual,
+            entry_agg_id: None,
+            exit_agg_id: None,
+            mae_points: None,
+            mfe_points: None,
         }
     }
 
@@ -4528,11 +5368,65 @@ mod tests {
         assert_eq!(parsed.trades[0].pnl_points, Decimal::from(5));
         assert_eq!(parsed.trades[1].pnl_points, Decimal::from(2));
 
-        let history = load_history(&dir, Some("TESTUSDT"), None);
+        let history = load_history(&dir, Some("TESTUSDT"), &[]);
         assert_eq!(history.rows.len(), 2);
         assert_eq!(report_from_history(&history).net_points, Decimal::from(7));
         assert_eq!(history.files, 1);
         assert_eq!(history.unreadable_files, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_session_adds_a_file_and_never_touches_the_first() {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-accumulate-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Session one: a round trip closing at t=2s.
+        let mut first = PaperTrading::new();
+        first.dir.clone_from(&dir);
+        first.set_symbol("ACCUM");
+        first.seed(&print(0, 100));
+        first.market(Side::Buy);
+        first.on_trade(&print(1, 100));
+        let events = first.sim.apply(Command::ClosePosition);
+        first.handle_events(events);
+        first.on_trade(&print(2, 103));
+        let folder = dir.join("ACCUM");
+        let first_file = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .next()
+            .expect("one session file")
+            .path();
+        let first_bytes = std::fs::read(&first_file).expect("readable");
+
+        // Session two: a fresh host — a restart — closing hours later.
+        let mut second = PaperTrading::new();
+        second.dir.clone_from(&dir);
+        second.set_symbol("ACCUM");
+        second.seed(&print(10_000, 200));
+        second.market(Side::Sell);
+        second.on_trade(&print(10_001, 200));
+        let events = second.sim.apply(Command::ClosePosition);
+        second.handle_events(events);
+        second.on_trade(&print(10_002, 190));
+
+        let files: Vec<_> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 2, "each session opens its own file");
+        assert_eq!(
+            std::fs::read(&first_file).expect("still readable"),
+            first_bytes,
+            "the earlier session's file is byte-for-byte untouched"
+        );
+        let history = load_history(&dir, Some("ACCUM"), &[]);
+        assert_eq!(history.files, 2);
+        assert_eq!(history.rows.len(), 2, "both sessions' trades load");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4559,7 +5453,7 @@ mod tests {
             "an armed click dies with the timeline"
         );
         assert!(paper.toast.is_some(), "the flatten is never silent");
-        let history = load_history(&dir, Some("RESETX"), None);
+        let history = load_history(&dir, Some("RESETX"), &[]);
         assert_eq!(history.rows.len(), 1);
         assert_eq!(
             report_from_history(&history).trades,
@@ -4569,19 +5463,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn the_stored_pick_beats_the_configured_base() {
-        assert_eq!(
-            chosen_trades_dir("paper-trades", None),
-            PathBuf::from("paper-trades"),
-            "no pick falls back to the configured base"
-        );
-        assert_eq!(
-            chosen_trades_dir("paper-trades", Some("D:/journals")),
-            PathBuf::from("D:/journals"),
-            "the in-app pick wins over the configured base"
-        );
-    }
+    // The stored-pick-vs-configured-base precedence now lives in
+    // `paper_home::chosen`, tested there beside the documents default.
 
     /// The panel's folder picker retargets everything downstream: the next
     /// close opens a new session file under the new home, and the ledger
@@ -4668,7 +5551,7 @@ mod tests {
             mae_points: Some(Decimal::ZERO),
             mfe_points: Some(Decimal::from(5)),
         };
-        let mut text = history::write_header("LEDGX");
+        let mut text = history::write_header("LEDGX", history::SessionSource::Live);
         text.push_str(&history::write_trade(&trade));
         std::fs::write(dir.join("LEDGX").join("20200101-000000.csv"), text)
             .expect("the earlier session file writes");
@@ -4680,9 +5563,183 @@ mod tests {
             1,
             "the live session's file is excluded, the earlier one loads"
         );
-        assert_eq!(cache.rows[0].0, "LEDGX");
-        assert_eq!(cache.rows[0].1, trade);
+        assert_eq!(cache.rows[0].symbol, "LEDGX");
+        assert_eq!(cache.rows[0].trade, trade);
+        assert_eq!(cache.rows[0].source, Some(history::SessionSource::Live));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_replay_rerun_lands_beside_its_first_run_never_inside_it() {
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-rerun-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // The same recording replayed twice: identical prints, identical
+        // venue times, so both sessions derive the same file stamp.
+        for _ in 0..2 {
+            let mut paper = PaperTrading::new();
+            paper.dir.clone_from(&dir);
+            paper.set_symbol("RERUN");
+            paper.set_session_source(history::SessionSource::Replay);
+            paper.seed(&print(0, 100));
+            paper.market(Side::Buy);
+            paper.on_trade(&print(1, 100));
+            let events = paper.sim.apply(Command::ClosePosition);
+            paper.handle_events(events);
+            paper.on_trade(&print(2, 103));
+        }
+
+        let folder = dir.join("RERUN");
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        names.sort();
+        assert_eq!(
+            names.len(),
+            2,
+            "the second run opened its own file instead of appending duplicates"
+        );
+        assert!(names[1].contains(".rerun-1."), "{names:?}");
+        let history = load_history(&dir, Some("RERUN"), &[]);
+        assert_eq!(history.rows.len(), 2);
+        assert!(
+            history
+                .rows
+                .iter()
+                .all(|row| row.source == Some(history::SessionSource::Replay)),
+            "both files carry the replay source"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_ledger_never_lists_this_sessions_trades_twice_after_a_retarget() {
+        // Hunt-confirmed: close live, flip to replay (what a same-symbol
+        // replay open does), reload the ledger — the live session's file
+        // must stay excluded, or every trade counts twice in the totals
+        // and the export.
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("DUPX");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+        assert_eq!(paper.sim.closed_trades().len(), 1);
+
+        paper.set_session_source(history::SessionSource::Replay);
+        paper.on_timeline_reset();
+        paper.reload_ledger();
+        let cache = paper.history_cache.as_ref().expect("loaded");
+        assert_eq!(
+            cache.rows.len(),
+            0,
+            "the session's own files stay excluded across the retarget"
+        );
+    }
+
+    #[test]
+    fn an_in_session_rerun_opens_its_own_file() {
+        // Seek-to-start / reopen-same-recording is a timeline reset with
+        // the source unchanged: run 2 must not append into run 1's file.
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("RESEEK");
+        paper.set_session_source(history::SessionSource::Replay);
+        for _ in 0..2 {
+            paper.seed(&print(0, 100));
+            paper.market(Side::Buy);
+            paper.on_trade(&print(1, 100));
+            let events = paper.sim.apply(Command::ClosePosition);
+            paper.handle_events(events);
+            paper.on_trade(&print(2, 103));
+            paper.on_timeline_reset();
+        }
+        let folder = paper.dir.join("RESEEK");
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 2, "each run has its own file: {names:?}");
+        assert!(names[1].contains(".rerun-1."), "{names:?}");
+    }
+
+    #[test]
+    fn export_rows_remember_the_source_each_trade_closed_under() {
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("SRCX");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+        paper.set_session_source(history::SessionSource::Replay);
+        assert_eq!(
+            paper.session_trade_sources,
+            vec![history::SessionSource::Live],
+            "a trade keeps the source it closed under, not the current one"
+        );
+    }
+
+    #[test]
+    fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
+        let utc = TzOffset::new(0);
+        let day = 86_400_000_i64;
+        let mut paper = PaperTrading::new();
+        assert_eq!(
+            paper.report_source,
+            SourceFilter::Real,
+            "practice runs never inflate the real track record unasked"
+        );
+        paper.report = Some(LoadedHistory {
+            rows: vec![
+                row("X", Some(history::SessionSource::Live), trade_at(day, 5)),
+                row("X", None, trade_at(2 * day, 3)),
+                row(
+                    "X",
+                    Some(history::SessionSource::Replay),
+                    trade_at(3 * day, 100),
+                ),
+            ],
+            files: 3,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("view built");
+        assert_eq!(
+            view.trades.len(),
+            2,
+            "live + unrecorded-legacy count as real"
+        );
+        assert_eq!(
+            view.hidden_by_source, 1,
+            "the replay trade sits behind the filter"
+        );
+        assert_eq!(
+            view.anchor_ms,
+            Some(2 * day),
+            "the anchor comes from the filtered scope, not the replay trade"
+        );
+        assert_eq!(view.report.net_points, Decimal::from(8));
+
+        paper.report_source = SourceFilter::Replay;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("rebuilt");
+        assert_eq!(view.trades.len(), 1, "the practice run, alone");
+        assert_eq!(view.report.net_points, Decimal::from(100));
+        assert_eq!(view.hidden_by_source, 2);
+
+        paper.report_source = SourceFilter::All;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("rebuilt");
+        assert_eq!(view.trades.len(), 3, "All mixes on purpose");
+        assert_eq!(view.hidden_by_source, 0);
     }
 
     #[test]
@@ -4702,27 +5759,32 @@ mod tests {
             mfe_points: mae.map(Decimal::from),
         };
         let rows = vec![
-            ("BTCUSDT".to_owned(), trade(1_773_666_068_000, 5, Some(2))),
-            ("WINQ26".to_owned(), trade(1_773_666_368_000, -2, None)),
+            row(
+                "BTCUSDT",
+                Some(history::SessionSource::Live),
+                trade(1_773_666_068_000, 5, Some(2)),
+            ),
+            row("WINQ26", None, trade(1_773_666_368_000, -2, None)),
         ];
         let text = export_csv(&rows);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3, "header plus two rows");
         assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
+        assert!(lines[0].ends_with(",source"), "{}", lines[0]);
         assert!(
             lines[1].contains("2026-03-16T13:01:08Z"),
             "human-readable UTC beside the epoch: {}",
             lines[1]
         );
-        assert!(lines[1].ends_with(",manual,1,2,2,2"), "{}", lines[1]);
+        assert!(lines[1].ends_with(",manual,1,2,2,2,live"), "{}", lines[1]);
         assert!(
             lines[2].contains(",3,"),
             "running equity 5 + (-2): {}",
             lines[2]
         );
         assert!(
-            lines[2].ends_with(",manual,,,,"),
-            "unknown v1 fields stay empty, never zero: {}",
+            lines[2].ends_with(",manual,,,,,"),
+            "unknown v1 fields and an unrecorded source stay empty: {}",
             lines[2]
         );
     }
@@ -4741,18 +5803,58 @@ mod tests {
 
     #[test]
     fn report_periods_anchor_to_the_given_trade_never_a_clock() {
+        let utc = TzOffset::new(0);
         // 2026-03-16 13:01:08 UTC.
         let anchor = 1_773_666_068_000_i64;
-        assert_eq!(ReportPeriod::All.cutoff_ms(anchor), None);
+        assert_eq!(ReportPeriod::All.cutoff_ms(anchor, utc), None);
         assert_eq!(
-            ReportPeriod::Today.cutoff_ms(anchor),
+            ReportPeriod::Today.cutoff_ms(anchor, utc),
             Some(1_773_619_200_000),
             "the anchor's own UTC midnight"
         );
         assert_eq!(
-            ReportPeriod::Week.cutoff_ms(anchor),
+            ReportPeriod::Week.cutoff_ms(anchor, utc),
             Some(anchor - 7 * 86_400_000)
         );
+        assert_eq!(
+            ReportPeriod::Custom(2 * 86_400_000).cutoff_ms(anchor, utc),
+            Some(anchor - 2 * 86_400_000),
+            "a typed 2d reaches back exactly two days"
+        );
+    }
+
+    #[test]
+    fn today_breaks_at_the_displayed_midnight_not_utc() {
+        let day = 86_400_000_i64;
+        // 03 Jan 01:00 UTC is 02 Jan 22:00 in UTC-03:00.
+        let anchor = 2 * day + 3_600_000;
+        let sao_paulo = TzOffset::new(-180);
+        assert_eq!(
+            ReportPeriod::Today.cutoff_ms(anchor, sao_paulo),
+            Some(day + 10_800_000),
+            "midnight of the anchor's displayed day, expressed in UTC"
+        );
+        assert_eq!(
+            ReportPeriod::Today.cutoff_ms(anchor, TzOffset::new(0)),
+            Some(2 * day),
+            "UTC viewers keep the UTC midnight"
+        );
+    }
+
+    #[test]
+    fn typed_periods_parse_strictly_and_format_back() {
+        assert_eq!(parse_period("2d"), Some(2 * 86_400_000));
+        assert_eq!(parse_period(" 3D "), Some(3 * 86_400_000));
+        assert_eq!(parse_period("12h"), Some(12 * 3_600_000));
+        assert_eq!(parse_period("45m"), Some(45 * 60_000));
+        assert_eq!(parse_period("1w"), Some(7 * 86_400_000));
+        for refused in ["", "d", "2", "2x", "0d", "-2d", "2.5d", "d2"] {
+            assert_eq!(parse_period(refused), None, "{refused:?} must be refused");
+        }
+        assert_eq!(fmt_period_ms(2 * 86_400_000), "2d");
+        assert_eq!(fmt_period_ms(36 * 3_600_000), "36h");
+        assert_eq!(fmt_period_ms(45 * 60_000), "45m");
+        assert_eq!(fmt_period_ms(14 * 86_400_000), "2w");
     }
 
     #[test]
@@ -4763,36 +5865,21 @@ mod tests {
 
     #[test]
     fn the_report_view_filters_by_period_from_the_newest_trade() {
-        fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
-            ClosedTrade {
-                side: Side::Buy,
-                quantity: Decimal::ONE,
-                entry_price: Decimal::from(100),
-                exit_price: Decimal::from(100 + pnl),
-                opened_ms: closed_ms - 1000,
-                closed_ms,
-                pnl_points: Decimal::from(pnl),
-                exit_reason: quantick_sim::ExitReason::Manual,
-                entry_agg_id: None,
-                exit_agg_id: None,
-                mae_points: None,
-                mfe_points: None,
-            }
-        }
+        let utc = TzOffset::new(0);
         let day = 86_400_000_i64;
         let mut paper = PaperTrading::new();
         paper.report = Some(LoadedHistory {
             rows: vec![
-                ("X".to_owned(), trade_at(10 * day, 5)),
-                ("X".to_owned(), trade_at(18 * day, -2)),
-                ("X".to_owned(), trade_at(20 * day + 3_600_000, 7)),
+                row("X", None, trade_at(10 * day, 5)),
+                row("X", None, trade_at(18 * day, -2)),
+                row("X", None, trade_at(20 * day + 3_600_000, 7)),
             ],
             files: 1,
             unreadable_files: 0,
             problem_rows: 0,
         });
         paper.report_period = ReportPeriod::Week;
-        paper.ensure_report_view();
+        paper.ensure_report_view(utc);
         let view = paper.report_view.as_ref().expect("view built");
         assert_eq!(
             view.anchor_ms,
@@ -4800,14 +5887,118 @@ mod tests {
             "anchored to the newest saved trade, not a clock"
         );
         assert_eq!(view.trades.len(), 2, "the 10-day-old trade is outside 7d");
+        assert_eq!(view.hidden_before, 1, "and the view counts what it hides");
         assert_eq!(view.report.net_points, Decimal::from(5));
 
         paper.report_period = ReportPeriod::All;
-        paper.ensure_report_view();
+        paper.ensure_report_view(utc);
         assert_eq!(
             paper.report_view.as_ref().expect("rebuilt").trades.len(),
             3,
             "All sees everything again"
+        );
+    }
+
+    #[test]
+    fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
+        let utc = TzOffset::new(0);
+        let day = 86_400_000_i64;
+        let mut paper = PaperTrading::new();
+        paper.report = Some(LoadedHistory {
+            rows: vec![
+                row("OLDSYM", None, trade_at(day, 5)),
+                row("NEWSYM", None, trade_at(60 * day, 7)),
+            ],
+            files: 2,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.report_period = ReportPeriod::Month;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("view built");
+        assert_eq!(
+            view.trades.len(),
+            1,
+            "30d back from the newest trade hides the older market entirely"
+        );
+        assert_eq!(view.hidden_before, 1, "the support line can say so");
+
+        // Narrowing the combo re-anchors on the old market's own newest
+        // trade — the "my trades came back" behaviour, now spelled out.
+        paper.report = Some(LoadedHistory {
+            rows: vec![row("OLDSYM", None, trade_at(day, 5))],
+            files: 1,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.report_view = None;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("rebuilt");
+        assert_eq!(view.trades.len(), 1, "its own scope shows the old market");
+        assert_eq!(view.hidden_before, 0);
+    }
+
+    #[test]
+    fn the_report_scopes_by_symbol_folder_on_disk() {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-symbols-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        for (symbol, id0, price) in [("AAAUSDT", 0, 100), ("BBBUSDT", 100, 200)] {
+            let mut paper = PaperTrading::new();
+            paper.dir.clone_from(&dir);
+            paper.set_symbol(symbol);
+            paper.seed(&print(id0, price));
+            paper.market(Side::Buy);
+            paper.on_trade(&print(id0 + 1, price));
+            let events = paper.sim.apply(Command::ClosePosition);
+            paper.handle_events(events);
+            paper.on_trade(&print(id0 + 2, price + 5));
+        }
+
+        assert_eq!(
+            list_symbol_folders(&dir),
+            vec!["AAAUSDT".to_owned(), "BBBUSDT".to_owned()],
+            "the combo lists every traded asset"
+        );
+        let all = load_history(&dir, None, &[]);
+        assert_eq!(all.rows.len(), 2, "All symbols reads both journals");
+        let symbols: Vec<&str> = all.rows.iter().map(|row| row.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["AAAUSDT", "BBBUSDT"]);
+        let one = load_history(&dir, Some("BBBUSDT"), &[]);
+        assert_eq!(one.rows.len(), 1, "a symbol scope reads only its folder");
+        assert_eq!(one.rows[0].symbol, "BBBUSDT");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_close_refreshes_an_open_report_by_itself() {
+        let utc = TzOffset::new(0);
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("FRESH");
+        paper.report_open = true;
+        paper.reload_report();
+        paper.ensure_report_view(utc);
+        assert!(
+            paper.report_view.as_ref().expect("view").trades.is_empty(),
+            "nothing saved yet"
+        );
+
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("refreshed");
+        assert_eq!(
+            view.trades.len(),
+            1,
+            "the close re-read the journal without a manual refresh"
         );
     }
 
@@ -4858,6 +6049,27 @@ mod tests {
             primary_pressed: pressed,
             primary_down: down,
             primary_released: released,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    /// A `frame` with held modifiers and a free pointer — the cmd-trading
+    /// gesture's shape of input.
+    fn cmd_frame<'a>(
+        chart: egui::Rect,
+        scale: &'a PriceScale,
+        pointer: egui::Pos2,
+        modifiers: egui::Modifiers,
+        pressed: bool,
+    ) -> ChartInput<'a> {
+        ChartInput {
+            chart,
+            scale: Some(scale),
+            pointer: Some(pointer),
+            primary_pressed: pressed,
+            primary_down: pressed,
+            primary_released: false,
+            modifiers,
         }
     }
 
@@ -4952,6 +6164,197 @@ mod tests {
             paper.hover_cursor(egui::pos2(400.0, 40.0), chart, &scale),
             None,
             "empty tape belongs to the chart"
+        );
+    }
+
+    #[test]
+    fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let ctrl = egui::Modifiers {
+            command: true,
+            ..Default::default()
+        };
+        let both = egui::Modifiers {
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+
+        // Hold buy above the mark: a stop. Below: a limit.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            shift,
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("preview above the mark");
+        assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Stop));
+        assert_eq!(preview.price, Decimal::from(110));
+        assert!(!preview.hover, "mid-chart is not the label");
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 300.0),
+            shift,
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("preview below the mark");
+        assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Limit));
+
+        // The sell key mirrors the table.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            ctrl,
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("sell above the mark");
+        assert_eq!((preview.side, preview.kind), (Side::Sell, EntryKind::Limit));
+
+        // Both keys is ambiguous, no key is no gesture.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            both,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_none(), "ambiguity shows nothing");
+        paper.handle_chart_input(&frame(chart, &scale, 100.0, false, false, false));
+        assert!(paper.cmd_preview.is_none(), "no key, no line");
+
+        // Clicking the label places exactly what the preview said, through
+        // the same path as the right-click menu.
+        let (_, _, label) = cmd_preview_layout(chart, 300.0);
+        let on_label = egui::pos2(label.center().x, 300.0);
+        paper.handle_chart_input(&cmd_frame(chart, &scale, on_label, shift, false));
+        assert!(
+            paper.cmd_preview.expect("hovering").hover,
+            "the label knows the pointer is on it"
+        );
+        assert!(
+            paper.handle_chart_input(&cmd_frame(chart, &scale, on_label, shift, true)),
+            "the click is the gesture's"
+        );
+        let orders = paper.working_orders();
+        assert_eq!(orders.len(), 1, "the click rested the order");
+        assert_eq!(orders[0].side, Side::Buy);
+        assert_eq!(orders[0].price, Some(Decimal::from(90)));
+
+        // Disabled means invisible.
+        paper.set_cmd_trading(CmdTradingSettings {
+            enabled: false,
+            ..Default::default()
+        });
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            shift,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_none(), "the toggle hides the gesture");
+    }
+
+    /// Off-screen render proof (for environments where no window can
+    /// present): the preview paints a dashed line, a label carrying
+    /// side+kind+qty, and the gutter chip with the snapped price.
+    #[test]
+    fn the_cmd_preview_paints_line_label_and_price_chip() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 300.0),
+            shift,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_some(), "the held key builds a preview");
+
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let paint = PaintCtx {
+                painter: &painter,
+                chart_rect: chart,
+                tag_right: chart.right(),
+                axis_x: chart.right(),
+                scale: &scale,
+                reserved_chip_y: None,
+                pointer: Some(egui::pos2(400.0, 300.0)),
+            };
+            paper.draw_cmd_preview(&paint);
+        });
+        let shapes = format!("{:?}", output.shapes);
+        assert!(shapes.contains("BUY"), "the label names the side: {shapes}");
+        assert!(
+            shapes.contains("90"),
+            "the gutter chip carries the snapped price"
+        );
+        let segments = shapes.matches("LineSegment").count();
+        assert!(
+            segments >= 8,
+            "a dashed line paints as many short segments, got {segments}"
+        );
+    }
+
+    #[test]
+    fn the_cmd_layout_hugs_the_right_edge_with_the_label_off_the_line() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let (start, end, label) = cmd_preview_layout(chart, 250.0);
+        assert_eq!(end.x, 800.0, "the line ends at the right edge");
+        assert_eq!(start.x, 640.0, "20% of an 800px chart");
+        assert!(label.right() < start.x, "the label sits clear of the line");
+        assert_eq!(label.center().y, 250.0);
+        let narrow = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(300.0, 400.0));
+        let (start, end, _) = cmd_preview_layout(narrow, 250.0);
+        assert_eq!(
+            end.x - start.x,
+            CMD_LINE_MIN_PX,
+            "a narrow pane keeps a line"
+        );
+        let wide = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(4000.0, 400.0));
+        let (start, end, _) = cmd_preview_layout(wide, 250.0);
+        assert_eq!(
+            end.x - start.x,
+            CMD_LINE_MAX_PX,
+            "a huge chart is not painted across"
+        );
+    }
+
+    #[test]
+    fn cmd_modifier_tokens_round_trip_and_state_defaults_fill_gaps() {
+        for modifier in CmdModifier::ALL {
+            assert_eq!(CmdModifier::parse(modifier.as_str()), Some(modifier));
+        }
+        assert_eq!(CmdModifier::parse("hyper"), None);
+        let state = crate::paper_state::PaperState {
+            cmd_trading_enabled: Some(false),
+            cmd_buy_modifier: Some("alt".to_owned()),
+            cmd_sell_modifier: Some("hyper".to_owned()),
+            ..Default::default()
+        };
+        let settings = CmdTradingSettings::from_state(&state);
+        assert!(!settings.enabled);
+        assert_eq!(settings.buy, CmdModifier::Alt);
+        assert_eq!(
+            settings.sell,
+            CmdModifier::Ctrl,
+            "an unknown token falls back to the default"
         );
     }
 
@@ -5074,6 +6477,7 @@ mod tests {
             primary_pressed: true,
             primary_down: true,
             primary_released: false,
+            modifiers: egui::Modifiers::default(),
         };
         assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
         assert!(
@@ -5107,6 +6511,7 @@ mod tests {
             primary_pressed: true,
             primary_down: true,
             primary_released: false,
+            modifiers: egui::Modifiers::default(),
         };
         assert!(
             paper.handle_chart_input(&press),

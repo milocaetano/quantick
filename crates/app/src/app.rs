@@ -38,7 +38,6 @@ use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
-use crate::paper_trading::PaperTrading;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
 use crate::statusbar;
@@ -939,11 +938,15 @@ impl QuantickApp {
         feed: FeedHandle,
         workspace: ui_state::Workspace,
     ) -> Self {
-        let trades_dir = {
-            let stored = crate::paper_state::load(&crate::paper_state::default_path());
-            PaperTrading::resolve_trades_dir(&config.paper.trades_dir, stored.as_deref())
-        };
-        let tab = Tab::new(
+        let state_path = crate::paper_state::default_path();
+        let paper_state = crate::paper_state::load(&state_path);
+        let cmd_trading = crate::paper_trading::CmdTradingSettings::from_state(&paper_state);
+        let (trades_dir, consolidated) = crate::paper_home::startup_home(
+            config.paper.trades_dir.as_deref(),
+            paper_state.trades_dir.as_deref(),
+            &state_path,
+        );
+        let mut tab = Tab::new(
             FIRST_TAB_ID,
             pane_ids(FIRST_TAB_ID),
             feed_id.into(),
@@ -952,6 +955,7 @@ impl QuantickApp {
             feed,
             trades_dir.clone(),
         );
+        tab.paper.set_cmd_trading(cmd_trading);
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
@@ -1381,6 +1385,15 @@ impl QuantickApp {
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
         app.saved_layer_mask = app.layer_mask();
+        if let Some(summary) = consolidated
+            && summary.imported() > 0
+        {
+            // A silent rescue would look like the app moved files on its
+            // own; the toast says what happened and that copies were made.
+            app.tabs[0]
+                .paper
+                .show_toast(crate::paper_home::import_toast(&summary));
+        }
         app
     }
 
@@ -1419,14 +1432,29 @@ impl QuantickApp {
         };
         self.trades_dir_picker = None;
         let Some(dir) = choice else { return };
-        crate::paper_state::save(
-            &crate::paper_state::default_path(),
-            &dir.display().to_string(),
-        );
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.trades_dir = Some(dir.display().to_string());
+        crate::paper_state::save(&path, &state);
         self.trades_dir = dir;
         for tab in &mut self.tabs {
             tab.paper.set_trades_dir(self.trades_dir.clone());
         }
+    }
+
+    /// Persist the active tab's cmd-trading settings and fan them out —
+    /// one gesture, one meaning, every tab (the trades-dir rule).
+    fn persist_cmd_trading(&mut self) {
+        let settings = self.active_tab().paper.cmd_trading();
+        for tab in &mut self.tabs {
+            tab.paper.set_cmd_trading(settings);
+        }
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.cmd_trading_enabled = Some(settings.enabled);
+        state.cmd_buy_modifier = Some(settings.buy.as_str().to_owned());
+        state.cmd_sell_modifier = Some(settings.sell.as_str().to_owned());
+        crate::paper_state::save(&path, &state);
     }
 
     /// The active tab beside the config it reads.
@@ -1551,15 +1579,12 @@ impl QuantickApp {
                 .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone())
         });
         let trades_dir = self.trades_dir.clone();
-        self.tabs.push(Tab::new(
-            id,
-            pane_ids(id),
-            feed_id,
-            symbol,
-            spec,
-            feed,
-            trades_dir,
-        ));
+        // Cmd trading is app-wide (the trades-dir rule): a new tab starts
+        // with the settings every other tab already carries.
+        let cmd_trading = self.active_tab().paper.cmd_trading();
+        let mut tab = Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed, trades_dir);
+        tab.paper.set_cmd_trading(cmd_trading);
+        self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
         self.active_tab_mut().refresh_chip_label(&config);
@@ -6129,6 +6154,9 @@ impl QuantickApp {
         if dock_response.pick_trades_dir {
             self.open_trades_dir_picker();
         }
+        if dock_response.cmd_trading_changed {
+            self.persist_cmd_trading();
+        }
         self.poll_trades_dir_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
@@ -6209,7 +6237,8 @@ impl QuantickApp {
         self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
-        self.active_tab_mut().paper.draw_report_window(ctx);
+        let tz = self.tz;
+        self.active_tab_mut().paper.draw_report_window(ctx, tz);
         self.active_tab_mut().paper.draw_toast(ctx, now);
         if notice_action == notice_card::NoticeAction::Retry {
             let (tab, config) = self.active_with_config();
@@ -16520,6 +16549,77 @@ plot(close)
             0,
             "and the tab stops asking"
         );
+    }
+
+    /// A position carried into a replay switch belongs to the session
+    /// that is ending: its forced flatten must journal under that
+    /// session's source, not the one the switch is about to install.
+    #[test]
+    fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = history_app(&ctx);
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-switch-source-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1000,
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+        {
+            let paper = &mut app.active_tab_mut().paper;
+            paper.redirect_history_dir(dir.clone());
+            paper.set_symbol("SWITCHSRC");
+            paper.seed(&print(0, 100));
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(1, 100));
+            assert!(
+                paper.position_summary().is_some(),
+                "a live position is open going into the switch"
+            );
+        }
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        with_config(&mut app, |tab, config| {
+            tab.open_replay(
+                config,
+                crate::feed::ReplayRequest {
+                    session: std::sync::Arc::new(session),
+                    options: crate::feed::ReplayOptions {
+                        autoplay: false,
+                        ..Default::default()
+                    },
+                },
+            )
+        });
+        let folder = dir.join("SWITCHSRC");
+        let files: Vec<_> = std::fs::read_dir(&folder)
+            .expect("the forced flatten journaled")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 1, "one session file for the flattened trade");
+        let parsed = quantick_sim::history::parse(
+            &std::fs::read_to_string(files[0].path()).expect("readable"),
+        )
+        .expect("valid history");
+        assert_eq!(
+            parsed.source,
+            Some(quantick_sim::history::SessionSource::Live),
+            "the live session's trade files as live, not under the replay"
+        );
+        assert_eq!(parsed.trades.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// (h) A recording is a fixed span of prints with no venue behind it.

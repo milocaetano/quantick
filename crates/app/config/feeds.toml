@@ -178,7 +178,10 @@ US30 = 9103
 # QUANTICK_TRADES_DIR environment variable overrides the setting for one run,
 # and the folder picker in the Trading tab (remembered in paper-state.toml)
 # wins over this base. The section is optional; absent, trades save under
-# `paper-trades`.
+# the user's documents folder (`Documents/Quantick/paper-trades`), the one
+# home that does not move with the working directory — and on first launch
+# quantick copies (never moves) any history it can still reach from the
+# cwd-relative era into that home.
 #
 # [paper]
 # trades_dir = "paper-trades"

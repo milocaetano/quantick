@@ -44,6 +44,7 @@ mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
 mod pane;
+mod paper_home;
 mod paper_hud;
 mod paper_state;
 mod paper_trading;

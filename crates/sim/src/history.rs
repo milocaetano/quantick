@@ -10,9 +10,15 @@
 //! ```text
 //! # quantick-trades 2
 //! # symbol=BTCUSDT
+//! # source=live
 //! opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points
 //! 1700000000000,1700000060000,long,2,100.5,103.25,5.5,take_profit,41,57,1.5,6.0
 //! ```
+//!
+//! `# source=` records where the whole session's trades came from (a
+//! session is wholly live or wholly a replay). Files from before the line
+//! existed parse with [`TradeHistory::source`] `None` — unrecorded, not
+//! guessed.
 //!
 //! `side` is the position's direction (`long`/`short`); `exit_reason` uses
 //! [`ExitReason::as_str`] tokens. Timestamps are venue epoch milliseconds;
@@ -46,11 +52,45 @@ pub const HEADER: &str = "opened_ms,closed_ms,side,quantity,entry_price,exit_pri
 const HEADER_V1: &str =
     "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason";
 
+/// Where a session's trades came from — recorded once per file, so the
+/// report can keep practice runs out of the real track record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionSource {
+    /// A live venue feed was driving the tape.
+    Live,
+    /// A recorded session was driving the tape (market replay).
+    Replay,
+}
+
+impl SessionSource {
+    /// The token the `# source=` header line carries.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Replay => "replay",
+        }
+    }
+
+    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "live" => Some(Self::Live),
+            "replay" => Some(Self::Replay),
+            _ => None,
+        }
+    }
+}
+
 /// A parsed history file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TradeHistory {
     /// Symbol from the `# symbol=` comment, when present.
     pub symbol: Option<String>,
+    /// Session source from the `# source=` comment; `None` for files from
+    /// before the line existed (unrecorded, never guessed).
+    pub source: Option<SessionSource>,
     /// Rows that parsed, in file order (which is closing order).
     pub trades: Vec<ClosedTrade>,
     /// Rows that did not parse, reported instead of silently dropped.
@@ -80,10 +120,14 @@ impl std::fmt::Display for HistoryError {
     }
 }
 
-/// The lines that open a new history file: magic, symbol, column header.
+/// The lines that open a new history file: magic, symbol, session source,
+/// column header.
 #[must_use]
-pub fn write_header(symbol: &str) -> String {
-    format!("# {FORMAT_NAME} {FORMAT_VERSION}\n# symbol={symbol}\n{HEADER}\n")
+pub fn write_header(symbol: &str, source: SessionSource) -> String {
+    format!(
+        "# {FORMAT_NAME} {FORMAT_VERSION}\n# symbol={symbol}\n# source={}\n{HEADER}\n",
+        source.as_str()
+    )
 }
 
 /// One closed trade as one CSV line (newline included), the exact inverse
@@ -149,6 +193,7 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
     };
 
     let mut symbol = None;
+    let mut source = None;
     let mut header_seen = false;
     let mut trades = Vec::new();
     let mut problems = Vec::new();
@@ -159,8 +204,23 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
             continue;
         }
         if let Some(comment) = trimmed.strip_prefix('#') {
-            if let Some(value) = comment.trim().strip_prefix("symbol=") {
+            let comment = comment.trim();
+            if let Some(value) = comment.strip_prefix("symbol=") {
                 symbol = Some(value.trim().to_owned());
+            } else if let Some(value) = comment.strip_prefix("source=") {
+                match SessionSource::parse(value.trim()) {
+                    Some(parsed) => source = Some(parsed),
+                    // An unknown token stays unrecorded and is reported —
+                    // guessing "live" would launder a practice run into
+                    // the real track record.
+                    None => problems.push(HistoryProblem {
+                        line: line_number,
+                        message: format!(
+                            "unknown source `{}` - treated as unrecorded",
+                            value.trim()
+                        ),
+                    }),
+                }
             }
             continue;
         }
@@ -192,6 +252,7 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
     }
     Ok(TradeHistory {
         symbol,
+        source,
         trades,
         problems,
     })
@@ -315,14 +376,38 @@ mod tests {
             sample(Side::Sell, -3, ExitReason::StopLoss),
             sample(Side::Buy, 0, ExitReason::Reset),
         ];
-        let mut text = write_header("BTCUSDT");
+        let mut text = write_header("BTCUSDT", SessionSource::Live);
         for trade in &trades {
             text.push_str(&write_trade(trade));
         }
         let history = parse(&text).expect("round trip parses");
         assert_eq!(history.symbol.as_deref(), Some("BTCUSDT"));
+        assert_eq!(history.source, Some(SessionSource::Live));
         assert_eq!(history.trades, trades.to_vec());
         assert!(history.problems.is_empty());
+    }
+
+    #[test]
+    fn the_session_source_round_trips_and_its_absence_stays_unrecorded() {
+        let mut text = write_header("BTCUSDT", SessionSource::Replay);
+        text.push_str(&write_trade(&sample(Side::Buy, 5, ExitReason::Manual)));
+        let history = parse(&text).expect("parses");
+        assert_eq!(history.source, Some(SessionSource::Replay));
+
+        // A file from before `# source=` existed: unrecorded, not "live".
+        let legacy = format!("# quantick-trades 2\n# symbol=X\n{HEADER}\n");
+        let history = parse(&legacy).expect("legacy files still parse");
+        assert_eq!(history.source, None, "unrecorded is not guessed");
+        assert!(history.problems.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_source_token_is_reported_and_stays_unrecorded() {
+        let text = format!("# quantick-trades 2\n# symbol=X\n# source=backtest\n{HEADER}\n");
+        let history = parse(&text).expect("the file still loads");
+        assert_eq!(history.source, None);
+        assert_eq!(history.problems.len(), 1);
+        assert!(history.problems[0].message.contains("backtest"));
     }
 
     #[test]
@@ -353,7 +438,7 @@ mod tests {
             line.trim_end().ends_with("manual,,,,"),
             "unknown fields stay empty: {line}"
         );
-        let mut text = write_header("X");
+        let mut text = write_header("X", SessionSource::Live);
         text.push_str(&line);
         let history = parse(&text).expect("round trips");
         assert_eq!(history.trades[0], trade);
@@ -361,7 +446,7 @@ mod tests {
 
     #[test]
     fn a_torn_final_line_costs_one_reported_row_not_the_file() {
-        let mut text = write_header("WINQ26");
+        let mut text = write_header("WINQ26", SessionSource::Live);
         text.push_str(&write_trade(&sample(Side::Buy, 5, ExitReason::Manual)));
         // A crash mid-append leaves a partial row.
         text.push_str("1700000000000,17000");
@@ -369,8 +454,8 @@ mod tests {
         assert_eq!(history.trades.len(), 1);
         assert_eq!(history.problems.len(), 1);
         assert_eq!(
-            history.problems[0].line, 5,
-            "magic + symbol + header + row, then the tear"
+            history.problems[0].line, 6,
+            "magic + symbol + source + header + row, then the tear"
         );
         assert!(history.problems[0].message.contains("12 fields"));
     }
@@ -409,7 +494,7 @@ mod tests {
 
     #[test]
     fn unknown_exit_reason_is_a_problem_row() {
-        let mut text = write_header("X");
+        let mut text = write_header("X", SessionSource::Live);
         text.push_str("1,2,long,1,100,101,1,liquidated,,,,\n");
         let history = parse(&text).expect("file loads");
         assert!(history.trades.is_empty());
@@ -418,7 +503,7 @@ mod tests {
 
     #[test]
     fn comments_and_blank_lines_are_tolerated_between_rows() {
-        let mut text = write_header("X");
+        let mut text = write_header("X", SessionSource::Live);
         text.push('\n');
         text.push_str("# a note a human left\n");
         text.push_str(&write_trade(&sample(Side::Sell, 7, ExitReason::TakeProfit)));

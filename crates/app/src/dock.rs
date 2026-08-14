@@ -130,6 +130,9 @@ pub struct DockResponse {
     /// The Trading tab asked for the trades-folder picker — app-wide, so
     /// the app owns the dialog and the fan-out to every tab.
     pub pick_trades_dir: bool,
+    /// The Trading tab changed the cmd-trading settings — app-wide like
+    /// the trades dir: the app persists and fans them out.
+    pub cmd_trading_changed: bool,
 }
 
 /// The dock's chrome state. Hidden, collapsed to the strip, or open on one
@@ -314,12 +317,14 @@ impl Dock {
                             // with no way to reach them.
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false, true])
-                                .show(ui, |ui| {
-                                    if let Some(TradingTabAction::PickTradesDir) =
-                                        env.paper.draw_trading_tab(ui)
-                                    {
+                                .show(ui, |ui| match env.paper.draw_trading_tab(ui) {
+                                    Some(TradingTabAction::PickTradesDir) => {
                                         response.pick_trades_dir = true;
                                     }
+                                    Some(TradingTabAction::CmdTradingChanged) => {
+                                        response.cmd_trading_changed = true;
+                                    }
+                                    None => {}
                                 });
                         }
                         // The ledger manages its own scroll (a virtualised

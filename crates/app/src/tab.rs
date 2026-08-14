@@ -452,6 +452,13 @@ impl Tab {
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
+        // The journal records where a session's trades came from; the
+        // attached handle is the single truth for that.
+        self.paper.set_session_source(if self.replay.is_some() {
+            quantick_sim::history::SessionSource::Replay
+        } else {
+            quantick_sim::history::SessionSource::Live
+        });
         self.book_channel_closed_reported = false;
     }
 
@@ -1783,6 +1790,13 @@ impl Tab {
             "opening a recorded session"
         );
 
+        // A position on the tape belongs to the session that is ending:
+        // flatten it while the journal still carries that session's
+        // source. attach() flips the source to the new feed's, and a
+        // flatten after it would file the old session's trade under the
+        // new session's name — a live trade laundered into the practice
+        // record. (reset_market_state below flattens again: a no-op.)
+        self.paper.on_timeline_reset();
         let handle = feed::spawn(feed::FeedSource::Replay(Box::new(request)), config);
         self.attach(handle);
 
@@ -1822,6 +1836,11 @@ impl Tab {
             self.reset_market_state();
             return;
         };
+        // Same ordering rule as open_replay: the flatten of a replay
+        // position must journal under the replay source, before attach()
+        // flips the journal back to live — or a practice trade counts in
+        // the real track record.
+        self.paper.on_timeline_reset();
         let handle = feed::spawn_live(provider, &self.symbol, config);
         self.attach(handle);
         self.reset_market_state();

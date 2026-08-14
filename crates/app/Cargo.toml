@@ -16,6 +16,10 @@ quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 rust_decimal = "1"
+# The user's documents folder (Known Folders on Windows, XDG on Linux) —
+# the paper-trading journal's durable default home. Path lookup only; no
+# path is ever invented when the platform reports none.
+dirs = "6"
 # Native folder picker for Market Replay. Runs off the UI thread, so the OS
 # dialog never blocks a frame.
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
