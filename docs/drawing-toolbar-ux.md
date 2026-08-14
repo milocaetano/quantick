@@ -359,6 +359,11 @@ given up one at a time — into the band, never out of existence — before the
 band is ever asked to give up its four-tool floor.
 
 - The armed tool always keeps a real slot; it is never buried in the flyout.
+  In the scrolling band that promise is kept by pulling the band to the tool
+  on the frame it is armed — a shortcut can arm a tool the band has scrolled
+  past, and a trader who cannot see what is armed does not know what their
+  next click will draw. It is a one-frame reveal, not a magnet: scrolling
+  away from the armed tool afterwards stays where the trader put it.
 - The More flyout (`DOTS_THREE`, replacing today's misleading `PLUS`) lists
   everything the stage swallowed, by name and shortcut, in registry order:
   Crosshair and the unarmed tools at Compact, plus repeat / hide-all /

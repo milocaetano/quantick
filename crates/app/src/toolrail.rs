@@ -450,6 +450,13 @@ pub struct ToolRail {
     /// An offset a chevron click asked for, handed to the band on the next
     /// frame. `None` leaves the band to the wheel and to drag scrolling.
     band_target: Option<f32>,
+    /// The armed tool changed and the band has not yet been asked to show
+    /// it. The spec's standing promise is that the armed tool always keeps a
+    /// real slot (§2.8); a keyboard shortcut can arm a tool the band has
+    /// scrolled past, and a trader who cannot see what is armed does not
+    /// know what their next click will draw. Set on arming only, never held,
+    /// so scrolling away from the armed tool by hand stays where it was put.
+    reveal_armed: bool,
     /// Currently-nearest drop edge while a grip drag is live.
     drag_preview: Option<ToolboxDock>,
     dragging: bool,
@@ -504,6 +511,7 @@ impl Default for ToolRail {
             favorites: Vec::new(),
             band_offset: 0.0,
             band_target: None,
+            reveal_armed: false,
             drag_preview: None,
             dragging: false,
             drag_cancelled: false,
@@ -595,6 +603,9 @@ impl ToolRail {
             && let Some(family) = drawing_tool.family()
         {
             self.last_family_member.insert(family.id, drawing_tool);
+        }
+        if self.tool != tool {
+            self.reveal_armed = true;
         }
         self.tool = tool;
     }
@@ -1271,6 +1282,23 @@ impl ToolRail {
         let viewport = band_viewport(available, anchored);
         let spilled = self.favorites.len() - anchored;
         let max_offset = band_max_offset(viewport, spilled + slots.len());
+        // Arming a tool the band has scrolled past pulls it back into view,
+        // so the rail keeps the spec's promise that the armed tool always
+        // has a real slot. Only on the frame it was armed: past that, the
+        // band stays wherever the trader put it.
+        if self.reveal_armed {
+            self.reveal_armed = false;
+            if let Some(index) = self.armed_band_index(slots, spilled) {
+                let span = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+                let visible = band_visible_items(viewport);
+                let first = (self.band_offset / span).round() as usize;
+                if index < first {
+                    self.band_target = Some(index as f32 * span);
+                } else if index >= first + visible {
+                    self.band_target = Some((index + 1 - visible) as f32 * span);
+                }
+            }
+        }
         // A pending chevron click is resolved before anything is drawn, so
         // both chevrons and the band read one offset. Taking it from last
         // frame instead would leave the way-back arrow a frame stale — dead
@@ -1365,6 +1393,26 @@ impl ToolRail {
         }
     }
 
+    /// Where the armed tool sits among the band's items: the spilled
+    /// favorites first, then the tool slots in registry order. `None` when
+    /// nothing is armed, or when the armed tool is anchored outside the band
+    /// and therefore already on screen.
+    fn armed_band_index(&self, slots: &[RailSlot], spilled: usize) -> Option<usize> {
+        let armed = self.tool.drawing_tool()?;
+        let anchored = self.favorites.len() - spilled;
+        if let Some(offset) = self.favorites[anchored..]
+            .iter()
+            .position(|pinned| *pinned == armed)
+        {
+            return Some(offset);
+        }
+        let slot = slots.iter().position(|slot| match slot {
+            RailSlot::Single(tool) => *tool == armed,
+            RailSlot::Family { members, .. } => members.contains(&armed),
+        })?;
+        Some(spilled + slot)
+    }
+
     /// One end of the band's navigation pair. Both ends keep their slot for
     /// as long as the band scrolls: a chevron that vanished at the end of
     /// travel would shift every tool under the pointer by its own length.
@@ -1415,16 +1463,17 @@ impl ToolRail {
                 color,
             );
         }
-        if live {
-            let hint = match (vertical, leading) {
-                (true, true) => "Scroll tools up",
-                (true, false) => "Scroll tools down",
-                (false, true) => "Scroll tools left",
-                (false, false) => "Scroll tools right",
-            };
-            return response.on_hover_text(hint).clicked();
-        }
-        false
+        // A dimmed control with no reason reads as a bug, so the dead end
+        // says which end it is rather than saying nothing.
+        let hint = match (vertical, leading, live) {
+            (true, true, true) => "Scroll tools up",
+            (true, false, true) => "Scroll tools down",
+            (false, true, true) => "Scroll tools left",
+            (false, false, true) => "Scroll tools right",
+            (_, true, false) => "Start of the tool list",
+            (_, false, false) => "End of the tool list",
+        };
+        live && response.on_hover_text(hint).clicked()
     }
 
     /// A family's shown member: the last-armed one, or `None` before any
@@ -2916,6 +2965,42 @@ mod tests {
         assert!(
             rail.band_leading_arrow.is_some_and(|(_, live)| live),
             "and the way back stays open"
+        );
+    }
+
+    /// Arming a tool by shortcut pulls the band to it. Without this the
+    /// rail can show a scrolled-away run while a tool the trader cannot see
+    /// is armed — they would not know what the next click draws.
+    #[test]
+    fn arming_a_scrolled_away_tool_brings_it_back_into_view() {
+        let screen = scrolling_screen();
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+
+        // The last registry tool is past the band's floor by construction.
+        let last = *DRAWING_TOOLS.last().expect("the registry is not empty");
+        assert!(
+            !tools_on_screen(&rail).contains(&last),
+            "the fixture must start with that tool out of view"
+        );
+
+        rail.arm(Tool::Drawing(last));
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        assert!(
+            tools_on_screen(&rail).contains(&last),
+            "arming scrolled the band to the armed tool"
+        );
+
+        // And the band stays put afterwards: a reveal is a one-frame event,
+        // never a magnet that fights the trader scrolling away.
+        let settled = rail.band_offset;
+        let up = rail.band_leading_arrow.expect("leading chevron").0;
+        click_chevron(&mut rail, &mut drawings, &ctx, screen, up);
+        assert!(
+            rail.band_offset < settled,
+            "the band scrolled away and was not dragged back"
         );
     }
 
