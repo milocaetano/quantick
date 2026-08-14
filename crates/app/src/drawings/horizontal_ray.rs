@@ -19,6 +19,14 @@ fn span(chart_rect: egui::Rect, point: egui::Pos2) -> (egui::Pos2, egui::Pos2) {
 }
 
 impl DrawingToolImpl for HorizontalRay {
+    /// From its anchor to the right edge: the drawing runs forward to the
+    /// live edge. See [`DrawingToolImpl::painted_bounds`].
+    fn painted_bounds(&self, anchors: egui::Rect, chart: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_max(
+            anchors.min,
+            egui::pos2(chart.right(), anchors.bottom()),
+        )
+    }
     fn id(&self) -> &'static str {
         "horizontal-ray"
     }

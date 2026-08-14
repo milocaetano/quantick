@@ -342,6 +342,16 @@ fn clamp_into_chart(position: egui::Pos2, size: egui::Vec2, chart: egui::Rect) -
     )
 }
 
+/// Where the inspector goes, and how wide it may be there.
+///
+/// The width is `Some` only when the panel had to be narrowed to fit a gutter
+/// beside a drawing too big to place around — see [`inspector_placement`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct InspectorPlacement {
+    position: egui::Pos2,
+    max_width: Option<f32>,
+}
+
 /// The inspector placement rule (`docs/ux/drawing-tools-2026-08.md` §D3).
 ///
 /// The old rule scored least overlap with the object's *bounding box*, and a
@@ -364,7 +374,11 @@ fn clamp_into_chart(position: egui::Pos2, size: egui::Vec2, chart: egui::Rect) -
 /// 3. only if neither top corner is free, the bottom two on the same rule;
 /// 4. and if every corner is fouled — a large object covering the chart —
 ///    the beside-the-object candidates, least overlap first.
-fn inspector_placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
+fn inspector_placement(
+    chart: egui::Rect,
+    bbox: egui::Rect,
+    size: egui::Vec2,
+) -> InspectorPlacement {
     let gap = INSPECTOR_OBJECT_GAP_PX;
     let top_corners = [
         egui::pos2(chart.left() + gap, chart.top() + gap),
@@ -390,11 +404,44 @@ fn inspector_placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) ->
         best.map(|(position, _)| position)
     };
     if let Some(position) = farthest_clear(top_corners).or_else(|| farthest_clear(bottom_corners)) {
-        return position;
+        return InspectorPlacement {
+            position,
+            max_width: None,
+        };
     }
-    let corners = [top_corners, bottom_corners].concat();
+    // No corner is clear, which is what a big object — a volume profile, a
+    // range across the whole chart — does to all four of them. The panel then
+    // goes into whichever *gutter* the object leaves beside it, narrowed to
+    // fit, because a settings panel sitting on the drawing it configures is
+    // the one outcome this whole function exists to avoid.
+    //
+    // Horizontal gutters only. Narrowing a panel reflows it and its scroll
+    // area keeps every row reachable; shortening one hides rows, and rows a
+    // trader cannot reach read as rows that do not exist.
+    let left_gutter = bbox.left() - gap - chart.left();
+    let right_gutter = chart.right() - bbox.right() - gap;
+    let (gutter, gutter_left) = if right_gutter >= left_gutter {
+        (right_gutter, bbox.right() + gap)
+    } else {
+        (left_gutter, chart.left() + gap)
+    };
+    if gutter >= INSPECTOR_MIN_WIDTH_PX {
+        let width = gutter.min(size.x);
+        let position = clamp_into_chart(
+            egui::pos2(gutter_left, chart.top() + gap),
+            egui::vec2(width, size.y),
+            chart,
+        );
+        return InspectorPlacement {
+            position,
+            max_width: Some(width),
+        };
+    }
 
-    // Nothing clear anywhere: crowd the object as little as possible.
+    // The object leaves no strip wide enough to be a panel in. Nothing can be
+    // placed clear of it, and saying so by crowding it least is more honest
+    // than pretending: this is the one case the rule cannot keep.
+    let corners = [top_corners, bottom_corners].concat();
     let fallbacks = [
         egui::pos2(bbox.right() + gap, bbox.top()),
         egui::pos2(bbox.left() - gap - size.x, bbox.top()),
@@ -423,7 +470,10 @@ fn inspector_placement(chart: egui::Rect, bbox: egui::Rect, size: egui::Vec2) ->
             best = Some((position, overlap_area, distance));
         }
     }
-    best.map_or_else(|| chart.left_top(), |(position, _, _)| position)
+    InspectorPlacement {
+        position: best.map_or_else(|| chart.left_top(), |(position, _, _)| position),
+        max_width: None,
+    }
 }
 
 /// Split the bottom time strip at the lane's divider: the candles' own time
@@ -636,6 +686,11 @@ pub struct QuantickApp {
     // would go. Consumed once.
     pending_drawing_draft: Option<usize>,
     inspector_pos: Option<egui::Pos2>,
+    /// How wide the floating inspector may be where it was placed.
+    ///
+    /// `Some` only when it had to be narrowed into a gutter beside a drawing
+    /// too big to place around; `None` means the usual width range applies.
+    inspector_max_width: Option<f32>,
     // The floating panel's size as it was last actually drawn. Read back from
     // the window response rather than from egui's area memory: the memory
     // lookup is empty on the frame the panel is being laid out, which is
@@ -903,6 +958,7 @@ impl QuantickApp {
             pending_avwap_demo: false,
             pending_drawing_draft: None,
             inspector_pos: None,
+            inspector_max_width: None,
             inspector_size: None,
             inspector_pin_touched: false,
             inspector_settle_frame: false,
@@ -4091,7 +4147,9 @@ impl QuantickApp {
             if bar.double_clicked() {
                 // The reset path: back to automatic placement.
                 self.inspector_moved = false;
-                self.inspector_pos = self.inspector_target_position(ui.ctx(), index);
+                let placed = self.inspector_target_placement(ui.ctx(), index);
+                self.inspector_pos = placed.map(|placed| placed.position);
+                self.inspector_max_width = placed.and_then(|placed| placed.max_width);
             } else if bar.dragged() {
                 self.inspector_moved = true;
                 let position = self.inspector_pos.or_else(|| {
@@ -4433,12 +4491,16 @@ impl QuantickApp {
         }
     }
 
-    /// Where a freshly opened floating inspector should sit: the farthest
-    /// chart corner that clears the object, bottom-left preferred, falling
-    /// back to beside-the-object only when no corner is free — see
-    /// [`inspector_placement`]. The chart pane already excludes both axes and
-    /// the live lane, so the popup can never cover them or leave the view.
-    fn inspector_target_position(&self, ctx: &egui::Context, index: usize) -> Option<egui::Pos2> {
+    /// Where a freshly opened floating inspector should sit, and how wide it
+    /// may be there: the farthest chart corner that clears the object, then a
+    /// gutter beside it narrowed to fit — see [`inspector_placement`]. The
+    /// chart pane already excludes both axes and the live lane, so the popup
+    /// can never cover them or leave the view.
+    fn inspector_target_placement(
+        &self,
+        ctx: &egui::Context,
+        index: usize,
+    ) -> Option<InspectorPlacement> {
         let chart = self.drawing_pane().last_chart_area?;
         let bbox = self.drawing_bbox_on_screen(chart, index)?;
         Some(inspector_placement(chart, bbox, self.inspector_size(ctx)))
@@ -4484,6 +4546,12 @@ impl QuantickApp {
         for point in &points {
             bbox.extend_with(*point);
         }
+        // What the tool paints, which is not always where its anchors are: a
+        // fixed-range profile anchors at one price and covers the axis. Every
+        // popup that keeps clear of an object reads this rectangle, so asking
+        // the anchors alone is what let a panel land in the middle of a
+        // profile while believing it had walked around it.
+        let bbox = drawing.tool.painted_bounds(bbox, chart);
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
 
@@ -4751,9 +4819,10 @@ impl QuantickApp {
         // Automatic placement only while the window is untouched.
         if selection_changed
             && !self.inspector_moved
-            && let Some(position) = self.inspector_target_position(ctx, index)
+            && let Some(placed) = self.inspector_target_placement(ctx, index)
         {
-            self.inspector_pos = Some(position);
+            self.inspector_pos = Some(placed.position);
+            self.inspector_max_width = placed.max_width;
         }
         // Repair, never override: a position that no longer fits the chart
         // pane is clamped back in, and `inspector_moved` survives.
@@ -4790,7 +4859,12 @@ impl QuantickApp {
             .default_pos(DRAWING_INSPECTOR_DEFAULT_POSITION)
             .default_width(default_width)
             .min_width(INSPECTOR_MIN_WIDTH_PX)
-            .max_width(INSPECTOR_MAX_WIDTH_PX)
+            .max_width(
+                self.inspector_max_width
+                    .map_or(INSPECTOR_MAX_WIDTH_PX, |width| {
+                        width.clamp(INSPECTOR_MIN_WIDTH_PX, INSPECTOR_MAX_WIDTH_PX)
+                    }),
+            )
             .max_height(max_height)
             .movable(false)
             .interactable(true)
@@ -5415,6 +5489,12 @@ impl QuantickApp {
         } else {
             &[(start, end, true)]
         };
+        // Selecting what the demo drew is what makes the *context bar* — the
+        // strip a trader edits a profile from — reachable without a click.
+        // Without it a validation run can photograph a profile but never the
+        // controls over it, which is exactly the surface whose placement this
+        // change is about (`ui-harness`: every surface owes a hook).
+        let select = std::env::var("QUANTICK_FRVP_DEMO_SELECT").is_ok_and(|v| v.trim() == "1");
         for &(from, to, outline) in ranges {
             for slot in [from, to] {
                 pane.drawings.place_with(
@@ -5437,6 +5517,10 @@ impl QuantickApp {
                         }
                     },
                 );
+            }
+            if select {
+                let last = pane.drawings.items().len().saturating_sub(1);
+                pane.drawings.select(Some(last));
             }
         }
     }
@@ -10802,12 +10886,100 @@ plot(close)
     /// The session's complaint (`docs/ux/drawing-tools-2026-08.md` §F3): the
     /// old rule put the panel 12 px beside a small object, right on top of
     /// the price action the trader drew it to read. A corner must win.
+    /// The rule a volume profile broke: a drawing big enough to foul all four
+    /// corners used to get the panel dropped straight onto it.
+    ///
+    /// A profile is exactly that shape — tall enough to span the price axis,
+    /// wide enough to reach past every corner candidate — so "least overlap"
+    /// meant "on the figure", and the panel covered the thing it configures.
+    /// It goes into the gutter beside the object instead, narrowed to fit.
+    #[test]
+    fn a_drawing_too_big_for_any_corner_sends_the_panel_to_a_gutter_beside_it() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1200.0, 700.0));
+        let size = egui::vec2(320.0, 280.0);
+        // A profile down the middle, wide enough that a panel parked at any
+        // corner overlaps it, and narrow enough that the strip beside it can
+        // still hold a narrowed one. That band is exactly what narrowing is
+        // for: the corner candidate assumes the full width and fouls, the
+        // gutter takes what fits.
+        let bbox = egui::Rect::from_min_max(egui::pos2(320.0, 0.0), egui::pos2(880.0, 700.0));
+        let gap = INSPECTOR_OBJECT_GAP_PX;
+        for corner in [
+            egui::pos2(chart.left() + gap, chart.top() + gap),
+            egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
+            egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
+            egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
+        ] {
+            assert!(
+                egui::Rect::from_min_size(corner, size)
+                    .intersect(bbox)
+                    .is_positive(),
+                "the fixture has to actually foul every corner: {corner:?}"
+            );
+        }
+
+        let placed = inspector_placement(chart, bbox, size);
+        let rect = egui::Rect::from_min_size(
+            placed.position,
+            egui::vec2(placed.max_width.unwrap_or(size.x), size.y),
+        );
+        assert!(
+            !rect.intersect(bbox).is_positive(),
+            "the panel must not cover the drawing it configures: {rect:?} vs {bbox:?}"
+        );
+        assert!(
+            chart.contains_rect(rect),
+            "and it stays inside the chart: {rect:?}"
+        );
+        assert!(
+            placed
+                .max_width
+                .is_some_and(|w| w >= INSPECTOR_MIN_WIDTH_PX),
+            "narrowed, but never below what a panel needs: {:?}",
+            placed.max_width
+        );
+    }
+
+    /// The wider side wins, so the panel goes where there is most room — and
+    /// a corner that *is* free still beats any gutter, because the gutter is
+    /// the fallback, not the rule.
+    #[test]
+    fn the_gutter_is_the_wider_side_and_never_preferred_over_a_free_corner() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1200.0, 700.0));
+        let size = egui::vec2(320.0, 280.0);
+
+        // Object hugging the left: the room is on its right.
+        let left_heavy = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 700.0));
+        let placed = inspector_placement(chart, left_heavy, size);
+        assert!(
+            placed.position.x >= left_heavy.right(),
+            "the panel takes the wider side: {placed:?}"
+        );
+
+        // Object hugging the right: the room is on its left.
+        let right_heavy =
+            egui::Rect::from_min_max(egui::pos2(800.0, 0.0), egui::pos2(1200.0, 700.0));
+        let placed = inspector_placement(chart, right_heavy, size);
+        assert!(
+            placed.position.x + placed.max_width.unwrap_or(size.x) <= right_heavy.left(),
+            "and the other side when that is where the room is: {placed:?}"
+        );
+
+        // A small object leaves corners free, and a free corner is unnarrowed.
+        let small = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
+        let placed = inspector_placement(chart, small, size);
+        assert_eq!(
+            placed.max_width, None,
+            "a corner placement never narrows the panel: {placed:?}"
+        );
+    }
+
     #[test]
     fn placement_sends_the_panel_to_a_corner_not_beside_a_small_object() {
         let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
         let bbox = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
         let size = egui::vec2(320.0, 280.0);
-        let position = inspector_placement(chart, bbox, size);
+        let position = inspector_placement(chart, bbox, size).position;
         let rect = egui::Rect::from_min_size(position, size);
         assert!(!rect.intersects(bbox), "a clear candidate exists and wins");
         assert!(chart.contains_rect(rect));
@@ -10822,7 +10994,7 @@ plot(close)
         );
         assert_eq!(
             position,
-            inspector_placement(chart, bbox, size),
+            inspector_placement(chart, bbox, size).position,
             "identical inputs give identical placements"
         );
     }
@@ -10837,7 +11009,7 @@ plot(close)
         let size = egui::vec2(320.0, 280.0);
         let gap = INSPECTOR_OBJECT_GAP_PX;
         assert_eq!(
-            inspector_placement(chart, bbox, size),
+            inspector_placement(chart, bbox, size).position,
             egui::pos2(chart.left() + gap, chart.top() + gap)
         );
     }
@@ -10855,7 +11027,7 @@ plot(close)
         // turns out to want once its level editor is open.
         let assumed = egui::vec2(360.0, 280.0);
         let actual = 620.0;
-        let position = inspector_placement(chart, bbox, assumed);
+        let position = inspector_placement(chart, bbox, assumed).position;
         assert!(
             position.y + actual <= chart.bottom(),
             "a panel that grows to {actual} px must still fit below {position:?}"
@@ -10872,7 +11044,7 @@ plot(close)
         let size = egui::vec2(320.0, 280.0);
         let gap = INSPECTOR_OBJECT_GAP_PX;
         assert_eq!(
-            inspector_placement(chart, bbox, size),
+            inspector_placement(chart, bbox, size).position,
             egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
             "the opposite corner is the farthest clear one"
         );
@@ -10884,7 +11056,7 @@ plot(close)
         // The object spans ~90% of the pane: every candidate overlaps.
         let bbox = chart.shrink2(egui::vec2(50.0, 30.0));
         let size = egui::vec2(320.0, 280.0);
-        let position = inspector_placement(chart, bbox, size);
+        let position = inspector_placement(chart, bbox, size).position;
         let chosen = egui::Rect::from_min_size(position, size)
             .intersect(bbox)
             .area();
@@ -10905,7 +11077,7 @@ plot(close)
         let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
         let bbox = egui::Rect::from_min_max(egui::pos2(900.0, 200.0), egui::pos2(1_000.0, 300.0));
         let size = egui::vec2(320.0, 280.0);
-        let position = inspector_placement(chart, bbox, size);
+        let position = inspector_placement(chart, bbox, size).position;
         let rect = egui::Rect::from_min_size(position, size);
         assert!(
             !rect.intersects(bbox),

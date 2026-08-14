@@ -548,6 +548,14 @@ fn fmt_signed_qty(value: Decimal) -> String {
 }
 
 impl DrawingToolImpl for FixedRangeProfile {
+    /// Floor to ceiling: the anchors say *when*, the drawing covers every
+    /// price on screen. See [`DrawingToolImpl::painted_bounds`].
+    fn painted_bounds(&self, anchors: egui::Rect, chart: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(anchors.left(), chart.top()),
+            egui::pos2(anchors.right(), chart.bottom()),
+        )
+    }
     fn id(&self) -> &'static str {
         "fixed-range-profile"
     }
