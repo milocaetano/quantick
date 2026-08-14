@@ -1,4 +1,9 @@
-# GOAL — navegação e densidade do gráfico
+# GOAL (arquivado) — navegação e densidade do gráfico
+
+**Resultado**: todos os critérios cumpridos com evidência; PR aberto. Os
+números medidos, os defeitos que a validação visual encontrou (e as
+correções que geraram) e o que ficou declarado fora de escopo estão no
+corpo do PR.
 
 **Missão**: dar ao gráfico o espaço e a densidade que faltam para operar —
 espaço vazio à direita suficiente para projetar canal e Fibo, espaçamento
