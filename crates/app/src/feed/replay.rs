@@ -296,6 +296,11 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
 ///
 /// A recording with no context file answers empty and complete — that is the
 /// whole truth about it, not a fetch that came up short.
+///
+/// Always one reply, whatever slicing the request asked for: the context is a
+/// file already read into memory, so there is no venue round trip for slices
+/// to hide behind, and cutting it up would buy the trader nothing but extra
+/// rebuilds.
 fn context_reply(
     context: Option<&quantick_replay::ContextSeries>,
     first_print_ms: i64,
@@ -305,7 +310,7 @@ fn context_reply(
         return FeedEvent::OhlcvHistory {
             interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            complete: true,
+            slice: crate::feed::OhlcvSlice::Last { complete: true },
         };
     };
     let earliest = first_print_ms.saturating_sub(span_ms);
@@ -321,7 +326,9 @@ fn context_reply(
         // caller: the download itself was clipped, or this span does not reach
         // the whole of what was downloaded. Either way there is more market
         // before the first bar returned, which is what `complete: false` says.
-        complete: context.complete && bars.len() == context.bars.len(),
+        slice: crate::feed::OhlcvSlice::Last {
+            complete: context.complete && bars.len() == context.bars.len(),
+        },
         bars,
     }
 }
@@ -408,7 +415,7 @@ fn play(
                 // Answered from the context file beside the recording, or
                 // answered empty — but always answered exactly once, or the
                 // pane waits for a reply that never comes.
-                Ok(FeedCommand::FetchOhlcv { span_ms }) => {
+                Ok(FeedCommand::FetchOhlcv { span_ms, .. }) => {
                     let reply = context_reply(context.as_ref(), session.start_ms(), span_ms);
                     if tx.blocking_send(reply).is_err() {
                         return; // UI gone
@@ -665,8 +672,15 @@ mod tests {
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
-                    complete,
-                }) => break (interval_ms, bars, complete),
+                    slice,
+                }) => {
+                    // A recording always answers once and for all; the helper
+                    // would be hiding a second reply if one ever appeared.
+                    let crate::feed::OhlcvSlice::Last { complete } = slice else {
+                        panic!("a recording must answer with a single closing slice");
+                    };
+                    break (interval_ms, bars, complete);
+                }
                 Ok(_) => {}
                 Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
                 Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),
@@ -693,6 +707,7 @@ mod tests {
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                slice_ms: None,
             })
             .expect("the worker is listening");
 
@@ -770,6 +785,7 @@ mod tests {
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: 30 * 60_000,
+                slice_ms: None,
             })
             .expect("the worker is listening");
 
@@ -980,6 +996,7 @@ mod tests {
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                slice_ms: None,
             })
             .expect("the worker is listening");
 
@@ -993,8 +1010,15 @@ mod tests {
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
-                    complete,
-                }) => break (interval_ms, bars, complete),
+                    slice,
+                }) => {
+                    // A recording always answers once and for all; the helper
+                    // would be hiding a second reply if one ever appeared.
+                    let crate::feed::OhlcvSlice::Last { complete } = slice else {
+                        panic!("a recording must answer with a single closing slice");
+                    };
+                    break (interval_ms, bars, complete);
+                }
                 Ok(_) => {}
                 Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
                 Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),

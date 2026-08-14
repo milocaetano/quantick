@@ -208,6 +208,15 @@ pub struct SavedChrome {
     /// feature simply has no pinned section.
     #[serde(default)]
     pub favorite_tools: Vec<String>,
+    /// Whether venue candle history was fetched in slices, newest first.
+    ///
+    /// Defaults to on rather than to `false`, which is what a missing field
+    /// would otherwise mean: a workspace written before this switch existed
+    /// describes a cockpit whose owner never chose the slower path, and
+    /// reading their silence as "off" would hand them the old wait back with
+    /// no way to know why.
+    #[serde(default = "yes")]
+    pub progressive_history: bool,
 }
 
 /// The workspace as a whole: what the app opens on.
@@ -656,6 +665,7 @@ mod tests {
                 rail_dock: SavedRailDock::Left,
                 perf_readings: true,
                 favorite_tools: vec!["parallel-channel".to_owned()],
+                progressive_history: false,
             }),
             saved: Vec::new(),
         }
@@ -682,6 +692,34 @@ mod tests {
         let path = temp_path("garbage");
         std::fs::write(&path, "this is not toml {{{").unwrap();
         assert_eq!(load(&path), Workspace::default());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A workspace written before the progressive switch existed says nothing
+    /// about it. Silence is not a choice, and reading it as "off" would hand
+    /// the trader back the wait this feature removes.
+    #[test]
+    fn a_workspace_written_before_the_switch_reopens_progressive() {
+        let path = temp_path("pre-progressive-chrome");
+        std::fs::write(
+            &path,
+            concat!(
+                "version = 1\n",
+                "tabs = []\n",
+                "[chrome]\n",
+                "timezone_minutes = -180\n",
+                "dock_visible = true\n",
+                "rail_visible = true\n",
+                "rail_dock = \"left\"\n",
+                "perf_readings = true\n",
+            ),
+        )
+        .unwrap();
+        let chrome = load(&path).chrome.expect("the chrome section is readable");
+        assert!(
+            chrome.progressive_history,
+            "a missing field means the trader never chose the slower path"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

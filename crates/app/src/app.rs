@@ -559,6 +559,15 @@ pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat)
     format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
+/// Which venue-history frame `QUANTICK_VENUE_HISTORY_DEMO` opens on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VenueHistoryDemo {
+    /// The finished prefix: the seam divider with no wait behind it.
+    Complete,
+    /// A run still arriving: prefix installed, loading indicator still up.
+    Partial,
+}
+
 /// The quantick chart window.
 ///
 /// One workspace: N open markets ([`Tab`]) and the chrome around them. The
@@ -691,6 +700,17 @@ pub struct QuantickApp {
     /// it has bars — the band stack and anchor marker, photographable from a
     /// fresh launch. Consumed once, like the other demos.
     pending_avwap_demo: bool,
+    /// `QUANTICK_VENUE_HISTORY_DEMO`: a venue candle prefix delivered to the
+    /// focused tab through the feed's own path, so the seam divider — and,
+    /// with `=partial`, a run still arriving — can be photographed from a
+    /// fresh launch.
+    ///
+    /// The seam only exists where venue candles meet bars cut from prints,
+    /// which on a live feed means waiting on a real venue for a real quarter
+    /// of history. That is not a state a scripted capture can reach, and
+    /// "arrived halfway" is not a state it can reach *at all*: it lasts a few
+    /// seconds, once, at a moment nothing controls. Consumed once.
+    pending_venue_history_demo: Option<VenueHistoryDemo>,
     // Scripted-validation hook: how many anchors of the armed tool are already
     // placed when the run opens, with the pointer parked where the next one
     // would go. Consumed once.
@@ -787,6 +807,17 @@ pub struct QuantickApp {
     last_style_change: Option<Instant>,
     // Whether the status bar shows the perf readings (View → perf readings).
     show_perf: bool,
+    /// Whether venue candle history is asked for in slices, newest first
+    /// (View → progressive venue history).
+    ///
+    /// On by default. Ninety days of one-minute candles is a couple of minutes
+    /// of sequential venue round trips, and fetched whole the chart shows
+    /// nothing at all for the whole of it. Off restores exactly that: one
+    /// request, one reply, one very late frame — kept because a trader on a
+    /// metered or rate-limited connection may prefer the smaller number of
+    /// requests, and because a setting whose "off" is not the old behaviour is
+    /// not a setting the user can fall back to.
+    progressive_history: bool,
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
@@ -968,6 +999,7 @@ impl QuantickApp {
             pending_drawing_demo: false,
             pending_frvp_demo: false,
             pending_avwap_demo: false,
+            pending_venue_history_demo: None,
             pending_drawing_draft: None,
             inspector_pos: None,
             inspector_max_width: None,
@@ -1009,6 +1041,7 @@ impl QuantickApp {
             style_log_pending: false,
             last_style_change: None,
             show_perf: true,
+            progressive_history: true,
             tz: TzOffset::default(),
             trades_dir,
             trades_dir_picker: None,
@@ -1101,6 +1134,25 @@ impl QuantickApp {
         // band stack have room to develop on screen.
         app.pending_avwap_demo =
             std::env::var("QUANTICK_AVWAP_DEMO").is_ok_and(|value| value.trim() == "1");
+        // The switch itself, so both sides of it are reachable without a
+        // click. Set explicitly, it also overrides what the workspace saved:
+        // a validation run must be able to pin the state it is photographing.
+        if let Ok(value) = std::env::var("QUANTICK_PROGRESSIVE_HISTORY") {
+            match value.trim() {
+                "1" => app.progressive_history = true,
+                "0" => app.progressive_history = false,
+                // Nonsense is refused rather than guessed: a typo leaves the
+                // trader's own setting alone instead of silently flipping it.
+                _ => {}
+            }
+        }
+        app.pending_venue_history_demo = std::env::var("QUANTICK_VENUE_HISTORY_DEMO")
+            .ok()
+            .and_then(|value| match value.trim() {
+                "1" => Some(VenueHistoryDemo::Complete),
+                "partial" => Some(VenueHistoryDemo::Partial),
+                _ => None,
+            });
         // The object manager is where a mark that cannot be trusted says so —
         // the "off series", "other market" and band badges live there, and a
         // mark clamped to an edge may be nowhere near the visible window,
@@ -2901,6 +2953,7 @@ impl QuantickApp {
                 .iter()
                 .map(|tool| tool.id().to_owned())
                 .collect(),
+            progressive_history: self.progressive_history,
         };
         (tabs, chrome)
     }
@@ -2933,6 +2986,7 @@ impl QuantickApp {
             self.toolrail.set_visible(chrome.rail_visible);
             self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
+            self.progressive_history = chrome.progressive_history;
         }
         if workspace.is_empty() {
             return;
@@ -3223,6 +3277,7 @@ impl QuantickApp {
             self.toolrail.set_visible(chrome.rail_visible);
             self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
+            self.progressive_history = chrome.progressive_history;
         }
         self.active_tab = entry.active_tab.min(self.tabs.len().saturating_sub(1));
         let config = self.config.clone();
@@ -3822,6 +3877,13 @@ impl QuantickApp {
                         ui.separator();
                         ui.checkbox(&mut self.show_perf, "Perf readings")
                             .on_hover_text("fps, frame time and trade count on the status bar");
+                        ui.checkbox(&mut self.progressive_history, "Progressive venue history")
+                            .on_hover_text(
+                                "Build the venue's candle history from now backwards, a week at \
+                                 a time, so the chart fills in while the rest arrives. Off asks \
+                                 for the whole span in one request: fewer calls, nothing on \
+                                 screen until all of it lands.",
+                            );
                         ui.separator();
                         ui.menu_button("Timezone", |ui| {
                             egui::ScrollArea::vertical()
@@ -5599,6 +5661,59 @@ impl QuantickApp {
         });
     }
 
+    /// The `QUANTICK_VENUE_HISTORY_DEMO` hook: a venue candle prefix in front
+    /// of the bars cut from prints, delivered through the very path a feed's
+    /// reply takes, so what is photographed is the real seam and the real
+    /// loading state rather than a picture of them.
+    ///
+    /// `partial` stops one slice short: the prefix is installed and the run is
+    /// left open, which is the mid-load frame progressive delivery exists to
+    /// produce and the one no capture could otherwise catch.
+    fn apply_venue_history_demo(&mut self) {
+        let Some(demo) = self.pending_venue_history_demo else {
+            return;
+        };
+        let tab = self.active_tab_mut();
+        // Wait for bars to sit the prefix in front of: a seam needs both sides.
+        if tab.flow_pane.state.bars().len() < 12 {
+            return;
+        }
+        self.pending_venue_history_demo = None;
+        let tab = self.active_tab_mut();
+        let Some(first) = tab.flow_pane.state.bars().first() else {
+            return;
+        };
+        let (first_open, anchor) = (first.open_time, first.open);
+        let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
+        // Candles for the minutes immediately before the first engine bar, so
+        // the prefix meets the tape without overlapping it. The wiggle is a
+        // fixed function of the minute — the capture has to be the same
+        // picture every run, or a visual diff means nothing.
+        let bars: Vec<quantick_engine::Bar> = (-90..0)
+            .map(|minute| {
+                let open_time = first_open + minute * interval;
+                let drift = rust_decimal::Decimal::from(minute.rem_euclid(7) - 3);
+                let open = anchor + drift;
+                quantick_engine::Bar {
+                    open_time,
+                    close_time: open_time + interval - 1,
+                    open,
+                    high: open + rust_decimal::Decimal::from(2),
+                    low: open - rust_decimal::Decimal::from(2),
+                    close: open + rust_decimal::Decimal::from(minute.rem_euclid(3) - 1),
+                    buy_volume: rust_decimal::Decimal::from(2),
+                    sell_volume: rust_decimal::Decimal::from(3),
+                    trade_count: 7,
+                }
+            })
+            .collect();
+        let slice = match demo {
+            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
+            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
+        };
+        tab.deliver_ohlcv_slice(interval, bars, slice);
+    }
+
     /// The `QUANTICK_FRVP_DEMO` hook: one fixed-range volume profile on the
     /// flow pane. When the pane carries a venue history prefix the range
     /// starts inside it, so the partial-coverage honesty label ("profile
@@ -5867,6 +5982,7 @@ impl QuantickApp {
         self.drain_tabs();
         self.apply_drawing_demo();
         self.apply_drawing_draft();
+        self.apply_venue_history_demo();
         self.apply_frvp_demo();
         self.apply_avwap_demo();
         self.maybe_emit_summary(now);
@@ -6084,6 +6200,7 @@ impl QuantickApp {
     /// already current rather than rebuilding on the frame it appears.
     fn drain_tabs(&mut self) {
         let config = &self.config;
+        let progressive_history = self.progressive_history;
         let mut trades = 0_u64;
         for tab in &mut self.tabs {
             let before = tab.live_trades;
@@ -6104,6 +6221,10 @@ impl QuantickApp {
             // after the pane may already have asked and been told there was
             // nothing held. Watching the edge is what asks again once the
             // answer can be a real one.
+            // The switch lives on the window, the request is phrased by the
+            // tab: mirrored here so every tab asks the way the trader last
+            // said, including one opened after the choice was made.
+            tab.progressive_history = progressive_history;
             tab.poll_ohlcv_capability(config);
             trades += tab.live_trades - before;
         }
@@ -14002,6 +14123,7 @@ plot(close)
                 rail_dock: ui_state::SavedRailDock::Bottom,
                 perf_readings: false,
                 favorite_tools: Vec::new(),
+                progressive_history: false,
             }),
         ));
         run_frame(&mut app, &ctx);
@@ -14034,6 +14156,14 @@ plot(close)
         assert!(!app.toolrail.visible());
         assert_eq!(app.toolrail.dock(), ToolboxDock::Bottom);
         assert!(!app.show_perf);
+        assert!(
+            !app.progressive_history,
+            "a trader who chose the single-request fetch reopens on it"
+        );
+        assert!(
+            app.tabs.iter().all(|tab| !tab.progressive_history),
+            "and every tab phrases its request that way"
+        );
     }
 
     /// The BARS selectors read the pane's own fields, so restoring the state
@@ -15516,15 +15646,30 @@ plot(close)
             .collect()
     }
 
+    /// Venue candles for a range of minutes, so a test can hand over one
+    /// progressive slice at a time. Minutes are negative: the fixture trades
+    /// start in minute 0, and the prefix sits before them.
+    fn venue_history_range(from_minute: i64, to_minute: i64) -> Vec<quantick_engine::Bar> {
+        (from_minute..to_minute)
+            .map(|m| venue_candle(m, m.rem_euclid(5)))
+            .collect()
+    }
+
     /// Every FetchOhlcv sitting in the command channel.
     fn drain_ohlcv_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> usize {
-        let mut count = 0;
+        drain_ohlcv_slice_requests(commands).len()
+    }
+
+    /// The `slice_ms` every queued FetchOhlcv asked for, in order — what says
+    /// whether the tab asked for a progressive answer or the old single one.
+    fn drain_ohlcv_slice_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
+        let mut asked = Vec::new();
         while let Ok(command) = commands.try_recv() {
-            if matches!(command, FeedCommand::FetchOhlcv { .. }) {
-                count += 1;
+            if let FeedCommand::FetchOhlcv { slice_ms, .. } = command {
+                asked.push(slice_ms);
             }
         }
-        count
+        asked
     }
 
     /// A split app whose feed reports candle history, with the channel ends
@@ -15594,7 +15739,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15617,6 +15762,212 @@ plot(close)
         assert!(
             has_price_axis(&texts),
             "the pane draws its chart: {texts:?}"
+        );
+    }
+
+    /// The progressive answer: each slice paints when it lands, the chart
+    /// grows leftwards, and the wait ends on the closing slice — not the
+    /// first one.
+    #[test]
+    fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        assert_eq!(
+            drain_ohlcv_slice_requests(&mut commands),
+            vec![Some(crate::feed::OHLCV_SLICE_SPAN_MS)],
+            "the default asks for slices"
+        );
+
+        // Newest week first, then older ones behind it: what a provider
+        // walking `ohlcv_plan::plan` sends.
+        let slices = [
+            (venue_history_range(-20, 0), 20),
+            (venue_history_range(-40, -20), 40),
+            (venue_history_range(-60, -40), 60),
+        ];
+        for (bars, expected_seam) in &slices[..2] {
+            events
+                .try_send(FeedEvent::OhlcvHistory {
+                    interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                    bars: bars.clone(),
+                    slice: crate::feed::OhlcvSlice::More,
+                })
+                .unwrap();
+            app.drain_tabs();
+            assert_eq!(
+                app.active_tab().pane(PaneSide::Time).seam_slot(),
+                *expected_seam,
+                "the prefix grew by the slice that just landed"
+            );
+            assert!(
+                app.active_tab()
+                    .loading
+                    .is_active(LoadingTask::VenueHistory),
+                "and the chart still says more is coming"
+            );
+            // It paints mid-run: a partial prefix is a chart, not a stall.
+            let texts = painted_text(&run_frame(&mut app, &ctx));
+            assert!(has_price_axis(&texts), "the pane draws mid-run: {texts:?}");
+        }
+
+        let (bars, expected_seam) = &slices[2];
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: bars.clone(),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            *expected_seam,
+            "the closing slice is merged in front, not written over the rest"
+        );
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and only now is the wait over"
+        );
+        assert_eq!(
+            drain_ohlcv_requests(&mut commands),
+            0,
+            "a run in progress is never asked again"
+        );
+
+        // The composed series is still searchable: `open_time` never decreases
+        // across the merge, which is what the seam contract rests on.
+        let pane = app.active_tab().pane(PaneSide::Time);
+        let opens: Vec<i64> = pane
+            .history_prefix
+            .iter()
+            .map(|bar| bar.open_time)
+            .collect();
+        assert!(
+            opens.windows(2).all(|pair| pair[0] < pair[1]),
+            "the merged prefix is strictly ascending: {opens:?}"
+        );
+    }
+
+    /// A push feed replacing its block mid-run discards the slices still in
+    /// flight rather than folding them onto the base they no longer belong to
+    /// — which would build a history missing exactly its newest part.
+    #[test]
+    fn slices_of_a_superseded_answer_are_dropped_and_the_tab_asks_again() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_requests(&mut commands);
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-20, 0),
+                slice: crate::feed::OhlcvSlice::More,
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 20);
+
+        // The feed stored a fresh block: the base being built is abandoned.
+        // What is already drawn stays drawn — blanking the chart while a
+        // replacement is fetched would be a worse answer than a slightly old
+        // one, and the replacement overwrites it wholesale when it lands.
+        app.active_tab_mut().forget_ohlcv_generation_for_test();
+        app.drain_tabs();
+
+        // The rest of the abandoned run arrives anyway, and is ignored: were
+        // it folded in, the base would be the two older weeks with the newest
+        // one — the part already thrown away — missing from the middle.
+        for slice in [
+            crate::feed::OhlcvSlice::More,
+            crate::feed::OhlcvSlice::Last { complete: true },
+        ] {
+            events
+                .try_send(FeedEvent::OhlcvHistory {
+                    interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                    bars: venue_history_range(-60, -20),
+                    slice,
+                })
+                .unwrap();
+            app.drain_tabs();
+        }
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            20,
+            "the leftovers extended nothing"
+        );
+        assert_eq!(
+            drain_ohlcv_requests(&mut commands),
+            1,
+            "the abandoned run's closing slice freed the tab to ask again, once"
+        );
+        assert!(
+            app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and the wait now belongs to the replacement request"
+        );
+
+        // The replacement answer installs cleanly over what was left.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-45, 0),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            45,
+            "the fresh answer is the whole prefix, not an addition to the old"
+        );
+    }
+
+    /// The switch turned off restores exactly the old shape of the exchange:
+    /// one request that asks for no slicing, one reply that ends the wait.
+    #[test]
+    fn turning_the_switch_off_asks_for_the_whole_span_in_one_reply() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_slice_requests(&mut commands);
+        // Close the request the pane made on being built, so the tab is idle
+        // and free to ask again.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        // Forget the answer and ask again with the switch off.
+        app.progressive_history = false;
+        app.active_tab_mut().forget_ohlcv_generation_for_test();
+        app.drain_tabs();
+        assert_eq!(
+            drain_ohlcv_slice_requests(&mut commands),
+            vec![None],
+            "no slicing is asked for"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let pane = app.active_tab().pane(PaneSide::Time);
+        assert_eq!(pane.seam_slot(), 120, "the whole prefix stands at once");
+        assert!(
+            !app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and the single reply ends the wait"
         );
     }
 
@@ -15682,7 +16033,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15721,7 +16072,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15802,7 +16153,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15838,7 +16189,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15883,7 +16234,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15929,7 +16280,7 @@ plot(close)
                 // mind about what it serves.
                 interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -15964,7 +16315,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16016,7 +16367,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16092,7 +16443,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: Vec::new(),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16175,7 +16526,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16225,7 +16576,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars,
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16281,7 +16632,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(120),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16577,7 +16928,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: Vec::new(),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16601,7 +16952,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(30),
-                complete: false,
+                slice: crate::feed::OhlcvSlice::Last { complete: false },
             })
             .unwrap();
         app.drain_tabs();
@@ -16630,7 +16981,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(30),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();
@@ -16652,7 +17003,7 @@ plot(close)
             .try_send(FeedEvent::OhlcvHistory {
                 interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history(90),
-                complete: true,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
             })
             .unwrap();
         app.drain_tabs();

@@ -8,6 +8,10 @@
 //! [`AMBER`] is reserved for provenance honesty — replay, the backfill
 //! divider, inferred data — and is never decoration. This is the UI
 //! expression of the project's data-honesty rule.
+//!
+//! Reserved is not the same as compulsory. A provenance mark the trader reads
+//! *constantly* rather than acts on is better made quiet: see [`SEAM_LINE`],
+//! which marks the venue/prints boundary without amber's alarm.
 
 use eframe::egui;
 use eframe::egui::Color32;
@@ -48,6 +52,22 @@ pub const POC: Color32 = Color32::from_rgb(0xFF, 0xD5, 0x4F);
 pub const ACCENT: Color32 = Color32::from_rgb(0x8A, 0xB4, 0xF8);
 /// `honest/amber` — not-live provenance only: replay, backfill, inferred data.
 pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
+/// `seam/line` — the venue/prints boundary: white, and mostly transparent.
+///
+/// The one provenance mark that is *always* on screen, on every time-cutting
+/// pane, for the whole session. [`AMBER`] earns its loudness where it says
+/// "this is not live" about something the trader might act on; here it was
+/// shouting a fact that never changes and never needs acting on, and it sat
+/// permanently across a chart read for shape. White at low alpha keeps the
+/// boundary findable when looked for and out of the way when not — it borrows
+/// no hue that already means something on this chart, which is exactly why a
+/// merely *dimmer* amber would not do: dimming a reserved colour keeps the
+/// promise it makes while making the promise harder to read.
+pub const SEAM_LINE: Color32 = Color32::from_rgba_premultiplied(0x3C, 0x3C, 0x3C, 0x3C);
+/// `seam/label` — the "venue" caption beside [`SEAM_LINE`], at the same
+/// weight as the line it names so the pair reads as one quiet mark rather
+/// than a faint rule under a legible word.
+pub const SEAM_LABEL: Color32 = Color32::from_rgba_premultiplied(0x50, 0x50, 0x50, 0x50);
 /// `warn` — threshold breaches and errors.
 pub const WARN: Color32 = Color32::from_rgb(0xFF, 0x63, 0x47);
 /// `tag/bg` — tooltips and the axis price tag.

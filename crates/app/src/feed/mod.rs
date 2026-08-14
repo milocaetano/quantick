@@ -17,6 +17,7 @@ pub mod binance;
 pub mod hyperliquid;
 pub mod metatrader;
 pub mod mt5_bridge;
+pub mod ohlcv_plan;
 pub mod replay;
 
 use tokio::sync::{mpsc, watch};
@@ -55,6 +56,20 @@ pub const TIME_HISTORY_SPAN_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 /// interval free — no refetch, just a different fold over bars already held.
 pub const OHLCV_BASE_INTERVAL_MS: i64 = 60_000;
 
+/// How much of the span one progressive slice covers: seven days.
+///
+/// Chosen against [`TIME_HISTORY_SPAN_MS`], not in isolation — a quarter cut
+/// into weeks is thirteen replies, comfortably inside
+/// [`ohlcv_plan::MAX_SLICES`], and the first of them is roughly a tenth of the
+/// venue round trips the whole span costs. That is the number the trader
+/// actually feels: it is how long the chart stays empty before the most recent
+/// week appears and becomes readable while the rest arrives behind it.
+///
+/// Narrower slices would paint sooner and cost more replies, each one a refold
+/// of everything already held (see [`ohlcv_plan`]); wider ones approach the
+/// all-at-once wait this exists to remove.
+pub const OHLCV_SLICE_SPAN_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+
 /// A message from the feed thread to the UI, tagged by source so the chart can
 /// label backfilled vs live data honestly.
 pub enum FeedEvent {
@@ -79,14 +94,16 @@ pub enum FeedEvent {
     /// Bars that were already closed cannot be un-closed, so the honest answer
     /// is to rebuild from the new position rather than patch the series.
     Reset,
-    /// Venue-native candle history, answering exactly one
-    /// [`FeedCommand::FetchOhlcv`].
+    /// Venue-native candle history, answering one
+    /// [`FeedCommand::FetchOhlcv`] — in one reply, or in a run of them from
+    /// the newest part of the span backwards.
     ///
     /// Empty means the request finished with nothing: the venue has no history
     /// for this symbol, the provider does not serve candles, or the fetch
-    /// failed. As with [`HistoryPrepended`](Self::HistoryPrepended), the reply
-    /// itself is the signal that loading ended — a provider that stayed silent
-    /// would strand a spinner forever.
+    /// failed. As with [`HistoryPrepended`](Self::HistoryPrepended), the
+    /// closing reply is the signal that loading ended — a provider that stayed
+    /// silent would strand a spinner forever, and [`OhlcvSlice`] is what says
+    /// which reply is the closing one.
     ///
     OhlcvHistory {
         /// The interval each bar covers. Always
@@ -99,9 +116,33 @@ pub enum FeedEvent {
         ///
         /// These are venue candles, not engine bars replayed from trades: see
         /// the mapping rules on [`FeedCommand::FetchOhlcv`] for what that costs
-        /// in fidelity.
+        /// in fidelity. In a sliced answer these are the candles of *this*
+        /// slice's window only, and every later slice is strictly older.
         bars: Vec<Bar>,
-        /// Whether these bars cover the whole span that was asked for.
+        /// Where this reply sits in the run answering the request.
+        slice: OhlcvSlice,
+    },
+}
+
+/// Where one [`FeedEvent::OhlcvHistory`] sits in the run of replies answering
+/// a single [`FeedCommand::FetchOhlcv`].
+///
+/// The whole point of the enum is that "how complete is the span?" is a
+/// question only the closing reply can answer. An intermediate slice knows
+/// nothing about the windows still being fetched, so it is given no field in
+/// which to claim otherwise — a `complete` flag on every reply would be a
+/// number that means something different depending on which reply carried it,
+/// which is exactly the kind of quiet lie the data-honesty rule exists to
+/// prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OhlcvSlice {
+    /// An older slice of the same request follows. The wait is not over and
+    /// the loading indicator stays up.
+    More,
+    /// The last reply for this request — and the only one a provider that
+    /// serves the whole span at once ever sends.
+    Last {
+        /// Whether the run as a whole covered the span that was asked for.
         ///
         /// False means the answer is short and *known* to be short: a venue
         /// that stopped answering partway, a bridge whose paging failed after
@@ -110,10 +151,19 @@ pub enum FeedEvent {
         /// span genuinely has fewer candles, and that answer is complete.
         ///
         /// Carried rather than inferred from the bar count, which cannot tell
-        /// those two apart, and cannot tell either from a quiet market.
-        ///
+        /// those two apart, and cannot tell either from a quiet market. In a
+        /// sliced run it is the conjunction over every window: one window that
+        /// came up short makes the whole answer short.
         complete: bool,
     },
+}
+
+impl OhlcvSlice {
+    /// Whether this reply closes its request.
+    #[must_use]
+    pub fn is_last(self) -> bool {
+        matches!(self, Self::Last { .. })
+    }
 }
 
 /// A command from the UI to the feed thread.
@@ -136,11 +186,18 @@ pub enum FeedCommand {
     Replay(ReplayControl),
     /// Fetch venue-native candle history covering `span_ms` back from now.
     ///
-    /// Answered by **exactly one** [`FeedEvent::OhlcvHistory`], by every
-    /// provider, always — empty when the provider serves no candles, when the
+    /// Answered by **exactly one closing** [`FeedEvent::OhlcvHistory`] — one
+    /// tagged [`OhlcvSlice::Last`] — by every provider, always, and optionally
+    /// preceded by [`OhlcvSlice::More`] slices running from the newest part of
+    /// the span backwards. Empty when the provider serves no candles, when the
     /// venue has none for this symbol, or when the fetch failed. A provider
     /// that answered only on success would leave the pane's loading indicator
     /// spinning on the one case a user most needs explained.
+    ///
+    /// A provider is free to ignore `slice_ms` and answer once: MetaTrader and
+    /// market replay both serve from a block already in hand, where slicing
+    /// would add replies without shortening any wait. Slicing is worth doing
+    /// exactly where the span costs sequential venue round trips.
     ///
     /// # What these bars are, and are not
     ///
@@ -168,6 +225,15 @@ pub enum FeedCommand {
         /// How far back to reach, in milliseconds. See
         /// [`TIME_HISTORY_SPAN_MS`].
         span_ms: i64,
+        /// How much of the span one reply should cover, newest first.
+        ///
+        /// `None` asks for the whole span in a single reply — what every
+        /// provider did before progressive loading existed, and what the
+        /// trader gets back by turning the option off. `Some` is a request,
+        /// not an instruction: [`ohlcv_plan::plan`] decides the actual windows
+        /// and caps how many there are, and a provider serving from a block it
+        /// already holds answers once regardless. See [`OHLCV_SLICE_SPAN_MS`].
+        slice_ms: Option<i64>,
     },
 }
 
