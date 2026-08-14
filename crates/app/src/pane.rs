@@ -112,6 +112,17 @@ const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 
 /// would be. Matches the "connecting…" line: same voice, same weight.
 const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 
+/// Font size, in points, of the grouping note ("×20 bars per candle"). The
+/// footprint legend's size, because the two share a corner and read as one
+/// statement about how coarse the chart currently is.
+const GROUPING_NOTE_FONT_SIZE: f32 = 11.0;
+/// Inset of that note from the left edge of the candles' pane, in pixels —
+/// the footprint legend's own inset, so the two line up.
+const GROUPING_NOTE_INSET_X: f32 = 6.0;
+/// Its baseline above the bottom of the pane, in pixels: one line clear of the
+/// footprint legend, which sits 6 px up in the same corner.
+const GROUPING_NOTE_OFFSET_Y: f32 = 22.0;
+
 /// Dash length, in pixels, of the venue↔prints seam marker. Long enough to
 /// read as deliberate beside the solid backfill divider, short enough not to
 /// be mistaken for one.
@@ -3983,7 +3994,6 @@ impl ChartPane {
             // The forming bar's ladder is the ~10 Hz snapshot taken with the
             // accumulation switch at the top of the frame, shared with the
             // range-profile drawings.
-            let viewport = &self.viewport;
             let frame = crate::footprint_render::LayerFrame {
                 painter: &clip,
                 chart_rect: history_rect,
@@ -4343,10 +4353,13 @@ impl ChartPane {
         // what it costs you.
         if self.viewport.grouped() {
             painter.text(
-                egui::pos2(history_rect.left() + 6.0, history_rect.bottom() - 22.0),
+                egui::pos2(
+                    history_rect.left() + GROUPING_NOTE_INSET_X,
+                    history_rect.bottom() - GROUPING_NOTE_OFFSET_Y,
+                ),
                 egui::Align2::LEFT_BOTTOM,
                 format!("×{} bars per candle", self.viewport.bars_per_slot()),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(GROUPING_NOTE_FONT_SIZE),
                 theme::TEXT_FAINT,
             );
         }

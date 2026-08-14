@@ -1237,12 +1237,12 @@ impl QuantickApp {
             std::env::var("QUANTICK_INDICATOR_SETTINGS").is_ok_and(|value| value == "1");
         // The zoom, scriptable: the footprint's detail levels are functions
         // of candle width, and a validation run cannot drag a scroll wheel.
-        // Same clamp as the gesture (see Viewport::set_candle_width).
+        // Same clamp as the gesture (see Viewport::set_px_per_bar).
         if let Ok(value) = std::env::var("QUANTICK_CANDLE_WIDTH")
             && let Ok(px) = value.trim().parse::<f32>()
         {
             app.scripted_candle_width = Some(px);
-            app.active_tab_mut().flow_pane.viewport.set_candle_width(px);
+            app.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
         // The pan, scriptable, for the same reason: the projection margin and
         // the way back from history are states a screenshot cannot otherwise
@@ -1630,10 +1630,7 @@ impl QuantickApp {
             self.active_tab_mut().flow_pane.footprint_visible = true;
         }
         if let Some(px) = self.scripted_candle_width {
-            self.active_tab_mut()
-                .flow_pane
-                .viewport
-                .set_candle_width(px);
+            self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
     }
 
@@ -13276,7 +13273,7 @@ plot(close)
         app.active_tab_mut()
             .flow_pane
             .viewport
-            .set_candle_width(crate::viewport::MIN_PX_PER_BAR);
+            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
         let grouped = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             grouped.iter().any(|text| text.contains("bars grouped")),
@@ -13312,10 +13309,7 @@ plot(close)
         );
 
         // Where zooming out used to stop.
-        app.active_tab_mut()
-            .flow_pane
-            .viewport
-            .set_candle_width(2.0);
+        app.active_tab_mut().flow_pane.viewport.set_px_per_bar(2.0);
         let shallow = run_frame(&mut app, &ctx);
         let shallow_rects = painted_rects(&shallow);
         let shallow_bars = bars_across(&app.active_tab().flow_pane.viewport);
@@ -13324,7 +13318,7 @@ plot(close)
         app.active_tab_mut()
             .flow_pane
             .viewport
-            .set_candle_width(crate::viewport::MIN_PX_PER_BAR);
+            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
         let deep = run_frame(&mut app, &ctx);
         let deep_rects = painted_rects(&deep);
         let viewport = app.active_tab().flow_pane.viewport;

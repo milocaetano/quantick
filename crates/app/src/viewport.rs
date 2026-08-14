@@ -153,7 +153,7 @@ impl Viewport {
     /// Set the zoom directly to `px` per bar, clamped to the same bounds the
     /// gesture obeys. This is the scripted entry (`QUANTICK_CANDLE_WIDTH`) to
     /// the zoom the scroll gesture reaches — one clamp, two doors.
-    pub fn set_candle_width(&mut self, px: f32) {
+    pub fn set_px_per_bar(&mut self, px: f32) {
         if px.is_finite() && px > 0.0 {
             self.px_per_bar = px.clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);
         }
@@ -403,11 +403,11 @@ mod tests {
     #[allow(clippy::assertions_on_constants)] // the ceiling itself is the claim
     fn scripted_candle_width_shares_the_gestures_clamp() {
         let mut v = Viewport::new();
-        v.set_candle_width(1000.0);
+        v.set_px_per_bar(1000.0);
         assert!((v.px_per_bar() - MAX_CANDLE_WIDTH).abs() < 0.001);
-        v.set_candle_width(0.01);
+        v.set_px_per_bar(0.01);
         assert!((v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001);
-        v.set_candle_width(f32::NAN);
+        v.set_px_per_bar(f32::NAN);
         assert!((v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001);
         assert!(MAX_CANDLE_WIDTH >= 160.0);
     }
@@ -493,7 +493,7 @@ mod tests {
         let mut v = Viewport::new();
         let zoomed_out = v.projection_margin_bars(1600.0);
         assert!((zoomed_out - (1600.0 / 8.0 - 1.0)).abs() < 0.001);
-        v.set_candle_width(32.0);
+        v.set_px_per_bar(32.0);
         let zoomed_in = v.projection_margin_bars(1600.0);
         assert!((zoomed_in - (1600.0 / 32.0 - 1.0)).abs() < 0.001);
         // Both come to one window of room, minus the bar left on screen.
@@ -537,12 +537,12 @@ mod tests {
         assert_eq!(v.bars_per_slot(), 1, "8 px per bar is one bar per candle");
         assert!(!v.grouped());
 
-        v.set_candle_width(2.0); // where zooming out used to stop
+        v.set_px_per_bar(2.0); // where zooming out used to stop
         assert_eq!(v.bars_per_slot(), 2);
         assert!(v.grouped());
         assert!((v.candle_width() - 4.0).abs() < 0.001, "a drawable slot");
 
-        v.set_candle_width(MIN_PX_PER_BAR); // as far out as it goes
+        v.set_px_per_bar(MIN_PX_PER_BAR); // as far out as it goes
         assert_eq!(v.bars_per_slot(), 20);
         assert!(
             (v.candle_width() - TARGET_SLOT_PX).abs() < 0.001,
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn the_zoom_out_floor_holds_ten_times_the_bars_the_old_one_did() {
         let mut v = Viewport::new();
-        v.set_candle_width(MIN_PX_PER_BAR);
+        v.set_px_per_bar(MIN_PX_PER_BAR);
         let (start, end) = v.visible_range(1600.0, 100_000);
         let bars = (end - start) as f32;
         // The old floor was 2 px per bar: 800 bars across a 1600 px chart.
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn a_grouped_window_starts_on_a_group_boundary() {
         let mut v = Viewport::new();
-        v.set_candle_width(0.5);
+        v.set_px_per_bar(0.5);
         assert_eq!(v.bars_per_slot(), 8);
         let (start, _) = v.visible_range(800.0, 100_000);
         assert_eq!(start % 8, 0, "start = {start}");
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn every_bar_of_a_group_shares_the_slot_its_candle_is_drawn_at() {
         let mut v = Viewport::new();
-        v.set_candle_width(1.0);
+        v.set_px_per_bar(1.0);
         assert_eq!(v.bars_per_slot(), 4);
         let right = 1000.0;
         let slot = v.slot_center_x(40, right, 100);
@@ -609,7 +609,7 @@ mod tests {
     fn x_and_bar_are_inverses_at_every_zoom() {
         for px in [8.0_f32, 2.0, 0.5, MIN_PX_PER_BAR] {
             let mut v = Viewport::new();
-            v.set_candle_width(px);
+            v.set_px_per_bar(px);
             for bar in [0.0_f32, 12.5, 99.0] {
                 let x = v.x_at_bar_position(bar, 1000.0, 200);
                 let back = v.bar_at_x(x, 1000.0, 200);
