@@ -4546,6 +4546,12 @@ impl QuantickApp {
         for point in &points {
             bbox.extend_with(*point);
         }
+        // What the tool paints, which is not always where its anchors are: a
+        // fixed-range profile anchors at one price and covers the axis. Every
+        // popup that keeps clear of an object reads this rectangle, so asking
+        // the anchors alone is what let a panel land in the middle of a
+        // profile while believing it had walked around it.
+        let bbox = drawing.tool.painted_bounds(bbox, chart);
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
 
@@ -5483,6 +5489,12 @@ impl QuantickApp {
         } else {
             &[(start, end, true)]
         };
+        // Selecting what the demo drew is what makes the *context bar* — the
+        // strip a trader edits a profile from — reachable without a click.
+        // Without it a validation run can photograph a profile but never the
+        // controls over it, which is exactly the surface whose placement this
+        // change is about (`ui-harness`: every surface owes a hook).
+        let select = std::env::var("QUANTICK_FRVP_DEMO_SELECT").is_ok_and(|v| v.trim() == "1");
         for &(from, to, outline) in ranges {
             for slot in [from, to] {
                 pane.drawings.place_with(
@@ -5505,6 +5517,10 @@ impl QuantickApp {
                         }
                     },
                 );
+            }
+            if select {
+                let last = pane.drawings.items().len().saturating_sub(1);
+                pane.drawings.select(Some(last));
             }
         }
     }

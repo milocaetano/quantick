@@ -9,6 +9,14 @@ pub(super) static TOOL: HorizontalLine = HorizontalLine;
 pub(super) struct HorizontalLine;
 
 impl DrawingToolImpl for HorizontalLine {
+    /// Edge to edge: the anchor says *what price*, the drawing covers the
+    /// whole width. See [`DrawingToolImpl::painted_bounds`].
+    fn painted_bounds(&self, anchors: egui::Rect, chart: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(chart.left(), anchors.top()),
+            egui::pos2(chart.right(), anchors.bottom()),
+        )
+    }
     fn id(&self) -> &'static str {
         "horizontal-line"
     }

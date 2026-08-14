@@ -362,6 +362,23 @@ trait DrawingToolImpl: Sync {
     fn freehand(&self) -> bool {
         false
     }
+    /// The rectangle this tool actually *paints*, given the box its anchors
+    /// span and the pane it is drawn in.
+    ///
+    /// The anchor box is the default and is right for most tools: a trend
+    /// line, a rectangle, a triangle all end where their anchors do. It is
+    /// badly wrong for the ones that do not. A fixed-range profile carries two
+    /// anchors at a single price and paints a histogram across the whole price
+    /// axis; a vertical line has one anchor and paints floor to ceiling.
+    ///
+    /// Anything that has to keep clear of an object — the settings inspector,
+    /// the context bar — asks for this, not for the anchors. Placing against
+    /// the anchors of a profile means walking around a thin horizontal sliver
+    /// and landing in the middle of the figure, which is precisely the bug
+    /// this exists to make impossible.
+    fn painted_bounds(&self, anchors: egui::Rect, _chart: egui::Rect) -> egui::Rect {
+        anchors
+    }
     /// The colour a fresh object of this tool is born in, when the stock
     /// blue would be the wrong answer. `None` — almost every tool — takes
     /// [`DEFAULT_DRAWING_COLOR`].
@@ -552,6 +569,12 @@ impl DrawingTool {
     #[must_use]
     pub fn freehand(self) -> bool {
         self.0.freehand()
+    }
+
+    /// See [`DrawingToolImpl::painted_bounds`].
+    #[must_use]
+    pub fn painted_bounds(self, anchors: egui::Rect, chart: egui::Rect) -> egui::Rect {
+        self.0.painted_bounds(anchors, chart)
     }
 
     #[must_use]
@@ -1723,6 +1746,52 @@ mod tests {
             .into_iter()
             .find(|tool| tool.id() == id)
             .expect("registered test tool")
+    }
+
+    /// The rectangle a popup must keep clear of is what the tool *paints*,
+    /// not where its anchors sit. A fixed-range profile carries two anchors at
+    /// one price and covers the axis; placing against the anchors walks around
+    /// a thin sliver and lands in the middle of the figure.
+    #[test]
+    fn a_tool_that_paints_past_its_anchors_says_so() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let anchors = egui::Rect::from_min_max(egui::pos2(300.0, 290.0), egui::pos2(500.0, 310.0));
+
+        let profile = tool("fixed-range-profile");
+        let painted = profile.painted_bounds(anchors, chart);
+        assert_eq!(
+            painted.x_range(),
+            anchors.x_range(),
+            "its time span is its own"
+        );
+        assert_eq!(
+            (painted.top(), painted.bottom()),
+            (chart.top(), chart.bottom()),
+            "and it covers every price on screen"
+        );
+
+        let vertical = tool("vertical-line");
+        assert_eq!(
+            (
+                vertical.painted_bounds(anchors, chart).top(),
+                vertical.painted_bounds(anchors, chart).bottom()
+            ),
+            (chart.top(), chart.bottom()),
+        );
+
+        let horizontal = tool("horizontal-line");
+        let painted = horizontal.painted_bounds(anchors, chart);
+        assert_eq!(
+            (painted.left(), painted.right()),
+            (chart.left(), chart.right()),
+            "edge to edge"
+        );
+
+        // Everything else ends where its anchors do, unchanged.
+        let trend = tool("trend-line");
+        assert_eq!(trend.painted_bounds(anchors, chart), anchors);
+        let rect = tool("rectangle");
+        assert_eq!(rect.painted_bounds(anchors, chart), anchors);
     }
 
     #[test]
