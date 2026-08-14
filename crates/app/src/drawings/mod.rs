@@ -257,6 +257,12 @@ pub enum AnchorSnap {
     Pointer,
     BarLow,
     BarHigh,
+    /// Glued to the nearest of the bar's OHLC, whatever the distance and
+    /// whether or not the magnet is on — and the bar itself clamps to the
+    /// tape. For a tool whose anchor *means a bar* (the anchored VWAP): its
+    /// price is presentation, and a ball floating in empty space far above
+    /// any candle reads as a bug, not as a choice.
+    NearestOhlc,
 }
 
 /// A tool's arming shortcut, declared by the tool itself so the keyboard

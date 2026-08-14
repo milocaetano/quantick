@@ -359,6 +359,10 @@ impl DrawingToolImpl for AnchoredVwapTool {
     fn required_points(&self) -> usize {
         1
     }
+    /// The anchor means a bar; the ball stays glued to its candle.
+    fn anchor_snap(&self) -> super::AnchorSnap {
+        super::AnchorSnap::NearestOhlc
+    }
     fn context_menu_label(&self) -> Option<&'static str> {
         Some("Anchor VWAP here")
     }

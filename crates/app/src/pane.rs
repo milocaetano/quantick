@@ -55,6 +55,9 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// the magnet to take the anchor. Generous enough to catch the swing you
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
+/// The candle magnet has no reach: [`drawings::AnchorSnap::NearestOhlc`]
+/// never lets go, however far the pointer floats from the candle.
+const MAGNET_REACH_UNLIMITED_PX: f32 = f32::INFINITY;
 const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 
 /// How far a press must travel before its release counts as "the trader
@@ -899,10 +902,11 @@ pub struct ChartPane {
     /// Price under the right-click that opened the layer menu — the trade
     /// section's anchor. Refreshed by every secondary click on the canvas.
     context_menu_price: Option<f64>,
-    /// The full chart point under that same right-click — bar, price and
-    /// market time — the "Anchor VWAP here" entry's seed. Separate from the
-    /// price because it exists only where a bar does.
-    context_menu_anchor: Option<ChartPoint>,
+    /// The placing entries of the last right-click: each registry tool that
+    /// declares a `context_menu_label`, with the chart point *its own*
+    /// `anchor_snap` resolved for that click — so the menu never re-derives
+    /// a projection and a new tool's snap rule needs no edit here.
+    context_menu_places: Vec<(drawings::DrawingTool, ChartPoint)>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1044,7 +1048,7 @@ impl ChartPane {
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
             context_menu_price: None,
-            context_menu_anchor: None,
+            context_menu_places: Vec::new(),
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_band_hint: None,
@@ -1376,25 +1380,22 @@ impl ChartPane {
             ui.separator();
         }
         // Tools that place at the bar under the right-click (the anchored
-        // VWAP's TradingView gesture) declare their entry on the registry —
-        // the pane sweeps it, so the next series tool docks with a
-        // declaration, not an edit here. Only where a bar exists: an anchor
-        // in the empty space right of the tape means nothing.
-        if let Some(anchor) = self.context_menu_anchor {
-            let mut placed = false;
-            for tool in drawings::DRAWING_TOOLS {
-                let Some(label) = tool.context_menu_label() else {
-                    continue;
-                };
+        // VWAP's TradingView gesture) declare their entry on the registry;
+        // the click was already resolved per tool, snap rules included, so
+        // the menu only offers what the capture could honestly anchor.
+        if !self.context_menu_places.is_empty() {
+            let places = std::mem::take(&mut self.context_menu_places);
+            for &(tool, point) in &places {
+                let label = tool
+                    .context_menu_label()
+                    .expect("only declaring tools were captured");
                 if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    self.place_drawing_point(tool, &DrawingBand::Price, anchor, chrome);
+                    self.place_drawing_point(tool, &DrawingBand::Price, point, chrome);
                     ui.close_menu();
                 }
-                placed = true;
             }
-            if placed {
-                ui.separator();
-            }
+            self.context_menu_places = places;
+            ui.separator();
         }
         ui.label(
             egui::RichText::new("chart layers")
@@ -1912,12 +1913,20 @@ impl ChartPane {
         }
         let bar = self.viewport.right_edge_bar(total) + 0.5
             - (history_right - pos.x) / self.viewport.candle_width();
+        // A candle-magnet anchor cannot land where no candle is: the bar
+        // clamps to the tape before the snap reads it.
+        let bar = if snap == drawings::AnchorSnap::NearestOhlc {
+            snap_bar_to_tape(bar, total)
+        } else {
+            bar
+        };
         let value = match snap {
             // A mark's own rule beats the magnet toggle in both directions:
             // it snaps with the magnet off, and it snaps to *its* extreme
             // rather than to whichever of the four OHLC prices is nearest.
             drawings::AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
             drawings::AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
+            drawings::AnchorSnap::NearestOhlc => self.candle_nearest_ohlc(band, bar, pos.y, scale),
             drawings::AnchorSnap::Pointer => magnet
                 .then(|| self.magnet_value(band, bar, pos.y, scale))
                 .flatten(),
@@ -1946,10 +1955,15 @@ impl ChartPane {
         // The extreme is read at the instant of the click. A low that
         // deepens afterwards leaves the mark where the bar was when it was
         // marked, which is what the mark is a record of.
-        let candle = self
-            .closed_bar(slot)
-            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)?;
+        let candle = self.candle_at_slot(slot)?;
         if high { candle.high } else { candle.low }.to_f64()
+    }
+
+    /// The candle behind a slot, the forming bar included — the one lookup
+    /// every candle-reading snap shares.
+    fn candle_at_slot(&self, slot: usize) -> Option<&quantick_engine::Bar> {
+        self.closed_bar(slot)
+            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)
     }
 
     /// Work a shared mark that lives on the other pane, from this one.
@@ -2115,7 +2129,9 @@ impl ChartPane {
         }
         let row = bar.floor() as usize;
         match &band.key {
-            DrawingBand::Price => magnet_price_of(self.closed_bar(row)?, pointer_y, scale),
+            DrawingBand::Price => {
+                magnet_price_of(self.closed_bar(row)?, pointer_y, scale, MAGNET_REACH_PX)
+            }
             // A time-only object has no value to snap.
             DrawingBand::AllBands => None,
             DrawingBand::Indicator(_) => {
@@ -2125,6 +2141,25 @@ impl ChartPane {
                 bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
         }
+    }
+
+    /// The unconditional candle magnet: the nearest of the bar's OHLC with
+    /// no reach limit, the forming bar included — [`AnchorSnap::NearestOhlc`]'s
+    /// value rule. Price band only; a band with no candles answers `None`
+    /// and the caller keeps the pointer's own value.
+    fn candle_nearest_ohlc(
+        &self,
+        band: &Band,
+        bar: f32,
+        pointer_y: f32,
+        scale: &PriceScale,
+    ) -> Option<f64> {
+        if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
+            return None;
+        }
+        let slot = bar.floor() as usize;
+        let candle = self.candle_at_slot(slot)?;
+        magnet_price_of(candle, pointer_y, scale, MAGNET_REACH_UNLIMITED_PX)
     }
 
     /// The market time behind a fractional bar slot, for anchors that may have
@@ -2828,20 +2863,26 @@ impl ChartPane {
             && let Some(scale) = drawing_scale.as_ref()
         {
             self.context_menu_price = Some(scale.price_at(position.y));
-            // The same click, as a chart point: the bar under the pointer and
-            // its market time, for the anchored-VWAP entry. The inverse of
-            // the projection `drawing_point_at` uses.
+            // The same click, resolved once per placing tool through the
+            // projection `drawing_point_at` owns, each with the tool's own
+            // snap — the anchored VWAP's candle magnet included.
             let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
-            let bar = self.viewport.right_edge_bar(total) + 0.5
-                - (history_right - position.x) / self.viewport.candle_width();
-            // Clamped to the newest bar at creation: the refresh clamps the
-            // math anyway, and a marker sitting where the average cannot
-            // start would be the dishonesty the clamp exists to avoid.
-            #[allow(clippy::cast_precision_loss)]
-            let bar = bar.min(total.saturating_sub(1) as f32);
-            self.context_menu_anchor = (total > 0).then(|| {
-                ChartPoint::at_time(bar, scale.price_at(position.y), self.anchor_time(bar))
-            });
+            self.context_menu_places.clear();
+            for tool in drawings::DRAWING_TOOLS {
+                if tool.context_menu_label().is_none() {
+                    continue;
+                }
+                if let Some(point) = self.drawing_point_at(
+                    position,
+                    history_right,
+                    total,
+                    false,
+                    tool.anchor_snap(),
+                    price_band,
+                ) {
+                    self.context_menu_places.push((tool, point));
+                }
+            }
         }
         // Right-click: what is on this canvas, and what is not. Secondary
         // button only, so it shares no gesture with the pan, the zoom or the
@@ -5159,17 +5200,26 @@ fn paint_placement_hint(
 /// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Nothing in
 /// reach returns `None` and the free price is used — a magnet that always
 /// snaps is a magnet you cannot draw a diagonal with.
+/// Clamp a fractional bar coordinate onto the bars that exist:
+/// `0 ..= total - 1`. The candle magnet's time half — a snap that reads a
+/// candle must stand on one.
+fn snap_bar_to_tape(bar: f32, total: usize) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    bar.clamp(0.0, total.saturating_sub(1) as f32)
+}
+
 fn magnet_price_of(
     candle: &quantick_engine::Bar,
     pointer_y: f32,
     scale: &PriceScale,
+    reach_px: f32,
 ) -> Option<f64> {
     [candle.open, candle.high, candle.low, candle.close]
         .into_iter()
         .filter_map(|price| {
             let price = price.to_f64()?;
             let distance = (scale.y(price) - pointer_y).abs();
-            (distance <= MAGNET_REACH_PX).then_some((distance, price))
+            (distance <= reach_px).then_some((distance, price))
         })
         .min_by(|left, right| left.0.total_cmp(&right.0))
         .map(|(_, price)| price)
@@ -5864,12 +5914,12 @@ mod tests {
         let scale = magnet_scale();
         let high_y = scale.y(102.0);
         assert_eq!(
-            magnet_price_of(&candle, high_y, &scale),
+            magnet_price_of(&candle, high_y, &scale, MAGNET_REACH_PX),
             Some(102.0),
             "exactly on the high"
         );
         assert_eq!(
-            magnet_price_of(&candle, high_y + 4.0, &scale),
+            magnet_price_of(&candle, high_y + 4.0, &scale, MAGNET_REACH_PX),
             Some(102.0),
             "inside the reach, and still nearer the high than the close"
         );
@@ -5881,7 +5931,41 @@ mod tests {
     fn the_magnet_lets_go_outside_its_reach() {
         let candle = magnet_candle();
         let scale = magnet_scale();
-        assert_eq!(magnet_price_of(&candle, scale.y(105.0), &scale), None);
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(105.0), &scale, MAGNET_REACH_PX),
+            None
+        );
+    }
+
+    /// The candle magnet's time half: a bar right of the tape lands on the
+    /// newest bar, left of it on the oldest, and a one-bar tape is slot 0.
+    #[test]
+    fn the_candle_magnet_clamps_the_bar_onto_the_tape() {
+        assert_eq!(snap_bar_to_tape(99.9, 20), 19.0);
+        assert_eq!(snap_bar_to_tape(-3.0, 20), 0.0);
+        assert_eq!(snap_bar_to_tape(7.25, 20), 7.25, "inside stays put");
+        assert_eq!(snap_bar_to_tape(5.0, 1), 0.0);
+        assert_eq!(snap_bar_to_tape(5.0, 0), 0.0, "an empty tape never panics");
+    }
+
+    /// The candle magnet has no reach: however far the pointer floats above
+    /// or below the candle, the anchor lands on its nearest level — the rule
+    /// [`AnchorSnap::NearestOhlc`] glues the anchored VWAP's ball with.
+    #[test]
+    fn the_candle_magnet_never_lets_go() {
+        let candle = magnet_candle();
+        let scale = magnet_scale();
+        // Far above every level (y of 110, the top of the scale).
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(110.0), &scale, f32::INFINITY),
+            Some(102.0),
+            "way above the candle still lands on its high"
+        );
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(90.0), &scale, f32::INFINITY),
+            Some(98.0),
+            "way below still lands on its low"
+        );
     }
 
     /// Near-ties resolve to the genuinely nearest level, never to the first
@@ -5891,10 +5975,13 @@ mod tests {
         let candle = magnet_candle();
         let scale = magnet_scale();
         // Just under the low: 98 is nearer than the open at 100.
-        assert_eq!(magnet_price_of(&candle, scale.y(97.6), &scale), Some(98.0));
+        assert_eq!(
+            magnet_price_of(&candle, scale.y(97.6), &scale, MAGNET_REACH_PX),
+            Some(98.0)
+        );
         // Just over the close: 101 is nearer than the high at 102.
         assert_eq!(
-            magnet_price_of(&candle, scale.y(101.2), &scale),
+            magnet_price_of(&candle, scale.y(101.2), &scale, MAGNET_REACH_PX),
             Some(101.0)
         );
     }
