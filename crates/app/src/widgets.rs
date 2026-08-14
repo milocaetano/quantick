@@ -44,10 +44,14 @@ pub const FOCUS_RING_WIDTH_PX: f32 = 1.5;
 
 /// Which outer edge of the button the active marker hugs — the edge facing
 /// the window border the owning rail is docked against.
+///
+/// Three edges, not four, because no rail docks against the right border:
+/// that side of the window belongs to the price axis and the live column
+/// (see [`crate::toolrail::ToolboxDock`]). A `Right` arm here would be a
+/// marker nothing can ever ask for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerEdge {
     Left,
-    Right,
     Top,
     Bottom,
 }
@@ -63,10 +67,6 @@ impl MarkerEdge {
             Self::Left => egui::Rect::from_min_max(
                 egui::pos2(rect.left(), rect.top() + inset),
                 egui::pos2(rect.left() + width, rect.bottom() - inset),
-            ),
-            Self::Right => egui::Rect::from_min_max(
-                egui::pos2(rect.right() - width, rect.top() + inset),
-                egui::pos2(rect.right(), rect.bottom() - inset),
             ),
             Self::Top => egui::Rect::from_min_max(
                 egui::pos2(rect.left() + inset, rect.top()),
@@ -344,8 +344,6 @@ mod tests {
         let top = MarkerEdge::Top.bar(rect);
         assert_eq!(top.top(), rect.top());
         assert_eq!(top.height(), ACTIVE_MARKER_WIDTH_PX);
-        let right = MarkerEdge::Right.bar(rect);
-        assert_eq!(right.right(), rect.right());
         let bottom = MarkerEdge::Bottom.bar(rect);
         assert_eq!(bottom.bottom(), rect.bottom());
     }

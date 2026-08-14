@@ -3763,7 +3763,6 @@ impl QuantickApp {
                         ui.menu_button("Drawing toolbar", |ui| {
                             for (dock, label) in [
                                 (ToolboxDock::Left, "Left"),
-                                (ToolboxDock::Right, "Right"),
                                 (ToolboxDock::Top, "Top"),
                                 (ToolboxDock::Bottom, "Bottom"),
                             ] {
@@ -5054,7 +5053,6 @@ impl QuantickApp {
             ToolboxDock::Left | ToolboxDock::Top => {
                 egui::pos2(chart.left() + gap, chart.top() + gap)
             }
-            ToolboxDock::Right => egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
             ToolboxDock::Bottom => egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
         };
         Some(clamp_into_chart(position, size, chart))
@@ -13928,7 +13926,7 @@ plot(close)
         app.active_tab_mut().focus = PaneSide::Flow;
         app.tz = TzOffset::new(-180);
         app.dock.open_tab(DockTab::Trading);
-        app.toolrail.set_dock(ToolboxDock::Right);
+        app.toolrail.set_dock(ToolboxDock::Bottom);
         app.show_perf = false;
 
         let workspace = app.capture_workspace();
@@ -13950,7 +13948,7 @@ plot(close)
         let chrome = workspace.chrome.expect("the chrome is part of a workspace");
         assert_eq!(chrome.timezone_minutes, -180);
         assert_eq!(chrome.dock_tab, Some(ui_state::SavedDockTab::Trading));
-        assert_eq!(chrome.rail_dock, ui_state::SavedRailDock::Right);
+        assert_eq!(chrome.rail_dock, ui_state::SavedRailDock::Bottom);
         assert!(!chrome.perf_readings);
     }
 

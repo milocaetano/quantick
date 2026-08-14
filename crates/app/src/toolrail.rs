@@ -128,12 +128,17 @@ impl Tool {
     }
 }
 
-/// One of the four window edges the toolbar can dock against.
+/// One of the three window edges the toolbar can dock against.
+///
+/// The right edge is deliberately absent. That border belongs to the price
+/// axis and to whatever the trader is reading as the tape prints; a rail
+/// parked there covers the one column of the chart that is always moving,
+/// and it is reachable by accident — a grip drag that drifts right used to
+/// land it in the way. Three edges, and the busy one stays clear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolboxDock {
     #[default]
     Left,
-    Right,
     Top,
     Bottom,
 }
@@ -141,12 +146,14 @@ pub enum ToolboxDock {
 impl ToolboxDock {
     #[must_use]
     pub const fn is_vertical(self) -> bool {
-        matches!(self, Self::Left | Self::Right)
+        matches!(self, Self::Left)
     }
 
     /// The nearest edge by *normalised* distance — raw pixels would bias
     /// every drop toward top/bottom on a wide window. Ties resolve
-    /// Left > Right > Top > Bottom, so the result is deterministic.
+    /// Left > Top > Bottom, so the result is deterministic. A drop on the
+    /// right half simply lands on whichever of the three offered edges is
+    /// closest; there is no right dock to fall into.
     #[must_use]
     fn nearest(pointer: egui::Pos2, screen: egui::Rect) -> Self {
         let pointer = pointer.clamp(screen.min, screen.max);
@@ -154,7 +161,6 @@ impl ToolboxDock {
         let height = screen.height().max(f32::EPSILON);
         let candidates = [
             (Self::Left, (pointer.x - screen.left()) / width),
-            (Self::Right, (screen.right() - pointer.x) / width),
             (Self::Top, (pointer.y - screen.top()) / height),
             (Self::Bottom, (screen.bottom() - pointer.y) / height),
         ];
@@ -173,7 +179,6 @@ impl ToolboxDock {
     const fn marker_edge(self) -> MarkerEdge {
         match self {
             Self::Left => MarkerEdge::Left,
-            Self::Right => MarkerEdge::Right,
             Self::Top => MarkerEdge::Top,
             Self::Bottom => MarkerEdge::Bottom,
         }
@@ -523,11 +528,6 @@ impl ToolRail {
                 .resizable(false)
                 .frame(rail_frame())
                 .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
-            ToolboxDock::Right => egui::SidePanel::right("drawing_toolbox_right")
-                .exact_width(TOOLBOX_THICKNESS_PX)
-                .resizable(false)
-                .frame(rail_frame())
-                .show(ctx, |ui| self.draw_contents(ui, drawings, manager_open)),
             ToolboxDock::Top => egui::TopBottomPanel::top("drawing_toolbox_top")
                 .exact_height(TOOLBOX_THICKNESS_PX)
                 .resizable(false)
@@ -578,7 +578,6 @@ impl ToolRail {
         let rail_rect = ui.max_rect().expand(TOOLBOX_MARGIN_PX);
         let edge = match self.dock {
             ToolboxDock::Left => [rail_rect.right_top(), rail_rect.right_bottom()],
-            ToolboxDock::Right => [rail_rect.left_top(), rail_rect.left_bottom()],
             ToolboxDock::Top => [rail_rect.left_bottom(), rail_rect.right_bottom()],
             ToolboxDock::Bottom => [rail_rect.left_top(), rail_rect.right_top()],
         };
@@ -1069,10 +1068,6 @@ impl ToolRail {
             TOOLBOX_FLYOUT_ROW_HEIGHT_PX * (members.len() + 1) as f32 + 2.0 * TOOLBOX_ITEM_GAP_PX;
         let position = match self.dock {
             ToolboxDock::Left => egui::pos2(anchor.right() + TOOLBOX_MARGIN_PX, anchor.top()),
-            ToolboxDock::Right => egui::pos2(
-                anchor.left() - TOOLBOX_MARGIN_PX - TOOLBOX_FLYOUT_WIDTH_PX,
-                anchor.top(),
-            ),
             ToolboxDock::Top => egui::pos2(anchor.left(), anchor.bottom() + TOOLBOX_MARGIN_PX),
             ToolboxDock::Bottom => {
                 egui::pos2(anchor.left(), anchor.top() - TOOLBOX_MARGIN_PX - height)
@@ -1198,10 +1193,6 @@ fn paint_drop_preview(ctx: &egui::Context, target: ToolboxDock) {
             screen.min,
             egui::pos2(screen.left() + thickness, screen.bottom()),
         ),
-        ToolboxDock::Right => egui::Rect::from_min_max(
-            egui::pos2(screen.right() - thickness, screen.top()),
-            screen.max,
-        ),
         ToolboxDock::Top => egui::Rect::from_min_max(
             screen.min,
             egui::pos2(screen.right(), screen.top() + thickness),
@@ -1216,10 +1207,6 @@ fn paint_drop_preview(ctx: &egui::Context, target: ToolboxDock) {
         ToolboxDock::Left => egui::Rect::from_min_max(
             egui::pos2(band.right() - edge, band.top()),
             band.right_bottom(),
-        ),
-        ToolboxDock::Right => egui::Rect::from_min_max(
-            band.left_top(),
-            egui::pos2(band.left() + edge, band.bottom()),
         ),
         ToolboxDock::Top => egui::Rect::from_min_max(
             egui::pos2(band.left(), band.bottom() - edge),
@@ -1368,10 +1355,6 @@ mod tests {
             ToolboxDock::Left
         );
         assert_eq!(
-            ToolboxDock::nearest(egui::pos2(790.0, 300.0), screen),
-            ToolboxDock::Right
-        );
-        assert_eq!(
             ToolboxDock::nearest(egui::pos2(400.0, 10.0), screen),
             ToolboxDock::Top
         );
@@ -1379,6 +1362,30 @@ mod tests {
             ToolboxDock::nearest(egui::pos2(400.0, 590.0), screen),
             ToolboxDock::Bottom
         );
+    }
+
+    /// The right border is not on offer. A drop anywhere in the right half —
+    /// including the far edge, where the old rail would have docked — lands
+    /// on one of the three edges that exist, and never on the price side of
+    /// the window.
+    #[test]
+    fn nothing_dropped_on_the_right_edge_docks_there() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        for point in [
+            egui::pos2(799.0, 300.0),
+            egui::pos2(790.0, 100.0),
+            egui::pos2(760.0, 500.0),
+            egui::pos2(799.0, 599.0),
+        ] {
+            let dock = ToolboxDock::nearest(point, screen);
+            assert!(
+                matches!(
+                    dock,
+                    ToolboxDock::Left | ToolboxDock::Top | ToolboxDock::Bottom
+                ),
+                "a drop at {point:?} resolved to {dock:?}"
+            );
+        }
     }
 
     #[test]
@@ -1418,7 +1425,6 @@ mod tests {
         draw_rail_frame(&mut rail, &ctx, screen, Vec::new());
 
         for (target, expected) in [
-            (egui::pos2(790.0, 300.0), ToolboxDock::Right),
             (egui::pos2(400.0, 10.0), ToolboxDock::Top),
             (egui::pos2(400.0, 590.0), ToolboxDock::Bottom),
             (egui::pos2(10.0, 300.0), ToolboxDock::Left),
@@ -1821,12 +1827,7 @@ mod tests {
     fn orientation_changes_positions_never_inventory() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0));
         let mut inventories: Vec<Vec<&'static str>> = Vec::new();
-        for dock in [
-            ToolboxDock::Left,
-            ToolboxDock::Right,
-            ToolboxDock::Top,
-            ToolboxDock::Bottom,
-        ] {
+        for dock in [ToolboxDock::Left, ToolboxDock::Top, ToolboxDock::Bottom] {
             let ctx = egui::Context::default();
             let mut rail = ToolRail::new();
             rail.set_dock(dock);
@@ -1850,12 +1851,7 @@ mod tests {
     #[test]
     fn the_grip_leads_and_objects_trails_in_every_dock() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 900.0));
-        for dock in [
-            ToolboxDock::Left,
-            ToolboxDock::Right,
-            ToolboxDock::Top,
-            ToolboxDock::Bottom,
-        ] {
+        for dock in [ToolboxDock::Left, ToolboxDock::Top, ToolboxDock::Bottom] {
             let ctx = egui::Context::default();
             let mut rail = ToolRail::new();
             rail.set_dock(dock);
@@ -1892,45 +1888,56 @@ mod tests {
         }
     }
 
+    /// Lay out a central panel with the rail in a given state and report the
+    /// rect the chart is left with. `visible: false` gives the baseline: what
+    /// the canvas looks like when no rail is competing for it.
+    fn central_rect_with_rail(screen: egui::Rect, dock: ToolboxDock, visible: bool) -> egui::Rect {
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail {
+            tool: Tool::Pointer,
+            visible,
+            dock,
+            ..ToolRail::default()
+        };
+        let mut central = egui::Rect::NOTHING;
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        let mut drawings = Drawings::default();
+        let mut manager_open = false;
+        let _ = ctx.run(input, |ctx| {
+            rail.draw(ctx, &mut drawings, &mut manager_open);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                central = ui.max_rect();
+            });
+        });
+        central
+    }
+
     #[test]
     fn every_dock_position_reserves_space_outside_the_central_chart() {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        for dock in [
-            ToolboxDock::Left,
-            ToolboxDock::Right,
-            ToolboxDock::Top,
-            ToolboxDock::Bottom,
-        ] {
-            let ctx = egui::Context::default();
-            let mut rail = ToolRail {
-                tool: Tool::Pointer,
-                visible: true,
-                dock,
-                ..ToolRail::default()
-            };
-            let mut central = egui::Rect::NOTHING;
-            let input = egui::RawInput {
-                screen_rect: Some(screen),
-                ..Default::default()
-            };
-            let mut drawings = Drawings::default();
-            let mut manager_open = false;
-            let _ = ctx.run(input, |ctx| {
-                rail.draw(ctx, &mut drawings, &mut manager_open);
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    central = ui.max_rect();
-                });
-            });
+        // The canvas with no rail at all: the right edge to beat.
+        let bare = central_rect_with_rail(screen, ToolboxDock::Left, false);
+        for dock in [ToolboxDock::Left, ToolboxDock::Top, ToolboxDock::Bottom] {
+            let central = central_rect_with_rail(screen, dock, true);
             match dock {
                 ToolboxDock::Left => assert!(central.left() >= TOOLBOX_THICKNESS_PX),
-                ToolboxDock::Right => {
-                    assert!(central.right() <= screen.right() - TOOLBOX_THICKNESS_PX);
-                }
                 ToolboxDock::Top => assert!(central.top() >= TOOLBOX_THICKNESS_PX),
                 ToolboxDock::Bottom => {
                     assert!(central.bottom() <= screen.bottom() - TOOLBOX_THICKNESS_PX);
                 }
             }
+            // Whichever edge it took, it never took the right one: that
+            // border is the price axis and the live column.
+            assert!(
+                (central.right() - bare.right()).abs() < f32::EPSILON,
+                "the rail docked {dock:?} still narrowed the chart from the \
+                 right: {} vs {}",
+                central.right(),
+                bare.right()
+            );
         }
     }
 
