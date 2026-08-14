@@ -18,6 +18,7 @@ pub(super) const SHAPES_FAMILY: ToolFamily = ToolFamily {
     id: "shapes",
     title: "Shapes",
     icon: icons::SHAPES,
+    icon_strokes: &[],
 };
 
 /// Segments in an ellipse outline. Fixed, not derived from the on-screen

@@ -275,15 +275,26 @@ pub struct ToolShortcut {
 
 /// A family of related tools sharing one rail slot. Declared by each member,
 /// never listed centrally — the rail folds consecutive registry entries with
-/// equal `id` into a single split button.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// equal `id` into a single split button. `PartialEq` only: the stroke
+/// coordinates are `f32`, and nothing orders or hashes families.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ToolFamily {
     pub id: &'static str,
     /// Header of the family flyout.
     pub title: &'static str,
     /// Slot icon before any member has been armed.
     pub icon: &'static str,
+    /// Vector icon for the slot, painted instead of `icon` when non-empty —
+    /// same contract as [`DrawingTool::icon_strokes`].
+    pub icon_strokes: IconStrokes,
 }
+
+/// A vector icon: polylines in the unit square (x right, y down), scaled to
+/// the glyph box at paint time. `&[]` means "use the font glyph". A tool
+/// declares one when no Phosphor glyph draws its meaning — a slanted
+/// channel, Fibonacci levels — so the icon is registry data, not a special
+/// case in the chrome.
+pub type IconStrokes = &'static [&'static [(f32, f32)]];
 
 /// The implementation port every drawing plugs into. Selection visuals (halo
 /// and anchor handles) are common chrome painted by the wrapper, so a tool
@@ -296,6 +307,11 @@ trait DrawingToolImpl: Sync {
     fn name(&self) -> &'static str;
     fn settings_title(&self) -> &'static str;
     fn icon(&self) -> &'static str;
+    /// Vector strokes painted in place of [`Self::icon`] when non-empty —
+    /// see [`IconStrokes`].
+    fn icon_strokes(&self) -> IconStrokes {
+        &[]
+    }
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
     /// What the *next* click will do, with `placed` anchors already down.
@@ -545,6 +561,20 @@ impl DrawingTool {
     #[must_use]
     pub fn id(self) -> &'static str {
         self.0.id()
+    }
+
+    /// Look up a registered tool by its stable id — how the saved favorites
+    /// list and the env hooks name tools. `None` for an id no registered
+    /// tool carries (a stale file survives a removed tool).
+    #[must_use]
+    pub fn by_id(id: &str) -> Option<Self> {
+        DRAWING_TOOLS.into_iter().find(|tool| tool.id() == id)
+    }
+
+    /// Vector icon strokes, `&[]` when the tool paints a font glyph.
+    #[must_use]
+    pub fn icon_strokes(self) -> IconStrokes {
+        self.0.icon_strokes()
     }
 
     #[must_use]

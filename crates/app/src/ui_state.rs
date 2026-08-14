@@ -203,6 +203,11 @@ pub struct SavedChrome {
     pub rail_dock: SavedRailDock,
     /// Whether the status bar showed fps/frame time.
     pub perf_readings: bool,
+    /// Starred drawing tools pinned to the rail, by tool id, in the order
+    /// the trader starred them. Default empty — a file from before the
+    /// feature simply has no pinned section.
+    #[serde(default)]
+    pub favorite_tools: Vec<String>,
 }
 
 /// The workspace as a whole: what the app opens on.
@@ -650,6 +655,7 @@ mod tests {
                 rail_visible: true,
                 rail_dock: SavedRailDock::Left,
                 perf_readings: true,
+                favorite_tools: vec!["parallel-channel".to_owned()],
             }),
             saved: Vec::new(),
         }

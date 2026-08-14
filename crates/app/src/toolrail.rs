@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::drawings::{DRAWING_TOOLS, DrawingTool, Drawings, ToolFamily};
+use crate::drawings::{DRAWING_TOOLS, DrawingTool, Drawings, IconStrokes, ToolFamily};
 use crate::theme;
-use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON};
+use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON, paint_icon_strokes};
 
 /// Rail cross axis, all four docks: `44 = 6 + 32 + 6`.
 const TOOLBOX_THICKNESS_PX: f32 = 44.0;
@@ -47,6 +47,16 @@ const FLYOUT_GLYPH_PX: f32 = 18.0;
 const FLYOUT_NAME_TEXT_PX: f32 = 12.0;
 const FLYOUT_SHORTCUT_TEXT_PX: f32 = 11.0;
 const FLYOUT_HEADER_TEXT_PX: f32 = 11.0;
+/// The favorite star riding the top-right of a flyout row's tool icon:
+/// glyph size, its centre offset from the icon centre, and the square click
+/// zone around it — bigger than the glyph, a 9 px star is no hit target.
+const FLYOUT_STAR_PX: f32 = 9.0;
+const FLYOUT_STAR_OFFSET_PX: f32 = 7.0;
+const FLYOUT_STAR_HIT_PX: f32 = 14.0;
+/// The corner star badge marking a pinned button in the rail's favorites
+/// section.
+const FAVORITE_BADGE_PX: f32 = 8.0;
+const FAVORITE_BADGE_INSET_PX: f32 = 3.0;
 /// Side of the caret triangle on a family slot.
 const CARET_SIDE_PX: f32 = 5.0;
 /// Inset of the caret from the button's trailing-bottom corner.
@@ -89,6 +99,14 @@ impl Tool {
             Self::Pointer => icons::CURSOR,
             Self::Crosshair => icons::CROSSHAIR,
             Self::Drawing(tool) => tool.icon(),
+        }
+    }
+
+    #[must_use]
+    fn icon_strokes(self) -> IconStrokes {
+        match self {
+            Self::Pointer | Self::Crosshair => &[],
+            Self::Drawing(tool) => tool.icon_strokes(),
         }
     }
 
@@ -240,14 +258,22 @@ fn tool_slots() -> &'static [RailSlot] {
     })
 }
 
-/// Long-axis length of the full rail (§2.8 of the spec).
-fn full_length(tool_slot_count: usize) -> f32 {
+/// Long-axis length of the full rail (§2.8 of the spec). The favorites
+/// section — a separator plus one slot per starred tool — only exists when
+/// something is starred, so an empty list costs no length.
+fn full_length(tool_slot_count: usize, favorite_count: usize) -> f32 {
     let n = tool_slot_count as f32;
+    let favorites = if favorite_count == 0 {
+        0.0
+    } else {
+        SEPARATOR_BLOCK_PX + favorite_count as f32 * (TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX)
+    };
     2.0 * TOOLBOX_MARGIN_PX
         + GRIP_BLOCK_PX
         + (2.0 * TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX)
         + SEPARATOR_BLOCK_PX
         + (n * TOOLRAIL_ICON.hit + (n - 1.0) * TOOLBOX_ITEM_GAP_PX)
+        + favorites
         + TOOLBOX_MIN_CLUSTER_GAP_PX
         + trailing_length()
 }
@@ -287,8 +313,8 @@ fn trailing_length() -> f32 {
 }
 
 /// Resolve the stage for an available long-axis extent (margins included).
-fn stage_for(available: f32, tool_slot_count: usize) -> RailStage {
-    if available >= full_length(tool_slot_count) {
+fn stage_for(available: f32, tool_slot_count: usize, favorite_count: usize) -> RailStage {
+    if available >= full_length(tool_slot_count, favorite_count) {
         RailStage::Full
     } else if available >= compact_length() {
         RailStage::Compact
@@ -313,12 +339,19 @@ pub struct ToolRail {
     magnet: bool,
     /// Last-armed member of each tool family, keyed by family id.
     last_family_member: BTreeMap<&'static str, DrawingTool>,
+    /// Starred tools, in the order the trader starred them — the pinned
+    /// section at the rail's tool end. Star order, not registry order, so a
+    /// favorite keeps the position the trader learned.
+    favorites: Vec<DrawingTool>,
     /// Currently-nearest drop edge while a grip drag is live.
     drag_preview: Option<ToolboxDock>,
     dragging: bool,
     drag_cancelled: bool,
     /// Open family flyout: the family id and the slot rect it anchors to.
     flyout: Option<(&'static str, egui::Rect)>,
+    /// A family flyout a validation hook asked for before the first frame —
+    /// honoured by the family slot once it knows its rect, then cleared.
+    hook_flyout: Option<String>,
     #[cfg(test)]
     button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
     #[cfg(test)]
@@ -337,6 +370,10 @@ pub struct ToolRail {
     rail_rect: Option<egui::Rect>,
     #[cfg(test)]
     flyout_rects: Vec<(DrawingTool, egui::Rect)>,
+    #[cfg(test)]
+    flyout_star_rects: Vec<(DrawingTool, egui::Rect)>,
+    #[cfg(test)]
+    favorite_rects: Vec<(DrawingTool, egui::Rect)>,
 }
 
 impl Default for ToolRail {
@@ -348,10 +385,12 @@ impl Default for ToolRail {
             repeat: false,
             magnet: false,
             last_family_member: BTreeMap::new(),
+            favorites: Vec::new(),
             drag_preview: None,
             dragging: false,
             drag_cancelled: false,
             flyout: None,
+            hook_flyout: None,
             #[cfg(test)]
             button_rects: [None; TOOLBOX_BUTTON_COUNT],
             #[cfg(test)]
@@ -370,6 +409,10 @@ impl Default for ToolRail {
             rail_rect: None,
             #[cfg(test)]
             flyout_rects: Vec::new(),
+            #[cfg(test)]
+            flyout_star_rects: Vec::new(),
+            #[cfg(test)]
+            favorite_rects: Vec::new(),
         }
     }
 }
@@ -432,6 +475,42 @@ impl ToolRail {
         self.tool = tool;
     }
 
+    /// The starred tools, in the order they were starred.
+    #[must_use]
+    pub fn favorites(&self) -> &[DrawingTool] {
+        &self.favorites
+    }
+
+    #[must_use]
+    pub fn is_favorite(&self, tool: DrawingTool) -> bool {
+        self.favorites.contains(&tool)
+    }
+
+    /// Star or unstar a tool. Starring appends — the pinned section grows at
+    /// its far end, and the tools already pinned never move.
+    pub fn toggle_favorite(&mut self, tool: DrawingTool) {
+        if let Some(index) = self.favorites.iter().position(|entry| *entry == tool) {
+            self.favorites.remove(index);
+        } else {
+            self.favorites.push(tool);
+        }
+    }
+
+    /// Restore the starred list from saved tool ids — the workspace file
+    /// path. An id no registered tool carries is dropped, a duplicate keeps
+    /// its first position, and saved order is kept: it is the order the
+    /// trader starred in.
+    pub fn set_favorites(&mut self, ids: &[String]) {
+        self.favorites.clear();
+        for id in ids {
+            if let Some(tool) = DrawingTool::by_id(id)
+                && !self.favorites.contains(&tool)
+            {
+                self.favorites.push(tool);
+            }
+        }
+    }
+
     /// Whether the repeat pin keeps the tool armed after an object completes.
     #[must_use]
     pub fn repeat(&self) -> bool {
@@ -454,6 +533,14 @@ impl ToolRail {
     /// the button does.
     pub(crate) fn set_magnet(&mut self, magnet: bool) {
         self.magnet = magnet;
+    }
+
+    /// Ask for a family flyout without a click — the
+    /// `QUANTICK_TOOLBOX_FLYOUT` hook. The slot honours it on its next draw,
+    /// when the anchor rect exists; an unknown family id is simply never
+    /// matched and stays pending, which draws nothing.
+    pub(crate) fn request_flyout(&mut self, family_id: String) {
+        self.hook_flyout = Some(family_id);
     }
 
     #[cfg(test)]
@@ -562,6 +649,8 @@ impl ToolRail {
             self.objects_rect = None;
             self.rail_rect = Some(ui.max_rect().expand(TOOLBOX_MARGIN_PX));
             self.flyout_rects.clear();
+            self.flyout_star_rects.clear();
+            self.favorite_rects.clear();
         }
 
         let vertical = self.dock.is_vertical();
@@ -571,7 +660,7 @@ impl ToolRail {
             ui.available_width()
         } + 2.0 * TOOLBOX_MARGIN_PX;
         let slots = tool_slots();
-        let stage = stage_for(available, slots.len());
+        let stage = stage_for(available, slots.len(), self.favorites.len());
 
         // Chart-facing hairline: the only stroke the rail paints — a
         // four-sided stroke would draw a seam against the window edge.
@@ -616,6 +705,7 @@ impl ToolRail {
                             }
                         }
                     }
+                    self.draw_favorites_section(ui, vertical, drawings);
                 }
                 RailStage::Compact | RailStage::Minimal => {
                     if let Some(armed) = self.tool.drawing_tool() {
@@ -920,6 +1010,7 @@ impl ToolRail {
 
     fn draw_button(&mut self, ui: &mut egui::Ui, tool: Tool, drawings: &Drawings) {
         let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
+            .strokes(tool.icon_strokes())
             .active(self.tool == tool)
             .active_marker(self.dock.marker_edge())
             .hover_text(tool.hover_text())
@@ -959,6 +1050,49 @@ impl ToolRail {
         true
     }
 
+    /// The pinned section at the tool end of the rail: a separator, then one
+    /// button per starred tool in star order. One click arms; unstarring
+    /// lives only on the star in the tool's own flyout row, so a pinned
+    /// button can never be destroyed by the click meant to use it.
+    fn draw_favorites_section(&mut self, ui: &mut egui::Ui, vertical: bool, drawings: &Drawings) {
+        if self.favorites.is_empty() {
+            return;
+        }
+        self.draw_separator(ui, vertical);
+        // Indexed so the loop never clones the list on the per-frame path;
+        // `DrawingTool` is `Copy` and arming cannot reorder favorites.
+        for index in 0..self.favorites.len() {
+            let tool = self.favorites[index];
+            let armed = self.tool == Tool::Drawing(tool);
+            let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
+                .strokes(tool.icon_strokes())
+                .active(armed)
+                .active_marker(self.dock.marker_edge())
+                .hover_text(tool.hover_text())
+                .show(ui);
+            self.paint_draft_badge(ui, &response, Tool::Drawing(tool), drawings);
+            if ui.is_rect_visible(response.rect) {
+                // The corner star names the section: this button is a pin,
+                // not a second registry slot.
+                ui.painter().text(
+                    egui::pos2(
+                        response.rect.right() - FAVORITE_BADGE_INSET_PX,
+                        response.rect.top() + FAVORITE_BADGE_INSET_PX,
+                    ),
+                    egui::Align2::RIGHT_TOP,
+                    icons::STAR,
+                    egui::FontId::proportional(FAVORITE_BADGE_PX),
+                    theme::ACCENT,
+                );
+            }
+            #[cfg(test)]
+            self.favorite_rects.push((tool, response.rect));
+            if response.clicked() {
+                self.arm(Tool::Drawing(tool));
+            }
+        }
+    }
+
     /// A family's shown member: the last-armed one, or `None` before any
     /// member has been used.
     fn family_member(&self, family: ToolFamily, members: &[DrawingTool]) -> Option<DrawingTool> {
@@ -983,8 +1117,10 @@ impl ToolRail {
             .drawing_tool()
             .is_some_and(|tool| members.contains(&tool));
         let icon = shown.map_or(family.icon, DrawingTool::icon);
+        let strokes = shown.map_or(family.icon_strokes, DrawingTool::icon_strokes);
         let hover = shown.map_or(family.title, DrawingTool::hover_text);
         let response = IconButton::new(icon, TOOLRAIL_ICON)
+            .strokes(strokes)
             .active(armed)
             .active_marker(self.dock.marker_edge())
             .hover_text(hover)
@@ -1029,6 +1165,11 @@ impl ToolRail {
         if let Some(slot) = self.button_rects.iter_mut().find(|slot| slot.is_none()) {
             let recorded = shown.unwrap_or(members[0]);
             *slot = Some((Tool::Drawing(recorded), response.rect));
+        }
+
+        if self.hook_flyout.as_deref() == Some(family.id) {
+            self.hook_flyout = None;
+            self.flyout = Some((family.id, response.rect));
         }
 
         let caret_clicked = response.clicked()
@@ -1095,9 +1236,17 @@ impl ToolRail {
                                 .size(FLYOUT_HEADER_TEXT_PX),
                         );
                         for member in members {
-                            if self.draw_flyout_row(ui, *member) {
-                                self.arm(Tool::Drawing(*member));
-                                self.flyout = None;
+                            match self.draw_flyout_row(ui, *member) {
+                                Some(FlyoutClick::Arm) => {
+                                    self.arm(Tool::Drawing(*member));
+                                    self.flyout = None;
+                                }
+                                // Starring neither arms nor closes: the
+                                // trader is curating the rail, not drawing.
+                                Some(FlyoutClick::ToggleFavorite) => {
+                                    self.toggle_favorite(*member);
+                                }
+                                None => {}
                             }
                         }
                     });
@@ -1117,16 +1266,28 @@ impl ToolRail {
         }
     }
 
-    /// One flyout row: glyph, name, right-aligned shortcut. Returns whether
-    /// the row was clicked.
-    fn draw_flyout_row(&mut self, ui: &mut egui::Ui, member: DrawingTool) -> bool {
+    /// One flyout row: glyph with its favorite star, name, right-aligned
+    /// shortcut. Returns what the click asked for, `None` when nothing was
+    /// clicked.
+    fn draw_flyout_row(&mut self, ui: &mut egui::Ui, member: DrawingTool) -> Option<FlyoutClick> {
         let width = ui.available_width();
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(width, TOOLBOX_FLYOUT_ROW_HEIGHT_PX),
             egui::Sense::click(),
         );
+        // The star rides the icon's top-right corner. Its hit zone outranks
+        // the row: a click there curates favorites, everywhere else arms.
+        let star_center = egui::pos2(
+            rect.left() + FLYOUT_GLYPH_CENTER_X_PX + FLYOUT_STAR_OFFSET_PX,
+            rect.center().y - FLYOUT_STAR_OFFSET_PX,
+        );
+        let star_zone =
+            egui::Rect::from_center_size(star_center, egui::Vec2::splat(FLYOUT_STAR_HIT_PX));
+        let favorite = self.is_favorite(member);
         #[cfg(test)]
         self.flyout_rects.push((member, rect));
+        #[cfg(test)]
+        self.flyout_star_rects.push((member, star_zone));
         if ui.is_rect_visible(rect) {
             let armed = self.tool == Tool::Drawing(member);
             if armed {
@@ -1147,13 +1308,42 @@ impl ToolRail {
             } else {
                 theme::TEXT_MUTED
             };
-            ui.painter().text(
-                egui::pos2(rect.left() + FLYOUT_GLYPH_CENTER_X_PX, rect.center().y),
-                egui::Align2::CENTER_CENTER,
-                member.icon(),
-                egui::FontId::proportional(FLYOUT_GLYPH_PX),
-                glyph_color,
-            );
+            let glyph_center = egui::pos2(rect.left() + FLYOUT_GLYPH_CENTER_X_PX, rect.center().y);
+            if member.icon_strokes().is_empty() {
+                ui.painter().text(
+                    glyph_center,
+                    egui::Align2::CENTER_CENTER,
+                    member.icon(),
+                    egui::FontId::proportional(FLYOUT_GLYPH_PX),
+                    glyph_color,
+                );
+            } else {
+                paint_icon_strokes(
+                    ui.painter(),
+                    egui::Rect::from_center_size(
+                        glyph_center,
+                        egui::Vec2::splat(FLYOUT_GLYPH_PX - 4.0),
+                    ),
+                    member.icon_strokes(),
+                    glyph_color,
+                );
+            }
+            // Accent when starred; otherwise the star only whispers on row
+            // hover, so an unstarred flyout stays as quiet as before.
+            if favorite || response.hovered() {
+                let star_color = if favorite {
+                    theme::ACCENT
+                } else {
+                    theme::TEXT_FAINT
+                };
+                ui.painter().text(
+                    star_center,
+                    egui::Align2::CENTER_CENTER,
+                    icons::STAR,
+                    egui::FontId::proportional(FLYOUT_STAR_PX),
+                    star_color,
+                );
+            }
             ui.painter().text(
                 egui::pos2(rect.left() + FLYOUT_NAME_X_PX, rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -1171,8 +1361,25 @@ impl ToolRail {
                 );
             }
         }
-        response.clicked()
+        if response.clicked() {
+            let on_star = response
+                .interact_pointer_pos()
+                .is_some_and(|position| star_zone.contains(position));
+            if on_star {
+                return Some(FlyoutClick::ToggleFavorite);
+            }
+            return Some(FlyoutClick::Arm);
+        }
+        None
     }
+}
+
+/// What a click on a flyout row asked for.
+enum FlyoutClick {
+    /// Arm the row's tool and close the flyout.
+    Arm,
+    /// Star or unstar the row's tool; the flyout stays open.
+    ToggleFavorite,
 }
 
 /// The rail's frame: chrome fill, margins, and no stroke — the chart-facing
@@ -1290,7 +1497,7 @@ mod tests {
             slots, 9,
             "Lines, Channels, Marks, Freehand, Shapes, Fib, Measure, Anchored VWAP and Text"
         );
-        assert_eq!(full_length(slots), 633.0);
+        assert_eq!(full_length(slots, 0), 633.0);
         assert_eq!(compact_length(), 381.0);
         assert_eq!(minimal_length(), 191.0);
     }
@@ -1727,6 +1934,147 @@ mod tests {
         assert!(!rail.magnet(), "the same button turns it back off");
     }
 
+    /// The first family slot and its members — every favorites test walks
+    /// in through a real family flyout, the way the trader does.
+    fn first_family() -> &'static [DrawingTool] {
+        tool_slots()
+            .iter()
+            .find_map(|slot| match slot {
+                RailSlot::Family { members, .. } => Some(members.as_slice()),
+                RailSlot::Single(_) => None,
+            })
+            .expect("the registry folds at least one family")
+    }
+
+    /// Open the family's flyout through the slot's caret zone and give the
+    /// next frame a chance to record the row and star rects.
+    fn open_flyout(
+        rail: &mut ToolRail,
+        drawings: &mut Drawings,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        members: &[DrawingTool],
+    ) {
+        rail_frame_with(rail, drawings, ctx, screen, Vec::new());
+        let slot = rail
+            .button_rect(Tool::Drawing(members[0]))
+            .expect("the family slot rendered");
+        click_at(rail, drawings, ctx, screen, slot.max - egui::vec2(3.0, 3.0));
+        rail_frame_with(rail, drawings, ctx, screen, Vec::new());
+        assert!(rail.flyout.is_some(), "the caret click opened the flyout");
+    }
+
+    /// Clicking the tiny star pins the tool: nothing arms, the flyout stays
+    /// open — the trader is curating the rail, not drawing.
+    #[test]
+    fn starring_from_the_flyout_pins_without_arming_or_closing() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        let members = first_family();
+        open_flyout(&mut rail, &mut drawings, &ctx, screen, members);
+
+        let star = rail
+            .flyout_star_rects
+            .iter()
+            .find_map(|(tool, rect)| (*tool == members[1]).then_some(*rect))
+            .expect("every flyout row carries a star");
+        click_at(&mut rail, &mut drawings, &ctx, screen, star.center());
+
+        assert!(rail.is_favorite(members[1]), "the star click pinned");
+        assert_eq!(rail.tool(), Tool::Pointer, "starring armed nothing");
+        assert!(
+            rail.flyout.is_some(),
+            "the flyout stayed open to keep curating"
+        );
+    }
+
+    /// The pinned button arms in one click and never unstars — removal lives
+    /// only on the flyout star, so using a favorite cannot destroy it.
+    #[test]
+    fn the_pinned_button_arms_and_never_unstars() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 900.0));
+        let ctx = egui::Context::default();
+        let mut rail = ToolRail::new();
+        let mut drawings = Drawings::default();
+        let members = first_family();
+        rail.toggle_favorite(members[1]);
+
+        rail_frame_with(&mut rail, &mut drawings, &ctx, screen, Vec::new());
+        let pinned = rail
+            .favorite_rects
+            .iter()
+            .find_map(|(tool, rect)| (*tool == members[1]).then_some(*rect))
+            .expect("the favorites section rendered the pin");
+        click_at(&mut rail, &mut drawings, &ctx, screen, pinned.center());
+
+        assert_eq!(rail.tool(), Tool::Drawing(members[1]), "one click armed");
+        assert!(
+            rail.is_favorite(members[1]),
+            "arming a favorite must never unstar it"
+        );
+    }
+
+    /// Star order is the order the trader starred in: unstarring removes in
+    /// place, re-starring appends at the end — pinned muscle memory holds.
+    #[test]
+    fn star_order_is_stable_under_unstar_and_restar() {
+        let mut rail = ToolRail::new();
+        let tools: Vec<DrawingTool> = DRAWING_TOOLS.into_iter().take(3).collect();
+        for tool in &tools {
+            rail.toggle_favorite(*tool);
+        }
+        rail.toggle_favorite(tools[1]);
+        assert_eq!(rail.favorites(), &[tools[0], tools[2]]);
+        rail.toggle_favorite(tools[1]);
+        assert_eq!(rail.favorites(), &[tools[0], tools[2], tools[1]]);
+    }
+
+    /// The saved-ids path: order kept, unknown ids dropped, duplicates kept
+    /// once — a stale or hand-edited file cannot corrupt the rail.
+    #[test]
+    fn set_favorites_round_trips_ids_and_survives_junk() {
+        let mut rail = ToolRail::new();
+        let tools: Vec<DrawingTool> = DRAWING_TOOLS.into_iter().take(2).collect();
+        let ids = vec![
+            tools[1].id().to_owned(),
+            "no-such-tool".to_owned(),
+            tools[0].id().to_owned(),
+            tools[1].id().to_owned(),
+        ];
+        rail.set_favorites(&ids);
+        assert_eq!(rail.favorites(), &[tools[1], tools[0]]);
+
+        let saved: Vec<String> = rail
+            .favorites()
+            .iter()
+            .map(|tool| tool.id().to_owned())
+            .collect();
+        let mut restored = ToolRail::new();
+        restored.set_favorites(&saved);
+        assert_eq!(
+            restored.favorites(),
+            rail.favorites(),
+            "round-trip is exact"
+        );
+    }
+
+    /// The favorites section costs rail length only when it exists, and the
+    /// stage math knows about it — pins cannot silently overflow the rail.
+    #[test]
+    fn favorites_lengthen_the_full_stage_only_when_present() {
+        let slots = tool_slots().len();
+        assert!(full_length(slots, 2) > full_length(slots, 0));
+        let extent = full_length(slots, 0);
+        assert_eq!(stage_for(extent, slots, 0), RailStage::Full);
+        assert_eq!(
+            stage_for(extent, slots, 2),
+            RailStage::Compact,
+            "two pins no longer fit the bare-full extent"
+        );
+    }
+
     /// The scripted-validation hook (`QUANTICK_DRAWING_MAGNET`) sets the same
     /// flag the button does; nothing may fork the two.
     #[test]
@@ -1742,16 +2090,16 @@ mod tests {
     fn stages_are_pure_functions_of_extent() {
         let slots = tool_slots().len();
         for extent in [100.0_f32, 200.0, 380.9, 381.0, 632.9, 633.0, 1000.0] {
-            let first = stage_for(extent, slots);
-            let second = stage_for(extent, slots);
+            let first = stage_for(extent, slots, 0);
+            let second = stage_for(extent, slots, 0);
             assert_eq!(first, second);
         }
         // The full stage grows one slot per registry addition; the anchored
         // VWAP took it from 597 to 633.
-        assert_eq!(stage_for(633.0, slots), RailStage::Full);
-        assert_eq!(stage_for(632.9, slots), RailStage::Compact);
-        assert_eq!(stage_for(381.0, slots), RailStage::Compact);
-        assert_eq!(stage_for(380.9, slots), RailStage::Minimal);
+        assert_eq!(stage_for(633.0, slots, 0), RailStage::Full);
+        assert_eq!(stage_for(632.9, slots, 0), RailStage::Compact);
+        assert_eq!(stage_for(381.0, slots, 0), RailStage::Compact);
+        assert_eq!(stage_for(380.9, slots, 0), RailStage::Minimal);
     }
 
     #[test]

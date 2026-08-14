@@ -396,6 +396,15 @@ impl DrawingToolImpl for ParallelChannel {
     fn icon(&self) -> &'static str {
         icons::PARALLELOGRAM
     }
+    /// Two slanted parallels — the channel's own geometry. The
+    /// `PARALLELOGRAM` glyph closed the shape into a lozenge, which reads
+    /// as a filled shape tool, not a pair of rails around a trend.
+    fn icon_strokes(&self) -> super::IconStrokes {
+        &[
+            &[(0.08, 0.70), (0.76, 0.12)],
+            &[(0.24, 0.88), (0.92, 0.30)],
+        ]
+    }
     fn hover_text(&self) -> &'static str {
         "Rising / falling channel - drag the trend line, then set the width (C)"
     }

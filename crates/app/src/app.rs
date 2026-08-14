@@ -1068,6 +1068,21 @@ impl QuantickApp {
         if std::env::var("QUANTICK_DRAWING_MAGNET").is_ok_and(|value| value == "1") {
             app.toolrail.set_magnet(true);
         }
+        // Pinned favorites by tool id, comma-separated — the same restore
+        // path the workspace file takes, so the hook cannot drift from it.
+        if let Ok(ids) = std::env::var("QUANTICK_TOOL_FAVORITES") {
+            let ids: Vec<String> = ids
+                .split(',')
+                .map(|id| id.trim().to_owned())
+                .filter(|id| !id.is_empty())
+                .collect();
+            app.toolrail.set_favorites(&ids);
+        }
+        // Open a family flyout on the first frame — the star column lives
+        // there, and a screenshot cannot click a caret.
+        if let Ok(family_id) = std::env::var("QUANTICK_TOOLBOX_FLYOUT") {
+            app.toolrail.request_flyout(family_id.trim().to_owned());
+        }
         app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
         // How many anchors of the armed tool are already down when the run
@@ -2880,6 +2895,12 @@ impl QuantickApp {
             rail_visible: self.toolrail.visible(),
             rail_dock: self.toolrail.dock().into(),
             perf_readings: self.show_perf,
+            favorite_tools: self
+                .toolrail
+                .favorites()
+                .iter()
+                .map(|tool| tool.id().to_owned())
+                .collect(),
         };
         (tabs, chrome)
     }
@@ -2910,6 +2931,7 @@ impl QuantickApp {
                 .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
             self.toolrail.set_dock(chrome.rail_dock.into());
             self.toolrail.set_visible(chrome.rail_visible);
+            self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
         }
         if workspace.is_empty() {
@@ -3199,6 +3221,7 @@ impl QuantickApp {
                 .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
             self.toolrail.set_dock(chrome.rail_dock.into());
             self.toolrail.set_visible(chrome.rail_visible);
+            self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
         }
         self.active_tab = entry.active_tab.min(self.tabs.len().saturating_sub(1));
@@ -13978,6 +14001,7 @@ plot(close)
                 rail_visible: false,
                 rail_dock: ui_state::SavedRailDock::Bottom,
                 perf_readings: false,
+                favorite_tools: Vec::new(),
             }),
         ));
         run_frame(&mut app, &ctx);

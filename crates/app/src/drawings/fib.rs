@@ -16,8 +16,28 @@ use smallvec::SmallVec;
 
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX,
-    PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
+    IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
 };
+
+/// The retracement icon the way TradingView draws it: the two-anchor trend
+/// diagonal with the horizontal levels it spans. The `ROWS` glyph it
+/// replaces read as a generic list, not as levels hung on a move.
+pub(super) const FIB_RETRACEMENT_ICON: IconStrokes = &[
+    &[(0.10, 0.18), (0.90, 0.18)],
+    &[(0.10, 0.52), (0.90, 0.52)],
+    &[(0.10, 0.86), (0.90, 0.86)],
+    &[(0.16, 0.86), (0.84, 0.18)],
+];
+
+/// The extension icon: the retracement ladder plus the projected level past
+/// the move — shorter, because it hangs beyond the anchor leg.
+pub(super) const FIB_EXTENSION_ICON: IconStrokes = &[
+    &[(0.34, 0.12), (0.90, 0.12)],
+    &[(0.10, 0.42), (0.90, 0.42)],
+    &[(0.10, 0.68), (0.90, 0.68)],
+    &[(0.10, 0.90), (0.90, 0.90)],
+    &[(0.16, 0.90), (0.84, 0.42)],
+];
 
 /// The one rail family both Fib tools declare, shared here so the two
 /// members can never drift onto different family ids.
@@ -25,6 +45,7 @@ pub(super) const FIB_FAMILY: ToolFamily = ToolFamily {
     id: "fib",
     title: "Fibonacci",
     icon: egui_phosphor::regular::ROWS,
+    icon_strokes: FIB_RETRACEMENT_ICON,
 };
 
 /// Ratios closer than this are the same level; a duplicate is rejected.
