@@ -5499,25 +5499,37 @@ impl eframe::App for QuantickApp {
 }
 
 impl QuantickApp {
-    /// The `QUANTICK_PAN_PX` hook: a scripted drag on the candles, re-applied
-    /// each frame until the view stops moving.
+    /// The scripted view hooks (`QUANTICK_CANDLE_WIDTH`, `QUANTICK_PAN_PX`),
+    /// re-applied every frame.
     ///
-    /// Held rather than fired once because a pan needs bars to move over, and
-    /// at boot there are none. Repeating it is also what makes
+    /// Every frame rather than once at boot, for two reasons. A pan needs bars
+    /// to move over and at boot there are none — repeating it is what makes
     /// `QUANTICK_PAN_PX=-9000` mean "as far left as it goes" whatever the
-    /// zoom: each frame pushes, the per-frame clamp holds, and the view
-    /// settles on the projection margin — the state a screenshot of a
-    /// projected channel needs, reached the way the gesture reaches it.
-    fn apply_scripted_pan(&mut self) {
-        let Some(dx) = self.scripted_pan_px else {
-            return;
-        };
-        let pane = &mut self.active_tab_mut().flow_pane;
-        let slots = pane.slots();
-        if slots == 0 {
+    /// zoom: each frame pushes, the per-frame clamp holds, and the view settles
+    /// on the projection margin.
+    ///
+    /// And the view is *rebuilt* under both hooks by anything that re-cuts the
+    /// series: `ChartPane::reset_series` hands back a fresh `Viewport`, which a
+    /// replay autostart does before its first frame. A zoom set at boot was
+    /// therefore thrown away, and every scripted capture of a recorded session
+    /// photographed the default zoom rather than the one it asked for.
+    ///
+    /// A run with neither variable set does nothing here.
+    fn apply_scripted_view(&mut self) {
+        let (width, pan) = (self.scripted_candle_width, self.scripted_pan_px);
+        if width.is_none() && pan.is_none() {
             return;
         }
-        pane.viewport.pan_pixels(dx, slots);
+        let pane = &mut self.active_tab_mut().flow_pane;
+        if let Some(px) = width {
+            pane.viewport.set_px_per_bar(px);
+        }
+        let slots = pane.slots();
+        if let Some(dx) = pan
+            && slots > 0
+        {
+            pane.viewport.pan_pixels(dx, slots);
+        }
     }
 
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
@@ -6076,7 +6088,7 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
-        self.apply_scripted_pan();
+        self.apply_scripted_view();
         self.apply_drawing_demo();
         self.apply_drawing_draft();
         self.apply_venue_history_demo();

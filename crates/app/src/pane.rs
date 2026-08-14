@@ -1853,6 +1853,23 @@ impl ChartPane {
     /// re-expressed against the refilled series rather than discarded
     /// ([`Self::settle_pending_reanchor`]). The re-anchor waits for bars to
     /// exist, because an empty series can answer nothing.
+    /// Whether the layers that draw *per bar* may draw on this frame.
+    ///
+    /// False while the chart groups bars into shared candles. A ladder is one
+    /// bar's tape and a bubble is one print at one bar; twenty bars behind one
+    /// candle leaves neither anywhere honest to go. Summing ladders would
+    /// invent a bar the rule never made, and thousands of bubbles at the same
+    /// x stop being a reading of aggression and become a coloured sheet over
+    /// the price.
+    ///
+    /// The footprint asks the same question through `LayerFrame`'s own
+    /// `bars_per_slot`, so both layers withdraw together — and the grouping
+    /// note in the corner is what tells the trader why.
+    #[must_use]
+    pub fn per_bar_layers_drawable(&self) -> bool {
+        !self.viewport.grouped()
+    }
+
     pub fn reset_series(&mut self) {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
@@ -3933,6 +3950,7 @@ impl ChartPane {
         // still forming. Both are read once here and used by every pass over
         // the candles below.
         let per_slot = self.viewport.bars_per_slot();
+        let per_bar_layers = self.per_bar_layers_drawable();
         let forming_slot = partial_visible.map(|_| closed_total / per_slot);
         let viewport = &self.viewport;
         // Clear the heat behind each candle's high–low span so a translucent
@@ -4141,6 +4159,7 @@ impl ChartPane {
         }
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
+            && per_bar_layers
         {
             orderflow.draw_aggressions(
                 painter,
@@ -6731,5 +6750,28 @@ mod tests {
             MAX_LANE_RUNGS,
             "the ceiling is a cost statement and holds at any width"
         );
+    }
+
+    /// The layers that speak about one bar answer to the zoom, not only to
+    /// their own switch: grouped, there is no single bar for them to be about.
+    #[test]
+    fn the_per_bar_layers_withdraw_from_a_grouped_chart() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        assert!(
+            pane.per_bar_layers_drawable(),
+            "at the default zoom one bar owns one candle"
+        );
+
+        // The zoom where grouping starts, and the far end of it.
+        pane.viewport.set_px_per_bar(2.0);
+        assert!(!pane.per_bar_layers_drawable());
+        pane.viewport
+            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
+        assert!(!pane.per_bar_layers_drawable());
+
+        // And back: zooming in returns them, so this is a state, never a
+        // one-way switch a trader has to go and undo somewhere else.
+        pane.viewport.set_px_per_bar(8.0);
+        assert!(pane.per_bar_layers_drawable());
     }
 }

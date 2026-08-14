@@ -45,12 +45,17 @@ pub const TARGET_SLOT_PX: f32 = 4.0;
 /// most detailed view of the tape permanently out of reach. 160 px shows a
 /// handful of bars with full ladders — the "read these five candles" zoom.
 pub const MAX_CANDLE_WIDTH: f32 = 160.0;
-/// Fewest bars left on screen when the chart is pushed as far left as it goes.
+/// Most of the window the projection margin may take, as a fraction.
 ///
-/// One bar is the honest floor: however much empty canvas a trader wants in
-/// front of the market, the view is still a chart *of this series*, and the
-/// newest bar is what every projection is drawn from.
-const MIN_BARS_ON_SCREEN: f32 = 1.0;
+/// Four fifths, so a fifth of the screen always still holds candles. Leaving
+/// only the newest bar was the obvious reading of "push it all the way left",
+/// and it makes the view useless for the thing it exists for: the price axis
+/// auto-fits what is visible, so a window holding one bar collapses to that
+/// bar's range, and a channel projected into the empty space is drawn against
+/// a scale that says nothing about the move it came from. A fifth of a screen
+/// of candles keeps the scale meaningful and still clears four fifths to draw
+/// into — more room than the old fixed margin gave at any zoom.
+const MAX_PROJECTION_FRACTION: f32 = 0.8;
 /// Smallest projection margin, in bar slots, when there is no usable window
 /// width to derive one from (mid-layout, or a pane a few pixels wide). Small
 /// enough to mean nothing on a real chart, large enough that the gesture is
@@ -208,10 +213,7 @@ impl Viewport {
         if !window_px.is_finite() || window_px <= 0.0 || self.px_per_bar <= 0.0 {
             return MIN_PROJECTION_BARS;
         }
-        // One *slot* stays on screen, not one bar: grouped, a single bar is a
-        // fraction of a pixel and leaving that much behind is leaving nothing.
-        let on_screen = MIN_BARS_ON_SCREEN * self.bars_per_slot() as f32;
-        (window_px / self.px_per_bar - on_screen).max(MIN_PROJECTION_BARS)
+        (window_px * MAX_PROJECTION_FRACTION / self.px_per_bar).max(MIN_PROJECTION_BARS)
     }
 
     /// Hold the view inside what a `window_px`-wide candle area may show.
@@ -467,22 +469,29 @@ mod tests {
         assert!(v.follows_live());
     }
 
-    /// Pushed as far left as it goes, the newest bar lands at the left edge and
-    /// the rest of the window is empty canvas — the room a projected channel or
-    /// a Fibonacci extension needs to be drawn into.
+    /// Pushed as far left as it goes, four fifths of the window is empty canvas
+    /// to project a channel or a Fibonacci extension into — and the last fifth
+    /// still holds candles, so the price axis is still scaled to the move being
+    /// projected from.
     #[test]
-    fn pushing_left_clears_a_whole_window_of_projection_room() {
+    fn pushing_left_clears_most_of_the_window_and_keeps_the_rest_readable() {
         let mut v = Viewport::new(); // 8 px per candle
         let window = 800.0; // 100 bars across
-        v.pan_pixels(-10_000.0, 10);
-        v.clamp_to_window(window, 10);
-        let edge = v.right_edge_bar(10);
+        v.pan_pixels(-10_000.0, 100);
+        v.clamp_to_window(window, 100);
         assert!(!v.follows_live());
-        assert!((edge - (9.0 + 99.0)).abs() < 0.001, "edge = {edge}");
-        // Which is the same statement in pixels: the newest bar is half a slot
-        // from the left edge, and everything right of it is empty.
-        let x = v.x_center(9, window, 10);
-        assert!((x - 4.0).abs() < 0.001, "newest bar at the left edge: {x}");
+        let edge = v.right_edge_bar(100);
+        assert!((edge - (99.0 + 80.0)).abs() < 0.001, "edge = {edge}");
+        // The same statement in pixels: the newest bar sits a fifth of the way
+        // in from the left, and everything right of it is empty.
+        let x = v.x_center(99, window, 100);
+        assert!(
+            (x - window * 0.2).abs() < 8.0,
+            "newest bar a fifth in: {x} of {window}"
+        );
+        // Which means bars are still on screen to scale the price axis by.
+        let (start, end) = v.visible_range(window, 100);
+        assert!(end - start >= 15, "candles left in view: {}", end - start);
     }
 
     /// The margin is derived from the window, so it is worth the same *screen*
@@ -492,13 +501,11 @@ mod tests {
     fn the_projection_margin_scales_with_the_window() {
         let mut v = Viewport::new();
         let zoomed_out = v.projection_margin_bars(1600.0);
-        assert!((zoomed_out - (1600.0 / 8.0 - 1.0)).abs() < 0.001);
         v.set_px_per_bar(32.0);
         let zoomed_in = v.projection_margin_bars(1600.0);
-        assert!((zoomed_in - (1600.0 / 32.0 - 1.0)).abs() < 0.001);
-        // Both come to one window of room, minus the bar left on screen.
-        assert!((zoomed_out * 8.0 - (1600.0 - 8.0)).abs() < 0.001);
-        assert!((zoomed_in * 32.0 - (1600.0 - 32.0)).abs() < 0.001);
+        // Both come to the same four fifths of a screen of empty canvas.
+        assert!((zoomed_out * 8.0 - 1600.0 * 0.8).abs() < 0.001);
+        assert!((zoomed_in * 32.0 - 1600.0 * 0.8).abs() < 0.001);
     }
 
     /// The regression the per-frame clamp exists for: the same margin in *bars*
@@ -512,7 +519,7 @@ mod tests {
         v.zoom(4.0); // 32 px per candle: 25 bars across, not 100
         v.clamp_to_window(800.0, 10);
         let edge = v.right_edge_bar(10);
-        assert!((edge - (9.0 + 24.0)).abs() < 0.001, "edge = {edge}");
+        assert!((edge - (9.0 + 20.0)).abs() < 0.001, "edge = {edge}");
         let x = v.x_center(9, 800.0, 10);
         assert!(
             (0.0..=800.0).contains(&x),
