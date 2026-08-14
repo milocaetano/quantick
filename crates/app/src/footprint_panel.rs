@@ -18,7 +18,9 @@ use std::path::Path;
 use eframe::egui;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use crate::footprint_config::{FootprintConfig, FootprintStyle, PROFILE_ROW_PX_RANGE};
+use crate::footprint_config::{
+    DETAIL_SCALE_RANGE, FootprintConfig, FootprintStyle, PROFILE_ROW_PX_RANGE,
+};
 use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
 
@@ -189,6 +191,23 @@ pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
                     "how fine the price bands may get before neighbouring rows merge. \
                      Lower = more, thinner bands per candle; the legend always names \
                      the price width one band stands for",
+                )
+                .changed();
+
+            ui.separator();
+            ui.heading("Detail");
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut config.detail_scale, DETAIL_SCALE_RANGE)
+                        .text("zoom needed for detail")
+                        .step_by(0.05),
+                )
+                .on_hover_text(
+                    "how much candle width each level waits for. 1.0 is where the \
+                     numbers exactly fit their candle; lower brings marks, profile \
+                     and numbers in at narrower candles, at the cost of the digits \
+                     crowding their neighbour. The legend says how much further to \
+                     zoom whenever numbers are not showing yet",
                 )
                 .changed();
 

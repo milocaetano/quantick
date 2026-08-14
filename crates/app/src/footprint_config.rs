@@ -84,6 +84,16 @@ pub struct FootprintConfig {
     /// clamped to 2–10 px — under 2 px a band is a moiré, over 10 the
     /// profile is a staircase. Text levels keep their own legibility floors.
     pub profile_row_px: f32,
+    /// How early the ladder's levels arrive, as a multiplier on the
+    /// candle-width each one needs.
+    ///
+    /// `1.0` is the typographic budget itself — the width at which that
+    /// level's text is drawn at its smallest legible size. Below 1 the levels
+    /// arrive at narrower candles and the numbers sit tighter; above 1 they
+    /// wait for more room. Clamped to [`DETAIL_SCALE_RANGE`]: the low end
+    /// still fits the digits it draws, and past the high end a trader may as
+    /// well switch the layer off.
+    pub detail_scale: f32,
     /// The POC line per bar.
     pub show_poc: bool,
     /// The aggression ratio badges at a bar's extremes (Detailed level only).
@@ -107,6 +117,7 @@ impl Default for FootprintConfig {
             imbalance_min_qty: None,
             stacked_count: 3,
             profile_row_px: 4.0,
+            detail_scale: 1.0,
             show_poc: true,
             extreme_ratio_badge: true,
             badge_min_ratio: Decimal::TWO,
@@ -119,6 +130,16 @@ impl Default for FootprintConfig {
 /// The bounds [`FootprintConfig::profile_row_px`] is clamped to, shared by
 /// the file guard and the settings window's slider.
 pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
+
+/// The bounds [`FootprintConfig::detail_scale`] is clamped to.
+///
+/// The floors it scales are already derived from the smallest font the ladder
+/// draws, so `1.0` is where the numbers exactly fit their candle. Below it a
+/// trader is deliberately trading room for earliness — the digits start to
+/// crowd their neighbour — and 0.8 is as far as that stays a chart rather
+/// than a smear. The ceiling is generous: waiting longer for detail costs
+/// nothing but zoom.
+pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=2.0;
 
 /// The file's shape, and the canonical serde form of a config: the
 /// hand-written preset, each saved named preset and the settings file all
@@ -137,6 +158,8 @@ pub(crate) struct FootprintFile {
     pub(crate) stacked_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) profile_row_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detail_scale: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) show_poc: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,6 +182,7 @@ pub(crate) fn to_file(config: &FootprintConfig) -> FootprintFile {
         imbalance_min_qty: config.imbalance_min_qty.and_then(|qty| qty.to_f64()),
         stacked_count: Some(config.stacked_count),
         profile_row_px: Some(f64::from(config.profile_row_px)),
+        detail_scale: Some(f64::from(config.detail_scale)),
         show_poc: Some(config.show_poc),
         extreme_ratio_badge: Some(config.extreme_ratio_badge),
         badge_min_ratio: config.badge_min_ratio.to_f64(),
@@ -313,6 +337,13 @@ pub(crate) fn resolve(file: FootprintFile) -> FootprintConfig {
             .map(|px| (px as f32).clamp(*PROFILE_ROW_PX_RANGE.start(), *PROFILE_ROW_PX_RANGE.end()))
             .filter(|px| px.is_finite())
             .unwrap_or(defaults.profile_row_px),
+        detail_scale: file
+            .detail_scale
+            .map(|scale| {
+                (scale as f32).clamp(*DETAIL_SCALE_RANGE.start(), *DETAIL_SCALE_RANGE.end())
+            })
+            .filter(|scale| scale.is_finite())
+            .unwrap_or(defaults.detail_scale),
         show_poc: file.show_poc.unwrap_or(defaults.show_poc),
         extreme_ratio_badge: file
             .extreme_ratio_badge
@@ -398,6 +429,7 @@ mod tests {
             imbalance_min_qty: Some(Decimal::from(40)),
             stacked_count: 4,
             profile_row_px: 2.5,
+            detail_scale: 1.4,
             show_poc: false,
             extreme_ratio_badge: false,
             badge_min_ratio: Decimal::from(3),

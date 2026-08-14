@@ -4000,6 +4000,7 @@ impl ChartPane {
                 x_center: &|slot| viewport.x_center(slot, right, total),
                 half,
                 candle_width: cw,
+                bars_per_slot: per_slot,
                 side_inferred: chrome.side_inferred,
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
@@ -4335,9 +4336,14 @@ impl ChartPane {
         // resolution — every candle a reader counts, every wick they measure,
         // would be a different thing from what the bar rule says it is. So it
         // says the factor, in the corner and in the reader's own units.
+        //
+        // One line above the footprint legend's home, which is the same
+        // corner: grouped, that layer is off and says so there, and the two
+        // statements are read together — this chart is coarse, and here is
+        // what it costs you.
         if self.viewport.grouped() {
             painter.text(
-                egui::pos2(history_rect.left() + 8.0, history_rect.bottom() - 6.0),
+                egui::pos2(history_rect.left() + 6.0, history_rect.bottom() - 22.0),
                 egui::Align2::LEFT_BOTTOM,
                 format!("×{} bars per candle", self.viewport.bars_per_slot()),
                 egui::FontId::proportional(11.0),

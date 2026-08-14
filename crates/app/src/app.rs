@@ -13176,6 +13176,40 @@ plot(close)
         );
     }
 
+    /// "Zoom in for numbers" with no number is why the footprint read as slow
+    /// to arrive — a trader could not tell a nudge from a different chart
+    /// entirely. And grouped, there is no ladder to draw at all: one candle
+    /// standing for twenty bars has twenty tapes behind it, and the layer says
+    /// so instead of stacking them at one x or going quietly blank.
+    #[test]
+    fn the_footprint_says_how_much_further_to_zoom_and_when_not_to_bother() {
+        let (mut app, _cmd_rx) = app_with_history(4_000);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().flow_pane.footprint_visible = true;
+
+        let opening = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            opening
+                .iter()
+                .any(|text| text.contains("numbers at") && text.contains("this zoom")),
+            "the default zoom says how far off the numbers are: {opening:?}"
+        );
+
+        app.active_tab_mut()
+            .flow_pane
+            .viewport
+            .set_candle_width(crate::viewport::MIN_PX_PER_BAR);
+        let grouped = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            grouped.iter().any(|text| text.contains("bars grouped")),
+            "and grouped, it says zooming is not the answer: {grouped:?}"
+        );
+        assert!(
+            !grouped.iter().any(|text| text.contains("numbers at")),
+            "without also promising numbers at some zoom: {grouped:?}"
+        );
+    }
+
     /// The squeeze a trader reaching for more history actually makes. Past the
     /// zoom where a bar can be drawn on its own, bars group into one candle per
     /// slot: ten times the history arrives in the window for no more painted
