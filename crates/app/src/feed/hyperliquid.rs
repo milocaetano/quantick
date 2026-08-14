@@ -89,7 +89,8 @@ async fn feed_task(
     let mut book_capture: Option<BookCaptureTask> = None;
     // Candle history runs off this loop: see `spawn_ohlcv` for what awaiting it
     // in a command arm used to cost the live trade stream.
-    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<(Vec<quantick_engine::Bar>, bool)>(1);
+    let (ohlcv_tx, mut ohlcv_rx) =
+        mpsc::channel::<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>(1);
     let mut ohlcv_task: Option<JoinHandle<()>> = None;
     let mut ever_connected = false;
     let mut recovery_pending = true;
@@ -98,13 +99,18 @@ async fn feed_task(
 
     loop {
         tokio::select! {
-            Some((bars, complete)) = ohlcv_rx.recv() => {
-                ohlcv_task = None;
+            Some((bars, slice)) = ohlcv_rx.recv() => {
+                // Only the closing slice frees the slot: a run still walking
+                // backwards through the span is one fetch, however many
+                // replies it makes.
+                if slice.is_last() {
+                    ohlcv_task = None;
+                }
                 if tx
                     .send(FeedEvent::OhlcvHistory {
                         interval_ms: ONE_MINUTE_MS,
                         bars,
-                        complete,
+                        slice,
                     })
                     .await
                     .is_err()
@@ -163,7 +169,7 @@ async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
-                    Some(FeedCommand::FetchOhlcv { span_ms }) => {
+                    Some(FeedCommand::FetchOhlcv { span_ms, slice_ms }) => {
                         if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
                             // One fetch at a time; the in-flight one answers.
                             warn!(
@@ -179,6 +185,7 @@ async fn feed_task(
                             ohlcv_task = Some(spawn_ohlcv(
                                 symbol.clone(),
                                 span_ms,
+                                slice_ms,
                                 ohlcv_tx.clone(),
                             ));
                         }
@@ -320,55 +327,89 @@ fn start_book_capture(
 fn spawn_ohlcv(
     symbol: String,
     span_ms: i64,
-    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, bool)>,
+    slice_ms: Option<i64>,
+    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let symbol = symbol.as_str();
-        let to_ms = crate::metrics::wall_clock_ms();
-        let from_ms = to_ms.saturating_sub(span_ms.max(0));
-        let (bars, complete) = match fetch_candle_history(
-            HYPERLIQUID_WS_URL,
+        let now_ms = crate::metrics::wall_clock_ms();
+        let windows = crate::feed::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
+        info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "HYPERLIQUID_OHLCV_PLAN",
             symbol,
-            CANDLE_INTERVAL_1M,
-            ONE_MINUTE_MS,
-            from_ms,
-            to_ms,
-        )
-        .await
-        {
-            Ok(history) => {
-                if !history.complete {
+            requested_span_ms = span_ms,
+            slice_ms = slice_ms.unwrap_or(0),
+            windows = windows.len(),
+            "candle history planned"
+        );
+        // Short or failed windows accumulate into the answer's completeness:
+        // the trader is told the span is short if *any* part of it came up
+        // short, never just the last window fetched.
+        let mut complete = true;
+        for window in windows {
+            let bars = match fetch_candle_history(
+                HYPERLIQUID_WS_URL,
+                symbol,
+                CANDLE_INTERVAL_1M,
+                ONE_MINUTE_MS,
+                window.from_ms,
+                window.to_ms,
+            )
+            .await
+            {
+                Ok(history) => {
+                    if !history.complete {
+                        warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "HYPERLIQUID_OHLCV_PARTIAL",
+                            symbol,
+                            requested_span_ms = span_ms,
+                            from_ms = window.from_ms,
+                            to_ms = window.to_ms,
+                            bars = history.bars.len(),
+                            action = "answer_partial",
+                            "candle history is short of the requested window"
+                        );
+                    }
+                    complete &= history.complete;
+                    history.bars
+                }
+                Err(error) => {
                     warn!(
                         target: "quantick::app",
                         schema_version = 1_u8,
-                        event_code = "HYPERLIQUID_OHLCV_PARTIAL",
+                        event_code = "HYPERLIQUID_OHLCV_FAILED",
                         symbol,
                         requested_span_ms = span_ms,
-                        bars = history.bars.len(),
-                        action = "answer_partial",
-                        "candle history is short of the requested span"
+                        from_ms = window.from_ms,
+                        to_ms = window.to_ms,
+                        %error,
+                        action = "answer_empty",
+                        "could not fetch candle history"
                     );
+                    // A failed window is the clearest "not the whole span"
+                    // there is — and a reason to keep going, not to stop: the
+                    // windows are independent, and one refused socket says
+                    // nothing about the next.
+                    complete = false;
+                    Vec::new()
                 }
-                (history.bars, history.complete)
+            };
+            let slice = if window.last {
+                crate::feed::OhlcvSlice::Last { complete }
+            } else {
+                crate::feed::OhlcvSlice::More
+            };
+            // A closed channel means the feed loop is gone, which is not this
+            // task's problem to report: it is already being reported there.
+            // Stop fetching, though — nothing is listening for the rest.
+            if reply.send((bars, slice)).await.is_err() {
+                return;
             }
-            Err(error) => {
-                warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "HYPERLIQUID_OHLCV_FAILED",
-                    symbol,
-                    requested_span_ms = span_ms,
-                    %error,
-                    action = "answer_empty",
-                    "could not fetch candle history"
-                );
-                // A failed fetch is the clearest "not the whole span" there is.
-                (Vec::new(), false)
-            }
-        };
-        // A closed channel means the feed loop is gone, which is not this task's
-        // problem to report: it is already being reported there.
-        let _ = reply.send((bars, complete)).await;
+        }
     })
 }
 

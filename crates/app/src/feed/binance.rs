@@ -118,18 +118,25 @@ async fn feed_task(
     // from being polled for the duration: the trade channel fills, the
     // websocket read loop behind it stalls, and pongs stop going out. The task
     // sends its result back here and the loop keeps turning meanwhile.
-    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<(Vec<quantick_engine::Bar>, bool)>(1);
+    let (ohlcv_tx, mut ohlcv_rx) =
+        mpsc::channel::<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>(1);
     let mut ohlcv_task: Option<JoinHandle<()>> = None;
 
     loop {
         tokio::select! {
-            Some((bars, complete)) = ohlcv_rx.recv() => {
-                ohlcv_task = None;
+            Some((bars, slice)) = ohlcv_rx.recv() => {
+                // Only the closing slice frees the slot. A run still walking
+                // backwards through the span is one fetch, however many
+                // replies it makes, and letting a second one start beside it
+                // would spend the same rate budget twice.
+                if slice.is_last() {
+                    ohlcv_task = None;
+                }
                 if tx
                     .send(FeedEvent::OhlcvHistory {
                         interval_ms: ONE_MINUTE_MS,
                         bars,
-                        complete,
+                        slice,
                     })
                     .await
                     .is_err()
@@ -168,7 +175,7 @@ async fn feed_task(
                             break; // UI gone
                         }
                     }
-                    Some(FeedCommand::FetchOhlcv { span_ms }) => {
+                    Some(FeedCommand::FetchOhlcv { span_ms, slice_ms }) => {
                         if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
                             // One fetch at a time: the venue's rate budget is
                             // shared, and the in-flight one already answers.
@@ -186,6 +193,7 @@ async fn feed_task(
                                 klines.clone(),
                                 symbol.clone(),
                                 span_ms,
+                                slice_ms,
                                 ohlcv_tx.clone(),
                             ));
                         }
@@ -369,7 +377,8 @@ fn parse_book_depth(raw: Option<&str>) -> u16 {
 }
 
 /// Fetch `span_ms` of one-minute candles on a task of its own, delivering the
-/// bars back to the feed loop through `reply`.
+/// bars back to the feed loop through `reply` — in one message, or in a run of
+/// them from the newest window backwards when `slice_ms` asks for slices.
 ///
 /// Off the loop deliberately: this is the one command whose work is measured in
 /// seconds rather than milliseconds, and the loop it was called from is the one
@@ -377,43 +386,73 @@ fn parse_book_depth(raw: Option<&str>) -> u16 {
 /// used to cost.
 ///
 /// A short answer is still an answer: the pane's loading indicator keys on the
-/// reply, so a fetch that ran out of rate budget resolves it with what it
-/// collected rather than leaving the pane waiting on a venue that has stopped
-/// talking. How much arrived, and whether it covers the whole span, is in the
-/// `BINANCE_OHLCV_*` log events.
+/// closing reply, so a fetch that ran out of rate budget resolves it with what
+/// it collected rather than leaving the pane waiting on a venue that has
+/// stopped talking. That is also why a failed window does not abandon the run:
+/// the remaining windows are still attempted and the closing slice reports the
+/// whole answer as short. How much arrived is in the `BINANCE_OHLCV_*` log
+/// events.
 fn spawn_ohlcv(
     klines: BinanceKlineHttp,
     symbol: String,
     span_ms: i64,
-    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, bool)>,
+    slice_ms: Option<i64>,
+    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let to_ms = crate::metrics::wall_clock_ms();
-        let from_ms = to_ms.saturating_sub(span_ms.max(0));
-        let history = fetch_history(
-            &klines,
-            &symbol,
-            KLINE_INTERVAL_1M,
-            ONE_MINUTE_MS,
-            from_ms,
-            to_ms,
-        )
-        .await;
-        if !history.complete {
-            warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "BINANCE_OHLCV_PARTIAL",
-                symbol,
-                requested_span_ms = span_ms,
-                bars = history.bars.len(),
-                action = "answer_partial",
-                "candle history is short of the requested span"
-            );
+        let now_ms = crate::metrics::wall_clock_ms();
+        let windows = crate::feed::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
+        info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "BINANCE_OHLCV_PLAN",
+            symbol,
+            requested_span_ms = span_ms,
+            slice_ms = slice_ms.unwrap_or(0),
+            windows = windows.len(),
+            "candle history planned"
+        );
+        // Short windows accumulate into the answer's completeness: the trader
+        // is told the span is short if *any* part of it came up short, never
+        // just the last one fetched.
+        let mut complete = true;
+        for window in windows {
+            let history = fetch_history(
+                &klines,
+                &symbol,
+                KLINE_INTERVAL_1M,
+                ONE_MINUTE_MS,
+                window.from_ms,
+                window.to_ms,
+            )
+            .await;
+            complete &= history.complete;
+            if !history.complete {
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "BINANCE_OHLCV_PARTIAL",
+                    symbol,
+                    requested_span_ms = span_ms,
+                    from_ms = window.from_ms,
+                    to_ms = window.to_ms,
+                    bars = history.bars.len(),
+                    action = "answer_partial",
+                    "candle history is short of the requested window"
+                );
+            }
+            let slice = if window.last {
+                crate::feed::OhlcvSlice::Last { complete }
+            } else {
+                crate::feed::OhlcvSlice::More
+            };
+            // A closed channel means the feed loop is gone, which is not this
+            // task's problem to report: it is already being reported there.
+            // Stop fetching, though — nothing is listening for the rest.
+            if reply.send((history.bars, slice)).await.is_err() {
+                return;
+            }
         }
-        // A closed channel means the feed loop is gone, which is not this
-        // task's problem to report: it is already being reported there.
-        let _ = reply.send((history.bars, history.complete)).await;
     })
 }
 

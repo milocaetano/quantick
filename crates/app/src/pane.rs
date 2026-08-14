@@ -5227,11 +5227,15 @@ impl ChartPane {
     /// A vertical marker where venue candles give way to bars this app built
     /// from prints.
     ///
-    /// Dashed, and in the same amber the backfill divider uses: both mark
-    /// provenance, and the dash is what says this one is a *different kind* of
-    /// boundary. Left of it the bars are the venue's own summaries — one price
-    /// per interval, with the aggressor split only where the venue publishes
-    /// one. Right of it every bar was cut from prints this app saw.
+    /// Dashed, and in a nearly transparent white rather than the backfill
+    /// divider's amber. Both mark provenance, but they are read differently:
+    /// the backfill divider answers a question asked once, while this one sits
+    /// on the chart the entire session, so it is drawn to be *found* rather
+    /// than noticed (see [`theme::SEAM_LINE`]). The dash still says it is a
+    /// different kind of boundary. Left of it the bars are the venue's own
+    /// summaries — one price per interval, with the aggressor split only where
+    /// the venue publishes one. Right of it every bar was cut from prints this
+    /// app saw.
     fn draw_seam_divider(
         &self,
         painter: &egui::Painter,
@@ -5247,13 +5251,20 @@ impl ChartPane {
         if x < pane.left() || x > pane.right() {
             return; // off-screen
         }
-        draw_dashed_vertical(painter, x, pane, SEAM_DASH_PX, SEAM_GAP_PX, theme::AMBER);
+        draw_dashed_vertical(
+            painter,
+            x,
+            pane,
+            SEAM_DASH_PX,
+            SEAM_GAP_PX,
+            theme::SEAM_LINE,
+        );
         painter.text(
             egui::pos2(x - 4.0, pane.top() + 4.0),
             egui::Align2::RIGHT_TOP,
             "venue",
             egui::FontId::proportional(11.0),
-            theme::TEXT_MUTED,
+            theme::SEAM_LABEL,
         );
     }
 

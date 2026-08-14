@@ -652,12 +652,16 @@ async fn answer_command(
             );
             true
         }
-        FeedCommand::FetchOhlcv { span_ms } => {
+        FeedCommand::FetchOhlcv { span_ms, slice_ms } => {
             // Answered from what the bridge already pushed. `span_ms` is not a
             // request that can be made here — the bridge chose its own reach
             // before this feed could say anything (its `--rates-months`) — so
             // it is logged against what actually arrived rather than silently
-            // ignored.
+            // ignored. `slice_ms` is declined for the same reason it would be
+            // pointless: progressive slicing shortens a wait made of venue
+            // round trips, and there are none here — the block is already in
+            // memory, so cutting it into replies would only make the chart
+            // rebuild itself several times over to arrive at the same frame.
             let (interval_ms, bars, complete) = match candles {
                 Some(block) => (block.interval_ms, block.bars.clone(), block.complete),
                 // Nothing held is not a short answer — it is no answer yet, and
@@ -677,12 +681,14 @@ async fn answer_command(
                 // and one whose block simply has not arrived yet.
                 source = if candles.is_some() { "bridge_block" } else { "nothing_held" },
                 complete,
+                requested_slice_ms = slice_ms.unwrap_or(0),
+                delivery = "single_reply",
                 "answered a candle-history request"
             );
             tx.send(FeedEvent::OhlcvHistory {
                 interval_ms,
                 bars,
-                complete,
+                slice: super::OhlcvSlice::Last { complete },
             })
             .await
             .is_ok()
@@ -1410,6 +1416,7 @@ mod tests {
         feed.commands
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                slice_ms: None,
             })
             .await
             .expect("the feed is listening");
@@ -1485,10 +1492,13 @@ mod tests {
             "the block is in hand, so the capability must have risen"
         );
 
-        // Ask again on the strength of that edge.
+        // Ask again on the strength of that edge — and ask for slices, which
+        // a bridge serving from a block it already holds declines: there is
+        // no venue round trip here for slicing to shorten.
         feed.commands
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                slice_ms: Some(crate::feed::OHLCV_SLICE_SPAN_MS),
             })
             .await
             .expect("the feed is listening");
@@ -1497,9 +1507,11 @@ mod tests {
             loop {
                 match feed.events.recv().await {
                     Some(FeedEvent::OhlcvHistory {
-                        interval_ms, bars, ..
+                        interval_ms,
+                        bars,
+                        slice,
                     }) => {
-                        return (interval_ms, bars);
+                        return (interval_ms, bars, slice);
                     }
                     Some(_) => {}
                     None => panic!("feed closed"),
@@ -1509,7 +1521,12 @@ mod tests {
         .await
         .expect("no reply: a pane would hang here");
 
-        let (interval_ms, bars) = reply;
+        let (interval_ms, bars, slice) = reply;
+        assert_eq!(
+            slice,
+            crate::feed::OhlcvSlice::Last { complete: true },
+            "a held block is answered once, whatever slicing was asked for"
+        );
         assert_eq!(interval_ms, 60_000);
         assert_eq!(bars.len(), 2);
         // Converted out of the terminal's server clock, like every other MT5
@@ -1543,6 +1560,7 @@ mod tests {
         feed.commands
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                slice_ms: None,
             })
             .await
             .expect("the feed is listening");
@@ -1629,6 +1647,7 @@ mod tests {
             feed.commands
                 .send(FeedCommand::FetchOhlcv {
                     span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                    slice_ms: None,
                 })
                 .await
                 .expect("the feed is listening");

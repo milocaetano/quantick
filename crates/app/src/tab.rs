@@ -120,6 +120,36 @@ pub struct CanvasChrome<'a> {
     pub layers: &'a mut crate::chart_layers::LayerActions,
 }
 
+/// Put an older slice of venue candles in front of the ones already held,
+/// keeping the base ascending by `open_time` and free of duplicates.
+///
+/// The fast path is the one progressive loading actually produces: the slice
+/// is strictly older than everything held, so it is spliced in front and the
+/// order is already right. The merge below exists for the case the port
+/// permits but no provider aims for — a window that overlaps what is held,
+/// through a venue re-reporting a bucket at a boundary. There the candle
+/// already on screen wins: it is the one the trader has been reading, and a
+/// bar that redraws itself for no visible reason is worse than a bar fetched
+/// a second apart from an identical twin.
+fn merge_older_candles(base: &mut Vec<quantick_engine::Bar>, older: Vec<quantick_engine::Bar>) {
+    let disjoint = match (older.last(), base.first()) {
+        (Some(newest_incoming), Some(oldest_held)) => {
+            newest_incoming.open_time < oldest_held.open_time
+        }
+        _ => true,
+    };
+    if disjoint {
+        base.splice(0..0, older);
+        return;
+    }
+    let mut merged: std::collections::BTreeMap<i64, quantick_engine::Bar> =
+        older.into_iter().map(|bar| (bar.open_time, bar)).collect();
+    for bar in base.drain(..) {
+        merged.insert(bar.open_time, bar);
+    }
+    *base = merged.into_values().collect();
+}
+
 /// Drop venue bars that overlap the trade-derived series.
 ///
 /// The two series meet at a seam, and the composed chart is only searchable if
@@ -258,9 +288,31 @@ pub struct Tab {
     /// the *market's* history: changing the pane's interval refolds it, and
     /// only a change of market throws it away.
     ohlcv_base: Option<Vec<quantick_engine::Bar>>,
-    /// Whether a fetch is out. One at a time — the reply is what clears it,
-    /// and every provider always sends one.
+    /// Whether a fetch is out. One at a time — the *closing* reply is what
+    /// clears it, and every provider always sends one. A progressive fetch
+    /// stays pending across all of its slices: it is one request throughout,
+    /// and a chart already showing the most recent week has not finished
+    /// loading.
     ohlcv_pending: bool,
+    /// Whether the slices still arriving belong to a request whose answer is
+    /// no longer wanted.
+    ///
+    /// A push feed can store a fresh block partway through a progressive run,
+    /// and that discards the base being built (see [`Self::poll_ohlcv_capability`]).
+    /// The slices already in flight know nothing about it, and folding them
+    /// onto an empty base would build a history missing exactly the newest
+    /// part — the slices that had already been thrown away. So they are
+    /// dropped, and the closing one re-opens the door for a fresh request.
+    ohlcv_stale: bool,
+    /// Whether the next candle request asks for slices (View → progressive
+    /// venue history). Mirrored from the app each frame rather than read from
+    /// it, because the tab is what phrases the request and a tab in a test has
+    /// no app around it.
+    ///
+    /// Only read when a request is *sent*: flipping the switch mid-run never
+    /// reshapes an answer already being fetched, which is the honest
+    /// behaviour — the venue was asked one way and is answering that way.
+    pub progressive_history: bool,
     /// The candle generation this tab has already acted on.
     ///
     /// A pull feed leaves it at zero forever — it answers whenever asked, so
@@ -352,6 +404,8 @@ impl Tab {
             chip_label: String::new(),
             ohlcv_base: None,
             ohlcv_pending: false,
+            ohlcv_stale: false,
+            progressive_history: true,
             ohlcv_generation: 0,
             ohlcv_capable: false,
             time_pane: None,
@@ -382,6 +436,9 @@ impl Tab {
         // restarts rather than draining to zero on an answer that never comes.
         self.ohlcv_base = None;
         self.ohlcv_pending = false;
+        // The channel carrying any in-flight slices is dropped with the old
+        // handle, so nothing survives to be dropped as stale.
+        self.ohlcv_stale = false;
         self.ohlcv_capable = false;
         self.loading.set_active(LoadingTask::VenueHistory, false);
         for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
@@ -467,6 +524,7 @@ impl Tab {
     /// a base already held is not re-fetched: changing a pane's interval is
     /// a different fold over the same bars.
     fn request_ohlcv_history(&mut self, config: &AppConfig) {
+        let progressive = self.progressive_history;
         if !self.any_pane_wants_venue_history()
             || self.replay.is_some()
             || self.ohlcv_pending
@@ -475,8 +533,10 @@ impl Tab {
         {
             return;
         }
+        let slice_ms = progressive.then_some(crate::feed::OHLCV_SLICE_SPAN_MS);
         let command = FeedCommand::FetchOhlcv {
             span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            slice_ms,
         };
         match self.commands.try_send(command) {
             Ok(()) => {
@@ -489,7 +549,8 @@ impl Tab {
                     tab = self.id,
                     symbol = %self.symbol,
                     span_ms = crate::feed::TIME_HISTORY_SPAN_MS,
-                    action = "await_single_reply",
+                    slice_ms = slice_ms.unwrap_or(0),
+                    action = if progressive { "await_slices" } else { "await_single_reply" },
                     "asked the venue for candle history"
                 );
             }
@@ -532,6 +593,10 @@ impl Tab {
             // first one took.
             self.ohlcv_generation = capabilities.ohlcv_generation;
             self.ohlcv_base = None;
+            // Slices of the discarded answer may still be on their way. They
+            // describe a base that no longer exists, so they are dropped
+            // rather than folded onto nothing.
+            self.ohlcv_stale = self.ohlcv_pending;
         }
         if rising {
             // A session that narrowed *into* serving candles may have answered
@@ -553,16 +618,50 @@ impl Tab {
     ///
     /// An empty reply is a complete answer — the venue has none, the provider
     /// serves none, or the fetch failed — and is recorded as such so the tab
-    /// stops asking. Either way the wait ends here: a provider that answered
-    /// only on success would strand the spinner on the one case that most
-    /// needs explaining.
+    /// stops asking. Either way the wait ends on the *closing* slice: a
+    /// provider that answered only on success would strand the spinner on the
+    /// one case that most needs explaining, and one that ended it on the first
+    /// of thirteen slices would claim a quarter of history had arrived when a
+    /// week of it had.
+    ///
+    /// Progressive slices run newest-first, so each one goes in *front* of the
+    /// base already held. The prefix is rebuilt after every slice, which is
+    /// the whole point — the chart grows leftwards while the rest is still
+    /// being fetched, and nothing the trader is looking at moves under them
+    /// (`ChartPane::install_history_prefix` shifts the viewport and every
+    /// bar-anchored drawing by the same amount the prefix grew).
     fn take_ohlcv_history(
         &mut self,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
-        complete: bool,
+        slice: crate::feed::OhlcvSlice,
     ) {
+        let last = slice.is_last();
+        if self.ohlcv_stale {
+            // An answer the tab already threw away (see `poll_ohlcv_capability`).
+            // The closing slice is what re-opens the door to asking again.
+            if last {
+                self.ohlcv_stale = false;
+                self.ohlcv_pending = false;
+                self.loading.end(LoadingTask::VenueHistory);
+            }
+            tracing::debug!(
+                target: "quantick::app",
+                event_code = "OHLCV_SLICE_DISCARDED",
+                tab = self.id,
+                bars = bars.len(),
+                last,
+                action = "await_fresh_request",
+                "dropped a slice of a candle answer that was superseded"
+            );
+            return;
+        }
+        if !last {
+            self.take_ohlcv_slice(interval_ms, bars);
+            return;
+        }
         self.ohlcv_pending = false;
+        let complete = matches!(slice, crate::feed::OhlcvSlice::Last { complete } if complete);
         if !complete {
             // Known-short, not merely short: a venue that stopped answering
             // partway, or a block clipped to a cap. An instrument younger than
@@ -596,6 +695,18 @@ impl Tab {
             action = if bars.is_empty() { "no_prefix" } else { "install_prefix" },
             "candle history arrived"
         );
+        self.take_ohlcv_slice(interval_ms, bars);
+    }
+
+    /// Merge one slice into the base and rebuild the prefix from it.
+    ///
+    /// Shared by the closing reply and every slice before it: whether an
+    /// answer arrived whole or in thirteen pieces changes when the wait ends,
+    /// never how the candles are installed. Merging rather than replacing is
+    /// what makes that true — a run's last slice is the *oldest* week of the
+    /// span, and assigning it over the base would throw away the twelve that
+    /// had already been drawn.
+    fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) {
         if interval_ms != crate::feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
             // The event tags its own interval so a consumer never has to
             // guess; a base this fold was not written for is refused rather
@@ -612,8 +723,34 @@ impl Tab {
             self.ohlcv_base = Some(Vec::new());
             return;
         }
-        self.ohlcv_base = Some(bars);
+        let base = self.ohlcv_base.get_or_insert_with(Vec::new);
+        if base.is_empty() {
+            *base = bars;
+        } else if !bars.is_empty() {
+            merge_older_candles(base, bars);
+        }
         self.refold_history_prefix();
+    }
+
+    /// Hand the tab one candle-history reply directly, as the feed drain does.
+    ///
+    /// The `QUANTICK_VENUE_HISTORY_DEMO` hook's one door in. It goes through
+    /// the same function a real reply does — a hook that installed a prefix by
+    /// another route would photograph a state the app cannot actually be in.
+    /// The pending flags are set first because that is what a request having
+    /// gone out looks like, and an unclosed run is precisely the frame the
+    /// `partial` variant exists to reach.
+    pub fn deliver_ohlcv_slice(
+        &mut self,
+        interval_ms: i64,
+        bars: Vec<quantick_engine::Bar>,
+        slice: crate::feed::OhlcvSlice,
+    ) {
+        if !self.ohlcv_pending {
+            self.ohlcv_pending = true;
+            self.loading.begin(LoadingTask::VenueHistory);
+        }
+        self.take_ohlcv_history(interval_ms, bars, slice);
     }
 
     /// Rebuild every pane's prefix from the base at that pane's interval.
@@ -1422,9 +1559,9 @@ impl Tab {
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
-                    complete,
+                    slice,
                 }) => {
-                    self.take_ohlcv_history(interval_ms, bars, complete);
+                    self.take_ohlcv_history(interval_ms, bars, slice);
                 }
                 Err(_) => break,
             }

@@ -63,6 +63,17 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
 
+Landing with the progressive venue-history goal
+(`feat/progressive-venue-history`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_VENUE_HISTORY_DEMO=1` | a venue candle prefix in front of the bars cut from prints, delivered through the feed's own reply path — the finished seam divider, deterministic and with no venue involved. The seam otherwise needs a real venue to serve a real quarter of history, which no scripted capture can wait on |
+| `QUANTICK_VENUE_HISTORY_DEMO=partial` | the same prefix with the run left open: the mid-load frame progressive delivery exists to produce — part of the history drawn, the "loading venue history" indicator still up. It lasts a few seconds once, at a moment nothing controls, so this hook is the only way to photograph it |
+| `QUANTICK_PROGRESSIVE_HISTORY=1` / `=0` | pins the View → progressive venue history switch for the run, overriding what the workspace saved. Anything else is refused rather than guessed, so a typo leaves the trader's own setting alone |
+
+Once merged, move these into the table above.
+
 Landing with the anchored VWAP goal (`feat/anchored-vwap`):
 
 | Hook | Reaches |
