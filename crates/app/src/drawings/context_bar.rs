@@ -170,16 +170,35 @@ pub fn place(
 ) -> egui::Pos2 {
     let above = bbox.top() - OBJECT_GAP_PX - size.y;
     let below = bbox.bottom() + OBJECT_GAP_PX;
-    let y = if above >= chart.top() {
-        above
-    } else if below + size.y <= chart.bottom() {
-        below
-    } else {
-        // An object taller than the pane — a vertical line, a channel across
-        // the whole view. Hug the top edge rather than sit in the middle of
-        // the price.
-        chart.top() + OBJECT_GAP_PX
-    };
+    if above < chart.top() && below + size.y > chart.bottom() {
+        // Taller than the pane leaves no room above or below — a volume
+        // profile spanning the price axis, a channel across the whole view.
+        // Hugging the top edge used to be the answer, and for a full-height
+        // object the top edge *is* the object: the bar sat on the figure it
+        // edits, which is the one place it must never be.
+        //
+        // Beside it instead, on whichever side has room. Vertically it keeps
+        // to the object's top, so the controls stay where the eye left them.
+        let gap = OBJECT_GAP_PX;
+        let y = (bbox.top()).clamp(chart.top(), (chart.bottom() - size.y).max(chart.top()));
+        let right_of = bbox.right() + gap;
+        let left_of = bbox.left() - gap - size.x;
+        if right_of + size.x <= right_limit.min(chart.right()) {
+            return egui::pos2(right_of, y);
+        }
+        if left_of >= chart.left() {
+            return egui::pos2(left_of, y);
+        }
+        // The object leaves no strip on either side either. Nothing can be
+        // placed clear of it; the top edge is the least-bad answer, and this
+        // is now the only case that reaches it.
+        return egui::pos2(
+            bbox.left()
+                .clamp(chart.left(), (chart.right() - size.x).max(chart.left())),
+            chart.top() + gap,
+        );
+    }
+    let y = if above >= chart.top() { above } else { below };
     // Prefer to stay clear of the live lane; if the bar is wider than the
     // history area itself, the chart's own edge wins over the preference.
     let right = right_limit.min(chart.right()).max(chart.left() + size.x);
@@ -1109,6 +1128,65 @@ mod tests {
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0))
     }
 
+    /// The bug the user hit: a volume profile spans the price axis, so there
+    /// is no room above it and none below, and the bar used to hug the top
+    /// edge — which for a full-height object *is* the object. The bar sat on
+    /// the figure it edits.
+    ///
+    /// It goes beside it now, on whichever side has room.
+    #[test]
+    fn a_full_height_object_gets_the_bar_beside_it_not_on_it() {
+        let chart = chart();
+        let size = egui::vec2(220.0, 32.0);
+        // A profile down the left of the pane, floor to ceiling.
+        let bbox = egui::Rect::from_min_max(
+            egui::pos2(chart.left() + 40.0, chart.top()),
+            egui::pos2(chart.left() + 240.0, chart.bottom()),
+        );
+
+        let position = place(chart, chart.right(), bbox, size);
+        let rect = egui::Rect::from_min_size(position, size);
+        assert!(
+            !rect.intersect(bbox).is_positive(),
+            "the bar must not sit on the object it edits: {rect:?} vs {bbox:?}"
+        );
+        assert!(
+            chart.contains_rect(rect),
+            "and it stays inside the pane: {rect:?}"
+        );
+
+        // Mirrored: an object hugging the right sends the bar to its left.
+        let right_side = egui::Rect::from_min_max(
+            egui::pos2(chart.right() - 240.0, chart.top()),
+            egui::pos2(chart.right(), chart.bottom()),
+        );
+        let rect = egui::Rect::from_min_size(place(chart, chart.right(), right_side, size), size);
+        assert!(
+            !rect.intersect(right_side).is_positive(),
+            "and beside it on the other side when that is where the room is: {rect:?}"
+        );
+        assert!(chart.contains_rect(rect), "{rect:?}");
+    }
+
+    /// An object that leaves room above still gets the bar above it: the
+    /// sideways placement is the fallback, not the rule.
+    #[test]
+    fn an_object_with_room_above_still_gets_the_bar_above_it() {
+        let chart = chart();
+        let size = egui::vec2(220.0, 32.0);
+        let bbox = egui::Rect::from_min_max(
+            egui::pos2(chart.left() + 300.0, chart.top() + 200.0),
+            egui::pos2(chart.left() + 400.0, chart.top() + 260.0),
+        );
+        let position = place(chart, chart.right(), bbox, size);
+        assert_eq!(position.x, bbox.left(), "left-aligned, as before");
+        assert_eq!(
+            position.y,
+            bbox.top() - OBJECT_GAP_PX - size.y,
+            "and above it, as before"
+        );
+    }
+
     #[test]
     fn the_bar_opens_above_the_object_aligned_to_its_left_edge() {
         let size = bar_size(&slots(PLAIN));
@@ -1126,11 +1204,24 @@ mod tests {
         assert_eq!(position.y, bbox.bottom() + OBJECT_GAP_PX);
     }
 
+    /// An object taller than the pane used to send the bar to the top edge,
+    /// which for a full-height object *is* the object. It goes beside it now;
+    /// the top edge is reserved for the one object that leaves no side either.
     #[test]
-    fn an_object_taller_than_the_pane_hugs_the_top_edge() {
+    fn an_object_taller_than_the_pane_gets_the_bar_beside_it() {
         let size = bar_size(&slots(PLAIN));
         let bbox = egui::Rect::from_min_max(egui::pos2(300.0, 0.0), egui::pos2(320.0, 600.0));
-        let position = place(chart(), chart().right(), bbox, size);
+        let rect = egui::Rect::from_min_size(place(chart(), chart().right(), bbox, size), size);
+        assert!(
+            !rect.intersect(bbox).is_positive(),
+            "beside the object, not on it: {rect:?}"
+        );
+        assert!(chart().contains_rect(rect), "{rect:?}");
+
+        // Wall to wall: no side to go to, and the top edge is the honest
+        // least-bad answer rather than a pretence.
+        let wall = egui::Rect::from_min_max(chart().left_top(), chart().right_bottom());
+        let position = place(chart(), chart().right(), wall, size);
         assert_eq!(position.y, chart().top() + OBJECT_GAP_PX);
     }
 
