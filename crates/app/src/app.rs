@@ -6222,7 +6222,8 @@ impl QuantickApp {
         self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
-        self.active_tab_mut().paper.draw_report_window(ctx);
+        let tz = self.tz;
+        self.active_tab_mut().paper.draw_report_window(ctx, tz);
         self.active_tab_mut().paper.draw_toast(ctx, now);
         if notice_action == notice_card::NoticeAction::Retry {
             let (tab, config) = self.active_with_config();

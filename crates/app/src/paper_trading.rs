@@ -124,6 +124,8 @@ const REPORT_MIN_WIDTH_PX: f32 = 440.0;
 const REPORT_MIN_HEIGHT_PX: f32 = 360.0;
 /// Height the report keeps for its honesty footer under the grids.
 const REPORT_FOOTER_RESERVE_PX: f32 = 64.0;
+/// Width of the typed-period field beside the pills — room for "999h".
+const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
 /// The grids' readable floor inside a squeezed window.
 const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
@@ -233,11 +235,14 @@ enum ReportPeriod {
     Month,
     Quarter,
     All,
+    /// A typed span (`2d`, `12h`…) in milliseconds back from the anchor —
+    /// the text box beside the pills.
+    Custom(i64),
 }
 
 impl ReportPeriod {
-    /// Every period, in pill order.
-    const ALL: [Self; 5] = [
+    /// Every fixed period, in pill order; `Custom` rides the text box.
+    const PILLS: [Self; 5] = [
         Self::Today,
         Self::Week,
         Self::Month,
@@ -252,40 +257,96 @@ impl ReportPeriod {
             Self::Month => "30d",
             Self::Quarter => "90d",
             Self::All => "All",
+            Self::Custom(_) => "custom",
         }
     }
 
     /// The anchor-relative phrase the support line reads.
-    fn phrase(self) -> &'static str {
+    fn phrase(self) -> String {
         match self {
-            Self::Today => "the newest trade's day",
-            Self::Week => "the last 7 days",
-            Self::Month => "the last 30 days",
-            Self::Quarter => "the last 90 days",
-            Self::All => "everything saved",
+            Self::Today => "the newest trade's day".to_owned(),
+            Self::Week => "the last 7 days".to_owned(),
+            Self::Month => "the last 30 days".to_owned(),
+            Self::Quarter => "the last 90 days".to_owned(),
+            Self::All => "everything saved".to_owned(),
+            Self::Custom(period_ms) => format!("the last {}", fmt_period_ms(period_ms)),
         }
     }
 
     /// Oldest closing time still inside the period, measured back from
-    /// `anchor_ms`; `None` keeps everything.
-    fn cutoff_ms(self, anchor_ms: i64) -> Option<i64> {
+    /// `anchor_ms`; `None` keeps everything. "Today" is the anchor's civil
+    /// day in the chart's display timezone — the ledger renders local
+    /// times, so the day must break where the user sees midnight, not
+    /// where UTC does.
+    fn cutoff_ms(self, anchor_ms: i64, tz: TzOffset) -> Option<i64> {
         const DAY_MS: i64 = 86_400_000;
         match self {
-            Self::Today => Some(anchor_ms.div_euclid(DAY_MS) * DAY_MS),
+            Self::Today => {
+                let local = anchor_ms.saturating_add(tz.offset_ms());
+                let local_day_start = local.div_euclid(DAY_MS) * DAY_MS;
+                Some(local_day_start.saturating_sub(tz.offset_ms()))
+            }
             Self::Week => Some(anchor_ms.saturating_sub(7 * DAY_MS)),
             Self::Month => Some(anchor_ms.saturating_sub(30 * DAY_MS)),
             Self::Quarter => Some(anchor_ms.saturating_sub(90 * DAY_MS)),
             Self::All => None,
+            Self::Custom(period_ms) => Some(anchor_ms.saturating_sub(period_ms)),
         }
     }
+}
+
+/// Parse a typed period: a positive whole number and a unit — `m`
+/// (minutes), `h`, `d`, `w` — any case, blanks tolerated. `None` is a
+/// refusal the caller must say out loud: a silently-empty report is
+/// exactly the confusion the typed field exists to end.
+fn parse_period(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let unit = text.chars().last()?;
+    let count = text.get(..text.len() - unit.len_utf8())?.trim_end();
+    let count: i64 = count.parse().ok()?;
+    if count <= 0 {
+        return None;
+    }
+    let unit_ms: i64 = match unit.to_ascii_lowercase() {
+        'm' => 60_000,
+        'h' => 3_600_000,
+        'd' => 86_400_000,
+        'w' => 7 * 86_400_000,
+        _ => return None,
+    };
+    count.checked_mul(unit_ms)
+}
+
+/// `45m`, `36h`, `2d`, `1w` — the canonical spelling of a custom period,
+/// largest whole unit first.
+fn fmt_period_ms(period_ms: i64) -> String {
+    const MINUTE_MS: i64 = 60_000;
+    const HOUR_MS: i64 = 3_600_000;
+    const DAY_MS: i64 = 86_400_000;
+    const WEEK_MS: i64 = 7 * DAY_MS;
+    let (value, unit) = if period_ms % WEEK_MS == 0 {
+        (period_ms / WEEK_MS, 'w')
+    } else if period_ms % DAY_MS == 0 {
+        (period_ms / DAY_MS, 'd')
+    } else if period_ms % HOUR_MS == 0 {
+        (period_ms / HOUR_MS, 'h')
+    } else {
+        (period_ms / MINUTE_MS, 'm')
+    };
+    format!("{value}{unit}")
 }
 
 /// The report as filtered for display: the period's trades in closing
 /// order, their aggregation, and the anchor the period was measured from.
 struct ReportView {
     period: ReportPeriod,
+    /// The display timezone the view was cut with — "Today" moves with it.
+    tz: TzOffset,
     /// Newest closing time in scope — what the period counts back from.
     anchor_ms: Option<i64>,
+    /// Saved trades older than the window — the honest answer to "where
+    /// did my old trades go": they exist, the period just stops short.
+    hidden_before: usize,
     trades: Vec<ClosedTrade>,
     report: PerformanceReport,
 }
@@ -386,6 +447,9 @@ pub struct PaperTrading {
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
     report_symbol: Option<String>,
     report_period: ReportPeriod,
+    /// What the typed-period field holds; applied on Enter, kept verbatim
+    /// so a refused entry stays visible for fixing.
+    report_custom_text: String,
     /// Symbol folders on disk, for the report's combo box.
     report_symbols: Vec<String>,
     /// The report's history in scope, loaded fresh from disk.
@@ -462,6 +526,7 @@ impl PaperTrading {
             report_open: false,
             report_symbol: None,
             report_period: ReportPeriod::All,
+            report_custom_text: String::new(),
             report_symbols: Vec::new(),
             report: None,
             report_view: None,
@@ -2381,13 +2446,14 @@ impl PaperTrading {
         self.report_symbols = list_symbol_folders(&self.dir);
     }
 
-    /// Rebuild the filtered view when the period (or the loaded history)
-    /// changed. The anchor is the newest trade in scope, never a clock.
-    fn ensure_report_view(&mut self) {
+    /// Rebuild the filtered view when the period, timezone or the loaded
+    /// history changed. The anchor is the newest trade in scope, never a
+    /// clock.
+    fn ensure_report_view(&mut self, tz: TzOffset) {
         let fresh = self
             .report_view
             .as_ref()
-            .is_some_and(|view| view.period == self.report_period);
+            .is_some_and(|view| view.period == self.report_period && view.tz == tz);
         if fresh {
             return;
         }
@@ -2396,7 +2462,7 @@ impl PaperTrading {
             return;
         };
         let anchor_ms = history.rows.last().map(|(_, trade)| trade.closed_ms);
-        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor));
+        let cutoff = anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor, tz));
         let trades: Vec<ClosedTrade> = history
             .rows
             .iter()
@@ -2404,10 +2470,13 @@ impl PaperTrading {
             .filter(|trade| cutoff.is_none_or(|cutoff| trade.closed_ms >= cutoff))
             .cloned()
             .collect();
+        let hidden_before = history.rows.len().saturating_sub(trades.len());
         let report = PerformanceReport::from_trades(&trades);
         self.report_view = Some(ReportView {
             period: self.report_period,
+            tz,
             anchor_ms,
+            hidden_before,
             trades,
             report,
         });
@@ -2416,11 +2485,11 @@ impl PaperTrading {
     /// The performance report, computed from what is actually on disk.
     /// Non-modal by the app's contract — dimming the chart while a
     /// simulated position is open would be dangerous.
-    pub fn draw_report_window(&mut self, ctx: &egui::Context) {
+    pub fn draw_report_window(&mut self, ctx: &egui::Context, tz: TzOffset) {
         if !self.report_open {
             return;
         }
-        self.ensure_report_view();
+        self.ensure_report_view(tz);
         let mut open = true;
         let mut reload = false;
         egui::Window::new("Simulated performance")
@@ -2571,7 +2640,7 @@ impl PaperTrading {
                     .color(theme::TEXT_MUTED)
                     .small(),
             );
-            for period in ReportPeriod::ALL {
+            for period in ReportPeriod::PILLS {
                 let on = self.report_period == period;
                 if pill_toggle(
                     ui,
@@ -2584,6 +2653,25 @@ impl PaperTrading {
                 {
                     self.report_period = period;
                     self.report_view = None;
+                }
+            }
+            let response = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.report_custom_text)
+                        .desired_width(CUSTOM_PERIOD_FIELD_PX)
+                        .hint_text("2d"),
+                )
+                .on_hover_text("type a period - 45m, 12h, 2d or 1w - and press Enter");
+            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                match parse_period(&self.report_custom_text) {
+                    Some(period_ms) => {
+                        self.report_period = ReportPeriod::Custom(period_ms);
+                        self.report_view = None;
+                    }
+                    None => self.show_toast(format!(
+                        "SIM: could not read `{}` as a period - use 45m, 12h, 2d or 1w",
+                        self.report_custom_text.trim(),
+                    )),
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2607,11 +2695,22 @@ impl PaperTrading {
         });
         if let Some(view) = &self.report_view {
             let text = match view.anchor_ms {
-                Some(anchor) => format!(
-                    "{} up to {} (newest saved trade, not the wall clock)",
-                    view.period.phrase(),
-                    fmt_utc_date(anchor),
-                ),
+                Some(anchor) => {
+                    let mut text = format!(
+                        "{} up to {} (newest saved trade, not the wall clock)",
+                        view.period.phrase(),
+                        fmt_utc_date(anchor),
+                    );
+                    if view.hidden_before > 0 {
+                        // "Where did my old trades go" gets a literal
+                        // answer: they are saved, before this window.
+                        text.push_str(&format!(
+                            " - {} older saved trade(s) before this window",
+                            view.hidden_before,
+                        ));
+                    }
+                    text
+                }
                 None => "no saved trades in this scope".to_owned(),
             };
             ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
@@ -2819,6 +2918,13 @@ impl PaperTrading {
                 }
                 SimEvent::Closed(trade) => {
                     self.journal(&trade);
+                    if self.report_open {
+                        // The report reads from disk and the close just
+                        // wrote to disk; re-read now or the window shows
+                        // yesterday until the manual refresh — the "my
+                        // trade is missing" report.
+                        self.reload_report();
+                    }
                     self.show_toast(format!(
                         "SIM closed: {} {} → {} pts ({})",
                         position_word(trade.side),
@@ -4535,6 +4641,23 @@ mod tests {
         }
     }
 
+    fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
+        ClosedTrade {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            entry_price: Decimal::from(100),
+            exit_price: Decimal::from(100 + pnl),
+            opened_ms: closed_ms - 1000,
+            closed_ms,
+            pnl_points: Decimal::from(pnl),
+            exit_reason: quantick_sim::ExitReason::Manual,
+            entry_agg_id: None,
+            exit_agg_id: None,
+            mae_points: None,
+            mfe_points: None,
+        }
+    }
+
     #[test]
     fn utc_compact_matches_known_timestamps() {
         // 2026-03-16 13:01:08 UTC.
@@ -4851,18 +4974,58 @@ mod tests {
 
     #[test]
     fn report_periods_anchor_to_the_given_trade_never_a_clock() {
+        let utc = TzOffset::new(0);
         // 2026-03-16 13:01:08 UTC.
         let anchor = 1_773_666_068_000_i64;
-        assert_eq!(ReportPeriod::All.cutoff_ms(anchor), None);
+        assert_eq!(ReportPeriod::All.cutoff_ms(anchor, utc), None);
         assert_eq!(
-            ReportPeriod::Today.cutoff_ms(anchor),
+            ReportPeriod::Today.cutoff_ms(anchor, utc),
             Some(1_773_619_200_000),
             "the anchor's own UTC midnight"
         );
         assert_eq!(
-            ReportPeriod::Week.cutoff_ms(anchor),
+            ReportPeriod::Week.cutoff_ms(anchor, utc),
             Some(anchor - 7 * 86_400_000)
         );
+        assert_eq!(
+            ReportPeriod::Custom(2 * 86_400_000).cutoff_ms(anchor, utc),
+            Some(anchor - 2 * 86_400_000),
+            "a typed 2d reaches back exactly two days"
+        );
+    }
+
+    #[test]
+    fn today_breaks_at_the_displayed_midnight_not_utc() {
+        let day = 86_400_000_i64;
+        // 03 Jan 01:00 UTC is 02 Jan 22:00 in UTC-03:00.
+        let anchor = 2 * day + 3_600_000;
+        let sao_paulo = TzOffset::new(-180);
+        assert_eq!(
+            ReportPeriod::Today.cutoff_ms(anchor, sao_paulo),
+            Some(day + 10_800_000),
+            "midnight of the anchor's displayed day, expressed in UTC"
+        );
+        assert_eq!(
+            ReportPeriod::Today.cutoff_ms(anchor, TzOffset::new(0)),
+            Some(2 * day),
+            "UTC viewers keep the UTC midnight"
+        );
+    }
+
+    #[test]
+    fn typed_periods_parse_strictly_and_format_back() {
+        assert_eq!(parse_period("2d"), Some(2 * 86_400_000));
+        assert_eq!(parse_period(" 3D "), Some(3 * 86_400_000));
+        assert_eq!(parse_period("12h"), Some(12 * 3_600_000));
+        assert_eq!(parse_period("45m"), Some(45 * 60_000));
+        assert_eq!(parse_period("1w"), Some(7 * 86_400_000));
+        for refused in ["", "d", "2", "2x", "0d", "-2d", "2.5d", "d2"] {
+            assert_eq!(parse_period(refused), None, "{refused:?} must be refused");
+        }
+        assert_eq!(fmt_period_ms(2 * 86_400_000), "2d");
+        assert_eq!(fmt_period_ms(36 * 3_600_000), "36h");
+        assert_eq!(fmt_period_ms(45 * 60_000), "45m");
+        assert_eq!(fmt_period_ms(14 * 86_400_000), "2w");
     }
 
     #[test]
@@ -4873,22 +5036,7 @@ mod tests {
 
     #[test]
     fn the_report_view_filters_by_period_from_the_newest_trade() {
-        fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
-            ClosedTrade {
-                side: Side::Buy,
-                quantity: Decimal::ONE,
-                entry_price: Decimal::from(100),
-                exit_price: Decimal::from(100 + pnl),
-                opened_ms: closed_ms - 1000,
-                closed_ms,
-                pnl_points: Decimal::from(pnl),
-                exit_reason: quantick_sim::ExitReason::Manual,
-                entry_agg_id: None,
-                exit_agg_id: None,
-                mae_points: None,
-                mfe_points: None,
-            }
-        }
+        let utc = TzOffset::new(0);
         let day = 86_400_000_i64;
         let mut paper = PaperTrading::new();
         paper.report = Some(LoadedHistory {
@@ -4902,7 +5050,7 @@ mod tests {
             problem_rows: 0,
         });
         paper.report_period = ReportPeriod::Week;
-        paper.ensure_report_view();
+        paper.ensure_report_view(utc);
         let view = paper.report_view.as_ref().expect("view built");
         assert_eq!(
             view.anchor_ms,
@@ -4910,14 +5058,83 @@ mod tests {
             "anchored to the newest saved trade, not a clock"
         );
         assert_eq!(view.trades.len(), 2, "the 10-day-old trade is outside 7d");
+        assert_eq!(view.hidden_before, 1, "and the view counts what it hides");
         assert_eq!(view.report.net_points, Decimal::from(5));
 
         paper.report_period = ReportPeriod::All;
-        paper.ensure_report_view();
+        paper.ensure_report_view(utc);
         assert_eq!(
             paper.report_view.as_ref().expect("rebuilt").trades.len(),
             3,
             "All sees everything again"
+        );
+    }
+
+    #[test]
+    fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
+        let utc = TzOffset::new(0);
+        let day = 86_400_000_i64;
+        let mut paper = PaperTrading::new();
+        paper.report = Some(LoadedHistory {
+            rows: vec![
+                ("OLDSYM".to_owned(), trade_at(day, 5)),
+                ("NEWSYM".to_owned(), trade_at(60 * day, 7)),
+            ],
+            files: 2,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.report_period = ReportPeriod::Month;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("view built");
+        assert_eq!(
+            view.trades.len(),
+            1,
+            "30d back from the newest trade hides the older market entirely"
+        );
+        assert_eq!(view.hidden_before, 1, "the support line can say so");
+
+        // Narrowing the combo re-anchors on the old market's own newest
+        // trade — the "my trades came back" behaviour, now spelled out.
+        paper.report = Some(LoadedHistory {
+            rows: vec![("OLDSYM".to_owned(), trade_at(day, 5))],
+            files: 1,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.report_view = None;
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("rebuilt");
+        assert_eq!(view.trades.len(), 1, "its own scope shows the old market");
+        assert_eq!(view.hidden_before, 0);
+    }
+
+    #[test]
+    fn a_close_refreshes_an_open_report_by_itself() {
+        let utc = TzOffset::new(0);
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("FRESH");
+        paper.report_open = true;
+        paper.reload_report();
+        paper.ensure_report_view(utc);
+        assert!(
+            paper.report_view.as_ref().expect("view").trades.is_empty(),
+            "nothing saved yet"
+        );
+
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+
+        paper.ensure_report_view(utc);
+        let view = paper.report_view.as_ref().expect("refreshed");
+        assert_eq!(
+            view.trades.len(),
+            1,
+            "the close re-read the journal without a manual refresh"
         );
     }
 
