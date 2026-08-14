@@ -623,6 +623,15 @@ pub struct PaperTrading {
     dir: PathBuf,
     /// Current session file, named after the first closed trade.
     journal_path: Option<PathBuf>,
+    /// Every file this host has journaled to. The ledger excludes them
+    /// all — their trades are still in the simulator, which keeps closed
+    /// trades across every retarget; excluding only the current file
+    /// double-counted after a symbol or source switch.
+    session_journal_paths: Vec<PathBuf>,
+    /// The session source each of the simulator's closed trades closed
+    /// under, index-aligned with `sim.closed_trades()` — the export must
+    /// not stamp a pre-switch trade with the current source.
+    session_trade_sources: Vec<history::SessionSource>,
     /// A failed journal write warns once, not once per trade.
     journal_warned: bool,
     /// Where this session's trades come from — the tab's feed sets it,
@@ -727,6 +736,8 @@ impl PaperTrading {
             symbol: String::new(),
             dir,
             journal_path: None,
+            session_journal_paths: Vec::new(),
+            session_trade_sources: Vec::new(),
             journal_warned: false,
             session_source: history::SessionSource::Live,
             cmd_trading: CmdTradingSettings::default(),
@@ -801,6 +812,12 @@ impl PaperTrading {
         self.history_cache = None;
         self.report = None;
         self.report_view = None;
+        if self.report_open {
+            // An open report must answer for the new folder now — cleared
+            // caches alone left it claiming "no saved trades" until a
+            // manual refresh.
+            self.reload_report();
+        }
         self.show_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
     }
 
@@ -923,19 +940,25 @@ impl PaperTrading {
         let had_position = self.sim.position().is_some();
         let had_orders = !self.sim.orders().is_empty() || !self.sim.queued().is_empty();
         let events = self.sim.reset();
+        let mut all_saved = true;
         for event in &events {
             if let SimEvent::Closed(trade) = event {
-                self.journal(&trade.clone());
+                all_saved &= self.journal(&trade.clone());
             }
         }
+        // A reset ends the tape session, so it ends the file session too:
+        // the next close opens a fresh file (same venue stamp lands as
+        // `.rerun-N`). Without this, replaying the same recording again
+        // without leaving replay appended run 2 into run 1's file.
+        self.journal_path = None;
         self.armed = None;
         self.drag = PaperDrag::None;
         self.drag_price = None;
-        if had_position {
+        if had_position && all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),
             );
-        } else if had_orders {
+        } else if had_orders && all_saved {
             self.show_toast(
                 "SIM orders cancelled - the timeline was rebuilt under them.".to_owned(),
             );
@@ -1346,7 +1369,19 @@ impl PaperTrading {
             return;
         }
         let color = side_color(preview.side);
-        let (start, end, label) = cmd_preview_layout(ctx.chart_rect, preview.y);
+        // Lay out against the band the input hit-tests (its right edge is
+        // the lane divider when the live tape lane is up), never the full
+        // chart rect — a label painted right of the divider would be a
+        // click target the press could not find (the overlay-controls
+        // rule).
+        let band = egui::Rect::from_min_max(
+            ctx.chart_rect.min,
+            egui::pos2(
+                ctx.tag_right.min(ctx.chart_rect.right()),
+                ctx.chart_rect.max.y,
+            ),
+        );
+        let (start, end, label) = cmd_preview_layout(band, preview.y);
         let width = if preview.hover {
             LINE_HOVER_WIDTH_PX
         } else {
@@ -2668,11 +2703,7 @@ impl PaperTrading {
             ReportScope::Symbol => Some(self.symbol.as_str()),
             ReportScope::All => None,
         };
-        self.history_cache = Some(load_history(
-            &self.dir,
-            symbol,
-            self.journal_path.as_deref(),
-        ));
+        self.history_cache = Some(load_history(&self.dir, symbol, &self.session_journal_paths));
     }
 
     /// The Trades dock tab: the ledger of closed simulated trades — the
@@ -2929,7 +2960,7 @@ impl PaperTrading {
     }
 
     fn reload_report(&mut self) {
-        self.report = Some(load_history(&self.dir, self.report_symbol.as_deref(), None));
+        self.report = Some(load_history(&self.dir, self.report_symbol.as_deref(), &[]));
         self.report_view = None;
         self.report_symbols = list_symbol_folders(&self.dir);
     }
@@ -3031,14 +3062,24 @@ impl PaperTrading {
                             .as_deref()
                             .unwrap_or("any symbol")
                             .to_owned();
-                        ui.label(
-                            egui::RichText::new(format!(
+                        let hidden_by_source = self
+                            .report_view
+                            .as_ref()
+                            .map_or(0, |view| view.hidden_by_source);
+                        let text = if hidden_by_source > 0 {
+                            // The trades exist; the one control that would
+                            // reveal them must be named, not implied.
+                            format!(
+                                "{scope} has {hidden_by_source} trade(s) behind the Source \
+                                 filter. Try Source \"Both\".",
+                            )
+                        } else {
+                            format!(
                                 "{scope} has no trades in {}. Try \"All\", or another symbol.",
                                 self.report_period.phrase(),
-                            ))
-                            .color(theme::TEXT_SUPPORT)
-                            .small(),
-                        );
+                            )
+                        };
+                        ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
                         let default_symbol = (!self.symbol.is_empty()).then(|| self.symbol.clone());
                         if (self.report_period != ReportPeriod::All
                             || self.report_symbol != default_symbol)
@@ -3049,6 +3090,7 @@ impl PaperTrading {
                         {
                             self.report_symbol = default_symbol;
                             self.report_period = ReportPeriod::All;
+                            self.report_source = SourceFilter::Real;
                             reload = true;
                         }
                     }
@@ -3212,7 +3254,7 @@ impl PaperTrading {
                     let mut text = format!(
                         "{} up to {} (newest saved trade, not the wall clock)",
                         view.period.phrase(),
-                        fmt_utc_date(anchor),
+                        fmt_offset_date(anchor, view.tz),
                     );
                     if view.hidden_before > 0 {
                         // "Where did my old trades go" gets a literal
@@ -3230,6 +3272,11 @@ impl PaperTrading {
                     }
                     text
                 }
+                None if view.hidden_by_source > 0 => format!(
+                    "no saved trades in this scope - {} trade(s) sit behind the Source \
+                     filter (try Both)",
+                    view.hidden_by_source,
+                ),
                 None => "no saved trades in this scope".to_owned(),
             };
             ui.label(egui::RichText::new(text).color(theme::TEXT_SUPPORT).small());
@@ -3345,11 +3392,24 @@ impl PaperTrading {
         if let Some(cache) = &self.history_cache {
             rows.extend(cache.rows.iter().cloned());
         }
-        rows.extend(self.sim.closed_trades().iter().map(|trade| HistoryRow {
-            symbol: self.symbol.clone(),
-            source: Some(self.session_source),
-            trade: trade.clone(),
-        }));
+        rows.extend(
+            self.sim
+                .closed_trades()
+                .iter()
+                .enumerate()
+                .map(|(index, trade)| HistoryRow {
+                    symbol: self.symbol.clone(),
+                    // The source the trade actually closed under — the
+                    // session may have flipped live/replay since.
+                    source: Some(
+                        self.session_trade_sources
+                            .get(index)
+                            .copied()
+                            .unwrap_or(self.session_source),
+                    ),
+                    trade: trade.clone(),
+                }),
+        );
         rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
         if rows.is_empty() {
             self.show_toast("SIM: nothing to export yet - close a trade first.".to_owned());
@@ -3435,7 +3495,7 @@ impl PaperTrading {
                     }
                 }
                 SimEvent::Closed(trade) => {
-                    self.journal(&trade);
+                    let saved = self.journal(&trade);
                     if self.report_open {
                         // The report reads from disk and the close just
                         // wrote to disk; re-read now or the window shows
@@ -3443,13 +3503,17 @@ impl PaperTrading {
                         // trade is missing" report.
                         self.reload_report();
                     }
-                    self.show_toast(format!(
-                        "SIM closed: {} {} → {} pts ({})",
-                        position_word(trade.side),
-                        fmt_decimal(trade.quantity),
-                        fmt_signed_points(trade.pnl_points),
-                        trade.exit_reason.as_str().replace('_', " "),
-                    ));
+                    // The toast slot holds one message: a healthy "closed"
+                    // must not paint over the could-not-save warning.
+                    if saved {
+                        self.show_toast(format!(
+                            "SIM closed: {} {} → {} pts ({})",
+                            position_word(trade.side),
+                            fmt_decimal(trade.quantity),
+                            fmt_signed_points(trade.pnl_points),
+                            trade.exit_reason.as_str().replace('_', " "),
+                        ));
+                    }
                 }
                 _ => {}
             }
@@ -3457,16 +3521,23 @@ impl PaperTrading {
     }
 
     /// Append one closed trade to the session's history file, creating the
-    /// file (with its header) on the first close. A failed write warns once
-    /// and never crashes a trading session.
-    fn journal(&mut self, trade: &ClosedTrade) {
+    /// file (with its header) on the first close. Also records the source
+    /// the trade closed under, for the export. Returns whether the write
+    /// landed — a failed write warns once and never crashes a trading
+    /// session, but its caller must not paint a healthy toast over the
+    /// warning.
+    fn journal(&mut self, trade: &ClosedTrade) -> bool {
+        self.session_trade_sources.push(self.session_source);
         if self.symbol.is_empty() {
-            return;
+            return false;
         }
         let folder = self.dir.join(sanitize_symbol(&self.symbol));
         let path = self
             .journal_path
             .get_or_insert_with(|| free_session_path(&folder, &utc_compact(trade.closed_ms)));
+        if self.session_journal_paths.last() != Some(path) {
+            self.session_journal_paths.push(path.clone());
+        }
         let mut text = String::new();
         if !path.exists() {
             text.push_str(&history::write_header(&self.symbol, self.session_source));
@@ -3480,7 +3551,7 @@ impl PaperTrading {
                 .open(&*path)
                 .and_then(|mut file| file.write_all(text.as_bytes()))
         });
-        if let Err(error) = written
+        if let Err(error) = &written
             && !self.journal_warned
         {
             self.journal_warned = true;
@@ -3497,6 +3568,7 @@ impl PaperTrading {
                 "SIM: could not save the trade history - see the log for the path.".to_owned(),
             );
         }
+        written.is_ok()
     }
 
     fn parse_quantity(&mut self) -> Option<Decimal> {
@@ -4172,10 +4244,10 @@ fn draw_exit_reason_grid(ui: &mut egui::Ui, report: &PerformanceReport) {
 }
 
 /// Read every history file under `dir` (one symbol's folder, or all of
-/// them), remembering each row's symbol and skipping `exclude` (the live
-/// session's own file — its trades are already in the simulator). Missing
-/// folders are simply empty, not an error.
-fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> LoadedHistory {
+/// them), remembering each row's symbol and skipping every path in
+/// `exclude` (the live session's own files — their trades are already in
+/// the simulator). Missing folders are simply empty, not an error.
+fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> LoadedHistory {
     let mut folders = Vec::new();
     match symbol {
         Some(symbol) => folders.push(dir.join(sanitize_symbol(symbol))),
@@ -4213,7 +4285,7 @@ fn load_history(dir: &Path, symbol: Option<&str>, exclude: Option<&Path>) -> Loa
             .collect();
         paths.sort();
         for path in paths {
-            if exclude.is_some_and(|exclude| exclude == path) {
+            if exclude.contains(&path) {
                 continue;
             }
             files += 1;
@@ -5004,8 +5076,17 @@ fn utc_compact(timestamp_ms: i64) -> String {
 }
 
 /// `YYYY-MM-DD` in UTC — the report's anchor date.
+#[cfg(test)]
 fn fmt_utc_date(timestamp_ms: i64) -> String {
     let (year, month, day, ..) = civil_utc(timestamp_ms);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// `YYYY-MM-DD` in the display timezone — the anchor date on the same
+/// calendar every other trade surface shows; a UTC date here named a day
+/// no displayed trade carried for anyone west of Greenwich after 21:00.
+fn fmt_offset_date(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (year, month, day, ..) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
     format!("{year:04}-{month:02}-{day:02}")
 }
 
@@ -5281,7 +5362,7 @@ mod tests {
         assert_eq!(parsed.trades[0].pnl_points, Decimal::from(5));
         assert_eq!(parsed.trades[1].pnl_points, Decimal::from(2));
 
-        let history = load_history(&dir, Some("TESTUSDT"), None);
+        let history = load_history(&dir, Some("TESTUSDT"), &[]);
         assert_eq!(history.rows.len(), 2);
         assert_eq!(report_from_history(&history).net_points, Decimal::from(7));
         assert_eq!(history.files, 1);
@@ -5337,7 +5418,7 @@ mod tests {
             first_bytes,
             "the earlier session's file is byte-for-byte untouched"
         );
-        let history = load_history(&dir, Some("ACCUM"), None);
+        let history = load_history(&dir, Some("ACCUM"), &[]);
         assert_eq!(history.files, 2);
         assert_eq!(history.rows.len(), 2, "both sessions' trades load");
 
@@ -5366,7 +5447,7 @@ mod tests {
             "an armed click dies with the timeline"
         );
         assert!(paper.toast.is_some(), "the flatten is never silent");
-        let history = load_history(&dir, Some("RESETX"), None);
+        let history = load_history(&dir, Some("RESETX"), &[]);
         assert_eq!(history.rows.len(), 1);
         assert_eq!(
             report_from_history(&history).trades,
@@ -5515,7 +5596,7 @@ mod tests {
             "the second run opened its own file instead of appending duplicates"
         );
         assert!(names[1].contains(".rerun-1."), "{names:?}");
-        let history = load_history(&dir, Some("RERUN"), None);
+        let history = load_history(&dir, Some("RERUN"), &[]);
         assert_eq!(history.rows.len(), 2);
         assert!(
             history
@@ -5525,6 +5606,78 @@ mod tests {
             "both files carry the replay source"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_ledger_never_lists_this_sessions_trades_twice_after_a_retarget() {
+        // Hunt-confirmed: close live, flip to replay (what a same-symbol
+        // replay open does), reload the ledger — the live session's file
+        // must stay excluded, or every trade counts twice in the totals
+        // and the export.
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("DUPX");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+        assert_eq!(paper.sim.closed_trades().len(), 1);
+
+        paper.set_session_source(history::SessionSource::Replay);
+        paper.on_timeline_reset();
+        paper.reload_ledger();
+        let cache = paper.history_cache.as_ref().expect("loaded");
+        assert_eq!(
+            cache.rows.len(),
+            0,
+            "the session's own files stay excluded across the retarget"
+        );
+    }
+
+    #[test]
+    fn an_in_session_rerun_opens_its_own_file() {
+        // Seek-to-start / reopen-same-recording is a timeline reset with
+        // the source unchanged: run 2 must not append into run 1's file.
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("RESEEK");
+        paper.set_session_source(history::SessionSource::Replay);
+        for _ in 0..2 {
+            paper.seed(&print(0, 100));
+            paper.market(Side::Buy);
+            paper.on_trade(&print(1, 100));
+            let events = paper.sim.apply(Command::ClosePosition);
+            paper.handle_events(events);
+            paper.on_trade(&print(2, 103));
+            paper.on_timeline_reset();
+        }
+        let folder = paper.dir.join("RESEEK");
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 2, "each run has its own file: {names:?}");
+        assert!(names[1].contains(".rerun-1."), "{names:?}");
+    }
+
+    #[test]
+    fn export_rows_remember_the_source_each_trade_closed_under() {
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("SRCX");
+        paper.seed(&print(0, 100));
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.sim.apply(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+        paper.set_session_source(history::SessionSource::Replay);
+        assert_eq!(
+            paper.session_trade_sources,
+            vec![history::SessionSource::Live],
+            "a trade keeps the source it closed under, not the current one"
+        );
     }
 
     #[test]
@@ -5803,11 +5956,11 @@ mod tests {
             vec!["AAAUSDT".to_owned(), "BBBUSDT".to_owned()],
             "the combo lists every traded asset"
         );
-        let all = load_history(&dir, None, None);
+        let all = load_history(&dir, None, &[]);
         assert_eq!(all.rows.len(), 2, "All symbols reads both journals");
         let symbols: Vec<&str> = all.rows.iter().map(|row| row.symbol.as_str()).collect();
         assert_eq!(symbols, vec!["AAAUSDT", "BBBUSDT"]);
-        let one = load_history(&dir, Some("BBBUSDT"), None);
+        let one = load_history(&dir, Some("BBBUSDT"), &[]);
         assert_eq!(one.rows.len(), 1, "a symbol scope reads only its folder");
         assert_eq!(one.rows[0].symbol, "BBBUSDT");
 

@@ -16551,6 +16551,77 @@ plot(close)
         );
     }
 
+    /// A position carried into a replay switch belongs to the session
+    /// that is ending: its forced flatten must journal under that
+    /// session's source, not the one the switch is about to install.
+    #[test]
+    fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = history_app(&ctx);
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-switch-source-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1000,
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+        {
+            let paper = &mut app.active_tab_mut().paper;
+            paper.redirect_history_dir(dir.clone());
+            paper.set_symbol("SWITCHSRC");
+            paper.seed(&print(0, 100));
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(1, 100));
+            assert!(
+                paper.position_summary().is_some(),
+                "a live position is open going into the switch"
+            );
+        }
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        with_config(&mut app, |tab, config| {
+            tab.open_replay(
+                config,
+                crate::feed::ReplayRequest {
+                    session: std::sync::Arc::new(session),
+                    options: crate::feed::ReplayOptions {
+                        autoplay: false,
+                        ..Default::default()
+                    },
+                },
+            )
+        });
+        let folder = dir.join("SWITCHSRC");
+        let files: Vec<_> = std::fs::read_dir(&folder)
+            .expect("the forced flatten journaled")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 1, "one session file for the flattened trade");
+        let parsed = quantick_sim::history::parse(
+            &std::fs::read_to_string(files[0].path()).expect("readable"),
+        )
+        .expect("valid history");
+        assert_eq!(
+            parsed.source,
+            Some(quantick_sim::history::SessionSource::Live),
+            "the live session's trade files as live, not under the replay"
+        );
+        assert_eq!(parsed.trades.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// (h) A recording is a fixed span of prints with no venue behind it.
     #[test]
     fn a_replaying_tab_never_asks_for_venue_history() {
