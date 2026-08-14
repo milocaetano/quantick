@@ -55,9 +55,15 @@ pub const MAX_SLICES: usize = 16;
 ///
 /// Hand-rolled because `i64::div_ceil` is still unstable, and the alternative
 /// — floating point — would make the plan depend on rounding.
+///
+/// Saturating rather than wrapping: `a + b - 1` overflows for a span near
+/// `i64::MAX`, and this is a public entry point's arithmetic. A saturated sum
+/// yields one enormous window, which is the same answer the caller would get
+/// from a span that large anyway — where a panic would be a crash on input
+/// the type permits.
 fn div_ceil(a: i64, b: i64) -> i64 {
     debug_assert!(a > 0 && b > 0, "callers guard the degenerate cases");
-    ((a + b - 1) / b).max(1)
+    (a.saturating_add(b - 1) / b).max(1)
 }
 
 /// Cut `span_ms` ending at `now_ms` into windows, newest first.
@@ -214,6 +220,37 @@ mod tests {
         assert_eq!(plan.last().expect("non-empty").from_ms, now - span);
         for pair in plan.windows(2) {
             assert_eq!(pair[0].from_ms, pair[1].to_ms + 1);
+        }
+    }
+
+    /// The cap is what bounds the per-slice refold work, so it holds for
+    /// every input the type permits — including the ones that overflow a
+    /// naive `ceil`, which must saturate rather than panic.
+    #[test]
+    fn no_input_the_type_permits_exceeds_the_cap_or_panics() {
+        let cases = [
+            (0_i64, 90 * DAY, 1_i64),
+            (i64::MAX, i64::MAX, 1),
+            (i64::MAX, i64::MAX, MINUTE),
+            (i64::MIN, i64::MAX, DAY),
+            (0, i64::MAX, i64::MAX - 1),
+            (0, 90 * DAY, MINUTE),
+        ];
+        for (now, span, slice) in cases {
+            let plan = plan(now, span, Some(slice));
+            assert!(
+                !plan.is_empty() && plan.len() <= MAX_SLICES,
+                "now={now} span={span} slice={slice} gave {} windows",
+                plan.len()
+            );
+            assert_eq!(
+                plan.iter().filter(|window| window.last).count(),
+                1,
+                "exactly one reply must close the request"
+            );
+            for window in &plan {
+                assert!(window.from_ms <= window.to_ms);
+            }
         }
     }
 

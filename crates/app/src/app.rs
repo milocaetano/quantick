@@ -15778,6 +15778,24 @@ plot(close)
             "the default asks for slices"
         );
 
+        // A trader reading back through history rather than pinned to live:
+        // the only state in which a prepend can move the chart under them. A
+        // following pane is immune by construction — its right edge *is* the
+        // newest bar — so this is where the guarantee has to be proven.
+        {
+            let pane = app.active_tab_mut().pane_mut(PaneSide::Time);
+            let total = pane.slots();
+            pane.viewport.pan_pixels(200.0, total);
+            assert!(
+                pane.viewport.right_edge_bar(total) < total.saturating_sub(1) as f32,
+                "the pane must really be panned back or this proves nothing"
+            );
+        }
+        let anchored_bar = {
+            let pane = app.active_tab().pane(PaneSide::Time);
+            pane.viewport.right_edge_bar(pane.slots())
+        };
+
         // Newest week first, then older ones behind it: what a provider
         // walking `ohlcv_plan::plan` sends.
         let slices = [
@@ -15808,6 +15826,16 @@ plot(close)
             // It paints mid-run: a partial prefix is a chart, not a stall.
             let texts = painted_text(&run_frame(&mut app, &ctx));
             assert!(has_price_axis(&texts), "the pane draws mid-run: {texts:?}");
+            // And the bar the trader was looking at is still under the same
+            // edge: the right edge moved by exactly the bars that appeared to
+            // its left, so nothing shifted on screen.
+            let pane = app.active_tab().pane(PaneSide::Time);
+            let expected = anchored_bar + *expected_seam as f32;
+            assert!(
+                (pane.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
+                "the viewport jumped: expected {expected}, got {}",
+                pane.viewport.right_edge_bar(pane.slots())
+            );
         }
 
         let (bars, expected_seam) = &slices[2];
