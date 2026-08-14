@@ -337,9 +337,21 @@ fn anchored_favorites(available: f32, favorite_count: usize) -> usize {
     anchored
 }
 
-/// Long-axis extent the band itself gets, chevrons excluded.
+/// Long-axis extent the band itself gets, chevrons excluded — snapped down
+/// to a whole number of buttons.
+///
+/// A toolbar button is atomic: half an icon is not readable, not clickable
+/// with confidence, and reads as a rendering fault rather than as "there is
+/// more below". Sizing the viewport to whole slots makes every offset a
+/// chevron can reach a multiple of one slot too, because the surplus
+/// `content - viewport` then divides exactly. The leftover px are spent by
+/// the flexible gap between the clusters, where nothing is drawn.
 fn band_viewport(available: f32, anchored_favorites: usize) -> f32 {
-    (available - fixed_length(anchored_favorites) - 2.0 * BAND_ARROW_BLOCK_PX).max(0.0)
+    let raw = (available - fixed_length(anchored_favorites) - 2.0 * BAND_ARROW_BLOCK_PX).max(0.0);
+    if raw < TOOLRAIL_ICON.hit {
+        return raw;
+    }
+    run_length(band_visible_items(raw))
 }
 
 /// How far the band can scroll: zero when everything already fits.
@@ -1293,24 +1305,42 @@ impl ToolRail {
         } else {
             egui::Layout::left_to_right(egui::Align::Center)
         };
-        let output = area.show(ui, |ui| {
-            ui.with_layout(inner, |ui| {
-                ui.spacing_mut().item_spacing =
-                    egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
-                let favorites = self.favorites.len();
-                self.draw_favorite_buttons(ui, drawings, anchored..favorites);
-                for slot in slots {
-                    match slot {
-                        RailSlot::Single(tool) => {
-                            self.draw_button(ui, Tool::Drawing(*tool), drawings);
+        // The band is handed its extent rather than left to ask for one:
+        // told only a maximum, a scroll area still claims whatever the
+        // parent has left, and the far cluster needs that room. Its bar is
+        // also denied a lane across the rail's short axis, because a hidden
+        // bar still books one and 44 px has none to spare.
+        let band_size = if vertical {
+            egui::vec2(ui.available_width(), viewport)
+        } else {
+            egui::vec2(viewport, ui.available_height())
+        };
+        let output = ui
+            .allocate_ui_with_layout(band_size, inner, |ui| {
+                let scroll = &mut ui.spacing_mut().scroll;
+                scroll.floating = true;
+                scroll.bar_width = 0.0;
+                scroll.floating_allocated_width = 0.0;
+                area.show(ui, |ui| {
+                    ui.with_layout(inner, |ui| {
+                        ui.spacing_mut().item_spacing =
+                            egui::vec2(TOOLBOX_ITEM_GAP_PX, TOOLBOX_ITEM_GAP_PX);
+                        let favorites = self.favorites.len();
+                        self.draw_favorite_buttons(ui, drawings, anchored..favorites);
+                        for slot in slots {
+                            match slot {
+                                RailSlot::Single(tool) => {
+                                    self.draw_button(ui, Tool::Drawing(*tool), drawings);
+                                }
+                                RailSlot::Family { family, members } => {
+                                    self.draw_family_slot(ui, *family, members, drawings);
+                                }
+                            }
                         }
-                        RailSlot::Family { family, members } => {
-                            self.draw_family_slot(ui, *family, members, drawings);
-                        }
-                    }
-                }
-            });
-        });
+                    });
+                })
+            })
+            .inner;
         #[cfg(test)]
         {
             self.band_rect = Some(output.inner_rect);
@@ -2740,6 +2770,34 @@ mod tests {
         );
     }
 
+    /// The band never shows half a button. The viewport is whole slots, so
+    /// the travel divides into whole slots too and every position a chevron
+    /// can reach lands on a button boundary — no star badge floating beside
+    /// a sliced icon, which is what the first capture of the spill state
+    /// showed.
+    #[test]
+    fn the_band_never_shows_a_sliced_button() {
+        let slot = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+        for extent in [489.0_f32, 500.0, 517.3, 560.0, 599.9, 632.9] {
+            for pins in 0..8 {
+                let anchored = anchored_favorites(extent, pins);
+                let viewport = band_viewport(extent, anchored);
+                let items = band_visible_items(viewport);
+                assert_eq!(
+                    viewport,
+                    run_length(items),
+                    "viewport is whole buttons at {extent} px with {pins} pins"
+                );
+                let max = band_max_offset(viewport, items + 5);
+                let steps = max / slot;
+                assert!(
+                    (steps - steps.round()).abs() < 1e-3,
+                    "travel divides into whole buttons at {extent} px with {pins} pins"
+                );
+            }
+        }
+    }
+
     /// A chevron click leaves one button of overlap, so the trader keeps a
     /// landmark across the jump instead of a fresh screen of icons.
     #[test]
@@ -2916,6 +2974,30 @@ mod tests {
             let band = rail.band_rect.expect("the band renders in every dock");
             let (leading, _) = rail.band_leading_arrow.expect("leading chevron");
             let (trailing, _) = rail.band_trailing_arrow.expect("trailing chevron");
+            // The band is a window onto the tools, not a claim on the rail:
+            // it must never eat the far cluster's room. Measured along the
+            // long axis only — the trailing cluster's short-axis placement
+            // on a horizontal dock is wrong on `main` too, in every stage,
+            // and fixing that is not this change's job.
+            let objects = rail
+                .objects_rect
+                .unwrap_or_else(|| panic!("{dock:?} kept its Objects button"));
+            let rail_rect = rail.rail_rect.expect("rail rendered");
+            assert!(
+                rail.magnet_rect.is_some() && rail.lock_all_rect.is_some(),
+                "{dock:?} kept its trailing cluster"
+            );
+            if dock.is_vertical() {
+                assert!(
+                    objects.top() > trailing.bottom() && objects.bottom() <= rail_rect.bottom(),
+                    "{dock:?} keeps Objects past the band, inside the rail"
+                );
+            } else {
+                assert!(
+                    objects.left() > trailing.right() && objects.right() <= rail_rect.right(),
+                    "{dock:?} keeps Objects past the band, inside the rail"
+                );
+            }
             if dock.is_vertical() {
                 assert!(leading.bottom() <= band.top() + 1.0, "{dock:?} up chevron");
                 assert!(
