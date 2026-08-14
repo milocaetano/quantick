@@ -501,34 +501,31 @@ impl FeedConfig {
 }
 
 /// Paper-trading options (`[paper]` in the TOML).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default)]
 pub struct PaperSettings {
     /// Where the simulator saves closed trades — the per-symbol journals,
-    /// and the exports beside them. Relative paths resolve against
-    /// quantick's working directory; the `QUANTICK_TRADES_DIR` environment
-    /// variable still overrides it for one run (an env var is an explicit
-    /// request, like every autostart hook). The same folder is the
-    /// integration port for other producers: anything that writes the
+    /// and the exports beside them. Absent, the journal lives in the
+    /// user's documents folder (`Documents/Quantick/paper-trades`), the
+    /// one home that does not move with the working directory; set, it
+    /// pins the journal somewhere else, relative paths resolving against
+    /// quantick's working directory. The `QUANTICK_TRADES_DIR` environment
+    /// variable still overrides either for one run (an env var is an
+    /// explicit request, like every autostart hook). The same folder is
+    /// the integration port for other producers: anything that writes the
     /// `quantick-trades` format here — a bot runner, another tool — shows
     /// up in the Trades ledger, the report and the export.
-    pub trades_dir: String,
-}
-
-impl Default for PaperSettings {
-    fn default() -> Self {
-        Self {
-            trades_dir: "paper-trades".to_string(),
-        }
-    }
+    pub trades_dir: Option<String>,
 }
 
 impl PaperSettings {
     fn validate(&self) -> Result<(), String> {
-        if self.trades_dir.trim().is_empty() {
+        if let Some(dir) = &self.trades_dir
+            && dir.trim().is_empty()
+        {
             return Err(
-                "paper.trades_dir must not be empty - drop the key to use the default \
-                 `paper-trades`"
+                "paper.trades_dir must not be empty - drop the key to use the \
+                 documents-folder default"
                     .to_string(),
             );
         }

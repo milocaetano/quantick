@@ -94,10 +94,30 @@ pub(crate) fn load(path: &Path) -> Option<String> {
 
 /// Remember the picked folder.
 pub(crate) fn save(path: &Path, trades_dir: &str) {
-    let file = PaperStateFile {
-        version: FORMAT_VERSION,
-        trades_dir: Some(trades_dir.to_owned()),
-    };
+    write_file(
+        path,
+        &PaperStateFile {
+            version: FORMAT_VERSION,
+            trades_dir: Some(trades_dir.to_owned()),
+        },
+    );
+}
+
+/// Forget the picked folder — the consolidation's closing step: once the
+/// legacy pick's files are copied into the documents home, the resolver's
+/// own default *is* the home. An explicit "no choice" is written rather
+/// than deleting the file, so the store never looks like it was lost.
+pub(crate) fn clear(path: &Path) {
+    write_file(
+        path,
+        &PaperStateFile {
+            version: FORMAT_VERSION,
+            trades_dir: None,
+        },
+    );
+}
+
+fn write_file(path: &Path, file: &PaperStateFile) {
     let Ok(text) = toml::to_string_pretty(&file) else {
         tracing::warn!(
             target: "quantick::app",
@@ -133,6 +153,16 @@ mod tests {
         assert_eq!(load(&path), None, "a missing file holds no choice");
         save(&path, "D:/trading/journals");
         assert_eq!(load(&path), Some("D:/trading/journals".to_owned()));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn clearing_forgets_the_choice_without_losing_the_file() {
+        let path = scratch_path();
+        save(&path, "D:/trading/journals");
+        clear(&path);
+        assert_eq!(load(&path), None, "a cleared choice is no choice");
+        assert!(path.exists(), "clearing writes an explicit no-choice");
         std::fs::remove_file(&path).ok();
     }
 

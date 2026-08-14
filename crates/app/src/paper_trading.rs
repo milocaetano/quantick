@@ -28,9 +28,6 @@ use crate::chart::PriceScale;
 use crate::theme;
 use crate::timezone::TzOffset;
 
-/// Overrides the history folder (cwd-relative otherwise, like every
-/// quantick path).
-const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 /// `=1` runs a fixed sequence of ordinary sim commands driven by print
 /// count, so a screenshot or demo run shows every trading surface without
 /// a click — the autostart family's member for paper trading. The trades
@@ -38,8 +35,6 @@ const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 /// `QUANTICK_TRADES_DIR` somewhere scratch to keep a demo out of your
 /// journal.
 const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
-/// Default history folder, relative to the working directory.
-const TRADES_DIR: &str = "paper-trades";
 /// How long a paper toast stays on screen.
 const TOAST_MS: u64 = 4_000;
 /// Grab distance for order lines — the drawings' select radius, so the two
@@ -382,6 +377,10 @@ pub struct PaperTrading {
     hovered_order: Option<OrderId>,
     /// The in-flight export, if any; resolved by `draw_toast`'s poll.
     export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
+    /// The in-flight history-folder import, if any; resolved by
+    /// `draw_toast`'s poll. Imports copy — the picked folder keeps its
+    /// files.
+    import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
     toast: Option<Toast>,
     report_open: bool,
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
@@ -420,18 +419,23 @@ impl PaperTrading {
     /// through [`Self::with_trades_dir`] with the configured folder.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_trades_dir(Self::resolve_trades_dir(TRADES_DIR, None))
+        if cfg!(test) {
+            // Tests must never journal into a real documents folder — the
+            // same scratch discipline `paper_state::default_path` applies.
+            return Self::with_trades_dir(test_scratch_dir());
+        }
+        Self::with_trades_dir(Self::resolve_trades_dir(None, None))
     }
 
     /// The journal folder for this run: the environment override wins (an
     /// env var is an explicit request for one run, like every autostart
     /// hook), then `stored` — the folder the user last picked with the
-    /// panel's button — then `configured`, the `[paper] trades_dir` key,
-    /// defaulting to `paper-trades`.
+    /// panel's button — then `configured`, the `[paper] trades_dir` key
+    /// when the config carries one, and finally the documents home
+    /// ([`crate::paper_home::default_trades_dir`]).
     #[must_use]
-    pub fn resolve_trades_dir(configured: &str, stored: Option<&str>) -> PathBuf {
-        std::env::var_os(TRADES_DIR_ENV)
-            .map_or_else(|| chosen_trades_dir(configured, stored), PathBuf::from)
+    pub fn resolve_trades_dir(configured: Option<&str>, stored: Option<&str>) -> PathBuf {
+        crate::paper_home::resolve(configured, stored)
     }
 
     /// A host journaling to `dir`, already resolved from config and
@@ -453,6 +457,7 @@ impl PaperTrading {
             drag_price: None,
             hovered_order: None,
             export_rx: None,
+            import_rx: None,
             toast: None,
             report_open: false,
             report_symbol: None,
@@ -2589,6 +2594,15 @@ impl PaperTrading {
                 {
                     reload = true;
                 }
+                if ui
+                    .small_button(icons::DOWNLOAD_SIMPLE)
+                    .on_hover_text(
+                        "import trades from another folder - copies, the folder keeps its files",
+                    )
+                    .clicked()
+                {
+                    self.start_import();
+                }
             });
         });
         if let Some(view) = &self.report_view {
@@ -2616,6 +2630,7 @@ impl PaperTrading {
     pub fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
         self.hovered_order = None;
         self.poll_export();
+        self.poll_import();
         let Some(toast) = &self.toast else {
             return;
         };
@@ -2638,11 +2653,59 @@ impl PaperTrading {
             });
     }
 
-    fn show_toast(&mut self, message: String) {
+    pub(crate) fn show_toast(&mut self, message: String) {
         self.toast = Some(Toast {
             message,
             shown_at: Instant::now(),
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Import
+    // ------------------------------------------------------------------
+
+    /// Ask for a folder whose trades should be copied into the journal
+    /// home, off the UI thread — the manual way in for legacy folders the
+    /// startup consolidation cannot reach (an old working directory, a
+    /// backup). One dialog at a time.
+    fn start_import(&mut self) {
+        if self.import_rx.is_some() {
+            self.show_toast("SIM: an import is already running.".to_owned());
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let start = self.dir.clone();
+        std::thread::Builder::new()
+            .name("quantick-trades-import-picker".into())
+            .spawn(move || {
+                let mut dialog =
+                    rfd::FileDialog::new().set_title("Import trades from a folder (copies)");
+                if start.is_dir() {
+                    dialog = dialog.set_directory(&start);
+                }
+                let _ = sender.send(dialog.pick_folder());
+            })
+            .expect("spawn trades-import picker thread");
+        self.import_rx = Some(receiver);
+    }
+
+    /// Land the picked folder: copy its history into the journal home and
+    /// re-read, so the report answers with the merged truth.
+    fn poll_import(&mut self) {
+        let Some(receiver) = &self.import_rx else {
+            return;
+        };
+        let Ok(choice) = receiver.try_recv() else {
+            return;
+        };
+        self.import_rx = None;
+        let Some(source) = choice else { return };
+        let summary = crate::paper_home::consolidate_into(&self.dir, &[source]);
+        self.show_toast(crate::paper_home::import_toast(&summary));
+        self.history_cache = None;
+        if self.report_open {
+            self.reload_report();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -4272,7 +4335,7 @@ pub(crate) fn fmt_signed_points(value: Decimal) -> String {
 /// Keep the characters real venue symbols use (`WDO$`, `WIN@N`… stay
 /// recognizable); anything else becomes `_` so a symbol can never traverse
 /// paths.
-fn sanitize_symbol(symbol: &str) -> String {
+pub(crate) fn sanitize_symbol(symbol: &str) -> String {
     let cleaned: String = symbol
         .chars()
         .map(|character| {
@@ -4432,12 +4495,16 @@ fn elide_path(path: &Path) -> String {
     })
 }
 
-/// The trades folder before the environment has its say: the user's own
-/// in-app pick when one is stored, else the configured base.
-fn chosen_trades_dir(configured: &str, stored: Option<&str>) -> PathBuf {
-    stored
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(configured))
+/// A journal folder of its own per host under test — tests must never
+/// touch a real documents folder, nor see one another's files.
+fn test_scratch_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "quantick-paper-host-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// The symbol folders under the history dir, for the report's combo box.
@@ -4538,6 +4605,60 @@ mod tests {
     }
 
     #[test]
+    fn a_second_session_adds_a_file_and_never_touches_the_first() {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-accumulate-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Session one: a round trip closing at t=2s.
+        let mut first = PaperTrading::new();
+        first.dir.clone_from(&dir);
+        first.set_symbol("ACCUM");
+        first.seed(&print(0, 100));
+        first.market(Side::Buy);
+        first.on_trade(&print(1, 100));
+        let events = first.sim.apply(Command::ClosePosition);
+        first.handle_events(events);
+        first.on_trade(&print(2, 103));
+        let folder = dir.join("ACCUM");
+        let first_file = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .next()
+            .expect("one session file")
+            .path();
+        let first_bytes = std::fs::read(&first_file).expect("readable");
+
+        // Session two: a fresh host — a restart — closing hours later.
+        let mut second = PaperTrading::new();
+        second.dir.clone_from(&dir);
+        second.set_symbol("ACCUM");
+        second.seed(&print(10_000, 200));
+        second.market(Side::Sell);
+        second.on_trade(&print(10_001, 200));
+        let events = second.sim.apply(Command::ClosePosition);
+        second.handle_events(events);
+        second.on_trade(&print(10_002, 190));
+
+        let files: Vec<_> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 2, "each session opens its own file");
+        assert_eq!(
+            std::fs::read(&first_file).expect("still readable"),
+            first_bytes,
+            "the earlier session's file is byte-for-byte untouched"
+        );
+        let history = load_history(&dir, Some("ACCUM"), None);
+        assert_eq!(history.files, 2);
+        assert_eq!(history.rows.len(), 2, "both sessions' trades load");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
         let dir =
             std::env::temp_dir().join(format!("quantick-paper-reset-test-{}", std::process::id()));
@@ -4569,19 +4690,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn the_stored_pick_beats_the_configured_base() {
-        assert_eq!(
-            chosen_trades_dir("paper-trades", None),
-            PathBuf::from("paper-trades"),
-            "no pick falls back to the configured base"
-        );
-        assert_eq!(
-            chosen_trades_dir("paper-trades", Some("D:/journals")),
-            PathBuf::from("D:/journals"),
-            "the in-app pick wins over the configured base"
-        );
-    }
+    // The stored-pick-vs-configured-base precedence now lives in
+    // `paper_home::chosen`, tested there beside the documents default.
 
     /// The panel's folder picker retargets everything downstream: the next
     /// close opens a new session file under the new home, and the ledger

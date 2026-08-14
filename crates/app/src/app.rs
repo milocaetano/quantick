@@ -38,7 +38,6 @@ use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
-use crate::paper_trading::PaperTrading;
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
 use crate::statusbar;
@@ -939,9 +938,14 @@ impl QuantickApp {
         feed: FeedHandle,
         workspace: ui_state::Workspace,
     ) -> Self {
-        let trades_dir = {
-            let stored = crate::paper_state::load(&crate::paper_state::default_path());
-            PaperTrading::resolve_trades_dir(&config.paper.trades_dir, stored.as_deref())
+        let (trades_dir, consolidated) = {
+            let state_path = crate::paper_state::default_path();
+            let stored = crate::paper_state::load(&state_path);
+            crate::paper_home::startup_home(
+                config.paper.trades_dir.as_deref(),
+                stored.as_deref(),
+                &state_path,
+            )
         };
         let tab = Tab::new(
             FIRST_TAB_ID,
@@ -1381,6 +1385,15 @@ impl QuantickApp {
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
         app.saved_layer_mask = app.layer_mask();
+        if let Some(summary) = consolidated
+            && summary.imported() > 0
+        {
+            // A silent rescue would look like the app moved files on its
+            // own; the toast says what happened and that copies were made.
+            app.tabs[0]
+                .paper
+                .show_toast(crate::paper_home::import_toast(&summary));
+        }
         app
     }
 
