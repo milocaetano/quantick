@@ -441,7 +441,13 @@ impl SourceFilter {
     /// Whether a row with this recorded source belongs to the filter.
     fn admits(self, source: Option<history::SessionSource>) -> bool {
         match self {
-            Self::Real => source != Some(history::SessionSource::Replay),
+            // Exhaustive on purpose: a future source variant must not fall
+            // into the real track record by default — adding one forces
+            // this match to say where it belongs.
+            Self::Real => match source {
+                None | Some(history::SessionSource::Live) => true,
+                Some(history::SessionSource::Replay) => false,
+            },
             Self::Replay => source == Some(history::SessionSource::Replay),
             Self::All => true,
         }
