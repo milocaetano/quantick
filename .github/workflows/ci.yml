@@ -19,6 +19,19 @@ jobs:
         # touches them, so they get their own step. Hermetic: the suite builds
         # its own throwaway repos and never reads this checkout.
         run: sh .claude/hooks/guardrails_test.sh
+      - name: Python tooling lint
+        # The MetaTrader bridge and the session exporter are Python, so not one
+        # of the cargo steps below can see them. An undefined name reached main
+        # on 2026-08-13 and killed every replay download for a day, because
+        # Python resolves names only when the line runs and that line runs on a
+        # logged-in terminal nobody has in CI. `--select F` is pyflakes' rule
+        # set — the one that catches a name that cannot resolve — and it runs
+        # before the slow steps so this class of bug fails in seconds.
+        run: pipx run ruff check --select F tools/mt5/ bridge/mt5/
+      - name: Exporter tests
+        # Drives export_session.py end to end against a fake terminal: no
+        # MetaTrader, no network, no credentials, nothing to install.
+        run: python3 tools/mt5/test_export_session.py
       - name: Install desktop GUI dependencies
         # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
         run: |

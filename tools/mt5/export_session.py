@@ -399,7 +399,10 @@ def export_tape(
         )
         raise SystemExit(4)
 
-    if flags_are_one_sided(flag_buys, flag_sells):
+    # Held rather than re-asked below: the summary has to report what was
+    # *decided*, and asking the predicate twice is how the two drift apart.
+    one_sided_flags = flags_are_one_sided(flag_buys, flag_sells)
+    if one_sided_flags:
         # The flags are untrustworthy for this whole day. Re-derive every side
         # with the tick rule — uptick bought, downtick sold, unchanged keeps
         # the last direction — the same safe default the live bridge charts
@@ -477,11 +480,14 @@ def export_tape(
         )
         written += 1
 
+    # Zero when the flags were thrown away: on a stamped day the venue answered
+    # for every print and none of those answers survived into the file, so
+    # reporting the count it stamped would credit it for work the tick rule did.
     emit(
         "EXPORT_TAPE_SIDES",
         symbol=symbol,
         side_source=side_source,
-        venue_flagged=0 if one_sided_flags else flagged,
+        venue_flagged=0 if one_sided_flags else flag_buys + flag_sells,
         inferred=inferred_sides,
     )
 

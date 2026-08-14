@@ -44,7 +44,7 @@ Every change must pass all four checks before commit — no exceptions:
 3. `cargo build --workspace`
 4. `cargo test --workspace`
 
-CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on pushes to `main`. After pushing a PR, watch CI with `gh pr checks <n> --watch` and fix any failure before requesting review or merging. A PR with red CI is never merged.
+CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on pushes to `main`, plus two the workspace cannot see: `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, and `python3 tools/mt5/test_export_session.py`. The MetaTrader bridge and the session exporter are Python — cargo never compiles them, and an undefined name there ships silently. Run both locally when you touch either folder. After pushing a PR, watch CI with `gh pr checks <n> --watch` and fix any failure before requesting review or merging. A PR with red CI is never merged.
 
 ## Workflow
 
