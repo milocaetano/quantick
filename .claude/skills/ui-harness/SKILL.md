@@ -51,6 +51,8 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_DRAWING_TOOL=<tool id>` | opens with that tool armed — any id in `DRAWING_TOOLS` (`trend-line`, `ray`, `measure`, `text`, …) |
 | `QUANTICK_DRAWING_MAGNET=1` | the magnet on (anchors snap to the bar's OHLC) |
 | `QUANTICK_TOOL_FAVORITES=<tool ids>` | comma-separated tool ids pinned as rail favorites — the starred section at the tool end of the rail, one button per id in the given order (`parallel-channel,fib-retracement`). Same restore path as the workspace file |
+| `QUANTICK_TOOLBOX_DOCK=<left\|top\|bottom>` | docks the rail against that edge, so the horizontal band and its left/right chevrons are reachable without editing the workspace file |
+| `QUANTICK_TOOLBAR_SCROLL=<px\|end>` | parks the scrolling tool band at that offset (`end` = the far end). Only mid-travel shows both chevrons live at once, and a screenshot cannot click an arrow to get there. Pair with a short `QUANTICK_WINDOW_SIZE` — the band only exists between 489 and 633 px of rail extent (`docs/drawing-toolbar-ux.md` §2.8) — and with `QUANTICK_TOOL_FAVORITES` to reach the state where pins spill into the band |
 | `QUANTICK_TOOLBOX_FLYOUT=<family id>` | that family's flyout open on the first frame (`lines`, `fib`, `marks`, `brush`, `shapes`, `measure`) — the rows with their favorite stars, the surface where pinning and unpinning happen |
 | `QUANTICK_DRAWINGS_DEMO=1` | one of every registered drawing placed on the flow pane once it has bars, the last one selected so the inspector is on screen too |
 | `QUANTICK_DRAWINGS_DEMO=bands` | the same set, plus a level on each indicator pane's own value and a diagonal across it — the band projection under test. Pair with `QUANTICK_INDICATORS_AUTOSTART=1` |
