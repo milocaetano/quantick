@@ -13295,6 +13295,15 @@ plot(close)
             !grouped.iter().any(|text| text.contains("numbers at")),
             "without also promising numbers at some zoom: {grouped:?}"
         );
+        // And the grouping note names the layer that went quiet, so a trader
+        // who switched it on and sees nothing is never left wondering whether
+        // the layer is broken.
+        assert!(
+            grouped
+                .iter()
+                .any(|text| text.contains("bars per candle") && text.contains("footprint paused")),
+            "the note says what the squeeze cost: {grouped:?}"
+        );
     }
 
     /// The squeeze a trader reaching for more history actually makes. Past the

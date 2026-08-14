@@ -4365,20 +4365,31 @@ impl ChartPane {
         // A chart that did that quietly would be misreporting its own
         // resolution — every candle a reader counts, every wick they measure,
         // would be a different thing from what the bar rule says it is. So it
-        // says the factor, in the corner and in the reader's own units.
+        // says the factor, in the corner and in the reader's own units, and
+        // names any layer that went quiet because of it: a trader who switched
+        // the bubbles on and sees none must not be left to wonder whether the
+        // layer is broken.
         //
         // One line above the footprint legend's home, which is the same
-        // corner: grouped, that layer is off and says so there, and the two
-        // statements are read together — this chart is coarse, and here is
-        // what it costs you.
+        // corner, so the two statements are read together — this chart is
+        // coarse, and here is what it costs you.
         if self.viewport.grouped() {
+            let paused = match (
+                self.layer_visible(ChartLayer::Footprint, chrome.style),
+                self.layer_visible(ChartLayer::Bubbles, chrome.style),
+            ) {
+                (true, true) => " · footprint and bubbles paused",
+                (true, false) => " · footprint paused",
+                (false, true) => " · bubbles paused",
+                (false, false) => "",
+            };
             painter.text(
                 egui::pos2(
                     history_rect.left() + GROUPING_NOTE_INSET_X,
                     history_rect.bottom() - GROUPING_NOTE_OFFSET_Y,
                 ),
                 egui::Align2::LEFT_BOTTOM,
-                format!("×{} bars per candle", self.viewport.bars_per_slot()),
+                format!("×{} bars per candle{paused}", self.viewport.bars_per_slot()),
                 egui::FontId::proportional(GROUPING_NOTE_FONT_SIZE),
                 theme::TEXT_FAINT,
             );
