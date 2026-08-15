@@ -20,6 +20,30 @@ pub const MAX_CORNER_RADIUS: f32 = 8.0;
 pub const MIN_BODY_HEIGHT: f32 = 1.0;
 /// Maximum configured minimum body height in pixels.
 pub const MAX_BODY_HEIGHT: f32 = 12.0;
+/// Least gap a trader can ask for between neighbouring candle bodies: none,
+/// for the dense look some flow traders read tick charts in.
+pub const MIN_CANDLE_GAP: f32 = 0.0;
+/// Most gap that is still a chart of candles rather than a row of needles.
+pub const MAX_CANDLE_GAP: f32 = 8.0;
+/// The default gap, in pixels.
+///
+/// A candle body takes [`CandleStyle::body_width_frac`] of its slot, and a
+/// proportion is the right rule while the slot is wide: at the 8 px default
+/// zoom, 0.72 already leaves 2.2 px of air and this floor never binds. It is
+/// the zoomed-out end that a proportion cannot serve — at 3 px per slot,
+/// 28 % of the slot is under a pixel, the gap disappears into antialiasing and
+/// the candles read as one solid band, which is exactly where a trader looking
+/// for more history spends their time.
+///
+/// Two pixels is the smallest gap that survives that: one pixel of true
+/// background between two antialiased edges. It is the same rule TradingView's
+/// Lightweight Charts applies (`optimalCandlestickWidth` keeps at least a
+/// pixel of gap and never lets a body reach its neighbour), stated as a
+/// configurable floor rather than baked into the renderer.
+pub const DEFAULT_CANDLE_GAP: f32 = 2.0;
+/// Narrowest a candle body is ever drawn, in pixels. A bar that vanishes is
+/// worse than a bar touching its neighbour, so the gap yields before the body.
+pub const MIN_BODY_WIDTH_PX: f32 = 1.0;
 
 const DEFAULT_BACKGROUND: [u8; 3] = [19, 23, 34];
 const DEFAULT_GRID: [u8; 3] = [35, 41, 54];
@@ -115,6 +139,7 @@ impl CandlePreset {
                 wick_opacity: 0.90,
                 wick_width: 1.0,
                 body_width_frac: 0.72,
+                gap_px: DEFAULT_CANDLE_GAP,
                 corner_radius: 0.75,
                 min_body_height: 1.5,
                 forming_opacity: 0.62,
@@ -134,6 +159,7 @@ impl CandlePreset {
                 wick_opacity: 0.74,
                 wick_width: 1.0,
                 body_width_frac: 0.70,
+                gap_px: DEFAULT_CANDLE_GAP,
                 corner_radius: 1.25,
                 min_body_height: 1.5,
                 forming_opacity: 0.58,
@@ -153,6 +179,7 @@ impl CandlePreset {
                 wick_opacity: 0.92,
                 wick_width: 1.0,
                 body_width_frac: 0.72,
+                gap_px: DEFAULT_CANDLE_GAP,
                 corner_radius: 0.75,
                 min_body_height: 1.5,
                 forming_opacity: 0.68,
@@ -172,6 +199,7 @@ impl CandlePreset {
                 wick_opacity: 1.0,
                 wick_width: 1.0,
                 body_width_frac: 0.70,
+                gap_px: DEFAULT_CANDLE_GAP,
                 corner_radius: 0.0,
                 min_body_height: 1.0,
                 forming_opacity: 0.50,
@@ -220,6 +248,13 @@ pub struct CandleStyle {
     pub wick_width: f32,
     /// Candle body width as a fraction of its bar slot.
     pub body_width_frac: f32,
+    /// Least air kept between neighbouring candle bodies, in pixels.
+    ///
+    /// The companion of [`body_width_frac`](Self::body_width_frac), and the
+    /// one that speaks for the zoomed-out end of the chart: see
+    /// [`DEFAULT_CANDLE_GAP`] for why a proportion alone cannot keep candles
+    /// apart there.
+    pub gap_px: f32,
     /// Body corner radius in pixels.
     pub corner_radius: f32,
     /// Smallest rendered body height in pixels, including doji candles.
@@ -238,6 +273,38 @@ impl CandleStyle {
             MAX_BODY_WIDTH_FRAC,
             0.70,
         )
+    }
+
+    /// Candle gap sanitized for layout calculations.
+    #[must_use]
+    pub fn clamped_gap_px(&self) -> f32 {
+        finite_range(
+            self.gap_px,
+            MIN_CANDLE_GAP,
+            MAX_CANDLE_GAP,
+            DEFAULT_CANDLE_GAP,
+        )
+    }
+
+    /// Half the width of a candle body drawn in a `slot_px`-wide bar slot.
+    ///
+    /// Two rules, the tighter one wins. The body takes
+    /// [`clamped_width_frac`](Self::clamped_width_frac) of the slot — a
+    /// proportion, which is what the eye reads while the candles are wide —
+    /// and neighbouring bodies keep [`clamped_gap_px`](Self::clamped_gap_px)
+    /// between them, which is what keeps them apart once a proportion of the
+    /// slot is no longer a pixel. Below both, the body is still drawn
+    /// [`MIN_BODY_WIDTH_PX`] wide.
+    #[must_use]
+    pub fn body_half_width(&self, slot_px: f32) -> f32 {
+        let slot = if slot_px.is_finite() {
+            slot_px.max(0.0)
+        } else {
+            0.0
+        };
+        let by_fraction = slot * self.clamped_width_frac();
+        let by_gap = slot - self.clamped_gap_px();
+        by_fraction.min(by_gap).max(MIN_BODY_WIDTH_PX) / 2.0
     }
 
     /// Resolve direction, body mode, forming state and unsafe numeric inputs to
@@ -709,5 +776,76 @@ mod tests {
             ..CanvasStyle::default()
         };
         assert_eq!(nan.grid_rgba().unwrap()[3], alpha(0.65));
+    }
+
+    /// The two rules divide the zoom range between them: the proportion shapes
+    /// the chart while the slots are wide, the gap takes over once a proportion
+    /// of the slot stops being a visible amount of screen.
+    #[test]
+    fn the_gap_takes_over_from_the_proportion_as_the_candles_narrow() {
+        let style = CandleStyle::default(); // 0.72 of the slot, 2 px gap
+        // Default zoom: 8 px slots. The proportion is the tighter rule and the
+        // look a trader already knows is untouched.
+        assert!((style.body_half_width(8.0) - 8.0 * 0.72 / 2.0).abs() < 0.001);
+        // 4 px slots: 0.72 would leave 1.1 px of air, which antialiasing eats.
+        // The gap binds instead — 2 px of body, 2 px of air.
+        assert!((style.body_half_width(4.0) - 1.0).abs() < 0.001);
+        // 2 px slots: nothing is left for a gap, so the body holds its floor
+        // rather than vanishing.
+        assert!((style.body_half_width(2.0) - MIN_BODY_WIDTH_PX / 2.0).abs() < 0.001);
+    }
+
+    /// The gap is a preference, not a law: asking for none brings back the
+    /// dense look, where a body is exactly its share of the slot.
+    #[test]
+    fn a_zero_gap_leaves_the_proportion_alone() {
+        let dense = CandleStyle {
+            gap_px: 0.0,
+            ..CandleStyle::default()
+        };
+        for slot in [4.0_f32, 8.0, 24.0, 160.0] {
+            let expected = (slot * 0.72).max(MIN_BODY_WIDTH_PX) / 2.0;
+            assert!(
+                (dense.body_half_width(slot) - expected).abs() < 0.001,
+                "slot {slot}"
+            );
+        }
+    }
+
+    /// Every preset ships the same gap: it is a legibility floor, not a look,
+    /// and a preset that dropped it would read as broken at the zoom this
+    /// exists for.
+    #[test]
+    fn every_preset_keeps_the_default_gap() {
+        for preset in CandlePreset::ALL {
+            assert!(
+                (preset.style().clamped_gap_px() - DEFAULT_CANDLE_GAP).abs() < f32::EPSILON,
+                "{preset:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hostile_gap_still_draws_a_candle() {
+        for gap in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -10.0, 1_000.0] {
+            let style = CandleStyle {
+                gap_px: gap,
+                ..CandleStyle::default()
+            };
+            let half = style.body_half_width(8.0);
+            assert!(
+                (MIN_BODY_WIDTH_PX / 2.0..=8.0).contains(&half),
+                "gap {gap}: half = {half}"
+            );
+        }
+        // A slot that is not a number cannot be divided up, and the candle
+        // falls back to its floor rather than to a NaN rectangle.
+        for slot in [f32::NAN, f32::INFINITY, -4.0] {
+            assert!(
+                (CandleStyle::default().body_half_width(slot) - MIN_BODY_WIDTH_PX / 2.0).abs()
+                    < 0.001,
+                "slot {slot}"
+            );
+        }
     }
 }

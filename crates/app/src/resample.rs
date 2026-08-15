@@ -1,10 +1,17 @@
-//! Folding venue candles up to a coarser interval.
+//! Folding bars into coarser bars.
 //!
-//! Every provider delivers candle history at one interval
-//! ([`crate::feed::OHLCV_BASE_INTERVAL_MS`], a minute), and the time pane
-//! shows whatever its header asks for. Folding locally is what makes changing
-//! that free: a chip click is a different fold over bars already held, not a
-//! round trip to a venue.
+//! Two callers, one fold. [`fold`] groups **by time**: every provider delivers
+//! candle history at one interval ([`crate::feed::OHLCV_BASE_INTERVAL_MS`], a
+//! minute) and the time pane shows whatever its header asks for, so folding
+//! locally is what makes changing that free — a chip click is a different fold
+//! over bars already held, not a round trip to a venue. [`for_each_group`]
+//! groups **by count**, for the chart squeezed past the zoom where a bar can be
+//! drawn on its own: several bars share one candle rather than each getting a
+//! sliver of a pixel.
+//!
+//! Both go through [`merge_into`], for the reason `Bar::extend` is public in
+//! the engine: the summary of a run of bars is a fact about those bars, and a
+//! second implementation of it is a second answer waiting to drift.
 //!
 //! Pure and deterministic — same bars in, same bars out, no clock and no
 //! iteration-order dependence. That is what lets a chip click be tested
@@ -54,15 +61,7 @@ pub fn fold(base: &[Bar], interval_ms: i64) -> Vec<Bar> {
         let bucket = bucket_start(bar.open_time, interval_ms);
         match (open_bucket, out.last_mut()) {
             // Same bucket as the bar before it: merge in.
-            (Some(current), Some(folded)) if current == bucket => {
-                folded.high = folded.high.max(bar.high);
-                folded.low = folded.low.min(bar.low);
-                folded.close = bar.close;
-                folded.close_time = bar.close_time;
-                folded.buy_volume = folded.buy_volume.saturating_add(bar.buy_volume);
-                folded.sell_volume = folded.sell_volume.saturating_add(bar.sell_volume);
-                folded.trade_count = folded.trade_count.saturating_add(bar.trade_count);
-            }
+            (Some(current), Some(folded)) if current == bucket => merge_into(folded, bar),
             // A new bucket starts a new bar, keeping the base candle's own
             // `open_time` rather than the window's start: the first minute
             // that traded is when this bar opened, and rounding it down to the
@@ -75,6 +74,68 @@ pub fn fold(base: &[Bar], interval_ms: i64) -> Vec<Bar> {
         }
     }
     out
+}
+
+/// Merge `bar` into the bar it is being folded with.
+///
+/// The summary of a run of bars, and the only one: the run keeps the first
+/// bar's open and stamp, takes the extremes, ends on the last bar's close and
+/// stamp, and adds the volumes and trade counts up. Exact arithmetic on the
+/// numbers already held — a folded bar states nothing the bars in it did not.
+///
+/// `bar` must come after `folded` in time, which both callers guarantee by
+/// walking an ascending series.
+pub fn merge_into(folded: &mut Bar, bar: &Bar) {
+    folded.high = folded.high.max(bar.high);
+    folded.low = folded.low.min(bar.low);
+    folded.close = bar.close;
+    folded.close_time = bar.close_time;
+    folded.buy_volume = folded.buy_volume.saturating_add(bar.buy_volume);
+    folded.sell_volume = folded.sell_volume.saturating_add(bar.sell_volume);
+    folded.trade_count = folded.trade_count.saturating_add(bar.trade_count);
+}
+
+/// Walk `bars` in runs of `per_slot`, calling `paint` once per run with the
+/// index of the run's first bar and the bar the run is drawn as.
+///
+/// `first_index` is the series index of the first bar handed in, so runs line
+/// up with the same absolute grouping every frame (bar *n* belongs to run
+/// `n / per_slot`) rather than with wherever the window happens to start.
+///
+/// `per_slot <= 1` is the path a chart spends nearly all its time on and costs
+/// nothing extra: the bars are passed straight through, borrowed, with no fold
+/// and no clone. Only a genuinely grouped chart builds bars, and then one per
+/// run rather than one per bar.
+pub fn for_each_group<'a>(
+    bars: impl Iterator<Item = &'a Bar>,
+    first_index: usize,
+    per_slot: usize,
+    mut paint: impl FnMut(usize, &Bar),
+) {
+    if per_slot <= 1 {
+        for (offset, bar) in bars.enumerate() {
+            paint(first_index + offset, bar);
+        }
+        return;
+    }
+    let mut run: Option<(usize, Bar)> = None;
+    for (offset, bar) in bars.enumerate() {
+        let index = first_index + offset;
+        match &mut run {
+            Some((first, folded)) if *first / per_slot == index / per_slot => {
+                merge_into(folded, bar);
+            }
+            _ => {
+                if let Some((first, folded)) = run.take() {
+                    paint(first, &folded);
+                }
+                run = Some((index, bar.clone()));
+            }
+        }
+    }
+    if let Some((first, folded)) = run {
+        paint(first, &folded);
+    }
 }
 
 /// The start of the `interval_ms` window containing `time_ms`.
@@ -206,5 +267,84 @@ mod tests {
         let once = fold(&base, 15 * OHLCV_BASE_INTERVAL_MS);
         let twice = fold(&base, 15 * OHLCV_BASE_INTERVAL_MS);
         assert_eq!(once, twice, "same bars in, same bars out");
+    }
+
+    /// Collect what `for_each_group` paints: `(first bar of the run, the bar
+    /// the run is drawn as)`.
+    fn groups(bars: &[Bar], first_index: usize, per_slot: usize) -> Vec<(usize, Bar)> {
+        let mut out = Vec::new();
+        for_each_group(bars.iter(), first_index, per_slot, |index, bar| {
+            out.push((index, bar.clone()));
+        });
+        out
+    }
+
+    /// One bar per candle passes straight through, in order — the path the
+    /// chart is on at every zoom a trader works at.
+    #[test]
+    fn ungrouped_bars_pass_through_untouched() {
+        let bars: Vec<Bar> = (0..5).map(|m| candle(m, m)).collect();
+        for per_slot in [0_usize, 1] {
+            let painted = groups(&bars, 10, per_slot);
+            assert_eq!(painted.len(), 5);
+            for (offset, (index, bar)) in painted.iter().enumerate() {
+                assert_eq!(*index, 10 + offset);
+                assert_eq!(bar, &bars[offset]);
+            }
+        }
+    }
+
+    /// Grouped, a run is drawn as its exact fold — and the runs line up with
+    /// absolute indices, not with where the window happens to start, so a
+    /// candle keeps standing for the same bars as the view moves.
+    #[test]
+    fn a_run_is_drawn_as_the_exact_fold_of_its_bars() {
+        let bars: Vec<Bar> = (0..8).map(|m| candle(m, m)).collect();
+        // Handed in starting at bar 4, in groups of four: 4..8 is one whole
+        // group, and its first index is 4.
+        let painted = groups(&bars[4..], 4, 4);
+        assert_eq!(painted.len(), 1);
+        let (index, folded) = &painted[0];
+        assert_eq!(*index, 4);
+        assert_eq!(folded.open, bars[4].open, "the first bar's open");
+        assert_eq!(folded.open_time, bars[4].open_time);
+        assert_eq!(folded.close, bars[7].close, "the last bar's close");
+        assert_eq!(folded.close_time, bars[7].close_time);
+        assert_eq!(folded.high, bars[7].high, "the highest high");
+        assert_eq!(folded.low, bars[4].low, "the lowest low");
+        assert_eq!(folded.buy_volume, Decimal::from(8), "volumes add up");
+        assert_eq!(folded.sell_volume, Decimal::from(12));
+        assert_eq!(folded.trade_count, 28);
+    }
+
+    /// A window rarely ends on a group boundary; the tail is drawn from the
+    /// bars there are rather than held back until the group fills.
+    #[test]
+    fn a_partial_run_at_the_end_is_still_drawn() {
+        let bars: Vec<Bar> = (0..6).map(|m| candle(m, m)).collect();
+        let painted = groups(&bars, 0, 4);
+        assert_eq!(painted.len(), 2);
+        assert_eq!(painted[0].0, 0);
+        assert_eq!(painted[1].0, 4, "the tail starts its own run");
+        assert_eq!(painted[1].1.close, bars[5].close);
+        assert!(for_each_group_is_empty_for_no_bars());
+    }
+
+    fn for_each_group_is_empty_for_no_bars() -> bool {
+        let mut painted = 0;
+        for_each_group([].iter(), 0, 4, |_, _| painted += 1);
+        painted == 0
+    }
+
+    /// Grouping by count and grouping by time are the same fold, so a run of
+    /// bars comes to the same candle either way.
+    #[test]
+    fn the_count_fold_and_the_time_fold_agree() {
+        let bars: Vec<Bar> = (0..5).map(|m| candle(m, m)).collect();
+        let by_time = fold(&bars, 5 * OHLCV_BASE_INTERVAL_MS);
+        let by_count = groups(&bars, 0, 5);
+        assert_eq!(by_time.len(), 1);
+        assert_eq!(by_count.len(), 1);
+        assert_eq!(by_time[0], by_count[0].1);
     }
 }

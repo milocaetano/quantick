@@ -787,10 +787,21 @@ pub struct QuantickApp {
     /// The settings window's "save preset" field, kept across frames.
     footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
-    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART` and
-    /// `QUANTICK_CANDLE_WIDTH`.
+    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART`,
+    /// `QUANTICK_CANDLE_WIDTH` and `QUANTICK_PAN_PX`.
     scripted_footprint: bool,
     scripted_candle_width: Option<f32>,
+    /// `QUANTICK_PAN_PX`: a drag on the candles, in pixels, applied every
+    /// frame until it lands. Negative pushes the chart left into the
+    /// projection margin; positive walks back into history.
+    ///
+    /// Every frame, and not once at boot, because the gesture it stands for
+    /// needs bars to move over: at boot the series is empty, `pan_pixels` is
+    /// a no-op on it, and a hook that fired then would validate nothing. It
+    /// re-applies while the view can still move, and stops as soon as the
+    /// per-frame clamp holds it — which is exactly the state a projection
+    /// screenshot wants.
+    scripted_pan_px: Option<f32>,
     /// `QUANTICK_INDICATOR_SETTINGS`: open the settings dialog for the
     /// first indicator once its inputs have arrived from the worker. Armed
     /// at boot, fired (and disarmed) by the first frame that can honour it —
@@ -1039,6 +1050,7 @@ impl QuantickApp {
             scripted_footprint: false,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
+            scripted_pan_px: None,
             style: ChartStyle::default(),
             show_style: false,
             style_revision: 0,
@@ -1225,13 +1237,26 @@ impl QuantickApp {
             std::env::var("QUANTICK_INDICATOR_SETTINGS").is_ok_and(|value| value == "1");
         // The zoom, scriptable: the footprint's detail levels are functions
         // of candle width, and a validation run cannot drag a scroll wheel.
-        // Same clamp as the gesture (see Viewport::set_candle_width).
+        // Same clamp as the gesture (see Viewport::set_px_per_bar).
         if let Ok(value) = std::env::var("QUANTICK_CANDLE_WIDTH")
             && let Ok(px) = value.trim().parse::<f32>()
         {
             app.scripted_candle_width = Some(px);
-            app.active_tab_mut().flow_pane.viewport.set_candle_width(px);
+            app.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
+        // The pan, scriptable, for the same reason: the projection margin and
+        // the way back from history are states a screenshot cannot otherwise
+        // reach. `QUANTICK_PAN_PX=-9000` is "shove the chart as far left as it
+        // goes" — the margin then holds it exactly where the gesture would.
+        if let Ok(value) = std::env::var("QUANTICK_PAN_PX")
+            && let Ok(px) = value.trim().parse::<f32>()
+            && px.is_finite()
+        {
+            app.scripted_pan_px = Some(px);
+        }
+        // The appearance dialog, reachable without a pointer — where the
+        // candle gap and the rest of the candle style are edited.
+        app.show_style = std::env::var("QUANTICK_STYLE_PANEL").is_ok_and(|value| value == "1");
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
         // menu takes, so a scripted validation run needs no clicks.
@@ -1605,10 +1630,7 @@ impl QuantickApp {
             self.active_tab_mut().flow_pane.footprint_visible = true;
         }
         if let Some(px) = self.scripted_candle_width {
-            self.active_tab_mut()
-                .flow_pane
-                .viewport
-                .set_candle_width(px);
+            self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
     }
 
@@ -5477,6 +5499,39 @@ impl eframe::App for QuantickApp {
 }
 
 impl QuantickApp {
+    /// The scripted view hooks (`QUANTICK_CANDLE_WIDTH`, `QUANTICK_PAN_PX`),
+    /// re-applied every frame.
+    ///
+    /// Every frame rather than once at boot, for two reasons. A pan needs bars
+    /// to move over and at boot there are none — repeating it is what makes
+    /// `QUANTICK_PAN_PX=-9000` mean "as far left as it goes" whatever the
+    /// zoom: each frame pushes, the per-frame clamp holds, and the view settles
+    /// on the projection margin.
+    ///
+    /// And the view is *rebuilt* under both hooks by anything that re-cuts the
+    /// series: `ChartPane::reset_series` hands back a fresh `Viewport`, which a
+    /// replay autostart does before its first frame. A zoom set at boot was
+    /// therefore thrown away, and every scripted capture of a recorded session
+    /// photographed the default zoom rather than the one it asked for.
+    ///
+    /// A run with neither variable set does nothing here.
+    fn apply_scripted_view(&mut self) {
+        let (width, pan) = (self.scripted_candle_width, self.scripted_pan_px);
+        if width.is_none() && pan.is_none() {
+            return;
+        }
+        let pane = &mut self.active_tab_mut().flow_pane;
+        if let Some(px) = width {
+            pane.viewport.set_px_per_bar(px);
+        }
+        let slots = pane.slots();
+        if let Some(dx) = pan
+            && slots > 0
+        {
+            pane.viewport.pan_pixels(dx, slots);
+        }
+    }
+
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
     /// the flow pane, spread across the visible bars, the last one selected
     /// so the inspector is on screen too.
@@ -6033,6 +6088,7 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
+        self.apply_scripted_view();
         self.apply_drawing_demo();
         self.apply_drawing_draft();
         self.apply_venue_history_demo();
@@ -9140,6 +9196,28 @@ plot(close)
             }
         }
         let mut found = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    /// How many rectangles the frame painted — candle bodies dominate it, so
+    /// it stands in for "how much work the candles were" when a test wants to
+    /// compare two zooms rather than measure a wall clock.
+    fn painted_rects(output: &egui::FullOutput) -> usize {
+        fn walk(shape: &egui::Shape, found: &mut usize) {
+            match shape {
+                egui::Shape::Rect(_) => *found += 1,
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = 0;
         for clipped in &output.shapes {
             walk(&clipped.shape, &mut found);
         }
@@ -13154,11 +13232,144 @@ plot(close)
         );
     }
 
-    /// The other way to empty the window — panning into the space past the
-    /// newest bar, zoomed in far enough that no bar is left on screen. The
-    /// chart keeps its axis and says how to get back.
+    /// The scripted pan (`QUANTICK_PAN_PX`) is the gesture, not a teleport: it
+    /// re-applies every frame and settles exactly where the projection margin
+    /// holds it, which is how a screenshot reaches that state at all.
     #[test]
-    fn an_empty_window_says_so_instead_of_going_dark() {
+    fn the_scripted_pan_settles_on_the_projection_margin() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let slots = app.active_tab().flow_pane.slots();
+        let newest = (slots - 1) as f32;
+
+        app.scripted_pan_px = Some(-9_000.0);
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let settled = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+        assert!(!app.active_tab().flow_pane.viewport.follows_live());
+        assert!(
+            settled > newest + 1.0,
+            "the chart is out in the empty canvas: {settled}"
+        );
+
+        // And it stays there. The margin is a wall, not a slope — a hook that
+        // kept sliding would screenshot a different chart every frame.
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let again = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+        assert!((again - settled).abs() < 0.001, "{again} vs {settled}");
+    }
+
+    /// "Zoom in for numbers" with no number is why the footprint read as slow
+    /// to arrive — a trader could not tell a nudge from a different chart
+    /// entirely. And grouped, there is no ladder to draw at all: one candle
+    /// standing for twenty bars has twenty tapes behind it, and the layer says
+    /// so instead of stacking them at one x or going quietly blank.
+    #[test]
+    fn the_footprint_says_how_much_further_to_zoom_and_when_not_to_bother() {
+        let (mut app, _cmd_rx) = app_with_history(4_000);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().flow_pane.footprint_visible = true;
+
+        let opening = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            opening
+                .iter()
+                .any(|text| text.contains("numbers at") && text.contains("this zoom")),
+            "the default zoom says how far off the numbers are: {opening:?}"
+        );
+
+        app.active_tab_mut()
+            .flow_pane
+            .viewport
+            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
+        let grouped = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            grouped.iter().any(|text| text.contains("bars grouped")),
+            "and grouped, it says zooming is not the answer: {grouped:?}"
+        );
+        assert!(
+            !grouped.iter().any(|text| text.contains("numbers at")),
+            "without also promising numbers at some zoom: {grouped:?}"
+        );
+        // And the grouping note names the layer that went quiet, so a trader
+        // who switched it on and sees nothing is never left wondering whether
+        // the layer is broken.
+        assert!(
+            grouped
+                .iter()
+                .any(|text| text.contains("bars per candle") && text.contains("footprint paused")),
+            "the note says what the squeeze cost: {grouped:?}"
+        );
+    }
+
+    /// The squeeze a trader reaching for more history actually makes. Past the
+    /// zoom where a bar can be drawn on its own, bars group into one candle per
+    /// slot: ten times the history arrives in the window for no more painted
+    /// shapes than before, and the canvas states the factor rather than letting
+    /// a reader take a grouped candle for a bar.
+    #[test]
+    fn squeezing_past_the_grouping_zoom_buys_history_without_buying_cost() {
+        let (mut app, _cmd_rx) = app_with_history(4_000);
+        let ctx = egui::Context::default();
+        let opening = run_frame(&mut app, &ctx);
+        let slots = app.active_tab().flow_pane.slots();
+        let bars_across = |viewport: &crate::viewport::Viewport| {
+            let (start, end) = viewport.visible_range(800.0, slots);
+            end - start
+        };
+        assert!(!app.active_tab().flow_pane.viewport.grouped());
+        assert!(
+            !painted_text(&opening)
+                .iter()
+                .any(|text| text.contains("bars per candle")),
+            "the default zoom groups nothing, so it claims nothing"
+        );
+
+        // Where zooming out used to stop.
+        app.active_tab_mut().flow_pane.viewport.set_px_per_bar(2.0);
+        let shallow = run_frame(&mut app, &ctx);
+        let shallow_rects = painted_rects(&shallow);
+        let shallow_bars = bars_across(&app.active_tab().flow_pane.viewport);
+
+        // As far out as it now goes.
+        app.active_tab_mut()
+            .flow_pane
+            .viewport
+            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
+        let deep = run_frame(&mut app, &ctx);
+        let deep_rects = painted_rects(&deep);
+        let viewport = app.active_tab().flow_pane.viewport;
+
+        assert!(viewport.grouped(), "the deep squeeze groups bars");
+        assert!(
+            bars_across(&viewport) >= 5 * shallow_bars,
+            "history in the window: {} vs {shallow_bars}",
+            bars_across(&viewport)
+        );
+        assert!(
+            deep_rects <= shallow_rects + 8,
+            "and no more shapes to paint it: {deep_rects} vs {shallow_rects}"
+        );
+        assert!(
+            painted_text(&deep)
+                .iter()
+                .any(|text| text.contains("bars per candle")),
+            "the canvas says what one candle now stands for"
+        );
+    }
+
+    /// Pushing the chart left is how a projected channel or a Fibonacci
+    /// extension gets somewhere to be drawn, so the margin is a whole window of
+    /// empty canvas. It is also why that gesture can no longer empty the
+    /// window: the newest bar stops at the left edge instead of leaving through
+    /// it. ("no bars in view" stays as the renderer's guard for a window
+    /// emptied some other way — a rebuild re-cutting the series under it.)
+    #[test]
+    fn pushing_the_chart_left_clears_a_window_and_keeps_the_series_on_screen() {
         let (mut app, _cmd_rx) = app_with_history(400);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
@@ -13168,15 +13379,25 @@ plot(close)
         app.active_tab_mut()
             .flow_pane
             .viewport
-            .pan_pixels(-10_000.0, slots); // into the empty future
+            .pan_pixels(-10_000.0, slots); // as far into the empty future as it goes
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
-            texts.iter().any(|text| text.contains("no bars in view")),
-            "an empty window must explain itself: {texts:?}"
+            !texts.iter().any(|text| text.contains("no bars in view")),
+            "the series stays on screen however far left it is pushed: {texts:?}"
         );
         assert!(
             has_price_axis(&texts),
-            "and keep the axis, so the chart never reads as hung: {texts:?}"
+            "and keeps the axis, so the chart never reads as hung: {texts:?}"
+        );
+        let viewport = app.active_tab().flow_pane.viewport;
+        let newest = (slots - 1) as f32;
+        assert!(
+            viewport.right_edge_bar(slots) > newest + 1.0,
+            "with real empty canvas past the newest bar to draw into"
+        );
+        assert!(
+            !viewport.follows_live(),
+            "and the view is off the live edge"
         );
     }
 

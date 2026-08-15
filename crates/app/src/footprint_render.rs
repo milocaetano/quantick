@@ -43,13 +43,57 @@ pub enum DetailLevel {
     Detailed,
 }
 
-/// Candle-width floors per level, in pixels — the typography budget of the
-/// numbers each level draws (a `1234 x 5678` cell needs ~72 px before it is a
-/// number and not a smear).
-const DETAILED_MIN_WIDTH: f32 = 72.0;
-const COMPACT_MIN_WIDTH: f32 = 40.0;
-const PROFILE_MIN_WIDTH: f32 = 18.0;
-const MARKS_MIN_WIDTH: f32 = 8.0;
+/// Smallest font the ladder draws its quantities at, in pixels.
+///
+/// Seven, down from eight. Monospace digits hold their shape a size below what
+/// prose needs — they are a fixed, familiar alphabet of ten — and every text
+/// floor below is measured from this number, so a pixel here is worth several
+/// pixels of candle in how soon the numbers arrive.
+const LADDER_MIN_FONT_PX: f32 = 7.0;
+/// Advance width of a monospace glyph, as a fraction of the font size.
+const GLYPH_EM: f32 = 0.6;
+/// Glyphs in the widest quantity the ladder writes (`58.1k`).
+const QUANTITY_GLYPHS: f32 = 5.0;
+/// Width of that quantity at the smallest font, in pixels.
+const QUANTITY_PX: f32 = QUANTITY_GLYPHS * GLYPH_EM * LADDER_MIN_FONT_PX;
+/// Clearance kept around a quantity inside the body it is drawn in.
+///
+/// A pixel and a half a side, not the six the row layout reserves when it is
+/// *sizing* the font: what a floor has to guarantee is that the digits do not
+/// reach the next candle, and the body already sits inside a gap
+/// ([`crate::style::DEFAULT_CANDLE_GAP`]) that keeps them apart.
+const QUANTITY_PADDING_PX: f32 = 3.0;
+/// The share of a slot a candle body takes at the default style. The numbers
+/// are drawn inside the *body*, so this is what turns a text budget into a
+/// candle width.
+const TYPICAL_BODY_FRAC: f32 = 0.72;
+
+/// Candle-width floors per level, in pixels — the typography budget of what
+/// each level draws.
+///
+/// The two text levels are **derived, never chosen**: Compact fits one
+/// quantity across the body, Detailed one per half of it. Writing them as
+/// arithmetic is what keeps the retune honest — the floors moved because
+/// [`LADDER_MIN_FONT_PX`] moved (8 px → 7 px), and anyone tightening them
+/// further has to move a number that means something first.
+///
+/// That gap is much of why the layer read as *slow to arrive*: a trader zoomed
+/// in for numbers, got marks, and had nothing saying how much further to go
+/// (the legend now says it).
+///
+/// The two levels that draw no text answer to geometry instead, and had no
+/// such excuse for waiting. Marks are a POC dot and a zone tick — visible from
+/// a candle six pixels wide. The profile is a textless histogram whose *shape*
+/// is the signal, readable at ten pixels where the old floor made it wait for
+/// eighteen.
+///
+/// [`crate::footprint_config::FootprintConfig::detail_scale`] moves all four
+/// together, for a trader who wants detail earlier still (and tighter) or
+/// later and roomier.
+const DETAILED_MIN_WIDTH: f32 = 2.0 * (QUANTITY_PX + QUANTITY_PADDING_PX / 2.0) / TYPICAL_BODY_FRAC;
+const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
+const PROFILE_MIN_WIDTH: f32 = 10.0;
+const MARKS_MIN_WIDTH: f32 = 6.0;
 /// Row-height floors per level. Profile rows survive down to hairline bands;
 /// text rows need a legible line.
 const DETAILED_MIN_ROW: f32 = 12.0;
@@ -439,6 +483,14 @@ pub struct LayerFrame<'a> {
     pub x_center: &'a dyn Fn(usize) -> f32,
     pub half: f32,
     pub candle_width: f32,
+    /// Bars sharing one drawn candle (`Viewport::bars_per_slot`).
+    ///
+    /// Above one the layer draws nothing and says so. A ladder is one bar's
+    /// tape, and there is no honest way to hang twenty bars' ladders on the
+    /// one candle standing for them — summing them would invent a bar the
+    /// rule never made, and drawing them all at the same x would stack twenty
+    /// answers on top of each other and call the top one the truth.
+    pub bars_per_slot: usize,
     /// Whether this feed *infers* the aggressor side (MT5 tick rule, replays
     /// of it). A layer whose entire content is buyer-vs-seller carries the
     /// label itself; the status bar's note is not enough here.
@@ -459,7 +511,20 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // From the scale's own f64 density — never y(0) - y(group), which is
     // f32 rounding noise at index-future prices (see PriceScale::px_per_price).
     let base_row_px = (frame.scale.px_per_price() * group_f) as f32;
-    let level = lod.resolve(frame.candle_width, base_row_px, frame.config.profile_row_px);
+    // The zoom this layer answers to, in the units its floors are written in:
+    // the candle's own width, stretched by the trader's `detail_scale` (a
+    // scale below one asks for detail at narrower candles, which is the same
+    // statement as lowering every floor by it). Grouped, no level applies.
+    let scaled_width = if frame.config.detail_scale > 0.0 {
+        frame.candle_width / frame.config.detail_scale
+    } else {
+        frame.candle_width
+    };
+    let level = if frame.bars_per_slot > 1 {
+        DetailLevel::Off
+    } else {
+        lod.resolve(scaled_width, base_row_px, frame.config.profile_row_px)
+    };
     // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
     // the boundary bugs so far were all states the eye could not explain
     // from the outside (wedged k, stale group), and the chart telling its
@@ -869,8 +934,11 @@ fn draw_bar(
                 && let Some(text) = delta_text
             {
                 let width_budget = (frame.half - 6.0) / 3.0;
-                let font =
-                    egui::FontId::monospace((row_height - 2.0).min(width_budget).clamp(8.0, 13.0));
+                let font = egui::FontId::monospace(
+                    (row_height - 2.0)
+                        .min(width_budget)
+                        .clamp(LADDER_MIN_FONT_PX, 13.0),
+                );
                 painter.text(
                     egui::pos2(xc - 3.0, (top + bottom) / 2.0),
                     egui::Align2::RIGHT_CENTER,
@@ -921,8 +989,11 @@ fn draw_bar(
                     DetailLevel::Detailed => (frame.half - 6.0) / 3.0,
                     _ => (2.0 * frame.half - 6.0) / 3.0,
                 };
-                let font =
-                    egui::FontId::monospace((row_height - 2.0).min(width_budget).clamp(8.0, 13.0));
+                let font = egui::FontId::monospace(
+                    (row_height - 2.0)
+                        .min(width_budget)
+                        .clamp(LADDER_MIN_FONT_PX, 13.0),
+                );
                 if is_poc {
                     painter.rect_filled(
                         egui::Rect::from_min_max(
@@ -1128,8 +1199,14 @@ fn draw_legend(
 ) {
     let mut text = String::from("footprint");
     match level {
+        // Grouped is a different silence from too-small, and saying so is what
+        // stops a trader zooming in to fix something zooming will not fix
+        // until the grouping lets go.
+        DetailLevel::Off if frame.bars_per_slot > 1 => {
+            text.push_str(" · bars grouped — zoom in to ungroup");
+        }
         DetailLevel::Off => text.push_str(" · zoom in for detail"),
-        DetailLevel::Marks => text.push_str(" · marks (zoom in for numbers)"),
+        DetailLevel::Marks => text.push_str(" · marks"),
         DetailLevel::Profile => text.push_str(" · profile"),
         DetailLevel::Compact => text.push_str(" · delta"),
         // The legend names what the columns actually are — "sell|buy" over
@@ -1141,6 +1218,15 @@ fn draw_legend(
                 " · sell|buy"
             },
         ),
+    }
+    // How much further to zoom, in the only unit the gesture has. "zoom in for
+    // numbers" with no number is why this layer read as slow to arrive: a
+    // trader could not tell a nudge from a different chart entirely.
+    if level < DetailLevel::Compact && frame.bars_per_slot <= 1 && frame.candle_width > 0.0 {
+        let further = COMPACT_MIN_WIDTH * frame.config.detail_scale / frame.candle_width;
+        if further > 1.05 {
+            text.push_str(&format!(" · numbers at {further:.1}× this zoom"));
+        }
     }
     // The effective grouping is always spoken: the number a row stands for
     // must never change meaning silently (data honesty).
@@ -1228,11 +1314,76 @@ mod tests {
             level_for(100.0, 0.0003, PROFILE_MIN_ROW),
             DetailLevel::Marks
         );
-        // Width floors gate exactly.
-        assert_eq!(level_for(60.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Compact);
-        assert_eq!(level_for(30.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Profile);
-        assert_eq!(level_for(10.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Marks);
-        assert_eq!(level_for(6.0, 12.0, PROFILE_MIN_ROW), DetailLevel::Off);
+        // Width floors gate exactly — stated against the floors themselves, so
+        // retuning one moves its own test rather than breaking four others.
+        for (width, expected) in [
+            (DETAILED_MIN_WIDTH, DetailLevel::Detailed),
+            (DETAILED_MIN_WIDTH - 1.0, DetailLevel::Compact),
+            (COMPACT_MIN_WIDTH, DetailLevel::Compact),
+            (COMPACT_MIN_WIDTH - 1.0, DetailLevel::Profile),
+            (PROFILE_MIN_WIDTH, DetailLevel::Profile),
+            (PROFILE_MIN_WIDTH - 1.0, DetailLevel::Marks),
+            (MARKS_MIN_WIDTH, DetailLevel::Marks),
+            (MARKS_MIN_WIDTH - 1.0, DetailLevel::Off),
+        ] {
+            assert_eq!(
+                level_for(width, 12.0, PROFILE_MIN_ROW),
+                expected,
+                "at {width} px per candle"
+            );
+        }
+    }
+
+    /// The text floors are a typography budget and must be re-derived, never
+    /// nudged: a floor under what its own text measures draws digits across
+    /// the neighbouring candle, which is worse than making the trader zoom.
+    /// This is that derivation, run against whatever the constants say today.
+    #[test]
+    fn every_text_floor_still_fits_the_text_it_draws() {
+        let quantity_px = QUANTITY_GLYPHS * GLYPH_EM * LADDER_MIN_FONT_PX;
+        // Compact writes one quantity across the whole body.
+        let compact_body = COMPACT_MIN_WIDTH * TYPICAL_BODY_FRAC;
+        assert!(
+            compact_body >= quantity_px,
+            "compact: {compact_body} px of body for {quantity_px} px of text"
+        );
+        // Detailed writes one per half of it.
+        let detailed_half = DETAILED_MIN_WIDTH * TYPICAL_BODY_FRAC / 2.0;
+        assert!(
+            detailed_half >= quantity_px,
+            "detailed: {detailed_half} px per half for {quantity_px} px of text"
+        );
+        // And the ordering that makes them levels at all.
+        const {
+            assert!(DETAILED_MIN_WIDTH > COMPACT_MIN_WIDTH);
+            assert!(COMPACT_MIN_WIDTH > PROFILE_MIN_WIDTH);
+            assert!(PROFILE_MIN_WIDTH > MARKS_MIN_WIDTH);
+        }
+    }
+
+    /// Detail arrives sooner than it used to at every level — the point of the
+    /// retune — and `detail_scale` moves the whole ladder together without
+    /// reordering it.
+    #[test]
+    fn detail_arrives_earlier_than_the_old_floors_and_scales_as_one() {
+        // What each floor was when the ladder's font floor was 8 px.
+        for (now, before) in [
+            (DETAILED_MIN_WIDTH, 72.0),
+            (COMPACT_MIN_WIDTH, 40.0),
+            (PROFILE_MIN_WIDTH, 18.0),
+            (MARKS_MIN_WIDTH, 8.0),
+        ] {
+            assert!(now < before, "{now} is no earlier than {before}");
+        }
+        // A scale below one says the same thing as narrower floors: at a given
+        // candle width the level can only improve, never reorder.
+        let tight = *crate::footprint_config::DETAIL_SCALE_RANGE.start();
+        assert!(tight < 1.0);
+        for width in [6.0_f32, 10.0, 20.0, 35.0, 63.0, 120.0] {
+            let plain = level_for(width, 12.0, PROFILE_MIN_ROW);
+            let scaled = level_for(width / tight, 12.0, PROFILE_MIN_ROW);
+            assert!(scaled >= plain, "at {width} px");
+        }
     }
 
     /// Full body up to the Profile floor, outline-only by the Detailed
@@ -1250,36 +1401,39 @@ mod tests {
 
     #[test]
     fn lod_changes_only_past_the_dead_band_in_both_directions() {
+        // Written as multiples of the floor rather than as pixels, so the dead
+        // band is tested wherever the floor is tuned to.
+        let floor = DETAILED_MIN_WIDTH;
         let mut lod = FootprintLod::default();
         // The first frame takes the strict answer.
         assert_eq!(
-            lod.resolve(80.0, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Detailed
         );
         // Just under the floor: inside the 15% band, the level holds.
         assert_eq!(
-            lod.resolve(68.0, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 0.95, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Detailed
         );
         // 15% past the floor: the downgrade happens.
         assert_eq!(
-            lod.resolve(60.0, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 0.83, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Compact
         );
-        // Upgrades need the same clearance: 80px is over the 72px floor but
-        // not 15% over, so the level holds — an instant upgrade against a
-        // banded downgrade is a blinker at the boundary.
+        // Upgrades need the same clearance: over the floor but not 15% over,
+        // so the level holds — an instant upgrade against a banded downgrade
+        // is a blinker at the boundary.
         assert_eq!(
-            lod.resolve(80.0, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 1.1, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Compact
         );
         assert_eq!(
-            lod.resolve(90.0, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW),
             DetailLevel::Detailed
         );
         // The blinker scenario itself: oscillating across the floor by a
         // hair must not change the level once settled.
-        for width in [73.0, 71.0, 73.0, 71.0, 73.0] {
+        for width in [floor * 1.02, floor * 0.98, floor * 1.02, floor * 0.98] {
             assert_eq!(
                 lod.resolve(width, 12.0, PROFILE_MIN_ROW),
                 DetailLevel::Detailed,
