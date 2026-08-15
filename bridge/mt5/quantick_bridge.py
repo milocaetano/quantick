@@ -47,12 +47,12 @@ from pathlib import Path
 try:
     import MetaTrader5 as mt5
 except ImportError:  # pragma: no cover - environment problem, not logic
-    print(
-        '{"event_code":"BRIDGE_NO_MT5_PACKAGE",'
-        '"hint":"pip install MetaTrader5"}',
-        file=sys.stderr,
-    )
-    raise SystemExit(2) from None
+    #: Missing package. Reported when the bridge is *run*, not when the module
+    #: is imported: everything here that is pure — the clock cache, the wire
+    #: format — is testable on a machine with no MetaTrader, and CI is exactly
+    #: such a machine. Exiting at import time made the bridge's own behaviour
+    #: unprovable anywhere it could be proven cheaply.
+    mt5 = None
 
 SCHEMA_VERSION = 1
 BRIDGE_NAME = "quantick-mt5-bridge-py"
@@ -150,6 +150,9 @@ class BridgeExit(Exception):
 
 
 def connect_terminal(symbol: str) -> None:
+    if mt5 is None:
+        log("BRIDGE_NO_MT5_PACKAGE", hint="pip install MetaTrader5")
+        raise SystemExit(2)
     if not mt5.initialize():
         log(
             "BRIDGE_TERMINAL_ATTACH_FAILED",
@@ -176,7 +179,12 @@ def market_is_trading(symbol: str, observe_s: float = 2.0) -> bool:
     Deciding this from a tick's timestamp would be circular — the timestamp is
     in the very clock we are trying to measure. Watching the timestamp *move*
     is not: a tick that advances while we watch was produced while we watched.
+
+    No terminal package at all means no ticks to watch, which is the same
+    answer as a closed market: fall back to what was measured earlier.
     """
+    if mt5 is None:
+        return False
     first = mt5.symbol_info_tick(symbol)
     if first is None or not first.time_msc:
         return False
