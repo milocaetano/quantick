@@ -1312,6 +1312,21 @@ impl QuantickApp {
                 "market replay autostart"
             );
         }
+        // The session list, opened outright. The browser is one menu entry
+        // deep and a validation run has no mouse, so without this the half
+        // that shows what a trader already has is the one half no capture can
+        // reach — and "I could not find my recordings" is a report about that
+        // window, not about the list inside it.
+        if std::env::var("QUANTICK_REPLAY_BROWSER").is_ok_and(|value| value == "1") {
+            app.replay_view.open_browser();
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_BROWSER_AUTOSTART",
+                folder = app.replay_view.folder_in_use(),
+                "opened the session browser"
+            );
+        }
         // The download half of the same browser. Reached on its own because a
         // scripted run has to photograph the Get data tab without a click, and
         // it is a different screen from the session list beside it. Takes the

@@ -19,24 +19,64 @@
 //! "no sessions", which is the truth, and the first download makes it — so a
 //! fresh install neither lies about what it holds nor litters the documents
 //! folder before the trader has asked for anything.
+//!
+//! # Why the documents folder is not always the answer
+//!
+//! One session day of B3 tape is ~60 MB and a trader keeps months of them.
+//! On a machine where the documents folder is inside OneDrive — which is the
+//! Windows default once the account is signed in — that puts gigabytes of
+//! recordings into a sync client: an upload per download, cloud quota spent on
+//! data the venue can re-serve, and, once Files On-Demand tiers an old file
+//! out, a replay that stalls fetching its own tape back. So tape lands beside
+//! the documents shelf rather than inside it, under the user's own home
+//! folder, which is just as easy to find and belongs to this machine. Small
+//! things quantick keeps — the journal, the broker clock — stay in documents,
+//! where syncing them is a feature.
 
 use std::path::PathBuf;
 
 /// Overrides the replay folder for one run — the autostart family's explicit
 /// ask, and the hook the validation harness drives.
 pub(crate) const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
+/// The environment variable OneDrive sets to its own root on Windows. Present
+/// only when the sync client is actually set up for this account, which is the
+/// question being asked — the folder's *name* is not evidence of anything.
+const SYNCED_ROOT_ENV: &str = "OneDrive";
+
 /// The folder under quantick's documents shelf. The shelf itself is named once,
 /// in [`crate::paper_home`], so everything quantick keeps for a trader is under
 /// one roof and renaming that roof stays one edit.
 const REPLAY_DIR: &str = "replay";
 
-/// The default home given a documents folder — and a cwd-relative `replay`
-/// when the platform reports none (headless CI, bare setups).
+/// The default home given a shelf — and a cwd-relative `replay` when the
+/// platform reports no folder to hang one off (headless CI, bare setups).
 ///
 /// Inventing a path the trader cannot find would be worse than the honest
 /// relative one, which is the same call [`crate::paper_home`] makes.
 pub(crate) fn default_dir(shelf: Option<PathBuf>) -> PathBuf {
     shelf.map_or_else(|| PathBuf::from(REPLAY_DIR), |shelf| shelf.join(REPLAY_DIR))
+}
+
+/// The shelf recordings hang off: the documents one, unless it sits inside a
+/// synced folder — then the user's home folder, which does not sync.
+///
+/// See the module docs for why gigabytes of tape must not land in OneDrive.
+/// When the documents folder is synced but the platform reports no home
+/// folder, documents still wins: a real path the trader can open beats a
+/// guess, and the sync client is a slow problem rather than a broken one.
+fn tape_shelf(
+    documents: Option<PathBuf>,
+    synced_root: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let documents = documents?;
+    let synced = synced_root.is_some_and(|root| documents.starts_with(root));
+    let base = if synced {
+        home.or(Some(documents))
+    } else {
+        Some(documents)
+    };
+    base.map(|base| base.join(crate::paper_home::DOCUMENTS_SHELF))
 }
 
 /// The folder before the environment has its say: the trader's own stored pick
@@ -75,7 +115,14 @@ pub(crate) fn resolve(stored: Option<&str>) -> String {
     resolve_with(
         std::env::var(REPLAY_DIR_ENV).ok().as_deref(),
         stored,
-        crate::paper_home::shelf_dir(),
+        tape_shelf(
+            crate::paper_home::documents_dir(),
+            // The sync client states its own root; quantick does not go
+            // looking for one by name, which would call any folder with
+            // "OneDrive" in its path synced.
+            std::env::var_os(SYNCED_ROOT_ENV).map(PathBuf::from),
+            dirs::home_dir(),
+        ),
     )
 }
 
@@ -109,6 +156,57 @@ mod tests {
         assert_eq!(
             chosen(Some("   "), Some(PathBuf::from("/docs/Quantick"))),
             Path::new("/docs/Quantick").join("replay"),
+        );
+    }
+
+    /// Tape is big and keeps coming. A synced documents folder would upload
+    /// every download and can tier an old session out to the cloud, which is a
+    /// replay that stalls fetching its own tape back.
+    #[test]
+    fn a_synced_documents_folder_sends_tape_to_the_home_folder_instead() {
+        assert_eq!(
+            tape_shelf(
+                Some(PathBuf::from("/users/me/OneDrive/Documents")),
+                Some(PathBuf::from("/users/me/OneDrive")),
+                Some(PathBuf::from("/users/me")),
+            ),
+            Some(PathBuf::from("/users/me/Quantick")),
+        );
+    }
+
+    /// An unsynced documents folder is exactly where a trader looks first.
+    #[test]
+    fn an_unsynced_documents_folder_keeps_the_recordings() {
+        assert_eq!(
+            tape_shelf(
+                Some(PathBuf::from("/users/me/Documents")),
+                Some(PathBuf::from("/users/me/OneDrive")),
+                Some(PathBuf::from("/users/me")),
+            ),
+            Some(PathBuf::from("/users/me/Documents/Quantick")),
+        );
+    }
+
+    /// No sync client at all: nothing to avoid.
+    #[test]
+    fn no_sync_client_keeps_the_documents_folder() {
+        assert_eq!(
+            tape_shelf(Some(PathBuf::from("/users/me/Documents")), None, None),
+            Some(PathBuf::from("/users/me/Documents/Quantick")),
+        );
+    }
+
+    /// Synced documents and no home folder to fall back to: a real path the
+    /// trader can open beats a guess.
+    #[test]
+    fn a_synced_folder_with_nowhere_else_to_go_still_answers() {
+        assert_eq!(
+            tape_shelf(
+                Some(PathBuf::from("/users/me/OneDrive/Documents")),
+                Some(PathBuf::from("/users/me/OneDrive")),
+                None,
+            ),
+            Some(PathBuf::from("/users/me/OneDrive/Documents/Quantick")),
         );
     }
 

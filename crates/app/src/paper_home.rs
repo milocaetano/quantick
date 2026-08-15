@@ -35,7 +35,7 @@ pub(crate) const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 pub(crate) const LEGACY_TRADES_DIR: &str = "paper-trades";
 /// The shelf inside the documents folder — one recognizable place for
 /// everything quantick may keep there.
-const DOCUMENTS_SHELF: &str = "Quantick";
+pub(crate) const DOCUMENTS_SHELF: &str = "Quantick";
 
 /// That shelf as a path, when the platform reports a documents folder.
 ///
