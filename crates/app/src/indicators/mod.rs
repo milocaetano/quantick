@@ -67,7 +67,11 @@ pub(crate) struct IndicatorView {
     /// them until a script asks — and otherwise as long as the last painted
     /// bar; reads past the end are "no paint", exactly as in the buffer this
     /// mirrors.
-    pub bar_paint: Vec<Option<Rgba8>>,
+    ///
+    /// Plural for the column, singular for one bar:
+    /// [`bar_paint`](IndicatorView::bar_paint) answers about a row and applies
+    /// the eye toggle, which reading this field directly does not.
+    pub bar_paints: Vec<Option<Rgba8>>,
     /// Latest forming-bar frame, if a bar is forming.
     pub preview: Option<PreviewFrame>,
     /// The forming bar sampled across the live lane's window, oldest rung
@@ -125,12 +129,6 @@ pub(crate) struct IndicatorView {
 }
 
 impl IndicatorView {
-    /// Rows committed so far.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn rows(&self) -> usize {
-        self.rows
-    }
-
     /// The candle paint this indicator asks for on one committed bar.
     ///
     /// A hidden indicator asks for nothing: the eye toggle is the trader
@@ -140,7 +138,7 @@ impl IndicatorView {
         if self.hidden {
             return None;
         }
-        self.bar_paint.get(row).copied().flatten()
+        self.bar_paints.get(row).copied().flatten()
     }
 
     /// The paint this indicator asks for on the bar that is forming.
@@ -277,7 +275,7 @@ impl IndicatorViews {
                     view.descriptor = descriptor;
                     view.columns = columns;
                     view.rows = rows;
-                    view.bar_paint = bar_paint;
+                    view.bar_paints = bar_paint;
                     view.input_values = inputs;
                     view.preview = None;
                     view.lane.clear();
@@ -306,7 +304,7 @@ impl IndicatorViews {
                         descriptor,
                         columns,
                         rows,
-                        bar_paint,
+                        bar_paints: bar_paint,
                         preview: None,
                         lane: Vec::new(),
                         error: None,
@@ -330,8 +328,8 @@ impl IndicatorViews {
                         // Bars between the previous painted one and this one
                         // asked for nothing; filled in only now, so a chart
                         // where nothing paints never allocates the channel.
-                        view.bar_paint.resize(view.rows, None);
-                        view.bar_paint.push(Some(color));
+                        view.bar_paints.resize(view.rows, None);
+                        view.bar_paints.push(Some(color));
                     }
                     view.rows += 1;
                     // The old preview described the bar that just closed;
@@ -384,7 +382,7 @@ impl IndicatorViews {
     pub(crate) fn paints_any(&self) -> bool {
         self.views.iter().any(|view| {
             !view.hidden
-                && (!view.bar_paint.is_empty()
+                && (!view.bar_paints.is_empty()
                     || view.preview.as_ref().is_some_and(|f| f.paint.is_some()))
         })
     }
@@ -456,8 +454,8 @@ impl IndicatorViews {
             // shifts with them or every colour lands `added` candles to the
             // left of the bar that earned it. Only when it exists: an empty
             // channel has nothing to shift.
-            if !view.bar_paint.is_empty() {
-                view.bar_paint
+            if !view.bar_paints.is_empty() {
+                view.bar_paints
                     .splice(0..0, std::iter::repeat_n(None, added));
             }
             view.rows += added;
@@ -709,7 +707,7 @@ mod tests {
         ));
         views.apply(IndicatorEvent::appended(slot, vec![2.0, 20.0]));
         let view = &views.all()[0];
-        assert_eq!(view.rows(), 2);
+        assert_eq!(view.rows, 2);
         assert_eq!(view.columns[0], vec![1.0, 2.0]);
         assert_eq!(view.columns[1], vec![10.0, 20.0]);
     }
@@ -770,7 +768,7 @@ mod tests {
 
         assert_eq!(views.bar_paint(7), Some(RED), "the bar that asked");
         assert_eq!(views.bar_paint(0), None, "and no other");
-        assert_eq!(views.all()[0].rows(), 8);
+        assert_eq!(views.all()[0].rows, 8);
     }
 
     #[test]

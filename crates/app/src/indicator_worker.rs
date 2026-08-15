@@ -971,7 +971,7 @@ mod tests {
             format!("{:?}", view.columns[0]),
             format!("{:?}", host.plots(id).unwrap().column(PlotId::new(0))),
         );
-        assert_eq!(view.rows(), fine.len());
+        assert_eq!(view.rows, fine.len());
     }
 
     /// Removing a slot stops its events; the other slot keeps flowing.
@@ -1004,7 +1004,7 @@ mod tests {
         }
         assert_eq!(views.all().len(), 1);
         assert_eq!(views.all()[0].slot, survivor);
-        assert_eq!(views.all()[0].rows(), 3, "the survivor saw the new bar");
+        assert_eq!(views.all()[0].rows, 3, "the survivor saw the new bar");
     }
 
     /// The rung budget is a ceiling on cost, and the newest print is never the
@@ -1228,7 +1228,7 @@ mod script_load_tests {
         assert!(view.error.is_none(), "{:?}", view.error);
         assert_eq!(view.descriptor.title, "EMA");
         assert!(view.descriptor.overlay);
-        assert_eq!(view.rows(), bars.len());
+        assert_eq!(view.rows, bars.len());
         // EMA(9) over 12 bars: warmup NaN then values.
         let column = &view.columns[0];
         assert!(column[0].is_nan());
@@ -1525,7 +1525,7 @@ mod reload_tests {
         let view = &views.all()[0];
         assert_eq!(view.descriptor.title, "r2", "the new version runs");
         assert!(view.stale.is_none());
-        assert_eq!(view.rows(), bars.len(), "replayed over the full history");
+        assert_eq!(view.rows, bars.len(), "replayed over the full history");
     }
 
     #[test]
@@ -1549,7 +1549,7 @@ mod reload_tests {
         let stale = view.stale.as_ref().expect("flagged stale");
         assert!(stale.contains("PINE_NO_SECURITY"), "{stale}");
         assert_eq!(
-            view.rows(),
+            view.rows,
             bars.len() + 1,
             "the running version even saw the new bar"
         );
@@ -1629,7 +1629,7 @@ mod reload_tests {
         let view = &views.all()[0];
         assert!(view.error.is_none(), "the good reload healed the slot");
         assert_eq!(
-            view.rows(),
+            view.rows,
             bars.len(),
             "and the healed instance caught up over the existing history"
         );
@@ -1713,7 +1713,7 @@ mod paint_tests {
 
         assert!(views.all()[0].error.is_none(), "the script loaded");
         assert_eq!(
-            views.all()[0].rows(),
+            views.all()[0].rows,
             bars.len(),
             "a script with no plots still commits a row per bar — the row \
              count cannot come from a column that does not exist"

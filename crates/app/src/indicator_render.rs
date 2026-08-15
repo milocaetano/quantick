@@ -1178,7 +1178,7 @@ mod tests {
             },
             rows: columns.first().map_or(0, Vec::len),
             columns,
-            bar_paint: Vec::new(),
+            bar_paints: Vec::new(),
             preview: preview.map(PreviewFrame::new),
             lane: Vec::new(),
             objects: quantick_indicators::ObjectSnapshot::default(),

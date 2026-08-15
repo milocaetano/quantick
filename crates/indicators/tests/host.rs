@@ -608,6 +608,8 @@ struct Painter {
     plots: PlotBuffer,
     color: Rgba8,
     paint_on: Vec<usize>,
+    /// Commit run that fails, disabling the instance from there on.
+    fail_at: Option<usize>,
 }
 
 impl Painter {
@@ -624,6 +626,14 @@ impl Painter {
             plots: PlotBuffer::new(0),
             color,
             paint_on: paint_on.to_vec(),
+            fail_at: None,
+        }
+    }
+
+    fn failing_at(color: Rgba8, paint_on: &[usize], bar: usize) -> Self {
+        Self {
+            fail_at: Some(bar),
+            ..Self::new(color, paint_on)
         }
     }
 
@@ -640,6 +650,12 @@ impl Indicator for Painter {
         &self.plots
     }
     fn on_close(&mut self, _bar: &IndicatorBar, ctx: &mut Ctx<'_>) -> Result<(), EvalError> {
+        if self.fail_at == Some(ctx.bar_index) {
+            return Err(EvalError {
+                bar_index: ctx.bar_index,
+                message: "deliberate test failure".to_owned(),
+            });
+        }
         let paint = self.paint_for(ctx.bar_index);
         self.plots.push_row_painted(&[], paint);
         Ok(())
@@ -767,6 +783,23 @@ fn the_forming_bar_is_painted_from_the_preview_and_commits_nothing() {
         None,
         "the paint dies with the frame that carried it"
     );
+}
+
+#[test]
+fn a_failed_indicator_keeps_the_bars_it_painted_before_it_broke() {
+    // The rows it committed are real evaluations of real bars, and `plots`
+    // hands them out for exactly that reason; hiding only their colour would
+    // make the two disagree about the same history.
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    let id = host.add(Box::new(Painter::failing_at(RED, &[1], 3)));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    assert!(host.error(id).is_some(), "the instance is disabled");
+    assert_eq!(host.bar_paint(1), Some(RED), "painted before the failure");
+    assert_eq!(host.bar_paint(3), None, "the bar it never evaluated");
 }
 
 #[test]
