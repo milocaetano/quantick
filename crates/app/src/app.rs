@@ -37,6 +37,7 @@ use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind,
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
+use crate::orderflow::LaneWindow;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
@@ -529,6 +530,38 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
         progress.done.normalize(),
         progress.target.normalize()
     )
+}
+
+/// Read a tape window off `QUANTICK_TAPE_WINDOW`.
+///
+/// `auto` follows the bars; a duration pins it, in the units a human would
+/// type (`90s`, `2min`, `120000ms`, or bare milliseconds). `None` for anything
+/// else, so a typo leaves the tape at its default rather than photographing an
+/// invented window. The value is clamped by the setter, not here — one owner
+/// for the drawable range.
+fn parse_tape_window(value: &str) -> Option<LaneWindow> {
+    let value = value.trim().to_ascii_lowercase();
+    if value == "auto" {
+        return Some(LaneWindow::default());
+    }
+    let (number, scale) = if let Some(rest) = value.strip_suffix("ms") {
+        (rest, 1)
+    } else if let Some(rest) = value.strip_suffix("min") {
+        (rest, 60_000)
+    } else if let Some(rest) = value.strip_suffix('m') {
+        (rest, 60_000)
+    } else if let Some(rest) = value.strip_suffix('s') {
+        (rest, 1_000)
+    } else {
+        (value.as_str(), 1)
+    };
+    let parsed = number.trim().parse::<f64>().ok()?;
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return None;
+    }
+    Some(LaneWindow::Fixed {
+        ms: (parsed * f64::from(scale)).round() as i64,
+    })
 }
 
 /// Format a duration in milliseconds for the lane's time axis, in the unit a
@@ -1205,6 +1238,46 @@ impl QuantickApp {
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
+        }
+        // The tape's own switches. The two panes are configured apart and the
+        // tape's menu is a right-click a scripted run cannot perform, so the
+        // state behind it needs a door of its own — the state, not a second
+        // way of drawing it: each entry calls the very setter the menu's
+        // checkbox calls. Unlisted layers stay as they were, which is what
+        // keeps this hook from being a second opinion about the whole tape.
+        if let Ok(value) = std::env::var("QUANTICK_TAPE_LAYERS") {
+            let wanted: Vec<&str> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .collect();
+            let tape = app.active_tab_mut().tape_mut();
+            if wanted.contains(&"none") {
+                tape.set_lane_depth_visible(false);
+                tape.set_lane_bubbles_enabled(false);
+            } else {
+                for entry in wanted {
+                    match entry {
+                        "heatmap" => tape.set_lane_depth_visible(true),
+                        "bubbles" => tape.set_lane_bubbles_enabled(true),
+                        "no-heatmap" => tape.set_lane_depth_visible(false),
+                        "no-bubbles" => tape.set_lane_bubbles_enabled(false),
+                        // A typo leaves the tape alone rather than guessing at
+                        // a layer: a capture of the wrong state is worse than
+                        // a capture of the default one.
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // How much market time the tape shows: `auto` follows the bars, a
+        // duration pins it (`90s`, `2min`, `120000ms`, or bare milliseconds).
+        // Nonsense is refused rather than guessed at, so a typo photographs
+        // the default instead of an invented window.
+        if let Ok(value) = std::env::var("QUANTICK_TAPE_WINDOW")
+            && let Some(window) = parse_tape_window(value.trim())
+        {
+            app.active_tab_mut().tape_mut().set_live_lane_window(window);
         }
         // Same convenience for the candle footprint — the same field the
         // pane's layer menu writes, so a validation run sees exactly what a
@@ -8634,6 +8707,34 @@ plot(close)
             "an unavailable layer is still listed, just not switchable"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// The tape's window hook reads what a human would type, and refuses
+    /// everything else rather than guessing — a capture of the wrong state is
+    /// worse than a capture of the default one.
+    #[test]
+    fn the_tape_window_hook_reads_durations_and_refuses_nonsense() {
+        assert_eq!(parse_tape_window("auto"), Some(LaneWindow::default()));
+        assert_eq!(parse_tape_window("  AUTO "), Some(LaneWindow::default()));
+        for (typed, ms) in [
+            ("15s", 15_000),
+            ("90s", 90_000),
+            ("1min", 60_000),
+            ("2min", 120_000),
+            ("2m", 120_000),
+            ("1.5min", 90_000),
+            ("120000ms", 120_000),
+            ("120000", 120_000),
+        ] {
+            assert_eq!(
+                parse_tape_window(typed),
+                Some(LaneWindow::Fixed { ms }),
+                "{typed}"
+            );
+        }
+        for refused in ["", "soon", "2 hours", "-5s", "0", "0s", "NaN", "infs"] {
+            assert_eq!(parse_tape_window(refused), None, "{refused}");
+        }
     }
 
     /// A right-click on the tape configures the tape. The candles' layers do

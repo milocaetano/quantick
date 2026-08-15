@@ -117,6 +117,15 @@ Landing with the paper-trading overhaul (`feat/paper-trading-overhaul`):
 
 Once merged, move it into the table above.
 
+Landing with the tape-configuration goal (`feat/tape-own-config`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_TAPE_LAYERS=<list>` | what the **tape** draws, now that it is switched apart from the candles: comma-separated `heatmap`, `bubbles`, `no-heatmap`, `no-bubbles`, or `none` for a bare tape. Each entry calls the setter the tape menu's checkbox calls, and an unlisted layer is left as it was. The state the split exists for — `QUANTICK_BUBBLES_AUTOSTART=1` with `QUANTICK_TAPE_LAYERS=no-bubbles`, or the reverse — is reachable no other way, because the tape's menu is a right-click no scripted run can perform |
+| `QUANTICK_TAPE_WINDOW=<auto\|90s\|2min\|120000ms>` | how much market time the tape shows: `auto` follows the bars (the default), a duration pins it. Accepts `s`, `m`/`min`, `ms` or bare milliseconds; anything else is refused rather than guessed, so a typo photographs the default instead of an invented window. This is what makes the "bubbles stay visible longer" state capturable at all — otherwise it depends on how fast the bars happen to be closing |
+
+Once merged, move them into the table above.
+
 For a screen that represents the user's real setup, enable the trio:
 `QUANTICK_BOOK_AUTOSTART` + `QUANTICK_BUBBLES_AUTOSTART` +
 `QUANTICK_LIVE_STRIP_AUTOSTART`, with a preset from `config/bubbles.toml`
