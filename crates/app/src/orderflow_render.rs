@@ -1792,33 +1792,40 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
 /// the bubbles switch for aggression) *and* its own display switch is on.
 /// Announcing anything else would describe a chart the viewer is not looking
 /// at — the legend is a key for what is on screen, not a feature list.
+///
+/// "On screen" means either pane. The canvas holds two of them and the layers
+/// are switched apart, so a key withheld because the candles are clear would
+/// deny a mark the tape is drawing right now — the legend has one canvas to
+/// describe, not one pane of it.
 fn legend_entries(
     style: &OrderflowRenderStyle,
     liquidity_label: String,
 ) -> Vec<(LegendGlyph, String)> {
+    let depth = style.depth_layer || style.lane_depth_layer;
+    let aggression = style.aggression_layer || style.lane_aggression_layer;
     let mut entries = Vec::new();
-    if style.depth_layer && style.show_liquidity {
+    if depth && style.show_liquidity {
         entries.push((LegendGlyph::Heat, liquidity_label));
     }
-    if style.aggression_layer && style.show_buy {
+    if aggression && style.show_buy {
         entries.push((LegendGlyph::Buy, "buy aggression".to_owned()));
     }
-    if style.aggression_layer && style.show_sell {
+    if aggression && style.show_sell {
         entries.push((LegendGlyph::Sell, "sell aggression".to_owned()));
     }
-    if style.depth_layer && style.show_aligned {
+    if depth && style.show_aligned {
         entries.push((
             LegendGlyph::Aligned,
             "aggression-aligned depletion".to_owned(),
         ));
     }
-    if style.depth_layer && style.show_unattributed {
+    if depth && style.show_unattributed {
         entries.push((
             LegendGlyph::DepthOnly,
             "L2 reduction (unattributed)".to_owned(),
         ));
     }
-    if style.depth_layer && style.show_gaps {
+    if depth && style.show_gaps {
         entries.push((LegendGlyph::Gap, "L2 gap".to_owned()));
     }
     entries
@@ -3853,14 +3860,30 @@ mod tests {
         );
 
         // Family switches still trump the per-layer ones: without L2 capture
-        // no depth entry may appear, whatever its individual flag says.
+        // no depth entry may appear, whatever its individual flag says. The
+        // family is now both panes — the key describes the canvas, not one
+        // pane of it.
         let mut bubbles_only = all.clone();
         bubbles_only.depth_layer = false;
+        bubbles_only.lane_depth_layer = false;
         assert_eq!(labels(&bubbles_only), ["buy aggression", "sell aggression"]);
+
+        // A layer the candles have switched off but the tape still draws keeps
+        // its key: withholding it would deny a mark that is on screen.
+        let mut tape_only = all.clone();
+        tape_only.depth_layer = false;
+        tape_only.aggression_layer = false;
+        assert_eq!(
+            labels(&tape_only),
+            labels(&all),
+            "the tape alone still earns every key"
+        );
 
         let mut nothing = all;
         nothing.depth_layer = false;
         nothing.aggression_layer = false;
+        nothing.lane_depth_layer = false;
+        nothing.lane_aggression_layer = false;
         assert!(labels(&nothing).is_empty());
     }
 
