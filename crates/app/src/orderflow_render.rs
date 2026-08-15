@@ -73,11 +73,22 @@ pub(crate) struct OrderflowRenderStyle {
     pub(crate) live_lane: LiveLaneStyle,
     pub(crate) show_gap_labels: bool,
     pub(crate) show_legend: bool,
-    /// Whether the L2 depth layer is active. The legend only advertises keys
-    /// for layers that can actually draw something.
+    /// Whether the L2 depth layer is active over the candles. The legend only
+    /// advertises keys for layers that can actually draw something.
     pub(crate) depth_layer: bool,
-    /// Whether the aggression layer is active.
+    /// Whether the aggression layer is active over the candles.
     pub(crate) aggression_layer: bool,
+    /// Whether the L2 depth layer is active on the tape.
+    ///
+    /// The two panes are switched apart because they are read apart: the
+    /// compressed history answers "where has size been resting", the rolling
+    /// tape answers "what is resting there right now". A trader clearing the
+    /// candles to read structure is not thereby asking to lose the book where
+    /// the book is being watched.
+    pub(crate) lane_depth_layer: bool,
+    /// Whether the aggression layer is active on the tape. Same reasoning as
+    /// [`lane_depth_layer`](Self::lane_depth_layer).
+    pub(crate) lane_aggression_layer: bool,
     /// Per-layer display switches, mirroring the config flags. The projection
     /// no longer filters the aggression primitives — several surfaces read
     /// them — so for those two switches this is where the decision is made
@@ -135,6 +146,8 @@ impl Default for OrderflowRenderStyle {
             show_legend: true,
             depth_layer: true,
             aggression_layer: true,
+            lane_depth_layer: true,
+            lane_aggression_layer: true,
             show_liquidity: true,
             show_buy: true,
             show_sell: true,
@@ -162,6 +175,8 @@ impl OrderflowRenderStyle {
             show_legend: config.show_legend,
             depth_layer: config.depth_visible(),
             aggression_layer: config.show_aggressions,
+            lane_depth_layer: config.lane_depth_visible(),
+            lane_aggression_layer: config.lane_aggressions_visible(),
             show_liquidity: config.show_liquidity,
             show_buy: config.show_buy_aggressions,
             show_sell: config.show_sell_aggressions,
@@ -1107,6 +1122,30 @@ impl<'a> ProjectedLayout<'a> {
         self.chart_rect
     }
 
+    /// The region a layer switched on for `chart`, `lane` or both may paint.
+    ///
+    /// `None` when neither pane draws it, which is the whole layer switched
+    /// off. Returning a region rather than filtering primitives is what keeps
+    /// a run that crosses the divider honest: a resting level that has been
+    /// there since before the tape's window opened is one continuous band, and
+    /// hiding the map over the candles has to cut it at the divider, not drop
+    /// it. It is also free — one clip rect per frame, instead of a test per
+    /// cell on the densest layer the chart draws.
+    #[must_use]
+    fn layer_clip(self, chart: bool, lane: bool) -> Option<egui::Rect> {
+        match (chart, lane) {
+            (true, true) => Some(self.chart_rect),
+            // With no lane there is only one pane, and it is the chart's.
+            (true, false) => Some(if self.lane_left_x().is_some() {
+                self.history_rect()
+            } else {
+                self.chart_rect
+            }),
+            (false, true) => self.lane_left_x().is_some().then(|| self.lane_rect()),
+            (false, false) => None,
+        }
+    }
+
     #[must_use]
     fn y(self, normalized: f64) -> f32 {
         self.chart_rect.top() + finite_unit_f64(normalized) as f32 * self.chart_rect.height()
@@ -1188,7 +1227,15 @@ impl<'a> RenderContext<'a> {
         let projection = self.projection;
         let both_sides = style.show_buy && style.show_sell;
         projection.aggressions.iter().filter(move |mark| {
-            if !style.aggression_layer {
+            // Which pane a print belongs to is the projection's own answer —
+            // the same one that clustered it on the tape's window rather than
+            // history's — so the switch is read from the mark, never inferred
+            // a second time from its position.
+            if !(if mark.live {
+                style.lane_aggression_layer
+            } else {
+                style.aggression_layer
+            }) {
                 return false;
             }
             // A mark carrying both sides — a merged cluster, or a bar summary
@@ -1213,7 +1260,15 @@ impl<'a> RenderContext<'a> {
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
     let style = context.style.sanitized();
     let palette = Palette::for_theme(style.theme);
-    let clip = painter.with_clip_rect(context.layout.chart_rect);
+    // Each pane answers for its own canvas, and a run that crosses the divider
+    // is cut at it rather than dropped.
+    let Some(region) = context
+        .layout
+        .layer_clip(style.depth_layer, style.lane_depth_layer)
+    else {
+        return;
+    };
+    let clip = painter.with_clip_rect(region);
     let mut mesh = egui::Mesh::default();
     mesh.vertices
         .reserve(context.projection.cells.len().saturating_mul(8));
@@ -1601,10 +1656,12 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
 /// keeps the "aggression consuming the book" legible even when price is going
 /// sideways and the prints stack into a horizontal band.
 pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderContext<'_>) {
-    // Off, this pass has nothing to do: the frame still carries every cluster
-    // (the strip reads them), so without this it would clip, sanitize and walk
-    // up to `max_aggression_primitives` marks per frame to draw none of them.
-    if !context.style.aggression_layer {
+    // Off on *both* panes, this pass has nothing to do: the frame still
+    // carries every cluster (the strip reads them), so without this it would
+    // clip, sanitize and walk up to `max_aggression_primitives` marks per
+    // frame to draw none of them. One pane still drawing keeps the pass —
+    // dropping out on the candles' switch alone would blank the tape with it.
+    if !context.style.aggression_layer && !context.style.lane_aggression_layer {
         return;
     }
     let style = context.style.sanitized();
@@ -4168,6 +4225,130 @@ mod tests {
         );
         assert!(layout.history_rect().right() <= divider);
         assert!(layout.lane_rect().left() >= divider);
+    }
+
+    /// The candles and the tape are switched apart: clearing a layer on one
+    /// pane leaves the other drawing exactly what it drew. This is the pixel
+    /// half of the promise — the config half is
+    /// `hiding_a_layer_on_one_pane_leaves_the_other_drawing_and_fed`.
+    #[test]
+    fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        // Three bar slots plus a 300 px lane: the divider lands on x = 700.
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+
+        // One print on each pane, from the same projection, so the only thing
+        // that can separate them is the switch under test.
+        let mut projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+        for (x, live) in [(0.4_f64, false), (0.9_f64, true)] {
+            projection.aggressions.push(AggressionPrimitive {
+                agg_id: 1,
+                agg_ids: vec![1],
+                generation: None,
+                side: Side::Buy,
+                consumed_side: BookSide::Ask,
+                quantity: rust_decimal::Decimal::ONE,
+                buy_share: 1.0,
+                live,
+                price_bucket: rust_decimal::Decimal::ONE,
+                price_span: rust_decimal::Decimal::ONE,
+                trade_count: 1,
+                first_timestamp_ms: 0,
+                last_timestamp_ms: 0,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                liquidity_event_ids: Vec::new(),
+                x,
+                y: 0.5,
+                size: 1.0,
+            });
+        }
+
+        let drawn = |chart: bool, lane: bool| {
+            let style = OrderflowRenderStyle {
+                aggression_layer: chart,
+                lane_aggression_layer: lane,
+                bubbles: BubbleStyle {
+                    min_radius: 20.0,
+                    max_radius: 20.0,
+                    detail_min_radius: 100.0, // cheap dots: one circle per print
+                    hollow_small_buys: false,
+                    halo_strength: 0.0,
+                    trail_length: 0.0,
+                    show_quantity_labels: false,
+                    show_trade_count: false,
+                    ..BubbleStyle::default()
+                },
+                ..OrderflowRenderStyle::default()
+            };
+            let context = RenderContext::new(&projection, layout, &style);
+            let counted = context.bubbles().count();
+            (
+                counted,
+                painted(|painter| draw_aggression_bubbles(painter, &context)),
+            )
+        };
+
+        let (both, _) = drawn(true, true);
+        assert_eq!(both, 2, "with both panes on, both prints draw");
+
+        // The candles are cleared. The tape's print survives — the whole ask.
+        let (tape_only, marks) = drawn(false, true);
+        assert_eq!(
+            tape_only, 1,
+            "the tape keeps drawing with the candles clear"
+        );
+        assert!(
+            marks.contains(&format!("{:?}", layout.lane_rect())),
+            "and it is the tape's print that survived: {marks}"
+        );
+
+        // And the other way round.
+        let (chart_only, marks) = drawn(true, false);
+        assert_eq!(chart_only, 1);
+        assert!(
+            marks.contains(&format!("{:?}", layout.history_rect())),
+            "the candle-pane print is the one left: {marks}"
+        );
+
+        assert_eq!(drawn(false, false).0, 0, "both off draws nothing");
+    }
+
+    /// The depth map is switched per pane by the region it may paint, not by
+    /// dropping cells: a resting level that has been there since before the
+    /// tape's window opened is one continuous band across the divider, and
+    /// hiding the map over the candles has to cut it there rather than lose it.
+    #[test]
+    fn the_depth_map_is_cut_at_the_divider_rather_than_dropped() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
+        let divider = layout.lane_left_x().expect("a lane has a boundary");
+
+        assert_eq!(layout.layer_clip(true, true), Some(layout.chart_rect));
+        assert_eq!(layout.layer_clip(true, false), Some(layout.history_rect()));
+        assert_eq!(layout.layer_clip(false, true), Some(layout.lane_rect()));
+        assert_eq!(layout.layer_clip(false, false), None);
+        // The two regions meet at the divider and neither reaches past it, so
+        // a band crossing it is cut, never doubled or dropped.
+        assert!(layout.layer_clip(true, false).unwrap().right() <= divider);
+        assert!(layout.layer_clip(false, true).unwrap().left() >= divider);
+
+        // A canvas with no tape has one pane, and it is the candles'. The
+        // lane's switch cannot blank a chart that has no lane.
+        let laneless = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 0.0);
+        assert!(laneless.lane_left_x().is_none());
+        assert_eq!(laneless.layer_clip(true, false), Some(laneless.chart_rect));
+        assert_eq!(laneless.layer_clip(true, true), Some(laneless.chart_rect));
+        assert_eq!(laneless.layer_clip(false, true), None);
     }
 
     /// The two sides never both get the side nudge: an even split sits on the

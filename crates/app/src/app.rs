@@ -8636,6 +8636,64 @@ plot(close)
         std::fs::remove_file(&path).ok();
     }
 
+    /// A right-click on the tape configures the tape. The candles' layers do
+    /// not vanish with it — they move one submenu away — because the tape is
+    /// also where a trader right-clicks to trade, and a menu that answered
+    /// only for the tape would take order entry and the drawing tools with it.
+    #[test]
+    fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
+        let dir = std::env::temp_dir().join(format!("quantick-tape-menu-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("chart-layers.toml");
+        let _ = std::fs::remove_file(&path);
+
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
+        let (mut app, _events, _commands, _book) = test_app();
+        app.chart_layers_path = path.clone();
+
+        let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
+            with_flow_pane(app, |pane, chrome| {
+                pane.aim_context_menu_at_tape(on_tape);
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .show(ctx, |ui| pane.draw_layer_menu(ui, chrome));
+                    },
+                );
+            });
+        };
+
+        // The candles' own menu is exactly the menu it always was.
+        menu_frame(&mut app, false);
+        assert_eq!(
+            app.active_tab().flow_pane.layer_menu_rects.len(),
+            ChartLayer::ALL.len(),
+            "a click on the candles still lists every chart layer up front"
+        );
+
+        // The tape's menu answers for the tape: the chart's checkboxes sit
+        // behind the submenu button rather than laid out at the top level.
+        menu_frame(&mut app, true);
+        assert!(
+            app.active_tab().flow_pane.layer_menu_rects.is_empty(),
+            "the chart's switches move into the submenu, so none are laid out yet"
+        );
+
+        // And back: aiming at the candles restores the full list, so the two
+        // menus cannot leak into each other across frames.
+        menu_frame(&mut app, false);
+        assert_eq!(
+            app.active_tab().flow_pane.layer_menu_rects.len(),
+            ChartLayer::ALL.len()
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
     /// §11 keeps the tape on the flow pane, so the time pane's menu says the
     /// flow layers are drawn elsewhere instead of offering dead switches.
     #[test]
