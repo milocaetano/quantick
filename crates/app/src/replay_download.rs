@@ -24,6 +24,7 @@
 //! which is what lets a second, fake source drive the whole interface in tests
 //! without MetaTrader, Python, or a network.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -403,6 +404,25 @@ pub fn run(
     })
 }
 
+/// How many of the exporter's last lines an unexplained exit carries.
+///
+/// Enough for a Python traceback's business end — the raise and the line that
+/// raised it — and short enough to stay inside the panel without turning the
+/// interface into a log viewer.
+const FAILURE_TAIL_LINES: usize = 4;
+
+/// What the exporter said just before it stopped, as advice a person can read.
+///
+/// `None` when it said nothing: an empty box under a headline would be one
+/// more thing to interpret, and silence is already reported by the headline.
+fn last_words<'a>(tail: impl Iterator<Item = &'a str>) -> Option<String> {
+    let body: Vec<&str> = tail.collect();
+    if body.is_empty() {
+        return None;
+    }
+    Some(format!("It last said:\n{}", body.join("\n")))
+}
+
 /// Run the command and translate its stderr until it ends or is cancelled.
 fn pump(
     mut commands: Vec<Command>,
@@ -439,7 +459,19 @@ fn pump(
         return;
     };
 
+    // The last thing the exporter said before it stopped, kept for the exit
+    // that explains nothing. A `NameError` on the line before the file is
+    // written exits 1 with a perfectly clear Python traceback on stderr, and
+    // the interface used to show none of it — "MetaTrader 5 stopped with code
+    // 1" is what a whole afternoon of that bug looked like from the outside.
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(FAILURE_TAIL_LINES);
     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        if !line.trim().is_empty() {
+            if tail.len() == FAILURE_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line.clone());
+        }
         // Verbatim to the log, recognised or not: a diagnostic this build does
         // not know about is still the thing a person needs when it goes wrong.
         tracing::info!(
@@ -476,10 +508,12 @@ fn pump(
         }
         Ok(status) => {
             // A non-zero exit with no `Failed` line already sent would leave
-            // the interface waiting forever, so the exit itself becomes one.
+            // the interface waiting forever, so the exit itself becomes one —
+            // carrying what the exporter last said, because an exit code alone
+            // is a fact about the process, not about the download.
             let _ = tx.send(DownloadEvent::Failed {
                 headline: format!("{label} stopped with code {}", status.code().unwrap_or(-1)),
-                fix: None,
+                fix: last_words(tail.iter().map(String::as_str)),
             });
         }
         Err(e) => {
@@ -678,5 +712,29 @@ mod tests {
             ],
             "the event vocabulary belongs to the port, not to MetaTrader"
         );
+    }
+
+    /// An exit code is a fact about the process. What the exporter said is the
+    /// fact about the download — and the one the trader can act on.
+    #[test]
+    fn an_unexplained_exit_carries_the_exporter_s_last_words() {
+        let advice = last_words(
+            [
+                "Traceback (most recent call last):",
+                "  File \"export_session.py\", line 490, in export_tape",
+                "NameError: name 'flagged' is not defined",
+            ]
+            .into_iter(),
+        )
+        .expect("something was said");
+        assert!(
+            advice.contains("NameError: name 'flagged' is not defined"),
+            "the reason has to survive the trip to the panel: {advice}"
+        );
+    }
+
+    #[test]
+    fn an_exit_that_said_nothing_offers_no_empty_box() {
+        assert_eq!(last_words(std::iter::empty()), None);
     }
 }

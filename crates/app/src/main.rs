@@ -52,6 +52,7 @@ mod popup;
 mod price_view;
 mod replay_download;
 mod replay_get_data;
+mod replay_home;
 mod replay_view;
 mod resample;
 mod state;

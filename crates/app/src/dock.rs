@@ -485,7 +485,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut dock = Dock::new();
         let mut orderflow = OrderflowView::new("TESTUSDT");
-        let mut replay_view = ReplayView::new();
+        let mut replay_view = ReplayView::new(None);
         let mut paper = PaperTrading::new();
         for tab in DockTab::ALL {
             dock.open_tab(tab);
@@ -543,7 +543,7 @@ mod tests {
                         ctx,
                         &mut DockEnv {
                             orderflow: &mut OrderflowView::new("TESTUSDT"),
-                            replay_view: &mut ReplayView::new(),
+                            replay_view: &mut ReplayView::new(None),
                             replay: None,
                             paper,
                             tz: TzOffset::default(),

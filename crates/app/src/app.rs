@@ -987,7 +987,7 @@ impl QuantickApp {
             indicator_state_dirty: false,
             last_indicator_change: None,
             last_script_poll: Instant::now(),
-            replay_view: ReplayView::new(),
+            replay_view: ReplayView::new(workspace.replay_folder.as_deref()),
             dock: Dock::new(),
             toolrail: ToolRail::new(),
             drawing_delete_confirm: false,
@@ -2969,6 +2969,10 @@ impl QuantickApp {
         // Every write rewrites the whole file, so the bookmarks have to ride
         // along or saving the startup screen would silently delete them.
         .with_saved(self.bookmarks.clone())
+        // And so does the replay folder, for exactly the same reason: a save
+        // that dropped it would send the browser back to nowhere on the next
+        // launch, which is the failure this field was added to end.
+        .with_replay_folder(Some(self.replay_view.remembered_folder().to_owned()))
     }
 
     /// The tabs and the chrome as they stand — the part a startup workspace
@@ -3212,6 +3216,29 @@ impl QuantickApp {
         let written = ui_state::save(&self.ui_state_path, &file);
         self.workspace_saved |= written;
         written
+    }
+
+    /// Write down the replay folder the trader just pointed the browser at,
+    /// without disturbing anything else the workspace file holds.
+    ///
+    /// The same read-swap-write as [`Self::write_bookmarks`], and for the same
+    /// reason: this is a standing choice, not a description of the screen, so
+    /// it must not wait for a clean exit and must not drag the current
+    /// arrangement into the file with it.
+    fn write_replay_folder(&mut self, folder: &str) {
+        let mut file = ui_state::load(&self.ui_state_path);
+        file.replay_folder = Some(folder.to_owned());
+        let written = ui_state::save(&self.ui_state_path, &file);
+        self.workspace_saved |= written;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "REPLAY_FOLDER_REMEMBERED",
+            folder = folder,
+            written,
+            action = "store_replay_folder",
+            "the replay folder is now the one this workspace opens on"
+        );
     }
 
     /// Keep the window as it stands under `name`.
@@ -6077,12 +6104,31 @@ impl QuantickApp {
                 replay_view,
                 tabs,
                 active_tab,
+                config,
                 ..
             } = self;
-            replay_view.draw(ctx, tabs[*active_tab].replay.as_ref())
+            let tab = &tabs[*active_tab];
+            // The instruments the download tab offers with one click: what this
+            // chart shows, and what the feed serving it lists. A dated contract
+            // rolls every couple of months, and typing `WINV26` from memory is
+            // not a thing a trader should have to get right to see what they
+            // can replay.
+            let market = crate::replay_view::MarketMenu {
+                current: Some(tab.symbol.as_str()),
+                catalogue: config
+                    .feed(&tab.feed_id)
+                    .map_or(&[] as &[String], |feed| feed.symbols.as_slice()),
+            };
+            replay_view.draw(ctx, tab.replay.as_ref(), &market)
         };
         if let Some(action) = replay_action {
             self.apply_replay_action(action);
+        }
+        // A folder the trader just pointed the browser at is written down on
+        // the frame they pointed it, not at exit: "it forgot my folder again"
+        // must not be one crash away.
+        if let Some(folder) = self.replay_view.take_folder_change() {
+            self.write_replay_folder(&folder);
         }
         {
             // The focused pane's objects: the toolbox lists and manages what a
