@@ -589,19 +589,6 @@ fn parse_tape_window(value: &str) -> Option<LaneWindow> {
     })
 }
 
-/// Format a duration in milliseconds for the lane's time axis, in the unit a
-/// human would read it in.
-pub fn fmt_window(milliseconds: i64) -> String {
-    let milliseconds = milliseconds.max(0);
-    if milliseconds < 1_000 {
-        format!("{milliseconds} ms")
-    } else if milliseconds < 60_000 {
-        format!("{:.1} s", milliseconds as f64 / 1_000.0)
-    } else {
-        format!("{:.1} min", milliseconds as f64 / 60_000.0)
-    }
-}
-
 /// Format a UTC epoch-millisecond timestamp as `HH:MM:SS` in the display
 /// timezone `tz`, for the time axis.
 pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
@@ -7588,10 +7575,15 @@ mod tests {
 
     #[test]
     fn the_lane_axis_reads_its_window_in_a_human_unit() {
-        assert_eq!(fmt_window(800), "800 ms");
-        assert_eq!(fmt_window(8_000), "8.0 s");
-        assert_eq!(fmt_window(90_000), "1.5 min");
-        assert_eq!(fmt_window(-1), "0 ms");
+        use crate::orderflow::format_window_ms;
+        // One duration, one wording. The tape's axis and the menu that sets
+        // its window sit a hand's width apart, so "1.5 min" under the tape
+        // while the menu reads "1 min 30 s" is two languages for one number.
+        assert_eq!(format_window_ms(800), "800 ms");
+        assert_eq!(format_window_ms(8_000), "8 s");
+        assert_eq!(format_window_ms(90_000), "1 min 30 s");
+        assert_eq!(format_window_ms(120_000), "2 min");
+        assert_eq!(format_window_ms(-1), "0 ms");
     }
 
     /// A minimal one-feed, two-symbol config for the app tests.

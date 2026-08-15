@@ -181,10 +181,16 @@ impl ChartLayer {
     /// Hover text: what disappears, and what keeps running while it is hidden.
     pub(crate) const fn hint(self) -> &'static str {
         match self {
+            // Both of these name the candles explicitly, and say where the
+            // other copy is: the tape has switches of its own, so a trader who
+            // clears the candles and still sees the book rolling on the tape
+            // is looking at a setting, not at a bug.
             Self::Heatmap => {
-                "resting depth behind the candles. Recording never stops, so hiding it loses no history"
+                "resting depth behind the candles. Recording never stops, so hiding it loses no                  history. The tape keeps its own copy of this switch — right-click the tape to                  reach it"
             }
-            Self::Bubbles => "confirmed executions from the trade stream, drawn where they printed",
+            Self::Bubbles => {
+                "confirmed executions from the trade stream, drawn where they printed, on the                  candles. The tape keeps its own copy of this switch — right-click the tape to                  reach it"
+            }
             Self::Footprint => {
                 "the buy/sell split at each price inside every candle. Detail follows zoom: \
                  numbers close in, profile and highlight marks further out. The violet line \

@@ -20,9 +20,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use smallvec::SmallVec;
 
-use crate::app::{
-    PlotAreas, fmt_time_as, fmt_window, gesture_hits_lane, plot_split, split_time_strip,
-};
+use crate::app::{PlotAreas, fmt_time_as, gesture_hits_lane, plot_split, split_time_strip};
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
@@ -38,7 +36,7 @@ use crate::indicator_worker::{
 use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
-    lane_window_label, reserved_span_ms, same_lane_window,
+    format_window_ms, lane_window_label, reserved_span_ms, same_lane_window,
 };
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
@@ -4585,7 +4583,7 @@ impl ChartPane {
         painter.text(
             strip.center(),
             egui::Align2::CENTER_CENTER,
-            format!("tape · {}", fmt_window(window_ms)),
+            format!("tape · {}", format_window_ms(window_ms)),
             egui::FontId::monospace(10.0),
             theme::TEXT_MUTED,
         );
