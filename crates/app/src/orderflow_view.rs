@@ -271,13 +271,14 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// The band's width for a canvas this wide — zero when the tape is off.
+    /// The band's width on a canvas this wide — zero when the tape is off.
     ///
-    /// The number `ChartPane::draw_chart` reads every frame, exposed so a test
-    /// can ask it without a live edge to anchor a lane on.
-    #[cfg(test)]
+    /// The one number the tape switch reaches the canvas through, and the one
+    /// [`Self::live_lane`] reports when there is a live edge to anchor the band
+    /// on. Asking for it directly is how a caller — or a test — knows whether a
+    /// band is reserved at all, without needing a market to have printed yet.
     #[must_use]
-    pub fn lane_width_px_for_test(&self, chart_width: f32) -> f32 {
+    pub fn lane_width_px(&self, chart_width: f32) -> f32 {
         self.config.live_lane.resolved_width_px(chart_width)
     }
 
@@ -447,7 +448,7 @@ impl OrderflowView {
     pub fn live_lane(&mut self, chart_width: f32) -> Option<LiveLane> {
         let end_ms = self.live_end_ms()?;
         Some(LiveLane {
-            width_px: self.config.live_lane.resolved_width_px(chart_width),
+            width_px: self.lane_width_px(chart_width),
             end_ms,
         })
     }

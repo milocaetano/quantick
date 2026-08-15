@@ -9559,9 +9559,7 @@ plot(close)
         frame(&mut app, Some(chip.center()));
         assert!(!layer_on(&app, ChartLayer::TapeChart), "one click takes it");
         assert_eq!(
-            app.active_tab()
-                .tape()
-                .lane_width_px_for_test(chart.width()),
+            app.active_tab().tape().lane_width_px(chart.width()),
             0.0,
             "and no band is reserved: the candles have the whole canvas"
         );
@@ -9571,12 +9569,7 @@ plot(close)
             layer_on(&app, ChartLayer::TapeChart),
             "and one puts it back"
         );
-        assert!(
-            app.active_tab()
-                .tape()
-                .lane_width_px_for_test(chart.width())
-                > 0.0
-        );
+        assert!(app.active_tab().tape().lane_width_px(chart.width()) > 0.0);
     }
 
     /// The menu's contents are covered above; what this proves is the one thing

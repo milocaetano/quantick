@@ -289,12 +289,31 @@ fn lane_rungs(lane_width_px: f32) -> usize {
 const TAPE_SWITCH_SIZE: egui::Vec2 = egui::vec2(54.0, 18.0);
 /// Inset of that chip from the canvas's top-right corner.
 const TAPE_SWITCH_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
-/// Room the switch takes off the right edge, for anything else that wants the
-/// same corner — the book status badge is the one thing that does.
-pub(crate) const TAPE_SWITCH_RESERVED_PX: f32 =
-    TAPE_SWITCH_SIZE.x + TAPE_SWITCH_INSET.x + TAPE_SWITCH_GAP_PX;
 /// Gap between the switch and whatever sits to its left.
 const TAPE_SWITCH_GAP_PX: f32 = 6.0;
+/// Room the switch takes off the right edge, for anything else that wants the
+/// same corner — the book status badge is the one thing that does.
+const TAPE_SWITCH_RESERVED_PX: f32 = TAPE_SWITCH_SIZE.x + TAPE_SWITCH_INSET.x + TAPE_SWITCH_GAP_PX;
+/// Corner radius of the chip, matching the status badge it sits beside.
+const TAPE_SWITCH_ROUNDING_PX: f32 = 3.0;
+/// Chip background opacity over the canvas, resting and hovered. The resting
+/// value is the status badge's, so the two read as one family of chrome.
+const TAPE_SWITCH_FILL_ALPHA: u8 = 165;
+const TAPE_SWITCH_HOVER_FILL_ALPHA: u8 = 210;
+/// Opacity of the hover outline, relative to the chip's own accent.
+const TAPE_SWITCH_HOVER_STROKE_ALPHA: f32 = 0.7;
+/// Width of every line the chip draws.
+const TAPE_SWITCH_STROKE_PX: f32 = 1.0;
+/// State dot: how far its centre sits from the chip's left edge, and its
+/// radius. Filled means the tape is on the canvas, hollow means it is not.
+const TAPE_SWITCH_DOT_X_PX: f32 = 9.0;
+const TAPE_SWITCH_DOT_RADIUS_PX: f32 = 3.0;
+/// Where the label starts, measured from the same edge as the dot.
+const TAPE_SWITCH_LABEL_X_PX: f32 = 17.0;
+/// Label size, matching the status badge's.
+const TAPE_SWITCH_FONT_PX: f32 = 11.0;
+/// The label itself. Short by necessity: the chip sits over market data.
+const TAPE_SWITCH_LABEL: &str = "tape";
 
 /// Where the tape switch sits on a canvas this size.
 ///
@@ -1406,7 +1425,10 @@ impl ChartPane {
                 .as_ref()
                 .is_some_and(OrderflowView::lane_enabled)
         {
-            return Some("the tape is off");
+            return Some(
+                "the tape is off — the switch in the canvas's top-right corner puts it back, \
+                 and this layer is waiting exactly as it was left",
+            );
         }
         match layer {
             ChartLayer::TapeHeatmap => (!capabilities.book_capture)
@@ -1580,31 +1602,43 @@ impl ChartPane {
         let on = tape.lane_enabled();
         let rect = tape_switch_rect(chart_rect);
         let accent = if on { theme::ACCENT } else { theme::TEXT_MUTED };
+        let rounding = egui::Rounding::same(TAPE_SWITCH_ROUNDING_PX);
         painter.rect_filled(
             rect,
-            egui::Rounding::same(3.0),
-            egui::Color32::from_black_alpha(if self.tape_switch_hovered { 210 } else { 165 }),
+            rounding,
+            egui::Color32::from_black_alpha(if self.tape_switch_hovered {
+                TAPE_SWITCH_HOVER_FILL_ALPHA
+            } else {
+                TAPE_SWITCH_FILL_ALPHA
+            }),
         );
         if self.tape_switch_hovered {
             painter.rect_stroke(
                 rect,
-                egui::Rounding::same(3.0),
-                egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.7)),
+                rounding,
+                egui::Stroke::new(
+                    TAPE_SWITCH_STROKE_PX,
+                    accent.gamma_multiply(TAPE_SWITCH_HOVER_STROKE_ALPHA),
+                ),
             );
         }
         // A filled dot for on, a ring for off: the state survives a screenshot
         // read in greyscale, which colour alone would not.
-        let dot = egui::pos2(rect.left() + 9.0, rect.center().y);
+        let dot = egui::pos2(rect.left() + TAPE_SWITCH_DOT_X_PX, rect.center().y);
         if on {
-            painter.circle_filled(dot, 3.0, accent);
+            painter.circle_filled(dot, TAPE_SWITCH_DOT_RADIUS_PX, accent);
         } else {
-            painter.circle_stroke(dot, 3.0, egui::Stroke::new(1.0_f32, accent));
+            painter.circle_stroke(
+                dot,
+                TAPE_SWITCH_DOT_RADIUS_PX,
+                egui::Stroke::new(TAPE_SWITCH_STROKE_PX, accent),
+            );
         }
         painter.text(
-            egui::pos2(rect.left() + 17.0, rect.center().y),
+            egui::pos2(rect.left() + TAPE_SWITCH_LABEL_X_PX, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "tape",
-            egui::FontId::proportional(11.0),
+            TAPE_SWITCH_LABEL,
+            egui::FontId::proportional(TAPE_SWITCH_FONT_PX),
             accent,
         );
     }
