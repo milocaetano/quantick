@@ -1286,10 +1286,10 @@ impl QuantickApp {
                 }
             }
         }
-        // Same convenience for Market Replay: open the folder named by
-        // QUANTICK_REPLAY_DIR and play its first session. One env var, the same
-        // code path a click takes, so a scripted run and a person get the same
-        // behaviour.
+        // Same convenience for Market Replay: scan the folder in force — the
+        // hook, else the stored pick, else the documents home — and play its
+        // first session. The same code path a click takes, so a scripted run
+        // and a person get the same behaviour.
         if std::env::var("QUANTICK_REPLAY_AUTOSTART").is_ok_and(|value| value == "1") {
             let speed = std::env::var("QUANTICK_REPLAY_SPEED")
                 .ok()
@@ -1301,7 +1301,11 @@ impl QuantickApp {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "REPLAY_AUTOSTART",
-                folder = std::env::var(crate::replay_view::REPLAY_DIR_ENV).unwrap_or_default(),
+                // The folder actually scanned, not the environment variable:
+                // once a stored pick can supply it, reading the hook back
+                // would report an empty folder for a run that scanned a full
+                // one — a log that lies about the input it acted on.
+                folder = app.replay_view.remembered_folder(),
                 speed,
                 started,
                 action = if started { "load_first_session" } else { "open_browser" },
@@ -1311,11 +1315,13 @@ impl QuantickApp {
         // The download half of the same browser. Reached on its own because a
         // scripted run has to photograph the Get data tab without a click, and
         // it is a different screen from the session list beside it. Takes the
-        // same path the tab click takes; a symbol pre-fills the field so the
-        // calendar can be looked up from a fresh launch.
+        // same path the tab click takes — including, for a bare `1`, the
+        // chart's own instrument, because that is what clicking the tab now
+        // fills the field with and a hook that opened it emptier than a click
+        // would photograph a screen no person ever sees.
         if let Ok(value) = std::env::var(crate::replay_view::GET_DATA_ENV) {
             let symbol = match value.trim() {
-                "1" | "" => None,
+                "1" | "" => Some(app.active_tab().symbol.clone()),
                 symbol => Some(symbol.to_string()),
             };
             app.replay_view.open_get_data(symbol.as_deref());

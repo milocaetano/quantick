@@ -314,6 +314,14 @@ impl Mt5SessionSource {
             args.push("--utc-offset-s".to_string());
             args.push(offset.to_string());
         }
+        // Where the live bridge wrote down this broker's clock. Without it the
+        // exporter only knows the copy inside its own checkout, and after the
+        // close — when replays are actually downloaded — no offset means no
+        // download at all.
+        if let Some(cache) = mt5_bridge::clock_cache_path() {
+            args.push("--clock-cache".to_string());
+            args.push(cache.display().to_string());
+        }
         match &request.day {
             Some(day) => {
                 args.push("--day".to_string());

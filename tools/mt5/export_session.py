@@ -51,14 +51,26 @@ CONTEXT_INTERVAL_MS = 60_000
 #: How many calendar days back a probe looks for tradable days.
 PROBE_WINDOW_DAYS = 120
 
-#: Where the live bridge remembers the clock offset it measured. Read, never
-#: written, from here: the bridge owns that measurement.
-BRIDGE_CACHE_PATH = (
+#: Where the live bridge used to remember the clock offset it measured: inside
+#: the checkout this script sits in. Read, never written, from here: the bridge
+#: owns that measurement.
+LEGACY_BRIDGE_CACHE_PATH = (
     Path(__file__).resolve().parents[2]
     / "bridge"
     / "mt5"
     / ".quantick_bridge_cache.json"
 )
+
+#: The clock caches to consult, in order. `--clock-cache` puts the durable home
+#: in front; without it only the legacy location is read, which is what a bare
+#: command line has always done.
+#:
+#: Why this matters at all: after the close there is no fresh tick to measure
+#: from, and an export with no offset refuses outright. A cache tied to one
+#: checkout means the same terminal, the same broker and the same trader can
+#: download from one folder and be refused from another — the difference
+#: invisible from the interface.
+BRIDGE_CACHE_PATHS = [LEGACY_BRIDGE_CACHE_PATH]
 
 #: Ticks accumulated before a progress line is emitted. Small enough that a bar
 #: moves visibly on a slow export, large enough that reporting is not the cost.
@@ -189,15 +201,16 @@ def offset_from_any_cached_symbol() -> tuple[int, str] | None:
     entry back is therefore sound, and it is what makes exporting work outside
     market hours — which is when a trader actually downloads a replay.
     """
-    try:
-        cache = json.loads(BRIDGE_CACHE_PATH.read_text("utf-8"))
-    except Exception:  # noqa: BLE001 - no cache is a normal first run
-        return None
-    for cached_symbol, entry in sorted(cache.items()):
+    for path in BRIDGE_CACHE_PATHS:
         try:
-            return int(entry["utc_offset_s"]), cached_symbol
-        except (KeyError, TypeError, ValueError):
+            cache = json.loads(path.read_text("utf-8"))
+        except Exception:  # noqa: BLE001 - no cache is a normal first run
             continue
+        for cached_symbol, entry in sorted(cache.items()):
+            try:
+                return int(entry["utc_offset_s"]), cached_symbol
+            except (KeyError, TypeError, ValueError):
+                continue
     return None
 
 
@@ -214,8 +227,14 @@ def server_utc_offset_s(mt5, symbol: str, override: int | None) -> int:
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "mt5"))
     try:
-        from quantick_bridge import measure_utc_offset_s
+        from quantick_bridge import measure_utc_offset_s, set_clock_cache
 
+        # If the market is open this measures a fresh offset, and the bridge
+        # writes it down. Point it at the same durable home the app reads, or
+        # a measurement made during an export would be remembered where only
+        # this checkout can find it.
+        if BRIDGE_CACHE_PATHS[0] != LEGACY_BRIDGE_CACHE_PATH:
+            set_clock_cache(str(BRIDGE_CACHE_PATHS[0]))
         offset = measure_utc_offset_s(symbol, None)
         emit("EXPORT_UTC_OFFSET", source="bridge", server_utc_offset_s=offset)
         return offset
@@ -601,10 +620,20 @@ def main() -> int:
         default=None,
         help="server time minus UTC, in seconds (B3 brokers use -10800)",
     )
+    parser.add_argument(
+        "--clock-cache",
+        default=None,
+        help="file the bridge remembers the broker clock in; consulted before the legacy one",
+    )
     args = parser.parse_args()
 
     if not args.probe and not args.day:
         parser.error("--day is required unless --probe is given")
+
+    # In front of the legacy path, not instead of it: a trader whose clock was
+    # measured before the cache moved must not be asked to measure it again.
+    if args.clock_cache:
+        BRIDGE_CACHE_PATHS.insert(0, Path(args.clock_cache))
 
     mt5 = load_mt5()
     try:

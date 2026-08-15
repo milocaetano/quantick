@@ -35,17 +35,17 @@ const REPLAY_ACCENT: egui::Color32 = AMBER;
 /// line directly above the status bar (`docs/ux/ui-design-model.md` §8).
 pub const TRANSPORT_HEIGHT: f32 = 30.0;
 
-/// Environment variable naming the folder the browser opens on.
-///
-/// Re-exported from [`crate::replay_home`], which owns the whole resolution
-/// order this hook sits at the top of — one name, so the hook and the stored
-/// pick can never disagree about which folder is being talked about.
-pub use crate::replay_home::REPLAY_DIR_ENV;
+// The folder this browser opens on is resolved by [`crate::replay_home`],
+// which owns the whole order — the `QUANTICK_REPLAY_DIR` hook, the trader's
+// stored pick, the documents home. The view is handed the answer rather than
+// reading the environment itself, so there is one place where "which folder"
+// is decided and nowhere for a second opinion to appear.
 
 /// Environment variable that opens the browser on its **Get data** tab.
 ///
-/// `1` opens it empty; any other value pre-fills the symbol field, so a
-/// scripted run can reach the calendar from a fresh launch with no clicks.
+/// `1` opens it on the chart's own instrument — what clicking the tab does —
+/// and any other value states the symbol outright, so a scripted run reaches
+/// the calendar of a *named* contract from a fresh launch with no clicks.
 pub const GET_DATA_ENV: &str = "QUANTICK_REPLAY_GET_DATA";
 
 /// Height of the seek track, in pixels.
