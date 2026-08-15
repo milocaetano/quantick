@@ -532,6 +532,31 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
     )
 }
 
+/// Which pane a scripted right-click should land on.
+///
+/// The two panes now open different menus, so "open the context menu" is no
+/// longer one instruction — a capture has to say which canvas it is asking
+/// about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextMenuPane {
+    /// The candles, left of the divider.
+    Chart,
+    /// The rolling tape, right of it.
+    Tape,
+}
+
+impl ContextMenuPane {
+    /// Read one off `QUANTICK_CONTEXT_MENU`; `None` for anything else, so a
+    /// typo opens no menu rather than the wrong one.
+    fn from_env_value(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "chart" | "candles" => Some(Self::Chart),
+            "tape" | "lane" => Some(Self::Tape),
+            _ => None,
+        }
+    }
+}
+
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
 ///
 /// `auto` follows the bars; a duration pins it, in the units a human would
@@ -823,6 +848,12 @@ pub struct QuantickApp {
     /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART` and
     /// `QUANTICK_CANDLE_WIDTH`.
     scripted_footprint: bool,
+    /// Which pane a scripted run asked to right-click, until the click lands.
+    ///
+    /// Cleared by the first frame that can honour it — the divider only exists
+    /// once the canvas has drawn once — so the menu opens exactly once and
+    /// then behaves like any menu a hand opened.
+    scripted_context_menu: Option<ContextMenuPane>,
     scripted_candle_width: Option<f32>,
     /// `QUANTICK_INDICATOR_SETTINGS`: open the settings dialog for the
     /// first indicator once its inputs have arrived from the worker. Armed
@@ -1070,6 +1101,7 @@ impl QuantickApp {
             indicator_presets_path,
             footprint_preset_draft: String::new(),
             scripted_footprint: false,
+            scripted_context_menu: None,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
             style: ChartStyle::default(),
@@ -1239,6 +1271,15 @@ impl QuantickApp {
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
         }
+        // The right-click itself, on the pane it names. The two panes open
+        // different menus now, so a capture has to say which canvas it is
+        // asking about; the click is delivered through the app's own input
+        // path (see `raw_input_hook`), never by reaching into egui's menu
+        // state, so what opens is what a trader's click opens.
+        app.scripted_context_menu = std::env::var("QUANTICK_CONTEXT_MENU")
+            .ok()
+            .and_then(|value| ContextMenuPane::from_env_value(&value));
+
         // The tape's own switches. The two panes are configured apart and the
         // tape's menu is a right-click a scripted run cannot perform, so the
         // state behind it needs a door of its own — the state, not a second
@@ -5540,12 +5581,66 @@ impl QuantickApp {
     }
 }
 
+impl QuantickApp {
+    /// Where a scripted right-click should land to reach `pane`'s menu.
+    ///
+    /// Mid-height, and mid-pane horizontally, off the geometry the draw
+    /// published — so the click lands on the canvas rather than on the axis,
+    /// the legend or the divider handle. `None` until the pane has drawn once
+    /// (no divider yet), and `None` for the tape on a canvas that has none:
+    /// there is no tape menu to open where there is no tape.
+    fn scripted_context_menu_pos(&self, pane: ContextMenuPane) -> Option<egui::Pos2> {
+        let flow = &self.active_tab().flow_pane;
+        let rect = flow.last_chart_rect?;
+        let divider = flow.last_lane_divider_x;
+        let x = match (pane, divider) {
+            (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
+            (ContextMenuPane::Tape, None) => return None,
+            (ContextMenuPane::Chart, Some(divider)) => (rect.left() + divider) / 2.0,
+            (ContextMenuPane::Chart, None) => rect.center().x,
+        };
+        Some(egui::pos2(x, rect.center().y))
+    }
+}
+
 impl eframe::App for QuantickApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(cpu) = frame.info().cpu_usage {
             self.cpu_frames.record(cpu * 1000.0);
         }
         self.draw_frame(ctx, Instant::now());
+    }
+
+    /// The one place a scripted run can put a pointer event into the app.
+    ///
+    /// A context menu opens on a real right-click and on nothing else — there
+    /// is no "open the menu" call to reach for, and reaching into egui's menu
+    /// state to fake one would be a second activation path that drifts from
+    /// the first. So the hook supplies the click itself, on the pane it names,
+    /// and every line after that is the code a trader's own click runs.
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let Some(pane) = self.scripted_context_menu else {
+            return;
+        };
+        // The divider is published by the draw, so the first frame has none:
+        // wait for it rather than guess where the tape is.
+        let Some(position) = self.scripted_context_menu_pos(pane) else {
+            return;
+        };
+        self.scripted_context_menu = None;
+        raw_input.events.push(egui::Event::PointerMoved(position));
+        raw_input.events.push(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw_input.events.push(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
     }
 }
 
@@ -8707,6 +8802,69 @@ plot(close)
             "an unavailable layer is still listed, just not switchable"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// The two panes open different menus, so the scripted right-click has to
+    /// name one — and refuse anything it does not recognise, since opening the
+    /// wrong pane's menu photographs a defect that is not there.
+    #[test]
+    fn the_context_menu_hook_names_a_pane_or_opens_nothing() {
+        assert_eq!(
+            ContextMenuPane::from_env_value("tape"),
+            Some(ContextMenuPane::Tape)
+        );
+        assert_eq!(
+            ContextMenuPane::from_env_value(" LANE "),
+            Some(ContextMenuPane::Tape)
+        );
+        assert_eq!(
+            ContextMenuPane::from_env_value("chart"),
+            Some(ContextMenuPane::Chart)
+        );
+        assert_eq!(
+            ContextMenuPane::from_env_value("candles"),
+            Some(ContextMenuPane::Chart)
+        );
+        for refused in ["", "1", "true", "both", "pane"] {
+            assert_eq!(ContextMenuPane::from_env_value(refused), None, "{refused}");
+        }
+    }
+
+    /// The scripted click lands on the canvas of the pane it names, and asks
+    /// for nothing that is not on screen: no draw yet means no geometry, and a
+    /// canvas with no tape has no tape menu to open.
+    #[test]
+    fn the_scripted_click_lands_on_the_pane_it_names() {
+        let (mut app, _events, _commands, _book) = test_app();
+        assert_eq!(
+            app.scripted_context_menu_pos(ContextMenuPane::Tape),
+            None,
+            "nothing has drawn yet, so there is no geometry to click"
+        );
+
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.last_chart_rect = Some(rect);
+            pane.last_lane_divider_x = Some(700.0);
+        }
+        let tape = app
+            .scripted_context_menu_pos(ContextMenuPane::Tape)
+            .expect("a drawn tape can be clicked");
+        assert!(tape.x > 700.0 && tape.x < 1000.0, "{tape:?}");
+        let chart = app
+            .scripted_context_menu_pos(ContextMenuPane::Chart)
+            .expect("and so can the candles");
+        assert!(chart.x > 0.0 && chart.x < 700.0, "{chart:?}");
+        assert!(rect.contains(tape) && rect.contains(chart));
+
+        // No lane: the candles still answer, the tape has nothing to open.
+        app.active_tab_mut().flow_pane.last_lane_divider_x = None;
+        assert_eq!(app.scripted_context_menu_pos(ContextMenuPane::Tape), None);
+        assert!(
+            app.scripted_context_menu_pos(ContextMenuPane::Chart)
+                .is_some()
+        );
     }
 
     /// The tape's window hook reads what a human would type, and refuses

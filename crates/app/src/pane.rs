@@ -860,6 +860,11 @@ pub struct ChartPane {
     // Where the history pane ended last frame — the lane's divider, and the
     // handle that resizes it. The input pass runs before the draw computes it.
     pub last_lane_divider_x: Option<f32>,
+    // The canvas the last draw used. Published for the same reason the divider
+    // is: something outside the draw needs a point on this pane — the scripted
+    // right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
+    // second time is how two answers start to disagree.
+    pub last_chart_rect: Option<egui::Rect>,
     // The automatic tape window at the last draw — the recent bars' typical
     // duration. Only the menu reads it, and only to state what "follows the
     // bars" currently amounts to; the drawing itself is handed the resolved
@@ -1073,6 +1078,7 @@ impl ChartPane {
             imbalance_target,
             viewport: Viewport::new(),
             last_lane_divider_x: None,
+            last_chart_rect: None,
             last_lane_reference_ms: None,
             context_menu_on_tape: false,
             lane_rungs: 0,
@@ -3895,6 +3901,7 @@ impl ChartPane {
         // zoom inside it exactly as they did when it was the whole chart.
         self.last_lane_divider_x =
             crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        self.last_chart_rect = Some(chart_rect);
         self.lane_rungs = lane_rungs(
             self.last_lane_divider_x
                 .map_or(0.0, |divider| chart_rect.right() - divider),
