@@ -16,6 +16,7 @@ from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
+import export_session
 from export_session import (
     ONE_SIDED_PROOF_PRINTS,
     TICK_FLAG_BUY,
@@ -23,6 +24,7 @@ from export_session import (
     export_tape,
     fill_missing_sides,
     flags_are_one_sided,
+    offset_from_any_cached_symbol,
     rederive_sides,
     spread_side,
 )
@@ -282,6 +284,95 @@ def test_a_terminal_that_serves_no_ticks_names_the_day_and_the_next_step():
     assert failure["day"] == "2026-08-12"
     assert failure["symbol"] == "WINV26"
     assert "chart" in failure["fix"], "the fix must be something to go and do"
+
+
+@contextlib.contextmanager
+def clock_caches(*paths):
+    """Run with `paths` as the clock caches consulted, in order."""
+    original = list(export_session.BRIDGE_CACHE_PATHS)
+    export_session.BRIDGE_CACHE_PATHS[:] = list(paths)
+    try:
+        yield
+    finally:
+        export_session.BRIDGE_CACHE_PATHS[:] = original
+
+
+def write_clock(path, symbol, offset_s):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({symbol: {"utc_offset_s": offset_s}}), "utf-8")
+
+
+def test_the_durable_clock_is_read_before_the_one_in_the_checkout():
+    # After the close there is no fresh tick to measure from, so which cache
+    # answers decides whether a download runs at all. The durable home is the
+    # one the app writes; a stale copy left in a checkout must not win.
+    with tempfile.TemporaryDirectory() as tmp:
+        durable = Path(tmp) / "Quantick" / "mt5-clock.json"
+        legacy = Path(tmp) / "checkout" / ".quantick_bridge_cache.json"
+        write_clock(durable, "WINV26", -10800)
+        write_clock(legacy, "WINV26", 7200)
+        with clock_caches(durable, legacy):
+            assert offset_from_any_cached_symbol() == (-10800, "WINV26")
+
+
+def test_a_clock_measured_before_the_move_still_answers():
+    # The whole reason the legacy path is still read: a trader who measured
+    # their broker's clock months ago must not be told to measure it again.
+    with tempfile.TemporaryDirectory() as tmp:
+        durable = Path(tmp) / "Quantick" / "mt5-clock.json"
+        legacy = Path(tmp) / "checkout" / ".quantick_bridge_cache.json"
+        write_clock(legacy, "WIN$N", -10800)
+        with clock_caches(durable, legacy):
+            assert offset_from_any_cached_symbol() == (-10800, "WIN$N")
+
+
+def import_bridge():
+    """The live bridge module, reached the way the exporter reaches it.
+
+    The bridge is not on the path by default and CI only runs *this* file
+    (`.github/workflows/ci.yml`), so the bridge's own behaviour is proven from
+    here or it is not proven at all.
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "mt5"))
+    import quantick_bridge
+
+    return quantick_bridge
+
+
+def test_the_bridge_copies_a_clock_measured_before_the_move_forward():
+    # The bridge owns the measurement, so it owns the rescue: reading the old
+    # location must leave the durable home holding the same answer, or every
+    # export from every other folder keeps asking for a clock that was
+    # measured years ago. Copied, never moved — the old file stays valid for
+    # any older build still pointed at it.
+    quantick_bridge = import_bridge()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        durable = Path(tmp) / "Quantick" / "mt5-clock.json"
+        legacy = Path(tmp) / "checkout" / ".quantick_bridge_cache.json"
+        write_clock(legacy, "WINV26", -10800)
+
+        original_cache, original_legacy = (
+            quantick_bridge.CACHE_PATH,
+            quantick_bridge.LEGACY_CACHE_PATH,
+        )
+        quantick_bridge.LEGACY_CACHE_PATH = legacy
+        quantick_bridge.set_clock_cache(str(durable))
+        try:
+            assert quantick_bridge._cache_read("WINV26") == -10800
+            assert json.loads(durable.read_text("utf-8"))["WINV26"]["utc_offset_s"] == -10800
+            assert legacy.exists(), "the old file is copied from, never moved"
+        finally:
+            quantick_bridge.CACHE_PATH = original_cache
+            quantick_bridge.LEGACY_CACHE_PATH = original_legacy
+
+
+def test_no_clock_anywhere_is_not_a_crash():
+    with tempfile.TemporaryDirectory() as tmp:
+        with clock_caches(Path(tmp) / "nothing.json"):
+            assert offset_from_any_cached_symbol() is None
 
 
 if __name__ == "__main__":

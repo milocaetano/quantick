@@ -116,6 +116,26 @@ pub fn resolve_script(arg: &str, roots: &[PathBuf]) -> Option<PathBuf> {
     None
 }
 
+/// What the remembered broker clock is called on the shelf.
+const CLOCK_CACHE_FILE: &str = "mt5-clock.json";
+
+/// The file the broker's measured clock offset is remembered in.
+///
+/// The offset is a fact about the trader's terminal, so it lives with the
+/// trader's other files rather than inside whichever checkout happened to
+/// launch the bridge. It has to outlive a source tree: outside market hours
+/// there is no fresh tick to measure from, and an export with no remembered
+/// offset refuses to run — so a cache that moves with the code turns "download
+/// yesterday's session" into a coin flip decided by the working directory.
+///
+/// `None` when the platform reports no documents folder; the scripts then keep
+/// their own legacy default, which is the honest old behaviour rather than an
+/// invented path.
+#[must_use]
+pub fn clock_cache_path() -> Option<PathBuf> {
+    crate::paper_home::shelf_dir().map(|shelf| shelf.join(CLOCK_CACHE_FILE))
+}
+
 /// The directories a bridge script is looked for under, most specific first:
 /// the working directory (how the repo runs it), then the directory holding
 /// the executable (how a shortcut or a copied build runs it).
@@ -297,6 +317,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
             None => candidates.clone(),
         };
         let mut child = None;
+        let clock_cache = clock_cache_path();
         for program in try_now {
             let mut command = Command::new(&program);
             command
@@ -306,7 +327,13 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
                 .arg("--host")
                 .arg(host)
                 .arg("--port")
-                .arg(&port_arg)
+                .arg(&port_arg);
+            // Where to remember the broker clock it measures, so the next
+            // export finds it whatever folder that export runs from.
+            if let Some(cache) = clock_cache.as_ref() {
+                command.arg("--clock-cache").arg(cache);
+            }
+            command
                 .stdin(Stdio::null())
                 // Read rather than inherit: the same lines still reach the log
                 // (one story, one place), and they also become something the

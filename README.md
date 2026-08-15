@@ -229,7 +229,7 @@ evenly across each second for smoother playback and marks the session
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `QUANTICK_REPLAY_DIR` | unset | Folder the browser opens on |
+| `QUANTICK_REPLAY_DIR` | the folder you last chose, else `Documents/Quantick/replay` | Folder the browser opens on, **for this run only** — what you pick in the app is stored in the workspace and is not overwritten by a run under this variable |
 | `QUANTICK_REPLAY_AUTOSTART` | unset | Set to `1` to load and play the first session in that folder on startup (same code path as clicking **Play session**) |
 | `QUANTICK_REPLAY_SPEED` | `1` | Speed the autostarted session opens at |
 

@@ -258,6 +258,19 @@ pub struct Workspace {
     /// a workspace with no bookmarks, not an unreadable one.
     #[serde(default)]
     pub saved: Vec<NamedArrangement>,
+    /// The folder Market Replay reads recordings from, as the trader last
+    /// pointed it.
+    ///
+    /// Top-level rather than inside [`SavedChrome`] for the same reason
+    /// `save_on_exit` is: it is a fact about this installation, not about an
+    /// arrangement of panes — opening a named bookmark must never silently
+    /// re-point where the trader's recordings live.
+    ///
+    /// `None` means "never chosen", which is what a file written before this
+    /// field existed says, and resolves to the default home rather than to
+    /// nothing.
+    #[serde(default)]
+    pub replay_folder: Option<String>,
 }
 
 /// One named arrangement: everything a workspace records about the window,
@@ -325,6 +338,7 @@ impl Default for Workspace {
             tabs: Vec::new(),
             chrome: None,
             saved: Vec::new(),
+            replay_folder: None,
         }
     }
 }
@@ -351,7 +365,20 @@ impl Workspace {
             tabs,
             chrome,
             saved: Vec::new(),
+            replay_folder: None,
         }
+    }
+
+    /// The same, carrying the replay folder through.
+    ///
+    /// Separate from [`Workspace::new`] for the reason [`Workspace::with_saved`]
+    /// is: the folder is a standing choice read off disk, not something the
+    /// live window describes, and every capture site would otherwise have to
+    /// remember to thread it.
+    #[must_use]
+    pub fn with_replay_folder(mut self, folder: Option<String>) -> Self {
+        self.replay_folder = folder;
+        self
     }
 
     /// The same, carrying `saved` bookmarks through.
@@ -668,6 +695,7 @@ mod tests {
                 progressive_history: false,
             }),
             saved: Vec::new(),
+            replay_folder: Some("D:/tape".to_owned()),
         }
     }
 
@@ -676,6 +704,34 @@ mod tests {
         let path = temp_path("round-trip");
         assert!(save(&path, &sample()));
         assert_eq!(load(&path), sample());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The whole point of the field: it survives the trip to disk, so the next
+    /// launch opens the browser on the folder the trader chose rather than on
+    /// nowhere.
+    #[test]
+    fn the_replay_folder_survives_a_round_trip() {
+        let path = temp_path("replay-folder");
+        assert!(save(&path, &sample()));
+        assert_eq!(load(&path).replay_folder.as_deref(), Some("D:/tape"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A workspace written before the field existed is a workspace with no
+    /// pick — not an unreadable one, and not a pick of "".
+    #[test]
+    fn a_file_from_before_the_field_has_no_pick() {
+        let path = temp_path("older-file");
+        let mut older = sample();
+        older.replay_folder = None;
+        assert!(save(&path, &older));
+        let body = std::fs::read_to_string(&path).expect("written");
+        assert!(
+            !body.contains("replay_folder"),
+            "an absent pick writes no key: {body}"
+        );
+        assert_eq!(load(&path).replay_folder, None);
         let _ = std::fs::remove_file(&path);
     }
 

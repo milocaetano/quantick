@@ -47,12 +47,12 @@ from pathlib import Path
 try:
     import MetaTrader5 as mt5
 except ImportError:  # pragma: no cover - environment problem, not logic
-    print(
-        '{"event_code":"BRIDGE_NO_MT5_PACKAGE",'
-        '"hint":"pip install MetaTrader5"}',
-        file=sys.stderr,
-    )
-    raise SystemExit(2) from None
+    #: Missing package. Reported when the bridge is *run*, not when the module
+    #: is imported: everything here that is pure — the clock cache, the wire
+    #: format — is testable on a machine with no MetaTrader, and CI is exactly
+    #: such a machine. Exiting at import time made the bridge's own behaviour
+    #: unprovable anywhere it could be proven cheaply.
+    mt5 = None
 
 SCHEMA_VERSION = 1
 BRIDGE_NAME = "quantick-mt5-bridge-py"
@@ -61,8 +61,31 @@ BRIDGE_VERSION = "0.1.0"
 #: Timezone offsets are whole 15-minute steps everywhere on earth, so snapping
 #: to that grid removes the millisecond of tick latency from the measurement.
 OFFSET_GRID_S = 15 * 60
+#: Where a measured offset used to be remembered: beside this script, inside
+#: whatever checkout it ran from. Still read, never written — a clock measured
+#: before the cache moved is one the trader already paid for.
+LEGACY_CACHE_PATH = Path(__file__).with_name(".quantick_bridge_cache.json")
+
 #: Where a measured offset is remembered between runs.
-CACHE_PATH = Path(__file__).with_name(".quantick_bridge_cache.json")
+#:
+#: The broker's clock is a fact about the trader's terminal, not about a source
+#: tree, so a second checkout, a git worktree or a fresh clone must not lose
+#: it. Losing it is not cosmetic: outside market hours there is no fresh tick
+#: to measure from, so a bridge or an export with no cached offset refuses to
+#: run at all — which is exactly what "the download is broken again" looks
+#: like from the outside.
+#:
+#: `set_clock_cache` points it at a durable home; the app passes the same one
+#: it keeps the trader's other files under. Left alone, this stays where it
+#: always was, so a bare `python quantick_bridge.py` behaves as before.
+CACHE_PATH = LEGACY_CACHE_PATH
+
+
+def set_clock_cache(path: str | None) -> None:
+    """Point the clock cache at `path`, if one was stated."""
+    global CACHE_PATH  # noqa: PLW0603 — one module-level setting, set once at startup
+    if path:
+        CACHE_PATH = Path(path)
 
 #: How far back to look for one executed trade before declaring a symbol
 #: tape-less. See `BridgeSession.detect_tape` for why this errs long.
@@ -127,6 +150,9 @@ class BridgeExit(Exception):
 
 
 def connect_terminal(symbol: str) -> None:
+    if mt5 is None:
+        log("BRIDGE_NO_MT5_PACKAGE", hint="pip install MetaTrader5")
+        raise SystemExit(2)
     if not mt5.initialize():
         log(
             "BRIDGE_TERMINAL_ATTACH_FAILED",
@@ -153,7 +179,12 @@ def market_is_trading(symbol: str, observe_s: float = 2.0) -> bool:
     Deciding this from a tick's timestamp would be circular — the timestamp is
     in the very clock we are trying to measure. Watching the timestamp *move*
     is not: a tick that advances while we watch was produced while we watched.
+
+    No terminal package at all means no ticks to watch, which is the same
+    answer as a closed market: fall back to what was measured earlier.
     """
+    if mt5 is None:
+        return False
     first = mt5.symbol_info_tick(symbol)
     if first is None or not first.time_msc:
         return False
@@ -210,11 +241,30 @@ def measure_utc_offset_s(symbol: str, override: int | None) -> int:
     raise BridgeExit
 
 
-def _cache_read(symbol: str) -> int | None:
+def _cache_read_at(path: Path, symbol: str) -> int | None:
     try:
-        return int(json.loads(CACHE_PATH.read_text("utf-8"))[symbol]["utc_offset_s"])
+        return int(json.loads(path.read_text("utf-8"))[symbol]["utc_offset_s"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def _cache_read(symbol: str) -> int | None:
+    """The remembered offset for `symbol`, from the durable home or the old one.
+
+    The legacy location is consulted only when the durable home has nothing to
+    say, and what it holds is copied forward — never moved, never deleted — so
+    a trader who measured their clock months ago never measures it again just
+    because the cache found a better home.
+    """
+    cached = _cache_read_at(CACHE_PATH, symbol)
+    if cached is not None:
+        return cached
+    if CACHE_PATH == LEGACY_CACHE_PATH:
+        return None
+    legacy = _cache_read_at(LEGACY_CACHE_PATH, symbol)
+    if legacy is not None:
+        _cache_write(symbol, legacy)
+    return legacy
 
 
 def _cache_write(symbol: str, offset_s: int) -> None:
@@ -226,6 +276,7 @@ def _cache_write(symbol: str, offset_s: int) -> None:
         data = {}
     data[symbol] = {"utc_offset_s": offset_s}
     try:
+        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         CACHE_PATH.write_text(json.dumps(data, indent=2), "utf-8")
     except OSError:
         pass  # a read-only checkout is not worth failing the feed over
@@ -874,7 +925,13 @@ def main() -> int:
         default=None,
         help="server_time - utc, in seconds; measured from a fresh tick when omitted",
     )
+    parser.add_argument(
+        "--clock-cache",
+        default=None,
+        help="file the measured broker clock is remembered in; defaults beside this script",
+    )
     args = parser.parse_args()
+    set_clock_cache(args.clock_cache)
 
     try:
         connect_terminal(args.symbol)

@@ -35,7 +35,16 @@ pub(crate) const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 pub(crate) const LEGACY_TRADES_DIR: &str = "paper-trades";
 /// The shelf inside the documents folder — one recognizable place for
 /// everything quantick may keep there.
-const DOCUMENTS_SHELF: &str = "Quantick";
+pub(crate) const DOCUMENTS_SHELF: &str = "Quantick";
+
+/// That shelf as a path, when the platform reports a documents folder.
+///
+/// The one place the shelf is named. Everything quantick keeps for a trader —
+/// the journal, the replay folder, the broker clock — hangs off this, so
+/// renaming it is one edit rather than a hunt through three modules.
+pub(crate) fn shelf_dir() -> Option<PathBuf> {
+    documents_dir().map(|documents| documents.join(DOCUMENTS_SHELF))
+}
 /// The file that marks the home as already consolidated. It lives in the
 /// home itself so the one-time rescue stays one-time from every launch
 /// directory — a flag in the cwd-relative sidecar would not.

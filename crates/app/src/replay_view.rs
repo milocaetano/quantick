@@ -35,13 +35,17 @@ const REPLAY_ACCENT: egui::Color32 = AMBER;
 /// line directly above the status bar (`docs/ux/ui-design-model.md` §8).
 pub const TRANSPORT_HEIGHT: f32 = 30.0;
 
-/// Environment variable naming the folder the browser opens on.
-pub const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
+// The folder this browser opens on is resolved by [`crate::replay_home`],
+// which owns the whole order — the `QUANTICK_REPLAY_DIR` hook, the trader's
+// stored pick, the documents home. The view is handed the answer rather than
+// reading the environment itself, so there is one place where "which folder"
+// is decided and nowhere for a second opinion to appear.
 
 /// Environment variable that opens the browser on its **Get data** tab.
 ///
-/// `1` opens it empty; any other value pre-fills the symbol field, so a
-/// scripted run can reach the calendar from a fresh launch with no clicks.
+/// `1` opens it on the chart's own instrument — what clicking the tab does —
+/// and any other value states the symbol outright, so a scripted run reaches
+/// the calendar of a *named* contract from a fresh launch with no clicks.
 pub const GET_DATA_ENV: &str = "QUANTICK_REPLAY_GET_DATA";
 
 /// Height of the seek track, in pixels.
@@ -51,6 +55,27 @@ const TRACK_HEIGHT: f32 = 6.0;
 const HANDLE_RADIUS: f32 = 4.5;
 /// See [`HANDLE_RADIUS`].
 const HANDLE_RADIUS_HOVERED: f32 = 6.0;
+
+/// The instruments the browser can offer without the trader typing one.
+///
+/// Passed in per frame rather than held, because both halves change under the
+/// app's feet: the chart's symbol follows the active tab, and the catalogue
+/// grows when a contract is added from the source picker.
+///
+/// Both halves are filtered by the caller to what the download source actually
+/// serves — the source answers that through [`SessionSource::provider`], so a
+/// MetaTrader exporter is never offered a Binance pair just because the chart
+/// behind the window happens to show one.
+///
+/// [`SessionSource::provider`]: crate::replay_download::SessionSource::provider
+pub struct MarketMenu<'a> {
+    /// What the active chart is showing, when the source can serve it — the
+    /// likeliest answer to "which instrument", and the one the Get data tab
+    /// fills itself with.
+    pub current: Option<&'a str>,
+    /// Every instrument the source's own provider lists, in catalogue order.
+    pub catalogue: Vec<&'a str>,
+}
 
 /// What the replay interface asks the app to do.
 pub enum ReplayAction {
@@ -104,21 +129,40 @@ pub struct ReplayView {
     /// The download half's state, kept across tab switches so a running
     /// download is not lost by looking at the session list.
     get_data: GetDataPanel,
+    /// The folder the trader chose, as the workspace file holds it — `None`
+    /// when they never chose one.
+    ///
+    /// Deliberately *not* the folder in use. `QUANTICK_REPLAY_DIR` decides
+    /// where this run looks and nothing else, so a QA or autostart run pointed
+    /// at a scratch folder cannot come back as a permanent pick; and a run that
+    /// merely accepted the default home must not freeze that path into the
+    /// file, or "never chosen" would become unreachable after one launch.
+    stored: Option<String>,
+    /// Whether the trader has pointed the browser somewhere the workspace file
+    /// does not know about yet.
+    ///
+    /// Raised by [`Self::choose_folder`] alone — the OS dialog and the field
+    /// they typed into. Not by a keystroke, which would write the file once per
+    /// character, and not by a scan the app started, which is not a choice.
+    folder_dirty: bool,
 }
 
 impl Default for ReplayView {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl ReplayView {
-    /// A closed browser, opening on `QUANTICK_REPLAY_DIR` when it is set.
+    /// A closed browser on the folder [`crate::replay_home`] resolves: the
+    /// environment hook, else the trader's `stored` pick, else the documents
+    /// home. Never nowhere.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(stored: Option<&str>) -> Self {
         Self {
             browser_open: false,
-            folder: std::env::var(REPLAY_DIR_ENV).unwrap_or_default(),
+            folder: crate::replay_home::resolve(stored),
+            stored: stored.map(str::to_owned),
             library: None,
             selected: None,
             loading: None,
@@ -130,7 +174,18 @@ impl ReplayView {
             scrub: None,
             tab: BrowserTab::Sessions,
             get_data: GetDataPanel::new(),
+            folder_dirty: false,
         }
+    }
+
+    /// Whose instruments the download half can actually fetch.
+    ///
+    /// Asked of the source rather than assumed by the caller, so a second
+    /// provider changes what the browser offers by being registered, not by
+    /// editing the window that shows it.
+    #[must_use]
+    pub fn download_provider(&self) -> crate::config::ProviderKind {
+        self.get_data.provider()
     }
 
     /// Open the browser, rescanning the folder it already knows.
@@ -139,6 +194,43 @@ impl ReplayView {
         if self.library.is_none() && !self.folder.trim().is_empty() {
             self.rescan();
         }
+    }
+
+    /// The folder actually being read this run — what a log or a status line
+    /// must name, because it is the one the scan happened in.
+    #[must_use]
+    pub fn folder_in_use(&self) -> &str {
+        &self.folder
+    }
+
+    /// The trader's standing choice, as the workspace file should hold it, or
+    /// `None` when they have never made one.
+    ///
+    /// Deliberately not the folder in use: a run under `QUANTICK_REPLAY_DIR`
+    /// looks elsewhere for that run only, and a run that merely accepted the
+    /// default home has still chosen nothing. Writing either down would let a
+    /// QA run redefine a trader's cockpit.
+    #[must_use]
+    pub fn stored_pick(&self) -> Option<&str> {
+        self.stored.as_deref()
+    }
+
+    /// The pick to write down, once, when the trader has pointed the browser
+    /// somewhere new. `None` when nothing has changed since the last write;
+    /// `Some(None)` when they emptied the field, which is un-choosing rather
+    /// than choosing "" — the empty string is exactly what used to resolve to
+    /// the process's working directory.
+    ///
+    /// Taken rather than read so one pick is written once, on the frame it was
+    /// made: a standing choice must survive a crash, not just a clean exit.
+    pub fn take_folder_change(&mut self) -> Option<Option<String>> {
+        if !self.folder_dirty {
+            return None;
+        }
+        self.folder_dirty = false;
+        let folder = self.folder.trim();
+        self.stored = (!folder.is_empty()).then(|| folder.to_owned());
+        Some(self.stored.clone())
     }
 
     /// Open the browser on its **Get data** tab, optionally with a symbol
@@ -152,9 +244,12 @@ impl ReplayView {
         self.tab = BrowserTab::GetData;
         if let Some(symbol) = symbol {
             self.get_data.set_symbol(symbol);
-            let folder = self.folder.clone();
-            self.get_data.look_up_days(&folder);
         }
+        // Through the same door a click uses, guards and all — a hook that
+        // took a shortcut would photograph a state no person can reach, which
+        // is the opposite of what a validation hook is for.
+        let folder = self.folder.clone();
+        self.get_data.arrive(&folder, symbol);
     }
 
     /// Show the format reference on its own, from the Help menu.
@@ -193,13 +288,18 @@ impl ReplayView {
     ///
     /// Returns at most one action per frame — a person clicks one thing at a
     /// time, and folding several into a frame would let a stale click win.
-    pub fn draw(&mut self, ctx: &egui::Context, link: Option<&ReplayLink>) -> Option<ReplayAction> {
+    pub fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        link: Option<&ReplayLink>,
+        market: &MarketMenu<'_>,
+    ) -> Option<ReplayAction> {
         self.poll_picker();
         let mut action = self.poll_loading();
         // The browser starts a load rather than returning an action: the
         // session is parsed on a worker, and `poll_loading` turns the result
         // into the `Open` a later frame carries.
-        self.draw_browser(ctx);
+        self.draw_browser(ctx, market);
         if let Some(link) = link
             && let Some(from_transport) = self.draw_transport(ctx, link)
         {
@@ -248,7 +348,9 @@ impl ReplayView {
             Ok(Some(folder)) => {
                 self.folder = folder.display().to_string();
                 self.picker = None;
-                self.rescan();
+                // Walking to a folder in the OS dialog and pressing Choose is
+                // as explicit as a decision gets.
+                self.choose_folder();
             }
             Ok(None) | Err(TryRecvError::Disconnected) => self.picker = None,
             Err(TryRecvError::Empty) => {}
@@ -256,6 +358,10 @@ impl ReplayView {
     }
 
     /// Scan the folder in the text field.
+    ///
+    /// Scanning alone is not choosing: opening the browser and the autostart
+    /// hook both land here, and neither is the trader pointing anywhere. Only
+    /// [`Self::choose_folder`] marks a scan as a decision worth storing.
     fn rescan(&mut self) {
         let root = PathBuf::from(self.folder.trim());
         let library = library::scan(&root);
@@ -271,6 +377,17 @@ impl ReplayView {
         self.selected = (!library.sessions.is_empty()).then_some(0);
         self.library = Some(library);
         self.error = None;
+    }
+
+    /// Scan the folder *and* record that the trader put it there.
+    ///
+    /// The two are one gesture — a folder is chosen by being used — but only
+    /// on the paths a person drives: the OS dialog, and the field they typed
+    /// into. Reaching this from a scan the app started on its own is what
+    /// would turn a default, or a QA run's scratch folder, into their cockpit.
+    fn choose_folder(&mut self) {
+        self.folder_dirty = true;
+        self.rescan();
     }
 
     /// Ask the operating system for a folder, off the UI thread so the dialog
@@ -319,8 +436,36 @@ impl ReplayView {
         library.sessions.get(self.selected?)
     }
 
+    /// Every instrument the Get data tab can offer with one click.
+    ///
+    /// The chart's own first — it is what the trader is looking at — then the
+    /// catalogue, then the contracts already sitting in the replay folder, so
+    /// last month's expired contract stays one click away long after it leaves
+    /// the broker's Market Watch. Deduplicated, order preserved.
+    fn offered_symbols(&self, market: &MarketMenu<'_>) -> Vec<String> {
+        let mut offered: Vec<String> = Vec::new();
+        let mut push = |symbol: &str| {
+            let symbol = symbol.trim();
+            if !symbol.is_empty() && !offered.iter().any(|held| held == symbol) {
+                offered.push(symbol.to_string());
+            }
+        };
+        if let Some(current) = market.current {
+            push(current);
+        }
+        for symbol in &market.catalogue {
+            push(symbol);
+        }
+        if let Some(library) = self.library.as_ref() {
+            for entry in &library.sessions {
+                push(&entry.symbol);
+            }
+        }
+        offered
+    }
+
     /// Draw the session browser, starting a load if one was asked for.
-    fn draw_browser(&mut self, ctx: &egui::Context) {
+    fn draw_browser(&mut self, ctx: &egui::Context, market: &MarketMenu<'_>) {
         if !self.browser_open {
             return;
         }
@@ -337,7 +482,7 @@ impl ReplayView {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
-                self.draw_tab_strip(ui);
+                self.draw_tab_strip(ui, market);
                 ui.add_space(8.0);
                 self.draw_folder_row(ui);
                 ui.add_space(10.0);
@@ -352,9 +497,10 @@ impl ReplayView {
                     }
                     BrowserTab::GetData => {
                         let folder = self.folder.clone();
+                        let offered = self.offered_symbols(market);
                         downloaded = self
                             .get_data
-                            .draw(ui, &folder, self.library.as_ref())
+                            .draw(ui, &folder, self.library.as_ref(), &offered)
                             .map(|GetDataAction::Downloaded(tape)| tape);
                     }
                 }
@@ -376,7 +522,8 @@ impl ReplayView {
 
     /// The two tabs. A download in flight is announced on its tab, so switching
     /// to the session list never loses sight of it.
-    fn draw_tab_strip(&mut self, ui: &mut egui::Ui) {
+    fn draw_tab_strip(&mut self, ui: &mut egui::Ui, market: &MarketMenu<'_>) {
+        let mut entered_get_data = false;
         ui.horizontal(|ui| {
             if ui
                 .selectable_label(self.tab == BrowserTab::Sessions, "My sessions")
@@ -394,9 +541,17 @@ impl ReplayView {
                 .on_hover_text("Download a session from MetaTrader 5")
                 .clicked()
             {
+                entered_get_data = self.tab != BrowserTab::GetData;
                 self.tab = BrowserTab::GetData;
             }
         });
+        // Arriving on the tab *is* the question "what can I download?", so it
+        // is asked here rather than left behind a button the trader has to
+        // find. Only on arrival: staying on the tab must not re-ask.
+        if entered_get_data {
+            let folder = self.folder.clone();
+            self.get_data.arrive(&folder, market.current);
+        }
     }
 
     /// Select the session at `path`, if the scan found it.
@@ -421,12 +576,16 @@ impl ReplayView {
                     .hint_text("…/replay")
                     .desired_width(width),
             );
+            // Typing is not choosing; pressing Enter on what was typed is.
             if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                self.rescan();
+                self.choose_folder();
             }
             if ui.button("Browse…").clicked() {
                 self.browse();
             }
+            // Re-reading the same folder answers "did anything land?" — it
+            // says nothing about where recordings should live, so it scans
+            // without recording a choice.
             if ui
                 .button(icons::ARROW_CLOCKWISE)
                 .on_hover_text("Scan this folder again")
@@ -866,7 +1025,7 @@ mod tests {
 
     #[test]
     fn a_fresh_view_is_closed_and_starts_at_one_times() {
-        let view = ReplayView::new();
+        let view = ReplayView::new(None);
         assert!(!view.browser_open);
         assert_eq!(view.speed, 1.0);
         assert!(view.autoplay);
@@ -876,16 +1035,92 @@ mod tests {
 
     #[test]
     fn opening_the_browser_with_no_folder_scans_nothing() {
-        let mut view = ReplayView::new();
+        let mut view = ReplayView::new(None);
         view.folder = String::new();
         view.open_browser();
         assert!(view.browser_open);
         assert!(view.library.is_none(), "no folder, nothing to scan");
     }
 
+    /// The report this whole change answers: the trader points the browser at
+    /// their recordings, and the app has something to write down instead of
+    /// starting the next launch on nowhere.
+    #[test]
+    fn a_folder_the_trader_chose_is_offered_for_remembering_once() {
+        let mut view = ReplayView::new(None);
+        view.folder = "D:/tape".to_string();
+        view.choose_folder();
+        assert_eq!(
+            view.take_folder_change(),
+            Some(Some("D:/tape".to_owned())),
+            "the pick is written on the frame it was made"
+        );
+        assert_eq!(
+            view.take_folder_change(),
+            None,
+            "one pick is written once, not on every frame that follows it"
+        );
+        assert_eq!(view.stored_pick(), Some("D:/tape"));
+    }
+
+    /// Scanning is not choosing. Opening the browser and the autostart hook
+    /// both scan, and neither is the trader pointing anywhere — a scan that
+    /// stored its folder would freeze the default, or a QA run's scratch
+    /// folder, into the workspace.
+    #[test]
+    fn a_scan_the_app_started_stores_nothing() {
+        let mut view = ReplayView::new(None);
+        view.rescan();
+        assert_eq!(view.take_folder_change(), None);
+        assert_eq!(view.stored_pick(), None, "still never chosen");
+    }
+
+    /// Typing is not choosing either. A half-typed path must never reach the
+    /// file and replace the folder that was working.
+    #[test]
+    fn typing_in_the_field_alone_changes_nothing() {
+        let mut view = ReplayView::new(Some("D:/tape"));
+        view.folder = "D:/ta".to_string();
+        assert_eq!(view.take_folder_change(), None);
+        assert_eq!(view.stored_pick(), Some("D:/tape"));
+    }
+
+    /// Emptying the field is un-choosing, not choosing "" — the empty string
+    /// is what used to resolve to the process's working directory.
+    #[test]
+    fn an_emptied_field_forgets_the_pick_rather_than_storing_nothing() {
+        let mut view = ReplayView::new(Some("D:/tape"));
+        view.folder = String::new();
+        view.choose_folder();
+        assert_eq!(view.take_folder_change(), Some(None));
+        assert_eq!(view.stored_pick(), None);
+    }
+
+    /// A stored pick opens the browser where the trader left it, with no
+    /// environment variable in sight.
+    #[test]
+    fn a_stored_pick_is_where_the_browser_opens() {
+        let view = ReplayView::new(Some("D:/tape"));
+        assert_eq!(view.folder_in_use(), "D:/tape");
+        assert_eq!(view.stored_pick(), Some("D:/tape"));
+    }
+
+    /// The chart's own contract comes first, the catalogue next, and what is
+    /// already on disk after that — each named once.
+    #[test]
+    fn the_offered_contracts_lead_with_the_chart_and_never_repeat() {
+        let mut view = ReplayView::new(None);
+        view.library = Some(library::scan(std::path::Path::new("definitely/not/here")));
+        let offered = view.offered_symbols(&MarketMenu {
+            current: Some("WINV26"),
+            catalogue: vec!["WINQ26", "WINV26"],
+        });
+        assert_eq!(offered, vec!["WINV26".to_owned(), "WINQ26".to_owned()]);
+    }
+
     #[test]
     fn scanning_a_missing_folder_reports_it_instead_of_failing() {
-        let mut view = ReplayView::new();
+        let mut view = ReplayView::new(None);
         view.folder = "definitely/not/here".to_string();
         view.rescan();
         let library = view.library.as_ref().expect("scanned");
