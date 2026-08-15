@@ -384,7 +384,11 @@ impl OrderflowView {
     /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
-        if !self.config.depth_visible() {
+        // Either pane: this instant is the tape's anchor, so answering it from
+        // the candles' own switch would make hiding the map over the candles
+        // delete the tape itself — the band, its bubbles and its strip — which
+        // is the opposite of each pane answering for its own canvas.
+        if !self.config.depth_visible_anywhere() {
             return None;
         }
         self.sync_published();
@@ -2113,6 +2117,34 @@ mod tests {
             view.bubbles_enabled() && !view.lane_bubbles_enabled(),
             "the candles come back alone once the tape has an answer of its own"
         );
+    }
+
+    /// Hiding the map over the candles must not delete the tape. The lane is
+    /// anchored on the live instant, and that instant used to be answered from
+    /// the candles' switch alone — so clearing them took the band, its bubbles
+    /// and its strip with it, which is the whole defect this split exists to
+    /// remove.
+    #[test]
+    fn clearing_the_candles_does_not_delete_the_tape_itself() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.enabled = true;
+        view.config.show_depth = true;
+        assert!(view.config.depth_visible_anywhere());
+
+        // Candles clear, tape keeps the map: the anchor survives, so there is
+        // still a lane to draw on.
+        view.set_depth_visible(false);
+        assert!(!view.config.depth_visible());
+        assert!(
+            view.config.depth_visible_anywhere(),
+            "the tape still draws the map, so the lane still has an anchor"
+        );
+
+        // Both panes clear: nothing is drawing the map anywhere, and the lane
+        // stands down as it always did.
+        view.set_lane_depth_visible(false);
+        assert!(!view.config.depth_visible_anywhere());
+        assert_eq!(view.live_end_ms(), None);
     }
 
     /// The tape's window is one field, reachable from the menu and the dock,

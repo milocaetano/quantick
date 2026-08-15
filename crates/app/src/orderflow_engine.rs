@@ -1179,8 +1179,11 @@ impl BookEngine {
             health: self.health(),
             // Gated on visibility, not on capture: the live tail and the strip
             // are pixels, and a recorder nobody is watching must not pay for
-            // them.
-            live_end_ms: if self.config.depth_visible() {
+            // them. Visibility on *either* pane — this instant is what anchors
+            // the tape, so answering it from the candles' switch alone would
+            // let clearing the candles take the whole tape with it, bubbles
+            // and all.
+            live_end_ms: if self.config.depth_visible_anywhere() {
                 self.history.latest_book_ms()
             } else {
                 None
