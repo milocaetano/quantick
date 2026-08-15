@@ -841,6 +841,13 @@ pub struct QuantickApp {
     /// once the canvas has drawn once — so the menu opens exactly once and
     /// then behaves like any menu a hand opened.
     scripted_context_menu: Option<ContextMenuPane>,
+    /// Where the scripted press landed, until its release goes out.
+    ///
+    /// A real right-click spans frames: the button goes down, the app draws,
+    /// and only then does it come up. Delivering both halves in one frame
+    /// makes the menu open and close in the same pass, which is why a scripted
+    /// click has to hold the button for a frame like a hand does.
+    scripted_context_menu_release: Option<egui::Pos2>,
     scripted_candle_width: Option<f32>,
     /// `QUANTICK_INDICATOR_SETTINGS`: open the settings dialog for the
     /// first indicator once its inputs have arrived from the worker. Armed
@@ -1089,6 +1096,7 @@ impl QuantickApp {
             footprint_preset_draft: String::new(),
             scripted_footprint: false,
             scripted_context_menu: None,
+            scripted_context_menu_release: None,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
             style: ChartStyle::default(),
@@ -5606,6 +5614,17 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Second frame: the button comes up where it went down, and the menu
+        // that opened on the press stays open.
+        if let Some(position) = self.scripted_context_menu_release.take() {
+            raw_input.events.push(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            return;
+        }
         let Some(pane) = self.scripted_context_menu else {
             return;
         };
@@ -5615,17 +5634,12 @@ impl eframe::App for QuantickApp {
             return;
         };
         self.scripted_context_menu = None;
+        self.scripted_context_menu_release = Some(position);
         raw_input.events.push(egui::Event::PointerMoved(position));
         raw_input.events.push(egui::Event::PointerButton {
             pos: position,
             button: egui::PointerButton::Secondary,
             pressed: true,
-            modifiers: egui::Modifiers::default(),
-        });
-        raw_input.events.push(egui::Event::PointerButton {
-            pos: position,
-            button: egui::PointerButton::Secondary,
-            pressed: false,
             modifiers: egui::Modifiers::default(),
         });
     }

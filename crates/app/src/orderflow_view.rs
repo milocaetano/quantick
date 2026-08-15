@@ -221,7 +221,14 @@ impl OrderflowView {
         let before = self.config.clone();
         let lane_was = self.config.lane_depth_visible();
         self.config.show_depth = visible;
-        self.config.live_lane.show_depth.get_or_insert(lane_was);
+        // Only *hiding* hands the tape a value of its own. Switching the map
+        // back on while the tape is still inheriting has to leave it
+        // inheriting, or turning the candles' map on would pin the tape to
+        // whatever it happened to show a moment ago — the trader never asked
+        // the two to part company, so they must not.
+        if !visible {
+            self.config.live_lane.show_depth.get_or_insert(lane_was);
+        }
         if !self.config.depth_visible_anywhere() {
             // Drop the local frame immediately; the worker clears its own.
             self.published.frame = None;
@@ -246,10 +253,13 @@ impl OrderflowView {
         let before = self.config.clone();
         let lane_was = self.config.lane_aggressions_visible();
         self.config.show_aggressions = enabled;
-        self.config
-            .live_lane
-            .show_aggressions
-            .get_or_insert(lane_was);
+        // Hiding parts them; showing does not. See `set_depth_visible`.
+        if !enabled {
+            self.config
+                .live_lane
+                .show_aggressions
+                .get_or_insert(lane_was);
+        }
         self.commit_config_changes(before);
     }
 
@@ -2109,6 +2119,24 @@ mod tests {
             "a frame the tape is still reading may not be dropped under it"
         );
 
+        // Switching a layer back on while the tape is still inheriting leaves
+        // it inheriting: the trader never parted the two, so turning the
+        // candles' layer on brings the tape's with it. Pinning the tape here
+        // is how a layer switched on at startup came back with the tape's own
+        // entry unticked.
+        let mut fresh = OrderflowView::new("BTCUSDT");
+        fresh.config.enabled = true;
+        assert!(!fresh.bubbles_enabled() && !fresh.lane_bubbles_enabled());
+        fresh.set_bubbles_enabled(true);
+        assert_eq!(
+            fresh.config.live_lane.show_aggressions, None,
+            "showing does not part the panes"
+        );
+        assert!(fresh.lane_bubbles_enabled(), "so the tape follows along");
+        fresh.set_depth_visible(true);
+        assert_eq!(fresh.config.live_lane.show_depth, None);
+        assert!(fresh.lane_depth_visible());
+
         // The tape is switched on its own, and the candles do not follow.
         view.set_lane_bubbles_enabled(false);
         assert!(!view.lane_bubbles_enabled() && !view.bubbles_enabled());
@@ -2510,9 +2538,22 @@ mod tests {
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
 
-        // Turning the bubbles off closes the pipeline again — nobody is left
-        // reading it.
+        // Turning the bubbles off over the candles does *not* close the
+        // pipeline: the tape draws them too, and it was never asked to stop.
+        // This is the split's whole point — the projection now answers to both
+        // panes, so it stands down only when neither is reading it.
         view.set_bubbles_enabled(false);
+        assert!(view.lane_bubbles_enabled(), "the tape kept them");
+        assert!(
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+                .is_some(),
+            "a tape nobody switched off may not lose the frame that feeds it"
+        );
+
+        // Switching the tape's own copy off too leaves nobody reading, and the
+        // pipeline closes exactly as it always did.
+        view.set_lane_bubbles_enabled(false);
+        view.flush_for_test();
         assert!(
             view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()
