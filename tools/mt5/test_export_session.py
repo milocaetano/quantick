@@ -326,6 +326,49 @@ def test_a_clock_measured_before_the_move_still_answers():
             assert offset_from_any_cached_symbol() == (-10800, "WIN$N")
 
 
+def import_bridge():
+    """The live bridge module, reached the way the exporter reaches it.
+
+    The bridge is not on the path by default and CI only runs *this* file
+    (`.github/workflows/ci.yml`), so the bridge's own behaviour is proven from
+    here or it is not proven at all.
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bridge" / "mt5"))
+    import quantick_bridge
+
+    return quantick_bridge
+
+
+def test_the_bridge_copies_a_clock_measured_before_the_move_forward():
+    # The bridge owns the measurement, so it owns the rescue: reading the old
+    # location must leave the durable home holding the same answer, or every
+    # export from every other folder keeps asking for a clock that was
+    # measured years ago. Copied, never moved — the old file stays valid for
+    # any older build still pointed at it.
+    quantick_bridge = import_bridge()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        durable = Path(tmp) / "Quantick" / "mt5-clock.json"
+        legacy = Path(tmp) / "checkout" / ".quantick_bridge_cache.json"
+        write_clock(legacy, "WINV26", -10800)
+
+        original_cache, original_legacy = (
+            quantick_bridge.CACHE_PATH,
+            quantick_bridge.LEGACY_CACHE_PATH,
+        )
+        quantick_bridge.LEGACY_CACHE_PATH = legacy
+        quantick_bridge.set_clock_cache(str(durable))
+        try:
+            assert quantick_bridge._cache_read("WINV26") == -10800
+            assert json.loads(durable.read_text("utf-8"))["WINV26"]["utc_offset_s"] == -10800
+            assert legacy.exists(), "the old file is copied from, never moved"
+        finally:
+            quantick_bridge.CACHE_PATH = original_cache
+            quantick_bridge.LEGACY_CACHE_PATH = original_legacy
+
+
 def test_no_clock_anywhere_is_not_a_crash():
     with tempfile.TemporaryDirectory() as tmp:
         with clock_caches(Path(tmp) / "nothing.json"):

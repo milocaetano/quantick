@@ -1305,7 +1305,7 @@ impl QuantickApp {
                 // once a stored pick can supply it, reading the hook back
                 // would report an empty folder for a run that scanned a full
                 // one — a log that lies about the input it acted on.
-                folder = app.replay_view.remembered_folder(),
+                folder = app.replay_view.folder_in_use(),
                 speed,
                 started,
                 action = if started { "load_first_session" } else { "open_browser" },
@@ -2977,8 +2977,11 @@ impl QuantickApp {
         .with_saved(self.bookmarks.clone())
         // And so does the replay folder, for exactly the same reason: a save
         // that dropped it would send the browser back to nowhere on the next
-        // launch, which is the failure this field was added to end.
-        .with_replay_folder(Some(self.replay_view.remembered_folder().to_owned()))
+        // launch, which is the failure this field was added to end. The
+        // trader's *pick*, never the folder in use — a run under
+        // `QUANTICK_REPLAY_DIR` must not write a QA scratch path into their
+        // workspace, and accepting the default home is not a choice either.
+        .with_replay_folder(self.replay_view.stored_pick().map(str::to_owned))
     }
 
     /// The tabs and the chrome as they stand — the part a startup workspace
@@ -3231,18 +3234,22 @@ impl QuantickApp {
     /// reason: this is a standing choice, not a description of the screen, so
     /// it must not wait for a clean exit and must not drag the current
     /// arrangement into the file with it.
-    fn write_replay_folder(&mut self, folder: &str) {
+    fn write_replay_folder(&mut self, folder: Option<&str>) {
         let mut file = ui_state::load(&self.ui_state_path);
-        file.replay_folder = Some(folder.to_owned());
+        file.replay_folder = folder.map(str::to_owned);
         let written = ui_state::save(&self.ui_state_path, &file);
         self.workspace_saved |= written;
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "REPLAY_FOLDER_REMEMBERED",
-            folder = folder,
+            folder = folder.unwrap_or_default(),
             written,
-            action = "store_replay_folder",
+            action = if folder.is_some() {
+                "store_replay_folder"
+            } else {
+                "forget_replay_folder"
+            },
             "the replay folder is now the one this workspace opens on"
         );
     }
@@ -6114,16 +6121,25 @@ impl QuantickApp {
                 ..
             } = self;
             let tab = &tabs[*active_tab];
-            // The instruments the download tab offers with one click: what this
-            // chart shows, and what the feed serving it lists. A dated contract
-            // rolls every couple of months, and typing `WINV26` from memory is
-            // not a thing a trader should have to get right to see what they
-            // can replay.
+            // The instruments the download tab offers with one click. A dated
+            // contract rolls every couple of months, and typing `WINV26` from
+            // memory is not a thing a trader should have to get right to see
+            // what they can replay.
+            //
+            // Filtered by what the download source actually serves, which the
+            // source itself answers: offering a Binance pair to a MetaTrader
+            // exporter would be a click that can only end in a refusal, and
+            // the chart behind this window is often on another venue entirely.
+            let serves = replay_view.download_provider();
             let market = crate::replay_view::MarketMenu {
-                current: Some(tab.symbol.as_str()),
+                current: (config.provider_of(&tab.feed_id) == Some(serves))
+                    .then_some(tab.symbol.as_str()),
                 catalogue: config
-                    .feed(&tab.feed_id)
-                    .map_or(&[] as &[String], |feed| feed.symbols.as_slice()),
+                    .feeds
+                    .iter()
+                    .filter(|feed| feed.provider == serves)
+                    .flat_map(|feed| feed.symbols.iter().map(String::as_str))
+                    .collect(),
             };
             replay_view.draw(ctx, tab.replay.as_ref(), &market)
         };
@@ -6133,8 +6149,8 @@ impl QuantickApp {
         // A folder the trader just pointed the browser at is written down on
         // the frame they pointed it, not at exit: "it forgot my folder again"
         // must not be one crash away.
-        if let Some(folder) = self.replay_view.take_folder_change() {
-            self.write_replay_folder(&folder);
+        if let Some(pick) = self.replay_view.take_folder_change() {
+            self.write_replay_folder(pick.as_deref());
         }
         {
             // The focused pane's objects: the toolbox lists and manages what a
@@ -7573,6 +7589,34 @@ mod tests {
             },
         );
         (app, evt_tx, cmd_rx, book_tx)
+    }
+
+    /// A workspace save must carry the trader's *pick* and nothing else.
+    ///
+    /// The failure this guards is quiet and expensive: a validation run under
+    /// `QUANTICK_REPLAY_DIR`, or any run that merely accepted the default
+    /// home, writing that path into `ui-state.toml` on exit and replacing the
+    /// folder a trader spends every morning in.
+    #[test]
+    fn a_workspace_save_never_invents_a_replay_folder() {
+        let (app, _evt, _cmd, _book) = test_app();
+        assert_eq!(
+            app.capture_workspace().replay_folder,
+            None,
+            "nothing was chosen, so nothing is stored"
+        );
+    }
+
+    /// And when there *is* a pick, every save carries it — a save that dropped
+    /// it would send the browser back to nowhere on the next launch.
+    #[test]
+    fn a_workspace_save_carries_the_pick_that_was_made() {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        app.replay_view = ReplayView::new(Some("D:/tape"));
+        assert_eq!(
+            app.capture_workspace().replay_folder.as_deref(),
+            Some("D:/tape")
+        );
     }
 
     /// The same app, plus the notice sender its feed would hold. The other

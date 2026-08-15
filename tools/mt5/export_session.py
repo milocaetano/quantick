@@ -72,6 +72,11 @@ LEGACY_BRIDGE_CACHE_PATH = (
 #: invisible from the interface.
 BRIDGE_CACHE_PATHS = [LEGACY_BRIDGE_CACHE_PATH]
 
+#: The durable home, once `--clock-cache` states one. Named rather than read
+#: back out of the list above by position: "index 0 is the durable one" is a
+#: contract nothing enforces.
+CLOCK_CACHE: Path | None = None
+
 #: Ticks accumulated before a progress line is emitted. Small enough that a bar
 #: moves visibly on a slow export, large enough that reporting is not the cost.
 PROGRESS_EVERY = 250_000
@@ -233,8 +238,8 @@ def server_utc_offset_s(mt5, symbol: str, override: int | None) -> int:
         # writes it down. Point it at the same durable home the app reads, or
         # a measurement made during an export would be remembered where only
         # this checkout can find it.
-        if BRIDGE_CACHE_PATHS[0] != LEGACY_BRIDGE_CACHE_PATH:
-            set_clock_cache(str(BRIDGE_CACHE_PATHS[0]))
+        if CLOCK_CACHE is not None:
+            set_clock_cache(str(CLOCK_CACHE))
         offset = measure_utc_offset_s(symbol, None)
         emit("EXPORT_UTC_OFFSET", source="bridge", server_utc_offset_s=offset)
         return offset
@@ -633,7 +638,9 @@ def main() -> int:
     # In front of the legacy path, not instead of it: a trader whose clock was
     # measured before the cache moved must not be asked to measure it again.
     if args.clock_cache:
-        BRIDGE_CACHE_PATHS.insert(0, Path(args.clock_cache))
+        global CLOCK_CACHE  # noqa: PLW0603 — one setting, stated once at startup
+        CLOCK_CACHE = Path(args.clock_cache)
+        BRIDGE_CACHE_PATHS.insert(0, CLOCK_CACHE)
 
     mt5 = load_mt5()
     try:

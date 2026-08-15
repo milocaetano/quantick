@@ -28,6 +28,7 @@ use egui_phosphor::regular as icons;
 use quantick_replay::Library;
 use quantick_replay::format::{CivilTime, UtcOffset};
 
+use crate::config::ProviderKind;
 use crate::replay_download::{
     DEFAULT_CONTEXT_SESSIONS, DownloadEvent, DownloadJob, DownloadRequest, Mt5SessionSource,
     SessionSource,
@@ -128,6 +129,12 @@ pub struct GetDataPanel {
     /// failed for want of one — nobody should have to think about broker
     /// timezones until the machine admits it cannot work one out.
     clock_needed: bool,
+    /// Who serves downloads for this panel.
+    ///
+    /// Held rather than built per request, so the panel can answer *whose*
+    /// instruments it is able to fetch — the interface has to know that before
+    /// it offers a contract to click, not after the download refuses.
+    source: Box<dyn SessionSource>,
 }
 
 impl Default for GetDataPanel {
@@ -151,7 +158,17 @@ impl GetDataPanel {
             phase: Phase::Idle,
             declared_clock: None,
             clock_needed: false,
+            // The interpreter is the bridge's default, which already falls
+            // back from `python` to `py`. A machine that can stream
+            // MetaTrader can download from it.
+            source: Box::new(Mt5SessionSource::new("python")),
         }
+    }
+
+    /// The provider whose instruments this panel can actually fetch.
+    #[must_use]
+    pub fn provider(&self) -> ProviderKind {
+        self.source.provider()
     }
 
     /// Type a symbol into the field, as the keyboard would.
@@ -204,20 +221,21 @@ impl GetDataPanel {
     /// Put `symbol` in the field and ask for its days at once — what clicking
     /// one of the offered contracts means.
     fn pick_symbol(&mut self, symbol: &str, out_dir: &str) {
+        self.adopt_pick(symbol);
+        self.probe(out_dir);
+    }
+
+    /// What a pick changes, decided without touching a process — split out for
+    /// the same reason [`Self::on_arrival`] is: the state a click produces has
+    /// to be reachable from a test with no MetaTrader behind it.
+    fn adopt_pick(&mut self, symbol: &str) {
         self.symbol = symbol.to_string();
+        // Another contract's day is not this one's; the calendar answers again
+        // before anything can be downloaded.
         self.day = None;
         // A pick is an explicit ask, so it clears a previous refusal rather
         // than being blocked by it.
         self.phase = Phase::Idle;
-        self.probe(out_dir);
-    }
-
-    /// Run the day look-up, as pressing **Look up days** would.
-    ///
-    /// Exposed so a scripted run reaches the calendar with no hand on the
-    /// mouse — the same call the button makes, never a parallel path.
-    pub fn look_up_days(&mut self, out_dir: &str) {
-        self.probe(out_dir);
     }
 
     /// Whether a download or probe is running.
@@ -368,11 +386,8 @@ impl GetDataPanel {
     }
 
     fn start(&mut self, request: DownloadRequest, phase: Phase) {
-        // The interpreter is the bridge's default, which already falls back
-        // from `python` to `py`. A machine that can stream MetaTrader can
-        // download from it.
-        let source = Mt5SessionSource::new("python");
-        match crate::replay_download::run(&source, &request) {
+        let source = &self.source;
+        match crate::replay_download::run(source.as_ref(), &request) {
             Ok(job) => {
                 tracing::info!(
                     target: "quantick::app",
@@ -1109,5 +1124,37 @@ mod tests {
         let mut panel = GetDataPanel::new();
         assert!(!panel.on_arrival(None));
         assert!(panel.symbol.is_empty());
+    }
+
+    /// Clicking an offered contract is the one explicit ask that clears a
+    /// refusal — the trader has answered "which instrument" themselves, so
+    /// leaving the old failure on screen would refuse a question nobody asked.
+    #[test]
+    fn picking_a_contract_clears_the_refusal_it_replaces() {
+        let mut panel = GetDataPanel::new();
+        panel.set_symbol("WINQ26");
+        panel.day = Some("2026-07-21".to_owned());
+        panel.absorb(DownloadEvent::Failed {
+            headline: "the terminal does not serve WINQ26".to_owned(),
+            fix: None,
+        });
+        assert!(matches!(panel.phase, Phase::Failed { .. }));
+
+        panel.adopt_pick("WINV26");
+
+        assert_eq!(panel.symbol, "WINV26");
+        assert_eq!(panel.day, None, "another contract's day means nothing here");
+        assert!(
+            !matches!(panel.phase, Phase::Failed { .. }),
+            "an explicit pick is not blocked by the last refusal"
+        );
+    }
+
+    /// The panel has to know whose instruments it can fetch *before* it offers
+    /// one to click: a contract the source cannot serve is a click that can
+    /// only end in a refusal.
+    #[test]
+    fn the_panel_answers_for_the_provider_its_source_serves() {
+        assert_eq!(GetDataPanel::new().provider(), ProviderKind::MetaTrader);
     }
 }

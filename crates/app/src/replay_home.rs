@@ -24,11 +24,10 @@ use std::path::PathBuf;
 
 /// Overrides the replay folder for one run — the autostart family's explicit
 /// ask, and the hook the validation harness drives.
-pub const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
-/// The shelf inside the documents folder. The same one the paper journal uses,
-/// so everything quantick keeps for a trader is under one roof.
-const DOCUMENTS_SHELF: &str = "Quantick";
-/// The folder under that shelf.
+pub(crate) const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
+/// The folder under quantick's documents shelf. The shelf itself is named once,
+/// in [`crate::paper_home`], so everything quantick keeps for a trader is under
+/// one roof and renaming that roof stays one edit.
 const REPLAY_DIR: &str = "replay";
 
 /// The default home given a documents folder — and a cwd-relative `replay`
@@ -36,11 +35,8 @@ const REPLAY_DIR: &str = "replay";
 ///
 /// Inventing a path the trader cannot find would be worse than the honest
 /// relative one, which is the same call [`crate::paper_home`] makes.
-pub(crate) fn default_dir(documents: Option<PathBuf>) -> PathBuf {
-    documents.map_or_else(
-        || PathBuf::from(REPLAY_DIR),
-        |documents| documents.join(DOCUMENTS_SHELF).join(REPLAY_DIR),
-    )
+pub(crate) fn default_dir(shelf: Option<PathBuf>) -> PathBuf {
+    shelf.map_or_else(|| PathBuf::from(REPLAY_DIR), |shelf| shelf.join(REPLAY_DIR))
 }
 
 /// The folder before the environment has its say: the trader's own stored pick
@@ -50,21 +46,37 @@ pub(crate) fn default_dir(documents: Option<PathBuf>) -> PathBuf {
 /// the old field held when nothing had been chosen, and honouring it would
 /// resolve to the process's working directory — the bug this module exists to
 /// end, preserved in a file.
-fn chosen(stored: Option<&str>, documents: Option<PathBuf>) -> PathBuf {
+fn chosen(stored: Option<&str>, shelf: Option<PathBuf>) -> PathBuf {
     stored
         .map(str::trim)
         .filter(|stored| !stored.is_empty())
-        .map_or_else(|| default_dir(documents), PathBuf::from)
+        .map_or_else(|| default_dir(shelf), PathBuf::from)
+}
+
+/// The replay folder for this run, given every input — the form the tests
+/// drive, because reading the environment inside a constructor makes the
+/// answer depend on the machine the suite runs on.
+fn resolve_with(from_env: Option<&str>, stored: Option<&str>, shelf: Option<PathBuf>) -> String {
+    let path = from_env
+        .map(str::trim)
+        .filter(|from_env| !from_env.is_empty())
+        .map_or_else(|| chosen(stored, shelf), PathBuf::from);
+    path.display().to_string()
 }
 
 /// The replay folder for this run, as text for the browser's field.
+///
+/// The env var wins *for this run only*. What the trader chose stays what they
+/// chose: a QA or autostart run pointed at a scratch folder must not come back
+/// as a permanent pick, which is the same line [`crate::paper_home`] draws
+/// around its own per-run override.
 #[must_use]
 pub(crate) fn resolve(stored: Option<&str>) -> String {
-    let path = std::env::var_os(REPLAY_DIR_ENV)
-        .map(PathBuf::from)
-        .filter(|from_env| !from_env.as_os_str().is_empty())
-        .unwrap_or_else(|| chosen(stored, crate::paper_home::documents_dir()));
-    path.display().to_string()
+    resolve_with(
+        std::env::var(REPLAY_DIR_ENV).ok().as_deref(),
+        stored,
+        crate::paper_home::shelf_dir(),
+    )
 }
 
 #[cfg(test)]
@@ -76,7 +88,7 @@ mod tests {
     #[test]
     fn a_stored_pick_wins_over_the_documents_home() {
         assert_eq!(
-            chosen(Some("D:/tape"), Some(PathBuf::from("/docs"))),
+            chosen(Some("D:/tape"), Some(PathBuf::from("/docs/Quantick"))),
             PathBuf::from("D:/tape"),
         );
     }
@@ -84,8 +96,8 @@ mod tests {
     #[test]
     fn no_pick_lands_under_the_documents_shelf() {
         assert_eq!(
-            chosen(None, Some(PathBuf::from("/docs"))),
-            Path::new("/docs").join("Quantick").join("replay"),
+            chosen(None, Some(PathBuf::from("/docs/Quantick"))),
+            Path::new("/docs/Quantick").join("replay"),
         );
     }
 
@@ -95,13 +107,42 @@ mod tests {
     #[test]
     fn a_blank_stored_pick_is_no_pick() {
         assert_eq!(
-            chosen(Some("   "), Some(PathBuf::from("/docs"))),
-            Path::new("/docs").join("Quantick").join("replay"),
+            chosen(Some("   "), Some(PathBuf::from("/docs/Quantick"))),
+            Path::new("/docs/Quantick").join("replay"),
         );
     }
 
     #[test]
     fn no_documents_folder_falls_back_to_the_relative_folder() {
         assert_eq!(chosen(None, None), PathBuf::from("replay"));
+    }
+
+    /// The hook is for one run. It decides where *this* run looks and nothing
+    /// else — a QA run must not be able to redefine the trader's folder.
+    #[test]
+    fn the_hook_wins_this_run_without_touching_the_stored_pick() {
+        assert_eq!(
+            resolve_with(
+                Some("E:/qa"),
+                Some("D:/tape"),
+                Some(PathBuf::from("/docs/Quantick"))
+            ),
+            "E:/qa",
+        );
+    }
+
+    /// An empty hook is not a hook. `QUANTICK_REPLAY_DIR=` used to resolve to
+    /// the working directory, which is how a download landed beside the
+    /// executable.
+    #[test]
+    fn an_empty_hook_falls_through_to_the_pick() {
+        assert_eq!(
+            resolve_with(
+                Some("  "),
+                Some("D:/tape"),
+                Some(PathBuf::from("/docs/Quantick"))
+            ),
+            "D:/tape",
+        );
     }
 }

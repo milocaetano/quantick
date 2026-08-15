@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
+use crate::config::ProviderKind;
 use crate::feed::mt5_bridge;
 
 /// Where `export_session.py` lives, relative to the repository root.
@@ -252,6 +253,16 @@ pub trait SessionSource: Send + Sync {
     /// Name for the interface, e.g. `MetaTrader 5`.
     fn label(&self) -> String;
 
+    /// The provider whose instruments this source can actually deliver.
+    ///
+    /// The browser offers contracts to click, and a contract this source
+    /// cannot serve is a click that ends in a refusal — a MetaTrader exporter
+    /// asked for `BTCUSDT` because that is what the chart behind the window
+    /// happens to show. Answering here keeps that judgement with the source
+    /// that knows, rather than in the caller that would have to be edited
+    /// again for the next one.
+    fn provider(&self) -> ProviderKind;
+
     /// The commands that could answer `request`, best first.
     ///
     /// A list rather than one command because launching is where Windows
@@ -275,6 +286,14 @@ pub struct Mt5SessionSource {
     interpreter: String,
     /// Where to look for the exporter script.
     roots: Vec<PathBuf>,
+    /// Where the live bridge wrote this broker's measured clock, when the
+    /// platform has a durable home for it.
+    ///
+    /// Resolved once here rather than read inside `arguments`, which must stay
+    /// pure: an argv that depends on the machine cannot be asserted in a test,
+    /// and this flag would then be the one part of the command line no test
+    /// covers.
+    clock_cache: Option<PathBuf>,
 }
 
 impl Mt5SessionSource {
@@ -284,6 +303,7 @@ impl Mt5SessionSource {
         Self {
             interpreter: interpreter.to_string(),
             roots: mt5_bridge::default_search_roots(),
+            clock_cache: mt5_bridge::clock_cache_path(),
         }
     }
 
@@ -294,6 +314,7 @@ impl Mt5SessionSource {
         Self {
             interpreter: interpreter.to_string(),
             roots,
+            clock_cache: mt5_bridge::clock_cache_path(),
         }
     }
 
@@ -302,7 +323,11 @@ impl Mt5SessionSource {
     /// Split out from [`command`](Self::command) so the mapping from a
     /// request to a command line is testable without a Python on the machine.
     #[must_use]
-    pub fn arguments(script: &Path, request: &DownloadRequest) -> Vec<String> {
+    pub fn arguments(
+        script: &Path,
+        request: &DownloadRequest,
+        clock_cache: Option<&Path>,
+    ) -> Vec<String> {
         let mut args = vec![
             script.display().to_string(),
             "--symbol".to_string(),
@@ -318,7 +343,7 @@ impl Mt5SessionSource {
         // exporter only knows the copy inside its own checkout, and after the
         // close — when replays are actually downloaded — no offset means no
         // download at all.
-        if let Some(cache) = mt5_bridge::clock_cache_path() {
+        if let Some(cache) = clock_cache {
             args.push("--clock-cache".to_string());
             args.push(cache.display().to_string());
         }
@@ -340,6 +365,10 @@ impl SessionSource for Mt5SessionSource {
         "MetaTrader 5".to_string()
     }
 
+    fn provider(&self) -> ProviderKind {
+        ProviderKind::MetaTrader
+    }
+
     fn commands(&self, request: &DownloadRequest) -> Result<Vec<Command>, DownloadError> {
         let script = mt5_bridge::resolve_script(EXPORT_SCRIPT, &self.roots).ok_or_else(|| {
             DownloadError::ScriptMissing {
@@ -352,7 +381,7 @@ impl SessionSource for Mt5SessionSource {
                 tried: self.interpreter.clone(),
             });
         }
-        let args = Self::arguments(&script, request);
+        let args = Self::arguments(&script, request, self.clock_cache.as_deref());
         Ok(candidates
             .into_iter()
             .map(|program| {
@@ -473,13 +502,11 @@ fn pump(
     // the interface used to show none of it — "MetaTrader 5 stopped with code
     // 1" is what a whole afternoon of that bug looked like from the outside.
     let mut tail: VecDeque<String> = VecDeque::with_capacity(FAILURE_TAIL_LINES);
+    // Whether a refusal already reached the interface in the exporter's own
+    // words. Those are plain sentences with a fix attached; the exit code that
+    // follows them explains nothing and must not overwrite them.
+    let mut explained = false;
     for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-        if !line.trim().is_empty() {
-            if tail.len() == FAILURE_TAIL_LINES {
-                tail.pop_front();
-            }
-            tail.push_back(line.clone());
-        }
         // Verbatim to the log, recognised or not: a diagnostic this build does
         // not know about is still the thing a person needs when it goes wrong.
         tracing::info!(
@@ -494,17 +521,34 @@ fn pump(
             let _ = child.kill();
             break;
         }
-        if let Some(event) = parse_event(&line)
-            && tx.send(event).is_err()
-        {
-            // The interface is gone; so is the reason to keep downloading.
-            let _ = child.kill();
-            break;
+        match parse_event(&line) {
+            Some(event) => {
+                explained |= matches!(event, DownloadEvent::Failed { .. });
+                if tx.send(event).is_err() {
+                    // The interface is gone; so is the reason to keep going.
+                    let _ = child.kill();
+                    break;
+                }
+            }
+            // Only what the app could *not* read is worth quoting back: a
+            // recognised line already reached the panel as plain words, and
+            // showing its JSON underneath would be the event code the
+            // interface deliberately never puts in front of a person.
+            None if !line.trim().is_empty() => {
+                if tail.len() == FAILURE_TAIL_LINES {
+                    tail.pop_front();
+                }
+                tail.push_back(line);
+            }
+            None => {}
         }
     }
 
     match child.wait() {
         Ok(status) if status.success() => {}
+        // A refusal the exporter already explained, in its own words, with its
+        // own fix. The exit code adds nothing a person can act on.
+        Ok(_) if explained => {}
         Ok(status) if cancelled.load(Ordering::Relaxed) => {
             tracing::info!(
                 target: "quantick::app",
@@ -556,10 +600,10 @@ mod tests {
             utc_offset_s: Some(-10_800),
             ..request()
         };
-        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &declared);
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &declared, None);
         assert!(args.windows(2).any(|w| w == ["--utc-offset-s", "-10800"]));
 
-        let measured = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request());
+        let measured = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request(), None);
         assert!(
             !measured.iter().any(|a| a == "--utc-offset-s"),
             "left out entirely when the provider should measure it"
@@ -641,7 +685,7 @@ mod tests {
 
     #[test]
     fn a_download_asks_for_the_day_and_its_context() {
-        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request());
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request(), None);
         assert!(args.windows(2).any(|w| w == ["--symbol", "WINQ26"]));
         assert!(args.windows(2).any(|w| w == ["--day", "2026-08-12"]));
         assert!(args.windows(2).any(|w| w == ["--context-sessions", "5"]));
@@ -655,7 +699,7 @@ mod tests {
             ..request()
         };
         assert!(probe.is_probe());
-        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &probe);
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &probe, None);
         assert!(args.iter().any(|a| a == "--probe"));
         assert!(
             !args.iter().any(|a| a == "--day"),
@@ -689,6 +733,12 @@ mod tests {
     impl SessionSource for ScriptedSource {
         fn label(&self) -> String {
             "Scripted".to_string()
+        }
+
+        fn provider(&self) -> ProviderKind {
+            // A second implementer, so the port is exercised by more than the
+            // one provider that shipped with it.
+            ProviderKind::Hyperliquid
         }
 
         fn commands(&self, _request: &DownloadRequest) -> Result<Vec<Command>, DownloadError> {
@@ -744,5 +794,33 @@ mod tests {
     #[test]
     fn an_exit_that_said_nothing_offers_no_empty_box() {
         assert_eq!(last_words(std::iter::empty()), None);
+    }
+
+    /// The clock cache is stated by the caller, never read from the machine
+    /// inside `arguments`: an argv that changes with the documents folder is
+    /// an argv no test can assert.
+    #[test]
+    fn the_clock_cache_is_passed_when_there_is_one() {
+        let args = Mt5SessionSource::arguments(
+            Path::new("tools/export.py"),
+            &request(),
+            Some(Path::new("/docs/Quantick/mt5-clock.json")),
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--clock-cache", "/docs/Quantick/mt5-clock.json"]),
+            "the exporter must be told where the measured clock lives: {args:?}"
+        );
+    }
+
+    /// A platform with no documents folder gets the scripts' own default
+    /// rather than an invented path, so the flag is simply absent.
+    #[test]
+    fn no_durable_home_passes_no_clock_cache() {
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request(), None);
+        assert!(
+            !args.iter().any(|arg| arg == "--clock-cache"),
+            "nothing to state, so nothing is stated: {args:?}"
+        );
     }
 }

@@ -116,6 +116,9 @@ pub fn resolve_script(arg: &str, roots: &[PathBuf]) -> Option<PathBuf> {
     None
 }
 
+/// What the remembered broker clock is called on the shelf.
+const CLOCK_CACHE_FILE: &str = "mt5-clock.json";
+
 /// The file the broker's measured clock offset is remembered in.
 ///
 /// The offset is a fact about the trader's terminal, so it lives with the
@@ -130,8 +133,7 @@ pub fn resolve_script(arg: &str, roots: &[PathBuf]) -> Option<PathBuf> {
 /// invented path.
 #[must_use]
 pub fn clock_cache_path() -> Option<PathBuf> {
-    crate::paper_home::documents_dir()
-        .map(|documents| documents.join("Quantick").join("mt5-clock.json"))
+    crate::paper_home::shelf_dir().map(|shelf| shelf.join(CLOCK_CACHE_FILE))
 }
 
 /// The directories a bridge script is looked for under, most specific first:
