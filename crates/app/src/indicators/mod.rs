@@ -420,9 +420,7 @@ impl IndicatorViews {
         rows: std::ops::Range<usize>,
         includes_forming: bool,
     ) -> Option<Rgba8> {
-        if includes_forming
-            && let Some(paint) = self.forming_paint()
-        {
+        if includes_forming && let Some(paint) = self.forming_paint() {
             return Some(paint);
         }
         rows.rev().find_map(|row| self.bar_paint(row))
@@ -769,6 +767,58 @@ mod tests {
         assert_eq!(views.bar_paint(7), Some(RED), "the bar that asked");
         assert_eq!(views.bar_paint(0), None, "and no other");
         assert_eq!(views.all()[0].rows, 8);
+    }
+
+    /// Past a certain zoom the chart folds several bars into one candle. The
+    /// paint has to survive that fold, or the marks disappear at exactly the
+    /// zoom a trader reaches for to see the whole session.
+    #[test]
+    fn a_folded_slot_wears_the_newest_paint_it_contains() {
+        let mut views = IndicatorViews::new();
+        let slot = paint_only(&mut views, 0);
+        for paint in [Some(RED), None, Some(BLUE), None] {
+            views.apply(IndicatorEvent::Appended {
+                slot,
+                row: Vec::new(),
+                paint,
+            });
+        }
+
+        // A slot folding bars 0..4: RED at 0, BLUE at 2, and BLUE is newer.
+        assert_eq!(views.slot_paint(0..4, false), Some(BLUE));
+        // A slot folding only 0..2 never sees the blue one.
+        assert_eq!(views.slot_paint(0..2, false), Some(RED));
+        // One that folds only unpainted bars stays unpainted.
+        assert_eq!(views.slot_paint(3..4, false), None);
+    }
+
+    #[test]
+    fn the_forming_bar_outranks_every_committed_bar_in_its_slot() {
+        let mut views = IndicatorViews::new();
+        let slot = paint_only(&mut views, 0);
+        views.apply(IndicatorEvent::Appended {
+            slot,
+            row: Vec::new(),
+            paint: Some(RED),
+        });
+        views.apply(IndicatorEvent::Preview {
+            slot,
+            frame: Some(PreviewFrame {
+                paint: Some(BLUE),
+                ..PreviewFrame::new(Vec::new())
+            }),
+        });
+
+        assert_eq!(
+            views.slot_paint(0..4, true),
+            Some(BLUE),
+            "the forming bar is the newest end of the fold"
+        );
+        assert_eq!(
+            views.slot_paint(0..4, false),
+            Some(RED),
+            "a slot the forming bar does not belong to ignores it"
+        );
     }
 
     #[test]
