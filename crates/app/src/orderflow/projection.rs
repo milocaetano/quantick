@@ -1163,9 +1163,12 @@ fn cluster_tier(
             tape_prints,
             coverage,
             grouping,
-            config
-                .live_lane
-                .effective_cluster_ms(config.bubble_cluster_ms),
+            config.live_lane.effective_cluster_ms(
+                config.bubble_cluster_ms,
+                // No lane means no tape prints to cluster, so the reference
+                // only has to be a number the scale can divide by.
+                timeline.lane_reference_ms().unwrap_or(1),
+            ),
         ),
         slot: cluster_aggressions(slot_prints, coverage, grouping, config.bubble_cluster_ms),
     }
@@ -1383,6 +1386,7 @@ mod tests {
         Some(crate::orderflow::LiveEdge {
             now_ms,
             window_ms: crate::orderflow::reserved_span_ms(closed),
+            reference_ms: crate::orderflow::reserved_span_ms(closed),
             on_newest_bar: true,
         })
     }
@@ -1463,6 +1467,7 @@ mod tests {
             Some(crate::orderflow::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
+                reference_ms: 1_500,
                 on_newest_bar: true,
             }),
         );
@@ -1520,6 +1525,7 @@ mod tests {
             Some(crate::orderflow::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
+                reference_ms: 1_500,
                 on_newest_bar: true,
             }),
         );
@@ -1581,6 +1587,7 @@ mod tests {
             Some(crate::orderflow::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
+                reference_ms: 1_500,
                 on_newest_bar: true,
             }),
         );
@@ -1642,6 +1649,7 @@ mod tests {
             Some(crate::orderflow::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
+                reference_ms: 1_500,
                 on_newest_bar: true,
             }),
         );
@@ -1700,6 +1708,7 @@ mod tests {
                     // A lane wide enough to cover more than one bar, which is
                     // what makes the seam fall inside a bar rather than on it.
                     window_ms: 1_500,
+                    reference_ms: 1_500,
                     on_newest_bar: true,
                 }),
             );
@@ -2267,6 +2276,7 @@ mod tests {
                 Some(crate::orderflow::LiveEdge {
                     now_ms: 20_000,
                     window_ms: 5_000,
+                    reference_ms: 5_000,
                     on_newest_bar: true,
                 }),
             ),

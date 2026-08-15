@@ -89,7 +89,9 @@ pub struct BubblePreset {
     /// Every visual choice for the bubbles themselves.
     #[serde(default)]
     pub bubbles: BubbleStyle,
-    /// The live lane's own width, clustering and radius scale.
+    /// The live lane's own width, window, clustering and radius scale — how
+    /// the tape *looks*, never whether its layers are drawn. See
+    /// [`Self::apply_to`].
     #[serde(default)]
     pub live_lane: LiveLaneStyle,
 }
@@ -106,12 +108,20 @@ impl BubblePreset {
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
-            live_lane: config.live_lane.clone(),
+            live_lane: LiveLaneStyle {
+                // A preset is a look, so it records none of the tape's
+                // visibility. Captured, these would come back as an
+                // instruction to switch layers on the next time the look is
+                // chosen — the one thing `apply_to` promises never to do.
+                show_depth: None,
+                show_aggressions: None,
+                ..config.live_lane.clone()
+            },
         }
     }
 
     /// Apply this preset over `config`, touching nothing outside the panel —
-    /// and never the layer's own switch.
+    /// and never a layer's own switch, on either pane.
     pub fn apply_to(&self, config: &mut HeatmapConfig) {
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
@@ -119,7 +129,17 @@ impl BubblePreset {
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
         config.bubbles = self.bubbles.clone();
+        // The lane's visibility is not the preset's to carry: choosing a look
+        // may not blank the tape, and a preset file edited by hand may not
+        // switch layers on behind the trader. Everything else in the lane's
+        // style is exactly what the preset stored.
+        let visibility = (
+            config.live_lane.show_depth,
+            config.live_lane.show_aggressions,
+        );
         config.live_lane = self.live_lane.clone();
+        config.live_lane.show_depth = visibility.0;
+        config.live_lane.show_aggressions = visibility.1;
     }
 }
 
@@ -590,6 +610,54 @@ mod tests {
 
         config.bubbles.side_offset = 0.0;
         assert_ne!(BubblePreset::capture("mine", &config), preset);
+    }
+
+    /// A preset is a look. Now that the tape's visibility lives in the same
+    /// struct as its style, choosing one may not blank the tape — nor switch
+    /// its layers back on behind the trader.
+    #[test]
+    fn a_preset_carries_the_tapes_look_and_never_its_visibility() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.radius_scale = 2.0;
+        config.live_lane.window = crate::orderflow::LaneWindow::Fixed { ms: 120_000 };
+        // Captured while the tape was cleared...
+        config.live_lane.show_depth = Some(false);
+        config.live_lane.show_aggressions = Some(false);
+        let preset = BubblePreset::capture("mine", &config);
+        assert_eq!(
+            preset.live_lane.show_depth, None,
+            "a look records no switch"
+        );
+        assert_eq!(preset.live_lane.show_aggressions, None);
+
+        // ...and applied over a tape that is drawing: the look lands, the
+        // visibility does not move.
+        let mut other = HeatmapConfig::default();
+        other.live_lane.show_depth = Some(true);
+        other.live_lane.show_aggressions = Some(true);
+        preset.apply_to(&mut other);
+        assert!(
+            (other.live_lane.radius_scale - 2.0).abs() < 1e-6,
+            "the look lands"
+        );
+        assert_eq!(
+            other.live_lane.window,
+            crate::orderflow::LaneWindow::Fixed { ms: 120_000 }
+        );
+        assert_eq!(
+            other.live_lane.show_depth,
+            Some(true),
+            "choosing a look may not blank the tape"
+        );
+        assert_eq!(other.live_lane.show_aggressions, Some(true));
+
+        // A hand-edited preset file cannot switch a layer on either.
+        let mut sneaky = preset.clone();
+        sneaky.live_lane.show_depth = Some(true);
+        let mut cleared = HeatmapConfig::default();
+        cleared.live_lane.show_depth = Some(false);
+        sneaky.apply_to(&mut cleared);
+        assert_eq!(cleared.live_lane.show_depth, Some(false));
     }
 
     #[test]

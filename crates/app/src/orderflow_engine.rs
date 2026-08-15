@@ -969,22 +969,24 @@ impl BookEngine {
     }
 
     /// The live edge this frame's lane runs to, and how much market time it
-    /// shows: the recent bars' typical duration, scaled by the lane's own zoom.
+    /// shows: the recent bars' typical duration, put through the lane's own
+    /// window setting.
     ///
-    /// The zoom is the user's, and it is applied here rather than in the
+    /// The setting is the user's, and it is applied here rather than in the
     /// timeline because the timeline draws the window it is handed — the
-    /// automatic reference is only the default the knob starts from.
+    /// automatic reference is only what the choice starts from, and it travels
+    /// alongside the answer so the tape's clustering can tell how far from it
+    /// the trader went.
     #[must_use]
     fn live_edge(&self, request: &ProjectionRequest) -> Option<LiveEdge> {
         if !request.lane {
             return None;
         }
+        let reference_ms = reserved_span_ms(&request.closed);
         Some(LiveEdge {
             now_ms: self.history.latest_book_ms()?,
-            window_ms: self
-                .config
-                .live_lane
-                .window_ms(reserved_span_ms(&request.closed)),
+            window_ms: self.config.live_lane.window_ms(reference_ms),
+            reference_ms,
             on_newest_bar: request.on_newest_bar,
         })
     }
@@ -1177,8 +1179,11 @@ impl BookEngine {
             health: self.health(),
             // Gated on visibility, not on capture: the live tail and the strip
             // are pixels, and a recorder nobody is watching must not pay for
-            // them.
-            live_end_ms: if self.config.depth_visible() {
+            // them. Visibility on *either* pane — this instant is what anchors
+            // the tape, so answering it from the candles' switch alone would
+            // let clearing the candles take the whole tape with it, bubbles
+            // and all.
+            live_end_ms: if self.config.depth_visible_anywhere() {
                 self.history.latest_book_ms()
             } else {
                 None

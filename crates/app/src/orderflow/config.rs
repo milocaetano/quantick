@@ -181,6 +181,13 @@ pub const MIN_LIVE_LANE_WINDOW_MS: i64 = 200;
 /// Most market time a zoomed-out lane will show. A tape is the recent past;
 /// past a quarter of an hour the chart's own history says it better.
 pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 900_000;
+/// The fixed tape windows the lane's menu offers, in exchange milliseconds.
+///
+/// Round durations a trader already thinks in, not a sample of the accepted
+/// range: the point of a preset is that it is chosen without reading a number.
+/// Anything else is reachable through the custom entry, which accepts the
+/// whole [`MIN_LIVE_LANE_WINDOW_MS`]..=[`MAX_LIVE_LANE_WINDOW_MS`] band.
+pub const LANE_WINDOW_PRESETS_MS: [i64; 5] = [15_000, 30_000, 60_000, 120_000, 300_000];
 /// Default multiplier applied to the bubble radii inside the live lane.
 pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 /// Bounds accepted for the live lane's radius multiplier.
@@ -652,16 +659,187 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
     }
 }
 
+/// How much market time the tape shows.
+///
+/// One number, one owner. The lane is a fixed band of screen, so its window is
+/// what decides how fast a print crosses it — and there is exactly one way to
+/// ask for that, phrased in one of two languages:
+///
+/// - [`Auto`](Self::Auto) follows the bars: the tape holds roughly one bar's
+///   worth of flow whatever the instrument or the bar type, and the zoom
+///   scales that reference. This is what the lane has always done, and it
+///   stays the default.
+/// - [`Fixed`](Self::Fixed) pins an amount of market time and ignores what the
+///   bars are doing. On an activity-sampled series a burst closes bars faster
+///   than a human reads prints, and a trader who wants the last two minutes in
+///   front of them is asking for two minutes, not for a multiplier.
+///
+/// The gesture over the tape edits whichever language is in force — the zoom
+/// in `Auto`, the milliseconds in `Fixed` — so dragging never silently
+/// switches modes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LaneWindow {
+    /// Follows the recent bars' typical duration, scaled by `zoom`.
+    Auto {
+        /// `1.0` fits about one bar's worth of market time in the band. Above
+        /// one shows less time (prints run across faster and further apart),
+        /// below one shows more (they crowd together and cluster).
+        zoom: f32,
+    },
+    /// A fixed amount of market time, whatever the bars do.
+    Fixed {
+        /// Exchange milliseconds shown in the band.
+        ms: i64,
+    },
+}
+
+impl Default for LaneWindow {
+    fn default() -> Self {
+        Self::Auto {
+            zoom: DEFAULT_LIVE_LANE_ZOOM,
+        }
+    }
+}
+
+impl LaneWindow {
+    /// Clamp into a range the renderer can use.
+    pub fn sanitize(&mut self) {
+        match self {
+            Self::Auto { zoom } => {
+                *zoom = finite_clamp(
+                    *zoom,
+                    MIN_LIVE_LANE_ZOOM,
+                    MAX_LIVE_LANE_ZOOM,
+                    DEFAULT_LIVE_LANE_ZOOM,
+                );
+            }
+            Self::Fixed { ms } => {
+                *ms = (*ms).clamp(MIN_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_WINDOW_MS);
+            }
+        }
+    }
+
+    /// Market time the lane shows, given the automatic reference — the recent
+    /// bars' typical duration ([`reserved_span_ms`](super::reserved_span_ms)).
+    ///
+    /// Both modes end in the same clamp: a session-long reference cannot turn
+    /// the tape into a second chart, and a burst cannot make it an instant
+    /// wide, whichever language asked for the window.
+    #[must_use]
+    pub fn resolve_ms(self, reference_ms: i64) -> i64 {
+        let window = match self {
+            Self::Auto { zoom } => {
+                let zoom = if zoom.is_finite() {
+                    zoom.clamp(MIN_LIVE_LANE_ZOOM, MAX_LIVE_LANE_ZOOM)
+                } else {
+                    DEFAULT_LIVE_LANE_ZOOM
+                };
+                (reference_ms.max(1) as f64 / f64::from(zoom)).round() as i64
+            }
+            Self::Fixed { ms } => ms,
+        };
+        window.clamp(MIN_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_WINDOW_MS)
+    }
+
+    /// How the resolved window compares to the automatic reference.
+    ///
+    /// The factor the clustering window is divided by, so a cluster covers a
+    /// constant *distance on screen* rather than a constant amount of time. In
+    /// `Auto` it works out to the zoom itself; in `Fixed` it is whatever the
+    /// pinned window is worth against the same reference — which is what keeps
+    /// a two-minute tape from drawing as a smear.
+    #[must_use]
+    fn cluster_scale(self, reference_ms: i64) -> f64 {
+        reference_ms.max(1) as f64 / self.resolve_ms(reference_ms).max(1) as f64
+    }
+
+    /// Apply a multiplicative zoom gesture, in whichever language is in force.
+    ///
+    /// `> 1` shows less market time in the same band, `< 1` more. A gesture
+    /// never changes the mode: pinning two minutes and then scrolling gives a
+    /// different fixed window, not a return to following the bars.
+    pub fn zoom_by(&mut self, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        match self {
+            Self::Auto { zoom } => *zoom *= factor,
+            Self::Fixed { ms } => {
+                *ms = ((*ms as f64 / f64::from(factor)).round() as i64)
+                    .clamp(MIN_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_WINDOW_MS);
+            }
+        }
+    }
+}
+
+/// A duration as a trader reads it: `8 s`, `1 min`, `1 min 30 s`, `250 ms`.
+///
+/// Sub-second windows keep their milliseconds because that is the only place
+/// the number carries information; past a minute the seconds are dropped when
+/// they are zero, so a preset reads as the round number it was chosen as.
+#[must_use]
+pub fn format_window_ms(ms: i64) -> String {
+    let ms = ms.max(0);
+    if ms < 1_000 {
+        return format!("{ms} ms");
+    }
+    let seconds = ms / 1_000;
+    let (minutes, seconds) = (seconds / 60, seconds % 60);
+    match (minutes, seconds) {
+        (0, seconds) => format!("{seconds} s"),
+        (minutes, 0) => format!("{minutes} min"),
+        (minutes, seconds) => format!("{minutes} min {seconds} s"),
+    }
+}
+
+/// How a tape window reads in a menu.
+///
+/// `reference_ms` is the automatic reference, when the caller knows it. The
+/// automatic entry states the duration it currently works out to whenever it
+/// is supplied: "auto" alone names a policy, and a trader choosing between it
+/// and `30 s` is comparing durations, so the one number that would let them
+/// compare has no business being the one number hidden.
+#[must_use]
+pub fn lane_window_label(window: LaneWindow, reference_ms: Option<i64>) -> String {
+    match window {
+        LaneWindow::Auto { .. } => reference_ms.map_or_else(
+            || "auto".to_owned(),
+            |reference| {
+                format!(
+                    "auto (≈ {})",
+                    format_window_ms(window.resolve_ms(reference))
+                )
+            },
+        ),
+        LaneWindow::Fixed { ms } => format_window_ms(ms),
+    }
+}
+
+/// Whether a menu entry names the window already in force.
+///
+/// Two `Auto`s match whatever their zoom, so selecting the automatic entry
+/// while already following the bars cannot quietly reset a zoom the trader
+/// set; two `Fixed`s have to name the same duration.
+#[must_use]
+pub fn same_lane_window(current: LaneWindow, option: LaneWindow) -> bool {
+    match (current, option) {
+        (LaneWindow::Auto { .. }, LaneWindow::Auto { .. }) => true,
+        (LaneWindow::Fixed { ms: current }, LaneWindow::Fixed { ms: option }) => current == option,
+        _ => false,
+    }
+}
+
 /// How the rolling tape past the last bar is drawn.
 ///
 /// The live lane is a pane of its own, pinned to the right edge of the chart:
 /// history is compressed into equal-width bar slots that pan and zoom, the lane
 /// is a fixed band of screen showing a fixed window of market time that always
 /// ends at now. Being its own pane is what earns it settings of its own — how
-/// wide it is, how much time fits in it, and how big its bubbles are, none of
-/// which the candles beside it get a say in.
+/// wide it is, how much time fits in it, how big its bubbles are, and which of
+/// the two flow layers it draws, none of which the candles beside it get a say
+/// in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "LiveLaneStyleRepr", into = "LiveLaneStyleRepr")]
 pub struct LiveLaneStyle {
     /// Width of the lane as a share of the chart.
     ///
@@ -672,17 +850,13 @@ pub struct LiveLaneStyle {
     /// a print enters at the right edge and slides left at the same speed. A
     /// bar closing changes neither, so nothing on the tape ever jumps.
     pub width_share: f32,
-    /// Zoom of the lane's time window, against the recent bars' typical
-    /// duration.
+    /// How much market time fits in the band: following the bars, or pinned.
     ///
-    /// `1.0` fits about one bar's worth of market time in the band. Zooming in
-    /// (`> 1`) shows less time in the same width, so prints run across it
-    /// faster and further apart; zooming out (`< 1`) shows more, so they crowd
-    /// together — and the clustering window follows the span
+    /// The clustering window follows whatever this resolves to
     /// ([`effective_cluster_ms`](Self::effective_cluster_ms)), which is what
-    /// turns that crowd into fewer, bigger marks instead of a smear.
-    pub time_zoom: f32,
-    /// Clustering window applied to prints inside the lane, before the zoom
+    /// turns a crowded tape into fewer, bigger marks instead of a smear.
+    pub window: LaneWindow,
+    /// Clustering window applied to prints inside the lane, before the window
     /// scales it.
     ///
     /// `None` inherits [`HeatmapConfig::bubble_cluster_ms`]. A shorter window
@@ -693,16 +867,108 @@ pub struct LiveLaneStyle {
     pub radius_scale: f32,
     /// Whether the lane's boundary and the live-edge line are drawn.
     pub show_marks: bool,
+    /// Whether the depth map is drawn *on the tape*. `None` follows the
+    /// chart's own switch ([`HeatmapConfig::show_depth`]).
+    ///
+    /// Each pane answers for its own canvas: the compressed history is read
+    /// one way and the rolling tape another, and a trader who wants the
+    /// candles clean does not thereby want the book hidden where the book is
+    /// actually being read. `None` is what every file written before the lane
+    /// had a switch of its own says, and it is why such a file opens drawing
+    /// exactly what it drew — hiding the chart's layer used to hide the tape's
+    /// with it, and inheritance keeps that true until the trader says
+    /// otherwise.
+    pub show_depth: Option<bool>,
+    /// Whether aggression bubbles are drawn *on the tape*. `None` follows the
+    /// chart's own switch ([`HeatmapConfig::show_aggressions`]). Same
+    /// inheritance rule as [`show_depth`](Self::show_depth).
+    pub show_aggressions: Option<bool>,
 }
 
 impl Default for LiveLaneStyle {
     fn default() -> Self {
         Self {
             width_share: DEFAULT_LIVE_LANE_SHARE,
-            time_zoom: DEFAULT_LIVE_LANE_ZOOM,
+            window: LaneWindow::default(),
             cluster_ms: None,
             radius_scale: DEFAULT_LIVE_LANE_RADIUS_SCALE,
             show_marks: true,
+            show_depth: None,
+            show_aggressions: None,
+        }
+    }
+}
+
+/// What a [`LiveLaneStyle`] looks like on disk.
+///
+/// The window is one field in memory and two on disk, and the split is
+/// deliberate: `time_zoom` is the name every preset written before this mode
+/// existed already uses, so reading one back has to find it where it was left.
+/// `window_ms` is absent from all of them, which is exactly the sentence "this
+/// lane follows the bars" — the mode a file from before the choice existed is
+/// in.
+///
+/// Nothing outside serialization sees this type. [`LaneWindow`] stays the only
+/// owner of the number in memory, so no two fields can disagree about how much
+/// market time the tape is showing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct LiveLaneStyleRepr {
+    width_share: f32,
+    time_zoom: f32,
+    window_ms: Option<i64>,
+    cluster_ms: Option<i64>,
+    radius_scale: f32,
+    show_marks: bool,
+    show_depth: Option<bool>,
+    show_aggressions: Option<bool>,
+}
+
+impl Default for LiveLaneStyleRepr {
+    fn default() -> Self {
+        Self::from(LiveLaneStyle::default())
+    }
+}
+
+impl From<LiveLaneStyleRepr> for LiveLaneStyle {
+    fn from(repr: LiveLaneStyleRepr) -> Self {
+        Self {
+            width_share: repr.width_share,
+            // A pinned window is the explicit choice; without one the file is
+            // asking to follow the bars, at whatever zoom it recorded.
+            window: repr.window_ms.map_or(
+                LaneWindow::Auto {
+                    zoom: repr.time_zoom,
+                },
+                |ms| LaneWindow::Fixed { ms },
+            ),
+            cluster_ms: repr.cluster_ms,
+            radius_scale: repr.radius_scale,
+            show_marks: repr.show_marks,
+            show_depth: repr.show_depth,
+            show_aggressions: repr.show_aggressions,
+        }
+    }
+}
+
+impl From<LiveLaneStyle> for LiveLaneStyleRepr {
+    fn from(style: LiveLaneStyle) -> Self {
+        // Pinning a window parks the zoom at its default rather than keeping
+        // the last one: "automatic" means the bars decide, and a remembered
+        // multiplier waiting to reappear is not that.
+        let (time_zoom, window_ms) = match style.window {
+            LaneWindow::Auto { zoom } => (zoom, None),
+            LaneWindow::Fixed { ms } => (DEFAULT_LIVE_LANE_ZOOM, Some(ms)),
+        };
+        Self {
+            width_share: style.width_share,
+            time_zoom,
+            window_ms,
+            cluster_ms: style.cluster_ms,
+            radius_scale: style.radius_scale,
+            show_marks: style.show_marks,
+            show_depth: style.show_depth,
+            show_aggressions: style.show_aggressions,
         }
     }
 }
@@ -716,12 +982,7 @@ impl LiveLaneStyle {
             MAX_LIVE_LANE_SHARE,
             DEFAULT_LIVE_LANE_SHARE,
         );
-        self.time_zoom = finite_clamp(
-            self.time_zoom,
-            MIN_LIVE_LANE_ZOOM,
-            MAX_LIVE_LANE_ZOOM,
-            DEFAULT_LIVE_LANE_ZOOM,
-        );
+        self.window.sanitize();
         self.radius_scale = finite_clamp(
             self.radius_scale,
             MIN_LIVE_LANE_RADIUS_SCALE,
@@ -760,34 +1021,27 @@ impl LiveLaneStyle {
     /// recent bars' typical duration).
     #[must_use]
     pub fn window_ms(&self, reference_ms: i64) -> i64 {
-        let zoom = if self.time_zoom.is_finite() {
-            self.time_zoom.clamp(MIN_LIVE_LANE_ZOOM, MAX_LIVE_LANE_ZOOM)
-        } else {
-            DEFAULT_LIVE_LANE_ZOOM
-        };
-        let window = reference_ms.max(1) as f64 / f64::from(zoom);
-        (window.round() as i64).clamp(MIN_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_WINDOW_MS)
+        self.window.resolve_ms(reference_ms)
     }
 
-    /// Clustering window for prints inside the lane, given history's own.
+    /// Clustering window for prints inside the lane, given history's own and
+    /// the automatic reference the lane's window is measured against.
     ///
-    /// Scaled by the same zoom as the window itself, so a cluster covers a
+    /// Scaled by the same factor as the window itself, so a cluster covers a
     /// constant *distance on screen* rather than a constant amount of time:
-    /// zooming out gathers the crowd it creates into fewer, bigger bubbles
-    /// instead of piling prints on top of each other.
+    /// a wider window gathers the crowd it creates into fewer, bigger bubbles
+    /// instead of piling prints on top of each other. The factor comes from
+    /// the resolved window rather than from the zoom, which is what lets a
+    /// pinned two-minute tape cluster like the zoomed-out tape it is.
     #[must_use]
-    pub fn effective_cluster_ms(&self, history_cluster_ms: i64) -> i64 {
+    pub fn effective_cluster_ms(&self, history_cluster_ms: i64, reference_ms: i64) -> i64 {
         let base = self.cluster_ms.unwrap_or(history_cluster_ms).max(0);
         if base == 0 {
-            // One bubble per print, at every zoom: raw is a choice, not a size.
+            // One bubble per print, at every window: raw is a choice, not a
+            // size.
             return 0;
         }
-        let zoom = if self.time_zoom.is_finite() {
-            self.time_zoom.clamp(MIN_LIVE_LANE_ZOOM, MAX_LIVE_LANE_ZOOM)
-        } else {
-            DEFAULT_LIVE_LANE_ZOOM
-        };
-        let scaled = (base as f64 / f64::from(zoom)).round() as i64;
+        let scaled = (base as f64 / self.window.cluster_scale(reference_ms)).round() as i64;
         scaled.clamp(1, MAX_BUBBLE_CLUSTER_MS)
     }
 
@@ -1026,6 +1280,43 @@ impl HeatmapConfig {
         self.enabled && self.show_depth
     }
 
+    /// Whether the depth map is drawn on the tape.
+    ///
+    /// Capture still gates it — a map with nothing recorded behind it is not a
+    /// map on either pane — but the *display* choice is the lane's own, falling
+    /// back to the chart's while the lane has not made one
+    /// ([`LiveLaneStyle::show_depth`]).
+    #[must_use]
+    pub fn lane_depth_visible(&self) -> bool {
+        self.enabled && self.live_lane.show_depth.unwrap_or(self.show_depth)
+    }
+
+    /// Whether aggression bubbles are drawn on the tape. No capture gate: the
+    /// bubbles are built from the trade stream the chart already consumes.
+    #[must_use]
+    pub fn lane_aggressions_visible(&self) -> bool {
+        self.live_lane
+            .show_aggressions
+            .unwrap_or(self.show_aggressions)
+    }
+
+    /// Whether any pane still draws the depth map.
+    ///
+    /// What decides that the projection has to keep building depth primitives:
+    /// hiding the map on the candles while the tape still shows it is a change
+    /// of view, never a reason to stop producing what the tape is reading.
+    #[must_use]
+    pub fn depth_visible_anywhere(&self) -> bool {
+        self.depth_visible() || self.lane_depth_visible()
+    }
+
+    /// Whether any pane still draws the aggression bubbles. Same rule as
+    /// [`depth_visible_anywhere`](Self::depth_visible_anywhere).
+    #[must_use]
+    pub fn aggressions_visible_anywhere(&self) -> bool {
+        self.show_aggressions || self.lane_aggressions_visible()
+    }
+
     /// Whether any order-flow layer asks for a projection.
     ///
     /// The depth map and the aggression bubbles are independent: either one
@@ -1039,7 +1330,9 @@ impl HeatmapConfig {
     /// hidden.
     #[must_use]
     pub fn any_layer_enabled(&self) -> bool {
-        self.depth_visible() || self.show_aggressions || self.projection_demand
+        self.depth_visible_anywhere()
+            || self.aggressions_visible_anywhere()
+            || self.projection_demand
     }
 
     /// Whether displayed-liquidity reductions need to be computed at all.
@@ -1134,7 +1427,7 @@ mod tests {
         assert_eq!(
             config
                 .live_lane
-                .effective_cluster_ms(config.bubble_cluster_ms),
+                .effective_cluster_ms(config.bubble_cluster_ms, 8_000),
             DEFAULT_BUBBLE_CLUSTER_MS
         );
         assert_eq!(
@@ -1189,10 +1482,12 @@ mod tests {
             },
             live_lane: LiveLaneStyle {
                 width_share: f32::NAN,
-                time_zoom: 900.0,
+                window: LaneWindow::Auto { zoom: 900.0 },
                 cluster_ms: Some(i64::MIN),
                 radius_scale: 900.0,
                 show_marks: true,
+                show_depth: None,
+                show_aggressions: None,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,
@@ -1216,7 +1511,12 @@ mod tests {
         assert_eq!(config.bubbles.opacity, DEFAULT_BUBBLE_OPACITY);
         assert_eq!(config.bubbles.max_radius, MAX_BUBBLE_MAX_RADIUS);
         assert_eq!(config.live_lane.width_share, DEFAULT_LIVE_LANE_SHARE);
-        assert_eq!(config.live_lane.time_zoom, MAX_LIVE_LANE_ZOOM);
+        assert_eq!(
+            config.live_lane.window,
+            LaneWindow::Auto {
+                zoom: MAX_LIVE_LANE_ZOOM
+            }
+        );
         assert_eq!(config.live_lane.cluster_ms, Some(0));
         assert_eq!(config.live_lane.radius_scale, MAX_LIVE_LANE_RADIUS_SCALE);
         assert_eq!(config.liquidity_correlation_ms, 0);
@@ -1274,47 +1574,348 @@ mod tests {
             ..LiveLaneStyle::default()
         };
         assert_eq!(default.window_ms(reference), 8_000);
-        assert_eq!(default.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 100);
+        assert_eq!(
+            default.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            100
+        );
 
         // Zoomed out: four times the market time in the same band, and a
         // cluster four times as long — so a cluster keeps its width on screen.
         let out = LiveLaneStyle {
-            time_zoom: 0.25,
+            window: LaneWindow::Auto { zoom: 0.25 },
             ..default.clone()
         };
         assert_eq!(out.window_ms(reference), 32_000);
-        assert_eq!(out.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 400);
+        assert_eq!(
+            out.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            400
+        );
 
         // Zoomed in: a quarter of the time, a quarter of the window.
         let into = LiveLaneStyle {
-            time_zoom: 4.0,
+            window: LaneWindow::Auto { zoom: 4.0 },
             ..default.clone()
         };
         assert_eq!(into.window_ms(reference), 2_000);
-        assert_eq!(into.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 25);
+        assert_eq!(
+            into.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            25
+        );
 
         // Raw is a choice, not a size: it survives every zoom.
         let raw = LiveLaneStyle {
             cluster_ms: Some(0),
-            time_zoom: MIN_LIVE_LANE_ZOOM,
+            window: LaneWindow::Auto {
+                zoom: MIN_LIVE_LANE_ZOOM,
+            },
             ..LiveLaneStyle::default()
         };
-        assert_eq!(raw.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 0);
+        assert_eq!(
+            raw.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            0
+        );
 
         // Bounds hold whatever the bars did: a session-long reference cannot
         // turn the tape into a second chart, and a burst cannot make it an
         // instant wide.
         let out = LiveLaneStyle {
-            time_zoom: MIN_LIVE_LANE_ZOOM,
+            window: LaneWindow::Auto {
+                zoom: MIN_LIVE_LANE_ZOOM,
+            },
             ..LiveLaneStyle::default()
         };
         assert_eq!(out.window_ms(i64::MAX), MAX_LIVE_LANE_WINDOW_MS);
         let into = LiveLaneStyle {
-            time_zoom: MAX_LIVE_LANE_ZOOM,
+            window: LaneWindow::Auto {
+                zoom: MAX_LIVE_LANE_ZOOM,
+            },
             ..LiveLaneStyle::default()
         };
         assert_eq!(into.window_ms(1), MIN_LIVE_LANE_WINDOW_MS);
-        assert_eq!(into.effective_cluster_ms(1), 1);
+        assert_eq!(into.effective_cluster_ms(1, 8_000), 1);
+    }
+
+    /// A pinned window is a window like any other: it resolves whatever the
+    /// bars do, and the clustering scales with it exactly as the zoom's does.
+    /// Without that second half a two-minute tape draws two minutes of prints
+    /// at a tape's density, which is a smear.
+    #[test]
+    fn a_pinned_window_ignores_the_bars_and_clusters_like_the_width_it_is() {
+        let reference = 8_000; // a typical bar of eight seconds
+        let pinned = LiveLaneStyle {
+            window: LaneWindow::Fixed { ms: 120_000 },
+            cluster_ms: Some(100),
+            ..LiveLaneStyle::default()
+        };
+        // Two minutes is two minutes, whatever the bars are doing...
+        assert_eq!(pinned.window_ms(reference), 120_000);
+        assert_eq!(pinned.window_ms(1), 120_000);
+        assert_eq!(pinned.window_ms(600_000), 120_000);
+        // ...and fifteen times the automatic window gathers fifteen times the
+        // market time into each mark.
+        assert_eq!(
+            pinned.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            1_500
+        );
+        // Past the clustering ceiling the scaling stops rather than running
+        // away: a mark may gather a crowd, never a whole tape.
+        let widest = LiveLaneStyle {
+            window: LaneWindow::Fixed {
+                ms: MAX_LIVE_LANE_WINDOW_MS,
+            },
+            ..pinned.clone()
+        };
+        assert_eq!(
+            widest.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            MAX_BUBBLE_CLUSTER_MS
+        );
+        let modest = LiveLaneStyle {
+            window: LaneWindow::Fixed { ms: 16_000 },
+            ..pinned.clone()
+        };
+        assert_eq!(
+            modest.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            200,
+            "twice the automatic window, twice the cluster"
+        );
+        // A narrower pinned window buys detail, the same way zooming in does.
+        let narrow = LiveLaneStyle {
+            window: LaneWindow::Fixed { ms: 4_000 },
+            ..pinned.clone()
+        };
+        assert_eq!(
+            narrow.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            50
+        );
+        // A wider tape always gathers more than a narrower one — the property
+        // the numbers above are examples of.
+        assert!(
+            modest.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference)
+                > narrow.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference)
+        );
+        // Raw is a choice, not a size: it survives a pinned window too.
+        let raw = LiveLaneStyle {
+            cluster_ms: Some(0),
+            ..pinned
+        };
+        assert_eq!(
+            raw.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, reference),
+            0
+        );
+
+        // Absurd durations are clamped to what the tape can draw, both ends.
+        let mut wild = LiveLaneStyle {
+            window: LaneWindow::Fixed { ms: i64::MAX },
+            ..LiveLaneStyle::default()
+        };
+        wild.sanitize();
+        assert_eq!(
+            wild.window,
+            LaneWindow::Fixed {
+                ms: MAX_LIVE_LANE_WINDOW_MS
+            }
+        );
+        let mut tiny = LiveLaneStyle {
+            window: LaneWindow::Fixed { ms: 0 },
+            ..LiveLaneStyle::default()
+        };
+        tiny.sanitize();
+        assert_eq!(
+            tiny.window,
+            LaneWindow::Fixed {
+                ms: MIN_LIVE_LANE_WINDOW_MS
+            }
+        );
+    }
+
+    /// The gesture over the tape edits whichever language the window is in,
+    /// and never swaps the language underneath the trader.
+    #[test]
+    fn a_zoom_gesture_never_changes_which_mode_the_tape_is_in() {
+        let mut following = LaneWindow::default();
+        following.zoom_by(2.0);
+        assert_eq!(following, LaneWindow::Auto { zoom: 2.0 });
+
+        let mut pinned = LaneWindow::Fixed { ms: 60_000 };
+        pinned.zoom_by(2.0);
+        assert_eq!(
+            pinned,
+            LaneWindow::Fixed { ms: 30_000 },
+            "zooming in halves the pinned window; it does not return to automatic"
+        );
+        pinned.zoom_by(0.5);
+        assert_eq!(pinned, LaneWindow::Fixed { ms: 60_000 });
+
+        // A pinned window cannot be dragged out of the drawable range.
+        let mut floor = LaneWindow::Fixed {
+            ms: MIN_LIVE_LANE_WINDOW_MS,
+        };
+        floor.zoom_by(1_000.0);
+        assert_eq!(
+            floor,
+            LaneWindow::Fixed {
+                ms: MIN_LIVE_LANE_WINDOW_MS
+            }
+        );
+
+        // A meaningless gesture is refused rather than applied as garbage.
+        let mut untouched = LaneWindow::Fixed { ms: 60_000 };
+        untouched.zoom_by(f32::NAN);
+        untouched.zoom_by(0.0);
+        untouched.zoom_by(-1.0);
+        assert_eq!(untouched, LaneWindow::Fixed { ms: 60_000 });
+    }
+
+    /// A menu that offers "auto" against "30 s" is asking the trader to
+    /// compare durations, so the automatic entry has to state the one it
+    /// currently amounts to.
+    #[test]
+    fn the_automatic_entry_states_the_duration_it_currently_works_out_to() {
+        let following = LaneWindow::default();
+        assert_eq!(lane_window_label(following, Some(8_000)), "auto (≈ 8 s)");
+        assert_eq!(
+            lane_window_label(following, Some(90_000)),
+            "auto (≈ 1 min 30 s)"
+        );
+        // With no bars to measure, it names the policy rather than inventing
+        // a number.
+        assert_eq!(lane_window_label(following, None), "auto");
+        // A zoomed automatic window reports what it shows, not the reference.
+        let zoomed = LaneWindow::Auto { zoom: 4.0 };
+        assert_eq!(lane_window_label(zoomed, Some(8_000)), "auto (≈ 2 s)");
+
+        for (ms, expected) in [
+            (250, "250 ms"),
+            (15_000, "15 s"),
+            (60_000, "1 min"),
+            (120_000, "2 min"),
+            (300_000, "5 min"),
+        ] {
+            assert_eq!(
+                lane_window_label(LaneWindow::Fixed { ms }, Some(8_000)),
+                expected
+            );
+        }
+        // Every preset the menu offers reads as the round number it was
+        // chosen as.
+        for ms in LANE_WINDOW_PRESETS_MS {
+            let label = lane_window_label(LaneWindow::Fixed { ms }, Some(8_000));
+            assert!(!label.contains("ms"), "{label} is not how a trader says it");
+        }
+
+        // Selecting the automatic entry while already following the bars must
+        // not reset a zoom the trader set; a preset only matches its own
+        // duration.
+        assert!(same_lane_window(zoomed, LaneWindow::default()));
+        assert!(same_lane_window(
+            LaneWindow::Fixed { ms: 60_000 },
+            LaneWindow::Fixed { ms: 60_000 }
+        ));
+        assert!(!same_lane_window(
+            LaneWindow::Fixed { ms: 60_000 },
+            LaneWindow::Fixed { ms: 30_000 }
+        ));
+        assert!(!same_lane_window(zoomed, LaneWindow::Fixed { ms: 60_000 }));
+    }
+
+    /// Every preset written before the tape had a window mode says "follow the
+    /// bars" by saying nothing, and has to keep drawing what it drew.
+    #[test]
+    fn a_file_from_before_the_mode_existed_opens_exactly_as_it_did() {
+        let old: LiveLaneStyle = toml::from_str(
+            "width_share = 0.4\ntime_zoom = 2.0\nradius_scale = 1.5\nshow_marks = false\n",
+        )
+        .unwrap();
+        assert_eq!(old.window, LaneWindow::Auto { zoom: 2.0 });
+        assert_eq!(
+            old.window_ms(8_000),
+            4_000,
+            "the same window it always drew"
+        );
+        assert!((old.width_share - 0.4).abs() < 1e-6);
+        assert!(!old.show_marks);
+        // And the two panes still move together, because the lane has not been
+        // asked for anything of its own.
+        assert_eq!(old.show_depth, None);
+        assert_eq!(old.show_aggressions, None);
+
+        // A file this build writes round-trips, in both languages.
+        for window in [
+            LaneWindow::default(),
+            LaneWindow::Auto { zoom: 0.5 },
+            LaneWindow::Fixed { ms: 120_000 },
+        ] {
+            let style = LiveLaneStyle {
+                window,
+                show_depth: Some(false),
+                show_aggressions: Some(true),
+                ..LiveLaneStyle::default()
+            };
+            let text = toml::to_string(&style).unwrap();
+            assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), style);
+        }
+
+        // Pinning parks the zoom at its default rather than hoarding the last
+        // one: "automatic" means the bars decide, not that a multiplier is
+        // waiting to reappear.
+        let pinned = LiveLaneStyle {
+            window: LaneWindow::Fixed { ms: 60_000 },
+            ..LiveLaneStyle::default()
+        };
+        let text = toml::to_string(&pinned).unwrap();
+        assert!(text.contains("window_ms = 60000"), "{text}");
+        assert!(text.contains("time_zoom = 1.0"), "{text}");
+    }
+
+    /// The two panes are switched apart, and neither switch may starve the
+    /// other pane of the projection that feeds it.
+    #[test]
+    fn hiding_a_layer_on_one_pane_leaves_the_other_drawing_and_fed() {
+        let mut config = HeatmapConfig {
+            enabled: true,
+            show_depth: true,
+            show_aggressions: true,
+            ..HeatmapConfig::default()
+        };
+        // Inheriting: one switch, both panes — exactly as before the lane had
+        // switches of its own.
+        assert!(config.depth_visible() && config.lane_depth_visible());
+        assert!(config.show_aggressions && config.lane_aggressions_visible());
+
+        // The candles go quiet, the tape keeps both layers.
+        config.show_depth = false;
+        config.show_aggressions = false;
+        config.live_lane.show_depth = Some(true);
+        config.live_lane.show_aggressions = Some(true);
+        assert!(!config.depth_visible(), "the candles are clear");
+        assert!(config.lane_depth_visible(), "the tape still has the book");
+        assert!(config.lane_aggressions_visible(), "and the prints");
+        assert!(
+            config.any_layer_enabled(),
+            "a tape nobody switched off may not lose the projection that feeds it"
+        );
+
+        // The other way round: the tape is cleared, the candles keep drawing.
+        config.show_depth = true;
+        config.live_lane.show_depth = Some(false);
+        config.live_lane.show_aggressions = Some(false);
+        assert!(config.depth_visible() && !config.lane_depth_visible());
+        assert!(config.any_layer_enabled());
+
+        // Only with every pane's every layer off does the pipeline stand down
+        // — and a surface that is not a layer can still hold it open.
+        config.show_depth = false;
+        assert!(!config.any_layer_enabled());
+        config.projection_demand = true;
+        assert!(config.any_layer_enabled());
+
+        // Capture still gates the map on both panes: a map with nothing
+        // recorded behind it is not a map anywhere.
+        config.projection_demand = false;
+        config.enabled = false;
+        config.show_depth = true;
+        config.live_lane.show_depth = Some(true);
+        assert!(!config.depth_visible() && !config.lane_depth_visible());
     }
 
     #[test]
@@ -1325,7 +1926,10 @@ mod tests {
             radius_scale: 2.0,
             ..LiveLaneStyle::default()
         };
-        assert_eq!(tuned.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS), 50);
+        assert_eq!(
+            tuned.effective_cluster_ms(DEFAULT_BUBBLE_CLUSTER_MS, 8_000),
+            50
+        );
         let (min, max) = tuned.scaled_radii(&bubbles);
         assert!((min - bubbles.min_radius * 2.0).abs() < 1e-4);
         assert!((max - bubbles.max_radius * 2.0).abs() < 1e-4);

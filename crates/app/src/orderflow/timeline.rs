@@ -79,6 +79,7 @@ pub fn reserved_span_ms(closed: &[Bar]) -> i64 {
 struct Lane {
     start_ms: i64,
     end_ms: i64,
+    reference_ms: i64,
 }
 
 /// One bar slot and the market time it represents.
@@ -101,6 +102,15 @@ pub struct LiveEdge {
     pub now_ms: i64,
     /// Market time the lane shows, ending at [`now_ms`](Self::now_ms).
     pub window_ms: i64,
+    /// The automatic reference [`window_ms`](Self::window_ms) was resolved
+    /// against: the recent bars' typical duration ([`reserved_span_ms`]).
+    ///
+    /// Carried beside the resolved window rather than recomputed, because the
+    /// two together say how far the tape is from its automatic size — and that
+    /// ratio is what the lane's clustering scales by. Without it a pinned
+    /// window would have nothing to be wide *relative to*, and the clustering
+    /// would need a magic constant standing in for the bars.
+    pub reference_ms: i64,
     /// Whether the last bar supplied is the newest bar of the series.
     ///
     /// Only then may its slot be stretched to the live edge. The lane is
@@ -162,6 +172,7 @@ impl BarTimeline {
         let lane = live.map(|edge| Lane {
             start_ms: edge.now_ms.saturating_sub(edge.window_ms.max(1)),
             end_ms: edge.now_ms,
+            reference_ms: edge.reference_ms,
         });
         Self { slots, lane }
     }
@@ -175,6 +186,14 @@ impl BarTimeline {
     #[must_use]
     pub fn lane_start_ms(&self) -> Option<i64> {
         Some(self.lane?.start_ms)
+    }
+
+    /// The automatic reference the lane's window was resolved against, for
+    /// whoever has to scale something by how far the tape is from following
+    /// the bars. `None` when this timeline follows no live edge.
+    #[must_use]
+    pub fn lane_reference_ms(&self) -> Option<i64> {
+        Some(self.lane?.reference_ms)
     }
 
     /// Position of the live edge, which is the lane's right edge whenever a
@@ -383,6 +402,7 @@ mod tests {
         Some(LiveEdge {
             now_ms,
             window_ms: reserved_span_ms(closed),
+            reference_ms: reserved_span_ms(closed),
             on_newest_bar: true,
         })
     }
@@ -551,6 +571,7 @@ mod tests {
             Some(LiveEdge {
                 now_ms: 100_000,
                 window_ms: 10_000,
+                reference_ms: 10_000,
                 on_newest_bar: false,
             }),
         );
@@ -584,6 +605,7 @@ mod tests {
                 Some(LiveEdge {
                     now_ms: 25_000,
                     window_ms,
+                    reference_ms: window_ms,
                     on_newest_bar: true,
                 }),
             );

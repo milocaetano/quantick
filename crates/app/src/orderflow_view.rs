@@ -22,9 +22,11 @@ use crate::live_strip;
 use crate::orderflow::projection::normalized_area_size;
 use crate::orderflow::{
     BubbleRenderMode, BubbleSizeReference, ConsumptionMark, DisplayGrouping, HeatmapConfig,
-    HeatmapTheme, IntensityMode, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
-    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS,
-    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM, reserved_span_ms,
+    HeatmapTheme, IntensityMode, LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_BUBBLE_MAX_RADIUS,
+    MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
+    MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
+    lane_window_label, reserved_span_ms, same_lane_window,
 };
 use crate::orderflow_engine::{
     BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
@@ -195,44 +197,105 @@ impl OrderflowView {
         self.config.enabled
     }
 
-    /// Whether the depth map is drawn: recording *and* not hidden.
+    /// Whether the depth map is drawn on the candles: recording *and* not
+    /// hidden.
     #[must_use]
     pub fn depth_visible(&self) -> bool {
         self.config.depth_visible()
     }
 
-    /// Show or hide the depth map without touching L2 capture.
+    /// Show or hide the depth map over the candles, without touching L2
+    /// capture.
     ///
     /// No feed command is involved: the recorder keeps running, so turning the
     /// map back on repaints the retained past instead of opening a gap in it.
+    ///
+    /// The tape is not touched either. While it was inheriting this switch it
+    /// is first handed the value it was drawing, so hiding the map over the
+    /// candles leaves the tape showing exactly what it showed — which is the
+    /// whole point of the two panes having switches of their own.
     pub fn set_depth_visible(&mut self, visible: bool) {
         if self.config.show_depth == visible {
             return;
         }
         let before = self.config.clone();
+        let lane_was = self.config.lane_depth_visible();
         self.config.show_depth = visible;
+        // Only *hiding* hands the tape a value of its own. Switching the map
+        // back on while the tape is still inheriting has to leave it
+        // inheriting, or turning the candles' map on would pin the tape to
+        // whatever it happened to show a moment ago — the trader never asked
+        // the two to part company, so they must not.
         if !visible {
+            self.config.live_lane.show_depth.get_or_insert(lane_was);
+        }
+        if !self.config.depth_visible_anywhere() {
             // Drop the local frame immediately; the worker clears its own.
             self.published.frame = None;
         }
         self.commit_config_changes(before);
     }
 
-    /// Whether the aggression layer is on. Independent of the depth map: it
-    /// reads the trade stream the chart already consumes.
+    /// Whether the aggression layer is on over the candles. Independent of the
+    /// depth map: it reads the trade stream the chart already consumes.
     #[must_use]
     pub fn bubbles_enabled(&self) -> bool {
         self.config.show_aggressions
     }
 
-    /// Toggle the aggression layer without touching L2 capture. No feed
-    /// command is needed — aggregate trades already flow for the candles.
+    /// Toggle the aggression layer over the candles, without touching L2
+    /// capture. No feed command is needed — aggregate trades already flow for
+    /// the candles. The tape keeps what it was drawing, as with the depth map.
     pub fn set_bubbles_enabled(&mut self, enabled: bool) {
         if self.config.show_aggressions == enabled {
             return;
         }
         let before = self.config.clone();
+        let lane_was = self.config.lane_aggressions_visible();
         self.config.show_aggressions = enabled;
+        // Hiding parts them; showing does not. See `set_depth_visible`.
+        if !enabled {
+            self.config
+                .live_lane
+                .show_aggressions
+                .get_or_insert(lane_was);
+        }
+        self.commit_config_changes(before);
+    }
+
+    /// Whether the depth map is drawn on the tape.
+    #[must_use]
+    pub fn lane_depth_visible(&self) -> bool {
+        self.config.lane_depth_visible()
+    }
+
+    /// Show or hide the depth map on the tape alone. Capture is untouched, and
+    /// so are the candles.
+    pub fn set_lane_depth_visible(&mut self, visible: bool) {
+        if self.config.lane_depth_visible() == visible {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.show_depth = Some(visible);
+        if !self.config.depth_visible_anywhere() {
+            self.published.frame = None;
+        }
+        self.commit_config_changes(before);
+    }
+
+    /// Whether aggression bubbles are drawn on the tape.
+    #[must_use]
+    pub fn lane_bubbles_enabled(&self) -> bool {
+        self.config.lane_aggressions_visible()
+    }
+
+    /// Toggle the aggression bubbles on the tape alone.
+    pub fn set_lane_bubbles_enabled(&mut self, enabled: bool) {
+        if self.config.lane_aggressions_visible() == enabled {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.show_aggressions = Some(enabled);
         self.commit_config_changes(before);
     }
 
@@ -331,7 +394,11 @@ impl OrderflowView {
     /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
-        if !self.config.depth_visible() {
+        // Either pane: this instant is the tape's anchor, so answering it from
+        // the candles' own switch would make hiding the map over the candles
+        // delete the tape itself — the band, its bubbles and its strip — which
+        // is the opposite of each pane answering for its own canvas.
+        if !self.config.depth_visible_anywhere() {
             return None;
         }
         self.sync_published();
@@ -378,12 +445,36 @@ impl OrderflowView {
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows
     /// less market time in the same band (prints run faster and further
     /// apart), `< 1` shows more (prints crowd together and cluster).
+    ///
+    /// The gesture speaks whichever language the window is in — the zoom while
+    /// it follows the bars, the milliseconds while it is pinned — and never
+    /// changes which one that is. Dragging a pinned tape gives a different
+    /// pinned tape, not a silent return to automatic.
     pub fn zoom_live_lane(&mut self, factor: f32) {
         if !factor.is_finite() || factor <= 0.0 {
             return;
         }
         let before = self.config.clone();
-        self.config.live_lane.time_zoom *= factor;
+        self.config.live_lane.window.zoom_by(factor);
+        self.commit_config_changes(before);
+    }
+
+    /// How much market time the tape shows, and in which language it was
+    /// asked for.
+    #[must_use]
+    pub fn live_lane_window(&self) -> LaneWindow {
+        self.config.live_lane.window
+    }
+
+    /// Choose how the tape's window is decided: a preset, a custom duration,
+    /// or back to following the bars.
+    pub fn set_live_lane_window(&mut self, window: LaneWindow) {
+        if self.config.live_lane.window == window {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.window = window;
+        self.config.live_lane.window.sanitize();
         self.commit_config_changes(before);
     }
 
@@ -1027,20 +1118,69 @@ impl OrderflowView {
                     "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
                 ui.horizontal(|ui| {
-                    ui.label("time zoom");
-                    ui.add(
-                        egui::Slider::new(
-                            &mut lane.time_zoom,
-                            MIN_LIVE_LANE_ZOOM..=MAX_LIVE_LANE_ZOOM,
-                        )
-                        .logarithmic(true)
-                        .suffix("×"),
-                    );
+                    ui.label("window");
+                    egui::ComboBox::from_id_salt("bubble_live_lane_window")
+                        .selected_text(lane_window_label(lane.window, None))
+                        .show_ui(ui, |ui| {
+                            let mut choose = |ui: &mut egui::Ui, option: LaneWindow| {
+                                // Selecting the mode the lane is already in must
+                                // not overwrite the number it is carrying, so
+                                // the entry compares modes and assigns whole
+                                // values only when the mode actually changes.
+                                let selected = same_lane_window(lane.window, option);
+                                if ui
+                                    .selectable_label(selected, lane_window_label(option, None))
+                                    .clicked()
+                                    && !selected
+                                {
+                                    lane.window = option;
+                                }
+                            };
+                            choose(ui, LaneWindow::default());
+                            for ms in LANE_WINDOW_PRESETS_MS {
+                                choose(ui, LaneWindow::Fixed { ms });
+                            }
+                        });
                 })
                 .response
                 .on_hover_text(
-                    "how much market time fits in the tape, against the recent bars' typical duration. Zoom in and prints run across it faster and further apart; zoom out and more time crowds in — the clustering window follows, so they gather into fewer, bigger bubbles. Also set by dragging the time strip under the tape",
+                    "how much market time fits in the tape. Following the bars keeps roughly one bar's worth of flow in the band whatever the instrument; a fixed window shows that much time however fast the bars are closing, which is what a burst calls for. The clustering window follows either way, so a crowded tape gathers into fewer, bigger bubbles instead of a smear",
                 );
+                // One row, whichever language the window is in: the zoom while
+                // it follows the bars, the duration while it is pinned.
+                match &mut lane.window {
+                    LaneWindow::Auto { zoom } => {
+                        ui.horizontal(|ui| {
+                            ui.label("zoom");
+                            ui.add(
+                                egui::Slider::new(zoom, MIN_LIVE_LANE_ZOOM..=MAX_LIVE_LANE_ZOOM)
+                                    .logarithmic(true)
+                                    .suffix("×"),
+                            );
+                        })
+                        .response
+                        .on_hover_text(
+                            "the recent bars' typical duration, scaled. Zoom in and prints run across the tape faster and further apart; zoom out and more time crowds in. Also set by dragging the time strip under the tape",
+                        );
+                    }
+                    LaneWindow::Fixed { ms } => {
+                        ui.horizontal(|ui| {
+                            ui.label("duration");
+                            ui.add(
+                                egui::Slider::new(
+                                    ms,
+                                    MIN_LIVE_LANE_WINDOW_MS..=MAX_LIVE_LANE_WINDOW_MS,
+                                )
+                                .logarithmic(true)
+                                .custom_formatter(|value, _| format_window_ms(value as i64)),
+                            );
+                        })
+                        .response
+                        .on_hover_text(
+                            "market time pinned in the tape, whatever the bars do. Also set by dragging the time strip under the tape",
+                        );
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.label("cluster");
                     egui::ComboBox::from_id_salt("bubble_live_lane_cluster")
@@ -1956,6 +2096,126 @@ mod tests {
     use crate::orderflow::{BubbleSizeReference, BubbleStyle};
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
+    /// The ask, in one test: switch a layer off on the chart and keep seeing
+    /// it on the tape. While the tape is inheriting, the chart's switch hands
+    /// it the value it was drawing before moving, so clearing the candles
+    /// never takes the tape's copy with it.
+    #[test]
+    fn clearing_the_candles_leaves_the_tape_drawing_what_it_was_drawing() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.enabled = true;
+        view.config.show_depth = true;
+        view.config.show_aggressions = true;
+        // Nothing asked of the lane yet: one switch, both panes.
+        assert_eq!(view.config.live_lane.show_depth, None);
+        assert!(view.depth_visible() && view.lane_depth_visible());
+        assert!(view.bubbles_enabled() && view.lane_bubbles_enabled());
+
+        view.set_depth_visible(false);
+        view.set_bubbles_enabled(false);
+        assert!(!view.depth_visible(), "the candles are clear");
+        assert!(!view.bubbles_enabled());
+        assert!(
+            view.lane_depth_visible(),
+            "and the tape still has the book — the whole point"
+        );
+        assert!(view.lane_bubbles_enabled(), "and the prints");
+        assert!(
+            view.config.depth_visible_anywhere(),
+            "a frame the tape is still reading may not be dropped under it"
+        );
+
+        // Switching a layer back on while the tape is still inheriting leaves
+        // it inheriting: the trader never parted the two, so turning the
+        // candles' layer on brings the tape's with it. Pinning the tape here
+        // is how a layer switched on at startup came back with the tape's own
+        // entry unticked.
+        let mut fresh = OrderflowView::new("BTCUSDT");
+        fresh.config.enabled = true;
+        assert!(!fresh.bubbles_enabled() && !fresh.lane_bubbles_enabled());
+        fresh.set_bubbles_enabled(true);
+        assert_eq!(
+            fresh.config.live_lane.show_aggressions, None,
+            "showing does not part the panes"
+        );
+        assert!(fresh.lane_bubbles_enabled(), "so the tape follows along");
+        fresh.set_depth_visible(true);
+        assert_eq!(fresh.config.live_lane.show_depth, None);
+        assert!(fresh.lane_depth_visible());
+
+        // The tape is switched on its own, and the candles do not follow.
+        view.set_lane_bubbles_enabled(false);
+        assert!(!view.lane_bubbles_enabled() && !view.bubbles_enabled());
+        view.set_bubbles_enabled(true);
+        assert!(
+            view.bubbles_enabled() && !view.lane_bubbles_enabled(),
+            "the candles come back alone once the tape has an answer of its own"
+        );
+    }
+
+    /// Hiding the map over the candles must not delete the tape. The lane is
+    /// anchored on the live instant, and that instant used to be answered from
+    /// the candles' switch alone — so clearing them took the band, its bubbles
+    /// and its strip with it, which is the whole defect this split exists to
+    /// remove.
+    #[test]
+    fn clearing_the_candles_does_not_delete_the_tape_itself() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.enabled = true;
+        view.config.show_depth = true;
+        assert!(view.config.depth_visible_anywhere());
+
+        // Candles clear, tape keeps the map: the anchor survives, so there is
+        // still a lane to draw on.
+        view.set_depth_visible(false);
+        assert!(!view.config.depth_visible());
+        assert!(
+            view.config.depth_visible_anywhere(),
+            "the tape still draws the map, so the lane still has an anchor"
+        );
+
+        // Both panes clear: nothing is drawing the map anywhere, and the lane
+        // stands down as it always did.
+        view.set_lane_depth_visible(false);
+        assert!(!view.config.depth_visible_anywhere());
+        assert_eq!(view.live_end_ms(), None);
+    }
+
+    /// The tape's window is one field, reachable from the menu and the dock,
+    /// and a gesture edits whichever language it is in.
+    #[test]
+    fn the_tape_window_is_one_field_whichever_door_it_is_set_from() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        assert_eq!(view.live_lane_window(), LaneWindow::default());
+
+        view.set_live_lane_window(LaneWindow::Fixed { ms: 120_000 });
+        assert_eq!(view.live_lane_window(), LaneWindow::Fixed { ms: 120_000 });
+        assert_eq!(
+            view.config.live_lane.window,
+            LaneWindow::Fixed { ms: 120_000 },
+            "the menu and the dock read the same field"
+        );
+        // A pinned tape shows that much market time whatever the bars did.
+        assert_eq!(view.live_lane_window_ms(&[]), 120_000);
+
+        // The gesture edits the pinned duration and does not fall back to
+        // following the bars.
+        view.zoom_live_lane(2.0);
+        assert_eq!(view.live_lane_window(), LaneWindow::Fixed { ms: 60_000 });
+
+        // An out-of-range choice is clamped rather than stored to be drawn.
+        view.set_live_lane_window(LaneWindow::Fixed { ms: i64::MAX });
+        assert_eq!(
+            view.live_lane_window(),
+            LaneWindow::Fixed {
+                ms: MAX_LIVE_LANE_WINDOW_MS
+            }
+        );
+
+        view.set_live_lane_window(LaneWindow::default());
+        assert_eq!(view.live_lane_window(), LaneWindow::default());
+    }
+
     /// Lay the dock tabs out for real, off-screen, so a broken nested layout
     /// or a duplicated widget id fails here instead of on the chart. Both tabs
     /// are drawn in the same frame: their widget ids must not collide.
@@ -2013,10 +2273,12 @@ mod tests {
             },
             live_lane: LiveLaneStyle {
                 width_share: 0.5,
-                time_zoom: 2.0,
+                window: LaneWindow::Auto { zoom: 2.0 },
                 cluster_ms: Some(50),
                 radius_scale: 1.6,
                 show_marks: true,
+                show_depth: None,
+                show_aggressions: None,
             },
         });
         assert!(view.apply_preset("wide"), "a stored name applies");
@@ -2025,7 +2287,7 @@ mod tests {
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
         assert!(view.config.bubble_candle_summary);
         assert_eq!(view.config.live_lane.width_share, 0.5);
-        assert_eq!(view.config.live_lane.time_zoom, 2.0);
+        assert_eq!(view.config.live_lane.window, LaneWindow::Auto { zoom: 2.0 });
         assert_eq!(view.config.live_lane.cluster_ms, Some(50));
         assert_eq!(view.presets.active, "wide");
         assert_eq!(view.preset_name_draft, "wide");
@@ -2169,9 +2431,19 @@ mod tests {
         assert_eq!(view.live_lane_window_ms(&bars), unzoomed);
 
         view.zoom_live_lane(1_000.0);
-        assert_eq!(view.config.live_lane.time_zoom, MAX_LIVE_LANE_ZOOM);
+        assert_eq!(
+            view.config.live_lane.window,
+            LaneWindow::Auto {
+                zoom: MAX_LIVE_LANE_ZOOM
+            }
+        );
         view.zoom_live_lane(1e-6);
-        assert_eq!(view.config.live_lane.time_zoom, MIN_LIVE_LANE_ZOOM);
+        assert_eq!(
+            view.config.live_lane.window,
+            LaneWindow::Auto {
+                zoom: MIN_LIVE_LANE_ZOOM
+            }
+        );
 
         let steady = view.config.live_lane.clone();
         view.zoom_live_lane(0.0);
@@ -2272,9 +2544,22 @@ mod tests {
         assert_eq!(frame.projection.aggressions.len(), 1);
         assert!(frame.projection.cells.is_empty(), "no map without capture");
 
-        // Turning the bubbles off closes the pipeline again — nobody is left
-        // reading it.
+        // Turning the bubbles off over the candles does *not* close the
+        // pipeline: the tape draws them too, and it was never asked to stop.
+        // This is the split's whole point — the projection now answers to both
+        // panes, so it stands down only when neither is reading it.
         view.set_bubbles_enabled(false);
+        assert!(view.lane_bubbles_enabled(), "the tape kept them");
+        assert!(
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+                .is_some(),
+            "a tape nobody switched off may not lose the frame that feeds it"
+        );
+
+        // Switching the tape's own copy off too leaves nobody reading, and the
+        // pipeline closes exactly as it always did.
+        view.set_lane_bubbles_enabled(false);
+        view.flush_for_test();
         assert!(
             view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()

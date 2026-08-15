@@ -119,6 +119,17 @@ Landing with the paper-trading overhaul (`feat/paper-trading-overhaul`):
 
 Once merged, move it into the table above.
 
+Landing with the tape-configuration goal (`feat/tape-own-config`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_TAPE_LAYERS=<list>` | what the **tape** draws, now that it is switched apart from the candles: comma-separated `heatmap`, `bubbles`, `no-heatmap`, `no-bubbles`, or `none` for a bare tape. Each entry calls the setter the tape menu's checkbox calls, and an unlisted layer is left as it was. The state the split exists for — `QUANTICK_BUBBLES_AUTOSTART=1` with `QUANTICK_TAPE_LAYERS=no-bubbles`, or the reverse — is set here directly; use `QUANTICK_CONTEXT_MENU=tape` when the menu itself is what needs photographing |
+| `QUANTICK_TAPE_WINDOW=<auto\|90s\|2min\|120000ms>` | how much market time the tape shows: `auto` follows the bars (the default), a duration pins it. Accepts `s`, `m`/`min`, `ms` or bare milliseconds; anything else is refused rather than guessed, so a typo photographs the default instead of an invented window. This is what makes the "bubbles stay visible longer" state capturable at all — otherwise it depends on how fast the bars happen to be closing |
+
+| `QUANTICK_CONTEXT_MENU=<chart\|tape>` | the right-click menu open on that pane, once, on the first frame that has drawn a canvas. The two panes now open **different** menus, so "open the context menu" is no longer one instruction. The click is delivered as a real secondary-button event through the app's own input path (`raw_input_hook`) rather than by reaching into egui's menu state — what opens is exactly what a trader's click opens. `tape` yields nothing on a canvas with no lane, and an unrecognised value opens nothing rather than the wrong pane's menu |
+
+Once merged, move them into the table above.
+
 For a screen that represents the user's real setup, enable the trio:
 `QUANTICK_BOOK_AUTOSTART` + `QUANTICK_BUBBLES_AUTOSTART` +
 `QUANTICK_LIVE_STRIP_AUTOSTART`, with a preset from `config/bubbles.toml`

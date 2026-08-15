@@ -20,9 +20,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use smallvec::SmallVec;
 
-use crate::app::{
-    PlotAreas, fmt_time_as, fmt_window, gesture_hits_lane, plot_split, split_time_strip,
-};
+use crate::app::{PlotAreas, fmt_time_as, gesture_hits_lane, plot_split, split_time_strip};
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
@@ -36,6 +34,10 @@ use crate::indicator_worker::{
     IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
 };
 use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
+use crate::orderflow::{
+    LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
+    format_window_ms, lane_window_label, reserved_span_ms, same_lane_window,
+};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::price_view::PriceView;
@@ -867,6 +869,20 @@ pub struct ChartPane {
     // Where the history pane ended last frame — the lane's divider, and the
     // handle that resizes it. The input pass runs before the draw computes it.
     pub last_lane_divider_x: Option<f32>,
+    // The canvas the last draw used. Published for the same reason the divider
+    // is: something outside the draw needs a point on this pane — the scripted
+    // right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
+    // second time is how two answers start to disagree.
+    pub last_chart_rect: Option<egui::Rect>,
+    // The automatic tape window at the last draw — the recent bars' typical
+    // duration. Only the menu reads it, and only to state what "follows the
+    // bars" currently amounts to; the drawing itself is handed the resolved
+    // window, never this.
+    last_lane_reference_ms: Option<i64>,
+    // Whether the right-click that opened the menu landed on the tape rather
+    // than on the candles. The two panes are configured apart, so the menu has
+    // to know which one was asked.
+    context_menu_on_tape: bool,
     // How many rungs the lane was wide enough for at the last draw, and so
     // how finely the next publish samples the forming bar across it. `0` when
     // there is no lane: the worker then walks no ladder and the panes draw
@@ -1071,6 +1087,9 @@ impl ChartPane {
             imbalance_target,
             viewport: Viewport::new(),
             last_lane_divider_x: None,
+            last_chart_rect: None,
+            last_lane_reference_ms: None,
+            context_menu_on_tape: false,
             lane_rungs: 0,
             price_view: PriceView::new(),
             last_auto_range: None,
@@ -1408,40 +1427,25 @@ impl ChartPane {
     /// The indicator entries drive `IndicatorViews::toggle_hidden` — the same
     /// state the toolbar's eye writes — so an indicator hidden here shows as
     /// hidden there, and the indicator state file remains its single home.
-    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        // The trade section rides on top, on the pane that owns order
-        // entry, anchored at the price the right-click landed on.
-        if chrome.paper_owns_input
-            && let Some(price) = self.context_menu_price
-        {
-            chrome.paper.context_trade_actions(ui, price);
-            ui.separator();
-        }
-        // Tools that place at the bar under the right-click (the anchored
-        // VWAP's TradingView gesture) declare their entry on the registry;
-        // the click was already resolved per tool, snap rules included, so
-        // the menu only offers what the capture could honestly anchor.
-        if !self.context_menu_places.is_empty() {
-            let places = std::mem::take(&mut self.context_menu_places);
-            for &(tool, point) in &places {
-                let label = tool
-                    .context_menu_label()
-                    .expect("only declaring tools were captured");
-                if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    self.place_drawing_point(tool, &DrawingBand::Price, point, chrome);
-                    ui.close_menu();
-                }
-            }
-            self.context_menu_places = places;
-            ui.separator();
-        }
-        ui.label(
-            egui::RichText::new("chart layers")
-                .size(11.0)
-                .color(theme::TEXT_MUTED),
-        );
-        #[cfg(test)]
-        self.layer_menu_rects.clear();
+    /// Aim the next menu at one pane or the other, as a right-click would.
+    #[cfg(test)]
+    pub(crate) fn aim_context_menu_at_tape(&mut self, on_tape: bool) {
+        self.context_menu_on_tape = on_tape;
+    }
+
+    /// Whether a click at this x belongs to the tape rather than the candles.
+    ///
+    /// Read off the divider the draw already published, never a second copy of
+    /// the lane's geometry — the two could then disagree, and the menu would
+    /// configure a pane the trader did not click. A canvas with no lane has no
+    /// divider, and every click on it is the candles'.
+    #[must_use]
+    fn click_on_tape(&self, x: f32) -> bool {
+        self.last_lane_divider_x.is_some_and(|divider| x >= divider)
+    }
+
+    /// The candles' layer checkboxes: the list the menu has always shown.
+    fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
         for layer in ChartLayer::ALL {
             let blocked = self.layer_blocked(layer, chrome.capabilities);
             let mut visible = self.layer_visible(layer, chrome.style);
@@ -1477,6 +1481,162 @@ impl ChartPane {
                     }
                 });
             }
+        }
+    }
+
+    /// What the tape draws, and how much market time it shows.
+    ///
+    /// Reached by right-clicking the tape itself, which is the only place
+    /// these choices are about. Every entry writes the lane's own field, so
+    /// the dock's copy of the same settings and this one can never disagree.
+    fn draw_tape_menu_section(&mut self, ui: &mut egui::Ui) {
+        let Some(orderflow) = self.orderflow.as_mut() else {
+            return;
+        };
+        ui.label(
+            egui::RichText::new("tape")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+
+        let mut depth = orderflow.lane_depth_visible();
+        if ui
+            .checkbox(&mut depth, ChartLayer::Heatmap.label())
+            .on_hover_text(
+                "resting depth on the tape. Switched apart from the candles': clearing the \
+                 chart to read structure does not hide the book where the book is being watched",
+            )
+            .changed()
+        {
+            orderflow.set_lane_depth_visible(depth);
+        }
+
+        let mut bubbles = orderflow.lane_bubbles_enabled();
+        if ui
+            .checkbox(&mut bubbles, ChartLayer::Bubbles.label())
+            .on_hover_text(
+                "confirmed executions rolling through the tape, drawn where they printed",
+            )
+            .changed()
+        {
+            orderflow.set_lane_bubbles_enabled(bubbles);
+        }
+
+        let reference_ms = self.last_lane_reference_ms;
+        let current = orderflow.live_lane_window();
+        let mut chosen = None;
+        ui.menu_button(
+            format!("tape window: {}", lane_window_label(current, reference_ms)),
+            |ui| {
+                let mut entry = |ui: &mut egui::Ui, option: LaneWindow| {
+                    if ui
+                        .selectable_label(
+                            same_lane_window(current, option),
+                            lane_window_label(option, reference_ms),
+                        )
+                        .clicked()
+                    {
+                        chosen = Some(option);
+                        ui.close_menu();
+                    }
+                };
+                entry(ui, LaneWindow::default());
+                ui.separator();
+                for ms in LANE_WINDOW_PRESETS_MS {
+                    entry(ui, LaneWindow::Fixed { ms });
+                }
+                ui.separator();
+                // Custom: the same number the presets set, typed. Seconds
+                // rather than milliseconds because that is the unit the choice
+                // is made in; the field clamps to what the tape can draw.
+                let mut seconds = match current {
+                    LaneWindow::Fixed { ms } => ms,
+                    LaneWindow::Auto { .. } => reference_ms
+                        .map_or(MIN_LIVE_LANE_WINDOW_MS, |reference| {
+                            current.resolve_ms(reference)
+                        }),
+                } as f64
+                    / 1_000.0;
+                ui.horizontal(|ui| {
+                    ui.label("custom");
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut seconds)
+                                .speed(1.0)
+                                .range(
+                                    (MIN_LIVE_LANE_WINDOW_MS as f64 / 1_000.0)
+                                        ..=(MAX_LIVE_LANE_WINDOW_MS as f64 / 1_000.0),
+                                )
+                                .suffix(" s"),
+                        )
+                        .changed()
+                    {
+                        chosen = Some(LaneWindow::Fixed {
+                            ms: (seconds * 1_000.0).round() as i64,
+                        });
+                    }
+                });
+            },
+        )
+        .response
+        .on_hover_text(
+            "how much market time the tape shows. Following the bars keeps roughly one bar's \
+             worth of flow in the band whatever the instrument; a fixed window shows that much \
+             time however fast the bars are closing, so prints stay readable through a burst",
+        );
+        if let Some(window) = chosen {
+            orderflow.set_live_lane_window(window);
+        }
+    }
+
+    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        // The trade section rides on top, on the pane that owns order
+        // entry, anchored at the price the right-click landed on.
+        if chrome.paper_owns_input
+            && let Some(price) = self.context_menu_price
+        {
+            chrome.paper.context_trade_actions(ui, price);
+            ui.separator();
+        }
+        // Tools that place at the bar under the right-click (the anchored
+        // VWAP's TradingView gesture) declare their entry on the registry;
+        // the click was already resolved per tool, snap rules included, so
+        // the menu only offers what the capture could honestly anchor.
+        if !self.context_menu_places.is_empty() {
+            let places = std::mem::take(&mut self.context_menu_places);
+            for &(tool, point) in &places {
+                let label = tool
+                    .context_menu_label()
+                    .expect("only declaring tools were captured");
+                if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
+                    self.place_drawing_point(tool, &DrawingBand::Price, point, chrome);
+                    ui.close_menu();
+                }
+            }
+            self.context_menu_places = places;
+            ui.separator();
+        }
+        #[cfg(test)]
+        self.layer_menu_rects.clear();
+        // The tape is a pane of its own and is configured as one: a right-click
+        // on it answers for it, and the candles' own layers stay one submenu
+        // away rather than disappearing. A click on the candles sees exactly
+        // the menu it always saw.
+        if self.context_menu_on_tape {
+            self.draw_tape_menu_section(ui);
+            ui.separator();
+            ui.menu_button("chart layers", |ui| {
+                self.draw_chart_layer_entries(ui, chrome);
+            })
+            .response
+            .on_hover_text("what the candles beside the tape draw");
+        } else {
+            ui.label(
+                egui::RichText::new("chart layers")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            self.draw_chart_layer_entries(ui, chrome);
         }
 
         // Borrowed straight from the view list — no per-frame copy of the
@@ -2935,6 +3095,7 @@ impl ChartPane {
             // projection `drawing_point_at` owns, each with the tool's own
             // snap — the anchored VWAP's candle magnet included.
             let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+            self.context_menu_on_tape = self.click_on_tape(position.x);
             self.context_menu_places.clear();
             for tool in drawings::DRAWING_TOOLS {
                 if tool.context_menu_label().is_none() {
@@ -3764,6 +3925,7 @@ impl ChartPane {
         // zoom inside it exactly as they did when it was the whole chart.
         self.last_lane_divider_x =
             crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
+        self.last_chart_rect = Some(chart_rect);
         self.lane_rungs = lane_rungs(
             self.last_lane_divider_x
                 .map_or(0.0, |divider| chart_rect.right() - divider),
@@ -4342,6 +4504,12 @@ impl ChartPane {
                 split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
                 orderflow.live_lane_window_ms(closed),
             );
+            // The automatic reference this frame, kept for the tape's menu:
+            // the entry that says "follows the bars" has to be able to say
+            // what that works out to, and the menu is drawn without the bars
+            // in reach. Recorded from the same bars the axis was just drawn
+            // from, so the label and the axis can never disagree.
+            self.last_lane_reference_ms = Some(reserved_span_ms(closed));
         }
         // The way back from history (audit F6), painted over the strip's
         // labels on the same geometry the input path registered.
@@ -4501,7 +4669,7 @@ impl ChartPane {
         painter.text(
             strip.center(),
             egui::Align2::CENTER_CENTER,
-            format!("tape · {}", fmt_window(window_ms)),
+            format!("tape · {}", format_window_ms(window_ms)),
             egui::FontId::monospace(10.0),
             theme::TEXT_MUTED,
         );
@@ -5505,6 +5673,28 @@ mod tests {
     /// being the depth map or the bubbles, so each of them alone has to keep
     /// it running — otherwise the lane sits reserved and unmarked (a band you
     /// cannot tell from a dead feed) while its menu entry reads as on.
+    /// The two panes are configured apart, so the right-click has to say which
+    /// one it landed on — and it says so from the divider the draw published,
+    /// not from a second copy of the lane's geometry.
+    #[test]
+    fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+
+        // No lane drawn yet: there is one pane, and every click is its.
+        assert!(!pane.click_on_tape(0.0));
+        assert!(!pane.click_on_tape(999.0));
+
+        pane.last_lane_divider_x = Some(700.0);
+        assert!(!pane.click_on_tape(699.9), "the candles' last pixel");
+        assert!(pane.click_on_tape(700.0), "the divider belongs to the tape");
+        assert!(pane.click_on_tape(880.0), "and so does everything past it");
+
+        // A lane that goes away takes its side of the question with it: no
+        // click may configure a tape that is no longer drawn.
+        pane.last_lane_divider_x = None;
+        assert!(!pane.click_on_tape(880.0));
+    }
+
     #[test]
     fn the_strip_and_the_lane_marks_each_keep_the_projection_alive() {
         let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
