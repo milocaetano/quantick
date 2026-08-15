@@ -2171,7 +2171,16 @@ mod tests {
 
     #[test]
     fn disabled_projection_is_empty_even_with_data() {
-        let mut history = LiquidityHistory::new(HeatmapConfig::default());
+        // Every layer off, said out loud: the default config stopped being
+        // inert when the tape gained defaults of its own (both layers on), so a
+        // test about a *disabled* projection has to disable the tape too.
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            live_lane: LiveLaneStyle {
+                enabled: false,
+                ..LiveLaneStyle::default()
+            },
+            ..HeatmapConfig::default()
+        });
         history.install_snapshot(100, 1, snapshot(10)).unwrap();
         let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();

@@ -210,25 +210,15 @@ impl OrderflowView {
     /// No feed command is involved: the recorder keeps running, so turning the
     /// map back on repaints the retained past instead of opening a gap in it.
     ///
-    /// The tape is not touched either. While it was inheriting this switch it
-    /// is first handed the value it was drawing, so hiding the map over the
-    /// candles leaves the tape showing exactly what it showed — which is the
-    /// whole point of the two panes having switches of their own.
+    /// **The tape is not touched, in either direction.** This is the toolbar's
+    /// switch and it governs the candles; the tape holds a value of its own
+    /// ([`Self::set_lane_depth_visible`]), reached by right-clicking it.
     pub fn set_depth_visible(&mut self, visible: bool) {
         if self.config.show_depth == visible {
             return;
         }
         let before = self.config.clone();
-        let lane_was = self.config.lane_depth_visible();
         self.config.show_depth = visible;
-        // Only *hiding* hands the tape a value of its own. Switching the map
-        // back on while the tape is still inheriting has to leave it
-        // inheriting, or turning the candles' map on would pin the tape to
-        // whatever it happened to show a moment ago — the trader never asked
-        // the two to part company, so they must not.
-        if !visible {
-            self.config.live_lane.show_depth.get_or_insert(lane_was);
-        }
         if !self.config.depth_visible_anywhere() {
             // Drop the local frame immediately; the worker clears its own.
             self.published.frame = None;
@@ -245,25 +235,54 @@ impl OrderflowView {
 
     /// Toggle the aggression layer over the candles, without touching L2
     /// capture. No feed command is needed — aggregate trades already flow for
-    /// the candles. The tape keeps what it was drawing, as with the depth map.
+    /// the candles. The tape is not touched in either direction, as with the
+    /// depth map.
     pub fn set_bubbles_enabled(&mut self, enabled: bool) {
         if self.config.show_aggressions == enabled {
             return;
         }
         let before = self.config.clone();
-        let lane_was = self.config.lane_aggressions_visible();
         self.config.show_aggressions = enabled;
-        // Hiding parts them; showing does not. See `set_depth_visible`.
-        if !enabled {
-            self.config
-                .live_lane
-                .show_aggressions
-                .get_or_insert(lane_was);
+        self.commit_config_changes(before);
+    }
+
+    /// Whether the tape is on the canvas at all.
+    #[must_use]
+    pub fn lane_enabled(&self) -> bool {
+        self.config.lane_enabled()
+    }
+
+    /// Put the tape on the canvas, or take it off.
+    ///
+    /// Off, the lane reserves no width and asks for no projection; the candles
+    /// take the whole canvas. Its two layer switches are left exactly as they
+    /// were, so switching the tape back on returns the tape that was switched
+    /// off rather than a fresh one.
+    pub fn set_lane_enabled(&mut self, enabled: bool) {
+        if self.config.live_lane.enabled == enabled {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.live_lane.enabled = enabled;
+        if !self.config.depth_visible_anywhere() {
+            // Drop the local frame immediately; the worker clears its own.
+            self.published.frame = None;
         }
         self.commit_config_changes(before);
     }
 
-    /// Whether the depth map is drawn on the tape.
+    /// The band's width for a canvas this wide — zero when the tape is off.
+    ///
+    /// The number `ChartPane::draw_chart` reads every frame, exposed so a test
+    /// can ask it without a live edge to anchor a lane on.
+    #[cfg(test)]
+    #[must_use]
+    pub fn lane_width_px_for_test(&self, chart_width: f32) -> f32 {
+        self.config.live_lane.resolved_width_px(chart_width)
+    }
+
+    /// Whether the depth map is switched on for the tape. Says nothing about
+    /// whether there is a tape — see [`Self::lane_enabled`].
     #[must_use]
     pub fn lane_depth_visible(&self) -> bool {
         self.config.lane_depth_visible()
@@ -272,18 +291,22 @@ impl OrderflowView {
     /// Show or hide the depth map on the tape alone. Capture is untouched, and
     /// so are the candles.
     pub fn set_lane_depth_visible(&mut self, visible: bool) {
-        if self.config.lane_depth_visible() == visible {
+        // Compared against the switch, not against what capture allows through
+        // it — same rule as the candles' `set_depth_visible`. A source with no
+        // book would otherwise swallow "off" and spring the layer back the
+        // moment a source with one arrived.
+        if self.config.live_lane.show_depth == visible {
             return;
         }
         let before = self.config.clone();
-        self.config.live_lane.show_depth = Some(visible);
+        self.config.live_lane.show_depth = visible;
         if !self.config.depth_visible_anywhere() {
             self.published.frame = None;
         }
         self.commit_config_changes(before);
     }
 
-    /// Whether aggression bubbles are drawn on the tape.
+    /// Whether aggression bubbles are switched on for the tape.
     #[must_use]
     pub fn lane_bubbles_enabled(&self) -> bool {
         self.config.lane_aggressions_visible()
@@ -295,7 +318,7 @@ impl OrderflowView {
             return;
         }
         let before = self.config.clone();
-        self.config.live_lane.show_aggressions = Some(enabled);
+        self.config.live_lane.show_aggressions = enabled;
         self.commit_config_changes(before);
     }
 
@@ -747,7 +770,16 @@ impl OrderflowView {
         draw_compact_legend(painter, &context);
     }
 
-    pub fn draw_status_badge(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
+    /// `right_inset_px` is the room another piece of chrome has already claimed
+    /// in this corner — the tape switch, which sits on the corner itself. The
+    /// badge steps left of it rather than under it: two labels on one pixel is
+    /// how a status message becomes unreadable exactly when it matters.
+    pub fn draw_status_badge(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        right_inset_px: f32,
+    ) {
         // Tied to the map, not to the recorder: a badge reporting on a book
         // nobody asked to see is just chrome. The trader can silence it on its
         // own too, from the canvas's right-click menu — but only while the
@@ -762,7 +794,7 @@ impl OrderflowView {
         let color = status_color(&self.published.status);
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), color);
         let pos = egui::pos2(
-            chart_rect.right() - galley.size().x - 10.0,
+            chart_rect.right() - galley.size().x - 10.0 - right_inset_px.max(0.0),
             chart_rect.top() + 4.0,
         );
         let rect = egui::Rect::from_min_size(
@@ -2096,28 +2128,26 @@ mod tests {
     use crate::orderflow::{BubbleSizeReference, BubbleStyle};
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
-    /// The ask, in one test: switch a layer off on the chart and keep seeing
-    /// it on the tape. While the tape is inheriting, the chart's switch hands
-    /// it the value it was drawing before moving, so clearing the candles
-    /// never takes the tape's copy with it.
+    /// The ask, in one test: the toolbar governs the candles and nothing else.
+    /// Every one of the four movements — each layer switched off *and* back on
+    /// — has to leave the tape exactly where the trader left it.
     #[test]
-    fn clearing_the_candles_leaves_the_tape_drawing_what_it_was_drawing() {
+    fn the_toolbar_switches_move_the_candles_and_never_the_tape() {
         let mut view = OrderflowView::new("BTCUSDT");
         view.config.enabled = true;
         view.config.show_depth = true;
         view.config.show_aggressions = true;
-        // Nothing asked of the lane yet: one switch, both panes.
-        assert_eq!(view.config.live_lane.show_depth, None);
-        assert!(view.depth_visible() && view.lane_depth_visible());
-        assert!(view.bubbles_enabled() && view.lane_bubbles_enabled());
+        // The tape opens with both layers, whatever the candles are doing.
+        assert!(view.lane_enabled(), "and with a band to draw them on");
+        assert!(view.lane_depth_visible() && view.lane_bubbles_enabled());
 
+        // Movement 1 and 2: both layers off on the candles.
         view.set_depth_visible(false);
         view.set_bubbles_enabled(false);
-        assert!(!view.depth_visible(), "the candles are clear");
-        assert!(!view.bubbles_enabled());
+        assert!(!view.depth_visible() && !view.bubbles_enabled());
         assert!(
             view.lane_depth_visible(),
-            "and the tape still has the book — the whole point"
+            "the tape still has the book — the whole point"
         );
         assert!(view.lane_bubbles_enabled(), "and the prints");
         assert!(
@@ -2125,31 +2155,63 @@ mod tests {
             "a frame the tape is still reading may not be dropped under it"
         );
 
-        // Switching a layer back on while the tape is still inheriting leaves
-        // it inheriting: the trader never parted the two, so turning the
-        // candles' layer on brings the tape's with it. Pinning the tape here
-        // is how a layer switched on at startup came back with the tape's own
-        // entry unticked.
+        // Movements 3 and 4: both back on. This is the direction that used to
+        // drag the tape along, because an inheriting lane had no answer of its
+        // own to keep.
+        view.set_lane_depth_visible(false);
+        view.set_lane_bubbles_enabled(false);
+        view.set_depth_visible(true);
+        view.set_bubbles_enabled(true);
+        assert!(view.depth_visible() && view.bubbles_enabled());
+        assert!(
+            !view.lane_depth_visible() && !view.lane_bubbles_enabled(),
+            "the candles come back alone: the toolbar is not the tape's switch"
+        );
+
+        // And a tape whose layers were never touched is still not the
+        // toolbar's to move — the case a fresh launch is in.
         let mut fresh = OrderflowView::new("BTCUSDT");
         fresh.config.enabled = true;
-        assert!(!fresh.bubbles_enabled() && !fresh.lane_bubbles_enabled());
+        assert!(!fresh.bubbles_enabled(), "the candles open without them");
+        assert!(fresh.lane_bubbles_enabled(), "the tape opens with them");
         fresh.set_bubbles_enabled(true);
-        assert_eq!(
-            fresh.config.live_lane.show_aggressions, None,
-            "showing does not part the panes"
-        );
-        assert!(fresh.lane_bubbles_enabled(), "so the tape follows along");
-        fresh.set_depth_visible(true);
-        assert_eq!(fresh.config.live_lane.show_depth, None);
-        assert!(fresh.lane_depth_visible());
-
-        // The tape is switched on its own, and the candles do not follow.
-        view.set_lane_bubbles_enabled(false);
-        assert!(!view.lane_bubbles_enabled() && !view.bubbles_enabled());
-        view.set_bubbles_enabled(true);
+        fresh.set_bubbles_enabled(false);
         assert!(
-            view.bubbles_enabled() && !view.lane_bubbles_enabled(),
-            "the candles come back alone once the tape has an answer of its own"
+            fresh.lane_bubbles_enabled(),
+            "there and back again, and the tape never moved"
+        );
+    }
+
+    /// The tape's own switch: one click takes the band off the canvas, another
+    /// puts back the tape that was taken away.
+    #[test]
+    fn the_tape_switch_takes_the_band_away_and_gives_it_back_unchanged() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.config.enabled = true;
+        view.set_lane_depth_visible(false);
+        assert!(view.lane_enabled() && view.lane_bubbles_enabled());
+
+        view.set_lane_enabled(false);
+        assert!(!view.lane_enabled());
+        assert_eq!(
+            view.config.live_lane.resolved_width_px(1_000.0),
+            0.0,
+            "no band is reserved, so the candles take the whole canvas"
+        );
+        assert!(
+            !view.config.aggressions_visible_anywhere(),
+            "and nothing is projected for a tape that is not there"
+        );
+        assert!(
+            view.lane_bubbles_enabled() && !view.lane_depth_visible(),
+            "the tape's own layer switches are not touched"
+        );
+
+        view.set_lane_enabled(true);
+        assert!(view.lane_enabled());
+        assert!(
+            view.lane_bubbles_enabled() && !view.lane_depth_visible(),
+            "the tape that comes back is the tape that went away"
         );
     }
 
@@ -2277,8 +2339,9 @@ mod tests {
                 cluster_ms: Some(50),
                 radius_scale: 1.6,
                 show_marks: true,
-                show_depth: None,
-                show_aggressions: None,
+                enabled: true,
+                show_depth: true,
+                show_aggressions: true,
             },
         });
         assert!(view.apply_preset("wide"), "a stored name applies");
@@ -2584,7 +2647,7 @@ mod tests {
             view.sync_published();
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_status_badge(ui.painter(), rect);
+                    view.draw_status_badge(ui.painter(), rect, 0.0);
                 });
             });
             let mut text = String::new();
@@ -2705,7 +2768,9 @@ mod tests {
     #[test]
     fn the_live_strip_alone_keeps_the_aggression_pipeline_running() {
         let mut view = OrderflowView::new("BTCUSDT");
-        // No depth capture, no bubbles: only the strip is asking.
+        // No depth capture, no bubbles anywhere — the tape's included, so the
+        // strip really is the only surface asking.
+        view.set_lane_enabled(false);
         view.set_projection_demand(true);
         assert!(!view.enabled(), "a strip must not start book capture");
         assert!(!view.bubbles_enabled(), "and it draws no bubbles");
@@ -2758,7 +2823,23 @@ mod tests {
                 .is_some()
         );
 
+        // Capture stops. The tape is still drawing prints, and prints do not
+        // come from the book — so the frame it reads must survive, carrying
+        // aggressions and no depth. Blanking it here would take a live surface
+        // down with a recorder nobody was watching.
         view.set_enabled(false, 11);
+        view.flush_for_test();
+        assert!(
+            view.lane_bubbles_enabled(),
+            "the tape was never asked to stop"
+        );
+        assert!(
+            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+                .is_some()
+        );
+
+        // With the tape off as well nobody is reading, and the frame goes.
+        view.set_lane_enabled(false);
         assert!(
             view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
                 .is_none()

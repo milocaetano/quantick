@@ -867,22 +867,27 @@ pub struct LiveLaneStyle {
     pub radius_scale: f32,
     /// Whether the lane's boundary and the live-edge line are drawn.
     pub show_marks: bool,
-    /// Whether the depth map is drawn *on the tape*. `None` follows the
-    /// chart's own switch ([`HeatmapConfig::show_depth`]).
+    /// Whether the tape is on the canvas at all.
     ///
-    /// Each pane answers for its own canvas: the compressed history is read
-    /// one way and the rolling tape another, and a trader who wants the
-    /// candles clean does not thereby want the book hidden where the book is
-    /// actually being read. `None` is what every file written before the lane
-    /// had a switch of its own says, and it is why such a file opens drawing
-    /// exactly what it drew — hiding the chart's layer used to hide the tape's
-    /// with it, and inheritance keeps that true until the trader says
-    /// otherwise.
-    pub show_depth: Option<bool>,
-    /// Whether aggression bubbles are drawn *on the tape*. `None` follows the
-    /// chart's own switch ([`HeatmapConfig::show_aggressions`]). Same
-    /// inheritance rule as [`show_depth`](Self::show_depth).
-    pub show_aggressions: Option<bool>,
+    /// Off, the lane reserves no width ([`Self::resolved_width_px`] answers
+    /// zero), so the candles take the whole canvas and nothing downstream —
+    /// divider, projection, marks — has a band to work in. The two layer
+    /// switches below keep whatever they were set to while it is off: turning
+    /// the tape back on must return the tape that was switched off, not a
+    /// default one.
+    pub enabled: bool,
+    /// Whether the depth map is drawn *on the tape*.
+    ///
+    /// Each pane answers for its own canvas, and the tape answers with a value
+    /// of its own rather than by following the candles: the compressed history
+    /// is read one way and the rolling tape another, so a trader who clears the
+    /// candles has not thereby asked for the book to vanish where the book is
+    /// actually being read. On by default — the tape's whole job is to show the
+    /// book and the prints landing into it.
+    pub show_depth: bool,
+    /// Whether aggression bubbles are drawn *on the tape*. Same rule as
+    /// [`show_depth`](Self::show_depth), and on by default for the same reason.
+    pub show_aggressions: bool,
 }
 
 impl Default for LiveLaneStyle {
@@ -893,8 +898,9 @@ impl Default for LiveLaneStyle {
             cluster_ms: None,
             radius_scale: DEFAULT_LIVE_LANE_RADIUS_SCALE,
             show_marks: true,
-            show_depth: None,
-            show_aggressions: None,
+            enabled: true,
+            show_depth: true,
+            show_aggressions: true,
         }
     }
 }
@@ -911,6 +917,13 @@ impl Default for LiveLaneStyle {
 /// Nothing outside serialization sees this type. [`LaneWindow`] stays the only
 /// owner of the number in memory, so no two fields can disagree about how much
 /// market time the tape is showing.
+///
+/// The two layer switches are `Option<bool>` here and plain `bool` in memory,
+/// and that is the whole of the compatibility story. A file written while the
+/// tape still inherited the candles' switches left the key out whenever nobody
+/// had chosen, which read as "follow the chart"; there is no chart to follow
+/// any more, so an absent answer becomes the tape's own default — on. A file
+/// that says `false` said it on purpose and is still obeyed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct LiveLaneStyleRepr {
@@ -920,6 +933,7 @@ struct LiveLaneStyleRepr {
     cluster_ms: Option<i64>,
     radius_scale: f32,
     show_marks: bool,
+    enabled: bool,
     show_depth: Option<bool>,
     show_aggressions: Option<bool>,
 }
@@ -945,8 +959,11 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             cluster_ms: repr.cluster_ms,
             radius_scale: repr.radius_scale,
             show_marks: repr.show_marks,
-            show_depth: repr.show_depth,
-            show_aggressions: repr.show_aggressions,
+            enabled: repr.enabled,
+            // Absent, or the `null` an inheriting file wrote: the tape's own
+            // default. See `LiveLaneStyleRepr`.
+            show_depth: repr.show_depth.unwrap_or(true),
+            show_aggressions: repr.show_aggressions.unwrap_or(true),
         }
     }
 }
@@ -967,8 +984,9 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             cluster_ms: style.cluster_ms,
             radius_scale: style.radius_scale,
             show_marks: style.show_marks,
-            show_depth: style.show_depth,
-            show_aggressions: style.show_aggressions,
+            enabled: style.enabled,
+            show_depth: Some(style.show_depth),
+            show_aggressions: Some(style.show_aggressions),
         }
     }
 }
@@ -1002,6 +1020,13 @@ impl LiveLaneStyle {
     /// never how much room the tape gets.
     #[must_use]
     pub fn resolved_width_px(&self, chart_width: f32) -> f32 {
+        // The one gate the whole switch hangs off. A tape that is off reserves
+        // no band, and everything downstream already reads a zero width as
+        // "there is no lane": no divider, no lane rungs, no drawing boundary,
+        // no projection asked for on the tape's account.
+        if !self.enabled {
+            return 0.0;
+        }
         if !chart_width.is_finite() || chart_width <= 0.0 {
             return 0.0;
         }
@@ -1280,41 +1305,67 @@ impl HeatmapConfig {
         self.enabled && self.show_depth
     }
 
-    /// Whether the depth map is drawn on the tape.
-    ///
-    /// Capture still gates it — a map with nothing recorded behind it is not a
-    /// map on either pane — but the *display* choice is the lane's own, falling
-    /// back to the chart's while the lane has not made one
-    /// ([`LiveLaneStyle::show_depth`]).
+    /// Whether the tape is on the canvas at all
+    /// ([`LiveLaneStyle::enabled`]).
     #[must_use]
-    pub fn lane_depth_visible(&self) -> bool {
-        self.enabled && self.live_lane.show_depth.unwrap_or(self.show_depth)
+    pub fn lane_enabled(&self) -> bool {
+        self.live_lane.enabled
     }
 
-    /// Whether aggression bubbles are drawn on the tape. No capture gate: the
-    /// bubbles are built from the trade stream the chart already consumes.
+    /// Whether the depth map is *switched on* for the tape.
+    ///
+    /// Capture still gates it — a map with nothing recorded behind it is not a
+    /// map on either pane — but the display choice is the lane's own, never the
+    /// chart's ([`LiveLaneStyle::show_depth`]).
+    ///
+    /// Deliberately blind to [`lane_enabled`](Self::lane_enabled): this answers
+    /// what the tape draws *when there is a tape*, so switching the whole tape
+    /// off and on again returns the tape that was switched off. What actually
+    /// reaches the canvas is [`lane_depth_drawn`](Self::lane_depth_drawn).
+    #[must_use]
+    pub fn lane_depth_visible(&self) -> bool {
+        self.enabled && self.live_lane.show_depth
+    }
+
+    /// Whether aggression bubbles are *switched on* for the tape. No capture
+    /// gate: the bubbles are built from the trade stream the chart already
+    /// consumes. Same blindness to the tape's own switch as
+    /// [`lane_depth_visible`](Self::lane_depth_visible).
     #[must_use]
     pub fn lane_aggressions_visible(&self) -> bool {
-        self.live_lane
-            .show_aggressions
-            .unwrap_or(self.show_aggressions)
+        self.live_lane.show_aggressions
+    }
+
+    /// Whether the depth map actually reaches the tape: switched on, and there
+    /// is a tape to reach.
+    #[must_use]
+    pub fn lane_depth_drawn(&self) -> bool {
+        self.lane_enabled() && self.lane_depth_visible()
+    }
+
+    /// Whether the bubbles actually reach the tape. See
+    /// [`lane_depth_drawn`](Self::lane_depth_drawn).
+    #[must_use]
+    pub fn lane_aggressions_drawn(&self) -> bool {
+        self.lane_enabled() && self.lane_aggressions_visible()
     }
 
     /// Whether any pane still draws the depth map.
     ///
     /// What decides that the projection has to keep building depth primitives:
     /// hiding the map on the candles while the tape still shows it is a change
-    /// of view, never a reason to stop producing what the tape is reading.
+    /// of view, never a reason to stop producing what the tape is reading. A
+    /// tape that is switched off reads nothing, so it asks for nothing.
     #[must_use]
     pub fn depth_visible_anywhere(&self) -> bool {
-        self.depth_visible() || self.lane_depth_visible()
+        self.depth_visible() || self.lane_depth_drawn()
     }
 
     /// Whether any pane still draws the aggression bubbles. Same rule as
     /// [`depth_visible_anywhere`](Self::depth_visible_anywhere).
     #[must_use]
     pub fn aggressions_visible_anywhere(&self) -> bool {
-        self.show_aggressions || self.lane_aggressions_visible()
+        self.show_aggressions || self.lane_aggressions_drawn()
     }
 
     /// Whether any order-flow layer asks for a projection.
@@ -1414,14 +1465,31 @@ mod tests {
         assert!((0.0..=1.0).contains(&config.opacity));
         assert!(config.gamma > 0.0);
         assert!(!config.show_aggressions);
-        assert!(!config.any_layer_enabled());
+        // The candles open clean; the tape does not. Its whole job is the book
+        // and the prints landing into it, so it opens with both — and that is
+        // what holds the aggression pipeline open from the first frame, where
+        // a fresh config used to be wholly inert.
+        assert!(config.lane_enabled());
+        assert!(config.lane_aggressions_drawn());
+        assert!(config.any_layer_enabled());
+        assert!(
+            !HeatmapConfig {
+                live_lane: LiveLaneStyle {
+                    enabled: false,
+                    ..LiveLaneStyle::default()
+                },
+                ..HeatmapConfig::default()
+            }
+            .any_layer_enabled(),
+            "and with the tape off there is nothing left asking for a projection"
+        );
         assert_eq!(config.bubble_cluster_ms, DEFAULT_BUBBLE_CLUSTER_MS);
         assert_eq!(config.bubble_dust_merge_ms, DEFAULT_BUBBLE_DUST_MERGE_MS);
         // Summarizing a closed bar throws away the intra-bar detail on
         // purpose, so nobody gets it without asking.
         assert!(!config.bubble_candle_summary);
-        // The lane defaults to inheriting every bubble decision history makes:
-        // gaining a region of its own must change no pixels on its own.
+        // The lane still inherits every *bubble* decision history makes —
+        // clustering, radii, regions — and only its own visibility is its own.
         assert_eq!(config.live_lane, LiveLaneStyle::default());
         assert_eq!(config.live_lane.cluster_ms, None);
         assert_eq!(
@@ -1486,8 +1554,9 @@ mod tests {
                 cluster_ms: Some(i64::MIN),
                 radius_scale: 900.0,
                 show_marks: true,
-                show_depth: None,
-                show_aggressions: None,
+                enabled: true,
+                show_depth: true,
+                show_aggressions: true,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,
@@ -1834,10 +1903,22 @@ mod tests {
         );
         assert!((old.width_share - 0.4).abs() < 1e-6);
         assert!(!old.show_marks);
-        // And the two panes still move together, because the lane has not been
-        // asked for anything of its own.
-        assert_eq!(old.show_depth, None);
-        assert_eq!(old.show_aggressions, None);
+        // A file that never named the tape's layers gets the tape's defaults —
+        // there is nothing to inherit from any more.
+        assert!(
+            old.enabled,
+            "a file from before the switch opens with a tape"
+        );
+        assert!(old.show_depth && old.show_aggressions);
+
+        // A file that said `false` said it on purpose, and is still obeyed —
+        // the one thing the switch to a plain `bool` may not quietly discard.
+        let chosen: LiveLaneStyle =
+            toml::from_str("show_depth = false\nshow_aggressions = false\nenabled = false\n")
+                .unwrap();
+        assert!(!chosen.show_depth, "an explicit no stays a no");
+        assert!(!chosen.show_aggressions);
+        assert!(!chosen.enabled, "and a tape put away stays away");
 
         // A file this build writes round-trips, in both languages.
         for window in [
@@ -1847,8 +1928,9 @@ mod tests {
         ] {
             let style = LiveLaneStyle {
                 window,
-                show_depth: Some(false),
-                show_aggressions: Some(true),
+                enabled: false,
+                show_depth: false,
+                show_aggressions: true,
                 ..LiveLaneStyle::default()
             };
             let text = toml::to_string(&style).unwrap();
@@ -1877,19 +1959,17 @@ mod tests {
             show_aggressions: true,
             ..HeatmapConfig::default()
         };
-        // Inheriting: one switch, both panes — exactly as before the lane had
-        // switches of its own.
-        assert!(config.depth_visible() && config.lane_depth_visible());
-        assert!(config.show_aggressions && config.lane_aggressions_visible());
+        // Two switches, two panes, and the tape's are on out of the box.
+        assert!(config.depth_visible() && config.lane_depth_drawn());
+        assert!(config.show_aggressions && config.lane_aggressions_drawn());
 
-        // The candles go quiet, the tape keeps both layers.
+        // The candles go quiet; the tape was never asked anything and keeps
+        // both layers.
         config.show_depth = false;
         config.show_aggressions = false;
-        config.live_lane.show_depth = Some(true);
-        config.live_lane.show_aggressions = Some(true);
         assert!(!config.depth_visible(), "the candles are clear");
-        assert!(config.lane_depth_visible(), "the tape still has the book");
-        assert!(config.lane_aggressions_visible(), "and the prints");
+        assert!(config.lane_depth_drawn(), "the tape still has the book");
+        assert!(config.lane_aggressions_drawn(), "and the prints");
         assert!(
             config.any_layer_enabled(),
             "a tape nobody switched off may not lose the projection that feeds it"
@@ -1897,9 +1977,9 @@ mod tests {
 
         // The other way round: the tape is cleared, the candles keep drawing.
         config.show_depth = true;
-        config.live_lane.show_depth = Some(false);
-        config.live_lane.show_aggressions = Some(false);
-        assert!(config.depth_visible() && !config.lane_depth_visible());
+        config.live_lane.show_depth = false;
+        config.live_lane.show_aggressions = false;
+        assert!(config.depth_visible() && !config.lane_depth_drawn());
         assert!(config.any_layer_enabled());
 
         // Only with every pane's every layer off does the pipeline stand down
@@ -1914,8 +1994,55 @@ mod tests {
         config.projection_demand = false;
         config.enabled = false;
         config.show_depth = true;
-        config.live_lane.show_depth = Some(true);
-        assert!(!config.depth_visible() && !config.lane_depth_visible());
+        config.live_lane.show_depth = true;
+        assert!(!config.depth_visible() && !config.lane_depth_drawn());
+    }
+
+    /// The tape's own switch is a gate over what it draws, never an eraser of
+    /// what it was set to draw.
+    #[test]
+    fn taking_the_tape_off_the_canvas_reserves_nothing_and_forgets_nothing() {
+        let mut config = HeatmapConfig {
+            enabled: true,
+            show_depth: false,
+            show_aggressions: false,
+            ..HeatmapConfig::default()
+        };
+        assert!(config.lane_enabled(), "a fresh tape is on the canvas");
+        assert!(
+            config.lane_depth_drawn() && config.lane_aggressions_drawn(),
+            "with the book and the prints, whatever the candles are showing"
+        );
+        assert!(
+            config.any_layer_enabled(),
+            "so the projection runs for the tape alone"
+        );
+        assert!(config.live_lane.resolved_width_px(1_000.0) > 0.0);
+
+        config.live_lane.enabled = false;
+        assert!(
+            !config.lane_depth_drawn() && !config.lane_aggressions_drawn(),
+            "nothing reaches a canvas with no tape on it"
+        );
+        assert!(
+            !config.any_layer_enabled(),
+            "and nothing is projected on its account"
+        );
+        assert_eq!(
+            config.live_lane.resolved_width_px(1_000.0),
+            0.0,
+            "the band is not reserved: the candles take the whole canvas"
+        );
+        assert!(
+            config.lane_depth_visible() && config.lane_aggressions_visible(),
+            "the switches themselves are untouched"
+        );
+
+        config.live_lane.enabled = true;
+        assert!(
+            config.lane_depth_drawn() && config.lane_aggressions_drawn(),
+            "so switching the tape back on returns the tape that was switched off"
+        );
     }
 
     #[test]

@@ -132,6 +132,14 @@ Landing with the tape-configuration goal (`feat/tape-own-config`):
 
 Once merged, move them into the table above.
 
+Landing with the tape-switch goal (`feat/tape-chart-switch`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_TAPE=<on\|off>` | whether the tape is on the canvas at all — the chip in the canvas's top-right corner. `off` reserves no band, so the candles take the whole canvas and there is nothing to right-click for `QUANTICK_CONTEXT_MENU=tape`; the tape's two layer switches are untouched, so `on` returns the tape that was switched off. Calls the setter the chip calls; anything but `on`/`off` leaves the tape alone rather than guessing |
+
+Once merged, move it into the table above.
+
 For a screen that represents the user's real setup, enable the trio:
 `QUANTICK_BOOK_AUTOSTART` + `QUANTICK_BUBBLES_AUTOSTART` +
 `QUANTICK_LIVE_STRIP_AUTOSTART`, with a preset from `config/bubbles.toml`

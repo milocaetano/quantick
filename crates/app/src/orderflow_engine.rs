@@ -1260,6 +1260,7 @@ fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orderflow::LiveLaneStyle;
     use quantick_engine::Side;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
@@ -1594,6 +1595,16 @@ mod tests {
     #[test]
     fn disabled_engine_ignores_book_and_trade_events() {
         let mut engine = BookEngine::new("BTCUSDT");
+        // The tape opens drawing prints, and prints are retained for whoever
+        // draws them. "Nothing is reading" is therefore something a test now
+        // has to say rather than get for free from a fresh engine.
+        engine.apply_visual_config(HeatmapConfig {
+            live_lane: LiveLaneStyle {
+                enabled: false,
+                ..LiveLaneStyle::default()
+            },
+            ..engine.config.clone()
+        });
         engine.handle_depth_event(snapshot_event(1));
         engine.record_trade(&Trade {
             agg_id: 1,
@@ -1891,8 +1902,16 @@ mod tests {
         engine.project(&request(&bars, (98.0, 102.0))).unwrap();
         assert_eq!(engine.projection_builds, 1);
 
+        // Hidden on *both* panes: the map on the candles is only half the
+        // question now that the tape holds a switch of its own, and a gate
+        // that shuts while the tape is still reading would be the bug the
+        // split exists to prevent.
         let hidden = HeatmapConfig {
             show_depth: false,
+            live_lane: LiveLaneStyle {
+                enabled: false,
+                ..engine.config.live_lane.clone()
+            },
             ..engine.config.clone()
         };
         engine.apply_visual_config(hidden);
@@ -1929,6 +1948,10 @@ mod tests {
         // Reopening repaints the past it kept recording.
         let shown = HeatmapConfig {
             show_depth: true,
+            live_lane: LiveLaneStyle {
+                enabled: true,
+                ..engine.config.live_lane.clone()
+            },
             ..engine.config.clone()
         };
         engine.apply_visual_config(shown);

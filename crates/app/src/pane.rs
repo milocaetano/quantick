@@ -280,6 +280,38 @@ fn lane_rungs(lane_width_px: f32) -> usize {
     rungs.clamp(1, MAX_LANE_RUNGS)
 }
 
+/// The tape switch's chip, in logical pixels.
+///
+/// A fixed size rather than one measured off its own text: the hit rect is
+/// registered in the input pass and painted in the pass after it, and two
+/// measurements of one chip are two chances for the button to be somewhere the
+/// click is not.
+const TAPE_SWITCH_SIZE: egui::Vec2 = egui::vec2(54.0, 18.0);
+/// Inset of that chip from the canvas's top-right corner.
+const TAPE_SWITCH_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
+/// Room the switch takes off the right edge, for anything else that wants the
+/// same corner — the book status badge is the one thing that does.
+pub(crate) const TAPE_SWITCH_RESERVED_PX: f32 =
+    TAPE_SWITCH_SIZE.x + TAPE_SWITCH_INSET.x + TAPE_SWITCH_GAP_PX;
+/// Gap between the switch and whatever sits to its left.
+const TAPE_SWITCH_GAP_PX: f32 = 6.0;
+
+/// Where the tape switch sits on a canvas this size.
+///
+/// The canvas's top-right corner: the tape's own corner, so the switch that
+/// puts it there and takes it away is on it. One function, read by the input
+/// pass and the paint pass alike.
+#[must_use]
+pub(crate) fn tape_switch_rect(chart_rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_size(
+        egui::pos2(
+            chart_rect.right() - TAPE_SWITCH_INSET.x - TAPE_SWITCH_SIZE.x,
+            chart_rect.top() + TAPE_SWITCH_INSET.y,
+        ),
+        TAPE_SWITCH_SIZE,
+    )
+}
+
 /// Half-height of the grab band over a pane's top edge, in pixels.
 ///
 /// The rule itself stays a hairline — a thick bar between a chart and its
@@ -913,6 +945,10 @@ pub struct ChartPane {
     pub last_plot_area: Option<egui::Rect>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
+    /// Whether the pointer is over the tape switch in the canvas's top-right
+    /// corner. Read by the paint pass, which runs after the input pass and has
+    /// no `Ui` of its own to ask.
+    tape_switch_hovered: bool,
 
     /// Venue candles standing in front of the trade-derived series, already
     /// folded to this pane's interval.
@@ -1100,6 +1136,7 @@ impl ChartPane {
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             last_plot_area: None,
             hover_pos: None,
+            tape_switch_hovered: false,
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
             context_menu_price: None,
@@ -1200,6 +1237,12 @@ impl ChartPane {
     pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
         let tape = self.orderflow.as_ref();
         match layer {
+            // The tape's three report the *switch*, not what survives the tape
+            // being off: a trader who takes the band away and puts it back gets
+            // the tape they had, and the state file records the same.
+            ChartLayer::TapeChart => tape.is_some_and(OrderflowView::lane_enabled),
+            ChartLayer::TapeHeatmap => tape.is_some_and(OrderflowView::lane_depth_visible),
+            ChartLayer::TapeBubbles => tape.is_some_and(OrderflowView::lane_bubbles_enabled),
             ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_visible),
             ChartLayer::Bubbles => tape.is_some_and(OrderflowView::bubbles_enabled),
             // Footprint reads the pane's own retained trades, not the tape
@@ -1236,6 +1279,21 @@ impl ChartPane {
         actions: &mut LayerActions,
     ) {
         match layer {
+            ChartLayer::TapeChart => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_lane_enabled(visible);
+                }
+            }
+            ChartLayer::TapeHeatmap => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_lane_depth_visible(visible);
+                }
+            }
+            ChartLayer::TapeBubbles => {
+                if let Some(tape) = self.orderflow.as_mut() {
+                    tape.set_lane_bubbles_enabled(visible);
+                }
+            }
             ChartLayer::Heatmap => {
                 if let Some(tape) = self.orderflow.as_mut() {
                     tape.set_depth_visible(visible);
@@ -1307,16 +1365,17 @@ impl ChartPane {
     /// time pane has no machinery for those five and never will.
     fn draws_layer(&self, layer: ChartLayer) -> bool {
         self.orderflow.is_some()
-            || !matches!(
-                layer,
-                ChartLayer::Heatmap
-                    | ChartLayer::Bubbles
-                    | ChartLayer::LiveStrip
-                    | ChartLayer::LaneMarks
-                    | ChartLayer::FlowLegend
-                    | ChartLayer::BookStatus
-                    | ChartLayer::DepthGaps
-            )
+            || !(layer.on_tape()
+                || matches!(
+                    layer,
+                    ChartLayer::Heatmap
+                        | ChartLayer::Bubbles
+                        | ChartLayer::LiveStrip
+                        | ChartLayer::LaneMarks
+                        | ChartLayer::FlowLegend
+                        | ChartLayer::BookStatus
+                        | ChartLayer::DepthGaps
+                ))
     }
 
     /// Why `layer` cannot be shown here, if it cannot.
@@ -1336,7 +1395,24 @@ impl ChartPane {
         if !self.draws_layer(layer) {
             return Some("the order-flow layers are drawn on the flow pane");
         }
+        // A layer of a tape that is not on the canvas: the switch is real and
+        // remembered, but ticking it now would draw nothing. Offered disabled
+        // with the reason, the same way the status badge refuses while the map
+        // it reports on is hidden.
+        if layer.on_tape()
+            && layer != ChartLayer::TapeChart
+            && !self
+                .orderflow
+                .as_ref()
+                .is_some_and(OrderflowView::lane_enabled)
+        {
+            return Some("the tape is off");
+        }
         match layer {
+            ChartLayer::TapeHeatmap => (!capabilities.book_capture)
+                .then_some("order-book capture is not available for this source"),
+            ChartLayer::TapeBubbles => (!capabilities.traded_volume)
+                .then_some("this source quotes prices but prints no traded volume"),
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
             // The badge reports on the book feed, so a source with no book has
@@ -1444,9 +1520,103 @@ impl ChartPane {
         self.last_lane_divider_x.is_some_and(|divider| x >= divider)
     }
 
+    /// The tape switch's click, in the input pass.
+    ///
+    /// Drawn by [`Self::draw_tape_switch`] in the pass after this one, off the
+    /// same [`tape_switch_rect`]. Nothing is registered on a pane with no tape
+    /// machinery (§11: a time pane has none), so no chip appears there to
+    /// promise a band that canvas will never draw.
+    fn handle_tape_switch(
+        &mut self,
+        ui: &egui::Ui,
+        chart_rect: egui::Rect,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        self.tape_switch_hovered = false;
+        if self.orderflow.is_none() {
+            return;
+        }
+        let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
+        let response = ui.interact(
+            tape_switch_rect(chart_rect),
+            self.interaction_id("tape_switch"),
+            egui::Sense::click(),
+        );
+        self.tape_switch_hovered = response.hovered();
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            // The chip is chrome on top of the canvas. A crosshair chasing the
+            // pointer underneath it would say the chart is being hovered while
+            // the pointer is reading a button.
+            self.hover_pos = None;
+        }
+        let clicked = response.clicked();
+        // `on_hover_ui` over `on_hover_text`: the closure runs only while the
+        // pointer is actually on the chip, so the wording costs nothing on the
+        // frames nobody is hovering — and this is a per-frame path.
+        response.on_hover_ui(|ui| {
+            ui.label(if on {
+                "the tape is on — click to take it off the canvas"
+            } else {
+                "the tape is off — click to put it back"
+            });
+            ui.label(
+                egui::RichText::new(ChartLayer::TapeChart.hint())
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+        });
+        if clicked {
+            self.set_layer_visible(ChartLayer::TapeChart, !on, chrome.layers);
+        }
+    }
+
+    /// Paint the tape switch: a chip in the canvas's top-right corner, lit
+    /// while the tape is on the canvas and muted while it is not.
+    fn draw_tape_switch(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
+        let Some(tape) = self.orderflow.as_ref() else {
+            return;
+        };
+        let on = tape.lane_enabled();
+        let rect = tape_switch_rect(chart_rect);
+        let accent = if on { theme::ACCENT } else { theme::TEXT_MUTED };
+        painter.rect_filled(
+            rect,
+            egui::Rounding::same(3.0),
+            egui::Color32::from_black_alpha(if self.tape_switch_hovered { 210 } else { 165 }),
+        );
+        if self.tape_switch_hovered {
+            painter.rect_stroke(
+                rect,
+                egui::Rounding::same(3.0),
+                egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.7)),
+            );
+        }
+        // A filled dot for on, a ring for off: the state survives a screenshot
+        // read in greyscale, which colour alone would not.
+        let dot = egui::pos2(rect.left() + 9.0, rect.center().y);
+        if on {
+            painter.circle_filled(dot, 3.0, accent);
+        } else {
+            painter.circle_stroke(dot, 3.0, egui::Stroke::new(1.0_f32, accent));
+        }
+        painter.text(
+            egui::pos2(rect.left() + 17.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "tape",
+            egui::FontId::proportional(11.0),
+            accent,
+        );
+    }
+
     /// The candles' layer checkboxes: the list the menu has always shown.
+    ///
+    /// The tape's own entries are filtered out here and drawn by
+    /// [`Self::draw_tape_menu_section`] instead — one list, split by the pane
+    /// each layer belongs to, so neither menu can offer a switch for the canvas
+    /// beside it.
     fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        for layer in ChartLayer::ALL {
+        for layer in ChartLayer::ALL.into_iter().filter(|layer| !layer.on_tape()) {
             let blocked = self.layer_blocked(layer, chrome.capabilities);
             let mut visible = self.layer_visible(layer, chrome.style);
             let response = ui
@@ -1489,40 +1659,43 @@ impl ChartPane {
     /// Reached by right-clicking the tape itself, which is the only place
     /// these choices are about. Every entry writes the lane's own field, so
     /// the dock's copy of the same settings and this one can never disagree.
-    fn draw_tape_menu_section(&mut self, ui: &mut egui::Ui) {
-        let Some(orderflow) = self.orderflow.as_mut() else {
+    fn draw_tape_menu_section(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        if self.orderflow.is_none() {
             return;
-        };
+        }
         ui.label(
             egui::RichText::new("tape")
                 .size(11.0)
                 .color(theme::TEXT_MUTED),
         );
 
-        let mut depth = orderflow.lane_depth_visible();
-        if ui
-            .checkbox(&mut depth, ChartLayer::Heatmap.label())
-            .on_hover_text(
-                "resting depth on the tape. Switched apart from the candles': clearing the \
-                 chart to read structure does not hide the book where the book is being watched",
-            )
-            .changed()
-        {
-            orderflow.set_lane_depth_visible(depth);
-        }
-
-        let mut bubbles = orderflow.lane_bubbles_enabled();
-        if ui
-            .checkbox(&mut bubbles, ChartLayer::Bubbles.label())
-            .on_hover_text(
-                "confirmed executions rolling through the tape, drawn where they printed",
-            )
-            .changed()
-        {
-            orderflow.set_lane_bubbles_enabled(bubbles);
+        // The same loop the candles' entries run, over the other half of the
+        // list. Nothing here is a second copy of the tape's state: each
+        // checkbox reads and writes the lane's own field through
+        // `layer_visible` / `set_layer_visible`, which is also what puts these
+        // three in the layer state file.
+        for layer in ChartLayer::ALL.into_iter().filter(|layer| layer.on_tape()) {
+            let blocked = self.layer_blocked(layer, chrome.capabilities);
+            let mut visible = self.layer_visible(layer, chrome.style);
+            let response = ui
+                .add_enabled(
+                    blocked.is_none(),
+                    egui::Checkbox::new(&mut visible, layer.label()),
+                )
+                .on_hover_text(layer.hint());
+            #[cfg(test)]
+            self.layer_menu_rects.push((layer, response.rect));
+            if let Some(reason) = blocked {
+                response.on_disabled_hover_text(reason);
+            } else if response.changed() {
+                self.set_layer_visible(layer, visible, chrome.layers);
+            }
         }
 
         let reference_ms = self.last_lane_reference_ms;
+        let Some(orderflow) = self.orderflow.as_mut() else {
+            return;
+        };
         let current = orderflow.live_lane_window();
         let mut chosen = None;
         ui.menu_button(
@@ -1623,7 +1796,7 @@ impl ChartPane {
         // away rather than disappearing. A click on the candles sees exactly
         // the menu it always saw.
         if self.context_menu_on_tape {
-            self.draw_tape_menu_section(ui);
+            self.draw_tape_menu_section(ui, chrome);
             ui.separator();
             ui.menu_button("chart layers", |ui| {
                 self.draw_chart_layer_entries(ui, chrome);
@@ -3079,6 +3252,12 @@ impl ChartPane {
         if !tool_armed {
             self.hover_pos = chart.hover_pos();
         }
+        // The tape switch, in the canvas's top-right corner. Registered after
+        // the chart body so the chip is on top of it — the lane divider's and
+        // the jump-to-live chip's rule — and it is the *only* way back once the
+        // tape is off: with no band there is no tape to right-click, so a
+        // switch that lived only in that menu would be a one-way door.
+        self.handle_tape_switch(ui, areas.chart, chrome);
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
@@ -3895,8 +4074,9 @@ impl ChartPane {
                 theme::TEXT_MUTED,
             );
             if let Some(orderflow) = self.orderflow.as_ref() {
-                orderflow.draw_status_badge(painter, chart_rect);
+                orderflow.draw_status_badge(painter, chart_rect, TAPE_SWITCH_RESERVED_PX);
             }
+            self.draw_tape_switch(painter, chart_rect);
             return;
         }
 
@@ -4566,10 +4746,13 @@ impl ChartPane {
             self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
         }
         // The status badge is not a layer: it reports whether the source is
-        // healthy, and a chart with every layer off must still say that.
+        // healthy, and a chart with every layer off must still say that. It
+        // shares the top-right corner with the tape switch, which is drawn last
+        // and holds the corner itself.
         if let Some(orderflow) = self.orderflow.as_ref() {
-            orderflow.draw_status_badge(painter, chart_rect);
+            orderflow.draw_status_badge(painter, chart_rect, TAPE_SWITCH_RESERVED_PX);
         }
+        self.draw_tape_switch(painter, chart_rect);
 
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
@@ -5775,6 +5958,50 @@ mod tests {
         assert!(
             !pane.wants_range_profile(),
             "deleting the last profile releases the ladders"
+        );
+    }
+
+    /// The tape switch reaches the canvas through one number: the band's
+    /// width. Zero is what every downstream reader already treats as "there is
+    /// no lane" — no divider, so no carve, no rungs, no tape time axis.
+    #[test]
+    fn a_tape_that_is_off_publishes_no_divider_for_anything_to_hang_off() {
+        use crate::orderflow::LiveLaneStyle;
+        let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
+
+        let mut lane = LiveLaneStyle::default();
+        let on = lane.resolved_width_px(chart.width());
+        assert!(on > 0.0, "a tape that is on reserves a band");
+        assert!(crate::orderflow_render::lane_divider_x(chart, on).is_some());
+        assert!(lane_rungs(on) > 0, "and a ladder is walked for it");
+
+        lane.enabled = false;
+        let off = lane.resolved_width_px(chart.width());
+        assert_eq!(off, 0.0, "a tape that is off reserves nothing");
+        assert!(
+            crate::orderflow_render::lane_divider_x(chart, off).is_none(),
+            "so the canvas is not split and the candles take all of it"
+        );
+        assert_eq!(lane_rungs(off), 0, "and no ladder is walked on its account");
+    }
+
+    #[test]
+    fn the_tape_switch_sits_in_the_canvas_top_right_corner() {
+        let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
+        let chip = tape_switch_rect(chart);
+        assert!(chart.contains_rect(chip), "on the canvas, not off its edge");
+        assert!(chip.right() < chart.right(), "inset from the right edge");
+        assert!(chip.top() > chart.top(), "and from the top");
+        assert!(
+            chip.right() > chart.center().x && chip.bottom() < chart.center().y,
+            "in the top-right quadrant: {chip:?}"
+        );
+        // Wherever the canvas is, the chip goes with it — a fixed offset from
+        // one corner, so a resized window never leaves it behind.
+        let moved = chart.translate(egui::vec2(37.0, -11.0));
+        assert_eq!(
+            tape_switch_rect(moved),
+            chip.translate(egui::vec2(37.0, -11.0))
         );
     }
 
