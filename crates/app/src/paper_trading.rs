@@ -4973,6 +4973,17 @@ impl PaintCtx<'_> {
 /// A tag's vertical center: the line's row, kept fully inside the plot.
 pub(crate) fn clamp_tag_center(y: f32, top: f32, bottom: f32) -> f32 {
     let half = TAG_HEIGHT_PX / 2.0;
+    // A band too short to hold a tag has nothing to clamp into, and
+    // `f32::clamp` does not merely saturate there — it panics outright the
+    // moment its bounds cross. That band is reachable: `plot_split` floors
+    // the plot at 20 px, but `indicators::split_panes` then carves the
+    // indicator strips out of it with no floor of its own, so a squeezed
+    // window with enough panes really does leave the candles a few pixels.
+    // Centre the tag in what there is rather than taking a live session
+    // down.
+    if bottom - top <= TAG_HEIGHT_PX {
+        return f32::midpoint(top, bottom);
+    }
     y.clamp(top + half, bottom - half)
 }
 
@@ -6926,14 +6937,18 @@ mod tests {
             }),
             "out of range clamps into the band"
         );
-        assert_eq!(
-            CmdPreviewForce::parse("buy@left"),
-            Some(CmdPreviewForce {
-                side: Side::Buy,
-                x_fraction: None
-            }),
-            "a bad fraction still paints, mid-band"
-        );
+        for bad in [
+            "buy@left", "buy@nan", "buy@NaN", "buy@inf", "buy@", "buy@0,15",
+        ] {
+            assert_eq!(
+                CmdPreviewForce::parse(bad),
+                Some(CmdPreviewForce {
+                    side: Side::Buy,
+                    x_fraction: None
+                }),
+                "a bad fraction still paints, mid-band: {bad}"
+            );
+        }
         assert_eq!(CmdPreviewForce::parse("hold"), None);
     }
 
@@ -7432,6 +7447,41 @@ mod tests {
                 .contains(&format!("#{} BUY LMT 1 @ 90", id.0)),
             "the row's hover reaches the chart"
         );
+    }
+
+    /// A band too short to hold a tag is reachable — `split_panes` carves
+    /// the indicator strips out of the plot with no floor of its own — and
+    /// `f32::clamp` panics rather than saturating once its bounds cross.
+    /// Every tag, every ✕ hit-test and the aim's own layout run through
+    /// this, so the panic would take a live session down.
+    #[test]
+    fn a_band_too_short_for_a_tag_centres_it_instead_of_panicking() {
+        // Shorter than a tag, and flat: the two cases that cross the bounds.
+        assert_eq!(clamp_tag_center(5.0, 0.0, 10.0), 5.0);
+        assert_eq!(clamp_tag_center(99.0, 40.0, 40.0), 40.0);
+        assert_eq!(clamp_tag_center(-99.0, 0.0, TAG_HEIGHT_PX), 10.0);
+        // And with room, it still clamps exactly as before.
+        assert_eq!(clamp_tag_center(0.0, 0.0, 400.0), 10.0);
+        assert_eq!(clamp_tag_center(400.0, 0.0, 400.0), 390.0);
+        assert_eq!(clamp_tag_center(200.0, 0.0, 400.0), 200.0);
+
+        // The paint and the press both survive it end to end.
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 12.0));
+        let scale = PriceScale::from_range(80.0, 120.0, 0.0, 12.0);
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let pointer = egui::pos2(400.0, 6.0);
+        paper.handle_chart_input(&cmd_frame(
+            sliver,
+            &scale,
+            pointer,
+            egui::Modifiers::default(),
+            false,
+        ));
+        let _ = layer_shapes(&paper, sliver, &scale, Some(pointer));
+        let _ = paper.control_at(pointer, sliver, &scale);
+        let _ = cmd_preview_layout(sliver, pointer);
     }
 
     #[test]
