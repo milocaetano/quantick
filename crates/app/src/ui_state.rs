@@ -43,8 +43,8 @@ use crate::state::BarSpec;
 
 /// Environment override for the workspace file location.
 pub const UI_STATE_ENV: &str = "QUANTICK_UI_STATE";
-/// Default file, next to the working directory's config.
-const UI_STATE_FILE: &str = "ui-state.toml";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const UI_STATE_FILE: &str = "ui-state.toml";
 /// Bumped on breaking format changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 
@@ -271,6 +271,20 @@ pub struct Workspace {
     /// nothing.
     #[serde(default)]
     pub replay_folder: Option<String>,
+    /// Workspace files exported or imported recently, newest first.
+    ///
+    /// Paths, not arrangements: the file on disk is the truth, and a copy
+    /// kept here would go stale the moment the trader re-exported over it.
+    /// An entry whose file has since gone is dropped when the menu is built
+    /// rather than when it is clicked — the same rule
+    /// [`Workspace::restore`] applies to tabs: every name in a menu opens
+    /// something.
+    ///
+    /// Here rather than in [`SavedChrome`] because it is a fact about this
+    /// installation, not about an arrangement of panes — opening a bookmark
+    /// must not rewrite which files the trader visited.
+    #[serde(default)]
+    pub recent_workspaces: Vec<String>,
 }
 
 /// One named arrangement: everything a workspace records about the window,
@@ -339,6 +353,7 @@ impl Default for Workspace {
             chrome: None,
             saved: Vec::new(),
             replay_folder: None,
+            recent_workspaces: Vec::new(),
         }
     }
 }
@@ -366,7 +381,19 @@ impl Workspace {
             chrome,
             saved: Vec::new(),
             replay_folder: None,
+            recent_workspaces: Vec::new(),
         }
+    }
+
+    /// The same, carrying the recently visited workspace files through.
+    ///
+    /// A separate constructor for the reason [`Workspace::with_saved`] is:
+    /// the list comes off disk, not off the screen, so every capture site
+    /// would otherwise have to remember to thread it.
+    #[must_use]
+    pub fn with_recent(mut self, recent: Vec<String>) -> Self {
+        self.recent_workspaces = recent;
+        self
     }
 
     /// The same, carrying the replay folder through.
@@ -541,9 +568,34 @@ fn filter_tabs(tabs: &mut Vec<SavedTab>, active_tab: usize, config: &AppConfig) 
 }
 
 /// The workspace file the app opens with and writes back to.
+///
+/// In the durable cockpit home rather than the launch directory — see
+/// [`crate::store_home`] for why the arrangement used to vanish.
 #[must_use]
 pub fn default_path() -> PathBuf {
-    std::env::var_os(UI_STATE_ENV).map_or_else(|| PathBuf::from(UI_STATE_FILE), PathBuf::from)
+    if cfg!(test) {
+        return crate::store_home::test_path(UI_STATE_FILE);
+    }
+    crate::store_home::resolve(UI_STATE_ENV, UI_STATE_FILE)
+}
+
+/// Parse a workspace file, reporting why it is not one.
+///
+/// The gate a bundle section goes through before anything is written — see
+/// [`crate::workspace_bundle`]. Deliberately stricter than [`load`], which
+/// answers "open on the defaults" for a broken file because a trader
+/// launching the app wants a window either way; an *import* has a trader
+/// watching, and must say what was wrong instead.
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let workspace: Workspace = toml::from_str(text).map_err(|error| error.to_string())?;
+    if workspace.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "workspace format version {} (this build reads {FORMAT_VERSION})",
+            workspace.version
+        ))
+    }
 }
 
 /// Load the saved workspace; the default (nothing saved) when the file is
@@ -696,6 +748,7 @@ mod tests {
             }),
             saved: Vec::new(),
             replay_folder: Some("D:/tape".to_owned()),
+            recent_workspaces: vec!["D:/desk/scalp.qws.toml".to_owned()],
         }
     }
 
@@ -732,6 +785,28 @@ mod tests {
             "an absent pick writes no key: {body}"
         );
         assert_eq!(load(&path).replay_folder, None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The Open-recent menu is only useful if it is still there tomorrow.
+    #[test]
+    fn the_recent_workspace_list_survives_a_restart() {
+        let path = temp_path("recent");
+        assert!(save(&path, &sample()));
+        assert_eq!(
+            load(&path).recent_workspaces,
+            vec!["D:/desk/scalp.qws.toml".to_owned()]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A workspace written before the list existed is a workspace with no
+    /// recents, not an unreadable one.
+    #[test]
+    fn a_file_from_before_the_recent_list_still_loads() {
+        let path = temp_path("pre-recent");
+        std::fs::write(&path, "version = 1\ntabs = []\n").unwrap();
+        assert!(load(&path).recent_workspaces.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 

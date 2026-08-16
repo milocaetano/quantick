@@ -25,11 +25,11 @@ const FOOTPRINT_ENV: &str = "QUANTICK_FOOTPRINT";
 /// Default file, next to the working directory's config.
 const FOOTPRINT_FILE: &str = "config/footprint.toml";
 /// Environment override for where the in-app edits persist.
-const SETTINGS_ENV: &str = "QUANTICK_FOOTPRINT_SETTINGS";
+pub(crate) const SETTINGS_ENV: &str = "QUANTICK_FOOTPRINT_SETTINGS";
 /// Where the in-app edits persist, next to the chart-layers file. Separate
 /// from `config/footprint.toml` on purpose: that file is a hand-written,
 /// commented preset the app must never rewrite; this one is app state.
-const SETTINGS_FILE: &str = "footprint-settings.toml";
+pub(crate) const SETTINGS_FILE: &str = "footprint-settings.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored. v2
 /// moved the knobs under a `[config]` table, the shape presets share.
 const SETTINGS_VERSION: u32 = 2;
@@ -213,7 +213,21 @@ pub fn settings_path() -> PathBuf {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
     }
-    std::env::var_os(SETTINGS_ENV).map_or_else(|| PathBuf::from(SETTINGS_FILE), PathBuf::from)
+    crate::store_home::resolve(SETTINGS_ENV, SETTINGS_FILE)
+}
+
+/// Parse a footprint-settings file, reporting why it is not one. The gate a
+/// bundle section goes through — see [`crate::workspace_bundle`].
+pub(crate) fn validate_settings(text: &str) -> Result<(), String> {
+    let file: SettingsFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == SETTINGS_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "footprint-settings format version {} (this build reads {SETTINGS_VERSION})",
+            file.version
+        ))
+    }
 }
 
 /// Resolve the config for this run: the preset file (env >

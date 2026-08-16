@@ -19,9 +19,9 @@ use quantick_indicators::{InputValue, Rgba8, SourceId};
 use crate::indicator_style::PlotOverride;
 
 /// Environment override for the state file location.
-const STATE_ENV: &str = "QUANTICK_INDICATORS_STATE";
-/// Default file, next to the working directory's config.
-const STATE_FILE: &str = "indicators-state.toml";
+pub(crate) const STATE_ENV: &str = "QUANTICK_INDICATORS_STATE";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const STATE_FILE: &str = "indicators-state.toml";
 /// Bumped on breaking layout changes; unknown versions start empty.
 const FORMAT_VERSION: u32 = 1;
 
@@ -169,9 +169,29 @@ struct StateFile {
 }
 
 /// The state file the app opens with and writes back to.
+///
+/// In the durable cockpit home rather than the launch directory — see
+/// [`crate::store_home`] for why the indicator set used to vanish.
 #[must_use]
 pub(crate) fn default_path() -> PathBuf {
-    std::env::var_os(STATE_ENV).map_or_else(|| PathBuf::from(STATE_FILE), PathBuf::from)
+    if cfg!(test) {
+        return crate::store_home::test_path(STATE_FILE);
+    }
+    crate::store_home::resolve(STATE_ENV, STATE_FILE)
+}
+
+/// Parse an indicator-state file, reporting why it is not one. The gate a
+/// bundle section goes through — see [`crate::workspace_bundle`].
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let file: StateFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "indicator-state format version {} (this build reads {FORMAT_VERSION})",
+            file.version
+        ))
+    }
 }
 
 /// Load the saved set; empty when missing, unreadable or from an unknown

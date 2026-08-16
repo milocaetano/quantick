@@ -21,9 +21,9 @@ use serde::{Deserialize, Serialize};
 use super::state_file::{SavedInput, SavedKind};
 
 /// Environment override for the presets file location.
-const PRESETS_ENV: &str = "QUANTICK_INDICATOR_PRESETS";
-/// Default file, beside the other app state.
-const PRESETS_FILE: &str = "indicator-presets.toml";
+pub(crate) const PRESETS_ENV: &str = "QUANTICK_INDICATOR_PRESETS";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const PRESETS_FILE: &str = "indicator-presets.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 /// Most presets one indicator kind keeps; same menu-not-database bound as
@@ -207,7 +207,21 @@ pub(crate) fn default_path() -> PathBuf {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
     }
-    std::env::var_os(PRESETS_ENV).map_or_else(|| PathBuf::from(PRESETS_FILE), PathBuf::from)
+    crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
+}
+
+/// Parse an indicator-presets file, reporting why it is not one. The gate a
+/// bundle section goes through — see [`crate::workspace_bundle`].
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let file: PresetsFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "indicator-presets format version {} (this build reads {FORMAT_VERSION})",
+            file.version
+        ))
+    }
 }
 
 #[cfg(test)]

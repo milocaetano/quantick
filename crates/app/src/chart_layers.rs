@@ -50,9 +50,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Environment override for the layer-visibility file location.
-const LAYERS_ENV: &str = "QUANTICK_CHART_LAYERS";
-/// Default file, next to the working directory's config.
-const LAYERS_FILE: &str = "chart-layers.toml";
+pub(crate) const LAYERS_ENV: &str = "QUANTICK_CHART_LAYERS";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const LAYERS_FILE: &str = "chart-layers.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 
@@ -373,7 +373,21 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return scratch_path();
     }
-    std::env::var_os(LAYERS_ENV).map_or_else(|| PathBuf::from(LAYERS_FILE), PathBuf::from)
+    crate::store_home::resolve(LAYERS_ENV, LAYERS_FILE)
+}
+
+/// Parse a layer-visibility file, reporting why it is not one. The gate a
+/// bundle section goes through — see [`crate::workspace_bundle`].
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let file: LayersFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "chart-layers format version {} (this build reads {FORMAT_VERSION})",
+            file.version
+        ))
+    }
 }
 
 /// A store of its own, for an app built by a test. See [`default_path`].
