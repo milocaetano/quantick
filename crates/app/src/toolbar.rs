@@ -53,6 +53,10 @@ const W_BARS: f32 = 160.0;
 const W_BAR_PARAM: f32 = 150.0;
 /// The time kind's parameter row: four preset chips plus the custom drag.
 const W_TIME_PARAM: f32 = 260.0;
+/// The imbalance kind's parameter row: three unit chips plus the target
+/// label and drag. Underestimating this makes the collapse plan draw a row
+/// wider than it budgeted instead of folding it.
+const W_IMBALANCE_PARAM: f32 = 330.0;
 /// The `+ older ▾` split button.
 const W_HISTORY: f32 = 100.0;
 /// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
@@ -182,6 +186,7 @@ pub fn trade_width(paper: &PaperTradeModel) -> f32 {
 pub fn param_width(kind: BarKind) -> f32 {
     match kind {
         BarKind::Time => W_TIME_PARAM,
+        BarKind::Imbalance => W_IMBALANCE_PARAM,
         _ => W_BAR_PARAM,
     }
 }
