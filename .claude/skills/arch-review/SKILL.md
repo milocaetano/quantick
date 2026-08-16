@@ -9,7 +9,36 @@ A new feature should dock like a spacecraft to the ISS: a standard port, no
 modification to the station. Review every change against that bar.
 
 This skill reviews *shape* — modularity, performance, extensibility, tests,
-naming. For bug hunting use `/code-review`; run both when the change is large.
+naming. Bug hunting belongs to the bundled `code-review` skill, which this one
+runs for you first: see step 0.
+
+## Step 0 — the native code review runs first, always
+
+Invoke the `code-review` skill over the same target as the scope below and wait
+for it to finish before reading a single file for shape. Correctness outranks
+architecture (priority 0), so a change that is wrong is not judged for elegance
+first.
+
+```
+Skill(code-review)  →  args: the same target, e.g. `main...HEAD`, a PR number,
+                       or nothing for the working diff.
+                       Effort: `high` for a branch or PR, `medium` for a small
+                       uncommitted diff.
+```
+
+Then:
+
+- **Carry its findings in.** Every confirmed correctness finding enters this
+  review as a **Blocker** and is listed before any shape finding. A branch does
+  not pass arch-review with an open correctness finding from step 0.
+- **Never restate it.** Cite a finding the code review already reported by
+  `file:line` and move on. This review adds the six dimensions below; it does
+  not re-report bugs in different words.
+- **Say what ran.** The review header names the effort level used and how many
+  findings came back — including zero. A review that could not run the skill
+  says so in that same line instead of staying silent about it.
+- Do not pass `--fix` or `--comment` from here. Findings are resolved
+  deliberately, and arch-review is the thing that reports them.
 
 ## Priority order
 
@@ -175,6 +204,8 @@ public API. A new local convention needs a stated reason or it is a finding.
 
 Reviews are judged on precision, not volume.
 
+0. Confirm step 0 actually ran and its findings are in hand. A shape review
+   published without it is incomplete, not "clean".
 1. Open the file and read the surrounding code — most "this is missing"
    findings die here because the thing exists one function up.
 2. For each surviving finding, argue the opposite case for a moment: is this
@@ -213,8 +244,10 @@ Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
 name, the test to add. Never a vague "consider refactoring".
 
-Close with a verdict in three lines:
+Close with a verdict in four lines:
 
+- **Correctness** — what the step 0 code review returned, and whether anything
+  from it is still open.
 - **Docking** — can the next feature attach without opening these files?
 - **Performance** — what got faster, slower, or stayed flat, and at what rate.
 - **Proof** — which test would fail if this change regressed.
