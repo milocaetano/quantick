@@ -3631,13 +3631,21 @@ impl QuantickApp {
         self.indicator_state_dirty = false;
     }
 
-    /// Put the focus where [`Self::restore_indicator_state`] expects it.
+    /// Put the focus where [`Self::restore_indicator_state`] expects it, and
+    /// make sure some tab still answers for the indicator file.
     ///
-    /// That function adds through the *focused* pane, which at startup is
+    /// The restore adds through the *focused* pane, which at startup is
     /// always tab zero's flow pane — the only pane the indicator file
     /// describes. Mid-session it is wherever the trader was looking, so an
     /// import has to put it back or the restored indicators land on a time
     /// pane, with their inputs sent to a different worker.
+    ///
+    /// And an import replaces the tab strip, so the tab the file was written
+    /// for is closed on the way — which clears `persisted_tab` and, with it,
+    /// every future save of the indicator set. That is right when a trader
+    /// closes the tab themselves (the set the file describes is genuinely
+    /// gone), and wrong here: the imported set is about to be restored onto
+    /// the new tab, and it is that tab which now answers for the file.
     fn focus_persisted_flow_pane(&mut self) {
         let Some(index) = self
             .persisted_tab
@@ -3648,6 +3656,7 @@ impl QuantickApp {
         };
         self.active_tab = index;
         self.tabs[index].focus = PaneSide::Flow;
+        self.persisted_tab = Some(self.tabs[index].id);
     }
 
     /// Work out which remembered workspace files are still there.
@@ -8506,6 +8515,36 @@ mod tests {
             app.active_tab < app.tabs.len(),
             "and the active index points at a tab that exists"
         );
+    }
+
+    /// An import must not cost the session its indicator persistence.
+    ///
+    /// Opening a workspace replaces the tab strip, which closes the tab the
+    /// indicator file was written for — and closing that tab is exactly what
+    /// makes the app stop saving the indicator set, on purpose, for the rest
+    /// of the session. Right when a trader closes it themselves; wrong here,
+    /// where the imported set is restored onto the new tab a moment later.
+    /// Without this the trader would import a cockpit, tune an indicator, and
+    /// silently lose the tuning at every restart.
+    #[test]
+    fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        let file = std::env::temp_dir().join(format!(
+            "quantick-app-persist-{}-{:?}.qws.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        app.export_workspace_to(&file);
+        // A market the live tab is not on, so the import replaces the strip.
+        app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+        app.import_workspace_from(&file);
+
+        let persisted = app.persisted_tab.expect("a tab still answers for the file");
+        assert!(
+            app.tabs.iter().any(|tab| tab.id == persisted),
+            "and it is one of the tabs actually open"
+        );
+        let _ = std::fs::remove_file(&file);
     }
 
     /// The all-or-nothing rule where the trader actually meets it: a bad file
