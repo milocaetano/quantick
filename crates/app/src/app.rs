@@ -10049,12 +10049,19 @@ plot(close)
         }
         // One frame to settle: the live lane's divider and the price range are
         // computed by a draw and read by the next one, so the first frame is
-        // not yet the chart this test is counting.
-        let _ = shapes(&mut app);
-        let all_on = shapes(&mut app);
+        // not yet the chart this test is counting. **Every** measurement gets
+        // that frame, not just the baseline — an exact shape count taken one
+        // frame after a switch is counting a chart still converging on its
+        // price range, and the asymmetry made this test fail on a loaded CI
+        // runner and pass on the next attempt.
+        let settled = |app: &mut QuantickApp| {
+            let _ = shapes(app);
+            shapes(app)
+        };
+        let all_on = settled(&mut app);
         for layer in under_test {
             switch_layer(&mut app, layer, false);
-            let off = shapes(&mut app);
+            let off = settled(&mut app);
             assert!(
                 off < all_on,
                 "{} kept painting after it was switched off ({off} shapes vs {all_on})",
@@ -10062,7 +10069,7 @@ plot(close)
             );
             switch_layer(&mut app, layer, true);
             assert_eq!(
-                shapes(&mut app),
+                settled(&mut app),
                 all_on,
                 "{} did not come back exactly as it was",
                 layer.id()
