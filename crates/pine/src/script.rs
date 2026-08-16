@@ -9,11 +9,11 @@
 
 use quantick_indicators::{
     Ctx, EvalError, Indicator, IndicatorBar, IndicatorDescriptor, InputValue, PlotBuffer,
-    PreviewFrame,
+    PreviewFrame, Rgba8,
 };
 
 use crate::compile::CompiledScript;
-use crate::eval::{Eval, ScriptState};
+use crate::eval::{Eval, ScriptState, Staged};
 
 /// A loaded script instance: compiled tables + bound inputs + running state.
 pub struct ScriptIndicator {
@@ -27,6 +27,11 @@ pub struct ScriptIndicator {
     state: ScriptState,
     /// Reused row scratch (one cell per plot).
     row: Vec<f64>,
+    /// The paint `barcolor` asked for on the run that just finished. Scratch
+    /// like `row`: cleared at the top of every run, so a bar that stops
+    /// calling `barcolor` stops being painted instead of inheriting the
+    /// previous bar's colour.
+    paint: Option<Rgba8>,
 }
 
 impl ScriptIndicator {
@@ -78,6 +83,7 @@ impl ScriptIndicator {
             plots,
             state,
             row,
+            paint: None,
         }
     }
 
@@ -101,13 +107,17 @@ impl ScriptIndicator {
         is_commit: bool,
     ) -> Result<(), EvalError> {
         self.row.fill(f64::NAN);
+        self.paint = None;
         let mut eval = Eval::new(
             &self.compiled,
             &self.inputs,
             bar,
             ctx,
             &mut self.state,
-            &mut self.row,
+            Staged {
+                row: &mut self.row,
+                paint: &mut self.paint,
+            },
             is_commit,
         );
         eval.run().map_err(|error| {
@@ -138,8 +148,9 @@ impl Indicator for ScriptIndicator {
     fn on_close(&mut self, bar: &IndicatorBar, ctx: &mut Ctx<'_>) -> Result<(), EvalError> {
         self.run_once(bar, ctx, true)?;
         self.state.commit_bar(self.compiled.max_bars_back);
-        // The append is the last step: an Err above leaves no half row.
-        self.plots.push_row(&self.row);
+        // The append is the last step: an Err above leaves no half row. The
+        // paint rides with it so a row and its colour can never disagree.
+        self.plots.push_row_painted(&self.row, self.paint);
         Ok(())
     }
 
@@ -158,6 +169,9 @@ impl Indicator for ScriptIndicator {
         result?;
         let mut frame = PreviewFrame::new(self.row.clone());
         frame.objects = objects;
+        // Travels in the frame, never into the committed channel: the forming
+        // bar wears this colour until it closes and earns its own.
+        frame.paint = self.paint;
         Ok(frame)
     }
 
@@ -183,6 +197,7 @@ impl Indicator for ScriptIndicator {
         self.state.reset();
         self.plots.clear();
         self.row.fill(f64::NAN);
+        self.paint = None;
     }
 
     fn objects(&self) -> Option<&quantick_indicators::ObjectStore> {

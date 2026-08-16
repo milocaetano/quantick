@@ -5,7 +5,7 @@
 use quantick_engine::{Bar, BarBuilder as _, TickBarBuilder, fixture, golden as engine_golden};
 use quantick_indicators::{
     Ctx, EvalError, Indicator, IndicatorBar, IndicatorDescriptor, IndicatorHost, PlotBuffer,
-    PlotId, PreviewFrame, SourceId,
+    PlotId, PreviewFrame, Rgba8, SourceId,
     native::{Cvd, Ema},
 };
 
@@ -596,4 +596,227 @@ fn a_failing_instance_drops_out_of_the_ladder_without_taking_its_neighbour() {
     assert_eq!(broken_rungs, 0, "the failing one says nothing");
     assert!(host.error(broken).is_some(), "and its failure is recorded");
     assert!(host.error(healthy).is_none(), "the neighbour is untouched");
+}
+
+/// Paints the bars whose index is listed, and nothing else.
+///
+/// Deliberately a **native** indicator with no script anywhere near it: the
+/// bar paint channel belongs to the [`Indicator`] contract, and a Pine-only
+/// feature that merely looked like a port would pass every other test here.
+struct Painter {
+    descriptor: IndicatorDescriptor,
+    plots: PlotBuffer,
+    color: Rgba8,
+    paint_on: Vec<usize>,
+    /// Commit run that fails, disabling the instance from there on.
+    fail_at: Option<usize>,
+}
+
+impl Painter {
+    fn new(color: Rgba8, paint_on: &[usize]) -> Self {
+        Self {
+            descriptor: IndicatorDescriptor {
+                title: "painter (test)".to_owned(),
+                short_title: None,
+                overlay: true,
+                plots: Vec::new(),
+                inputs: Vec::new(),
+                fills: Vec::new(),
+            },
+            plots: PlotBuffer::new(0),
+            color,
+            paint_on: paint_on.to_vec(),
+            fail_at: None,
+        }
+    }
+
+    fn failing_at(color: Rgba8, paint_on: &[usize], bar: usize) -> Self {
+        Self {
+            fail_at: Some(bar),
+            ..Self::new(color, paint_on)
+        }
+    }
+
+    fn paint_for(&self, bar_index: usize) -> Option<Rgba8> {
+        self.paint_on.contains(&bar_index).then_some(self.color)
+    }
+}
+
+impl Indicator for Painter {
+    fn descriptor(&self) -> &IndicatorDescriptor {
+        &self.descriptor
+    }
+    fn plots(&self) -> &PlotBuffer {
+        &self.plots
+    }
+    fn on_close(&mut self, _bar: &IndicatorBar, ctx: &mut Ctx<'_>) -> Result<(), EvalError> {
+        if self.fail_at == Some(ctx.bar_index) {
+            return Err(EvalError {
+                bar_index: ctx.bar_index,
+                message: "deliberate test failure".to_owned(),
+            });
+        }
+        let paint = self.paint_for(ctx.bar_index);
+        self.plots.push_row_painted(&[], paint);
+        Ok(())
+    }
+    fn preview(
+        &mut self,
+        _partial: &IndicatorBar,
+        ctx: &mut Ctx<'_>,
+    ) -> Result<PreviewFrame, EvalError> {
+        let mut frame = PreviewFrame::new(Vec::new());
+        frame.paint = self.paint_for(ctx.bar_index);
+        Ok(frame)
+    }
+    fn reset(&mut self) {
+        self.plots.clear();
+    }
+}
+
+const RED: Rgba8 = Rgba8::opaque(255, 0, 0);
+const BLUE: Rgba8 = Rgba8::opaque(0, 0, 255);
+
+#[test]
+fn a_chart_where_nothing_paints_answers_none_everywhere() {
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Cvd::new()));
+    host.add(Box::new(Ema::new(3, SourceId::Close)));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    assert!(!host.paints_any(), "no native indicator paints today");
+    assert_eq!(host.bar_paint(0), None);
+    assert_eq!(host.forming_paint(), None);
+}
+
+#[test]
+fn a_native_indicator_can_paint_bars_through_the_host() {
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Painter::new(RED, &[1, 3])));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    assert!(host.paints_any());
+    assert_eq!(host.bar_paint(0), None);
+    assert_eq!(host.bar_paint(1), Some(RED));
+    assert_eq!(host.bar_paint(2), None);
+    assert_eq!(host.bar_paint(3), Some(RED));
+}
+
+#[test]
+fn the_last_indicator_to_ask_paints_the_bar() {
+    // Insertion order is render order: the later overlay draws over the
+    // earlier one, and the paint channel follows the same rule.
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Painter::new(RED, &[1, 2])));
+    host.add(Box::new(Painter::new(BLUE, &[2])));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    assert_eq!(host.bar_paint(2), Some(BLUE), "the later instance wins");
+    assert_eq!(
+        host.bar_paint(1),
+        Some(RED),
+        "and it wins per bar, not per chart: where the later one asks for \
+         nothing, the earlier one still paints"
+    );
+}
+
+#[test]
+fn removing_the_top_painter_uncovers_the_one_below() {
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Painter::new(RED, &[2])));
+    let top = host.add(Box::new(Painter::new(BLUE, &[2])));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    assert_eq!(host.bar_paint(2), Some(BLUE));
+
+    assert!(host.remove(top));
+    assert_eq!(
+        host.bar_paint(2),
+        Some(RED),
+        "the stack is resolved on read, not baked in at commit"
+    );
+}
+
+#[test]
+fn the_forming_bar_is_painted_from_the_preview_and_commits_nothing() {
+    let (bars, partial) = bars_and_partial(5);
+    let partial = partial.expect("12 trades leave a 2-trade partial at tick(5)");
+    let forming_index = bars.len();
+
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Painter::new(RED, &[forming_index])));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    assert_eq!(
+        host.forming_paint(),
+        None,
+        "nothing is forming before a partial arrives"
+    );
+
+    host.set_partial(Some(&partial));
+    assert_eq!(
+        host.forming_paint(),
+        Some(RED),
+        "the forming bar is painted"
+    );
+    assert_eq!(
+        host.bar_paint(forming_index),
+        None,
+        "and the committed channel never grew a row for it"
+    );
+
+    host.set_partial(None);
+    assert_eq!(
+        host.forming_paint(),
+        None,
+        "the paint dies with the frame that carried it"
+    );
+}
+
+#[test]
+fn a_failed_indicator_keeps_the_bars_it_painted_before_it_broke() {
+    // The rows it committed are real evaluations of real bars, and `plots`
+    // hands them out for exactly that reason; hiding only their colour would
+    // make the two disagree about the same history.
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    let id = host.add(Box::new(Painter::failing_at(RED, &[1], 3)));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+
+    assert!(host.error(id).is_some(), "the instance is disabled");
+    assert_eq!(host.bar_paint(1), Some(RED), "painted before the failure");
+    assert_eq!(host.bar_paint(3), None, "the bar it never evaluated");
+}
+
+#[test]
+fn a_replay_rebuilds_the_paint_channel_from_scratch() {
+    let (bars, _) = bars_and_partial(1);
+    let mut host = IndicatorHost::new();
+    host.add(Box::new(Painter::new(RED, &[1])));
+    for bar in &bars {
+        host.push_closed_bar(bar);
+    }
+    let before = host.bar_paint(1);
+
+    host.rebuild(&bars, None);
+    assert_eq!(host.bar_paint(1), before, "same bars in, same paint out");
+    assert_eq!(
+        host.plots(host.ids().next().unwrap()).unwrap().len(),
+        bars.len(),
+        "and no rows were doubled by the replay"
+    );
 }
