@@ -30,6 +30,12 @@ honest: commit again after the review and the sha no longer matches, so the
 gate denies and names both shas. A marker that only said "a review happened"
 would pass while the newest commits went unreviewed.
 
+Since the skill's step 0 runs the bundled `code-review` first, recording the
+marker is meant to say both passes happened — correctness and shape. Meant to,
+not proven to: the gate compares a sha and nothing more, so an agent that skips
+step 0 still records a marker the gate accepts. What keeps that honest is the
+review header, which names the level step 0 ran at or says it did not run.
+
 The gate proves a review was *recorded*, not that it was *good*. Nothing can
 prove the latter from outside the review. What it does remove is the failure
 this repo actually hits: forgetting entirely, or reviewing and then pushing

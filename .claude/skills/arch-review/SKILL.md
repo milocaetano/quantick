@@ -1,6 +1,6 @@
 ---
 name: arch-review
-description: Architecture-first code review for quantick — checks that a change docks as a module, declares its performance impact, proves itself with tests, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review, or asks whether a change is modular, extensible or fast enough.
+description: The full pre-PR review for quantick — runs the bundled code-review for bugs first, then checks that a change docks as a module, declares its performance impact, proves itself with tests, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change is modular, extensible or fast enough.
 ---
 
 # Architecture-first code review
@@ -9,7 +9,69 @@ A new feature should dock like a spacecraft to the ISS: a standard port, no
 modification to the station. Review every change against that bar.
 
 This skill reviews *shape* — modularity, performance, extensibility, tests,
-naming. For bug hunting use `/code-review`; run both when the change is large.
+naming. Bug hunting belongs to the bundled `code-review` skill, which this one
+runs for you first: see step 0.
+
+## Step 0 — the native code review runs first, always
+
+Correctness outranks architecture (priority 0), so the bug pass starts before
+the shape pass and the review never closes without it. Run the bundled
+`code-review` — the skill that takes a target plus an effort level
+(`low`…`ultra`). A plugin command of the same name appears prefixed,
+`code-review:code-review`; that one posts to the PR by itself and is not what
+this step calls.
+
+```
+Skill(code-review), args: "<target> <effort>"      one string, in that order
+
+  <target>   a PR number once one exists — the least ambiguous target there
+             is — otherwise a branch name, or omitted for the working diff.
+             Never a revision range: `main...HEAD` is not a target it parses.
+  <effort>   `high` for a branch or PR, `medium` for a working diff.
+             Never omit it: with no level the skill reuses whatever was typed
+             last, in some other session, and this review has to name the
+             level it used.
+```
+
+**Check the scope it comes back with.** When the target does not pin a range
+the skill derives one, so it can end up reviewing another branch's merged work
+(local `main` behind `origin/main`) or nothing at all (a pushed branch whose
+upstream already contains every commit). Findings over files this branch never
+touched, or a suspiciously empty pass, mean re-invoking with an explicit
+target — not a clean bill of health. Fetch first either way; see *Scope the
+review*.
+
+**Expect it in the background.** The skill dispatches an agent and returns only
+a name; the findings arrive later as a notification. Read for shape meanwhile,
+but publish nothing — the review closes only with step 0's list in hand. If the
+notification never lands, re-invoke once; if that fails too, do the bug pass
+yourself before publishing and say which it was in the header. "It never came
+back" is not a reason to ship an unreviewed branch.
+
+When the findings land:
+
+- **Sort before promoting.** The skill returns bugs and cleanups in one flat
+  list with no severity of its own. Wrong *behaviour* — crash, wrong output,
+  broken determinism, race — becomes a **Blocker** here, listed before every
+  shape finding, and the branch does not pass with one open. A cleanup is not
+  automatically lower: file it in the dimension it belongs to and let that
+  dimension decide, so an efficiency finding on a per-frame path lands in
+  dimension 2 and is still a Blocker under the hot-path rule.
+- **Confirm before promoting.** `high` and above deliberately include uncertain
+  findings. Item 2 of *Verify before reporting* applies to this list too: argue
+  the opposite case and drop what the refutation kills. *Confirmed* means it
+  survived that pass, not that the sub-agent sounded certain.
+- **Cite, never restate.** A finding step 0 already reported ships as its
+  `file:line` plus the severity assigned here — not re-described in new words
+  as though this review found it.
+- **Step 0 never publishes.** No `--fix`, no `--comment`, no `--post`, and
+  never the plugin variant that posts unasked. Findings are resolved
+  deliberately, and arch-review is the only thing that reports them.
+
+`code-review` stays callable on its own, but a branch still needs the
+`arch-review-ok` marker to open a PR. So on a docs/skills change — where
+`mission` waives the shape pass — run this skill anyway and report step 0's
+findings through it. The bug pass is not the waived part.
 
 ## Priority order
 
@@ -36,10 +98,19 @@ never has to, since naming and comments compile away.
 ## Scope the review
 
 ```sh
-git diff main...HEAD --stat      # branch under review
-git diff --stat                  # uncommitted working diff
-gh pr diff <n>                   # a PR
+git fetch origin                       # first: the ranges below read origin/main
+git diff origin/main...HEAD --stat     # branch under review
+git diff --stat                        # uncommitted working diff
+gh pr diff <n>                         # a PR
 ```
+
+The range names the remote on purpose. `git fetch` moves `origin/main` and
+leaves the local `main` ref where it was, so in a worktree cut from
+`origin/main` while the main checkout still sits on an older `main`,
+`main...HEAD` shows other branches' merged work as if this branch wrote it —
+it happened on the branch that added this line, 26 files from someone else's
+PR. Fast-forwarding the main checkout (`git -C <main-checkout> pull --ff-only`)
+fixes the local ref too, and is worth doing before a review either way.
 
 Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
@@ -175,6 +246,9 @@ public API. A new local convention needs a stated reason or it is a finding.
 
 Reviews are judged on precision, not volume.
 
+0. Confirm step 0 ran and its findings are in hand — if it went to the
+   background, wait for the notification. A shape review published without
+   them is incomplete, not "clean".
 1. Open the file and read the surrounding code — most "this is missing"
    findings die here because the thing exists one function up.
 2. For each surviving finding, argue the opposite case for a moment: is this
@@ -193,9 +267,9 @@ A clean change gets a short review saying it is clean and why. Never pad.
 
 ## Severity
 
-- **Blocker** — reverse dependency edge; forked aggregator logic; determinism
-  broken; hot-path regression; new behaviour with no test; a feature that
-  activates itself.
+- **Blocker** — a confirmed correctness finding from step 0; reverse dependency
+  edge; forked aggregator logic; determinism broken; hot-path regression; new
+  behaviour with no test; a feature that activates itself.
 - **Should fix** — hardcoded value; extension point that forces edits to
   existing code; missing regression cover; unexplained complex algorithm;
   misleading name or missing unit; a second way to do a solved thing.
@@ -204,17 +278,28 @@ A clean change gets a short review saying it is clean and why. Never pad.
 
 ## Output
 
+Open with one line for step 0: the effort level it ran at and how many findings
+came back, including zero — `step 0: code-review at high, 12 findings, 3
+confirmed` — or why it did not run. On the `ReportFindings` path that line is
+the text accompanying the call, since the tool carries no header field. It is
+the only signal that the bug pass was skipped, so it is never dropped — and it
+goes into the PR body too, next to the deferred findings `CLAUDE.md` already
+requires there. Chat scrolls away; the PR is where the next reader looks.
+
 Report findings with the `ReportFindings` tool when it is available, ranked
-most severe first, using categories `modularity`, `performance`,
-`hardcoded-values`, `test-coverage`, `standardisation`, `readability`. Without
-that tool, write the same list as markdown grouped by severity.
+most severe first, using categories `correctness` (step 0's, promoted here),
+`modularity`, `performance`, `hardcoded-values`, `test-coverage`,
+`standardisation`, `readability`. Without that tool, write the same list as
+markdown grouped by severity.
 
 Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
 name, the test to add. Never a vague "consider refactoring".
 
-Close with a verdict in three lines:
+Close with a verdict in four lines:
 
+- **Correctness** — what the step 0 code review returned, and whether anything
+  from it is still open.
 - **Docking** — can the next feature attach without opening these files?
 - **Performance** — what got faster, slower, or stayed flat, and at what rate.
 - **Proof** — which test would fail if this change regressed.

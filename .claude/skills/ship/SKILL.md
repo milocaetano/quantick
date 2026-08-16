@@ -24,7 +24,7 @@ description: Deliver the current branch - run the full verification loop, commit
 
 2. **Commit** anything pending: conventional style (`feat: ...`, `fix: ...`), imperative mood, English.
 
-3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff main...HEAD`. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never open a PR that has not been arch-reviewed.
+3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff origin/main...HEAD`. Its step 0 dispatches the bundled `code-review` in the background, so this step is not done when the skill returns — it is done when those findings have landed and been handled. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never push or open a PR ahead of this step.
 
 4. **Push**: `git push -u origin <branch>`.
 
