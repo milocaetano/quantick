@@ -116,7 +116,24 @@ wears a card (`INSET` fill, hairline border, a side-colour rail).
 | Position entry | solid 1.5 px, `BUY`/`SELL` by side | card: `SIM LONG 2` + live open pts, hover `×` closes |
 | Stop loss | solid 1 px, `SELL` | chip: `SL 97.0 −12.4 pts`, hover `×` clears |
 | Take profit | solid 1 px, `BUY` | chip: `TP 110.0 +13.6 pts`, hover `×` clears |
-| Pending order | dashed 1 px, `ACCENT` | chip: `#3 BUY LMT 2 @ 95.0`, hover `×` cancels |
+| Pending order | dashed 1 px, `ACCENT` | pill: `BUY LMT 2`; open on hover: `#3 BUY LMT 2 @ 95.0`, `×` cancels |
+
+**A pending order's tag rests small.** It sits at the right edge of the
+plot — over the newest candles, the ones the trader is reading — and stayed
+there in full for as long as the order worked, hiding the price action
+behind a banner. At rest it now states only what the chart cannot say
+otherwise: an order line is `ACCENT` whatever its side, so the words `BUY
+LMT 2` are the only place the side, the kind and the size live. The price is
+already on the gutter chip and the id only matters once you mean to act on
+the order, so both wait for the open form. The tag opens under the pointer
+(the line's own grab row, plus the row a clamped tag was pushed into near a
+chart edge), while its dock row is hovered — one hover, two surfaces — and
+for as long as it is being dragged, since a trader repricing an order is
+reading the number they are moving. The `×` exists only in the open form,
+and `control_at` asks that same question at press time, so a cancel is never
+pressable while unpainted. The position, stop and target tags keep the full
+form: there is at most one of each, and none of them is the tag that filled
+the screen.
 
 Interaction, reusing the drawing-drag grammar (`DrawingDrag` mechanics, same
 hit radius constants, raw-input reads, gesture-consumption flag so the chart
@@ -141,6 +158,38 @@ drawings' halo):
 - Order state lives in the simulator, **not** in `Drawings` — a bar-spec
   change or history rebuild clears annotations, but simulated orders belong
   to the session, not to the bar series.
+
+### Cmd trading: the aim rides the pointer
+
+Hold the buy modifier (Shift by default; Ctrl sells, both configurable in
+the Trading tab) and the chart paints the order the next click would place:
+a dashed line from under the cursor out to the axis, the exact snapped
+price on the gutter, and a `BUY stop 1` label riding beside the cursor —
+a fixed gap to its left, flipping to the right near the left edge, never
+under the crosshair it belongs to. Whether the entry rests as a stop or a
+limit follows the same validity table the right-click menu uses: above the
+mark a buy stops in, below it a buy waits at a limit; a sell mirrors.
+
+**The click places it, anywhere in the plot.** A label that follows the
+pointer can never be landed on — move toward it and it moves with you — so
+the *held modifier* is the deliberate act and the label is the statement of
+what this click will do. Release the modifier and the aim is gone; the
+pointer wears the hand cursor for as long as it is up, everywhere, because
+everywhere is the target. An overlay `×` still takes the press first: a
+cancel under the pointer is never eaten by an order.
+
+**The aim is the last claimant on the canvas.** The default buy modifier is
+Shift, which is also the key that levels a channel corner mid-drag, so an
+annotation already under the pointer keeps its pixel: over a drawing's body
+or a selected object's handle the aim paints nothing, the hand cursor stays
+off and the click cannot place — it starts the drawing drag it always did.
+That is one gate (`ChartInput::drawing_under_pointer`, answered by the pane
+exactly as "a tool is armed" is), so the label can never promise an order
+the press will not make. Sweeping across a drawn line blinks the aim off
+for its ~10 px grab band and the move cursor comes up instead; nudge off
+the line and the aim is back. Paper's own overlay does not yield — an
+order line under a held modifier is still a price to aim at, which is
+what the label says.
 
 ### Closed-trade marks
 

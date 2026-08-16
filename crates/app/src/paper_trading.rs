@@ -129,26 +129,28 @@ const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
 /// How many `.rerun-N` session names one venue-time stamp may try — far
 /// beyond any real journal, a backstop against a pathological folder.
 const MAX_SESSION_RERUNS: usize = 999;
-/// `=buy`/`=sell` forces the cmd-trading preview for a capture run — the
-/// held modifier is the one input a run with nobody at the keyboard
-/// cannot supply (the ParkedHand rule).
+/// `=buy`/`=sell` forces the cmd-trading preview for a capture run, and an
+/// optional `@<fraction>` parks the virtual pointer at that fraction of the
+/// band's width (`buy@0.15` aims near the left edge). The held modifier and
+/// the hand that moves the mouse are the two inputs a run with nobody at
+/// the keyboard cannot supply (the ParkedHand rule) — and now that the
+/// label rides the pointer, its x is a state of its own to capture.
 const CMD_PREVIEW_ENV: &str = "QUANTICK_CMD_PREVIEW";
-/// Cmd-trading preview line, as a fraction of the chart width…
-const CMD_LINE_FRACTION: f32 = 0.2;
-/// …no shorter than this (a narrow pane must still show a line)…
+/// Forces every resting order's in-plot tag to its expanded form for a
+/// capture run — the same ParkedHand problem: the compact pill opens under
+/// a pointer no scripted run has.
+const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
+/// Shortest cmd-trading preview line: the pointer near the right edge
+/// still gets a line long enough to read as one, by starting left of it.
 const CMD_LINE_MIN_PX: f32 = 120.0;
-/// …and no longer than this (a wide chart must not paint a bar across
-/// half the plot). Whether fraction or fixed reads better is a
-/// trader-ux-review question; the clamp serves both answers.
-const CMD_LINE_MAX_PX: f32 = 320.0;
 /// The preview label's fixed width: paint and press share this exact
 /// rect, so the two can never disagree (the overlay-controls rule).
 const CMD_LABEL_WIDTH_PX: f32 = 116.0;
-/// Gap between the label and the left end of its line.
-const CMD_LABEL_GAP_PX: f32 = 6.0;
-/// The label's fill while the pointer is elsewhere; hover paints it full,
-/// so the brightening itself says "clickable".
-const CMD_LABEL_RESTING_ALPHA: f32 = 0.72;
+/// Clear space between the pointer and the label riding beside it. The
+/// label must not sit under the crosshair it belongs to — the cursor and
+/// the candle beneath it stay readable — while staying close enough to
+/// read as one statement with the aim.
+const CMD_LABEL_CURSOR_GAP_PX: f32 = 14.0;
 /// The grids' readable floor inside a squeezed window.
 const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
@@ -506,6 +508,14 @@ pub struct ChartInput<'a> {
     pub primary_released: bool,
     /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub modifiers: egui::Modifiers,
+    /// Whether an annotation already owns this pixel — a drawing body or a
+    /// selected object's handle under the pointer. The pane answers it,
+    /// the same way it answers "a tool is armed": this module never reads
+    /// the drawings itself. The aim-anywhere cmd gesture is the *last*
+    /// claimant on the canvas, so it paints nothing and places nothing
+    /// there; the buy modifier is Shift by default, which is also the key
+    /// that levels a channel corner mid-drag.
+    pub drawing_under_pointer: bool,
 }
 
 /// A modifier key the cmd-trading gesture can bind to.
@@ -615,9 +625,44 @@ struct CmdPreview {
     /// Raw pointer price — what a click hands to `place_resting`, which
     /// snaps for itself (the armed-click path's contract).
     raw_price: f64,
-    y: f32,
-    /// Pointer on the label — highlight, hand cursor, click places.
-    hover: bool,
+    /// The aiming pointer, both coordinates: y is the price, x is where
+    /// the label rides. Stored whole so paint and press lay out from the
+    /// very same position.
+    pointer: egui::Pos2,
+}
+
+/// The `QUANTICK_CMD_PREVIEW` hook, parsed: which side to aim and, when
+/// stated, where along the band to park the virtual pointer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CmdPreviewForce {
+    side: Side,
+    /// 0.0 is the band's left edge, 1.0 its right; `None` leaves the
+    /// pointer mid-band, which is what the hook meant before the label
+    /// followed it.
+    x_fraction: Option<f32>,
+}
+
+impl CmdPreviewForce {
+    /// `buy`, `sell`, `buy@0.15`. An unparseable fraction degrades to the
+    /// mid-band park rather than killing the whole preview — a capture run
+    /// that paints nothing is the hardest failure to read.
+    fn parse(value: &str) -> Option<Self> {
+        let (side, fraction) = match value.split_once('@') {
+            Some((side, fraction)) => (side, Some(fraction)),
+            None => (value, None),
+        };
+        let side = match side.trim().to_ascii_lowercase().as_str() {
+            "buy" => Side::Buy,
+            "sell" => Side::Sell,
+            _ => return None,
+        };
+        Some(Self {
+            side,
+            x_fraction: fraction
+                .and_then(|text| text.trim().parse::<f32>().ok())
+                .map(|fraction| fraction.clamp(0.0, 1.0)),
+        })
+    }
 }
 
 /// The app-side paper-trading host: simulator, order-entry form state,
@@ -649,9 +694,12 @@ pub struct PaperTrading {
     /// This frame's cmd preview — input computes, paint reads, one
     /// geometry both sides.
     cmd_preview: Option<CmdPreview>,
-    /// Harness override: paint the preview for this side with nobody at
-    /// the keyboard (`QUANTICK_CMD_PREVIEW`).
-    cmd_preview_force: Option<Side>,
+    /// Harness override: paint the preview for this side, optionally at a
+    /// stated x, with nobody at the keyboard (`QUANTICK_CMD_PREVIEW`).
+    cmd_preview_force: Option<CmdPreviewForce>,
+    /// Harness override: every resting order's tag opens, with nobody at
+    /// the mouse (`QUANTICK_PAPER_ORDER_HOVER`).
+    order_hover_force: bool,
     // Order-entry form.
     qty_text: String,
     order_type: EntryKind,
@@ -749,21 +797,18 @@ impl PaperTrading {
             cmd_trading: CmdTradingSettings::default(),
             cmd_preview: None,
             cmd_preview_force: std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
-                match value.as_str() {
-                    "buy" => Some(Side::Buy),
-                    "sell" => Some(Side::Sell),
-                    other => {
-                        tracing::warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
-                            value = %other,
-                            "QUANTICK_CMD_PREVIEW wants `buy` or `sell`"
-                        );
-                        None
-                    }
-                }
+                CmdPreviewForce::parse(&value).or_else(|| {
+                    tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
+                        value = %value,
+                        "QUANTICK_CMD_PREVIEW wants `buy` or `sell`, optionally `@<0..1>`"
+                    );
+                    None
+                })
             }),
+            order_hover_force: std::env::var(PAPER_ORDER_HOVER_ENV).is_ok_and(|value| value == "1"),
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -1228,19 +1273,36 @@ impl PaperTrading {
             if !ctx.in_range(y) {
                 continue;
             }
-            let hovered = ctx.hovers_line(y) || self.hovered_order == Some(order.id);
+            // At rest the tag is a pill; it opens under the pointer. The
+            // line's own emphasis follows the same event, so one hover
+            // reads as one thing.
+            let expanded = self.order_tag_expanded(ctx.pointer, y, ctx.chart_rect, order.id);
+            let hovered = expanded && !dragged;
             let shown = if dragged { self.snap(price) } else { level };
             ctx.level_line(y, theme::ACCENT, true, LINE_WIDTH_PX, hovered, dragged);
             ctx.gutter_chip(y, theme::ACCENT, &fmt_decimal(shown));
-            let text = format!(
-                "#{} {} {} {} @ {}",
-                order.id.0,
-                side_word_upper(order.side),
-                kind_short(order.kind),
-                fmt_decimal(order.quantity),
-                fmt_decimal(shown),
-            );
-            ctx.chip_tag(y, theme::ACCENT, &text, !dragged);
+            // Resting, the pill states what the gutter chip cannot — which
+            // side and what kind of order waits there. The price is the
+            // chip's job, and the id only matters once you mean to act on
+            // it, so both wait for the open form.
+            let text = if expanded {
+                format!(
+                    "#{} {} {} {} @ {}",
+                    order.id.0,
+                    side_word_upper(order.side),
+                    kind_short(order.kind),
+                    fmt_decimal(order.quantity),
+                    fmt_decimal(shown),
+                )
+            } else {
+                format!(
+                    "{} {} {}",
+                    side_word_upper(order.side),
+                    kind_short(order.kind),
+                    fmt_decimal(order.quantity),
+                )
+            };
+            ctx.chip_tag(y, theme::ACCENT, &text, expanded && !dragged);
         }
 
         if let Some(position) = self.sim.position().cloned() {
@@ -1357,11 +1419,13 @@ impl PaperTrading {
         self.draw_cmd_preview(&ctx);
     }
 
-    /// The cmd-trading preview: a short dashed line at the pointer's
-    /// price, hugging the right edge, with the clickable label off its
-    /// left end and the exact price on the gutter — the trader reads
-    /// where the order will rest *before* anything commits, which is the
-    /// safety the right-click menu cannot offer.
+    /// The cmd-trading preview: a dashed line at the pointer's price
+    /// running out to the right edge, the label riding beside the cursor,
+    /// and the exact price on the gutter — the trader reads what this
+    /// click will place *before* it commits, which is the safety the
+    /// right-click menu cannot offer. The line is what ties the label at
+    /// the pointer to the price on the axis, so it spans the whole way
+    /// rather than hugging the edge.
     fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>) {
         let Some(preview) = self.cmd_preview else {
             return;
@@ -1371,7 +1435,7 @@ impl PaperTrading {
         if ctx.pointer.is_none() && self.cmd_preview_force.is_none() {
             return;
         }
-        if !ctx.in_range(preview.y) {
+        if !ctx.in_range(preview.pointer.y) {
             return;
         }
         let color = side_color(preview.side);
@@ -1387,28 +1451,21 @@ impl PaperTrading {
                 ctx.chart_rect.max.y,
             ),
         );
-        let (start, end, label) = cmd_preview_layout(band, preview.y);
-        let width = if preview.hover {
-            LINE_HOVER_WIDTH_PX
-        } else {
-            LINE_WIDTH_PX
-        };
+        let (start, end, label) = cmd_preview_layout(band, preview.pointer);
+        // The gesture in progress reads a step above a resting order's
+        // line: this is the one thing on the chart the next click acts on.
         ctx.painter.extend(egui::Shape::dashed_line(
             &[start, end],
-            egui::Stroke::new(width, color),
+            egui::Stroke::new(LINE_HOVER_WIDTH_PX, color),
             ORDER_DASH_PX,
             ORDER_GAP_PX,
         ));
-        ctx.gutter_chip(preview.y, color, &fmt_decimal(preview.price));
-        // The label: fixed geometry (paint and press share it), hover
-        // brightens the fill — the click target must say it is one.
-        let fill = if preview.hover {
-            color
-        } else {
-            color.gamma_multiply(CMD_LABEL_RESTING_ALPHA)
-        };
+        ctx.gutter_chip(preview.pointer.y, color, &fmt_decimal(preview.price));
+        // Full fill, always: while it paints, the click is already live.
+        // There is no resting state to distinguish — releasing the
+        // modifier is what makes the aim go away.
         ctx.painter
-            .rect_filled(label, egui::Rounding::same(3.0), fill);
+            .rect_filled(label, egui::Rounding::same(3.0), color);
         let quantity = self
             .quantity_preview()
             .map_or_else(|| "?".to_owned(), fmt_decimal);
@@ -1555,13 +1612,16 @@ impl PaperTrading {
             return true;
         }
 
-        // The preview's label takes the press after the ✕s (they are
-        // rarer and smaller) and before everything else: clicking it *is*
-        // the gesture.
+        // The aimed order takes the press after the ✕s (they are rarer and
+        // smaller) and before everything else. There is no separate target
+        // to hit: a label that rides the pointer can never be landed on —
+        // move toward it and it moves with you — so the *held modifier* is
+        // the deliberate act and the label beside the cursor is the
+        // statement of what this click will do. Nothing is aimed unless
+        // the preview exists, and the preview is exactly what is painted.
         if input.primary_pressed
             && self.drag == PaperDrag::None
             && let Some(preview) = self.cmd_preview
-            && preview.hover
         {
             self.place_resting(preview.side, preview.kind, preview.raw_price);
             return true;
@@ -1683,8 +1743,17 @@ impl PaperTrading {
                 .then(|| clamp_tag_center(y, chart.top(), chart.bottom()))
         };
         for order in self.sim.orders().iter().rev() {
+            // A resting tag paints no ✕ until it opens, so it offers none
+            // either: the press asks the paint's own question, rather than
+            // trusting two constants to keep agreeing by accident.
             if let Some(level) = order.price
                 && let Some(center_y) = visible_center(level)
+                && self.order_tag_expanded(
+                    Some(pointer),
+                    scale.y(level.to_f64().unwrap_or_default()),
+                    chart,
+                    order.id,
+                )
                 && close_button_rect(tag_right, center_y).contains(pointer)
             {
                 return Some(PaperControl::CancelOrder(order.id));
@@ -1730,10 +1799,33 @@ impl PaperTrading {
         if !self.cmd_trading.enabled {
             return None;
         }
+        // An annotation already owns this pixel. One gate, not three: no
+        // preview means nothing paints, the hand cursor stays off and the
+        // click cannot place — so the label can never promise an order the
+        // press will not make. Sweeping across a drawn line blinks the aim
+        // off for its grab band, which is the chart saying whose pixel it
+        // is, in step with the move cursor the drawings put up.
+        if input.drawing_under_pointer {
+            return None;
+        }
         let scale = input.scale?;
         let (pointer, side) = match self.cmd_preview_force {
-            // The harness has no hand; park the pointer mid-chart.
-            Some(side) => (input.pointer.unwrap_or(input.chart.center()), side),
+            // The harness has no hand; park the pointer mid-chart, or at
+            // the x the hook stated — which is the whole point of a run
+            // capturing where the label rides, so it wins over a stray
+            // real pointer that in such a run is nobody's aim.
+            Some(force) => {
+                let pointer = match force.x_fraction {
+                    Some(fraction) => egui::pos2(
+                        input.chart.left() + input.chart.width() * fraction,
+                        input
+                            .pointer
+                            .map_or_else(|| input.chart.center().y, |pointer| pointer.y),
+                    ),
+                    None => input.pointer.unwrap_or(input.chart.center()),
+                };
+                (pointer, force.side)
+            }
             None => {
                 let pointer = input.pointer?;
                 let buy = self.cmd_trading.buy.is_down(input.modifiers);
@@ -1760,16 +1852,35 @@ impl PaperTrading {
             (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
             _ => return None,
         };
-        let (_, _, label) = cmd_preview_layout(input.chart, pointer.y);
-        let hover = input.pointer.is_some_and(|pointer| label.contains(pointer));
         Some(CmdPreview {
             side,
             kind,
             price,
             raw_price,
-            y: pointer.y,
-            hover,
+            pointer,
         })
+    }
+
+    /// Whether a resting order's in-plot tag states itself in full this
+    /// frame. At rest it is a compact pill, so the candles behind the most
+    /// recent price stay readable; it opens under the pointer, while its
+    /// dock row is hovered, and for as long as it is being dragged — a
+    /// trader repricing an order needs every field of it.
+    ///
+    /// Pure geometry from this frame's own scale, so `control_at` asks the
+    /// identical question at press time and a ✕ is never pressable while
+    /// unpainted (the overlay-controls rule).
+    fn order_tag_expanded(
+        &self,
+        pointer: Option<egui::Pos2>,
+        y: f32,
+        chart: egui::Rect,
+        id: OrderId,
+    ) -> bool {
+        self.drag == PaperDrag::Order(id)
+            || self.hovered_order == Some(id)
+            || self.order_hover_force
+            || pointer.is_some_and(|pointer| tag_row_hit(pointer, y, chart))
     }
 
     /// Turn a pending entry-line press into the leg the pull chose, once it
@@ -1819,9 +1930,9 @@ impl PaperTrading {
         if self.control_at(pointer, chart, scale).is_some() {
             return Some(egui::CursorIcon::PointingHand);
         }
-        // The cmd preview's label announces its click like every painted
-        // control.
-        if self.cmd_preview.is_some_and(|preview| preview.hover) {
+        // While the aim is painted, the whole plot is the click: the hand
+        // says so everywhere, not just over the label riding beside it.
+        if self.cmd_preview.is_some() {
             return Some(egui::CursorIcon::PointingHand);
         }
         match self.line_at(pointer, scale)? {
@@ -5201,24 +5312,69 @@ fn elide_path(path: &Path) -> String {
     })
 }
 
-/// The cmd preview's geometry from the chart frame and the pointer's y:
-/// the dashed line hugging the right edge and the clickable label off its
-/// left end. One function for paint and press alike, so a painted label
-/// and its hit-test can never disagree (the overlay-controls rule).
-fn cmd_preview_layout(chart: egui::Rect, y: f32) -> (egui::Pos2, egui::Pos2, egui::Rect) {
-    let length = (chart.width() * CMD_LINE_FRACTION).clamp(CMD_LINE_MIN_PX, CMD_LINE_MAX_PX);
-    let end = egui::pos2(chart.right(), y);
-    let start = egui::pos2((chart.right() - length).max(chart.left()), y);
-    let center_y = clamp_tag_center(y, chart.top(), chart.bottom());
+/// The cmd preview's geometry from the interactive band and the pointer:
+/// the dashed line under the cursor running out to the right edge, and the
+/// clickable label riding beside the cursor. One function for paint and
+/// press alike, so a painted label and its hit-test can never disagree
+/// (the overlay-controls rule).
+///
+/// The label follows the pointer rather than parking against the right
+/// edge: aiming at a price on the left of the plot used to mean crossing
+/// the whole chart to click the thing you were already pointing at. It
+/// sits *beside* the cursor, never under it, so the crosshair and the
+/// candle it rests on stay readable. Left is the preferred side (the line
+/// and the price chip run off to the right, so the label completes the
+/// sentence from its start); it flips right when the left edge leaves no
+/// room, and in a band too narrow for either — well under any window this
+/// app opens — it parks against the closer edge.
+fn cmd_preview_layout(
+    band: egui::Rect,
+    pointer: egui::Pos2,
+) -> (egui::Pos2, egui::Pos2, egui::Rect) {
+    let need = CMD_LABEL_CURSOR_GAP_PX + CMD_LABEL_WIDTH_PX;
+    let left = if pointer.x - band.left() >= need {
+        pointer.x - need
+    } else if band.right() - pointer.x >= need {
+        pointer.x + CMD_LABEL_CURSOR_GAP_PX
+    } else {
+        // Narrower than the label and its gap on either side: the two
+        // cannot both hold, so it parks at the left edge and the cursor
+        // may cross it. Reaching this needs a band under 260 px — no
+        // window this app opens is that small.
+        band.left()
+    };
+    let center_y = clamp_tag_center(pointer.y, band.top(), band.bottom());
     let half = TAG_HEIGHT_PX / 2.0;
     let label = egui::Rect::from_min_max(
-        egui::pos2(
-            start.x - CMD_LABEL_GAP_PX - CMD_LABEL_WIDTH_PX,
-            center_y - half,
-        ),
-        egui::pos2(start.x - CMD_LABEL_GAP_PX, center_y + half),
+        egui::pos2(left, center_y - half),
+        egui::pos2(left + CMD_LABEL_WIDTH_PX, center_y + half),
     );
-    (start, end, label)
+    // The line starts under the cursor and reaches the axis, which is what
+    // ties the label beside the hand to the price on the gutter. Close to
+    // that edge it starts further left instead, so there is always a line
+    // to read.
+    let start = egui::pos2(
+        pointer
+            .x
+            .min(band.right() - CMD_LINE_MIN_PX)
+            .max(band.left()),
+        pointer.y,
+    );
+    (start, egui::pos2(band.right(), pointer.y), label)
+}
+
+/// The row around a line where its in-plot tag counts as hovered: the
+/// line's own grab band, plus the row a tag was clamped into near a chart
+/// edge (where the two part company). Text-free geometry on purpose — a
+/// press-time hit-test has no painter to measure a galley with, and the
+/// paint must be able to ask the same question.
+fn tag_row_hit(pointer: egui::Pos2, y: f32, chart: egui::Rect) -> bool {
+    if !chart.contains(pointer) {
+        return false;
+    }
+    let center = clamp_tag_center(y, chart.top(), chart.bottom());
+    (pointer.y - y).abs() <= LINE_GRAB_RADIUS_PX
+        || (pointer.y - center).abs() <= TAG_HEIGHT_PX / 2.0 + TAG_HOVER_SLACK_PX
 }
 
 /// The session file for `stamp` under `folder`: the plain name when free,
@@ -6050,6 +6206,7 @@ mod tests {
             primary_down: down,
             primary_released: released,
             modifiers: egui::Modifiers::default(),
+            drawing_under_pointer: false,
         }
     }
 
@@ -6070,6 +6227,7 @@ mod tests {
             primary_down: pressed,
             primary_released: false,
             modifiers,
+            drawing_under_pointer: false,
         }
     }
 
@@ -6197,7 +6355,11 @@ mod tests {
         let preview = paper.cmd_preview.expect("preview above the mark");
         assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Stop));
         assert_eq!(preview.price, Decimal::from(110));
-        assert!(!preview.hover, "mid-chart is not the label");
+        assert_eq!(
+            preview.pointer,
+            egui::pos2(400.0, 100.0),
+            "the aim is the hand"
+        );
         paper.handle_chart_input(&cmd_frame(
             chart,
             &scale,
@@ -6231,23 +6393,27 @@ mod tests {
         paper.handle_chart_input(&frame(chart, &scale, 100.0, false, false, false));
         assert!(paper.cmd_preview.is_none(), "no key, no line");
 
-        // Clicking the label places exactly what the preview said, through
-        // the same path as the right-click menu.
-        let (_, _, label) = cmd_preview_layout(chart, 300.0);
-        let on_label = egui::pos2(label.center().x, 300.0);
-        paper.handle_chart_input(&cmd_frame(chart, &scale, on_label, shift, false));
+        // The click places exactly what the preview said, wherever in the
+        // plot it lands, through the same path as the right-click menu —
+        // a label that rides the pointer can never be landed on, so the
+        // held modifier is the deliberate act.
+        let aim = egui::pos2(120.0, 300.0);
         assert!(
-            paper.cmd_preview.expect("hovering").hover,
-            "the label knows the pointer is on it"
-        );
-        assert!(
-            paper.handle_chart_input(&cmd_frame(chart, &scale, on_label, shift, true)),
+            paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)),
             "the click is the gesture's"
         );
         let orders = paper.working_orders();
         assert_eq!(orders.len(), 1, "the click rested the order");
         assert_eq!(orders[0].side, Side::Buy);
         assert_eq!(orders[0].price, Some(Decimal::from(90)));
+
+        // No modifier, no preview, no order: an unmodified click on empty
+        // canvas belongs to the chart.
+        assert!(
+            !paper.handle_chart_input(&frame(chart, &scale, 100.0, true, true, false)),
+            "a bare click is nobody's order"
+        );
+        assert_eq!(paper.working_orders().len(), 1, "still just the one");
 
         // Disabled means invisible.
         paper.set_cmd_trading(CmdTradingSettings {
@@ -6312,27 +6478,364 @@ mod tests {
         );
     }
 
+    /// The aim label rides the pointer instead of parking at the right
+    /// edge — the whole point of the change — while the dashed line still
+    /// reaches the axis, so label and price chip stay one statement.
     #[test]
-    fn the_cmd_layout_hugs_the_right_edge_with_the_label_off_the_line() {
-        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-        let (start, end, label) = cmd_preview_layout(chart, 250.0);
-        assert_eq!(end.x, 800.0, "the line ends at the right edge");
-        assert_eq!(start.x, 640.0, "20% of an 800px chart");
-        assert!(label.right() < start.x, "the label sits clear of the line");
-        assert_eq!(label.center().y, 250.0);
-        let narrow = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(300.0, 400.0));
-        let (start, end, _) = cmd_preview_layout(narrow, 250.0);
+    fn the_cmd_label_follows_the_pointer_and_the_line_reaches_the_axis() {
+        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let mut previous: Option<f32> = None;
+        for x in [200.0_f32, 400.0, 600.0] {
+            let (start, end, label) = cmd_preview_layout(band, egui::pos2(x, 250.0));
+            assert_eq!(end.x, 800.0, "the line always reaches the axis");
+            assert_eq!(start.x, x, "the line starts under the cursor");
+            assert_eq!(
+                label.right(),
+                x - CMD_LABEL_CURSOR_GAP_PX,
+                "the label rides a fixed gap off the pointer"
+            );
+            assert_eq!(label.width(), CMD_LABEL_WIDTH_PX);
+            assert_eq!(label.center().y, 250.0);
+            assert!(
+                !label.contains(egui::pos2(x, 250.0)),
+                "never under the cursor it belongs to"
+            );
+            if let Some(previous) = previous {
+                assert!(label.left() > previous, "moving right moves the label");
+            }
+            previous = Some(label.left());
+        }
+    }
+
+    /// The two edges: near the left one the label flips to the pointer's
+    /// right rather than leaving the band, and near the right one the line
+    /// starts further left so there is still a line to read.
+    #[test]
+    fn the_cmd_layout_clamps_at_both_edges_of_the_band() {
+        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+
+        let pointer = egui::pos2(20.0, 250.0);
+        let (_, _, label) = cmd_preview_layout(band, pointer);
+        assert!(label.left() >= band.left(), "never off the left edge");
+        assert_eq!(
+            label.left(),
+            pointer.x + CMD_LABEL_CURSOR_GAP_PX,
+            "no room on the left, so it flips right"
+        );
+        assert!(!label.contains(pointer), "still clear of the cursor");
+
+        let pointer = egui::pos2(780.0, 250.0);
+        let (start, end, label) = cmd_preview_layout(band, pointer);
+        assert!(label.right() <= band.right(), "never off the right edge");
         assert_eq!(
             end.x - start.x,
             CMD_LINE_MIN_PX,
-            "a narrow pane keeps a line"
+            "close to the axis the line starts further left"
         );
-        let wide = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(4000.0, 400.0));
-        let (start, end, _) = cmd_preview_layout(wide, 250.0);
+        assert!(!label.contains(pointer), "still clear of the cursor");
+
+        // A band narrower than the label plus its gap cannot hold both; it
+        // parks at the left edge rather than running off-plot to the left.
+        let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 400.0));
+        let (start, _, label) = cmd_preview_layout(sliver, egui::pos2(50.0, 250.0));
+        assert_eq!(label.left(), sliver.left(), "a sliver parks at its edge");
+        assert_eq!(start.x, sliver.left(), "and the line spans what there is");
+    }
+
+    /// Paint and press read one geometry: the label the layout hands the
+    /// painter is the label the pointer that produced it was measured
+    /// against (the overlay-controls rule), and the preview carries that
+    /// exact pointer rather than re-deriving it.
+    #[test]
+    fn the_cmd_preview_carries_the_pointer_the_paint_lays_out_from() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(180.0, 300.0);
+        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
+        let preview = paper.cmd_preview.expect("the held key builds a preview");
+        assert_eq!(preview.pointer, aim, "the aim is the pointer, whole");
+        let (_, _, label) = cmd_preview_layout(chart, preview.pointer);
         assert_eq!(
-            end.x - start.x,
-            CMD_LINE_MAX_PX,
-            "a huge chart is not painted across"
+            label.right(),
+            aim.x - CMD_LABEL_CURSOR_GAP_PX,
+            "the paint lays out from that same pointer"
+        );
+    }
+
+    /// An annotation under the pointer keeps its pixel: no aim paints and
+    /// no click places there, so Shift+drag on a channel corner still
+    /// levels it. One gate governs paint, cursor and press together — the
+    /// label can never promise an order the press will not make.
+    #[test]
+    fn the_aim_yields_the_pixel_to_a_drawing_already_under_it() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(400.0, 300.0);
+
+        let over_drawing = ChartInput {
+            chart,
+            scale: Some(&scale),
+            pointer: Some(aim),
+            primary_pressed: true,
+            primary_down: true,
+            primary_released: false,
+            modifiers: shift,
+            drawing_under_pointer: true,
+        };
+        assert!(
+            !paper.handle_chart_input(&over_drawing),
+            "the press belongs to the drawing"
+        );
+        assert!(paper.cmd_preview.is_none(), "and nothing aims over it");
+        assert!(paper.working_orders().is_empty(), "so nothing was placed");
+        assert_eq!(
+            paper.hover_cursor(aim, chart, &scale),
+            None,
+            "no hand promising a click that will not happen"
+        );
+
+        // The very same pixel, one step off the line: the aim is back.
+        assert!(paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)));
+        assert_eq!(paper.working_orders().len(), 1, "clear canvas, order rests");
+    }
+
+    /// The capture hook: a side, and optionally where along the band to
+    /// park the hand the run does not have.
+    #[test]
+    fn the_cmd_preview_hook_parses_a_side_and_an_optional_x() {
+        assert_eq!(
+            CmdPreviewForce::parse("buy"),
+            Some(CmdPreviewForce {
+                side: Side::Buy,
+                x_fraction: None
+            })
+        );
+        assert_eq!(
+            CmdPreviewForce::parse("SELL@0.15"),
+            Some(CmdPreviewForce {
+                side: Side::Sell,
+                x_fraction: Some(0.15)
+            })
+        );
+        assert_eq!(
+            CmdPreviewForce::parse("buy@9"),
+            Some(CmdPreviewForce {
+                side: Side::Buy,
+                x_fraction: Some(1.0)
+            }),
+            "out of range clamps into the band"
+        );
+        assert_eq!(
+            CmdPreviewForce::parse("buy@left"),
+            Some(CmdPreviewForce {
+                side: Side::Buy,
+                x_fraction: None
+            }),
+            "a bad fraction still paints, mid-band"
+        );
+        assert_eq!(CmdPreviewForce::parse("hold"), None);
+    }
+
+    /// The parked x is what a capture run states, so it wins over a real
+    /// pointer that in such a run is nobody's aim — and without it the
+    /// hook keeps its old mid-band park.
+    #[test]
+    fn the_forced_preview_aims_where_the_hook_says() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.cmd_preview_force = Some(CmdPreviewForce {
+            side: Side::Sell,
+            x_fraction: Some(0.25),
+        });
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(700.0, 100.0),
+            egui::Modifiers::default(),
+            false,
+        ));
+        let preview = paper.cmd_preview.expect("the hook forces a preview");
+        assert_eq!(preview.side, Side::Sell);
+        assert_eq!(preview.pointer.x, 200.0, "a quarter into an 800px band");
+        assert_eq!(preview.pointer.y, 100.0, "the real hand still sets price");
+
+        paper.cmd_preview_force = Some(CmdPreviewForce {
+            side: Side::Sell,
+            x_fraction: None,
+        });
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(700.0, 100.0),
+            egui::Modifiers::default(),
+            false,
+        ));
+        assert_eq!(
+            paper.cmd_preview.expect("still forced").pointer.x,
+            700.0,
+            "with no stated x the real pointer is left alone"
+        );
+    }
+
+    /// Paint one frame of the paper layer and return its shape dump — the
+    /// off-screen render proof the tag tests read.
+    fn layer_shapes(
+        paper: &PaperTrading,
+        chart: egui::Rect,
+        scale: &PriceScale,
+        pointer: Option<egui::Pos2>,
+    ) -> String {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            paper.draw_layer(
+                &painter,
+                chart,
+                chart.right(),
+                chart.right(),
+                scale,
+                None,
+                pointer,
+            );
+        });
+        format!("{:?}", output.shapes)
+    }
+
+    /// A resting order rests as a pill and opens under the pointer: the
+    /// full tag used to sit over the candles at the live price all
+    /// session. The pill still names side, kind and size — an order line
+    /// is accent-coloured whatever its side, so dropping the word would
+    /// leave the chart unable to say what waits there. Off-screen render
+    /// proof.
+    #[test]
+    fn a_resting_order_tag_is_a_pill_until_the_pointer_reaches_it() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // A buy limit at 90 — y 300 on this scale.
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let id = paper.working_orders()[0].id.0;
+
+        let resting = layer_shapes(&paper, chart, &scale, Some(egui::pos2(400.0, 60.0)));
+        assert!(
+            resting.contains("BUY LMT 1"),
+            "the pill still names side, kind and size: {resting}"
+        );
+        assert!(
+            !resting.contains(&format!("#{id}")),
+            "the id waits until you mean to act on it: {resting}"
+        );
+        assert!(
+            !resting.contains("@ 90"),
+            "the price is the gutter chip's job: {resting}"
+        );
+        assert!(!resting.contains('×'), "and no ✕ over the candles");
+
+        let opened = layer_shapes(&paper, chart, &scale, Some(egui::pos2(400.0, 300.0)));
+        assert!(
+            opened.contains(&format!("#{id} BUY LMT 1 @ 90")),
+            "reaching for it states the order whole: {opened}"
+        );
+        assert!(opened.contains('×'), "…and offers the cancel: {opened}");
+    }
+
+    /// The ✕ and its press are one thing: for any pointer, a tag that
+    /// paints no ✕ offers none, and one that paints it takes the press.
+    /// Two constants happen to keep this true today — this is what keeps
+    /// it true tomorrow (the overlay-controls rule).
+    #[test]
+    fn a_tag_offers_its_cancel_exactly_while_it_paints_one() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // Near the top edge, where the tag is clamped away from its line
+        // and the two rows part company. Above the mark, so a buy rests
+        // as a stop.
+        assert!(paper.place_resting(Side::Buy, EntryKind::Stop, 119.0));
+        let order_y = scale.y(119.0);
+        let id = paper.working_orders()[0].id;
+        let x = chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0;
+        for step in -4_i16..=100 {
+            let pointer = egui::pos2(x, f32::from(step) * 5.0);
+            let center = clamp_tag_center(order_y, chart.top(), chart.bottom());
+            let painted = paper.order_tag_expanded(Some(pointer), order_y, chart, id)
+                && close_button_rect(chart.right(), center).contains(pointer);
+            let pressable = matches!(
+                paper.control_at(pointer, chart, &scale),
+                Some(PaperControl::CancelOrder(_))
+            );
+            assert_eq!(painted, pressable, "at y {}", pointer.y);
+        }
+    }
+
+    /// A dragged order keeps every field: a trader repricing one is
+    /// reading the number they are moving, and the pointer is on the line
+    /// they grabbed, not on the tag.
+    #[test]
+    fn a_dragged_order_keeps_its_full_statement() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let id = paper.working_orders()[0].id;
+        paper.drag = PaperDrag::Order(id);
+        paper.drag_price = Some(88.0);
+        let shapes = layer_shapes(&paper, chart, &scale, None);
+        assert!(
+            shapes.contains(&format!("#{} BUY LMT 1 @ 88", id.0)),
+            "the drag reads the price it is moving: {shapes}"
+        );
+        assert!(
+            !shapes.contains('×'),
+            "a moving order offers no cancel, as before: {shapes}"
+        );
+    }
+
+    /// The capture hook opens every tag with nobody at the mouse — the
+    /// pill's open form is otherwise unreachable from a scripted run.
+    #[test]
+    fn the_order_hover_hook_opens_the_tag_with_no_pointer() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let id = paper.working_orders()[0].id.0;
+        assert!(
+            !layer_shapes(&paper, chart, &scale, None).contains(&format!("#{id}")),
+            "no hand, no open tag"
+        );
+        paper.order_hover_force = true;
+        assert!(
+            layer_shapes(&paper, chart, &scale, None).contains(&format!("#{id} BUY LMT 1 @ 90")),
+            "the hook supplies the hand"
+        );
+    }
+
+    /// One hover, two surfaces: the dock row already lifted the chart
+    /// line, and now it opens the tag too.
+    #[test]
+    fn hovering_the_dock_row_opens_the_chart_tag() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let id = paper.working_orders()[0].id;
+        paper.hovered_order = Some(id);
+        assert!(
+            layer_shapes(&paper, chart, &scale, None)
+                .contains(&format!("#{} BUY LMT 1 @ 90", id.0)),
+            "the row's hover reaches the chart"
         );
     }
 
@@ -6478,6 +6981,7 @@ mod tests {
             primary_down: true,
             primary_released: false,
             modifiers: egui::Modifiers::default(),
+            drawing_under_pointer: false,
         };
         assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
         assert!(
@@ -6512,6 +7016,7 @@ mod tests {
             primary_down: true,
             primary_released: false,
             modifiers: egui::Modifiers::default(),
+            drawing_under_pointer: false,
         };
         assert!(
             paper.handle_chart_input(&press),

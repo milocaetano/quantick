@@ -3351,6 +3351,31 @@ impl ChartPane {
         // can only be handed out once. Without this gate a click meant to
         // drop an anchor would *also* reach an order's ✕ and cancel it —
         // the early return this replaced used to hide that.
+        //
+        // The cmd-trading aim is the one paper gesture that claims the
+        // *whole* plot rather than a line or a ✕, so it alone yields to an
+        // annotation already under the pointer. The pane answers that
+        // question here — paper never reads the drawings — for the same
+        // reason it answers "a tool is armed": the button can be handed
+        // out once, and the default buy modifier is Shift, the very key
+        // that levels a channel corner. Bounded work: the two picks the
+        // hover cursors below already run, over visible objects only.
+        let drawing_under_pointer = pointer_position
+            .filter(|_| chrome.toolrail.tool() == Tool::Pointer && !over_chrome)
+            .filter(|position| !Self::pane_chrome_hit(&areas, *position))
+            .and_then(|position| {
+                bands::band_at(&bands, position)
+                    .filter(|band| band.drawable())
+                    .map(|band| (position, band))
+            })
+            .is_some_and(|(position, band)| {
+                self.drawings.selected().is_some_and(|selected| {
+                    self.drawing_handle_in(selected, position, band, history_right, total)
+                        .is_some()
+                }) || self
+                    .drawing_at(position, band, history_right, total)
+                    .is_some()
+            });
         let paper_gesture = if chrome.paper_owns_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
@@ -3360,6 +3385,7 @@ impl ChartPane {
                 primary_down,
                 primary_released,
                 modifiers: ui.input(|input| input.modifiers),
+                drawing_under_pointer,
             })
         } else {
             if chrome.paper_owns_input {

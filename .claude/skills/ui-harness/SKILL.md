@@ -121,9 +121,10 @@ Landing with the paper-trading overhaul (`feat/paper-trading-overhaul`):
 
 | Hook | Reaches |
 | --- | --- |
-| `QUANTICK_CMD_PREVIEW=<buy\|sell>` | the cmd-trading preview painted with nobody at the keyboard: the dashed y-locked line, its clickable side/kind/qty label and the gutter price chip, parked mid-chart for that side. The held modifier is the one input a capture run cannot supply (the ParkedHand rule). Needs prints on the tape for a mark — pair with a live feed or `QUANTICK_PAPER_DEMO=1`. |
+| `QUANTICK_CMD_PREVIEW=<buy\|sell>[@<0..1>]` | the cmd-trading preview painted with nobody at the keyboard: the dashed line out to the axis, the side/kind/qty label riding beside the cursor and the gutter price chip. The held modifier is one input a capture run cannot supply (the ParkedHand rule) — and since the label follows the pointer, so is the pointer's **x**: `buy@0.15` parks the aim a sixth of the way in, `sell@0.9` next to the axis, and a bare `buy` keeps the old mid-band park. A stated fraction wins over a real pointer that happens to be over the window; the y still comes from the real hand when there is one. Needs prints on the tape for a mark — pair with a live feed or `QUANTICK_PAPER_DEMO=1`. |
+| `QUANTICK_PAPER_ORDER_HOVER=1` | every resting order's in-plot tag in its **open** form (`#3 BUY LMT 2 @ 95.0` with the ✕). At rest the tag is a compact pill and only opens under the pointer, so the full statement is otherwise unreachable from a scripted run — the same ParkedHand problem as above. Pair with `QUANTICK_PAPER_DEMO=1`, which rests an order around print 220. |
 
-Once merged, move it into the table above.
+Once merged, move them into the table above.
 
 Landing with the tape-configuration goal (`feat/tape-own-config`):
 
