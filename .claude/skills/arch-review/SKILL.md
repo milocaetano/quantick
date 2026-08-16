@@ -26,6 +26,10 @@ Skill(code-review)  →  args: the same target, e.g. `main...HEAD`, a PR number,
                        uncommitted diff.
 ```
 
+That is the bundled review that takes a target plus an effort level
+(`low`…`ultra`) — not a plugin command that happens to share the name. If both
+are listed, the effort levels are how you tell them apart.
+
 Then:
 
 - **Carry its findings in.** Every confirmed correctness finding enters this
@@ -65,10 +69,17 @@ never has to, since naming and comments compile away.
 ## Scope the review
 
 ```sh
+git fetch origin                 # first: a stale local `main` inflates every diff below
 git diff main...HEAD --stat      # branch under review
 git diff --stat                  # uncommitted working diff
 gh pr diff <n>                   # a PR
 ```
+
+Fetch before scoping, and check that `main` is not behind `origin/main` — a
+worktree cut from `origin/main` while the main checkout still sits on an older
+`main` makes `main...HEAD` show other branches' merged work as if this branch
+wrote it. Fast-forward it (`git -C <main-checkout> pull --ff-only`) or scope
+against `origin/main` instead. Both the review and step 0 use the same target.
 
 Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something

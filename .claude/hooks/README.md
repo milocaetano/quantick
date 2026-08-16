@@ -30,6 +30,10 @@ honest: commit again after the review and the sha no longer matches, so the
 gate denies and names both shas. A marker that only said "a review happened"
 would pass while the newest commits went unreviewed.
 
+Since the skill's step 0 runs the bundled `code-review` first, the one marker
+now stands for both passes — correctness and shape. The gate still checks only
+that the marker matches `HEAD`; it cannot see which passes actually ran.
+
 The gate proves a review was *recorded*, not that it was *good*. Nothing can
 prove the latter from outside the review. What it does remove is the failure
 this repo actually hits: forgetting entirely, or reviewing and then pushing
