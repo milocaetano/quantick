@@ -9782,6 +9782,28 @@ plot(close)
         );
     }
 
+    /// How many rectangles the frame painted — candle bodies dominate it, so
+    /// it stands in for "how many candles were drawn" when a test holds the
+    /// one-bar-one-candle law at the paint level rather than at an accessor.
+    fn painted_rects(output: &egui::FullOutput) -> usize {
+        fn walk(shape: &egui::Shape, found: &mut usize) {
+            match shape {
+                egui::Shape::Rect(_) => *found += 1,
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = 0;
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        found
+    }
+
     /// Every string the frame painted, panels and chart alike.
     fn painted_text(output: &egui::FullOutput) -> Vec<String> {
         fn walk(shape: &egui::Shape, found: &mut Vec<String>) {
@@ -13866,11 +13888,9 @@ plot(close)
 
         let before_time = time_zoom(&app);
         let before_flow = app.active_tab().flow_pane.viewport.px_per_bar();
-        // Stretch first, squeeze back. A pane with almost no series in it is
-        // already at its zoom-out floor (`MIN_SERIES_FILL` — squeezing a
-        // three-bar chart shows nothing more), so the gesture is proven in the
-        // direction that always has room, then in the one that has room again
-        // once it has been stretched.
+        // Stretch first, squeeze back: both directions of the gesture are
+        // proven from wherever the pane's zoom happens to open, with no
+        // assumption about how far the squeeze side has left to travel.
         drag_chart(
             &mut app,
             &ctx,
@@ -13945,8 +13965,9 @@ plot(close)
 
         // Where zooming out used to stop.
         app.active_tab_mut().flow_pane.viewport.set_px_per_bar(2.0);
-        run_frame(&mut app, &ctx);
+        let shallow = run_frame(&mut app, &ctx);
         let shallow_bars = bars_across(&app.active_tab().flow_pane.viewport);
+        let shallow_rects = painted_rects(&shallow);
 
         // As far out as it now goes: twice the bars, each still its own candle.
         app.active_tab_mut()
@@ -13954,15 +13975,30 @@ plot(close)
             .viewport
             .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
         let deep = run_frame(&mut app, &ctx);
+        let deep_bars = bars_across(&app.active_tab().flow_pane.viewport);
+        let deep_rects = painted_rects(&deep);
         let viewport = app.active_tab().flow_pane.viewport;
+        // Not an exact 2x: `visible_range` is deliberately generous by a bar
+        // at each edge, and the cushion must absorb that at both zooms.
         assert!(
-            bars_across(&viewport) >= 2 * shallow_bars - 2,
-            "history in the window: {} vs {shallow_bars}",
-            bars_across(&viewport)
+            deep_bars + 4 >= 2 * shallow_bars,
+            "history in the window: {deep_bars} vs {shallow_bars}"
         );
         assert!(
             (viewport.candle_width() - viewport.px_per_bar()).abs() < f32::EPSILON,
             "one bar, one candle, at the deepest squeeze"
+        );
+        // The law held at the *paint* level, where a fold would actually
+        // happen. The chrome's rectangles are a constant, so the growth from
+        // shallow to deep is the extra bars' candles alone: at least two
+        // rectangles each (body fill + outline — a draw-side fold would erase
+        // them), and boundedly few (a layer forgetting its zoom gate would
+        // blow past any per-bar budget).
+        let extra_bars = deep_bars - shallow_bars;
+        let extra_rects = deep_rects.saturating_sub(shallow_rects);
+        assert!(
+            extra_rects >= 2 * extra_bars && extra_rects <= 8 * extra_bars,
+            "each of the {extra_bars} extra bars drawn as its own candle: {extra_rects} extra rects"
         );
         assert!(
             !painted_text(&deep)

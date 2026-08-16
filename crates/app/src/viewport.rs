@@ -277,7 +277,6 @@ impl Viewport {
     /// the bar at the right edge fully on screen. Order-book timestamps use
     /// fractional positions so several depth updates can be shown inside one
     /// activity-sampled bar without changing candle spacing.
-    ///
     #[must_use]
     pub fn x_at_bar_position(&self, bar_position: f32, chart_right: f32, total: usize) -> f32 {
         let right_bar = self.right_edge_bar(total);
@@ -289,7 +288,8 @@ impl Viewport {
     ///
     /// Placing a drawing and drawing it are the same projection read in
     /// opposite directions; written out twice they would disagree the first
-    /// time the projection changed, and grouping is exactly such a change.
+    /// time the projection changed, and a drift here puts an anchor on the
+    /// wrong bar.
     #[must_use]
     pub fn bar_at_x(&self, x: f32, chart_right: f32, total: usize) -> f32 {
         if self.px_per_bar <= 0.0 {
@@ -301,7 +301,6 @@ impl Viewport {
     /// The `[start, end)` bar indices at least partly visible in a chart `width`
     /// pixels wide over `total` bars. Generous by up to a bar at each edge (the
     /// caller clips), so nothing pops in late.
-    ///
     #[must_use]
     pub fn visible_range(&self, width: f32, total: usize) -> (usize, usize) {
         if total == 0 || self.px_per_bar <= 0.0 {
