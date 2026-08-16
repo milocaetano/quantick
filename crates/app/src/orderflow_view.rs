@@ -750,7 +750,6 @@ impl OrderflowView {
         canvas_background: egui::Color32,
         lane_width_px: f32,
         top_inset_px: f32,
-        aggressions_drawable: bool,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -762,11 +761,6 @@ impl OrderflowView {
         );
         let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         style.legend_top_inset = top_inset_px;
-        // A key names what is on the canvas. Grouped, the bubbles withdraw
-        // (`ChartPane::per_bar_layers_drawable`), so their rows come out of the
-        // key too — a key promising a layer that is not being drawn is the
-        // "enabled but invisible reads as broken" failure with an extra step.
-        style.aggression_layer &= aggressions_drawable;
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_compact_legend(painter, &context);
     }
@@ -2717,7 +2711,6 @@ mod tests {
                             egui::Color32::BLACK,
                             0.0,
                             crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
-                            true,
                         );
                     } else {
                         view.draw_aggressions(

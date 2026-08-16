@@ -7,37 +7,32 @@
 //! that (pixels per bar + the fractional bar index at the right edge + a follow
 //! flag), unit-tested in CI with no egui or input handling.
 //!
-//! Two things it owns that a plain "one bar, one candle" window would not:
+//! One thing it owns that a plain window would not: **room to project into.**
+//! How far past the newest bar the view may go is derived from the window
+//! ([`Viewport::projection_margin_bars`]), so pushing the chart left always
+//! clears about a screen of empty canvas — enough for a channel or a
+//! Fibonacci extension drawn out in front of the market.
 //!
-//! - **Room to project into.** How far past the newest bar the view may go is
-//!   derived from the window ([`Viewport::projection_margin_bars`]), so pushing
-//!   the chart left always clears about a screen of empty canvas — enough for a
-//!   channel or a Fibonacci extension drawn out in front of the market.
-//! - **Grouping.** Squeezed past the point where a bar can be drawn on its own,
-//!   several bars share one candle ([`Viewport::bars_per_slot`]) instead of the
-//!   zoom simply stopping. Bars keep getting narrower; what is drawn for them
-//!   does not, so more history arrives without the chart turning into a band.
+//! One law it enforces by construction: **one bar, one candle, at every
+//! zoom.** A trader who entered on a single bar of their rule — the elephant
+//! bar an imbalance rule cut — must be able to trust that every candle on
+//! screen *is* one bar of that rule. There is no level of detail here, no
+//! aggregation, nothing that changes what a candle means when the zoom moves.
 //!
 //! It owns the candles' pane only. The live lane is a band of screen beside it
 //! with a clock of its own, so nothing here reaches the tape.
 
-/// Narrowest a single **bar** can be, in pixels — the zoom-out floor.
+/// Narrowest a bar can be drawn, in pixels — the zoom-out floor.
 ///
-/// A fifth of a pixel: a 1600 px chart holds 8 000 bars there, ten times what
-/// the old 2 px floor allowed. That floor was a floor on *drawing* — two pixels
-/// is about the least a candle can be and still be one — and using it as the
-/// zoom limit tied how much history a trader could see to how small a candle
-/// can be drawn. Grouping ([`Viewport::bars_per_slot`]) separates the two: bars
-/// keep shrinking, the thing drawn for them does not.
-pub const MIN_PX_PER_BAR: f32 = 0.2;
-/// The slot width grouping aims for, in pixels.
-///
-/// Four pixels is a two-pixel body with the default two-pixel gap around it —
-/// the narrowest candle that still reads as a candle rather than a smear. It is
-/// a *target*, not a floor: the multiple is the nearest whole number of bars to
-/// it, so the slot drifts between roughly three and five pixels as the zoom
-/// moves instead of doubling at every threshold, which a hard floor would do.
-pub const TARGET_SLOT_PX: f32 = 4.0;
+/// One pixel is the honest floor: each bar still owns its own pixel column,
+/// so every mark on screen is attributable to exactly one bar of the
+/// configured rule. Below it neighbouring bars would share pixels and the
+/// chart would stop being a drawing of the bars — squeezing may make bars
+/// thin, never make them lie. (The old floor was 2 px; this doubles the
+/// history a window holds, with nothing merged to pay for it.)
+pub const MIN_PX_PER_BAR: f32 = 1.0;
+/// Pixels per bar a chart opens on.
+pub const DEFAULT_PX_PER_BAR: f32 = 8.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
 ///
 /// Sized for the footprint's Detailed level: a `sell × buy` ladder cell is
@@ -65,8 +60,7 @@ const MIN_PROJECTION_BARS: f32 = 8.0;
 /// The visible window over a bar series.
 #[derive(Debug, Clone, Copy)]
 pub struct Viewport {
-    /// Pixels per **bar** — the zoom. Below [`TARGET_SLOT_PX`] several bars
-    /// share one drawn slot; see [`Viewport::bars_per_slot`].
+    /// Pixels per **bar** — the zoom.
     px_per_bar: f32,
     /// Fractional bar index at the right edge (used when not following). May
     /// exceed `total - 1` to show empty space past the newest bar.
@@ -78,7 +72,7 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            px_per_bar: 8.0,
+            px_per_bar: DEFAULT_PX_PER_BAR,
             right_bar: 0.0,
             follow: true,
         }
@@ -92,52 +86,21 @@ impl Viewport {
         Self::default()
     }
 
-    /// Pixels per bar — how far apart two neighbouring bars sit.
-    ///
-    /// This is the zoom, and the number every pixel↔bar conversion uses. It is
-    /// [`Self::candle_width`] only while one bar owns one slot; zoomed out past
-    /// that, a bar is a fraction of the candle drawn over it.
+    /// Pixels per bar — how far apart two neighbouring bars sit. This is the
+    /// zoom, and the number every pixel↔bar conversion uses.
     #[must_use]
     pub fn px_per_bar(&self) -> f32 {
         self.px_per_bar
     }
 
-    /// How many bars are merged into one drawn candle.
+    /// Width of one drawn candle slot, in pixels — always one bar's width.
     ///
-    /// One until the zoom takes a bar below [`TARGET_SLOT_PX`], then the whole
-    /// number of bars that brings a slot back closest to that target. This is
-    /// what lets zoom-out keep going without the chart turning into a solid
-    /// band: past this point, squeezing shows *more history at the same
-    /// legibility* instead of thinner and thinner candles.
-    ///
-    /// Nearest rather than "at least", so the slot drifts gently (roughly
-    /// three to five pixels) instead of doubling every time the multiple
-    /// steps. Bars group from index 0 up, so a group is the same group from
-    /// frame to frame and prepended history shifts every index by a count the
-    /// viewport already knows how to absorb.
-    #[must_use]
-    pub fn bars_per_slot(&self) -> usize {
-        if !self.px_per_bar.is_finite() || self.px_per_bar <= 0.0 {
-            return 1;
-        }
-        let nearest = (TARGET_SLOT_PX / self.px_per_bar).round();
-        if nearest.is_finite() && nearest >= 2.0 {
-            nearest as usize
-        } else {
-            1
-        }
-    }
-
-    /// Whether several bars share one drawn candle at this zoom.
-    #[must_use]
-    pub fn grouped(&self) -> bool {
-        self.bars_per_slot() > 1
-    }
-
-    /// Width of one drawn candle slot, in pixels.
+    /// One bar, one candle, is a law of this chart, not a level of detail:
+    /// a candle that could stand for several bars would make every candle
+    /// untrustworthy at some zoom, and a trader enters on *one* bar.
     #[must_use]
     pub fn candle_width(&self) -> f32 {
-        self.px_per_bar * self.bars_per_slot() as f32
+        self.px_per_bar
     }
 
     /// Whether the right edge is pinned to the newest bar.
@@ -314,10 +277,6 @@ impl Viewport {
     /// the bar at the right edge fully on screen. Order-book timestamps use
     /// fractional positions so several depth updates can be shown inside one
     /// activity-sampled bar without changing candle spacing.
-    ///
-    /// Grouped, neighbouring bars land a fraction of a pixel apart — the
-    /// projection stays continuous in *bars*, and it is only what is drawn
-    /// (candles, one per slot) that steps.
     #[must_use]
     pub fn x_at_bar_position(&self, bar_position: f32, chart_right: f32, total: usize) -> f32 {
         let right_bar = self.right_edge_bar(total);
@@ -329,7 +288,8 @@ impl Viewport {
     ///
     /// Placing a drawing and drawing it are the same projection read in
     /// opposite directions; written out twice they would disagree the first
-    /// time the projection changed, and grouping is exactly such a change.
+    /// time the projection changed, and a drift here puts an anchor on the
+    /// wrong bar.
     #[must_use]
     pub fn bar_at_x(&self, x: f32, chart_right: f32, total: usize) -> f32 {
         if self.px_per_bar <= 0.0 {
@@ -338,27 +298,9 @@ impl Viewport {
         self.right_edge_bar(total) - (chart_right - x - 0.5 * self.candle_width()) / self.px_per_bar
     }
 
-    /// The x-pixel centre of the slot holding bar `index` — where the candle
-    /// drawn for that bar actually sits.
-    ///
-    /// The same point as [`Self::x_center`] while one bar owns one slot. Once
-    /// grouped, it is the centre of the whole group, so a candle and anything
-    /// anchored to a bar inside it agree about where that bar is on screen.
-    #[must_use]
-    pub fn slot_center_x(&self, index: usize, chart_right: f32, total: usize) -> f32 {
-        let per_slot = self.bars_per_slot();
-        let first = (index / per_slot * per_slot) as f32;
-        let middle = first + (per_slot as f32 - 1.0) / 2.0;
-        self.x_at_bar_position(middle, chart_right, total)
-    }
-
     /// The `[start, end)` bar indices at least partly visible in a chart `width`
     /// pixels wide over `total` bars. Generous by up to a bar at each edge (the
     /// caller clips), so nothing pops in late.
-    ///
-    /// Grouped, the start is pulled back to the first bar of its slot: a slot
-    /// is drawn from every bar in it, and starting mid-group would draw a
-    /// candle from part of one.
     #[must_use]
     pub fn visible_range(&self, width: f32, total: usize) -> (usize, usize) {
         if total == 0 || self.px_per_bar <= 0.0 {
@@ -367,8 +309,6 @@ impl Viewport {
         let right_bar = self.right_edge_bar(total);
         let bars_across = width / self.px_per_bar;
         let start = (right_bar - bars_across).floor().max(0.0) as usize;
-        let per_slot = self.bars_per_slot();
-        let start = start / per_slot * per_slot;
         let end = (right_bar.floor() as i64 + 2).clamp(0, total as i64) as usize;
         let start = start.min(end);
         (start, end)
@@ -535,86 +475,42 @@ mod tests {
         assert_eq!(v.right_edge_bar(10), 9.0);
     }
 
-    /// Zoomed out past the point where a bar can be drawn on its own, the chart
-    /// stops shrinking candles and starts grouping bars — which is what keeps
-    /// the extra history readable instead of turning it into a solid band.
+    /// The law the x axis answers to: one bar, one candle, at every zoom.
+    /// A trader enters on a single bar of their rule — a candle that could
+    /// stand for several would make every candle untrustworthy somewhere.
     #[test]
-    fn squeezing_past_a_drawable_candle_groups_bars_instead() {
+    fn one_bar_is_one_candle_at_every_zoom() {
         let mut v = Viewport::new();
-        assert_eq!(v.bars_per_slot(), 1, "8 px per bar is one bar per candle");
-        assert!(!v.grouped());
-
-        v.set_px_per_bar(2.0); // where zooming out used to stop
-        assert_eq!(v.bars_per_slot(), 2);
-        assert!(v.grouped());
-        assert!((v.candle_width() - 4.0).abs() < 0.001, "a drawable slot");
-
-        v.set_px_per_bar(MIN_PX_PER_BAR); // as far out as it goes
-        assert_eq!(v.bars_per_slot(), 20);
-        assert!(
-            (v.candle_width() - TARGET_SLOT_PX).abs() < 0.001,
-            "still a drawable slot: {}",
-            v.candle_width()
-        );
-    }
-
-    /// What the floor buys, stated as the trader feels it: ten times the
-    /// history on the same screen.
-    #[test]
-    fn the_zoom_out_floor_holds_ten_times_the_bars_the_old_one_did() {
-        let mut v = Viewport::new();
-        v.set_px_per_bar(MIN_PX_PER_BAR);
-        let (start, end) = v.visible_range(1600.0, 100_000);
-        let bars = (end - start) as f32;
-        // The old floor was 2 px per bar: 800 bars across a 1600 px chart.
-        assert!(bars >= 10.0 * (1600.0 / 2.0), "bars across = {bars}");
-    }
-
-    /// A candle is drawn from a whole group, so the window starts on a group
-    /// boundary — starting mid-group would draw a candle from part of one.
-    #[test]
-    fn a_grouped_window_starts_on_a_group_boundary() {
-        let mut v = Viewport::new();
-        v.set_px_per_bar(0.5);
-        assert_eq!(v.bars_per_slot(), 8);
-        let (start, _) = v.visible_range(800.0, 100_000);
-        assert_eq!(start % 8, 0, "start = {start}");
-    }
-
-    /// Grouped, the candle for a group is drawn at the middle of it and every
-    /// bar in the group reports that same slot — which is what keeps a drawing
-    /// anchored to a bar sitting on the candle that stands for it.
-    #[test]
-    fn every_bar_of_a_group_shares_the_slot_its_candle_is_drawn_at() {
-        let mut v = Viewport::new();
-        v.set_px_per_bar(1.0);
-        assert_eq!(v.bars_per_slot(), 4);
-        let right = 1000.0;
-        let slot = v.slot_center_x(40, right, 100);
-        for bar in 40..44 {
+        let mut px = MAX_CANDLE_WIDTH;
+        while px >= MIN_PX_PER_BAR {
+            v.set_px_per_bar(px);
             assert!(
-                (v.slot_center_x(bar, right, 100) - slot).abs() < 0.001,
-                "bar {bar} belongs to the same candle"
+                (v.candle_width() - v.px_per_bar()).abs() < f32::EPSILON,
+                "at {px} px per bar"
             );
-            // And its own position never leaves the candle drawn over it.
-            let x = v.x_center(bar, right, 100);
-            assert!(
-                (x - slot).abs() <= v.candle_width() / 2.0 + 0.001,
-                "bar {bar}"
-            );
+            px *= 0.9;
         }
-        let next = v.slot_center_x(44, right, 100);
-        assert!(
-            (next - slot - v.candle_width()).abs() < 0.001,
-            "neighbouring candles are one slot apart"
-        );
+    }
+
+    /// The zoom-out floor is one pixel per bar — each bar still owns its own
+    /// pixel column, so the squeeze doubles what the old 2 px floor showed
+    /// without a single bar merged to pay for it.
+    #[test]
+    fn the_squeeze_reaches_one_pixel_per_bar_and_stops() {
+        let mut v = Viewport::new();
+        for _ in 0..100 {
+            v.zoom(0.9);
+        }
+        assert!((v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001);
+        let (start, end) = v.visible_range(1600.0, 100_000);
+        assert!(end - start >= 1600, "a 1600 px window holds 1600 bars");
     }
 
     /// Placing a drawing and drawing it are one projection read in both
-    /// directions — including grouped, where the two easily drift apart.
+    /// directions, at every zoom the chart reaches.
     #[test]
     fn x_and_bar_are_inverses_at_every_zoom() {
-        for px in [8.0_f32, 2.0, 0.5, MIN_PX_PER_BAR] {
+        for px in [8.0_f32, 2.0, MIN_PX_PER_BAR] {
             let mut v = Viewport::new();
             v.set_px_per_bar(px);
             for bar in [0.0_f32, 12.5, 99.0] {
@@ -622,18 +518,6 @@ mod tests {
                 let back = v.bar_at_x(x, 1000.0, 200);
                 assert!((back - bar).abs() < 0.01, "px {px}, bar {bar}: got {back}");
             }
-        }
-    }
-
-    /// Ungrouped — every zoom a trader spends their day at — nothing about the
-    /// projection moved: one bar, one slot, the same pixels as before.
-    #[test]
-    fn an_ungrouped_projection_is_unchanged() {
-        let v = Viewport::new();
-        assert_eq!(v.bars_per_slot(), 1);
-        assert!((v.candle_width() - v.px_per_bar()).abs() < f32::EPSILON);
-        for bar in [0_usize, 5, 9] {
-            assert!((v.slot_center_x(bar, 1000.0, 10) - v.x_center(bar, 1000.0, 10)).abs() < 0.001);
         }
     }
 

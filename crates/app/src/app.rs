@@ -9782,6 +9782,28 @@ plot(close)
         );
     }
 
+    /// How many rectangles the frame painted — candle bodies dominate it, so
+    /// it stands in for "how many candles were drawn" when a test holds the
+    /// one-bar-one-candle law at the paint level rather than at an accessor.
+    fn painted_rects(output: &egui::FullOutput) -> usize {
+        fn walk(shape: &egui::Shape, found: &mut usize) {
+            match shape {
+                egui::Shape::Rect(_) => *found += 1,
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = 0;
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        found
+    }
+
     /// Every string the frame painted, panels and chart alike.
     fn painted_text(output: &egui::FullOutput) -> Vec<String> {
         fn walk(shape: &egui::Shape, found: &mut Vec<String>) {
@@ -9796,28 +9818,6 @@ plot(close)
             }
         }
         let mut found = Vec::new();
-        for clipped in &output.shapes {
-            walk(&clipped.shape, &mut found);
-        }
-        found
-    }
-
-    /// How many rectangles the frame painted — candle bodies dominate it, so
-    /// it stands in for "how much work the candles were" when a test wants to
-    /// compare two zooms rather than measure a wall clock.
-    fn painted_rects(output: &egui::FullOutput) -> usize {
-        fn walk(shape: &egui::Shape, found: &mut usize) {
-            match shape {
-                egui::Shape::Rect(_) => *found += 1,
-                egui::Shape::Vec(shapes) => {
-                    for shape in shapes {
-                        walk(shape, found);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut found = 0;
         for clipped in &output.shapes {
             walk(&clipped.shape, &mut found);
         }
@@ -13863,13 +13863,77 @@ plot(close)
         assert!((again - settled).abs() < 0.001, "{again} vs {settled}");
     }
 
+    /// The x axis belongs to every chart on the canvas, not just the flow
+    /// pane. In the split, dragging the *timeframe* pane's own time strip has
+    /// to squeeze the *timeframe* pane — and leave the flow pane beside it
+    /// exactly where it was.
+    #[test]
+    fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let plot = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split has a time pane")
+            .last_plot_area
+            .expect("laid out by the frames above");
+        // The time pane carries no tape and no indicator panes, so its own
+        // layout call reduces to this.
+        let strip = plot_split(plot, 0.0, &[]).time_strip;
+
+        let before_time = time_zoom(&app);
+        let before_flow = app.active_tab().flow_pane.viewport.px_per_bar();
+        // Stretch first, squeeze back: both directions of the gesture are
+        // proven from wherever the pane's zoom happens to open, with no
+        // assumption about how far the squeeze side has left to travel.
+        drag_chart(
+            &mut app,
+            &ctx,
+            strip.center(),
+            strip.center() + egui::vec2(120.0, 0.0),
+        );
+        let stretched = time_zoom(&app);
+        assert!(
+            stretched > before_time,
+            "the timeframe pane stretches: {stretched} vs {before_time}"
+        );
+
+        drag_chart(
+            &mut app,
+            &ctx,
+            strip.center(),
+            strip.center() + egui::vec2(-120.0, 0.0),
+        );
+        assert!(
+            time_zoom(&app) < stretched,
+            "and squeezes: {} vs {stretched}",
+            time_zoom(&app)
+        );
+        assert!(
+            (app.active_tab().flow_pane.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
+            "and the flow pane beside it never moved"
+        );
+    }
+
+    fn time_zoom(app: &QuantickApp) -> f32 {
+        app.active_tab()
+            .time_pane
+            .as_ref()
+            .expect("time pane")
+            .viewport
+            .px_per_bar()
+    }
+
     /// "Zoom in for numbers" with no number is why the footprint read as slow
     /// to arrive — a trader could not tell a nudge from a different chart
-    /// entirely. And grouped, there is no ladder to draw at all: one candle
-    /// standing for twenty bars has twenty tapes behind it, and the layer says
-    /// so instead of stacking them at one x or going quietly blank.
+    /// entirely.
     #[test]
-    fn the_footprint_says_how_much_further_to_zoom_and_when_not_to_bother() {
+    fn the_footprint_says_how_much_further_to_zoom() {
         let (mut app, _cmd_rx) = app_with_history(4_000);
         let ctx = egui::Context::default();
         app.active_tab_mut().flow_pane.footprint_visible = true;
@@ -13881,84 +13945,66 @@ plot(close)
                 .any(|text| text.contains("numbers at") && text.contains("this zoom")),
             "the default zoom says how far off the numbers are: {opening:?}"
         );
-
-        app.active_tab_mut()
-            .flow_pane
-            .viewport
-            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
-        let grouped = painted_text(&run_frame(&mut app, &ctx));
-        assert!(
-            grouped.iter().any(|text| text.contains("bars grouped")),
-            "and grouped, it says zooming is not the answer: {grouped:?}"
-        );
-        assert!(
-            !grouped.iter().any(|text| text.contains("numbers at")),
-            "without also promising numbers at some zoom: {grouped:?}"
-        );
-        // And the grouping note names the layer that went quiet, so a trader
-        // who switched it on and sees nothing is never left wondering whether
-        // the layer is broken.
-        assert!(
-            grouped
-                .iter()
-                .any(|text| text.contains("bars per candle") && text.contains("footprint paused")),
-            "the note says what the squeeze cost: {grouped:?}"
-        );
     }
 
-    /// The squeeze a trader reaching for more history actually makes. Past the
-    /// zoom where a bar can be drawn on its own, bars group into one candle per
-    /// slot: ten times the history arrives in the window for no more painted
-    /// shapes than before, and the canvas states the factor rather than letting
-    /// a reader take a grouped candle for a bar.
+    /// The trust law, held at the app level: one bar is one candle at every
+    /// zoom the squeeze can reach. A trader enters on a single bar of their
+    /// rule — a candle that could stand for several would poison all of them.
+    /// The 1 px floor still doubles what the old 2 px one showed, with nothing
+    /// merged to pay for it.
     #[test]
-    fn squeezing_past_the_grouping_zoom_buys_history_without_buying_cost() {
+    fn squeezing_shows_more_bars_and_never_merges_any() {
         let (mut app, _cmd_rx) = app_with_history(4_000);
         let ctx = egui::Context::default();
-        let opening = run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
         let slots = app.active_tab().flow_pane.slots();
         let bars_across = |viewport: &crate::viewport::Viewport| {
             let (start, end) = viewport.visible_range(800.0, slots);
             end - start
         };
-        assert!(!app.active_tab().flow_pane.viewport.grouped());
-        assert!(
-            !painted_text(&opening)
-                .iter()
-                .any(|text| text.contains("bars per candle")),
-            "the default zoom groups nothing, so it claims nothing"
-        );
 
         // Where zooming out used to stop.
         app.active_tab_mut().flow_pane.viewport.set_px_per_bar(2.0);
         let shallow = run_frame(&mut app, &ctx);
-        let shallow_rects = painted_rects(&shallow);
         let shallow_bars = bars_across(&app.active_tab().flow_pane.viewport);
+        let shallow_rects = painted_rects(&shallow);
 
-        // As far out as it now goes.
+        // As far out as it now goes: twice the bars, each still its own candle.
         app.active_tab_mut()
             .flow_pane
             .viewport
             .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
         let deep = run_frame(&mut app, &ctx);
+        let deep_bars = bars_across(&app.active_tab().flow_pane.viewport);
         let deep_rects = painted_rects(&deep);
         let viewport = app.active_tab().flow_pane.viewport;
-
-        assert!(viewport.grouped(), "the deep squeeze groups bars");
+        // Not an exact 2x: `visible_range` is deliberately generous by a bar
+        // at each edge, and the cushion must absorb that at both zooms.
         assert!(
-            bars_across(&viewport) >= 5 * shallow_bars,
-            "history in the window: {} vs {shallow_bars}",
-            bars_across(&viewport)
+            deep_bars + 4 >= 2 * shallow_bars,
+            "history in the window: {deep_bars} vs {shallow_bars}"
         );
         assert!(
-            deep_rects <= shallow_rects + 8,
-            "and no more shapes to paint it: {deep_rects} vs {shallow_rects}"
+            (viewport.candle_width() - viewport.px_per_bar()).abs() < f32::EPSILON,
+            "one bar, one candle, at the deepest squeeze"
+        );
+        // The law held at the *paint* level, where a fold would actually
+        // happen. The chrome's rectangles are a constant, so the growth from
+        // shallow to deep is the extra bars' candles alone: at least two
+        // rectangles each (body fill + outline — a draw-side fold would erase
+        // them), and boundedly few (a layer forgetting its zoom gate would
+        // blow past any per-bar budget).
+        let extra_bars = deep_bars - shallow_bars;
+        let extra_rects = deep_rects.saturating_sub(shallow_rects);
+        assert!(
+            extra_rects >= 2 * extra_bars && extra_rects <= 8 * extra_bars,
+            "each of the {extra_bars} extra bars drawn as its own candle: {extra_rects} extra rects"
         );
         assert!(
-            painted_text(&deep)
+            !painted_text(&deep)
                 .iter()
-                .any(|text| text.contains("bars per candle")),
-            "the canvas says what one candle now stands for"
+                .any(|text| text.contains("bars per candle") || text.contains("bars grouped")),
+            "and nothing on the canvas claims otherwise"
         );
     }
 

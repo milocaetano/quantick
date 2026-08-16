@@ -114,17 +114,6 @@ const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 
 /// would be. Matches the "connecting…" line: same voice, same weight.
 const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 
-/// Font size, in points, of the grouping note ("×20 bars per candle"). The
-/// footprint legend's size, because the two share a corner and read as one
-/// statement about how coarse the chart currently is.
-const GROUPING_NOTE_FONT_SIZE: f32 = 11.0;
-/// Inset of that note from the left edge of the candles' pane, in pixels —
-/// the footprint legend's own inset, so the two line up.
-const GROUPING_NOTE_INSET_X: f32 = 6.0;
-/// Its baseline above the bottom of the pane, in pixels: one line clear of the
-/// footprint legend, which sits 6 px up in the same corner.
-const GROUPING_NOTE_OFFSET_Y: f32 = 22.0;
-
 /// Dash length, in pixels, of the venue↔prints seam marker. Long enough to
 /// read as deliberate beside the solid backfill divider, short enough not to
 /// be mistaken for one.
@@ -2220,23 +2209,6 @@ impl ChartPane {
     /// re-expressed against the refilled series rather than discarded
     /// ([`Self::settle_pending_reanchor`]). The re-anchor waits for bars to
     /// exist, because an empty series can answer nothing.
-    /// Whether the layers that draw *per bar* may draw on this frame.
-    ///
-    /// False while the chart groups bars into shared candles. A ladder is one
-    /// bar's tape and a bubble is one print at one bar; twenty bars behind one
-    /// candle leaves neither anywhere honest to go. Summing ladders would
-    /// invent a bar the rule never made, and thousands of bubbles at the same
-    /// x stop being a reading of aggression and become a coloured sheet over
-    /// the price.
-    ///
-    /// The footprint asks the same question through `LayerFrame`'s own
-    /// `bars_per_slot`, so both layers withdraw together — and the grouping
-    /// note in the corner is what tells the trader why.
-    #[must_use]
-    pub fn per_bar_layers_drawable(&self) -> bool {
-        !self.viewport.grouped()
-    }
-
     pub fn reset_series(&mut self) {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
@@ -4322,13 +4294,19 @@ impl ChartPane {
         // sends the newest bars off the right of it, and they scroll out of
         // sight behind the tape instead of being drawn over it.
         let clip = painter.with_clip_rect(history_rect);
-        // How many bars share one drawn candle, and which slot holds the bar
-        // still forming. Both are read once here and used by every pass over
-        // the candles below.
-        let per_slot = self.viewport.bars_per_slot();
-        let per_bar_layers = self.per_bar_layers_drawable();
-        let forming_slot = partial_visible.map(|_| closed_total / per_slot);
         let viewport = &self.viewport;
+        // Every candle this frame draws, in order: its bar index, the bar
+        // itself, and whether it is still forming. One bar, one candle — the
+        // law `Viewport::candle_width` states — so this is simply the visible
+        // bars, borrowed.
+        let visible_candles = |paint: &mut dyn FnMut(usize, &quantick_engine::Bar, bool)| {
+            for (offset, bar) in visible_closed().enumerate() {
+                paint(closed_start + offset, bar, false);
+            }
+            if let Some(partial) = partial_visible {
+                paint(closed_total, partial, true);
+            }
+        };
         // Clear the heat behind each candle's high–low span so a translucent
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
@@ -4351,53 +4329,35 @@ impl ChartPane {
                     canvas_background,
                 );
             };
-            crate::resample::for_each_group(
-                visible_closed().chain(partial_visible),
-                closed_start,
-                per_slot,
-                |index, bar| clear_bar(viewport.slot_center_x(index, right, total), bar),
-            );
+            visible_candles(&mut |index, bar, _forming| {
+                clear_bar(viewport.x_center(index, right, total), bar);
+            });
         }
-        // One candle per drawn slot. Ungrouped — every zoom a trader works at —
-        // that is one bar, borrowed and drawn exactly as before. Squeezed past
-        // the point where a bar can be drawn on its own, it is the exact fold
-        // of the bars sharing the slot (`Viewport::bars_per_slot`), so a
-        // compressed chart is a coarser record of the same tape rather than an
-        // invented one, and the cost of a frame stops growing with the zoom.
-        // The forming bar folds into the slot it belongs to, and that slot is
-        // drawn as forming.
         // Asked once for the whole frame: on a chart where no indicator paints
-        // — every chart until a script calls `barcolor` — the per-slot lookup
+        // — every chart until a script calls `barcolor` — the per-bar lookup
         // below never runs at all.
         let painted = self.indicators.paints_any();
-        crate::resample::for_each_group(
-            visible_closed().chain(partial_visible),
-            closed_start,
-            per_slot,
-            |index, bar| {
-                let xc = viewport.slot_center_x(index, right, total);
-                let forming = forming_slot == Some(index / per_slot);
-                // Plot rows map 1:1 onto bars (see `PlotX`), so a drawn slot
-                // covers the rows its fold covers: `index` is the first bar of
-                // the group and the bucket ends where the next one starts.
-                let slot_end = (index / per_slot + 1) * per_slot;
-                let paint = painted
-                    .then(|| self.indicators.slot_paint(index..slot_end, forming))
-                    .flatten();
-                draw_candle(
-                    &clip,
-                    crate::candle_view::BarSlot {
-                        xc,
-                        half_width: half,
-                    },
-                    &scale,
-                    bar,
-                    forming,
-                    candles,
-                    paint,
-                );
-            },
-        );
+        visible_candles(&mut |index, bar, forming| {
+            let xc = viewport.x_center(index, right, total);
+            // Plot rows map 1:1 onto bars (see `PlotX`), and one bar is one
+            // candle at every zoom, so a drawn candle covers exactly its own
+            // row.
+            let paint = painted
+                .then(|| self.indicators.slot_paint(index..index + 1, forming))
+                .flatten();
+            draw_candle(
+                &clip,
+                crate::candle_view::BarSlot {
+                    xc,
+                    half_width: half,
+                },
+                &scale,
+                bar,
+                forming,
+                candles,
+                paint,
+            );
+        });
         // The footprint rides directly on the candles, before everything
         // drawn over them: it is a representation of the bars themselves,
         // not an annotation. Prefix (venue) candles carry no tape and draw
@@ -4426,7 +4386,6 @@ impl ChartPane {
                 x_center: &|slot| viewport.x_center(slot, right, total),
                 half,
                 candle_width: cw,
-                bars_per_slot: per_slot,
                 side_inferred: chrome.side_inferred,
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
@@ -4557,7 +4516,6 @@ impl ChartPane {
         }
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
-            && per_bar_layers
         {
             orderflow.draw_aggressions(
                 painter,
@@ -4597,7 +4555,6 @@ impl ChartPane {
                 canvas_background,
                 lane_width_px,
                 legend_inset,
-                per_bar_layers,
             );
         }
 
@@ -4763,39 +4720,6 @@ impl ChartPane {
                 "no bars in view — double-click to return to the live edge",
                 egui::FontId::proportional(EMPTY_VIEW_FONT_SIZE),
                 theme::TEXT_MUTED,
-            );
-        }
-        // Squeezed past the grouping zoom, one candle stands for several bars.
-        // A chart that did that quietly would be misreporting its own
-        // resolution — every candle a reader counts, every wick they measure,
-        // would be a different thing from what the bar rule says it is. So it
-        // says the factor, in the corner and in the reader's own units, and
-        // names any layer that went quiet because of it: a trader who switched
-        // the bubbles on and sees none must not be left to wonder whether the
-        // layer is broken.
-        //
-        // One line above the footprint legend's home, which is the same
-        // corner, so the two statements are read together — this chart is
-        // coarse, and here is what it costs you.
-        if self.viewport.grouped() {
-            let paused = match (
-                self.layer_visible(ChartLayer::Footprint, chrome.style),
-                self.layer_visible(ChartLayer::Bubbles, chrome.style),
-            ) {
-                (true, true) => " · footprint and bubbles paused",
-                (true, false) => " · footprint paused",
-                (false, true) => " · bubbles paused",
-                (false, false) => "",
-            };
-            painter.text(
-                egui::pos2(
-                    history_rect.left() + GROUPING_NOTE_INSET_X,
-                    history_rect.bottom() - GROUPING_NOTE_OFFSET_Y,
-                ),
-                egui::Align2::LEFT_BOTTOM,
-                format!("×{} bars per candle{paused}", self.viewport.bars_per_slot()),
-                egui::FontId::proportional(GROUPING_NOTE_FONT_SIZE),
-                theme::TEXT_FAINT,
             );
         }
         if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
@@ -7229,26 +7153,75 @@ mod tests {
         );
     }
 
-    /// The layers that speak about one bar answer to the zoom, not only to
-    /// their own switch: grouped, there is no single bar for them to be about.
-    #[test]
-    fn the_per_bar_layers_withdraw_from_a_grouped_chart() {
-        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-        assert!(
-            pane.per_bar_layers_drawable(),
-            "at the default zoom one bar owns one candle"
+    /// Drag horizontally across `from`, over three frames: press, move,
+    /// release. egui reads a drag from the movement *between* frames, so a
+    /// single frame carrying both the press and the move reports no delta.
+    fn drag_across(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        from: egui::Pos2,
+        dx: f32,
+    ) {
+        let to = from + egui::vec2(dx, 0.0);
+        // The pointer arrives first: a widget only takes a press it can see
+        // the pointer over, and the press in the same frame as the move is
+        // read against last frame's position.
+        let _ = drive_navigation(pane, ctx, area, vec![egui::Event::PointerMoved(from)]);
+        let _ = drive_navigation(
+            pane,
+            ctx,
+            area,
+            vec![egui::Event::PointerButton {
+                pos: from,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            }],
         );
+        let _ = drive_navigation(pane, ctx, area, vec![egui::Event::PointerMoved(to)]);
+        let _ = drive_navigation(
+            pane,
+            ctx,
+            area,
+            vec![egui::Event::PointerButton {
+                pos: to,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+    }
 
-        // The zoom where grouping starts, and the far end of it.
-        pane.viewport.set_px_per_bar(2.0);
-        assert!(!pane.per_bar_layers_drawable());
-        pane.viewport
-            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
-        assert!(!pane.per_bar_layers_drawable());
+    /// The x axis belongs to every chart. Dragging the time strip squeezes or
+    /// stretches the candles of the pane whose strip is under the pointer —
+    /// the flow pane *and* the timeframe pane beside it, which is the whole
+    /// point of the gesture living on each pane's own axis.
+    #[test]
+    fn dragging_the_time_strip_zooms_the_pane_it_belongs_to() {
+        let ctx = egui::Context::default();
+        for (label, mut pane) in [
+            (
+                "flow",
+                ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned()),
+            ),
+            ("time", ChartPane::time(2, 60_000)),
+        ] {
+            let start = test_areas(&pane, TEST_PLOT).time_strip.center();
 
-        // And back: zooming in returns them, so this is a state, never a
-        // one-way switch a trader has to go and undo somewhere else.
-        pane.viewport.set_px_per_bar(8.0);
-        assert!(pane.per_bar_layers_drawable());
+            let before = pane.viewport.px_per_bar();
+            drag_across(&mut pane, &ctx, TEST_PLOT, start, -120.0);
+            let squeezed = pane.viewport.px_per_bar();
+            assert!(
+                squeezed < before,
+                "{label}: dragging left squeezes ({squeezed} vs {before})"
+            );
+
+            drag_across(&mut pane, &ctx, TEST_PLOT, start, 120.0);
+            assert!(
+                pane.viewport.px_per_bar() > squeezed,
+                "{label}: dragging right stretches again"
+            );
+        }
     }
 }
