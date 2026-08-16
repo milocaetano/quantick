@@ -932,6 +932,14 @@ pub struct QuantickApp {
     /// file remembers them. Carried between load and save for the same reason
     /// `bookmarks` is: every write rewrites the whole file.
     recent_workspaces: Vec<String>,
+    /// Which of them are actually on disk, resolved when the list changes
+    /// rather than when the menu is drawn.
+    ///
+    /// The same rule `workspace_saved` above is here for: the menu body runs
+    /// every frame it is open, so filtering ten paths there would be ten
+    /// syscalls at 60 Hz for an answer that changes only when this app
+    /// exports, imports or restores — the three places that refresh it.
+    recent_on_disk: Vec<std::path::PathBuf>,
     /// The native file dialog, while one is open, and what it is for. One at
     /// a time, and off the UI thread — the OS dialog never blocks a frame.
     workspace_picker: Option<(
@@ -1146,6 +1154,7 @@ impl QuantickApp {
             workspace_name_entry: None,
             workspace_saved: false,
             recent_workspaces: Vec::new(),
+            recent_on_disk: Vec::new(),
             workspace_picker: None,
             window_size: None,
             frames: FrameStats::new(120),
@@ -3236,6 +3245,7 @@ impl QuantickApp {
         self.save_on_exit = workspace.save_on_exit;
         self.bookmarks = workspace.saved.clone();
         self.recent_workspaces = workspace.recent_workspaces.clone();
+        self.refresh_recent_workspaces();
         // One stat at boot, so the Reset entry can gate on a field instead of
         // the filesystem for the rest of the session. A file with no tabs
         // still counts: it carries the autosave setting, and Reset is how the
@@ -3414,6 +3424,7 @@ impl QuantickApp {
         match outcome {
             Ok(stores) => {
                 crate::workspace_bundle::remember_recent(&mut self.recent_workspaces, path);
+                self.refresh_recent_workspaces();
                 self.save_workspace("export_recent");
                 tracing::info!(
                     target: "quantick::app",
@@ -3465,6 +3476,7 @@ impl QuantickApp {
             Ok(stores) => {
                 self.reload_cockpit_stores();
                 crate::workspace_bundle::remember_recent(&mut self.recent_workspaces, path);
+                self.refresh_recent_workspaces();
                 // The recent list lives in the workspace file the import just
                 // replaced, so it has to be written back after the reload —
                 // otherwise opening a file would forget that it was opened.
@@ -3524,6 +3536,16 @@ impl QuantickApp {
         let recent = workspace.recent_workspaces.clone();
         self.restore_workspace(workspace);
         self.recent_workspaces = recent;
+    }
+
+    /// Work out which remembered workspace files are still there.
+    ///
+    /// Called when the list changes, never from the menu body — see
+    /// [`Self::recent_on_disk`]. The stored list keeps every entry: a file on
+    /// a drive that is merely unplugged today comes back when it is plugged
+    /// in, and only the menu is filtered.
+    fn refresh_recent_workspaces(&mut self) {
+        self.recent_on_disk = crate::workspace_bundle::existing_recent(&self.recent_workspaces);
     }
 
     /// Take every indicator off every pane, through the same removal the
@@ -4584,13 +4606,12 @@ impl QuantickApp {
                             self.open_workspace_import_picker();
                             ui.close_menu();
                         }
-                        // Built from what is actually on disk, so every entry
-                        // in the menu opens something.
-                        let recent = crate::workspace_bundle::existing_recent(&self.recent_workspaces);
+                        // Read off the field, not the filesystem: this body
+                        // runs every frame the menu is open.
                         let mut reopen: Option<std::path::PathBuf> = None;
-                        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+                        ui.add_enabled_ui(!self.recent_on_disk.is_empty(), |ui| {
                             ui.menu_button("Open recent", |ui| {
-                                for path in &recent {
+                                for path in &self.recent_on_disk {
                                     if ui
                                         .button(crate::workspace_bundle::recent_label(path))
                                         .on_hover_text(path.display().to_string())
