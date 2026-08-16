@@ -59,15 +59,38 @@ pub(crate) struct CockpitStore {
     /// one. The gate that lets a bundle be checked whole before any of it is
     /// written — see [`crate::workspace_bundle`].
     pub validate: fn(&str) -> Result<(), String>,
+    /// Whether this store travels in a workspace bundle.
+    ///
+    /// Every store here shares the durable home, because losing any of them
+    /// to a launch directory is the same bug. Not every one is part of an
+    /// *arrangement* a trader would hand to someone else: the paper sidecar
+    /// records a simulated account and the folder its journal lives in, which
+    /// are results and machine facts, not a screen.
+    pub in_bundle: bool,
+    /// Top-level keys that describe *this installation* rather than the
+    /// arrangement, and so never travel in a bundle.
+    ///
+    /// A workspace file carries a cockpit, not a machine. Without this, a
+    /// bundle from a colleague would overwrite the recent-files list, the
+    /// named bookmarks and the replay folder of whoever opened it — the very
+    /// thing those fields' own doc comments say must not happen
+    /// ([`crate::ui_state::Workspace::recent_workspaces`]). They are stripped
+    /// on capture and preserved on apply.
+    pub local_keys: &'static [&'static str],
 }
 
-/// Every store that holds a piece of the cockpit, in the order a bundle
+/// Every store that keeps something between launches, in the order a bundle
 /// writes them.
 ///
-/// Paper trading is deliberately absent: [`crate::paper_home`] already gave
-/// the journal a durable home of its own, and a simulated position is a
-/// *result*, not an arrangement of the screen — restoring a saved cockpit
-/// must not rewrite the trader's account.
+/// Two questions, deliberately separate. *Does it belong in the durable
+/// home?* — yes for all of these, because losing any of them to a launch
+/// directory is the one bug this module exists to end. *Does it travel in a
+/// workspace bundle?* — [`CockpitStore::in_bundle`], and the paper sidecar
+/// answers no: it records a simulated account and where its journal lives,
+/// which are a result and a machine fact, not an arrangement of the screen.
+/// The journal *folder* was already rescued by [`crate::paper_home`]; the
+/// file recording which folder the trader picked was not, and that is why
+/// `paper_state` is here.
 pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     CockpitStore {
         key: "ui_state",
@@ -75,6 +98,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::ui_state::UI_STATE_FILE,
         validate: crate::ui_state::validate,
         path: crate::ui_state::default_path,
+        in_bundle: true,
+        local_keys: crate::ui_state::LOCAL_KEYS,
     },
     CockpitStore {
         key: "indicators",
@@ -82,6 +107,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::indicators::state_file::STATE_FILE,
         validate: crate::indicators::state_file::validate,
         path: crate::indicators::state_file::default_path,
+        in_bundle: true,
+        local_keys: &[],
     },
     CockpitStore {
         key: "indicator_presets",
@@ -89,6 +116,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::indicators::preset_file::PRESETS_FILE,
         validate: crate::indicators::preset_file::validate,
         path: crate::indicators::preset_file::default_path,
+        in_bundle: true,
+        local_keys: &[],
     },
     CockpitStore {
         key: "chart_layers",
@@ -96,6 +125,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::chart_layers::LAYERS_FILE,
         validate: crate::chart_layers::validate,
         path: crate::chart_layers::default_path,
+        in_bundle: true,
+        local_keys: &[],
     },
     CockpitStore {
         key: "drawing_presets",
@@ -103,6 +134,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::drawings::presets::PRESETS_FILE,
         validate: crate::drawings::presets::validate,
         path: crate::drawings::presets::PresetStore::default_path,
+        in_bundle: true,
+        local_keys: &[],
     },
     CockpitStore {
         key: "footprint_settings",
@@ -110,6 +143,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::footprint_config::SETTINGS_FILE,
         validate: crate::footprint_config::validate_settings,
         path: crate::footprint_config::settings_path,
+        in_bundle: true,
+        local_keys: &[],
     },
     CockpitStore {
         key: "footprint_presets",
@@ -117,6 +152,17 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::footprint_presets::PRESETS_FILE,
         validate: crate::footprint_presets::validate,
         path: crate::footprint_presets::default_path,
+        in_bundle: true,
+        local_keys: &[],
+    },
+    CockpitStore {
+        key: "paper_state",
+        env: crate::paper_state::STATE_ENV,
+        file: crate::paper_state::STATE_FILE,
+        validate: crate::paper_state::validate,
+        path: crate::paper_state::default_path,
+        in_bundle: false,
+        local_keys: &[],
     },
     CockpitStore {
         key: "symbols",
@@ -124,6 +170,8 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         file: crate::symbols_file::SYMBOLS_FILE,
         validate: crate::symbols_file::validate,
         path: crate::symbols_file::default_path,
+        in_bundle: true,
+        local_keys: &[],
     },
 ];
 
@@ -132,10 +180,41 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
 /// a flag written beside the launch directory would not.
 const CONSOLIDATED_MARKER: &str = ".cockpit-consolidated";
 
-/// The durable home for cockpit stores, when the platform reports a documents
-/// folder. The same shelf the journal hangs off, by design.
+/// The durable home for cockpit stores: the shelf the journal hangs off, but
+/// only once it is a folder that can actually be written to.
+///
+/// Resolved once per process. A path the platform names but the app cannot
+/// create — an unmounted roaming profile, a full disk, a permissions
+/// problem — is *not* a home: returning it anyway would send every store to a
+/// folder that does not exist, and the trader would get "could not be saved"
+/// on every save for the rest of the session while the log claimed the launch
+/// directory had been kept. Falling back to the cwd-relative name is the old
+/// behaviour, which at least works.
+///
+/// Caching also pays for itself: `dirs::document_dir` is a `SHGetKnownFolderPath`
+/// call on Windows and eight stores ask for it at startup.
 pub(crate) fn home() -> Option<PathBuf> {
-    crate::paper_home::shelf_dir()
+    static HOME: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let shelf = crate::paper_home::shelf_dir()?;
+        match std::fs::create_dir_all(&shelf) {
+            Ok(()) => Some(shelf),
+            Err(error) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "COCKPIT_HOME_UNAVAILABLE",
+                    path = %shelf.display(),
+                    %error,
+                    action = "keeping_launch_directory",
+                    "the documents folder cannot hold the cockpit; falling back to the launch \
+                     directory"
+                );
+                None
+            }
+        }
+    })
+    .clone()
 }
 
 /// Where a store's file lives this run.
@@ -156,20 +235,43 @@ fn resolve_in(home: Option<PathBuf>, file: &str) -> PathBuf {
     home.map_or_else(|| PathBuf::from(file), |home| home.join(file))
 }
 
+thread_local! {
+    /// Which scratch home this thread's stores resolve to. See [`test_path`].
+    static TEST_HOME_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Give the app a test is about to build a scratch home of its own.
+///
+/// Called by the test harness's app constructor. Without it, two apps built
+/// on one thread would share a cockpit and the second would open on the
+/// first's arrangement — an order-dependent failure that passes in parallel
+/// CI and appears the moment someone serializes the run to debug something
+/// else.
+#[cfg(test)]
+pub(crate) fn next_test_home() {
+    TEST_HOME_EPOCH.with(|epoch| epoch.set(epoch.get() + 1));
+}
+
 /// A per-process scratch home for stores built by a test.
 ///
 /// Stable within a process and distinct per file, so a `default_path()` a
 /// test calls twice answers twice the same — and no test can reach the real
 /// documents folder.
 pub(crate) fn test_path(file: &str) -> PathBuf {
-    // Per thread as well as per process: the test harness gives each test its
-    // own thread, so this is stable *within* a test — a path resolved twice
-    // answers twice the same — while still isolating tests that build several
-    // apps and would otherwise restore one another's cockpit.
+    // Two requirements pull against each other. A path resolved twice inside
+    // one test must answer twice the same, or the bundle would write to a
+    // different file than the app is reading. And two tests must never share
+    // a cockpit, or one restores the other's — which the per-call counters
+    // this replaced did give, and `--test-threads=1` would otherwise take
+    // away, since libtest then runs every test on the same thread.
+    //
+    // So: stable per (process, thread, epoch), where the epoch is bumped by
+    // `next_test_home` when a test builds an app.
     let home = std::env::temp_dir().join(format!(
-        "quantick-test-home-{}-{:?}",
+        "quantick-test-home-{}-{:?}-{}",
         std::process::id(),
-        std::thread::current().id()
+        std::thread::current().id(),
+        TEST_HOME_EPOCH.with(std::cell::Cell::get)
     ));
     // The real home is created by the startup rescue, which a test does not
     // run; without this every store's first save would fail on a missing
@@ -191,10 +293,22 @@ pub(crate) struct RescueSummary {
 }
 
 impl RescueSummary {
-    /// Whether this pass may stamp the home as consolidated. A pass that
-    /// failed must run again rather than declare the rescue done.
-    const fn clean(&self) -> bool {
-        self.failed == 0
+    /// Whether this pass may stamp the home as consolidated.
+    ///
+    /// A pass that copied nothing may *not*: it saw one launch directory, and
+    /// the trader's real cockpit is very likely in a different one. Stamping
+    /// on an empty pass is how the rescue would disable itself before ever
+    /// reaching the folder that mattered — a trader who happens to open the
+    /// app once from a desktop shortcut would lose their arrangement
+    /// permanently, which is the exact failure this module exists to end.
+    /// A pass that failed may not either: it must run again rather than
+    /// declare the rescue done.
+    ///
+    /// The cost of not stamping is one `exists` per store on later launches
+    /// (microseconds), against losing a cockpit — so the bar is deliberately
+    /// this high.
+    const fn rescued_something(&self) -> bool {
+        self.copied > 0 && self.failed == 0
     }
 }
 
@@ -246,6 +360,8 @@ fn rescue_into(
     if marker.exists() {
         return None;
     }
+    // A pass that copies nothing must not reach the marker: see
+    // `RescueSummary::rescued_something`.
     let mut summary = RescueSummary::default();
     for store in COCKPIT_STORES {
         // A store pointed somewhere by its own environment variable is not
@@ -294,7 +410,7 @@ fn rescue_into(
             }
         }
     }
-    if summary.clean() {
+    if summary.rescued_something() {
         write_marker(&marker);
     }
     Some(summary)
@@ -407,6 +523,52 @@ mod tests {
         assert!(
             rescue_into(&home, Path::new("some/other/checkout"), &nothing_overridden).is_none(),
             "a second launch from anywhere else finds the marker"
+        );
+    }
+
+    /// The failure that would make this module worse than the bug it fixes.
+    ///
+    /// A trader whose cockpit lives in one checkout opens the app once from
+    /// somewhere else — a desktop shortcut, another worktree. That pass finds
+    /// nothing. If it stamped the home anyway, the rescue would be over
+    /// before it ever saw the folder that mattered, and the arrangement would
+    /// be lost for good.
+    #[test]
+    fn a_pass_that_found_nothing_does_not_end_the_rescue() {
+        let home = scratch("rescue-empty-home");
+        let empty = scratch("rescue-empty-launch");
+        let real = scratch("rescue-real-cockpit");
+        std::fs::write(real.join("ui-state.toml"), "version = 1\ntabs = []\n").unwrap();
+
+        let first = rescue_into(&home, &empty, &nothing_overridden).expect("the pass runs");
+        assert_eq!(first.copied, 0, "that folder held no cockpit");
+        assert!(
+            !home.join(CONSOLIDATED_MARKER).exists(),
+            "and an empty pass must not declare the rescue done"
+        );
+
+        let second = rescue_into(&home, &real, &nothing_overridden).expect("the next launch tries");
+        assert_eq!(second.copied, 1, "the real cockpit is still rescued");
+        assert!(
+            home.join(CONSOLIDATED_MARKER).exists(),
+            "and now the rescue is over"
+        );
+    }
+
+    /// A failed copy must not end the rescue either.
+    #[test]
+    fn a_pass_that_failed_does_not_end_the_rescue() {
+        let home = scratch("rescue-failed-home");
+        let legacy = scratch("rescue-failed-legacy");
+        std::fs::write(legacy.join("ui-state.toml"), "version = 1\ntabs = []\n").unwrap();
+        // A directory where the copy expects to write a file: the rename
+        // fails, which is the shape of any I/O refusal here.
+        std::fs::create_dir_all(home.join("ui-state.toml")).unwrap();
+        let summary = rescue_into(&home, &legacy, &nothing_overridden).expect("the pass runs");
+        assert_eq!(summary.copied, 0);
+        assert!(
+            !home.join(CONSOLIDATED_MARKER).exists(),
+            "a pass that could not finish runs again next launch"
         );
     }
 

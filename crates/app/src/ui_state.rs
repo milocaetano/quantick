@@ -48,6 +48,22 @@ pub(crate) const UI_STATE_FILE: &str = "ui-state.toml";
 /// Bumped on breaking format changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 
+/// The keys in this file that describe *this installation* rather than the
+/// arrangement, and so never travel in a workspace bundle.
+///
+/// Each of these already documents itself as a fact about the machine rather
+/// than about a screen — the recent files, the named bookmarks, the replay
+/// folder, whether this copy autosaves. A bundle carries a cockpit; opening a
+/// colleague's must not replace the trader's own bookmarks with theirs, nor
+/// re-point where their recordings live. See
+/// [`crate::store_home::CockpitStore::local_keys`].
+pub(crate) const LOCAL_KEYS: &[&str] = &[
+    "recent_workspaces",
+    "saved",
+    "replay_folder",
+    "save_on_exit",
+];
+
 /// Which pane the chrome spoke for, in the file's vocabulary.
 ///
 /// A twin of [`crate::pane::PaneSide`] rather than that enum itself, for the

@@ -20,9 +20,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Environment override for the paper-state file location.
-const STATE_ENV: &str = "QUANTICK_PAPER_STATE";
-/// Default file, next to the working directory's config.
-const STATE_FILE: &str = "paper-state.toml";
+pub(crate) const STATE_ENV: &str = "QUANTICK_PAPER_STATE";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const STATE_FILE: &str = "paper-state.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
 /// Adding an optional field is not breaking — absent keys stay `None`.
 const FORMAT_VERSION: u32 = 1;
@@ -63,7 +63,26 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return scratch_path();
     }
-    std::env::var_os(STATE_ENV).map_or_else(|| PathBuf::from(STATE_FILE), PathBuf::from)
+    crate::store_home::resolve(STATE_ENV, STATE_FILE)
+}
+
+/// Parse a paper-state file, reporting why it is not one.
+///
+/// This store shares the durable home with the cockpit — losing the journal
+/// folder the trader picked because they launched from elsewhere is the same
+/// bug — but it deliberately never travels in a workspace bundle: a simulated
+/// account is a result, not an arrangement of the screen. See
+/// [`crate::store_home::COCKPIT_STORES`].
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let file: PaperStateFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "paper-state format version {} (this build reads {FORMAT_VERSION})",
+            file.version
+        ))
+    }
 }
 
 /// A store of its own, for tests. See [`default_path`].

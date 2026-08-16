@@ -202,11 +202,6 @@ enum InspectorTab {
     Coordinates,
 }
 
-/// What the inspector body asked for this frame. The caller owns every
-/// mutation, so the pinned panel and the floating window share one rule set.
-/// Which default-style button the Style tab was pressed on, so the caller can
-/// say out loud that something was remembered — a silent save leaves the
-/// trader wondering whether it took.
 /// What the open file dialog is for, so the one poll can land either answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspacePick {
@@ -216,6 +211,11 @@ enum WorkspacePick {
     Import,
 }
 
+/// What the inspector body asked for this frame. The caller owns every
+/// mutation, so the pinned panel and the floating window share one rule set.
+/// Which default-style button the Style tab was pressed on, so the caller can
+/// say out loud that something was remembered — a silent save leaves the
+/// trader wondering whether it took.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SavedDefault {
     OneTool,
@@ -3264,11 +3264,31 @@ impl QuantickApp {
         if workspace.is_empty() {
             return;
         }
+        // Whether tab zero is already the workspace's first market.
+        //
+        // At startup it is: `main` read that market out of this very file and
+        // spawned the window on it, so the tab exists and only its bar rule
+        // can differ. Mid-session — a workspace file being opened — it is
+        // whatever the trader was looking at, and adopting it would leave the
+        // strip holding one market with another's name. Then every tab is
+        // opened outright and the ones that were there are closed after, so
+        // the strip is *replaced* rather than grown.
+        let adopt_first =
+            self.tabs.first().is_some_and(|tab| {
+                tab.id == FIRST_TAB_ID && self.persisted_tab == Some(FIRST_TAB_ID)
+            }) && self.tabs.len() == 1
+                && self.tabs[0].feed_id == workspace.tabs[0].feed
+                && self.tabs[0].symbol == workspace.tabs[0].symbol;
+        let stale: Vec<u64> = if adopt_first {
+            Vec::new()
+        } else {
+            self.tabs.iter().map(|tab| tab.id).collect()
+        };
         for (index, saved) in workspace.tabs.iter().enumerate() {
             // `restore` has already dropped anything unparseable, so a spec
             // reaching here is one a control could have produced.
             let flow = BarSpec::parse(&saved.flow_bars).ok();
-            if index == 0 {
+            if index == 0 && adopt_first {
                 // Tab zero is the one `main` spawned. Its market matches this
                 // entry (that is where `main` read it from), so only its bar
                 // rule can still differ — `main` prefers a feed's declared
@@ -3290,13 +3310,27 @@ impl QuantickApp {
             let focus = saved.focus.map(Into::into);
             // `open_tab` activates what it opened, so the tab just arranged is
             // always the last one — index zero on the first pass.
-            let target = if index == 0 { 0 } else { self.tabs.len() - 1 };
+            let target = if index == 0 && adopt_first {
+                0
+            } else {
+                self.tabs.len() - 1
+            };
             self.tabs[target].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
                 focus,
                 time_interval,
             );
+        }
+        // The markets that were on screen before this workspace was opened.
+        // Closed last, so the strip is never empty in between and `close_tab`
+        // — which refuses to close the only tab — always has the restored
+        // ones to keep. Each closes through its own path, so a simulated
+        // position ends in a journaled flatten rather than vanishing.
+        for id in stale {
+            if let Some(index) = self.tabs.iter().position(|tab| tab.id == id) {
+                self.close_tab(index);
+            }
         }
         self.active_tab = workspace.active_tab.min(self.tabs.len() - 1);
         let config = self.config.clone();
@@ -3324,8 +3358,6 @@ impl QuantickApp {
         if self.workspace_picker.is_some() {
             return;
         }
-        self.save_workspace("export");
-        self.flush_cockpit_stores();
         let start = crate::workspace_bundle::default_dir();
         let suggested = crate::workspace_bundle::file_name_for(&self.suggested_workspace_name());
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -3375,8 +3407,27 @@ impl QuantickApp {
         let Some((intent, receiver)) = &self.workspace_picker else {
             return;
         };
-        let Ok(choice) = receiver.try_recv() else {
-            return;
+        let choice = match receiver.try_recv() {
+            Ok(choice) => choice,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            // The dialog thread died without answering — no display server,
+            // a COM failure. Treated as "no answer yet" this would leave the
+            // field set forever and both menu entries silently dead, since
+            // each refuses to open a second dialog.
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.workspace_picker = None;
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "WORKSPACE_PICKER_LOST",
+                    action = "picker_reset",
+                    "the file dialog closed without an answer"
+                );
+                self.note_workspace(
+                    "The file chooser could not open — see the log. Try again.".to_owned(),
+                );
+                return;
+            }
         };
         let intent = *intent;
         self.workspace_picker = None;
@@ -3414,6 +3465,13 @@ impl QuantickApp {
 
     /// Export the whole cockpit to one file, and say what happened.
     fn export_workspace_to(&mut self, path: &std::path::Path) {
+        // Here rather than before the dialog: these two writes are how the
+        // bundle comes to describe the screen instead of the last flush, and
+        // doing them up front meant a trader who pressed Cancel had still
+        // silently redefined what the app opens on. It also keeps the harness
+        // hook on exactly the menu's path.
+        self.save_workspace("export");
+        self.flush_cockpit_stores();
         let name = crate::workspace_bundle::recent_label(path);
         let outcome = crate::workspace_bundle::capture(
             &name,
@@ -3463,15 +3521,14 @@ impl QuantickApp {
     /// back into the running app, because a cockpit that only changed on disk
     /// would be overwritten by this session's own save on exit.
     fn import_workspace_from(&mut self, path: &std::path::Path) {
-        let outcome = crate::workspace_bundle::read(path, crate::store_home::COCKPIT_STORES)
-            .and_then(|bundle| {
-                crate::workspace_bundle::apply(
-                    &bundle,
-                    crate::store_home::COCKPIT_STORES,
-                    &crate::workspace_bundle::live_paths,
-                )
-                .map(|written| written.len())
-            });
+        let outcome = crate::workspace_bundle::read(path).and_then(|bundle| {
+            crate::workspace_bundle::apply(
+                &bundle,
+                crate::store_home::COCKPIT_STORES,
+                &crate::workspace_bundle::live_paths,
+            )
+            .map(|written| written.len())
+        });
         match outcome {
             Ok(stores) => {
                 self.reload_cockpit_stores();
@@ -3525,17 +3582,43 @@ impl QuantickApp {
         self.footprint_presets =
             crate::footprint_presets::PresetStore::load(&self.footprint_presets_path);
         self.indicator_presets = preset_file::PresetStore::load(&self.indicator_presets_path);
+
+        // The tab strip first, and *before* the indicators: the restore adds
+        // each indicator to whatever pane is focused right now, so the tabs
+        // have to be the imported ones — and the focus on the pane the file
+        // describes — before a single indicator is added. Getting this order
+        // wrong puts a trader's imported indicators on the tab they happened
+        // to be looking at, or on its time pane.
+        let workspace = ui_state::load(&self.ui_state_path).restore(&self.config.clone());
+        self.restore_workspace(workspace);
         self.restore_chart_layers();
+
         // Indicators are *added* by the restore, so the live ones have to go
         // first or the imported set would land on top of them.
         self.clear_indicators();
+        self.focus_persisted_flow_pane();
         self.restore_indicator_state();
         // The set on screen is now the file's; nothing changed since.
         self.indicator_state_dirty = false;
-        let workspace = ui_state::load(&self.ui_state_path).restore(&self.config.clone());
-        let recent = workspace.recent_workspaces.clone();
-        self.restore_workspace(workspace);
-        self.recent_workspaces = recent;
+    }
+
+    /// Put the focus where [`Self::restore_indicator_state`] expects it.
+    ///
+    /// That function adds through the *focused* pane, which at startup is
+    /// always tab zero's flow pane — the only pane the indicator file
+    /// describes. Mid-session it is wherever the trader was looking, so an
+    /// import has to put it back or the restored indicators land on a time
+    /// pane, with their inputs sent to a different worker.
+    fn focus_persisted_flow_pane(&mut self) {
+        let Some(index) = self
+            .persisted_tab
+            .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
+            .or(if self.tabs.is_empty() { None } else { Some(0) })
+        else {
+            return;
+        };
+        self.active_tab = index;
+        self.tabs[index].focus = PaneSide::Flow;
     }
 
     /// Work out which remembered workspace files are still there.
@@ -3548,13 +3631,36 @@ impl QuantickApp {
         self.recent_on_disk = crate::workspace_bundle::existing_recent(&self.recent_workspaces);
     }
 
-    /// Take every indicator off every pane, through the same removal the
-    /// menu uses.
+    /// Take every indicator off every pane.
+    ///
+    /// Straight off each pane's own collection rather than by walking
+    /// `slot_kinds`: that list is bookkeeping for the state *file*, and an
+    /// indicator can be on a pane without being in it — the autostart hooks
+    /// add without registering, and `forget_last_indicator_state_change` pops
+    /// an entry while leaving the indicator on screen. Clearing the list
+    /// would have left those behind for the imported set to stack on top of.
     fn clear_indicators(&mut self) {
-        let targets: Vec<TabSlot> = self.slot_kinds.iter().map(|(target, _)| *target).collect();
-        for target in targets {
-            self.remove_indicator_at(target);
+        /// Empty one pane, view and worker alike.
+        fn strip(pane: &mut crate::pane::ChartPane) {
+            let slots: Vec<SlotId> = pane.indicators.all().iter().map(|view| view.slot).collect();
+            for slot in slots {
+                pane.indicators.remove(slot);
+                pane.indicator_worker.send(IndicatorCommand::Remove(slot));
+            }
         }
+        for tab in &mut self.tabs {
+            strip(&mut tab.flow_pane);
+            // Not `pane_mut(Time)`: that falls back to the flow pane when a
+            // tab was never split, which would strip it twice.
+            if let Some(pane) = tab.time_pane.as_mut() {
+                strip(pane);
+            }
+        }
+        self.slot_kinds.clear();
+        self.script_files.clear();
+        self.pending_hidden.clear();
+        self.pending_styles.clear();
+        self.mark_indicator_state_dirty();
     }
 
     /// Show the trader where the cockpit is kept, and open it.
@@ -3570,30 +3676,12 @@ impl QuantickApp {
             );
             return;
         };
-        let _ = std::fs::create_dir_all(&home);
         self.note_workspace(format!("Cockpit saved in {}", home.display()));
-        // Best effort: the path is on the status line either way, so a system
-        // with no file manager still answers the question.
-        let opened = std::process::Command::new(if cfg!(windows) {
-            "explorer"
-        } else if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        })
-        .arg(&home)
-        .spawn();
-        if let Err(error) = opened {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "COCKPIT_HOME_NOT_OPENED",
-                path = %home.display(),
-                %error,
-                action = "path_shown_on_status_line",
-                "could not open the cockpit home in a file manager"
-            );
-        }
+        // The journal panel's opener, not a second copy of the platform
+        // table: two of them means the next fix lands on one and misses the
+        // other. Best effort — the path is on the status line either way, so
+        // a system with no file manager still answers the question.
+        crate::paper_trading::reveal_folder(&home);
     }
 
     /// Write the workspace and say so on the status bar.
@@ -8220,6 +8308,11 @@ mod tests {
         mpsc::Receiver<FeedCommand>,
         mpsc::Sender<DepthEvent>,
     ) {
+        // A cockpit of its own for this app: every store resolves under the
+        // scratch home this bumps to, so two apps built on one thread never
+        // restore each other's arrangement — the isolation the per-call
+        // counters used to give, kept even under `--test-threads=1`.
+        crate::store_home::next_test_home();
         let (evt_tx, evt_rx) = mpsc::channel(64);
         let (book_tx, book_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
@@ -8292,6 +8385,51 @@ mod tests {
             "and so did the toolbar favourite"
         );
         let _ = std::fs::remove_file(&file);
+    }
+
+    /// Opening a workspace *replaces* the tab strip rather than growing it.
+    ///
+    /// `restore_workspace` was written for startup, where tab zero is already
+    /// the file's first market. Mid-session it is whatever the trader was
+    /// looking at, so adopting it would leave one market carrying another's
+    /// name — and every other saved tab would be opened on top of the ones
+    /// already there, multiplying the strip and the live feeds with it.
+    #[test]
+    fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+        assert_eq!(app.tabs.len(), 2, "the trader has two markets open");
+
+        // A saved workspace naming one market, and not the one on screen.
+        app.restore_workspace(
+            ui_state::Workspace::new(
+                true,
+                None,
+                0,
+                vec![ui_state::SavedTab {
+                    feed: "binance".to_owned(),
+                    symbol: "TESTUSDT".to_owned(),
+                    layout: crate::config::DeclaredLayout::Flow,
+                    split_fraction: None,
+                    focus: None,
+                    flow_bars: "tick:50".to_owned(),
+                    time_bars: None,
+                }],
+                None,
+            )
+            .restore(&app.config.clone()),
+        );
+
+        assert_eq!(
+            app.tabs.len(),
+            1,
+            "the strip is the workspace's, not the workspace on top of what was there"
+        );
+        assert_eq!(app.tabs[0].symbol, "TESTUSDT");
+        assert!(
+            app.active_tab < app.tabs.len(),
+            "and the active index points at a tab that exists"
+        );
     }
 
     /// The all-or-nothing rule where the trader actually meets it: a bad file

@@ -23,13 +23,23 @@
 //! becoming a second, drifting description of everything the app remembers.
 //!
 //! **Importing is all-or-nothing.** Every section is parsed with its real
-//! type *before any file is written* ([`CockpitStore::validate`]). A bundle
-//! that fails anywhere is refused whole, with the reason — half a cockpit is
-//! worse than none, because the trader cannot see the half that is missing.
-//! It is the same rule [`crate::ui_state::load`] already applies to a single
-//! store, applied across all of them.
+//! type, and every replacement file is written, *before any store is
+//! replaced* ([`apply`]). A bundle that fails anywhere is refused whole, with
+//! the reason — half a cockpit is worse than none, because the trader cannot
+//! see the half that is missing. It is the same rule
+//! [`crate::ui_state::load`] already applies to a single store, applied
+//! across all of them. The honest limit: the final phase is a sequence of
+//! renames, atomic one at a time but not as a group, so a failure *there* is
+//! reported by name rather than hidden.
 //!
-//! Paper trading is deliberately not here: see [`COCKPIT_STORES`].
+//! **A bundle carries a cockpit, not a machine.** Keys that describe this
+//! installation — the recent files, the named bookmarks, the replay folder —
+//! are stripped on capture and kept on apply
+//! ([`crate::store_home::CockpitStore::local_keys`]), so opening a
+//! colleague's workspace never costs the trader their own.
+//!
+//! The paper sidecar shares the durable home but is deliberately not a
+//! section here: see [`crate::store_home::COCKPIT_STORES`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -103,7 +113,7 @@ pub(crate) fn capture(
     path_of: StorePath<'_>,
 ) -> Result<Bundle, String> {
     let mut sections = BTreeMap::new();
-    for store in stores {
+    for store in stores.iter().filter(|store| store.in_bundle) {
         let path = path_of(store);
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
@@ -112,8 +122,9 @@ pub(crate) fn capture(
                 return Err(format!("could not read {}: {error}", path.display()));
             }
         };
-        let value: toml::Value = toml::from_str(&text)
+        let mut value: toml::Value = toml::from_str(&text)
             .map_err(|error| format!("{} is not readable: {error}", path.display()))?;
+        strip_local_keys(&mut value, store);
         sections.insert(store.key.to_owned(), value);
     }
     Ok(Bundle {
@@ -139,7 +150,7 @@ fn check<'a>(bundle: &Bundle, stores: &'a [CockpitStore]) -> Result<Vec<&'a Cock
     }
     let known: Vec<&CockpitStore> = stores
         .iter()
-        .filter(|store| bundle.sections.contains_key(store.key))
+        .filter(|store| store.in_bundle && bundle.sections.contains_key(store.key))
         .collect();
     for key in bundle.sections.keys() {
         if !stores.iter().any(|store| store.key == *key) {
@@ -165,47 +176,131 @@ fn check<'a>(bundle: &Bundle, stores: &'a [CockpitStore]) -> Result<Vec<&'a Cock
 
 /// Write every section of `bundle` over the live stores.
 ///
-/// Checked whole first: if any section is bad, nothing is written at all and
-/// the cockpit on screen is exactly as it was. Returns the stores written.
+/// Two phases, so a failure cannot leave half a cockpit. Every section is
+/// checked and rendered, then written to a temp file beside its store — all
+/// of them, before any store is replaced. Only once every temp file is on
+/// disk does the second phase rename them into place. Anything that can fail
+/// for a reason this app can foresee (a bad section, a full disk, a
+/// permission) fails in phase one, where nothing has been replaced yet and
+/// the temp files are cleaned up.
+///
+/// A rename that fails in phase two is the residual risk: the operation is
+/// atomic per file, but there is no atomic rename of eight. That case is
+/// reported by name — what was replaced and what was not — rather than
+/// papered over, and re-importing finishes the job.
 pub(crate) fn apply<'a>(
     bundle: &Bundle,
     stores: &'a [CockpitStore],
     path_of: StorePath<'_>,
 ) -> Result<Vec<&'a str>, String> {
     let stores = check(bundle, stores)?;
-    // Serialize everything before touching the disk, for the same reason:
-    // a section that fails to render must not leave the earlier ones applied.
-    let mut pending: Vec<(PathBuf, String)> = Vec::with_capacity(stores.len());
+    let mut staged: Vec<(PathBuf, PathBuf, &CockpitStore)> = Vec::with_capacity(stores.len());
+    let cleanup = |staged: &[(PathBuf, PathBuf, &CockpitStore)]| {
+        for (temp, ..) in staged {
+            let _ = std::fs::remove_file(temp);
+        }
+    };
     for store in &stores {
-        let text = toml::to_string_pretty(&bundle.sections[store.key])
-            .map_err(|error| format!("section \"{}\" cannot be written: {error}", store.key))?;
-        pending.push((path_of(store), text));
+        let live = path_of(store);
+        let merged = match merge_local_keys(&bundle.sections[store.key], &live, store) {
+            Ok(merged) => merged,
+            Err(error) => {
+                cleanup(&staged);
+                return Err(error);
+            }
+        };
+        let temp = live.with_extension("importing");
+        if let Err(error) = std::fs::write(&temp, &merged) {
+            cleanup(&staged);
+            return Err(format!(
+                "could not stage {}: {error}. Nothing was changed.",
+                live.display()
+            ));
+        }
+        staged.push((temp, live, store));
     }
-    let mut written = Vec::with_capacity(pending.len());
-    for ((path, text), store) in pending.into_iter().zip(&stores) {
-        write_atomically(&path, &text).map_err(|error| {
-            format!(
-                "wrote {} of {} stores, then {} failed: {error}. The rest of the workspace is on \
-                 disk; re-import to finish.",
+    let total = staged.len();
+    let mut written = Vec::with_capacity(total);
+    for (temp, live, store) in staged {
+        if let Err(error) = std::fs::rename(&temp, &live) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(format!(
+                "replaced {} of {total} settings groups, then {} failed: {error}. Open the file \
+                 again to finish.",
                 written.len(),
-                stores.len(),
-                path.display()
-            )
-        })?;
+                live.display()
+            ));
+        }
         written.push(store.key);
     }
     Ok(written)
 }
 
+/// Drop the keys that describe this installation, so they never reach a file
+/// somebody else will open.
+fn strip_local_keys(value: &mut toml::Value, store: &CockpitStore) {
+    let Some(table) = value.as_table_mut() else {
+        return;
+    };
+    for key in store.local_keys {
+        table.remove(*key);
+    }
+}
+
+/// Render a section for `store`, putting this machine's own keys back.
+///
+/// The bundle carries no `local_keys` (they were stripped on capture), so the
+/// values living in the store right now are kept: opening a workspace must
+/// not cost the trader their bookmarks, their recent files or the folder
+/// their recordings are in. A store that cannot be read yet simply has none
+/// to keep, which is the fresh-install case.
+fn merge_local_keys(
+    section: &toml::Value,
+    live: &Path,
+    store: &CockpitStore,
+) -> Result<String, String> {
+    let render = |value: &toml::Value| {
+        toml::to_string_pretty(value)
+            .map_err(|error| format!("section \"{}\" cannot be written: {error}", store.key))
+    };
+    if store.local_keys.is_empty() {
+        return render(section);
+    }
+    let mut merged = section.clone();
+    let (Some(table), Ok(text)) = (merged.as_table_mut(), std::fs::read_to_string(live)) else {
+        return render(&merged);
+    };
+    let Ok(current) = toml::from_str::<toml::Value>(&text) else {
+        return render(&merged);
+    };
+    let Some(current) = current.as_table() else {
+        return render(&merged);
+    };
+    for key in store.local_keys {
+        if let Some(kept) = current.get(*key) {
+            table.insert((*key).to_string(), kept.clone());
+        }
+    }
+    render(&merged)
+}
+
 /// Read a bundle from disk, refusing anything that is not one.
-pub(crate) fn read(path: &Path, stores: &[CockpitStore]) -> Result<Bundle, String> {
+pub(crate) fn read(path: &Path) -> Result<Bundle, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let bundle: Bundle = toml::from_str(&text)
         .map_err(|error| format!("{} is not a quantick workspace: {error}", path.display()))?;
-    // Check on the way in, so a broken file is refused at the moment the
-    // trader chose it rather than after the app has started applying it.
-    check(&bundle, stores)?;
+    // The version, on the way in, so a file this build cannot read is refused
+    // at the moment the trader chose it. The per-section check belongs to
+    // `apply`, which is the only thing that writes — running it here too
+    // would validate and render every section twice for one import, and log
+    // each unknown section twice as if two imports had happened.
+    if bundle.version != FORMAT_VERSION {
+        return Err(format!(
+            "workspace file version {} (this build reads {FORMAT_VERSION})",
+            bundle.version
+        ));
+    }
     Ok(bundle)
 }
 
@@ -337,6 +432,11 @@ mod tests {
             ("footprint-settings.toml", "version = 2\n\n[config]\n"),
             ("footprint-presets.toml", "version = 1\n"),
             (
+                "paper-state.toml",
+                "version = 1
+",
+            ),
+            (
                 "quantick-symbols.toml",
                 "version = 1\n\n[feeds]\nbinance = [\"BTCUSDT\"]\n",
             ),
@@ -344,6 +444,15 @@ mod tests {
         for (name, body) in files {
             std::fs::write(dir.join(name), body).expect("write store");
         }
+    }
+
+    /// How many stores a bundle should carry — the registry minus the ones
+    /// that share the home but not an arrangement.
+    fn bundled() -> usize {
+        COCKPIT_STORES
+            .iter()
+            .filter(|store| store.in_bundle)
+            .count()
     }
 
     fn paths_in(dir: &Path) -> impl Fn(&CockpitStore) -> PathBuf + use<'_> {
@@ -359,11 +468,11 @@ mod tests {
         cockpit(&source);
         let bundle =
             capture("scalp WIN manhã", COCKPIT_STORES, &paths_in(&source)).expect("capture");
-        assert_eq!(bundle.len(), COCKPIT_STORES.len(), "every store travels");
+        assert_eq!(bundle.len(), bundled(), "every store travels");
 
         let file = scratch("round-trip-file").join(file_name_for(&bundle.name));
         write(&file, &bundle).expect("write");
-        let reread = read(&file, COCKPIT_STORES).expect("read");
+        let reread = read(&file).expect("read");
         assert_eq!(reread, bundle, "the file is a faithful copy");
 
         // A live cockpit that says something else entirely.
@@ -374,7 +483,7 @@ mod tests {
         )
         .unwrap();
         let written = apply(&reread, COCKPIT_STORES, &paths_in(&live)).expect("apply");
-        assert_eq!(written.len(), COCKPIT_STORES.len());
+        assert_eq!(written.len(), bundled());
         assert!(
             std::fs::read_to_string(live.join("chart-layers.toml"))
                 .unwrap()
@@ -424,11 +533,11 @@ mod tests {
         let dir = scratch("refuse-read");
         let path = dir.join("not-a-workspace.qws.toml");
         std::fs::write(&path, "this is not toml {{{").unwrap();
-        assert!(read(&path, COCKPIT_STORES).is_err());
+        assert!(read(&path).is_err());
 
         let future = dir.join("future.qws.toml");
         std::fs::write(&future, "version = 99\nname = \"from tomorrow\"\n").unwrap();
-        let error = read(&future, COCKPIT_STORES).expect_err("refused");
+        let error = read(&future).expect_err("refused");
         assert!(
             error.contains("99"),
             "the reason names the version: {error}"
@@ -444,10 +553,10 @@ mod tests {
         cockpit(&source);
         std::fs::remove_file(source.join("footprint-presets.toml")).unwrap();
         let bundle = capture("no footprint", COCKPIT_STORES, &paths_in(&source)).expect("capture");
-        assert_eq!(bundle.len(), COCKPIT_STORES.len() - 1);
+        assert_eq!(bundle.len(), bundled() - 1);
         cockpit(&live);
         let written = apply(&bundle, COCKPIT_STORES, &paths_in(&live)).expect("apply");
-        assert_eq!(written.len(), COCKPIT_STORES.len() - 1);
+        assert_eq!(written.len(), bundled() - 1);
         assert!(
             !written.contains(&"footprint_presets"),
             "an absent section writes nothing, rather than an empty file"
@@ -470,7 +579,7 @@ mod tests {
         cockpit(&live);
         let written =
             apply(&bundle, COCKPIT_STORES, &paths_in(&live)).expect("the known stores still apply");
-        assert_eq!(written.len(), COCKPIT_STORES.len());
+        assert_eq!(written.len(), bundled());
     }
 
     /// A cockpit that cannot be parsed must not become a bundle that can
@@ -545,6 +654,87 @@ mod tests {
         );
     }
 
+    /// A bundle carries a cockpit, not a machine: opening a colleague's must
+    /// not replace the trader's own bookmarks, recent files or replay folder.
+    #[test]
+    fn the_facts_about_this_machine_never_travel_and_are_never_replaced() {
+        let source = scratch("local-keys-source");
+        let live = scratch("local-keys-live");
+        cockpit(&source);
+        // A cockpit belonging to somebody else, with their own machine facts.
+        std::fs::write(
+            source.join("ui-state.toml"),
+            "version = 1\nactive_tab = 0\ntabs = []\nsave_on_exit = false\n\
+             replay_folder = \"D:/their-tapes\"\nrecent_workspaces = [\"D:/theirs.qws.toml\"]\n",
+        )
+        .unwrap();
+        let bundle = capture("theirs", COCKPIT_STORES, &paths_in(&source)).expect("capture");
+        let rendered = toml::to_string_pretty(&bundle).expect("render");
+        for key in crate::ui_state::LOCAL_KEYS {
+            assert!(
+                !rendered.contains(key),
+                "\"{key}\" describes their machine and must not be in the file:\n{rendered}"
+            );
+        }
+
+        // The trader's own machine facts, which must survive the import.
+        cockpit(&live);
+        std::fs::write(
+            live.join("ui-state.toml"),
+            "version = 1\nactive_tab = 0\ntabs = []\nsave_on_exit = false\n\
+             replay_folder = \"C:/my-tapes\"\nrecent_workspaces = [\"C:/mine.qws.toml\"]\n",
+        )
+        .unwrap();
+        apply(&bundle, COCKPIT_STORES, &paths_in(&live)).expect("apply");
+        let after = std::fs::read_to_string(live.join("ui-state.toml")).unwrap();
+        assert!(
+            after.contains("C:/my-tapes"),
+            "my replay folder stayed: {after}"
+        );
+        assert!(
+            after.contains("C:/mine.qws.toml"),
+            "my recent list stayed: {after}"
+        );
+        assert!(
+            !after.contains("D:/their-tapes"),
+            "theirs did not arrive: {after}"
+        );
+    }
+
+    /// The paper sidecar shares the durable home but is not part of an
+    /// arrangement — importing a workspace must never rewrite an account.
+    #[test]
+    fn the_paper_sidecar_is_not_part_of_a_workspace() {
+        let source = scratch("paper-source");
+        let live = scratch("paper-live");
+        cockpit(&source);
+        std::fs::write(
+            source.join("paper-state.toml"),
+            "version = 1\ntrades_dir = \"D:/their-journal\"\n",
+        )
+        .unwrap();
+        let bundle = capture("no paper", COCKPIT_STORES, &paths_in(&source)).expect("capture");
+        assert!(
+            !toml::to_string_pretty(&bundle)
+                .unwrap()
+                .contains("their-journal"),
+            "a simulated account is a result, not a screen"
+        );
+        cockpit(&live);
+        std::fs::write(
+            live.join("paper-state.toml"),
+            "version = 1\ntrades_dir = \"C:/my-journal\"\n",
+        )
+        .unwrap();
+        apply(&bundle, COCKPIT_STORES, &paths_in(&live)).expect("apply");
+        assert!(
+            std::fs::read_to_string(live.join("paper-state.toml"))
+                .unwrap()
+                .contains("C:/my-journal"),
+            "and my journal folder is untouched"
+        );
+    }
+
     /// A store no line of this module mentions, standing in for the ninth
     /// one somebody adds later.
     fn validate_fake(text: &str) -> Result<(), String> {
@@ -569,6 +759,8 @@ mod tests {
         file: "fake-store.toml",
         path: fake_path,
         validate: validate_fake,
+        in_bundle: true,
+        local_keys: &[],
     }];
 
     /// The port's own test: a store this module has never heard of travels
@@ -585,7 +777,7 @@ mod tests {
         assert_eq!(bundle.len(), 1);
         let file = scratch("fake-file").join(file_name_for("fake"));
         write(&file, &bundle).expect("write");
-        let reread = read(&file, FAKE_REGISTRY).expect("read");
+        let reread = read(&file).expect("read");
         let written = apply(&reread, FAKE_REGISTRY, &paths_in(&live)).expect("apply");
 
         assert_eq!(written, vec!["fake_store"]);
