@@ -1937,6 +1937,7 @@ impl QuantickApp {
             dollar_notional: &mut pane.dollar_notional,
             time_interval_ms: &mut pane.time_interval_ms,
             imbalance_target: &mut pane.imbalance_target,
+            imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
             capabilities,

@@ -10,6 +10,9 @@
 //! No egui, no async here, so the ingest, dispatch and rebuild logic is
 //! unit-tested in CI.
 
+/// Re-exported so every consumer of the bar vocabulary finds the imbalance
+/// unit next to [`BarSpec`], not off in the engine.
+pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::{
     Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder,
     TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
@@ -59,11 +62,14 @@ impl BarKind {
     /// Whether this rule measures traded size, and so needs a venue that
     /// prints one.
     ///
-    /// Tick, time and imbalance bars all count *events*: imbalance sums a
-    /// signed ±1 per trade (López de Prado's tick imbalance bars), never a
-    /// quantity. They stay meaningful on a quote-driven feed. Volume and dollar
-    /// bars do not — fed one synthetic unit per tick, a "volume 500" bar is a
-    /// 500-tick bar wearing a misleading label.
+    /// Tick, time and imbalance bars all count *events*: imbalance in its
+    /// default trades unit sums a signed ±1 per trade (López de Prado's tick
+    /// imbalance bars), never a quantity. They stay meaningful on a
+    /// quote-driven feed. Volume and dollar bars do not — fed one synthetic
+    /// unit per tick, a "volume 500" bar is a 500-tick bar wearing a
+    /// misleading label. The imbalance *kind* answers for that default: its
+    /// volume/dollar units measure size too, and the toolbar's unit selector
+    /// gates them per feed exactly as this method gates the kinds.
     #[must_use]
     pub fn needs_traded_volume(self) -> bool {
         match self {
@@ -96,8 +102,10 @@ pub enum BarSpec {
     /// N milliseconds per bar. The interval a control may ask for is bounded
     /// by [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`].
     Time(i64),
-    /// Target trades per bar for the adaptive imbalance rule.
-    Imbalance(u64),
+    /// The adaptive imbalance rule: the measure θ accumulates (trades, volume
+    /// or dollar — López de Prado's TIB/VIB/DIB) and the target trades per
+    /// bar, which counts trades in every unit.
+    Imbalance(ImbalanceUnit, u64),
 }
 
 impl BarSpec {
@@ -109,7 +117,7 @@ impl BarSpec {
             BarSpec::Volume(_) => BarKind::Volume,
             BarSpec::Dollar(_) => BarKind::Dollar,
             BarSpec::Time(_) => BarKind::Time,
-            BarSpec::Imbalance(_) => BarKind::Imbalance,
+            BarSpec::Imbalance(..) => BarKind::Imbalance,
         }
     }
 
@@ -122,7 +130,9 @@ impl BarSpec {
             BarSpec::Volume(units) => Box::new(VolumeBarBuilder::new(*units)),
             BarSpec::Dollar(notional) => Box::new(DollarBarBuilder::new(*notional)),
             BarSpec::Time(ms) => Box::new(TimeBarBuilder::new(*ms)),
-            BarSpec::Imbalance(target) => Box::new(ImbalanceBarBuilder::new(*target)),
+            BarSpec::Imbalance(unit, target) => {
+                Box::new(ImbalanceBarBuilder::with_unit(*target, *unit))
+            }
         }
     }
 
@@ -147,7 +157,13 @@ impl BarSpec {
             BarSpec::Volume(u) => format!("volume({u})"),
             BarSpec::Dollar(d) => format!("dollar({d})"),
             BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
-            BarSpec::Imbalance(target) => format!("imbalance({target})"),
+            BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
+            BarSpec::Imbalance(ImbalanceUnit::Volume, target) => {
+                format!("imbalance(volume {target})")
+            }
+            BarSpec::Imbalance(ImbalanceUnit::Dollar, target) => {
+                format!("imbalance(dollar {target})")
+            }
         }
     }
 
@@ -166,14 +182,24 @@ impl BarSpec {
             BarSpec::Volume(units) => format!("volume:{units}"),
             BarSpec::Dollar(notional) => format!("dollar:{notional}"),
             BarSpec::Time(ms) => format!("time:{}", fmt_time_interval(*ms)),
-            BarSpec::Imbalance(target) => format!("imbalance:{target}"),
+            // The trades unit keeps its historical short form, so every spec
+            // a workspace saved before units existed still reads back as the
+            // same chart.
+            BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance:{target}"),
+            BarSpec::Imbalance(ImbalanceUnit::Volume, target) => {
+                format!("imbalance:volume:{target}")
+            }
+            BarSpec::Imbalance(ImbalanceUnit::Dollar, target) => {
+                format!("imbalance:dollar:{target}")
+            }
         }
     }
 
     /// Parse a `kind:parameter` spec string, the form `default_bars` uses in
     /// the feeds configuration: `tick:50`, `volume:5`, `dollar:500000`,
-    /// `imbalance:100`, `time:1m` (also `time:30s`, `time:1h`, `time:1500ms`
-    /// or a bare millisecond count).
+    /// `imbalance:100` (also `imbalance:volume:500` / `imbalance:dollar:500`
+    /// to pick what θ accumulates), `time:1m` (also `time:30s`, `time:1h`,
+    /// `time:1500ms` or a bare millisecond count).
     ///
     /// Every rule a UI control enforces holds here too — a positive
     /// parameter, and a time interval inside
@@ -205,7 +231,33 @@ impl BarSpec {
         };
         match kind {
             "tick" => Ok(BarSpec::Tick(positive_count("tick")?)),
-            "imbalance" => Ok(BarSpec::Imbalance(positive_count("imbalance")?)),
+            "imbalance" => {
+                // The parameter is `target` or `unit:target`. The unit picks
+                // what θ accumulates; the target counts trades in every unit.
+                let (unit, target) = match param.split_once(':') {
+                    None => (ImbalanceUnit::Trades, param),
+                    Some((unit, target)) => {
+                        let unit = match unit.trim() {
+                            "trades" => ImbalanceUnit::Trades,
+                            "volume" => ImbalanceUnit::Volume,
+                            "dollar" => ImbalanceUnit::Dollar,
+                            other => {
+                                return Err(format!(
+                                    "unknown imbalance unit '{other}'; one of trades, \
+                                     volume, dollar"
+                                ));
+                            }
+                        };
+                        (unit, target.trim())
+                    }
+                };
+                match target.parse::<u64>() {
+                    Ok(n) if n > 0 => Ok(BarSpec::Imbalance(unit, n)),
+                    _ => Err(format!(
+                        "imbalance bars need a positive whole trade target, got '{target}'"
+                    )),
+                }
+            }
             "volume" => Ok(BarSpec::Volume(positive_decimal("volume")?)),
             "dollar" => Ok(BarSpec::Dollar(positive_decimal("dollar")?)),
             "time" => {
@@ -626,7 +678,9 @@ mod tests {
     fn every_bar_spec_survives_the_config_round_trip() {
         for spec in [
             BarSpec::Tick(50),
-            BarSpec::Imbalance(100),
+            BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
+            BarSpec::Imbalance(ImbalanceUnit::Volume, 500),
+            BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500),
             BarSpec::Volume(dec("5.25")),
             BarSpec::Dollar(dec("500000")),
             BarSpec::Time(60_000),
@@ -649,7 +703,23 @@ mod tests {
     #[test]
     fn bar_specs_parse_in_the_config_vocabulary() {
         assert_eq!(BarSpec::parse("tick:50"), Ok(BarSpec::Tick(50)));
-        assert_eq!(BarSpec::parse("imbalance:100"), Ok(BarSpec::Imbalance(100)));
+        assert_eq!(
+            BarSpec::parse("imbalance:100"),
+            Ok(BarSpec::Imbalance(ImbalanceUnit::Trades, 100)),
+            "the pre-units short form still names tick imbalance bars"
+        );
+        assert_eq!(
+            BarSpec::parse("imbalance:trades:100"),
+            Ok(BarSpec::Imbalance(ImbalanceUnit::Trades, 100))
+        );
+        assert_eq!(
+            BarSpec::parse("imbalance:volume:500"),
+            Ok(BarSpec::Imbalance(ImbalanceUnit::Volume, 500))
+        );
+        assert_eq!(
+            BarSpec::parse("imbalance:dollar:2500"),
+            Ok(BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500))
+        );
         assert_eq!(BarSpec::parse("volume:5"), Ok(BarSpec::Volume(dec("5"))));
         assert_eq!(
             BarSpec::parse("volume:0.5"),
@@ -701,6 +771,10 @@ mod tests {
             "volume:0",
             "dollar:nope",
             "imbalance:1.5",
+            "imbalance:volume:0",
+            "imbalance:volume:1.5",
+            "imbalance:notional:500",
+            "imbalance:volume:",
             "time:0",
             "time:50ms",
             "time:25h",
@@ -728,8 +802,9 @@ mod tests {
         // only fake them.
         assert!(BarKind::Volume.needs_traded_volume());
         assert!(BarKind::Dollar.needs_traded_volume());
-        // The other three count events, not quantity — imbalance included: it
-        // sums a signed ±1 per trade, so it stays honest on a quote feed.
+        // The other three count events, not quantity — imbalance answering
+        // for its default trades unit, which sums a signed ±1 per trade; the
+        // unit selector gates its volume/dollar units per feed.
         assert!(!BarKind::Tick.needs_traded_volume());
         assert!(!BarKind::Time.needs_traded_volume());
         assert!(!BarKind::Imbalance.needs_traded_volume());
@@ -764,7 +839,9 @@ mod tests {
             BarSpec::Volume(dec("1.0")),
             BarSpec::Dollar(dec("100")),
             BarSpec::Time(1),
-            BarSpec::Imbalance(1),
+            BarSpec::Imbalance(ImbalanceUnit::Trades, 1),
+            BarSpec::Imbalance(ImbalanceUnit::Volume, 1),
+            BarSpec::Imbalance(ImbalanceUnit::Dollar, 1),
         ] {
             let kind = spec.kind();
             let mut builder = spec.build();

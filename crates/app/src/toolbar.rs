@@ -21,7 +21,7 @@ use egui_phosphor::regular as icons;
 
 use crate::config::FeedCapabilities;
 use crate::dock::DockTab;
-use crate::state::BarKind;
+use crate::state::{BarKind, ImbalanceUnit};
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 
@@ -221,6 +221,9 @@ pub struct ToolbarModel<'a> {
     pub time_interval_ms: &'a mut i64,
     /// Parameter for [`BarKind::Imbalance`].
     pub imbalance_target: &'a mut u64,
+    /// What θ accumulates for [`BarKind::Imbalance`]: trades, volume or
+    /// dollar (López de Prado's TIB/VIB/DIB).
+    pub imbalance_unit: &'a mut ImbalanceUnit,
     /// Trades pulled per "+ older" click.
     pub history_step: &'a mut usize,
     /// Trades backfilled so far, for the history menu readout.
@@ -539,12 +542,50 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             });
         }
         BarKind::Imbalance => {
+            // The unit picks what θ accumulates; the target counts trades in
+            // every unit. Size-measuring units are offered only where the
+            // venue prints a real size, mirroring the kind combo's gate.
+            let traded_volume = model.capabilities.traded_volume;
+            for (unit, label, hover) in [
+                (
+                    ImbalanceUnit::Trades,
+                    "trades",
+                    "θ sums ±1 per trade — tick imbalance bars",
+                ),
+                (
+                    ImbalanceUnit::Volume,
+                    "volume",
+                    "θ sums ±quantity — volume imbalance bars",
+                ),
+                (
+                    ImbalanceUnit::Dollar,
+                    "dollar",
+                    "θ sums ±(price × quantity) — dollar imbalance bars",
+                ),
+            ] {
+                let usable = traded_volume || unit == ImbalanceUnit::Trades;
+                ui.add_enabled_ui(usable, |ui| {
+                    let chip = ui
+                        .selectable_value(model.imbalance_unit, unit, label)
+                        .on_hover_text(hover);
+                    if !usable {
+                        chip.on_disabled_hover_text(
+                            "this source quotes prices but prints no traded volume",
+                        );
+                    }
+                });
+            }
             ui.label("target trades");
-            ui.add(egui::DragValue::new(model.imbalance_target).range(2.0..=5000.0))
-                .on_hover_text(
-                    "expected trades per bar in balanced flow; \
-                     one-sided aggression closes bars sooner",
-                );
+            ui.add(
+                egui::DragValue::new(model.imbalance_target)
+                    .range(2.0..=1_000_000.0)
+                    .speed(25.0),
+            )
+            .on_hover_text(
+                "expected trades per bar in balanced flow — the seed of the \
+                 adaptive threshold, not a fixed length: dense two-way tape \
+                 closes bars well short of it, one-sided aggression sooner still",
+            );
         }
     }
 }
@@ -557,7 +598,11 @@ fn param_summary(model: &ToolbarModel) -> String {
         BarKind::Volume => format!("{:.1}", model.volume_units),
         BarKind::Dollar => format!("{:.0}", model.dollar_notional),
         BarKind::Time => crate::state::fmt_time_interval(*model.time_interval_ms),
-        BarKind::Imbalance => model.imbalance_target.to_string(),
+        BarKind::Imbalance => match *model.imbalance_unit {
+            ImbalanceUnit::Trades => model.imbalance_target.to_string(),
+            ImbalanceUnit::Volume => format!("volume {}", model.imbalance_target),
+            ImbalanceUnit::Dollar => format!("dollar {}", model.imbalance_target),
+        },
     }
 }
 
@@ -1074,6 +1119,7 @@ mod tests {
         let mut dollar_notional = 500_000.0_f64;
         let mut time_interval_ms = 1_000_i64;
         let mut imbalance_target = 100_u64;
+        let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         for replaying in [false, true] {
             for _ in 0..2 {
@@ -1094,6 +1140,7 @@ mod tests {
                         dollar_notional: &mut dollar_notional,
                         time_interval_ms: &mut time_interval_ms,
                         imbalance_target: &mut imbalance_target,
+                        imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_trades: 1_000,
                         capabilities: FeedCapabilities {
@@ -1153,6 +1200,7 @@ mod tests {
         let mut dollar_notional = 500_000.0_f64;
         let mut time_interval_ms = 60_000_i64;
         let mut imbalance_target = 100_u64;
+        let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
@@ -1179,6 +1227,7 @@ mod tests {
                     dollar_notional: &mut dollar_notional,
                     time_interval_ms: &mut time_interval_ms,
                     imbalance_target: &mut imbalance_target,
+                    imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_trades: 1_000,
                     capabilities: FeedCapabilities {
@@ -1231,6 +1280,7 @@ mod tests {
         let mut dollar_notional = 500_000.0_f64;
         let mut time_interval_ms = 1_000_i64;
         let mut imbalance_target = 100_u64;
+        let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
@@ -1251,6 +1301,7 @@ mod tests {
                         dollar_notional: &mut dollar_notional,
                         time_interval_ms: &mut time_interval_ms,
                         imbalance_target: &mut imbalance_target,
+                        imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_trades: 200_000,
                         capabilities: FeedCapabilities {
@@ -1292,6 +1343,7 @@ mod tests {
         let mut dollar_notional = 500_000.0_f64;
         let mut time_interval_ms = 1_000_i64;
         let mut imbalance_target = 100_u64;
+        let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
@@ -1318,6 +1370,7 @@ mod tests {
                     dollar_notional: &mut dollar_notional,
                     time_interval_ms: &mut time_interval_ms,
                     imbalance_target: &mut imbalance_target,
+                    imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_trades: 1_000,
                     capabilities: FeedCapabilities {

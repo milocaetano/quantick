@@ -1,7 +1,8 @@
 //! Which bar rule a run uses, as a string a person can type.
 //!
 //! The vocabulary is deliberately the one the chart already speaks —
-//! `tick:100`, `volume:5`, `dollar:500000`, `time:1m`, `imbalance:2500` —
+//! `tick:100`, `volume:5`, `dollar:500000`, `time:1m`, `imbalance:2500`,
+//! `imbalance:volume:2500`, `imbalance:dollar:2500` —
 //! so the spec a trader reads off a tab is the spec they hand to a backtest.
 //! It is re-implemented here rather than shared because the chart's copy
 //! lives in `quantick-app`, and a headless harness that linked the desktop
@@ -11,8 +12,8 @@
 //! engine's public surface, not a line item of this harness.
 
 use quantick_engine::{
-    BarBuilder, DollarBarBuilder, ImbalanceBarBuilder, TickBarBuilder, TimeBarBuilder,
-    VolumeBarBuilder,
+    BarBuilder, DollarBarBuilder, ImbalanceBarBuilder, ImbalanceUnit, TickBarBuilder,
+    TimeBarBuilder, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
 
@@ -27,8 +28,10 @@ pub enum BarSpec {
     Dollar(Decimal),
     /// N milliseconds per bar.
     Time(i64),
-    /// Target trades per bar for the adaptive imbalance rule.
-    Imbalance(u64),
+    /// The adaptive imbalance rule: what θ accumulates (trades, volume or
+    /// dollar) and the target trades per bar, which counts trades in every
+    /// unit.
+    Imbalance(ImbalanceUnit, u64),
 }
 
 impl BarSpec {
@@ -41,7 +44,7 @@ impl BarSpec {
             Self::Volume(units) => Box::new(VolumeBarBuilder::new(units)),
             Self::Dollar(notional) => Box::new(DollarBarBuilder::new(notional)),
             Self::Time(ms) => Box::new(TimeBarBuilder::new(ms)),
-            Self::Imbalance(target) => Box::new(ImbalanceBarBuilder::new(target)),
+            Self::Imbalance(unit, target) => Box::new(ImbalanceBarBuilder::with_unit(target, unit)),
         }
     }
 
@@ -74,7 +77,34 @@ impl BarSpec {
         };
         match kind {
             "tick" => Ok(Self::Tick(positive_count("tick")?)),
-            "imbalance" => Ok(Self::Imbalance(positive_count("imbalance")?)),
+            "imbalance" => {
+                // The parameter is `target` or `unit:target` — the same two
+                // forms the chart accepts. The unit picks what θ accumulates;
+                // the target counts trades in every unit.
+                let (unit, target) = match param.split_once(':') {
+                    None => (ImbalanceUnit::Trades, param),
+                    Some((unit, target)) => {
+                        let unit = match unit.trim() {
+                            "trades" => ImbalanceUnit::Trades,
+                            "volume" => ImbalanceUnit::Volume,
+                            "dollar" => ImbalanceUnit::Dollar,
+                            other => {
+                                return Err(format!(
+                                    "unknown imbalance unit '{other}'; one of trades, \
+                                     volume, dollar"
+                                ));
+                            }
+                        };
+                        (unit, target.trim())
+                    }
+                };
+                match target.parse::<u64>() {
+                    Ok(n) if n > 0 => Ok(Self::Imbalance(unit, n)),
+                    _ => Err(format!(
+                        "imbalance bars need a positive whole trade target, got '{target}'"
+                    )),
+                }
+            }
             "volume" => Ok(Self::Volume(positive_decimal("volume")?)),
             "dollar" => Ok(Self::Dollar(positive_decimal("dollar")?)),
             "time" => Ok(Self::Time(parse_interval(param)?)),
@@ -92,7 +122,9 @@ impl BarSpec {
             Self::Volume(u) => format!("volume({})", u.normalize()),
             Self::Dollar(d) => format!("dollar({})", d.normalize()),
             Self::Time(ms) => format!("time({})", fmt_interval(ms)),
-            Self::Imbalance(target) => format!("imbalance({target})"),
+            Self::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
+            Self::Imbalance(ImbalanceUnit::Volume, target) => format!("imbalance(volume {target})"),
+            Self::Imbalance(ImbalanceUnit::Dollar, target) => format!("imbalance(dollar {target})"),
         }
     }
 }
@@ -138,7 +170,22 @@ mod tests {
     fn every_kind_round_trips_through_its_summary() {
         let cases = [
             ("tick:100", BarSpec::Tick(100)),
-            ("imbalance:2500", BarSpec::Imbalance(2500)),
+            (
+                "imbalance:2500",
+                BarSpec::Imbalance(ImbalanceUnit::Trades, 2500),
+            ),
+            (
+                "imbalance:trades:2500",
+                BarSpec::Imbalance(ImbalanceUnit::Trades, 2500),
+            ),
+            (
+                "imbalance:volume:500",
+                BarSpec::Imbalance(ImbalanceUnit::Volume, 500),
+            ),
+            (
+                "imbalance:dollar:2500",
+                BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500),
+            ),
             ("volume:5", BarSpec::Volume(Decimal::from(5u64))),
             ("dollar:500000", BarSpec::Dollar(Decimal::from(500_000u64))),
             ("time:1m", BarSpec::Time(60_000)),
