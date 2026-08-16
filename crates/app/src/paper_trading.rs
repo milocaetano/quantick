@@ -35,6 +35,20 @@ use crate::timezone::TzOffset;
 /// `QUANTICK_TRADES_DIR` somewhere scratch to keep a demo out of your
 /// journal.
 const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
+/// `=<rungs>` rests entry orders around the mark as soon as the tape has
+/// one, so the in-plot order tag can be photographed at all. The scripted
+/// demo's own order is 220 prints away and sits 0.4 % out — far enough to
+/// fall outside an autoscaled price range, and close enough that a lively
+/// tape fills it before the shutter. Each rung is a **buy limit below and
+/// a sell limit above**: a move in either direction can fill only one side
+/// of it, so a resting tag always survives on screen.
+const PAPER_ORDERS_ENV: &str = "QUANTICK_PAPER_ORDERS";
+/// How far the first rung sits from the mark, as a fraction of it. Small
+/// on purpose: a line outside the chart's autoscaled price range paints no
+/// tag, so an order that cannot be reached also cannot be seen.
+const PAPER_ORDERS_STEP_FRACTION: Decimal = Decimal::from_parts(6, 0, 0, false, 4);
+/// Rungs past this are refused — a capture wants a tag or two, not a book.
+const PAPER_ORDERS_MAX_RUNGS: u8 = 4;
 /// How long a paper toast stays on screen.
 const TOAST_MS: u64 = 4_000;
 /// Grab distance for order lines — the drawings' select radius, so the two
@@ -700,6 +714,9 @@ pub struct PaperTrading {
     /// Harness override: every resting order's tag opens, with nobody at
     /// the mouse (`QUANTICK_PAPER_ORDER_HOVER`).
     order_hover_force: bool,
+    /// Harness override: how many rungs of resting orders to place on the
+    /// first mark (`QUANTICK_PAPER_ORDERS`); `None` once they are placed.
+    orders_demo: Option<u8>,
     // Order-entry form.
     qty_text: String,
     order_type: EntryKind,
@@ -809,6 +826,11 @@ impl PaperTrading {
                 })
             }),
             order_hover_force: std::env::var(PAPER_ORDER_HOVER_ENV).is_ok_and(|value| value == "1"),
+            orders_demo: std::env::var(PAPER_ORDERS_ENV)
+                .ok()
+                .and_then(|value| value.trim().parse::<u8>().ok())
+                .filter(|rungs| *rungs > 0)
+                .map(|rungs| rungs.min(PAPER_ORDERS_MAX_RUNGS)),
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -934,8 +956,39 @@ impl PaperTrading {
     pub fn on_trade(&mut self, trade: &Trade) {
         let events = self.sim.on_trade(trade);
         self.handle_events(events);
+        if self.orders_demo.is_some() {
+            self.rest_capture_orders();
+        }
         if self.demo.is_some() {
             self.run_demo_step();
+        }
+    }
+
+    /// Place the capture run's resting orders, once, as soon as the tape
+    /// has a mark to place them around. See [`PAPER_ORDERS_ENV`].
+    fn rest_capture_orders(&mut self) {
+        let Some(rungs) = self.orders_demo else {
+            return;
+        };
+        let Some(mark) = self.sim.mark_price() else {
+            return;
+        };
+        self.orders_demo = None;
+        for rung in 1..=u32::from(rungs) {
+            let step =
+                (mark * PAPER_ORDERS_STEP_FRACTION * Decimal::from(rung)).round_dp(mark.scale());
+            for (side, price) in [
+                (Side::Buy, mark.saturating_sub(step)),
+                (Side::Sell, mark.saturating_add(step)),
+            ] {
+                let events = self.sim.apply(Command::PlaceLimit {
+                    side,
+                    quantity: Decimal::ONE,
+                    price,
+                    bracket: Bracket::none(),
+                });
+                self.handle_events(events);
+            }
         }
     }
 
@@ -1451,6 +1504,15 @@ impl PaperTrading {
                 ctx.chart_rect.max.y,
             ),
         );
+        // The aim belongs to the band it was aimed in. Both panes of a
+        // split draw this layer from one simulator, and the label now
+        // rides an x — so laying a flow-pane pointer out against the time
+        // pane's band would paint a label off the end of it. Live, the
+        // other pane holds no pointer and never reaches here; under the
+        // capture hook it does, which is how this was seen at all.
+        if preview.pointer.x < band.left() || preview.pointer.x > band.right() {
+            return;
+        }
         let (start, end, label) = cmd_preview_layout(band, preview.pointer);
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
@@ -6609,6 +6671,50 @@ mod tests {
         assert_eq!(paper.working_orders().len(), 1, "clear canvas, order rests");
     }
 
+    /// A pointer from another pane's band paints nothing here: the label
+    /// rides an x, so laying it out against a band that does not hold that
+    /// x would put a click target off the end of the plot.
+    #[test]
+    fn the_aim_paints_only_in_the_band_it_was_aimed_in() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(700.0, 300.0),
+            shift,
+            false,
+        ));
+        assert!(paper.cmd_preview.is_some(), "aimed on this band");
+
+        // The same simulator drawn against a narrower band — the other
+        // pane of a split, whose right edge stops short of that x.
+        let other = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 400.0));
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            paper.draw_cmd_preview(&PaintCtx {
+                painter: &painter,
+                chart_rect: other,
+                tag_right: other.right(),
+                axis_x: other.right(),
+                scale: &scale,
+                reserved_chip_y: None,
+                pointer: Some(egui::pos2(700.0, 300.0)),
+            });
+        });
+        let shapes = format!("{:?}", output.shapes);
+        assert!(
+            !shapes.contains("BUY"),
+            "a foreign pointer paints no label: {shapes}"
+        );
+    }
+
     /// The capture hook: a side, and optionally where along the band to
     /// park the hand the run does not have.
     #[test]
@@ -6800,6 +6906,35 @@ mod tests {
             !shapes.contains('×'),
             "a moving order offers no cancel, as before: {shapes}"
         );
+    }
+
+    /// The capture hook rests a rung around the mark on the first print:
+    /// one order each side, so whichever way the tape moves a tag is still
+    /// on screen for the shutter, and it happens at once rather than 220
+    /// prints in.
+    #[test]
+    fn the_orders_hook_rests_a_rung_either_side_of_the_mark() {
+        let mut paper = PaperTrading::new();
+        paper.orders_demo = Some(2);
+        paper.on_trade(&print(1, 100_000));
+        assert!(paper.orders_demo.is_none(), "placed once, never again");
+        let prices: Vec<_> = paper
+            .working_orders()
+            .iter()
+            .map(|order| (order.side, order.price.expect("a limit has a price")))
+            .collect();
+        assert_eq!(
+            prices,
+            vec![
+                (Side::Buy, Decimal::from(99_940)),
+                (Side::Sell, Decimal::from(100_060)),
+                (Side::Buy, Decimal::from(99_880)),
+                (Side::Sell, Decimal::from(100_120)),
+            ],
+            "two rungs, each side, stepping out from the mark"
+        );
+        paper.on_trade(&print(2, 100_000));
+        assert_eq!(paper.working_orders().len(), 4, "a second print adds none");
     }
 
     /// The capture hook opens every tag with nobody at the mouse — the
