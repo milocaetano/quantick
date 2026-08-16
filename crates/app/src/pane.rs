@@ -41,7 +41,7 @@ use crate::orderflow::{
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::price_view::PriceView;
-use crate::state::{BarKind, BarSpec, ChartState};
+use crate::state::{BarKind, BarSpec, ChartState, ImbalanceUnit};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -901,6 +901,7 @@ pub struct ChartPane {
     pub dollar_notional: f64,
     pub time_interval_ms: i64,
     pub imbalance_target: u64,
+    pub imbalance_unit: ImbalanceUnit,
 
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
@@ -1093,12 +1094,16 @@ impl ChartPane {
         // (audit QW2): the same 1m the split's time pane opens on.
         let mut time_interval_ms = crate::time_header::DEFAULT_INTERVAL_MS;
         let mut imbalance_target = 100;
+        let mut imbalance_unit = ImbalanceUnit::Trades;
         match &spec {
             BarSpec::Tick(n) => tick_n = *n,
             BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
             BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
             BarSpec::Time(ms) => time_interval_ms = *ms,
-            BarSpec::Imbalance(target) => imbalance_target = *target,
+            BarSpec::Imbalance(unit, target) => {
+                imbalance_unit = *unit;
+                imbalance_target = *target;
+            }
         }
 
         Self {
@@ -1129,6 +1134,7 @@ impl ChartPane {
             dollar_notional,
             time_interval_ms,
             imbalance_target,
+            imbalance_unit,
             viewport: Viewport::new(),
             last_lane_divider_x: None,
             last_chart_rect: None,
@@ -1213,7 +1219,10 @@ impl ChartPane {
                 self.dollar_notional = notional.to_f64().unwrap_or(self.dollar_notional);
             }
             BarSpec::Time(ms) => self.time_interval_ms = *ms,
-            BarSpec::Imbalance(target) => self.imbalance_target = *target,
+            BarSpec::Imbalance(unit, target) => {
+                self.imbalance_unit = *unit;
+                self.imbalance_target = *target;
+            }
         }
         self.state.set_spec(spec);
     }
@@ -1869,7 +1878,9 @@ impl ChartPane {
             BarKind::Volume => BarSpec::Volume(dec_from_f64(self.volume_units)),
             BarKind::Dollar => BarSpec::Dollar(dec_from_f64(self.dollar_notional)),
             BarKind::Time => BarSpec::Time(self.time_interval_ms.max(1)),
-            BarKind::Imbalance => BarSpec::Imbalance(self.imbalance_target.max(1)),
+            BarKind::Imbalance => {
+                BarSpec::Imbalance(self.imbalance_unit, self.imbalance_target.max(1))
+            }
         }
     }
 

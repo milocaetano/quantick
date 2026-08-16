@@ -121,7 +121,7 @@ impl FootprintSeries {
 mod tests {
     use super::*;
     use crate::state::{BarSpec, ChartState};
-    use quantick_engine::Side;
+    use quantick_engine::{ImbalanceUnit, Side};
     use std::str::FromStr as _;
 
     fn dec(s: &str) -> Decimal {
@@ -162,7 +162,7 @@ mod tests {
             BarSpec::Volume(dec("4")),
             BarSpec::Dollar(dec("500")),
             BarSpec::Time(1000),
-            BarSpec::Imbalance(3),
+            BarSpec::Imbalance(ImbalanceUnit::Trades, 3),
         ];
         for spec in specs {
             let label = format!("{spec:?}");

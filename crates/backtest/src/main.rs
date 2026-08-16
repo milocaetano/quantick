@@ -152,7 +152,8 @@ fn usage() -> String {
   --to <YYYY-MM-DD>        last session day, inclusive
   --limit <n>              stop after n sessions
   --bars <kind:parameter>  tick:100 (default), volume:5, dollar:500000,
-                           time:1m, imbalance:2500
+                           time:1m, imbalance:2500 (also imbalance:volume:2500,
+                           imbalance:dollar:2500)
   --strategy <name>        which rule to run (default {default}):{strategies}
   --fast <n> --slow <n>    EMA lengths for the built-in cross \
 ({DEFAULT_FAST_EMA} / {DEFAULT_SLOW_EMA})

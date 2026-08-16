@@ -478,6 +478,7 @@ pub struct FeedConfig {
     pub default_layout: Option<DeclaredLayout>,
     /// The bar spec a tab on this feed opens on, as `kind:parameter` —
     /// `time:1m`, `tick:50`, `volume:5`, `dollar:500000`, `imbalance:100`
+    /// (also `imbalance:volume:500` / `imbalance:dollar:500`)
     /// (see `crate::state::BarSpec::parse`). It sets the flow pane's opening
     /// spec; when [`default_layout`](Self::default_layout) shows a time pane
     /// and this names a time spec, that pane opens on its interval too.

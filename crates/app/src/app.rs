@@ -2008,6 +2008,7 @@ impl QuantickApp {
             dollar_notional: &mut pane.dollar_notional,
             time_interval_ms: &mut pane.time_interval_ms,
             imbalance_target: &mut pane.imbalance_target,
+            imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
             capabilities,
@@ -9049,6 +9050,35 @@ plot(close)
             "a new bar partition re-anchors the marks, it does not drop them"
         );
         assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
+    }
+
+    /// The unit chips write one field and nothing else: a unit-only change
+    /// is a whole spec change, and the same two settle frames every selector
+    /// gets must re-cut the series.
+    #[test]
+    fn switching_only_the_imbalance_unit_recuts_the_series() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Imbalance;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(
+            app.active_tab().flow_pane.state.spec(),
+            &BarSpec::Imbalance(crate::state::ImbalanceUnit::Trades, 100),
+            "the kind switch lands on the default trades unit first"
+        );
+
+        app.active_tab_mut().flow_pane.imbalance_unit = crate::state::ImbalanceUnit::Volume;
+        app.active_tab_mut().apply_spec_changes();
+        assert!(
+            app.active_tab().loading.is_active(LoadingTask::BarRebuild),
+            "the arming frame shows the rebuild overlay"
+        );
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(
+            app.active_tab().flow_pane.state.spec(),
+            &BarSpec::Imbalance(crate::state::ImbalanceUnit::Volume, 100),
+            "a unit-only change rebuilds the series"
+        );
     }
 
     #[test]
