@@ -23,9 +23,9 @@ use serde::{Deserialize, Serialize};
 use crate::footprint_config::{self, FootprintConfig};
 
 /// Environment override for the presets file location.
-const PRESETS_ENV: &str = "QUANTICK_FOOTPRINT_PRESETS";
-/// Default file, beside the other app state.
-const PRESETS_FILE: &str = "footprint-presets.toml";
+pub(crate) const PRESETS_ENV: &str = "QUANTICK_FOOTPRINT_PRESETS";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const PRESETS_FILE: &str = "footprint-presets.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 /// Most presets one store keeps. A name list is a menu, not a database;
@@ -168,15 +168,23 @@ impl PresetStore {
 #[must_use]
 pub fn default_path() -> PathBuf {
     if cfg!(test) {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        return std::env::temp_dir().join(format!(
-            "quantick-footprint-presets-{}-{}.toml",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        return crate::store_home::test_path(PRESETS_FILE);
     }
-    std::env::var_os(PRESETS_ENV).map_or_else(|| PathBuf::from(PRESETS_FILE), PathBuf::from)
+    crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
+}
+
+/// Parse a footprint-presets file, reporting why it is not one. The gate a
+/// bundle section goes through — see [`crate::workspace_bundle`].
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let file: PresetsFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "footprint-presets format version {} (this build reads {FORMAT_VERSION})",
+            file.version
+        ))
+    }
 }
 
 #[cfg(test)]

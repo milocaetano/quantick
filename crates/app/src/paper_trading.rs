@@ -5116,7 +5116,7 @@ fn offset_price(position: &Position, offset: Decimal, stop: bool) -> Decimal {
 
 /// Open `path` in the platform's file manager — created first, so the
 /// reveal never points at nothing on a fresh install.
-fn reveal_folder(path: &Path) {
+pub(crate) fn reveal_folder(path: &Path) {
     let _ = std::fs::create_dir_all(path);
     let launcher = if cfg!(target_os = "windows") {
         "explorer"
@@ -5129,10 +5129,10 @@ fn reveal_folder(path: &Path) {
         tracing::warn!(
             target: "quantick::app",
             schema_version = 1_u8,
-            event_code = "PAPER_HISTORY_REVEAL_FAILED",
+            event_code = "FOLDER_REVEAL_FAILED",
             path = %path.display(),
             %error,
-            "could not open the history folder"
+            "could not open a folder in the file manager"
         );
     }
 }

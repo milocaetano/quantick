@@ -14,7 +14,7 @@ use super::{DrawingStyle, PresetHost};
 
 /// Environment override for the preset file location.
 pub const PRESETS_ENV: &str = "QUANTICK_DRAWING_PRESETS";
-/// Default preset file, next to the working directory's quantick.toml.
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const PRESETS_FILE: &str = "quantick-drawing-presets.toml";
 /// Version this build writes and the only one it reads.
 const STORE_FORMAT_VERSION: u32 = 1;
@@ -83,6 +83,20 @@ struct StoreFile {
     tools: BTreeMap<String, ToolPresets>,
 }
 
+/// Parse a drawing-presets file, reporting why it is not one. The gate a
+/// bundle section goes through — see `crate::workspace_bundle`.
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let file: StoreFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    if file.version == STORE_FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "drawing-presets format version {} (this build reads {STORE_FORMAT_VERSION})",
+            file.version
+        ))
+    }
+}
+
 /// The app-side [`PresetHost`]: an in-memory copy of the preset file that
 /// writes itself back after every mutation (preset edits are rare,
 /// event-driven work — never on the frame path).
@@ -93,11 +107,15 @@ pub struct PresetStore {
 }
 
 impl PresetStore {
-    /// Resolve the preset file the same way the app config resolves:
-    /// the env override first, then the working directory.
+    /// Resolve the preset file: the env override first, then the durable
+    /// cockpit home — see [`crate::store_home`] for why the tool colours used
+    /// to vanish when the app was launched from elsewhere.
     #[must_use]
     pub fn default_path() -> PathBuf {
-        std::env::var_os(PRESETS_ENV).map_or_else(|| PathBuf::from(PRESETS_FILE), PathBuf::from)
+        if cfg!(test) {
+            return crate::store_home::test_path(PRESETS_FILE);
+        }
+        crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
     }
 
     /// Load the store, empty when the file is missing, unreadable or from an

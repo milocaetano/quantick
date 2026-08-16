@@ -22,9 +22,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Environment override for the file location.
-const SYMBOLS_ENV: &str = "QUANTICK_SYMBOLS";
-/// Default file, beside the working directory's config.
-const SYMBOLS_FILE: &str = "quantick-symbols.toml";
+pub(crate) const SYMBOLS_ENV: &str = "QUANTICK_SYMBOLS";
+/// The file's name inside the durable cockpit home. See [`crate::store_home`].
+pub(crate) const SYMBOLS_FILE: &str = "quantick-symbols.toml";
 /// Bumped on breaking layout changes; unknown versions start empty.
 const FORMAT_VERSION: u32 = 1;
 
@@ -102,10 +102,28 @@ impl AddedSymbols {
     }
 }
 
-/// Where the file lives: `QUANTICK_SYMBOLS`, else the working directory.
+/// Where the file lives: `QUANTICK_SYMBOLS`, else the durable cockpit home —
+/// see [`crate::store_home`] for why hand-added symbols used to vanish.
 #[must_use]
 pub fn default_path() -> PathBuf {
-    std::env::var_os(SYMBOLS_ENV).map_or_else(|| PathBuf::from(SYMBOLS_FILE), PathBuf::from)
+    if cfg!(test) {
+        return crate::store_home::test_path(SYMBOLS_FILE);
+    }
+    crate::store_home::resolve(SYMBOLS_ENV, SYMBOLS_FILE)
+}
+
+/// Parse an added-symbols file, reporting why it is not one. The gate a
+/// bundle section goes through — see [`crate::workspace_bundle`].
+pub(crate) fn validate(text: &str) -> Result<(), String> {
+    let added: AddedSymbols = toml::from_str(text).map_err(|error| error.to_string())?;
+    if added.version == FORMAT_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "added-symbols format version {} (this build reads {FORMAT_VERSION})",
+            added.version
+        ))
+    }
 }
 
 /// Load the added symbols; empty when missing, unreadable or from an unknown

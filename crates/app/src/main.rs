@@ -57,6 +57,7 @@ mod replay_view;
 mod resample;
 mod state;
 mod statusbar;
+mod store_home;
 mod style;
 mod symbols_file;
 mod tab;
@@ -70,6 +71,7 @@ mod trade_paint;
 mod ui_state;
 mod viewport;
 mod widgets;
+mod workspace_bundle;
 
 /// The bar type the chart opens on. The type and its parameter are tunable live
 /// from the controls bar; the feed and symbol come from the configuration.
@@ -142,6 +144,25 @@ fn main() -> eframe::Result {
     // that has since left it cannot decide what opens. `QUANTICK_DEFAULT_FEED`
     // and `QUANTICK_DEFAULT_SYMBOL` were applied to the config above and win
     // over the file — an env var is an explicit request for this one run.
+    // Before the first store is read: bring a cockpit left in this launch
+    // directory into the durable home, once. Every launch before this change
+    // wrote its arrangement beside wherever the app was started from, so the
+    // trader's real cockpit may still be sitting in one of them — see
+    // `store_home`. Copies only, and never over a home file that already
+    // exists, so it is safe to run and safe to have run.
+    if let Some(rescue) = store_home::consolidate_once()
+        && rescue.copied > 0
+    {
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "COCKPIT_HOME_READY",
+            copied = rescue.copied,
+            action = "opened_on_rescued_cockpit",
+            "brought the cockpit into its durable home"
+        );
+    }
+
     let workspace = ui_state::load(&ui_state::default_path()).restore(&config);
     let env_chose_market = config::startup_selection_came_from_env();
     if !env_chose_market && let Some((feed, symbol)) = workspace.first_market() {
