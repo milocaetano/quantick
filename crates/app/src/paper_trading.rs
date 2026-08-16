@@ -7338,6 +7338,49 @@ mod tests {
         assert_eq!(paper.working_orders().len(), 4, "a second print adds none");
     }
 
+    /// A coarsely quoted mark rounds 6 bp to nothing: both legs would
+    /// price *at* the mark, the simulator would refuse every one of them,
+    /// and the run would photograph an empty chart with nothing to explain
+    /// it. The step floors at one unit of the instrument's own precision.
+    #[test]
+    fn the_orders_hook_still_rests_on_an_integer_quoted_mark() {
+        let mut paper = PaperTrading::new();
+        paper.orders_demo = Some(2);
+        // 620 * 0.0006 = 0.372, which rounds to zero at scale 0.
+        paper.on_trade(&print(1, 620));
+        let prices: Vec<_> = paper
+            .working_orders()
+            .iter()
+            .map(|order| (order.side, order.price.expect("a limit has a price")))
+            .collect();
+        assert_eq!(
+            prices,
+            vec![
+                (Side::Buy, Decimal::from(619)),
+                (Side::Sell, Decimal::from(621)),
+                (Side::Buy, Decimal::from(618)),
+                (Side::Sell, Decimal::from(622)),
+            ],
+            "one tick per rung, and the rungs stay apart"
+        );
+        assert!(paper.orders_demo.is_none(), "orders rested, hook disarmed");
+    }
+
+    /// Nothing rested means the hook stays armed: disarming before the
+    /// simulator has accepted anything is exactly how a silent empty
+    /// capture happens.
+    #[test]
+    fn the_orders_hook_stays_armed_until_something_rests() {
+        let mut paper = PaperTrading::new();
+        paper.orders_demo = Some(1);
+        // No mark yet: nothing to place around, nothing consumed.
+        paper.rest_capture_orders();
+        assert_eq!(paper.orders_demo, Some(1), "no mark, still armed");
+        paper.on_trade(&print(1, 100_000));
+        assert_eq!(paper.working_orders().len(), 2);
+        assert!(paper.orders_demo.is_none());
+    }
+
     /// The capture hook opens every tag with nobody at the mouse — the
     /// pill's open form is otherwise unreachable from a scripted run.
     #[test]
