@@ -7275,8 +7275,18 @@ mod tests {
             "at the default zoom one bar owns one candle"
         );
 
-        // The zoom where grouping starts, and the far end of it.
-        pane.viewport.set_px_per_bar(2.0);
+        // The last zoom that still draws one candle per bar keeps them: the
+        // layers withdraw with the grouping, never before it.
+        pane.viewport
+            .set_px_per_bar(crate::viewport::UNGROUPED_MIN_PX_PER_BAR);
+        assert!(
+            pane.per_bar_layers_drawable(),
+            "ungrouped is ungrouped, however narrow the candles"
+        );
+
+        // Just past it, and at the far end of the squeeze.
+        pane.viewport
+            .set_px_per_bar(crate::viewport::UNGROUPED_MIN_PX_PER_BAR - 0.1);
         assert!(!pane.per_bar_layers_drawable());
         pane.viewport
             .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
@@ -7284,7 +7294,8 @@ mod tests {
 
         // And back: zooming in returns them, so this is a state, never a
         // one-way switch a trader has to go and undo somewhere else.
-        pane.viewport.set_px_per_bar(8.0);
+        pane.viewport
+            .set_px_per_bar(crate::viewport::DEFAULT_PX_PER_BAR);
         assert!(pane.per_bar_layers_drawable());
     }
 

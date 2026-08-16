@@ -13888,21 +13888,37 @@ plot(close)
 
         let before_time = time_zoom(&app);
         let before_flow = app.active_tab().flow_pane.viewport.px_per_bar();
+        // Stretch first, squeeze back. A pane with almost no series in it is
+        // already at its zoom-out floor (`MIN_SERIES_FILL` — squeezing a
+        // three-bar chart shows nothing more), so the gesture is proven in the
+        // direction that always has room, then in the one that has room again
+        // once it has been stretched.
+        drag_chart(
+            &mut app,
+            &ctx,
+            strip.center(),
+            strip.center() + egui::vec2(120.0, 0.0),
+        );
+        let stretched = time_zoom(&app);
+        assert!(
+            stretched > before_time,
+            "the timeframe pane stretches: {stretched} vs {before_time}"
+        );
+
         drag_chart(
             &mut app,
             &ctx,
             strip.center(),
             strip.center() + egui::vec2(-120.0, 0.0),
         );
-
         assert!(
-            time_zoom(&app) < before_time,
-            "the timeframe pane squeezes: {} vs {before_time}",
+            time_zoom(&app) < stretched,
+            "and squeezes: {} vs {stretched}",
             time_zoom(&app)
         );
         assert!(
             (app.active_tab().flow_pane.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
-            "and the flow pane beside it does not move"
+            "and the flow pane beside it never moved"
         );
     }
 

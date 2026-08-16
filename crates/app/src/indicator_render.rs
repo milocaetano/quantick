@@ -156,6 +156,11 @@ impl PlotX<'_> {
     fn rows_per_slot(&self) -> usize {
         self.viewport.bars_per_slot()
     }
+
+    /// Whether several bars share one candle at this zoom.
+    fn grouped(&self) -> bool {
+        self.viewport.grouped()
+    }
 }
 
 /// One plot column made drawable: the visible committed cells plus the
@@ -677,7 +682,16 @@ fn draw_view_plots(
         let color = color32(resolved.color);
         let stroke = Stroke::new(resolved.width, color);
         if let Some(marker) = &spec.marker {
-            draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
+            // Not on a grouped chart. A marker says "this happened on *this*
+            // bar", and a candle standing for eighty of them cannot carry the
+            // claim: the shapes pile onto each other by the hundred and their
+            // labels cover the price they are about. Line plots stay — a curve
+            // sampled per candle still reads — and the corner note says the
+            // chart is grouped, which is the same discipline the footprint and
+            // the aggression bubbles already follow.
+            if !x.grouped() {
+                draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
+            }
             continue;
         }
         match spec.style {

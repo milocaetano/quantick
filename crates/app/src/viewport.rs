@@ -40,6 +40,32 @@ pub const MIN_PX_PER_BAR: f32 = 0.01;
 /// multiple is the first one on [`SLOT_SNAP`] that reaches it, so a slot is
 /// always at least this wide and at most a step over.
 pub const TARGET_SLOT_PX: f32 = 4.0;
+/// The zoom above which one bar always owns one candle, in pixels per bar.
+///
+/// Grouping may only exist in territory that had no chart at all before it:
+/// two pixels per bar was the old zoom-out floor, so everything at or above it
+/// draws exactly the bars the trader configured, one candle each, forever.
+///
+/// This is not a tuning constant — it is a promise. A trader reading order
+/// flow enters on *one* bar: the elephant, the single print-storm bar that a
+/// 5 000-tick imbalance rule cut. A chart that quietly folds that bar into its
+/// neighbours while they zoom has taken away the thing they trade on. Above
+/// this line the chart is theirs, unchanged; below it there was never a
+/// readable bar to lose.
+pub const UNGROUPED_MIN_PX_PER_BAR: f32 = 2.0;
+/// Pixels per bar a chart opens on, and the zoom-out floor that always
+/// remains reachable however short the series is.
+pub const DEFAULT_PX_PER_BAR: f32 = 8.0;
+/// The least of the window a squeezed series may fill.
+///
+/// Zooming out past the point where the whole series is on screen buys
+/// nothing — there is no more history behind it — and costs everything: the
+/// bars huddle into a corner and the rest of the chart is empty canvas. So
+/// the floor follows the data, and the series always holds at least half the
+/// window. It can only ever *lower* the floor below [`DEFAULT_PX_PER_BAR`],
+/// never raise it above: a chart with ten bars on it must still zoom out to
+/// its normal candles, and does.
+const MIN_SERIES_FILL: f32 = 0.5;
 /// The grouping multiples, in order — the only counts of bars a candle is ever
 /// drawn from.
 ///
@@ -84,6 +110,11 @@ pub struct Viewport {
     /// Pixels per **bar** — the zoom. Below [`TARGET_SLOT_PX`] several bars
     /// share one drawn slot; see [`Viewport::bars_per_slot`].
     px_per_bar: f32,
+    /// How far the zoom may go out, in pixels per bar, given how much series
+    /// there is to show. Refreshed every frame by [`Viewport::clamp_to_window`],
+    /// which is the only place that knows both the window and the bar count;
+    /// see [`MIN_SERIES_FILL`].
+    data_floor: f32,
     /// Fractional bar index at the right edge (used when not following). May
     /// exceed `total - 1` to show empty space past the newest bar.
     right_bar: f32,
@@ -94,7 +125,8 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            px_per_bar: 8.0,
+            px_per_bar: DEFAULT_PX_PER_BAR,
+            data_floor: MIN_PX_PER_BAR,
             right_bar: 0.0,
             follow: true,
         }
@@ -120,20 +152,23 @@ impl Viewport {
 
     /// How many bars are merged into one drawn candle.
     ///
-    /// One until the zoom takes a bar below [`TARGET_SLOT_PX`], then the whole
-    /// number of bars that brings a slot back closest to that target. This is
-    /// what lets zoom-out keep going without the chart turning into a solid
-    /// band: past this point, squeezing shows *more history at the same
-    /// legibility* instead of thinner and thinner candles.
+    /// **One, at every zoom the chart could already reach** — see
+    /// [`UNGROUPED_MIN_PX_PER_BAR`]. Below that line, where a bar used to be
+    /// too narrow to draw at all, it is the whole number of bars that brings a
+    /// slot back to [`TARGET_SLOT_PX`]: squeezing further then shows *more
+    /// history at the same legibility* instead of a solid band.
     ///
-    /// The multiple is the first entry of [`SLOT_SNAP`] wide enough to bring a
-    /// slot back to [`TARGET_SLOT_PX`] — a ladder, not a free number, for the
-    /// reasons written there. Bars group from index 0 up, so a group is the
-    /// same group from frame to frame however far the view pans, and prepended
-    /// history shifts every index by a count the cache already watches for.
+    /// The multiple is the first entry of [`SLOT_SNAP`] wide enough — a
+    /// ladder, not a free number, for the reasons written there. Bars group
+    /// from index 0 up, so a group is the same group from frame to frame
+    /// however far the view pans, and prepended history shifts every index by
+    /// a count the cache already watches for.
     #[must_use]
     pub fn bars_per_slot(&self) -> usize {
-        if !self.px_per_bar.is_finite() || self.px_per_bar <= 0.0 {
+        if !self.px_per_bar.is_finite()
+            || self.px_per_bar <= 0.0
+            || self.px_per_bar >= UNGROUPED_MIN_PX_PER_BAR
+        {
             return 1;
         }
         SLOT_SNAP
@@ -165,8 +200,19 @@ impl Viewport {
     /// bar stays put.
     pub fn zoom(&mut self, factor: f32) {
         if factor > 0.0 && factor.is_finite() {
-            self.px_per_bar = (self.px_per_bar * factor).clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);
+            self.px_per_bar = (self.px_per_bar * factor).clamp(self.floor(), MAX_CANDLE_WIDTH);
         }
+    }
+
+    /// How far out this view may zoom right now, in pixels per bar.
+    ///
+    /// The hard floor, unless the series is short enough that showing all of
+    /// it takes wider bars — then it is whatever keeps [`MIN_SERIES_FILL`] of
+    /// the window covered. Never above [`DEFAULT_PX_PER_BAR`]: however few
+    /// bars there are, a chart still zooms out to its ordinary candles.
+    #[must_use]
+    fn floor(&self) -> f32 {
+        self.data_floor.clamp(MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR)
     }
 
     /// Set the zoom directly to `px` per bar, clamped to the same bounds the
@@ -174,7 +220,7 @@ impl Viewport {
     /// the zoom the scroll gesture reaches — one clamp, two doors.
     pub fn set_px_per_bar(&mut self, px: f32) {
         if px.is_finite() && px > 0.0 {
-            self.px_per_bar = px.clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);
+            self.px_per_bar = px.clamp(self.floor(), MAX_CANDLE_WIDTH);
         }
     }
 
@@ -238,6 +284,16 @@ impl Viewport {
     /// — zooming in while pushed fully left would otherwise multiply the empty
     /// space and walk the candles off the screen.
     pub fn clamp_to_window(&mut self, window_px: f32, total: usize) {
+        // How far out this series is worth zooming, refreshed here because
+        // this is the one call that sees both the window and the bar count.
+        // It only ever *lowers* the floor (see `Self::floor`), so a chart with
+        // three bars on it is not pinned to giant candles.
+        if window_px.is_finite() && window_px > 0.0 && total > 0 {
+            self.data_floor = window_px * MIN_SERIES_FILL / total as f32;
+            // The zoom may already be past it — the series just grew shorter,
+            // or the window just grew wider. Bring it back to what there is.
+            self.px_per_bar = self.px_per_bar.max(self.floor());
+        }
         if self.follow || total == 0 {
             return;
         }
@@ -549,19 +605,45 @@ mod tests {
         assert_eq!(v.right_edge_bar(10), 9.0);
     }
 
-    /// Zoomed out past the point where a bar can be drawn on its own, the chart
-    /// stops shrinking candles and starts grouping bars — which is what keeps
-    /// the extra history readable instead of turning it into a solid band.
+    /// The promise grouping is bounded by: every zoom the chart could already
+    /// reach draws the bars the trader configured, one candle each. A trader
+    /// entering on a single print-storm bar — the elephant a 5 000-tick
+    /// imbalance rule cut — must never watch it fold into its neighbours
+    /// because they moved the zoom.
+    #[test]
+    fn nothing_groups_at_any_zoom_the_chart_could_already_reach() {
+        let mut v = Viewport::new();
+        for px in [
+            MAX_CANDLE_WIDTH,
+            64.0,
+            DEFAULT_PX_PER_BAR,
+            4.0,
+            3.0,
+            UNGROUPED_MIN_PX_PER_BAR,
+        ] {
+            v.set_px_per_bar(px);
+            assert_eq!(v.bars_per_slot(), 1, "{px} px per bar must stay ungrouped");
+            assert!(!v.grouped());
+            assert!((v.candle_width() - px).abs() < 0.001);
+        }
+    }
+
+    /// Below that line — territory the old floor made unreachable — squeezing
+    /// groups instead of shrinking, which is what keeps the extra history
+    /// readable rather than a solid band.
     #[test]
     fn squeezing_past_a_drawable_candle_groups_bars_instead() {
         let mut v = Viewport::new();
-        assert_eq!(v.bars_per_slot(), 1, "8 px per bar is one bar per candle");
-        assert!(!v.grouped());
-
-        v.set_px_per_bar(2.0); // where zooming out used to stop
-        assert_eq!(v.bars_per_slot(), 2);
-        assert!(v.grouped());
-        assert!((v.candle_width() - 4.0).abs() < 0.001, "a drawable slot");
+        v.set_px_per_bar(UNGROUPED_MIN_PX_PER_BAR - 0.1);
+        assert!(
+            v.grouped(),
+            "just past the line, bars start sharing candles"
+        );
+        assert!(
+            v.candle_width() >= TARGET_SLOT_PX - 0.001,
+            "and the candle drawn for them is drawable: {}",
+            v.candle_width()
+        );
 
         v.set_px_per_bar(MIN_PX_PER_BAR); // as far out as it goes
         assert_eq!(v.bars_per_slot(), 400);
