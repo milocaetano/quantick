@@ -849,6 +849,16 @@ pub struct QuantickApp {
     /// Cleared by the first frame that can honour it — the divider only exists
     /// once the canvas has drawn once — so the menu opens exactly once and
     /// then behaves like any menu a hand opened.
+    /// Whether a scripted run asked for the Workspace menu open
+    /// (`QUANTICK_MENU=workspace`). A menu is a popup egui owns, so a capture
+    /// reaches it by clicking the button, not by setting state — see
+    /// [`Self::raw_input_hook`].
+    scripted_menu: Option<()>,
+    /// The press's matching release, on the frame after it.
+    scripted_menu_release: Option<egui::Pos2>,
+    /// Where the Workspace button was drawn, published by the menu bar so the
+    /// hook can click it rather than guess at a coordinate.
+    workspace_menu_rect: Option<egui::Rect>,
     scripted_context_menu: Option<ContextMenuPane>,
     /// Where the scripted press landed, until its release goes out.
     ///
@@ -1133,6 +1143,9 @@ impl QuantickApp {
             indicator_presets_path,
             footprint_preset_draft: String::new(),
             scripted_footprint: false,
+            scripted_menu: None,
+            scripted_menu_release: None,
+            workspace_menu_rect: None,
             scripted_context_menu: None,
             scripted_context_menu_release: None,
             scripted_indicator_settings: false,
@@ -1316,6 +1329,15 @@ impl QuantickApp {
         app.scripted_context_menu = std::env::var("QUANTICK_CONTEXT_MENU")
             .ok()
             .and_then(|value| ContextMenuPane::from_env_value(&value));
+
+        // The Workspace menu, open. Its entries are the only door to
+        // exporting, opening and locating a workspace, and a menu bar button
+        // is not something a scripted run can press — so the hook presses it.
+        // Anything but `workspace` opens nothing rather than the wrong menu.
+        app.scripted_menu = std::env::var("QUANTICK_MENU")
+            .ok()
+            .filter(|value| value.trim().eq_ignore_ascii_case("workspace"))
+            .map(|_| ());
 
         // The tape switch in the canvas's top-right corner — the one control
         // that decides whether there is a band at all. Same setter the chip
@@ -4576,7 +4598,10 @@ impl QuantickApp {
                     // under File is how a platform ends up with traders who
                     // rebuild their screen every morning without knowing they
                     // never had to (audit §6).
-                    ui.menu_button("Workspace", |ui| {
+                    // The button's own rect, published for the capture hook —
+                    // read, never acted on, so the menu behaves identically
+                    // whether or not a scripted run is watching.
+                    let workspace_menu = ui.menu_button("Workspace", |ui| {
                         if ui
                             .add(
                                 egui::Button::new("Save workspace").shortcut_text(
@@ -4743,6 +4768,7 @@ impl QuantickApp {
                             self.save_workspace("save_on_exit_toggled");
                         }
                     });
+                    self.workspace_menu_rect = Some(workspace_menu.response.rect);
                     ui.menu_button("Tools", |ui| {
                         if ui.button("Appearance…").clicked() {
                             self.show_style = true;
@@ -6191,6 +6217,34 @@ impl eframe::App for QuantickApp {
                 pos: position,
                 button: egui::PointerButton::Secondary,
                 pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            return;
+        }
+        // The menu bar's own button, clicked. A menu is a popup egui owns, so
+        // there is no state to set that would not be a second way of opening
+        // it; the hook supplies the press, and every line after it is what a
+        // trader's click runs. The rect is published by the draw, so the
+        // first frame has none — wait for it rather than guess.
+        if let Some(position) = self.scripted_menu_release.take() {
+            raw_input.events.push(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            });
+            return;
+        }
+        if self.scripted_menu.is_some()
+            && let Some(position) = self.workspace_menu_rect.map(|rect| rect.center())
+        {
+            self.scripted_menu = None;
+            self.scripted_menu_release = Some(position);
+            raw_input.events.push(egui::Event::PointerMoved(position));
+            raw_input.events.push(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
                 modifiers: egui::Modifiers::default(),
             });
             return;
