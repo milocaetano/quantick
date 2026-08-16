@@ -47,6 +47,14 @@ pub(crate) struct CockpitStore {
     /// The file's name, in the durable home and in the legacy launch
     /// directory alike. One name, so the rescue is a copy and not a mapping.
     pub file: &'static str,
+    /// Where this store's file actually is for this run — the module's own
+    /// `default_path`, not a second copy of its resolution.
+    ///
+    /// A field rather than `resolve(env, file)` because each module decides
+    /// its own answer, and under test that answer is a scratch file. Reading
+    /// the trader's real cockpit from a test — or worse, writing it — is the
+    /// failure this closes.
+    pub path: fn() -> PathBuf,
     /// Parse this store's file with its real type, reporting why it is not
     /// one. The gate that lets a bundle be checked whole before any of it is
     /// written — see [`crate::workspace_bundle`].
@@ -66,48 +74,56 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         env: crate::ui_state::UI_STATE_ENV,
         file: crate::ui_state::UI_STATE_FILE,
         validate: crate::ui_state::validate,
+        path: crate::ui_state::default_path,
     },
     CockpitStore {
         key: "indicators",
         env: crate::indicators::state_file::STATE_ENV,
         file: crate::indicators::state_file::STATE_FILE,
         validate: crate::indicators::state_file::validate,
+        path: crate::indicators::state_file::default_path,
     },
     CockpitStore {
         key: "indicator_presets",
         env: crate::indicators::preset_file::PRESETS_ENV,
         file: crate::indicators::preset_file::PRESETS_FILE,
         validate: crate::indicators::preset_file::validate,
+        path: crate::indicators::preset_file::default_path,
     },
     CockpitStore {
         key: "chart_layers",
         env: crate::chart_layers::LAYERS_ENV,
         file: crate::chart_layers::LAYERS_FILE,
         validate: crate::chart_layers::validate,
+        path: crate::chart_layers::default_path,
     },
     CockpitStore {
         key: "drawing_presets",
         env: crate::drawings::presets::PRESETS_ENV,
         file: crate::drawings::presets::PRESETS_FILE,
         validate: crate::drawings::presets::validate,
+        path: crate::drawings::presets::PresetStore::default_path,
     },
     CockpitStore {
         key: "footprint_settings",
         env: crate::footprint_config::SETTINGS_ENV,
         file: crate::footprint_config::SETTINGS_FILE,
         validate: crate::footprint_config::validate_settings,
+        path: crate::footprint_config::settings_path,
     },
     CockpitStore {
         key: "footprint_presets",
         env: crate::footprint_presets::PRESETS_ENV,
         file: crate::footprint_presets::PRESETS_FILE,
         validate: crate::footprint_presets::validate,
+        path: crate::footprint_presets::default_path,
     },
     CockpitStore {
         key: "symbols",
         env: crate::symbols_file::SYMBOLS_ENV,
         file: crate::symbols_file::SYMBOLS_FILE,
         validate: crate::symbols_file::validate,
+        path: crate::symbols_file::default_path,
     },
 ];
 
@@ -146,9 +162,20 @@ fn resolve_in(home: Option<PathBuf>, file: &str) -> PathBuf {
 /// test calls twice answers twice the same — and no test can reach the real
 /// documents folder.
 pub(crate) fn test_path(file: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join(format!("quantick-test-home-{}", std::process::id()))
-        .join(file)
+    // Per thread as well as per process: the test harness gives each test its
+    // own thread, so this is stable *within* a test — a path resolved twice
+    // answers twice the same — while still isolating tests that build several
+    // apps and would otherwise restore one another's cockpit.
+    let home = std::env::temp_dir().join(format!(
+        "quantick-test-home-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    // The real home is created by the startup rescue, which a test does not
+    // run; without this every store's first save would fail on a missing
+    // folder rather than on anything the test is about.
+    let _ = std::fs::create_dir_all(&home);
+    home.join(file)
 }
 
 /// What one consolidation pass did. Copies only — the launch directory keeps
@@ -199,10 +226,10 @@ fn rescue_into(
     legacy: &Path,
     overridden: &dyn Fn(&str) -> bool,
 ) -> Option<RescueSummary> {
-    let marker = home.join(CONSOLIDATED_MARKER);
-    if marker.exists() {
-        return None;
-    }
+    // Before the marker check, not after: a trader who deleted the folder
+    // still has a marker-less home *and* one that no store could write to,
+    // and the cheap `create_dir_all` on an existing folder is the price of
+    // the app never silently failing to save again.
     if let Err(error) = std::fs::create_dir_all(home) {
         tracing::warn!(
             target: "quantick::app",
@@ -213,6 +240,10 @@ fn rescue_into(
             action = "keeping_launch_directory",
             "could not create the cockpit home"
         );
+        return None;
+    }
+    let marker = home.join(CONSOLIDATED_MARKER);
+    if marker.exists() {
         return None;
     }
     let mut summary = RescueSummary::default();

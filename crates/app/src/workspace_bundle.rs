@@ -82,9 +82,12 @@ impl Bundle {
 /// folders by a test instead of at the trader's real home.
 pub(crate) type StorePath<'a> = &'a dyn Fn(&CockpitStore) -> PathBuf;
 
-/// The live resolver: every store where it actually lives this run.
+/// The live resolver: every store where it actually lives this run, through
+/// the module's own `default_path` rather than a second copy of its rules —
+/// so a bundle written under test lands in the same scratch file the app is
+/// reading, and never in the trader's real cockpit.
 pub(crate) fn live_paths(store: &CockpitStore) -> PathBuf {
-    crate::store_home::resolve(store.env, store.file)
+    (store.path)()
 }
 
 /// Read every cockpit store into one bundle.
@@ -553,10 +556,18 @@ mod tests {
     }
 
     /// A registry of exactly one made-up store.
+    /// Where the made-up store would live. Never called — every test below
+    /// points `capture`/`apply` at a scratch folder — but a registry entry
+    /// has to be able to answer it, which is the point.
+    fn fake_path() -> PathBuf {
+        crate::store_home::test_path("fake-store.toml")
+    }
+
     const FAKE_REGISTRY: &[CockpitStore] = &[CockpitStore {
         key: "fake_store",
         env: "QUANTICK_FAKE_STORE",
         file: "fake-store.toml",
+        path: fake_path,
         validate: validate_fake,
     }];
 

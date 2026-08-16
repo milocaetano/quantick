@@ -8219,6 +8219,93 @@ mod tests {
         (app, evt_tx, cmd_rx, book_tx)
     }
 
+    /// The whole point of the feature, end to end inside a running app:
+    /// export a cockpit, change it, open the file back, and the cockpit the
+    /// trader saved is the cockpit on screen.
+    ///
+    /// Under test every store resolves to a per-process scratch home
+    /// (`store_home::test_path`), so this touches no real documents folder.
+    #[test]
+    fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        // A cockpit worth keeping: a layer off, a symbol added, a rail
+        // favourite — three different stores.
+        app.added_symbols.add("binance", "WINQ26");
+        symbols_file::save(&app.symbols_path, &app.added_symbols).expect("symbols written");
+        app.toolrail.set_favorites(&["measure".to_owned()]);
+        app.save_workspace("test");
+
+        let file = std::env::temp_dir().join(format!(
+            "quantick-app-bundle-{}-{:?}.qws.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        app.export_workspace_to(&file);
+        assert!(file.is_file(), "the export reached the disk");
+        assert_eq!(
+            app.recent_workspaces.len(),
+            1,
+            "and the file joined the Open-recent menu"
+        );
+
+        // Now undo all of it, the way a trader rearranging their screen would.
+        app.added_symbols.remove("binance", "WINQ26");
+        symbols_file::save(&app.symbols_path, &app.added_symbols).expect("symbols written");
+        app.toolrail.set_favorites(&[]);
+        app.save_workspace("test");
+        assert!(!app.added_symbols.contains("binance", "WINQ26"));
+
+        app.import_workspace_from(&file);
+
+        assert!(
+            app.added_symbols.contains("binance", "WINQ26"),
+            "the added symbol came back"
+        );
+        assert_eq!(
+            app.toolrail
+                .favorites()
+                .iter()
+                .map(|tool| tool.id().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["measure".to_owned()],
+            "and so did the toolbar favourite"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+
+    /// The all-or-nothing rule where the trader actually meets it: a bad file
+    /// leaves the screen exactly as it was, and says so.
+    #[test]
+    fn opening_a_file_that_is_not_a_workspace_changes_nothing_on_screen() {
+        let (mut app, _evt, _cmd, _book) = test_app();
+        app.toolrail.set_favorites(&["measure".to_owned()]);
+        let before: Vec<String> = app
+            .toolrail
+            .favorites()
+            .iter()
+            .map(|tool| tool.id().to_owned())
+            .collect();
+
+        let file = std::env::temp_dir().join(format!(
+            "quantick-app-bad-bundle-{}-{:?}.qws.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&file, "version = 99\nname = \"from tomorrow\"\n").unwrap();
+        app.import_workspace_from(&file);
+
+        assert_eq!(
+            app.toolrail
+                .favorites()
+                .iter()
+                .map(|tool| tool.id().to_owned())
+                .collect::<Vec<_>>(),
+            before,
+            "the cockpit is untouched"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+
     /// A workspace save must carry the trader's *pick* and nothing else.
     ///
     /// The failure this guards is quiet and expensive: a validation run under

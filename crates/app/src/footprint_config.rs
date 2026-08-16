@@ -205,13 +205,7 @@ struct SettingsFile {
 #[must_use]
 pub fn settings_path() -> PathBuf {
     if cfg!(test) {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        return std::env::temp_dir().join(format!(
-            "quantick-footprint-settings-{}-{}.toml",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        return crate::store_home::test_path(SETTINGS_FILE);
     }
     crate::store_home::resolve(SETTINGS_ENV, SETTINGS_FILE)
 }

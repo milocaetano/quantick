@@ -371,7 +371,7 @@ struct LayersFile {
 #[must_use]
 pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
-        return scratch_path();
+        return crate::store_home::test_path(LAYERS_FILE);
     }
     crate::store_home::resolve(LAYERS_ENV, LAYERS_FILE)
 }
@@ -388,17 +388,6 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
             file.version
         ))
     }
-}
-
-/// A store of its own, for an app built by a test. See [`default_path`].
-fn scratch_path() -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!(
-        "quantick-chart-layers-{}-{}.toml",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ))
 }
 
 /// Load the stored visibility; empty (change nothing) when the file is

@@ -199,13 +199,7 @@ impl PresetStore {
 #[must_use]
 pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        return std::env::temp_dir().join(format!(
-            "quantick-indicator-presets-{}-{}.toml",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        return crate::store_home::test_path(PRESETS_FILE);
     }
     crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
 }
