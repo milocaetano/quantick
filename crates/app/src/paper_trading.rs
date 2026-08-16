@@ -157,6 +157,13 @@ const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 /// Shortest cmd-trading preview line: the pointer near the right edge
 /// still gets a line long enough to read as one, by starting left of it.
 const CMD_LINE_MIN_PX: f32 = 120.0;
+/// Most dash segments the aim line is allowed to paint. It now runs from
+/// the pointer all the way to the axis, which ties the label beside the
+/// hand to the price on the gutter — but on a maximised chart that is
+/// thousands of pixels, and `Shape::dashed_line` allocates one segment per
+/// dash *every frame the modifier is held*. Past this the dash period
+/// stretches instead, so the cost is bounded and the rhythm still reads.
+const CMD_LINE_MAX_DASHES: f32 = 96.0;
 /// The preview label's fixed width: paint and press share this exact
 /// rect, so the two can never disagree (the overlay-controls rule).
 const CMD_LABEL_WIDTH_PX: f32 = 116.0;
@@ -522,14 +529,20 @@ pub struct ChartInput<'a> {
     pub primary_released: bool,
     /// The frame's held modifiers — what the cmd-trading gesture reads.
     pub modifiers: egui::Modifiers,
-    /// Whether an annotation already owns this pixel — a drawing body or a
-    /// selected object's handle under the pointer. The pane answers it,
-    /// the same way it answers "a tool is armed": this module never reads
-    /// the drawings itself. The aim-anywhere cmd gesture is the *last*
-    /// claimant on the canvas, so it paints nothing and places nothing
-    /// there; the buy modifier is Shift by default, which is also the key
-    /// that levels a channel corner mid-drag.
-    pub drawing_under_pointer: bool,
+    /// Whether something the pane owns already holds this pixel — a
+    /// drawing a press would grab, or the canvas's own chrome (the tape
+    /// chip, an indicator pane's header or its divider). The pane answers
+    /// it, the same way it answers "a tool is armed": this module never
+    /// reads the drawings itself. The aim-anywhere cmd gesture is the
+    /// *last* claimant on the canvas, so it paints nothing and places
+    /// nothing there; the buy modifier is Shift by default, which is also
+    /// the key that levels a channel corner mid-drag.
+    pub canvas_claimed: bool,
+    /// Whether the paper layer is painted this frame. Switched off, its
+    /// lines and tags are unpainted — so they take no press either. An
+    /// invisible control is not a control, and the aim's target is now the
+    /// whole plot rather than one small label.
+    pub layer_visible: bool,
 }
 
 /// A modifier key the cmd-trading gesture can bind to.
@@ -587,8 +600,9 @@ impl CmdModifier {
 }
 
 /// Cmd trading: hold a key over the chart and a dashed line shows exactly
-/// where the order will rest; click its label to place. Safer than the
-/// right-click menu because the price is visible before anything commits.
+/// where the order will rest, with a label riding beside the cursor; the
+/// click places it. Safer than the right-click menu because the price is
+/// visible before anything commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CmdTradingSettings {
     pub enabled: bool,
@@ -643,6 +657,29 @@ struct CmdPreview {
     /// the label rides. Stored whole so paint and press lay out from the
     /// very same position.
     pointer: egui::Pos2,
+    /// This aim was invented by the capture hook, not by a held key. It
+    /// paints, so a screenshot has something to show, and it never places:
+    /// a run with nobody at the keyboard is holding no modifier, and a
+    /// stray click during one must not write orders into a journal.
+    forced: bool,
+}
+
+/// One frame's answer for one working order's in-plot tag: computed by
+/// `handle_chart_input`, read by the paint *and* by the press.
+///
+/// A shared **value**, not a shared formula. The two sides are handed
+/// different pointers (`hover_pos` for the paint, `latest_pos` for the
+/// press) and different rects (the whole chart vs. the band left of the
+/// tape lane), so asking them to recompute the same predicate is asking
+/// them to disagree — and a ✕ that one side paints and the other side does
+/// not is a cancel the trader never saw coming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenTag {
+    id: OrderId,
+    /// The ✕ is painted with the full statement, so a press may act on it.
+    /// False while the order is being dragged: a moving order offers no
+    /// cancel, and its tag is on a different row from its resting price.
+    cancel: bool,
 }
 
 /// The `QUANTICK_CMD_PREVIEW` hook, parsed: which side to aim and, when
@@ -674,6 +711,11 @@ impl CmdPreviewForce {
             side,
             x_fraction: fraction
                 .and_then(|text| text.trim().parse::<f32>().ok())
+                // `"NaN"` and `"inf"` parse, and `clamp` passes NaN
+                // straight through — which would poison the pointer's x
+                // and paint nothing at all, the one outcome this fallback
+                // exists to rule out.
+                .filter(|fraction: &f32| fraction.is_finite())
                 .map(|fraction| fraction.clamp(0.0, 1.0)),
         })
     }
@@ -708,6 +750,14 @@ pub struct PaperTrading {
     /// This frame's cmd preview — input computes, paint reads, one
     /// geometry both sides.
     cmd_preview: Option<CmdPreview>,
+    /// This frame's opened order tags — same contract as `cmd_preview`:
+    /// input computes, paint and press both read. Empty is the common
+    /// case, so this allocates nothing on an ordinary frame.
+    open_tags: Vec<OpenTag>,
+    /// Whether this frame paints the paper layer. Same contract again, and
+    /// the gate lives *here* so that every reader honours it: an unpainted
+    /// line offers no cursor, no control and no press, whoever asks.
+    layer_visible: bool,
     /// Harness override: paint the preview for this side, optionally at a
     /// stated x, with nobody at the keyboard (`QUANTICK_CMD_PREVIEW`).
     cmd_preview_force: Option<CmdPreviewForce>,
@@ -813,6 +863,8 @@ impl PaperTrading {
             session_source: history::SessionSource::Live,
             cmd_trading: CmdTradingSettings::default(),
             cmd_preview: None,
+            open_tags: Vec::new(),
+            layer_visible: true,
             cmd_preview_force: std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
                 CmdPreviewForce::parse(&value).or_else(|| {
                     tracing::warn!(
@@ -826,11 +878,27 @@ impl PaperTrading {
                 })
             }),
             order_hover_force: std::env::var(PAPER_ORDER_HOVER_ENV).is_ok_and(|value| value == "1"),
-            orders_demo: std::env::var(PAPER_ORDERS_ENV)
-                .ok()
-                .and_then(|value| value.trim().parse::<u8>().ok())
-                .filter(|rungs| *rungs > 0)
-                .map(|rungs| rungs.min(PAPER_ORDERS_MAX_RUNGS)),
+            orders_demo: std::env::var(PAPER_ORDERS_ENV).ok().and_then(|value| {
+                value
+                    .trim()
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|rungs| (1..=PAPER_ORDERS_MAX_RUNGS).contains(rungs))
+                    .or_else(|| {
+                        // Refused, never guessed: a typo that silently
+                        // photographed an orderless chart would read as a
+                        // defect in the thing being photographed.
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "PAPER_ORDERS_AUTOSTART_UNKNOWN",
+                            value = %value,
+                            max = PAPER_ORDERS_MAX_RUNGS,
+                            "QUANTICK_PAPER_ORDERS wants a rung count from 1 to the maximum"
+                        );
+                        None
+                    })
+            }),
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
@@ -966,6 +1034,15 @@ impl PaperTrading {
 
     /// Place the capture run's resting orders, once, as soon as the tape
     /// has a mark to place them around. See [`PAPER_ORDERS_ENV`].
+    ///
+    /// The rung offsets snap to the instrument's own precision, and never
+    /// to nothing: on a coarsely quoted mark 6 bp rounds to zero, both
+    /// legs would price *at* the mark, the simulator would refuse every
+    /// one of them and the hook would have disarmed itself already — an
+    /// empty chart with nothing in the log to explain it, which is exactly
+    /// the failure this hook exists to prevent. So the step floors at one
+    /// unit of that precision, and the hook stays armed until at least one
+    /// order is actually resting.
     fn rest_capture_orders(&mut self) {
         let Some(rungs) = self.orders_demo else {
             return;
@@ -973,10 +1050,13 @@ impl PaperTrading {
         let Some(mark) = self.sim.mark_price() else {
             return;
         };
-        self.orders_demo = None;
+        let tick = Decimal::ONE
+            .checked_div(Decimal::from(10_u64.pow(mark.scale().min(18))))
+            .unwrap_or(Decimal::ONE);
         for rung in 1..=u32::from(rungs) {
-            let step =
-                (mark * PAPER_ORDERS_STEP_FRACTION * Decimal::from(rung)).round_dp(mark.scale());
+            let step = (mark * PAPER_ORDERS_STEP_FRACTION * Decimal::from(rung))
+                .round_dp(mark.scale())
+                .max(tick * Decimal::from(rung));
             for (side, price) in [
                 (Side::Buy, mark.saturating_sub(step)),
                 (Side::Sell, mark.saturating_add(step)),
@@ -990,6 +1070,18 @@ impl PaperTrading {
                 self.handle_events(events);
             }
         }
+        if self.sim.orders().is_empty() {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "PAPER_ORDERS_HOOK_REJECTED",
+                %mark,
+                action = "retry_next_print",
+                "QUANTICK_PAPER_ORDERS rested nothing around this mark"
+            );
+            return;
+        }
+        self.orders_demo = None;
     }
 
     /// One step of the scripted demo: a fixed command sequence by print
@@ -1326,11 +1418,17 @@ impl PaperTrading {
             if !ctx.in_range(y) {
                 continue;
             }
-            // At rest the tag is a pill; it opens under the pointer. The
-            // line's own emphasis follows the same event, so one hover
-            // reads as one thing.
-            let expanded = self.order_tag_expanded(ctx.pointer, y, ctx.chart_rect, order.id);
-            let hovered = expanded && !dragged;
+            // At rest the tag is a pill; it opens under the pointer. Read,
+            // never recomputed — this frame's input already decided it,
+            // from the pointer and the rect the *press* will use.
+            let open = self.open_tag(order.id);
+            let expanded = open.is_some();
+            // The line's own emphasis keeps its own 10 px band: that band
+            // is `line_at`'s, so a line that lights up is a line the press
+            // can actually grab. The tag opens over a wider row and near a
+            // chart edge over a different one, which is why the two
+            // questions stayed separate.
+            let hovered = ctx.hovers_line(y) || self.hovered_order == Some(order.id);
             let shown = if dragged { self.snap(price) } else { level };
             ctx.level_line(y, theme::ACCENT, true, LINE_WIDTH_PX, hovered, dragged);
             ctx.gutter_chip(y, theme::ACCENT, &fmt_decimal(shown));
@@ -1355,7 +1453,9 @@ impl PaperTrading {
                     fmt_decimal(order.quantity),
                 )
             };
-            ctx.chip_tag(y, theme::ACCENT, &text, expanded && !dragged);
+            // The ✕ is painted exactly when the press-side offers it —
+            // one value, read twice, never two formulas.
+            ctx.chip_tag(y, theme::ACCENT, &text, open.is_some_and(|tag| tag.cancel));
         }
 
         if let Some(position) = self.sim.position().cloned() {
@@ -1516,11 +1616,15 @@ impl PaperTrading {
         let (start, end, label) = cmd_preview_layout(band, preview.pointer);
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
+        // The dash period stretches on a very wide plot rather than paying
+        // for a segment every 8 px across it (see `CMD_LINE_MAX_DASHES`).
+        let period = ((end.x - start.x) / CMD_LINE_MAX_DASHES).max(ORDER_DASH_PX + ORDER_GAP_PX);
+        let dash = period * ORDER_DASH_PX / (ORDER_DASH_PX + ORDER_GAP_PX);
         ctx.painter.extend(egui::Shape::dashed_line(
             &[start, end],
             egui::Stroke::new(LINE_HOVER_WIDTH_PX, color),
-            ORDER_DASH_PX,
-            ORDER_GAP_PX,
+            dash,
+            period - dash,
         ));
         ctx.gutter_chip(preview.pointer.y, color, &fmt_decimal(preview.price));
         // Full fill, always: while it paints, the click is already live.
@@ -1637,9 +1741,22 @@ impl PaperTrading {
     }
 
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
-        // The cmd preview is a per-frame fact: recomputed here, painted by
-        // `draw_layer`, and cleared the instant the key lifts.
+        // Three per-frame facts, in dependency order: whether the layer
+        // paints at all, which tags are open (the aim yields to an open ✕,
+        // so this comes before it), then the cmd preview. All three are
+        // written here, and read by `draw_layer`, by the press below and
+        // by `hover_cursor` — one value each, never a formula re-run
+        // against a different pointer.
+        self.layer_visible = input.layer_visible;
+        self.open_tags = self.compute_open_tags(input);
         self.cmd_preview = self.compute_cmd_preview(input);
+
+        // Nothing paper is painted while its layer is off, so nothing
+        // paper takes the press: an invisible line is not a control.
+        if !input.layer_visible {
+            self.drag = PaperDrag::None;
+            return false;
+        }
 
         // An overlay control (a tag's ✕, a bracket handle) takes the press
         // before *everything*: before the armed click — arming an order must
@@ -1674,16 +1791,20 @@ impl PaperTrading {
             return true;
         }
 
-        // The aimed order takes the press after the ✕s (they are rarer and
-        // smaller) and before everything else. There is no separate target
-        // to hit: a label that rides the pointer can never be landed on —
-        // move toward it and it moves with you — so the *held modifier* is
-        // the deliberate act and the label beside the cursor is the
-        // statement of what this click will do. Nothing is aimed unless
-        // the preview exists, and the preview is exactly what is painted.
+        // The aimed order. There is no separate target to hit: a label
+        // that rides the pointer can never be landed on — move toward it
+        // and it moves with you — so the *held modifier* is the deliberate
+        // act and the label beside the cursor is the statement of what
+        // this click will do. It is also the *last* claimant on the
+        // canvas: `compute_cmd_preview` has already stood the aim down
+        // wherever an overlay control, a paper line, an armed placement or
+        // an annotation holds the pixel, so a preview existing here means
+        // nothing else wanted this press. A forced aim is a capture
+        // fixture with no hand behind it and never places.
         if input.primary_pressed
             && self.drag == PaperDrag::None
             && let Some(preview) = self.cmd_preview
+            && !preview.forced
         {
             self.place_resting(preview.side, preview.kind, preview.raw_price);
             return true;
@@ -1805,17 +1926,12 @@ impl PaperTrading {
                 .then(|| clamp_tag_center(y, chart.top(), chart.bottom()))
         };
         for order in self.sim.orders().iter().rev() {
-            // A resting tag paints no ✕ until it opens, so it offers none
-            // either: the press asks the paint's own question, rather than
-            // trusting two constants to keep agreeing by accident.
+            // A tag that paints no ✕ offers none: the press reads the very
+            // value the paint read, rather than recomputing a predicate
+            // from a different pointer and a different rect.
             if let Some(level) = order.price
                 && let Some(center_y) = visible_center(level)
-                && self.order_tag_expanded(
-                    Some(pointer),
-                    scale.y(level.to_f64().unwrap_or_default()),
-                    chart,
-                    order.id,
-                )
+                && self.open_tag(order.id).is_some_and(|tag| tag.cancel)
                 && close_button_rect(tag_right, center_y).contains(pointer)
             {
                 return Some(PaperControl::CancelOrder(order.id));
@@ -1857,21 +1973,35 @@ impl PaperTrading {
     /// `None` hides the overlay. Both keys down at once is ambiguous and
     /// shows nothing — so a shared binding degrades to "off", never to a
     /// wrong side.
+    ///
+    /// **The aim is the last claimant on the canvas.** Its target is the
+    /// whole plot, so anything already holding the pixel outranks it: an
+    /// annotation or the canvas chrome (the pane says so), an armed
+    /// placement the trader is in the middle of, an overlay ✕ or bracket
+    /// handle, and this module's own draggable lines. Standing the aim
+    /// *down* rather than merely refusing its press is what keeps the
+    /// promise: no preview means nothing paints, no hand cursor, no place
+    /// — the label can never advertise an order the press will not make.
     fn compute_cmd_preview(&self, input: &ChartInput<'_>) -> Option<CmdPreview> {
-        if !self.cmd_trading.enabled {
+        if !self.cmd_trading.enabled || !input.layer_visible {
             return None;
         }
-        // An annotation already owns this pixel. One gate, not three: no
-        // preview means nothing paints, the hand cursor stays off and the
-        // click cannot place — so the label can never promise an order the
-        // press will not make. Sweeping across a drawn line blinks the aim
-        // off for its grab band, which is the chart saying whose pixel it
-        // is, in step with the move cursor the drawings put up.
-        if input.drawing_under_pointer {
+        // A drawing a press would grab, or the canvas's own chrome. The
+        // buy modifier is Shift by default — the very key that levels a
+        // channel corner — so sweeping across a drawn line blinks the aim
+        // off for its grab band, in step with the move cursor the drawings
+        // put up.
+        if input.canvas_claimed {
+            return None;
+        }
+        // An armed limit/stop is an intent already stated, with its own
+        // hint on screen; a modifier resting under the hand must not turn
+        // that click into a different order and leave the ticket armed.
+        if self.armed.is_some() {
             return None;
         }
         let scale = input.scale?;
-        let (pointer, side) = match self.cmd_preview_force {
+        let (pointer, side, forced) = match self.cmd_preview_force {
             // The harness has no hand; park the pointer mid-chart, or at
             // the x the hook stated — which is the whole point of a run
             // capturing where the label rides, so it wins over a stray
@@ -1886,7 +2016,7 @@ impl PaperTrading {
                     ),
                     None => input.pointer.unwrap_or(input.chart.center()),
                 };
-                (pointer, force.side)
+                (pointer, force.side, true)
             }
             None => {
                 let pointer = input.pointer?;
@@ -1897,10 +2027,20 @@ impl PaperTrading {
                     (false, true) => Side::Sell,
                     _ => return None,
                 };
-                (pointer, side)
+                (pointer, side, false)
             }
         };
         if !input.chart.contains(pointer) {
+            return None;
+        }
+        // This module's own furniture outranks the aim, the same way an
+        // annotation does: an ✕ or a bracket handle under the pointer, and
+        // any line a press would grab. Otherwise holding the modifier
+        // while reaching for a stop would rest a new order on top of it,
+        // with the hand cursor promising exactly that.
+        if self.control_at(pointer, input.chart, scale).is_some()
+            || self.line_at(pointer, scale).is_some()
+        {
             return None;
         }
         let mark = self.sim.mark_price()?;
@@ -1920,29 +2060,56 @@ impl PaperTrading {
             price,
             raw_price,
             pointer,
+            forced,
         })
     }
 
-    /// Whether a resting order's in-plot tag states itself in full this
-    /// frame. At rest it is a compact pill, so the candles behind the most
-    /// recent price stay readable; it opens under the pointer, while its
-    /// dock row is hovered, and for as long as it is being dragged — a
-    /// trader repricing an order needs every field of it.
+    /// Which resting orders state themselves in full this frame, and which
+    /// of those offer their ✕. At rest a tag is a compact pill, so the
+    /// candles behind the most recent price stay readable; it opens under
+    /// the pointer, while its dock row is hovered, and for as long as it is
+    /// being dragged — a trader repricing an order needs every field of it,
+    /// though a moving order offers no cancel.
     ///
-    /// Pure geometry from this frame's own scale, so `control_at` asks the
-    /// identical question at press time and a ✕ is never pressable while
-    /// unpainted (the overlay-controls rule).
-    fn order_tag_expanded(
-        &self,
-        pointer: Option<egui::Pos2>,
-        y: f32,
-        chart: egui::Rect,
-        id: OrderId,
-    ) -> bool {
-        self.drag == PaperDrag::Order(id)
-            || self.hovered_order == Some(id)
-            || self.order_hover_force
-            || pointer.is_some_and(|pointer| tag_row_hit(pointer, y, chart))
+    /// Computed once, from the pointer and the rect the *press* uses, and
+    /// then read by both sides (see [`OpenTag`]).
+    fn compute_open_tags(&self, input: &ChartInput<'_>) -> Vec<OpenTag> {
+        let mut open = Vec::new();
+        if !input.layer_visible {
+            return open;
+        }
+        let Some(scale) = input.scale else {
+            return open;
+        };
+        for order in self.sim.orders() {
+            let Some(level) = order.price else { continue };
+            let dragged = self.drag == PaperDrag::Order(order.id);
+            let price = if dragged {
+                self.drag_price
+                    .unwrap_or_else(|| level.to_f64().unwrap_or_default())
+            } else {
+                level.to_f64().unwrap_or_default()
+            };
+            let expanded = dragged
+                || self.hovered_order == Some(order.id)
+                || self.order_hover_force
+                || input
+                    .pointer
+                    .is_some_and(|pointer| tag_row_hit(pointer, scale.y(price), input.chart));
+            if expanded {
+                open.push(OpenTag {
+                    id: order.id,
+                    cancel: !dragged,
+                });
+            }
+        }
+        open
+    }
+
+    /// This frame's answer for one order's tag, or `None` while it rests
+    /// as a pill. See [`OpenTag`].
+    fn open_tag(&self, id: OrderId) -> Option<OpenTag> {
+        self.open_tags.iter().copied().find(|tag| tag.id == id)
     }
 
     /// Turn a pending entry-line press into the leg the pull chose, once it
@@ -1989,12 +2156,17 @@ impl PaperTrading {
         chart: egui::Rect,
         scale: &PriceScale,
     ) -> Option<egui::CursorIcon> {
+        if !self.layer_visible {
+            return None;
+        }
         if self.control_at(pointer, chart, scale).is_some() {
             return Some(egui::CursorIcon::PointingHand);
         }
-        // While the aim is painted, the whole plot is the click: the hand
-        // says so everywhere, not just over the label riding beside it.
-        if self.cmd_preview.is_some() {
+        // While a *real* aim is painted, the whole plot is the click, so
+        // the hand says so everywhere — and only there: the aim already
+        // stood down over every line and control this function would
+        // otherwise announce, so the two can no longer contradict.
+        if self.cmd_preview.is_some_and(|preview| !preview.forced) {
             return Some(egui::CursorIcon::PointingHand);
         }
         match self.line_at(pointer, scale)? {
@@ -2624,7 +2796,7 @@ impl PaperTrading {
                 "Enabled",
                 self.cmd_trading.enabled,
                 "hold a key over the chart: a dashed line shows exactly where the order \
-                 will rest - click its label to place it",
+                 will rest, and the click places it",
             )
             .clicked()
             {
@@ -2676,7 +2848,7 @@ impl PaperTrading {
             ui.label(
                 egui::RichText::new(format!(
                     "hold {} over the chart to buy, {} to sell - the dashed line shows \
-                     where; click its label to place",
+                     where, and the click places it",
                     self.cmd_trading.buy.label(),
                     self.cmd_trading.sell.label(),
                 ))
@@ -6268,7 +6440,8 @@ mod tests {
             primary_down: down,
             primary_released: released,
             modifiers: egui::Modifiers::default(),
-            drawing_under_pointer: false,
+            canvas_claimed: false,
+            layer_visible: true,
         }
     }
 
@@ -6289,7 +6462,8 @@ mod tests {
             primary_down: pressed,
             primary_released: false,
             modifiers,
-            drawing_under_pointer: false,
+            canvas_claimed: false,
+            layer_visible: true,
         }
     }
 
@@ -6652,7 +6826,8 @@ mod tests {
             primary_down: true,
             primary_released: false,
             modifiers: shift,
-            drawing_under_pointer: true,
+            canvas_claimed: true,
+            layer_visible: true,
         };
         assert!(
             !paper.handle_chart_input(&over_drawing),
@@ -6833,7 +7008,20 @@ mod tests {
         assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
         let id = paper.working_orders()[0].id.0;
 
-        let resting = layer_shapes(&paper, chart, &scale, Some(egui::pos2(400.0, 60.0)));
+        // The frame the pointer arrives in is the frame that decides; the
+        // paint reads that decision rather than re-asking its own pointer.
+        let frame_at = |paper: &mut PaperTrading, y: f32| {
+            paper.handle_chart_input(&cmd_frame(
+                chart,
+                &scale,
+                egui::pos2(400.0, y),
+                egui::Modifiers::default(),
+                false,
+            ));
+            layer_shapes(paper, chart, &scale, Some(egui::pos2(400.0, y)))
+        };
+
+        let resting = frame_at(&mut paper, 60.0);
         assert!(
             resting.contains("BUY LMT 1"),
             "the pill still names side, kind and size: {resting}"
@@ -6848,7 +7036,7 @@ mod tests {
         );
         assert!(!resting.contains('×'), "and no ✕ over the candles");
 
-        let opened = layer_shapes(&paper, chart, &scale, Some(egui::pos2(400.0, 300.0)));
+        let opened = frame_at(&mut paper, 300.0);
         assert!(
             opened.contains(&format!("#{id} BUY LMT 1 @ 90")),
             "reaching for it states the order whole: {opened}"
@@ -6856,33 +7044,227 @@ mod tests {
         assert!(opened.contains('×'), "…and offers the cancel: {opened}");
     }
 
-    /// The ✕ and its press are one thing: for any pointer, a tag that
-    /// paints no ✕ offers none, and one that paints it takes the press.
-    /// Two constants happen to keep this true today — this is what keeps
-    /// it true tomorrow (the overlay-controls rule).
+    /// The ✕ and its press are one thing, checked the only way that means
+    /// anything: sweep a pointer down the ✕ column, and for every stop ask
+    /// **the painter** whether a ✕ came out and **`control_at`** whether a
+    /// cancel is offered. Both sides run off one `handle_chart_input`, so
+    /// this fails the moment they are handed different pointers, different
+    /// rects, or different `dragged` terms again.
     #[test]
     fn a_tag_offers_its_cancel_exactly_while_it_paints_one() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
         let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // Near the top edge, where the tag is clamped away from its line
-        // and the two rows part company. Above the mark, so a buy rests
-        // as a stop.
-        assert!(paper.place_resting(Side::Buy, EntryKind::Stop, 119.0));
-        let order_y = scale.y(119.0);
-        let id = paper.working_orders()[0].id;
+        // Two orders: one near the top edge, where `clamp_tag_center`
+        // pushes the tag off its own line and the two rows part company,
+        // and one mid-plot where they coincide. Above the mark a buy rests
+        // as a stop, below it as a limit.
+        assert!(paper.place_resting(Side::Buy, EntryKind::Stop, 119.5));
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
         let x = chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0;
-        for step in -4_i16..=100 {
+        let mut painted_anywhere = false;
+        for step in -4_i16..=84 {
             let pointer = egui::pos2(x, f32::from(step) * 5.0);
-            let center = clamp_tag_center(order_y, chart.top(), chart.bottom());
-            let painted = paper.order_tag_expanded(Some(pointer), order_y, chart, id)
-                && close_button_rect(chart.right(), center).contains(pointer);
+            paper.handle_chart_input(&cmd_frame(
+                chart,
+                &scale,
+                pointer,
+                egui::Modifiers::default(),
+                false,
+            ));
+            let painted = layer_shapes(&paper, chart, &scale, Some(pointer)).contains('×');
             let pressable = matches!(
                 paper.control_at(pointer, chart, &scale),
                 Some(PaperControl::CancelOrder(_))
             );
             assert_eq!(painted, pressable, "at y {}", pointer.y);
+            painted_anywhere |= painted;
         }
+        assert!(painted_anywhere, "the sweep crossed a ✕ at all");
+    }
+
+    /// The press side is fed a pointer the paint side never sees — the
+    /// pane nulls `hover_pos` over its own chrome while `latest_pos`
+    /// survives — so the ✕'s offer must come from the frame's *input*, not
+    /// from whatever pointer each side happens to hold.
+    #[test]
+    fn a_cancel_offered_this_frame_survives_a_paint_with_no_pointer() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let on_row = egui::pos2(chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0, 300.0);
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            on_row,
+            egui::Modifiers::default(),
+            false,
+        ));
+        assert!(
+            layer_shapes(&paper, chart, &scale, None).contains('×'),
+            "the paint follows the frame's decision, not its own pointer"
+        );
+        assert!(matches!(
+            paper.control_at(on_row, chart, &scale),
+            Some(PaperControl::CancelOrder(_))
+        ));
+
+        // Pointer off the row: neither side offers anything.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(on_row.x, 60.0),
+            egui::Modifiers::default(),
+            false,
+        ));
+        assert!(!layer_shapes(&paper, chart, &scale, Some(on_row)).contains('×'));
+        assert!(paper.control_at(on_row, chart, &scale).is_none());
+    }
+
+    /// Switched off, the layer is unpainted — so it is also untouchable:
+    /// the aim's target is the whole plot, and an invisible plot-sized
+    /// order button is the worst kind of hidden control.
+    #[test]
+    fn a_hidden_layer_paints_nothing_and_takes_no_press() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
+        let hidden = ChartInput {
+            chart,
+            scale: Some(&scale),
+            pointer: Some(egui::pos2(400.0, 200.0)),
+            primary_pressed: true,
+            primary_down: true,
+            primary_released: false,
+            modifiers: shift,
+            canvas_claimed: false,
+            layer_visible: false,
+        };
+        assert!(
+            !paper.handle_chart_input(&hidden),
+            "the press is the chart's"
+        );
+        assert!(paper.cmd_preview.is_none(), "and nothing is aimed");
+        assert_eq!(
+            paper.working_orders().len(),
+            1,
+            "no order rested through a hidden layer"
+        );
+        assert_eq!(
+            paper.hover_cursor(egui::pos2(400.0, 300.0), chart, &scale),
+            None,
+            "and no cursor promises an invisible control"
+        );
+    }
+
+    /// The aim stands down wherever something concrete already holds the
+    /// pixel — this module's own lines and ✕s included. Otherwise holding
+    /// the modifier while reaching for a stop rests a new order on top of
+    /// it, and the hand cursor promises exactly that.
+    #[test]
+    fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.stop_offset_text = "10".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+
+        // y 300 is the stop at 90 — a line a press would grab.
+        let on_stop = egui::pos2(400.0, 300.0);
+        paper.handle_chart_input(&cmd_frame(chart, &scale, on_stop, shift, false));
+        assert!(paper.cmd_preview.is_none(), "the stop line keeps its pixel");
+        assert_eq!(
+            paper.hover_cursor(on_stop, chart, &scale),
+            Some(egui::CursorIcon::ResizeVertical),
+            "and the cursor still says so"
+        );
+        assert!(
+            paper.handle_chart_input(&cmd_frame(chart, &scale, on_stop, shift, true)),
+            "the press is paper's"
+        );
+        assert_eq!(
+            paper.drag,
+            PaperDrag::StopLoss,
+            "it grabbed the stop instead of resting an order"
+        );
+        assert!(paper.working_orders().is_empty());
+        paper.cancel_interaction();
+
+        // An armed placement is an intent already stated.
+        paper.armed = Some(ArmedPlacement {
+            side: Side::Buy,
+            kind: EntryKind::Limit,
+        });
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 100.0),
+            shift,
+            false,
+        ));
+        assert!(
+            paper.cmd_preview.is_none(),
+            "the armed ticket keeps the click"
+        );
+        assert!(paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 320.0),
+            shift,
+            true
+        )));
+        assert!(
+            paper.armed.is_none(),
+            "the armed placement fired and disarmed"
+        );
+        let orders = paper.working_orders();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(
+            orders[0].kind,
+            EntryKind::Limit,
+            "the kind the ticket armed"
+        );
+    }
+
+    /// A forced aim is a capture fixture: it paints so a screenshot has
+    /// something to show, and it never places — a run with nobody at the
+    /// keyboard is holding no modifier, and its stray clicks must not
+    /// write orders into a journal.
+    #[test]
+    fn a_forced_aim_paints_but_never_places() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.cmd_preview_force = Some(CmdPreviewForce {
+            side: Side::Buy,
+            x_fraction: Some(0.5),
+        });
+        let aim = egui::pos2(400.0, 300.0);
+        assert!(!paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            aim,
+            egui::Modifiers::default(),
+            true
+        )));
+        assert!(paper.cmd_preview.is_some(), "it still paints");
+        assert!(paper.working_orders().is_empty(), "and never places");
+        assert_eq!(
+            paper.hover_cursor(aim, chart, &scale),
+            None,
+            "no hand promising a click that does nothing"
+        );
     }
 
     /// A dragged order keeps every field: a trader repricing one is
@@ -6897,6 +7279,15 @@ mod tests {
         let id = paper.working_orders()[0].id;
         paper.drag = PaperDrag::Order(id);
         paper.drag_price = Some(88.0);
+        // The frame decides; the paint reads. A button-free frame leaves
+        // the drag exactly where it was.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 60.0),
+            egui::Modifiers::default(),
+            false,
+        ));
         let shapes = layer_shapes(&paper, chart, &scale, None);
         assert!(
             shapes.contains(&format!("#{} BUY LMT 1 @ 88", id.0)),
@@ -6951,6 +7342,13 @@ mod tests {
             "no hand, no open tag"
         );
         paper.order_hover_force = true;
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 60.0),
+            egui::Modifiers::default(),
+            false,
+        ));
         assert!(
             layer_shapes(&paper, chart, &scale, None).contains(&format!("#{id} BUY LMT 1 @ 90")),
             "the hook supplies the hand"
@@ -6967,6 +7365,15 @@ mod tests {
         assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
         let id = paper.working_orders()[0].id;
         paper.hovered_order = Some(id);
+        // The dock draws before the canvas, so the frame that carries the
+        // row's hover is the frame the chart reads.
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, 60.0),
+            egui::Modifiers::default(),
+            false,
+        ));
         assert!(
             layer_shapes(&paper, chart, &scale, None)
                 .contains(&format!("#{} BUY LMT 1 @ 90", id.0)),
@@ -7116,7 +7523,8 @@ mod tests {
             primary_down: true,
             primary_released: false,
             modifiers: egui::Modifiers::default(),
-            drawing_under_pointer: false,
+            canvas_claimed: false,
+            layer_visible: true,
         };
         assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
         assert!(
@@ -7151,7 +7559,8 @@ mod tests {
             primary_down: true,
             primary_released: false,
             modifiers: egui::Modifiers::default(),
-            drawing_under_pointer: false,
+            canvas_claimed: false,
+            layer_visible: true,
         };
         assert!(
             paper.handle_chart_input(&press),

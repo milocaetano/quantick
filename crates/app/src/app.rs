@@ -11303,6 +11303,62 @@ plot(close)
         );
     }
 
+    /// The pane's half of the cmd aim's yield rule, end to end: a held buy
+    /// modifier over an annotation places nothing — the press goes to the
+    /// drawing, as it always did — while the same modifier over bare
+    /// canvas rests the order. The paper-side tests hand `canvas_claimed`
+    /// in by hand and so prove only what the module does with the answer;
+    /// this is what proves the pane computes it.
+    #[test]
+    fn a_held_modifier_over_a_drawing_places_no_order_but_bare_canvas_does() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        let start = egui::pos2(600.0, 400.0);
+        let end = egui::pos2(800.0, 400.0);
+        click_chart_with(&mut app, &ctx, start, egui::Modifiers::NONE);
+        click_chart_with(&mut app, &ctx, end, egui::Modifiers::NONE);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "the line is on the canvas"
+        );
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "placing it rested nothing"
+        );
+
+        // On the line the trader drew: the annotation keeps its pixel.
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(700.0, 400.0),
+            egui::Modifiers::SHIFT,
+        );
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "a held modifier over a drawing rests no order"
+        );
+
+        // Bare canvas well clear of it: the aim is the last claimant, and
+        // there is nothing left to claim.
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(700.0, 200.0),
+            egui::Modifiers::SHIFT,
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            1,
+            "and on empty canvas the click is the order"
+        );
+    }
+
     /// Shift on a **corner of a finished channel**, driven through the real
     /// app rather than through the tool alone.
     ///

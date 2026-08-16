@@ -178,18 +178,28 @@ pointer wears the hand cursor for as long as it is up, everywhere, because
 everywhere is the target. An overlay `×` still takes the press first: a
 cancel under the pointer is never eaten by an order.
 
-**The aim is the last claimant on the canvas.** The default buy modifier is
-Shift, which is also the key that levels a channel corner mid-drag, so an
-annotation already under the pointer keeps its pixel: over a drawing's body
-or a selected object's handle the aim paints nothing, the hand cursor stays
-off and the click cannot place — it starts the drawing drag it always did.
-That is one gate (`ChartInput::drawing_under_pointer`, answered by the pane
-exactly as "a tool is armed" is), so the label can never promise an order
-the press will not make. Sweeping across a drawn line blinks the aim off
-for its ~10 px grab band and the move cursor comes up instead; nudge off
-the line and the aim is back. Paper's own overlay does not yield — an
-order line under a held modifier is still a price to aim at, which is
-what the label says.
+**The aim is the last claimant on the canvas.** Its target is the whole
+plot, so everything already holding a pixel outranks it, and the aim is
+*stood down* there rather than merely refused — no line, no label, no hand
+cursor, no place. That is what keeps the promise: the label can never
+advertise an order the press will not make. It yields to
+
+- an annotation a press would grab, and the canvas's own chrome — the tape
+  chip, an indicator pane's header or divider (`ChartInput::canvas_claimed`,
+  answered by the pane exactly as "a tool is armed" is). The default buy
+  modifier is Shift, the very key that levels a channel corner mid-drag, so
+  without this the drawing gesture would be gone;
+- an armed limit/stop from the ticket — an intent already stated, with its
+  own hint on screen;
+- this module's own furniture: an overlay ✕ or bracket handle, and any
+  order/stop/target line a press would grab;
+- the layer switch. Hidden means unpainted, and unpainted means untouchable
+  — an invisible plot-sized order button is the worst kind of hidden
+  control (`ChartInput::layer_visible`).
+
+Sweeping across a drawn line or an order line blinks the aim off for its
+grab band, and that band's own cursor comes up instead; nudge clear and the
+aim is back.
 
 ### Closed-trade marks
 

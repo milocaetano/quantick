@@ -3360,28 +3360,35 @@ impl ChartPane {
         // out once, and the default buy modifier is Shift, the very key
         // that levels a channel corner.
         //
+        // The canvas's own chrome counts too, and it does *not* live in a
+        // floating layer, so `over_chrome` never sees it: the tape chip
+        // and an indicator pane's header or divider are pixels a press
+        // already means something on, and a modifier resting under the
+        // hand must not turn "put the tape back" into "rest an order".
+        //
         // Per-frame path, so it costs nothing on a frame with no modifier
-        // down: the aim cannot exist without one, and only then are the
-        // two picks worth running (the same bounded, visible-objects-only
-        // picks the hover cursors below already do).
+        // down: the aim cannot exist without one, and only then is the
+        // pick worth running (the same bounded, visible-objects-only pick
+        // the drag initiation below performs — `drawing_pick_at`, so a
+        // press that would grab an *unselected* object's handle keeps its
+        // pixel too).
         let modifiers = ui.input(|input| input.modifiers);
-        let drawing_under_pointer = pointer_position
-            .filter(|_| modifiers.shift || modifiers.command || modifiers.alt)
-            .filter(|_| chrome.toolrail.tool() == Tool::Pointer && !over_chrome)
-            .filter(|position| !Self::pane_chrome_hit(&areas, *position))
-            .and_then(|position| {
-                bands::band_at(&bands, position)
-                    .filter(|band| band.drawable())
-                    .map(|band| (position, band))
-            })
-            .is_some_and(|(position, band)| {
-                self.drawings.selected().is_some_and(|selected| {
-                    self.drawing_handle_in(selected, position, band, history_right, total)
-                        .is_some()
-                }) || self
-                    .drawing_at(position, band, history_right, total)
-                    .is_some()
+        let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
+        let canvas_claimed = pointer_position
+            .filter(|_| modifier_down)
+            .is_some_and(|position| {
+                Self::pane_chrome_hit(&areas, position)
+                    || tape_switch_rect(areas.chart).contains(position)
+                    || (chrome.toolrail.tool() == Tool::Pointer
+                        && !over_chrome
+                        && bands::band_at(&bands, position)
+                            .filter(|band| band.drawable())
+                            .is_some_and(|band| {
+                                self.drawing_pick_at(position, band, history_right, total)
+                                    .is_some()
+                            }))
             });
+        let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
         let paper_gesture = if chrome.paper_owns_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
@@ -3391,7 +3398,8 @@ impl ChartPane {
                 primary_down,
                 primary_released,
                 modifiers,
-                drawing_under_pointer,
+                canvas_claimed,
+                layer_visible: paper_layer_visible,
             })
         } else {
             if chrome.paper_owns_input {
@@ -3405,6 +3413,8 @@ impl ChartPane {
         // drawings get hover cursors below, and a draggable stop must not
         // feel deader than an annotation — nor may the entry line's blocked
         // band refuse a pan with no explanation at all.
+        // The layer gate lives inside `hover_cursor` itself, next to the
+        // frame's other decisions, so it cannot be forgotten by a caller.
         if chrome.paper_owns_input
             && !over_chrome
             && !tool_armed
