@@ -23,6 +23,14 @@
 //! saves as a unit. Writing them here too would give one field two files to
 //! disagree over, so the preset stays their home.
 //!
+//! The tape's own three — whether it is on the canvas at all, and which of its
+//! two flow layers it draws — *are* stored here, and for the opposite reason:
+//! the preset explicitly refuses to carry them (a look may not switch a layer),
+//! which left them with no home at all and the tape opening on its defaults
+//! every launch. They resolve to the fields on
+//! [`crate::orderflow::LiveLaneStyle`], same as every other entry resolves to
+//! the one field that already owns its layer.
+//!
 //! The file records each layer's *state*, not a list of hidden ones, because
 //! the layers do not share one default — the heatmap, the bubbles, the live
 //! strip and the backfill divider open off, everything else opens on. An
@@ -50,10 +58,21 @@ const FORMAT_VERSION: u32 = 1;
 
 /// One switchable layer on the chart canvas.
 ///
-/// Ordered as the menu shows them: what the market drew, then the chart's own
-/// chrome, then what the user put on top.
+/// Two panes' worth. The tape's three come first, then the candles'; inside
+/// each group the order is the order that pane's menu shows them — for the
+/// candles, what the market drew, then the chart's own chrome, then what the
+/// user put on top. [`ChartLayer::on_tape`] is what splits the list between the
+/// two menus, so neither ever offers a switch for the canvas beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ChartLayer {
+    /// Whether the tape is on the canvas at all. Off, the lane reserves no
+    /// width and the candles take the whole canvas.
+    TapeChart,
+    /// Resting depth on the tape — the candles' [`Self::Heatmap`] is a
+    /// different switch, and neither follows the other.
+    TapeHeatmap,
+    /// Aggression bubbles on the tape. Twin of [`Self::Bubbles`], same rule.
+    TapeBubbles,
     /// Resting depth behind the candles.
     Heatmap,
     /// Aggression bubbles from the trade stream.
@@ -95,7 +114,10 @@ impl ChartLayer {
     /// in the menu test that counts it. The two paper layers sit together:
     /// live orders and closed-trade marks are switched apart, because hiding
     /// history must never hide the position you are in.
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 19] = [
+        Self::TapeChart,
+        Self::TapeHeatmap,
+        Self::TapeBubbles,
         Self::Heatmap,
         Self::Bubbles,
         Self::Footprint,
@@ -129,6 +151,9 @@ impl ChartLayer {
     /// version bump: the file is hand-editable and an unknown id is dropped.
     pub(crate) const fn id(self) -> &'static str {
         match self {
+            Self::TapeChart => "tape_chart",
+            Self::TapeHeatmap => "tape_heatmap",
+            Self::TapeBubbles => "tape_bubbles",
             Self::Heatmap => "heatmap",
             Self::Bubbles => "bubbles",
             Self::Footprint => "footprint",
@@ -155,8 +180,15 @@ impl ChartLayer {
     }
 
     /// Menu label.
+    ///
+    /// The tape's two flow layers deliberately wear the same words as the
+    /// candles': under the menu's "tape" heading they can only mean the tape's,
+    /// and giving one concept two names would be worse than the repetition.
     pub(crate) const fn label(self) -> &'static str {
         match self {
+            Self::TapeChart => "show the tape",
+            Self::TapeHeatmap => "L2 heatmap",
+            Self::TapeBubbles => "aggression bubbles",
             Self::Heatmap => "L2 heatmap",
             Self::Bubbles => "aggression bubbles",
             Self::Footprint => "candle footprint",
@@ -181,15 +213,34 @@ impl ChartLayer {
     /// Hover text: what disappears, and what keeps running while it is hidden.
     pub(crate) const fn hint(self) -> &'static str {
         match self {
+            // The tape's three. The first says what the band costs and what
+            // coming back is worth; the other two say, plainly, that the
+            // toolbar is not their switch — the question a trader asks after
+            // clicking the toolbar's L2 button and watching the tape ignore it.
+            Self::TapeChart => {
+                "the rolling tape pinned to the right edge: prints landing into the book in real \
+                 time, on their own fixed window of market time. Off, the band is not reserved at \
+                 all and the candles take the whole canvas; its two layers keep their settings, so \
+                 switching it back on returns the tape you switched off"
+            }
+            Self::TapeHeatmap => {
+                "resting depth on the tape. The toolbar's L2 button does not touch this — it is \
+                 the candles' switch. Recording never stops either way, so hiding this loses no \
+                 history"
+            }
+            Self::TapeBubbles => {
+                "confirmed executions rolling through the tape, drawn where they printed. The \
+                 toolbar's bubble button does not touch this — it is the candles' switch"
+            }
             // Both of these name the candles explicitly, and say where the
             // other copy is: the tape has switches of its own, so a trader who
             // clears the candles and still sees the book rolling on the tape
             // is looking at a setting, not at a bug.
             Self::Heatmap => {
-                "resting depth behind the candles. Recording never stops, so hiding it loses no                  history. The tape keeps its own copy of this switch — right-click the tape to                  reach it"
+                "resting depth behind the candles. Recording never stops, so hiding it loses no                  history. The tape has a switch of its own and this one never moves it —                  right-click the tape to reach it"
             }
             Self::Bubbles => {
-                "confirmed executions from the trade stream, drawn where they printed, on the                  candles. The tape keeps its own copy of this switch — right-click the tape to                  reach it"
+                "confirmed executions from the trade stream, drawn where they printed, on the                  candles. The tape has a switch of its own and this one never moves it —                  right-click the tape to reach it"
             }
             Self::Footprint => {
                 "the buy/sell split at each price inside every candle. Detail follows zoom: \
@@ -253,6 +304,18 @@ impl ChartLayer {
         }
     }
 
+    /// Whether this layer belongs to the tape rather than to the candles.
+    ///
+    /// The one place the split is declared. Each pane's menu iterates the list
+    /// through this, so adding a layer to the wrong group is the only way to
+    /// get it onto the wrong menu — there is no second list to keep in step.
+    pub(crate) const fn on_tape(self) -> bool {
+        matches!(
+            self,
+            Self::TapeChart | Self::TapeHeatmap | Self::TapeBubbles
+        )
+    }
+
     /// Whether this file is the layer's persistence home.
     ///
     /// The lane marks live in the order-flow preset — a feed can declare one,
@@ -261,6 +324,8 @@ impl ChartLayer {
     /// persisted here instead: the order-flow preset does not carry them, and
     /// their state has a single owner (the order-flow config) that this file
     /// merely restores — exactly as it does for the heatmap and the bubbles.
+    /// The tape's three are here for the same reason, and because the preset
+    /// refuses them by design.
     pub(crate) const fn persisted(self) -> bool {
         !matches!(self, Self::LaneMarks)
     }

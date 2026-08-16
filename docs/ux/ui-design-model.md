@@ -418,6 +418,15 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   never render on the time pane. Indicators and drawings work on both, each
   pane owning its slots and objects (anchors are bar-index + price and do
   not translate across bar streams).
+- **The tape is a canvas of its own, switched on the canvas.** A chip in the
+  flow pane's top-right corner puts the tape there or takes it away; off, no
+  band is reserved and the candles have the whole canvas. The tape draws the
+  book **and** the aggression bubbles by default, and holds its own switch for
+  each, reached by right-clicking it. The toolbar's L2 and bubble buttons
+  govern the *candles* and never the tape, in either direction — one pane's
+  switch may not move another pane's pixels. The chip is the only way back
+  from a tape that is off (there is no band left to right-click), which is why
+  it lives on the canvas rather than only in that menu.
 - **Focus**: clicking a pane focuses it; the focused pane drives the status
   bar's content section, `Insert → Indicator` targeting and the Indicators
   dock tab. A 1 px accent under the pane's top edge marks focus — no

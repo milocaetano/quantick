@@ -484,10 +484,17 @@ pub fn project_settled(
     };
 
     // The depth layer is projected only while the map is both recording and on
-    // screen. Retained runs survive hiding it untouched — they simply stop
-    // being drawn and keep accumulating, so the aggression layer can render
-    // without the map behind it and reopening repaints the whole retained past.
-    let depth_enabled = config.depth_visible();
+    // screen — on *either* pane. Retained runs survive hiding it untouched:
+    // they simply stop being drawn and keep accumulating, so the aggression
+    // layer can render without the map behind it and reopening repaints the
+    // whole retained past.
+    //
+    // "Either pane" is the whole point and was the bug: these cells span the
+    // normalized x axis, tape included, and the renderer clips them per pane
+    // (`layer_clip`). Gating production on the *candles'* switch therefore
+    // deleted the tape's map along with the chart's — the projection decided
+    // there was nothing to draw before the renderer ever got to decide where.
+    let depth_enabled = config.depth_visible_anywhere();
     let retained_start = history
         .retention_start_ms()
         .map_or(time_start, |start| start.max(time_start));
@@ -897,7 +904,9 @@ pub fn project_live(
     };
     let summarizing =
         config.bubble_candle_summary && config.show_buy_aggressions && config.show_sell_aggressions;
-    let coverage: Vec<_> = if config.depth_visible() {
+    // Same rule as the settled half: this is the *tape's* projection, so a
+    // switch on the candles may not empty it.
+    let coverage: Vec<_> = if config.depth_visible_anywhere() {
         history.coverage_segments().cloned().collect()
     } else {
         Vec::new()
@@ -2169,9 +2178,77 @@ mod tests {
         );
     }
 
+    /// Clearing the map on the candles may not delete the tape's.
+    ///
+    /// These cells span the whole normalized x axis, tape included, and the
+    /// renderer clips them per pane. Gating their *production* on the candles'
+    /// switch therefore emptied the tape as well: the trader switched off one
+    /// pane and the other went dark with it, which no amount of correctness in
+    /// the config layer could fix — the data was never built.
+    #[test]
+    fn hiding_the_map_on_the_candles_still_projects_the_tapes() {
+        let base = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            // The candles are clear; the tape keeps both of its layers, which
+            // is what a fresh install now opens as.
+            show_depth: false,
+            ..HeatmapConfig::default()
+        };
+        assert!(!base.depth_visible(), "the candles draw no map");
+        assert!(base.lane_depth_drawn(), "the tape does");
+
+        // Enough book movement to close a run, so the cells below exist for a
+        // reason other than the switch under test.
+        let fill = |config: HeatmapConfig| {
+            let mut history = LiquidityHistory::new(config);
+            history.install_snapshot(100, 1, snapshot(10)).unwrap();
+            history
+                .apply_delta(
+                    800,
+                    &BookDelta::new(11, 11, vec![level("100", "6")], vec![]),
+                )
+                .unwrap();
+            history
+                .apply_delta(900, &BookDelta::new(11, 11, vec![], vec![]))
+                .unwrap();
+            history
+        };
+        let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
+        let prices = PriceWindow::new(dec("99.5"), dec("100.5")).unwrap();
+
+        let projection = project(&fill(base.clone()), &timeline, prices);
+        assert!(
+            !projection.cells.is_empty(),
+            "the tape reads these cells, so hiding the candles' map may not stop building them"
+        );
+
+        // And with the tape's own switch off too, nobody is reading them.
+        let both_off = fill(HeatmapConfig {
+            live_lane: LiveLaneStyle {
+                show_depth: false,
+                ..LiveLaneStyle::default()
+            },
+            ..base
+        });
+        assert!(
+            project(&both_off, &timeline, prices).cells.is_empty(),
+            "with neither pane drawing the map, none is built"
+        );
+    }
+
     #[test]
     fn disabled_projection_is_empty_even_with_data() {
-        let mut history = LiquidityHistory::new(HeatmapConfig::default());
+        // Every layer off, said out loud: the default config stopped being
+        // inert when the tape gained defaults of its own (both layers on), so a
+        // test about a *disabled* projection has to disable the tape too.
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            live_lane: LiveLaneStyle {
+                enabled: false,
+                ..LiveLaneStyle::default()
+            },
+            ..HeatmapConfig::default()
+        });
         history.install_snapshot(100, 1, snapshot(10)).unwrap();
         let timeline = BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None);
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
@@ -3439,9 +3516,29 @@ mod tests {
         assert!(!shown.cells.is_empty(), "the visible map has heat cells");
         assert!(!shown.gaps.is_empty(), "and its pre-capture boundary");
 
+        // Hidden on the candles alone is *not* hidden: the tape draws the same
+        // cells and the renderer clips them per pane, so the primitives have to
+        // survive or the tape goes dark with the chart.
         history
             .update_config(HeatmapConfig {
                 show_depth: false,
+                ..config()
+            })
+            .unwrap();
+        let candles_only = project(&history, &timeline, prices);
+        assert!(
+            !candles_only.cells.is_empty(),
+            "the tape still draws the map, so its cells are still built"
+        );
+
+        // Hidden on both panes is hidden, and that is where the saving is.
+        history
+            .update_config(HeatmapConfig {
+                show_depth: false,
+                live_lane: LiveLaneStyle {
+                    show_depth: false,
+                    ..LiveLaneStyle::default()
+                },
                 ..config()
             })
             .unwrap();
@@ -3450,7 +3547,7 @@ mod tests {
         assert!(hidden.gaps.is_empty());
         assert!(
             hidden.liquidity_events.is_empty(),
-            "no depth primitive survives a hidden map"
+            "no depth primitive survives a map hidden on every pane"
         );
     }
 }

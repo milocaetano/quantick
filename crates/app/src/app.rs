@@ -1287,8 +1287,19 @@ impl QuantickApp {
             .ok()
             .and_then(|value| ContextMenuPane::from_env_value(&value));
 
-        // The tape's own switches. The two panes are configured apart and the
-        // tape's menu is a right-click a scripted run cannot perform, so the
+        // The tape switch in the canvas's top-right corner — the one control
+        // that decides whether there is a band at all. Same setter the chip
+        // calls, so a capture shows what a click shows. Anything but `on`/`off`
+        // leaves the tape alone rather than guessing.
+        if let Ok(value) = std::env::var("QUANTICK_TAPE") {
+            match value.trim() {
+                "on" => app.active_tab_mut().tape_mut().set_lane_enabled(true),
+                "off" => app.active_tab_mut().tape_mut().set_lane_enabled(false),
+                _ => {}
+            }
+        }
+        // The tape's own layer switches. The two panes are configured apart and
+        // the tape's menu is a right-click a scripted run cannot perform, so the
         // state behind it needs a door of its own — the state, not a second
         // way of drawing it: each entry calls the very setter the menu's
         // checkbox calls. Unlisted layers stay as they were, which is what
@@ -8637,6 +8648,24 @@ plot(close)
         (app, cmd_rx)
     }
 
+    /// How many switches each pane's menu lays out at its top level. The two
+    /// menus split one list ([`ChartLayer::on_tape`]), so counting either from
+    /// the list is what keeps a new layer from silently landing on the wrong
+    /// canvas's menu.
+    fn chart_menu_entries() -> usize {
+        ChartLayer::ALL
+            .into_iter()
+            .filter(|layer| !layer.on_tape())
+            .count()
+    }
+
+    fn tape_menu_entries() -> usize {
+        ChartLayer::ALL
+            .into_iter()
+            .filter(|layer| layer.on_tape())
+            .count()
+    }
+
     /// The active tab's flow pane beside the chrome a canvas frame hands it.
     fn with_flow_pane<R>(
         app: &mut QuantickApp,
@@ -8804,6 +8833,11 @@ plot(close)
         // A market layer switched *on* has to come back on, which is why the
         // file records each layer's state instead of a list of hidden ones.
         switch_layer(&mut app, ChartLayer::Bubbles, true);
+        // The tape's three: this file is their only home (the order-flow preset
+        // refuses to carry a switch), so without them the tape would open on
+        // its defaults every single launch.
+        switch_layer(&mut app, ChartLayer::TapeHeatmap, false);
+        switch_layer(&mut app, ChartLayer::TapeChart, false);
         app.maintain_chart_layers();
         assert_eq!(
             app.saved_layer_mask,
@@ -8822,6 +8856,12 @@ plot(close)
             (ChartLayer::Bubbles, true),
             (ChartLayer::LastPrice, true),
             (ChartLayer::Drawings, true),
+            // Off, and its layer switch off under it — a tape put back on the
+            // canvas has to be the tape that was taken off it, across a
+            // restart as much as across a click.
+            (ChartLayer::TapeChart, false),
+            (ChartLayer::TapeHeatmap, false),
+            (ChartLayer::TapeBubbles, true),
         ] {
             assert_eq!(
                 layer_on(&restored, layer),
@@ -8913,8 +8953,16 @@ plot(close)
         menu_frame(&mut app, Vec::new());
         assert_eq!(
             app.active_tab().flow_pane.layer_menu_rects.len(),
-            ChartLayer::ALL.len(),
+            chart_menu_entries(),
             "every layer needs a switch, or it cannot be turned off at all"
+        );
+        assert!(
+            app.active_tab()
+                .flow_pane
+                .layer_menu_rects
+                .iter()
+                .all(|(layer, _)| !layer.on_tape()),
+            "and the candles' menu never offers a switch for the canvas beside it"
         );
 
         let crosshair = app
@@ -8968,10 +9016,27 @@ plot(close)
         );
         assert!(pane.layer_blocked(ChartLayer::Bubbles, quotes).is_some());
         assert!(pane.layer_blocked(ChartLayer::Grid, quotes).is_none());
+        // The tape's twins refuse for the same reasons, and say so in the same
+        // words: a source with no book has no map to put on the tape either.
+        assert!(
+            pane.layer_blocked(ChartLayer::TapeHeatmap, quotes)
+                .is_some(),
+            "a source with no book cannot promise a heatmap on the tape either"
+        );
+        assert!(
+            pane.layer_blocked(ChartLayer::TapeBubbles, quotes)
+                .is_some(),
+            "nor bubbles where nothing prints a traded quantity"
+        );
+        assert!(
+            pane.layer_blocked(ChartLayer::TapeChart, quotes).is_none(),
+            "the band itself is still the trader's to show: it carries the marks \
+             and the time axis whatever the source can produce"
+        );
         menu_frame(&mut quote_only, Vec::new());
         assert_eq!(
             quote_only.active_tab().flow_pane.layer_menu_rects.len(),
-            ChartLayer::ALL.len(),
+            chart_menu_entries(),
             "an unavailable layer is still listed, just not switchable"
         );
         std::fs::remove_file(&path).ok();
@@ -9104,24 +9169,42 @@ plot(close)
         menu_frame(&mut app, false);
         assert_eq!(
             app.active_tab().flow_pane.layer_menu_rects.len(),
-            ChartLayer::ALL.len(),
+            chart_menu_entries(),
             "a click on the candles still lists every chart layer up front"
         );
 
-        // The tape's menu answers for the tape: the chart's checkboxes sit
-        // behind the submenu button rather than laid out at the top level.
+        // The tape's menu answers for the tape: its own three switches at the
+        // top level, and the chart's behind the submenu button rather than
+        // laid out beside them.
         menu_frame(&mut app, true);
-        assert!(
-            app.active_tab().flow_pane.layer_menu_rects.is_empty(),
-            "the chart's switches move into the submenu, so none are laid out yet"
+        let tape_menu = app.active_tab().flow_pane.layer_menu_rects.clone();
+        assert_eq!(
+            tape_menu.len(),
+            tape_menu_entries(),
+            "the tape's own switches are what a click on the tape lists"
         );
+        assert!(
+            tape_menu.iter().all(|(layer, _)| layer.on_tape()),
+            "and none of the candles' are laid out beside them"
+        );
+        for layer in [
+            ChartLayer::TapeChart,
+            ChartLayer::TapeHeatmap,
+            ChartLayer::TapeBubbles,
+        ] {
+            assert!(
+                tape_menu.iter().any(|(entry, _)| *entry == layer),
+                "{} is reachable from the tape's own menu",
+                layer.id()
+            );
+        }
 
         // And back: aiming at the candles restores the full list, so the two
         // menus cannot leak into each other across frames.
         menu_frame(&mut app, false);
         assert_eq!(
             app.active_tab().flow_pane.layer_menu_rects.len(),
-            ChartLayer::ALL.len()
+            chart_menu_entries()
         );
         std::fs::remove_file(&path).ok();
     }
@@ -9406,6 +9489,89 @@ plot(close)
     /// The gesture itself: a right-click on the canvas opens the menu, and the
     /// primary button — which pans, zooms and places drawings — never does.
     ///
+    /// The tape switch in the canvas's top-right corner: one click takes the
+    /// band away, another brings it back.
+    ///
+    /// It is the only way back, too — with no band there is nothing to
+    /// right-click — so this drives the real pointer through
+    /// `handle_navigation` rather than calling the setter, and checks the
+    /// corner it lands in.
+    #[test]
+    fn the_canvas_switch_takes_the_tape_off_and_puts_it_back() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let (mut app, _events, _commands, _book) = test_app();
+
+        // A frame that clicks wherever `at` says, then draws — the draw is what
+        // publishes the lane divider the next assertion reads.
+        let frame = |app: &mut QuantickApp, at: Option<egui::Pos2>| {
+            with_flow_pane(app, |pane, chrome| {
+                for pressed in [true, false] {
+                    let events = at.map_or_else(Vec::new, |target| {
+                        vec![
+                            egui::Event::PointerMoved(target),
+                            egui::Event::PointerButton {
+                                pos: target,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::default(),
+                            },
+                        ]
+                    });
+                    let _ = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            events,
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default().show(ctx, |ui| {
+                                let area = ui.available_rect_before_wrap();
+                                pane.handle_navigation(ui, area, chrome);
+                                pane.draw_chart(ui.painter(), area, chrome);
+                            });
+                        },
+                    );
+                }
+            });
+        };
+
+        // Where the chip is: the canvas's top-right corner, inside it.
+        let chart = {
+            frame(&mut app, None);
+            app.active_tab()
+                .flow_pane
+                .last_chart_area
+                .expect("the canvas laid out")
+        };
+        let chip = crate::pane::tape_switch_rect(chart);
+        assert!(
+            chart.contains_rect(chip),
+            "the switch is on the canvas, not off its edge"
+        );
+        assert!(
+            chip.right() > chart.center().x && chip.top() < chart.center().y,
+            "and in its top-right corner: {chip:?} of {chart:?}"
+        );
+
+        assert!(layer_on(&app, ChartLayer::TapeChart), "the tape opens on");
+
+        frame(&mut app, Some(chip.center()));
+        assert!(!layer_on(&app, ChartLayer::TapeChart), "one click takes it");
+        assert_eq!(
+            app.active_tab().tape().lane_width_px(chart.width()),
+            0.0,
+            "and no band is reserved: the candles have the whole canvas"
+        );
+
+        frame(&mut app, Some(chip.center()));
+        assert!(
+            layer_on(&app, ChartLayer::TapeChart),
+            "and one puts it back"
+        );
+        assert!(app.active_tab().tape().lane_width_px(chart.width()) > 0.0);
+    }
+
     /// The menu's contents are covered above; what this proves is the one thing
     /// between the user and all of it, the button it is bound to.
     #[test]
@@ -9451,7 +9617,7 @@ plot(close)
         );
         assert_eq!(
             click(&mut app, egui::PointerButton::Secondary),
-            ChartLayer::ALL.len(),
+            chart_menu_entries(),
             "a right click on the canvas has to open the layer menu"
         );
     }
