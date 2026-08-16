@@ -60,11 +60,14 @@ pub const DEFAULT_PX_PER_BAR: f32 = 8.0;
 ///
 /// Zooming out past the point where the whole series is on screen buys
 /// nothing — there is no more history behind it — and costs everything: the
-/// bars huddle into a corner and the rest of the chart is empty canvas. So
-/// the floor follows the data, and the series always holds at least half the
-/// window. It can only ever *lower* the floor below [`DEFAULT_PX_PER_BAR`],
-/// never raise it above: a chart with ten bars on it must still zoom out to
-/// its normal candles, and does.
+/// bars huddle into a corner and the rest of the chart is empty canvas. So the
+/// floor follows the data, and the series always holds at least half the
+/// window.
+///
+/// It governs the *new* range only. It can lower the floor below
+/// [`UNGROUPED_MIN_PX_PER_BAR`] and never raise it above — see
+/// [`Viewport::floor`]. A rule about how much data is worth showing may not
+/// reach back and take away zoom the chart already had.
 const MIN_SERIES_FILL: f32 = 0.5;
 /// The grouping multiples, in order — the only counts of bars a candle is ever
 /// drawn from.
@@ -208,11 +211,19 @@ impl Viewport {
     ///
     /// The hard floor, unless the series is short enough that showing all of
     /// it takes wider bars — then it is whatever keeps [`MIN_SERIES_FILL`] of
-    /// the window covered. Never above [`DEFAULT_PX_PER_BAR`]: however few
-    /// bars there are, a chart still zooms out to its ordinary candles.
+    /// the window covered.
+    ///
+    /// **Never above [`UNGROUPED_MIN_PX_PER_BAR`]**, which is the same line
+    /// grouping obeys and for the same reason: everything at or above it is
+    /// zoom the chart already had, and a rule invented here may not take any
+    /// of it away. An imbalance chart on a fresh session holds ten bars — a
+    /// data-derived floor would put it at forty-five pixels a bar and the
+    /// squeeze would simply stop responding, which is exactly how the trader
+    /// found this.
     #[must_use]
     fn floor(&self) -> f32 {
-        self.data_floor.clamp(MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR)
+        self.data_floor
+            .clamp(MIN_PX_PER_BAR, UNGROUPED_MIN_PX_PER_BAR)
     }
 
     /// Set the zoom directly to `px` per bar, clamped to the same bounds the
@@ -603,6 +614,44 @@ mod tests {
         v.clamp_to_window(800.0, 10);
         assert!(v.follows_live());
         assert_eq!(v.right_edge_bar(10), 9.0);
+    }
+
+    /// The regression this floor caused the day it was written: an imbalance
+    /// chart on a fresh session holds a handful of bars, the data-derived
+    /// floor put it at forty-five pixels a bar, and dragging the time axis
+    /// left simply stopped doing anything. A rule about how much data is
+    /// worth showing may not take away zoom the chart already had.
+    #[test]
+    fn a_short_series_still_squeezes_to_the_zoom_it_always_had() {
+        let mut v = Viewport::new();
+        v.clamp_to_window(900.0, 10); // ten bars, the imbalance case
+        for _ in 0..60 {
+            v.zoom(0.9);
+            v.clamp_to_window(900.0, 10);
+        }
+        assert!(
+            (v.px_per_bar() - UNGROUPED_MIN_PX_PER_BAR).abs() < 0.001,
+            "squeezed to {} px per bar, not the old floor",
+            v.px_per_bar()
+        );
+        assert!(!v.grouped(), "and ten bars are still ten candles");
+    }
+
+    /// The other end: with a real series behind it the floor does its job and
+    /// lets the squeeze run to the bottom.
+    #[test]
+    fn a_long_series_squeezes_past_the_old_floor() {
+        let mut v = Viewport::new();
+        for _ in 0..200 {
+            v.zoom(0.9);
+            v.clamp_to_window(1600.0, 200_000);
+        }
+        assert!(
+            (v.px_per_bar() - MIN_PX_PER_BAR).abs() < 0.001,
+            "squeezed to {} px per bar",
+            v.px_per_bar()
+        );
+        assert!(v.grouped());
     }
 
     /// The promise grouping is bounded by: every zoom the chart could already
