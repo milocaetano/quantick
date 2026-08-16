@@ -3358,9 +3358,15 @@ impl ChartPane {
         // question here — paper never reads the drawings — for the same
         // reason it answers "a tool is armed": the button can be handed
         // out once, and the default buy modifier is Shift, the very key
-        // that levels a channel corner. Bounded work: the two picks the
-        // hover cursors below already run, over visible objects only.
+        // that levels a channel corner.
+        //
+        // Per-frame path, so it costs nothing on a frame with no modifier
+        // down: the aim cannot exist without one, and only then are the
+        // two picks worth running (the same bounded, visible-objects-only
+        // picks the hover cursors below already do).
+        let modifiers = ui.input(|input| input.modifiers);
         let drawing_under_pointer = pointer_position
+            .filter(|_| modifiers.shift || modifiers.command || modifiers.alt)
             .filter(|_| chrome.toolrail.tool() == Tool::Pointer && !over_chrome)
             .filter(|position| !Self::pane_chrome_hit(&areas, *position))
             .and_then(|position| {
@@ -3384,7 +3390,7 @@ impl ChartPane {
                 primary_pressed: primary_pressed && !over_chrome,
                 primary_down,
                 primary_released,
-                modifiers: ui.input(|input| input.modifiers),
+                modifiers,
                 drawing_under_pointer,
             })
         } else {
