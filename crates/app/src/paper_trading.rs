@@ -1748,7 +1748,7 @@ impl PaperTrading {
         // by `hover_cursor` — one value each, never a formula re-run
         // against a different pointer.
         self.layer_visible = input.layer_visible;
-        self.open_tags = self.compute_open_tags(input);
+        self.refresh_open_tags(input);
         self.cmd_preview = self.compute_cmd_preview(input);
 
         // Nothing paper is painted while its layer is off, so nothing
@@ -2073,13 +2073,24 @@ impl PaperTrading {
     ///
     /// Computed once, from the pointer and the rect the *press* uses, and
     /// then read by both sides (see [`OpenTag`]).
-    fn compute_open_tags(&self, input: &ChartInput<'_>) -> Vec<OpenTag> {
-        let mut open = Vec::new();
+    ///
+    /// Per-frame path: the buffer is taken and refilled rather than rebuilt,
+    /// so hovering an order costs no allocation once its capacity is up.
+    fn refresh_open_tags(&mut self, input: &ChartInput<'_>) {
+        let mut open = std::mem::take(&mut self.open_tags);
+        open.clear();
+        self.fill_open_tags(&mut open, input);
+        self.open_tags = open;
+    }
+
+    /// See [`Self::refresh_open_tags`] — split out so the order list and
+    /// the buffer are never borrowed from `self` at the same time.
+    fn fill_open_tags(&self, open: &mut Vec<OpenTag>, input: &ChartInput<'_>) {
         if !input.layer_visible {
-            return open;
+            return;
         }
         let Some(scale) = input.scale else {
-            return open;
+            return;
         };
         for order in self.sim.orders() {
             let Some(level) = order.price else { continue };
@@ -2103,7 +2114,6 @@ impl PaperTrading {
                 });
             }
         }
-        open
     }
 
     /// This frame's answer for one order's tag, or `None` while it rests
