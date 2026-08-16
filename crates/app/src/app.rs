@@ -9802,28 +9802,6 @@ plot(close)
         found
     }
 
-    /// How many rectangles the frame painted — candle bodies dominate it, so
-    /// it stands in for "how much work the candles were" when a test wants to
-    /// compare two zooms rather than measure a wall clock.
-    fn painted_rects(output: &egui::FullOutput) -> usize {
-        fn walk(shape: &egui::Shape, found: &mut usize) {
-            match shape {
-                egui::Shape::Rect(_) => *found += 1,
-                egui::Shape::Vec(shapes) => {
-                    for shape in shapes {
-                        walk(shape, found);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut found = 0;
-        for clipped in &output.shapes {
-            walk(&clipped.shape, &mut found);
-        }
-        found
-    }
-
     /// Whether the frame drew the price axis over the test's price range —
     /// the labels only exist once the chart really scaled and painted itself.
     fn has_price_axis(texts: &[String]) -> bool {
@@ -13933,11 +13911,9 @@ plot(close)
 
     /// "Zoom in for numbers" with no number is why the footprint read as slow
     /// to arrive — a trader could not tell a nudge from a different chart
-    /// entirely. And grouped, there is no ladder to draw at all: one candle
-    /// standing for twenty bars has twenty tapes behind it, and the layer says
-    /// so instead of stacking them at one x or going quietly blank.
+    /// entirely.
     #[test]
-    fn the_footprint_says_how_much_further_to_zoom_and_when_not_to_bother() {
+    fn the_footprint_says_how_much_further_to_zoom() {
         let (mut app, _cmd_rx) = app_with_history(4_000);
         let ctx = egui::Context::default();
         app.active_tab_mut().flow_pane.footprint_visible = true;
@@ -13949,84 +13925,50 @@ plot(close)
                 .any(|text| text.contains("numbers at") && text.contains("this zoom")),
             "the default zoom says how far off the numbers are: {opening:?}"
         );
-
-        app.active_tab_mut()
-            .flow_pane
-            .viewport
-            .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
-        let grouped = painted_text(&run_frame(&mut app, &ctx));
-        assert!(
-            grouped.iter().any(|text| text.contains("bars grouped")),
-            "and grouped, it says zooming is not the answer: {grouped:?}"
-        );
-        assert!(
-            !grouped.iter().any(|text| text.contains("numbers at")),
-            "without also promising numbers at some zoom: {grouped:?}"
-        );
-        // And the grouping note names the layer that went quiet, so a trader
-        // who switched it on and sees nothing is never left wondering whether
-        // the layer is broken.
-        assert!(
-            grouped
-                .iter()
-                .any(|text| text.contains("bars per candle") && text.contains("footprint paused")),
-            "the note says what the squeeze cost: {grouped:?}"
-        );
     }
 
-    /// The squeeze a trader reaching for more history actually makes. Past the
-    /// zoom where a bar can be drawn on its own, bars group into one candle per
-    /// slot: ten times the history arrives in the window for no more painted
-    /// shapes than before, and the canvas states the factor rather than letting
-    /// a reader take a grouped candle for a bar.
+    /// The trust law, held at the app level: one bar is one candle at every
+    /// zoom the squeeze can reach. A trader enters on a single bar of their
+    /// rule — a candle that could stand for several would poison all of them.
+    /// The 1 px floor still doubles what the old 2 px one showed, with nothing
+    /// merged to pay for it.
     #[test]
-    fn squeezing_past_the_grouping_zoom_buys_history_without_buying_cost() {
+    fn squeezing_shows_more_bars_and_never_merges_any() {
         let (mut app, _cmd_rx) = app_with_history(4_000);
         let ctx = egui::Context::default();
-        let opening = run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
         let slots = app.active_tab().flow_pane.slots();
         let bars_across = |viewport: &crate::viewport::Viewport| {
             let (start, end) = viewport.visible_range(800.0, slots);
             end - start
         };
-        assert!(!app.active_tab().flow_pane.viewport.grouped());
-        assert!(
-            !painted_text(&opening)
-                .iter()
-                .any(|text| text.contains("bars per candle")),
-            "the default zoom groups nothing, so it claims nothing"
-        );
 
         // Where zooming out used to stop.
         app.active_tab_mut().flow_pane.viewport.set_px_per_bar(2.0);
-        let shallow = run_frame(&mut app, &ctx);
-        let shallow_rects = painted_rects(&shallow);
+        run_frame(&mut app, &ctx);
         let shallow_bars = bars_across(&app.active_tab().flow_pane.viewport);
 
-        // As far out as it now goes.
+        // As far out as it now goes: twice the bars, each still its own candle.
         app.active_tab_mut()
             .flow_pane
             .viewport
             .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
         let deep = run_frame(&mut app, &ctx);
-        let deep_rects = painted_rects(&deep);
         let viewport = app.active_tab().flow_pane.viewport;
-
-        assert!(viewport.grouped(), "the deep squeeze groups bars");
         assert!(
-            bars_across(&viewport) >= 5 * shallow_bars,
+            bars_across(&viewport) >= 2 * shallow_bars - 2,
             "history in the window: {} vs {shallow_bars}",
             bars_across(&viewport)
         );
         assert!(
-            deep_rects <= shallow_rects + 8,
-            "and no more shapes to paint it: {deep_rects} vs {shallow_rects}"
+            (viewport.candle_width() - viewport.px_per_bar()).abs() < f32::EPSILON,
+            "one bar, one candle, at the deepest squeeze"
         );
         assert!(
-            painted_text(&deep)
+            !painted_text(&deep)
                 .iter()
-                .any(|text| text.contains("bars per candle")),
-            "the canvas says what one candle now stands for"
+                .any(|text| text.contains("bars per candle") || text.contains("bars grouped")),
+            "and nothing on the canvas claims otherwise"
         );
     }
 

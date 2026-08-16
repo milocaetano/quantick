@@ -14,7 +14,6 @@ use crate::state::BarSpec;
 mod app;
 mod avwap;
 mod bands;
-mod bar_groups;
 mod bubble_presets;
 mod candle_view;
 mod chart;

@@ -483,14 +483,6 @@ pub struct LayerFrame<'a> {
     pub x_center: &'a dyn Fn(usize) -> f32,
     pub half: f32,
     pub candle_width: f32,
-    /// Bars sharing one drawn candle (`Viewport::bars_per_slot`).
-    ///
-    /// Above one the layer draws nothing and says so. A ladder is one bar's
-    /// tape, and there is no honest way to hang twenty bars' ladders on the
-    /// one candle standing for them — summing them would invent a bar the
-    /// rule never made, and drawing them all at the same x would stack twenty
-    /// answers on top of each other and call the top one the truth.
-    pub bars_per_slot: usize,
     /// Whether this feed *infers* the aggressor side (MT5 tick rule, replays
     /// of it). A layer whose entire content is buyer-vs-seller carries the
     /// label itself; the status bar's note is not enough here.
@@ -514,17 +506,13 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // The zoom this layer answers to, in the units its floors are written in:
     // the candle's own width, stretched by the trader's `detail_scale` (a
     // scale below one asks for detail at narrower candles, which is the same
-    // statement as lowering every floor by it). Grouped, no level applies.
+    // statement as lowering every floor by it).
     let scaled_width = if frame.config.detail_scale > 0.0 {
         frame.candle_width / frame.config.detail_scale
     } else {
         frame.candle_width
     };
-    let level = if frame.bars_per_slot > 1 {
-        DetailLevel::Off
-    } else {
-        lod.resolve(scaled_width, base_row_px, frame.config.profile_row_px)
-    };
+    let level = lod.resolve(scaled_width, base_row_px, frame.config.profile_row_px);
     // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
     // the boundary bugs so far were all states the eye could not explain
     // from the outside (wedged k, stale group), and the chart telling its
@@ -1199,12 +1187,6 @@ fn draw_legend(
 ) {
     let mut text = String::from("footprint");
     match level {
-        // Grouped is a different silence from too-small, and saying so is what
-        // stops a trader zooming in to fix something zooming will not fix
-        // until the grouping lets go.
-        DetailLevel::Off if frame.bars_per_slot > 1 => {
-            text.push_str(" · bars grouped — zoom in to ungroup");
-        }
         DetailLevel::Off => text.push_str(" · zoom in for detail"),
         DetailLevel::Marks => text.push_str(" · marks"),
         DetailLevel::Profile => text.push_str(" · profile"),
@@ -1222,7 +1204,7 @@ fn draw_legend(
     // How much further to zoom, in the only unit the gesture has. "zoom in for
     // numbers" with no number is why this layer read as slow to arrive: a
     // trader could not tell a nudge from a different chart entirely.
-    if level < DetailLevel::Compact && frame.bars_per_slot <= 1 && frame.candle_width > 0.0 {
+    if level < DetailLevel::Compact && frame.candle_width > 0.0 {
         let further = COMPACT_MIN_WIDTH * frame.config.detail_scale / frame.candle_width;
         if further > 1.05 {
             text.push_str(&format!(" · numbers at {further:.1}× this zoom"));

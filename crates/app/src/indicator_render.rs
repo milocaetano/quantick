@@ -150,17 +150,6 @@ impl PlotX<'_> {
     fn slot_width(&self) -> f32 {
         self.viewport.candle_width()
     }
-
-    /// Rows per drawn slot: one once a bar owns a candle, several once the
-    /// chart is squeezed far enough to group them.
-    fn rows_per_slot(&self) -> usize {
-        self.viewport.bars_per_slot()
-    }
-
-    /// Whether several bars share one candle at this zoom.
-    fn grouped(&self) -> bool {
-        self.viewport.grouped()
-    }
 }
 
 /// One plot column made drawable: the visible committed cells plus the
@@ -169,11 +158,6 @@ struct VisiblePlot<'a> {
     column: &'a [f64],
     start: usize,
     end: usize,
-    /// Rows sharing one drawn slot ([`PlotX::rows_per_slot`]). One point per
-    /// slot is drawn, not one per row: past the grouping zoom a window holds
-    /// thousands of rows, and a polyline with a vertex every fraction of a
-    /// pixel costs a frame to say what a vertex per candle already says.
-    step: usize,
     /// `Some((slot, value))`: the forming bar's previewed value.
     preview: Option<(usize, f64)>,
 }
@@ -182,14 +166,9 @@ impl VisiblePlot<'_> {
     /// Every visible `(slot, value)` pair, preview last — exactly the
     /// candles' order, so lines join the forming bar seamlessly.
     ///
-    /// Grouped, the row taken for a slot is its **last** one — the value the
-    /// candle drawn over it closes on, so line and candle tell one story.
     fn cells(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
-        let last = self.end.min(self.column.len());
-        let step = self.step.max(1);
-        let committed = (self.start..last)
-            .filter(move |row| step == 1 || (row + 1) % step == 0 || row + 1 == last)
-            .map(|row| (row, self.column[row]));
+        let committed =
+            (self.start..self.end.min(self.column.len())).map(|row| (row, self.column[row]));
         committed.chain(self.preview)
     }
 }
@@ -667,7 +646,6 @@ fn draw_view_plots(
             column,
             start,
             end,
-            step: x.rows_per_slot(),
             preview,
         };
         // The trader's style layer over the author's declaration. A plot they
@@ -682,16 +660,7 @@ fn draw_view_plots(
         let color = color32(resolved.color);
         let stroke = Stroke::new(resolved.width, color);
         if let Some(marker) = &spec.marker {
-            // Not on a grouped chart. A marker says "this happened on *this*
-            // bar", and a candle standing for eighty of them cannot carry the
-            // claim: the shapes pile onto each other by the hundred and their
-            // labels cover the price they are about. Line plots stay — a curve
-            // sampled per candle still reads — and the corner note says the
-            // chart is grouped, which is the same discipline the footprint and
-            // the aggression bubbles already follow.
-            if !x.grouped() {
-                draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
-            }
+            draw_shape_markers(painter, &visible, x, &y_of, color, marker, bar_extents);
             continue;
         }
         match spec.style {
@@ -1255,7 +1224,6 @@ mod tests {
                 column,
                 start: 0,
                 end: column.len(),
-                step: 1,
                 preview: None,
             };
             plot.cells().filter(|(_, v)| !v.is_nan()).count()
