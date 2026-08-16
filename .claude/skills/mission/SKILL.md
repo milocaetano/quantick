@@ -33,7 +33,7 @@ before it. Step 7 hands over the line to paste.
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
    | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius (added vs. edited files) stated in the PR body |
    | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
-   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); arch-review waived |
+   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s six shape dimensions waived — its step 0 bug pass is not, and `pr-gate` still wants the marker, so the skill runs and reports what step 0 found |
 
    Present the merged checklist to the user before starting work.
 

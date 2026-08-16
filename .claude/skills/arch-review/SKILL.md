@@ -1,6 +1,6 @@
 ---
 name: arch-review
-description: Architecture-first code review for quantick — checks that a change docks as a module, declares its performance impact, proves itself with tests, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review, or asks whether a change is modular, extensible or fast enough.
+description: The full pre-PR review for quantick — runs the bundled code-review for bugs first, then checks that a change docks as a module, declares its performance impact, proves itself with tests, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change is modular, extensible or fast enough.
 ---
 
 # Architecture-first code review
@@ -14,41 +14,49 @@ runs for you first: see step 0.
 
 ## Step 0 — the native code review runs first, always
 
-Correctness outranks architecture (priority 0), so the bug pass happens before
-any judgement about shape. Run the bundled `code-review` — the skill that takes
-a target plus an effort level (`low`…`ultra`). A plugin command of the same
-name appears prefixed, `code-review:code-review`; that one is a different thing
-that comments on the PR by itself, and it is not what this step calls.
+Correctness outranks architecture (priority 0), so the bug pass starts before
+the shape pass and the review never closes without it. Run the bundled
+`code-review` — the skill that takes a target plus an effort level
+(`low`…`ultra`). A plugin command of the same name appears prefixed,
+`code-review:code-review`; that one posts to the PR by itself and is not what
+this step calls.
 
 ```
 Skill(code-review), args: "<target> <effort>"      one string, in that order
 
-  <target>   a PR number, a branch name, or omitted for the working diff.
-             Not a revision range — `main...HEAD` is not a target it parses,
-             and it re-derives its own scope from the local `main`.
+  <target>   a PR number once one exists — the least ambiguous target there
+             is — otherwise a branch name, or omitted for the working diff.
+             Never a revision range: `main...HEAD` is not a target it parses.
   <effort>   `high` for a branch or PR, `medium` for a working diff.
              Never omit it: with no level the skill reuses whatever was typed
              last, in some other session, and this review has to name the
              level it used.
 ```
 
-**Fetch before calling it.** It scopes itself against the local `main`; behind
-`origin/main`, it reviews other branches' merged work as if this branch wrote
-it. The scope section below covers both with one fetch.
+**Check the scope it comes back with.** When the target does not pin a range
+the skill derives one, so it can end up reviewing another branch's merged work
+(local `main` behind `origin/main`) or nothing at all (a pushed branch whose
+upstream already contains every commit). Findings over files this branch never
+touched, or a suspiciously empty pass, mean re-invoking with an explicit
+target — not a clean bill of health. Fetch first either way; see *Scope the
+review*.
 
 **Expect it in the background.** The skill dispatches an agent and returns only
-a name — the findings arrive later as a notification. Read for shape meanwhile,
-but do not publish: the review closes only with step 0's list in hand. If it
-never arrives, the header says so instead of implying a bug pass that never ran.
+a name; the findings arrive later as a notification. Read for shape meanwhile,
+but publish nothing — the review closes only with step 0's list in hand. If the
+notification never lands, re-invoke once; if that fails too, do the bug pass
+yourself before publishing and say which it was in the header. "It never came
+back" is not a reason to ship an unreviewed branch.
 
 When the findings land:
 
-- **Sort before promoting.** The skill returns bugs and
-  reuse/simplification/efficiency cleanups in one flat list with no severity of
-  its own. Wrong *behaviour* — crash, wrong output, broken determinism, race —
-  becomes a **Blocker** here, listed before every shape finding, and the branch
-  does not pass with one open. A cleanup is not a Blocker: it enters the
-  dimension it belongs to (5 or 6) and takes this skill's severity.
+- **Sort before promoting.** The skill returns bugs and cleanups in one flat
+  list with no severity of its own. Wrong *behaviour* — crash, wrong output,
+  broken determinism, race — becomes a **Blocker** here, listed before every
+  shape finding, and the branch does not pass with one open. A cleanup is not
+  automatically lower: file it in the dimension it belongs to and let that
+  dimension decide, so an efficiency finding on a per-frame path lands in
+  dimension 2 and is still a Blocker under the hot-path rule.
 - **Confirm before promoting.** `high` and above deliberately include uncertain
   findings. Item 2 of *Verify before reporting* applies to this list too: argue
   the opposite case and drop what the refutation kills. *Confirmed* means it
@@ -60,8 +68,10 @@ When the findings land:
   never the plugin variant that posts unasked. Findings are resolved
   deliberately, and arch-review is the only thing that reports them.
 
-`code-review` stays callable on its own. On a docs/skills change — where
-`mission` waives arch-review — it *is* the review.
+`code-review` stays callable on its own, but a branch still needs the
+`arch-review-ok` marker to open a PR. So on a docs/skills change — where
+`mission` waives the shape pass — run this skill anyway and report step 0's
+findings through it. The bug pass is not the waived part.
 
 ## Priority order
 
@@ -88,17 +98,19 @@ never has to, since naming and comments compile away.
 ## Scope the review
 
 ```sh
-git fetch origin                 # first: a stale local `main` inflates every diff below
-git diff main...HEAD --stat      # branch under review
-git diff --stat                  # uncommitted working diff
-gh pr diff <n>                   # a PR
+git fetch origin                       # first: the ranges below read origin/main
+git diff origin/main...HEAD --stat     # branch under review
+git diff --stat                        # uncommitted working diff
+gh pr diff <n>                         # a PR
 ```
 
-Fetch before scoping, and check that `main` is not behind `origin/main` — a
-worktree cut from `origin/main` while the main checkout still sits on an older
-`main` makes `main...HEAD` show other branches' merged work as if this branch
-wrote it. Fast-forward it (`git -C <main-checkout> pull --ff-only`) or scope
-against `origin/main` instead. Both the review and step 0 use the same target.
+The range names the remote on purpose. `git fetch` moves `origin/main` and
+leaves the local `main` ref where it was, so in a worktree cut from
+`origin/main` while the main checkout still sits on an older `main`,
+`main...HEAD` shows other branches' merged work as if this branch wrote it —
+it happened on the branch that added this line, 26 files from someone else's
+PR. Fast-forwarding the main checkout (`git -C <main-checkout> pull --ff-only`)
+fixes the local ref too, and is worth doing before a review either way.
 
 Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
@@ -270,7 +282,9 @@ Open with one line for step 0: the effort level it ran at and how many findings
 came back, including zero — `step 0: code-review at high, 12 findings, 3
 confirmed` — or why it did not run. On the `ReportFindings` path that line is
 the text accompanying the call, since the tool carries no header field. It is
-the only signal that the bug pass was skipped, so it is never dropped.
+the only signal that the bug pass was skipped, so it is never dropped — and it
+goes into the PR body too, next to the deferred findings `CLAUDE.md` already
+requires there. Chat scrolls away; the PR is where the next reader looks.
 
 Report findings with the `ReportFindings` tool when it is available, ranked
 most severe first, using categories `correctness` (step 0's, promoted here),
