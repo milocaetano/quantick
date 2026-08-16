@@ -1615,6 +1615,13 @@ impl QuantickApp {
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
         app.saved_layer_mask = app.layer_mask();
+        // The cockpit rescue ran in `main`, before any store was read. A
+        // silent one would look like the app relocated the trader's settings
+        // behind their back — and leave them not knowing which folder to back
+        // up. Same toast channel the journal's rescue uses.
+        if let Some(notice) = crate::store_home::rescue_notice() {
+            app.tabs[0].paper.show_toast(notice);
+        }
         if let Some(summary) = consolidated
             && summary.imported() > 0
         {
@@ -4646,9 +4653,17 @@ impl QuantickApp {
                         // distinction so the menu does not need a paragraph.
                         if ui
                             .button("Save as…")
+                            // Says what a bookmark keeps *and what it does
+                            // not*: it is the tabs and the panels, not the
+                            // indicators or the colours. Two entries in one
+                            // menu that both "save a workspace" but restore
+                            // different amounts is exactly how a trader comes
+                            // to believe the app forgets things — use Export
+                            // to file for the whole cockpit.
                             .on_hover_text(
-                                "Keep this arrangement under a name you can reopen later. It \
-                                 does not change what quantick opens on.",
+                                "Keep these tabs and panels under a name you can reopen later. \
+                                 It does not change what quantick opens on, and it does not \
+                                 keep indicators or colours — use Export to file for those.",
                             )
                             .clicked()
                         {
@@ -4727,7 +4742,14 @@ impl QuantickApp {
                                 for path in &self.recent_on_disk {
                                     if ui
                                         .button(crate::workspace_bundle::recent_label(path))
-                                        .on_hover_text(path.display().to_string())
+                                        // The same warning the bookmark list
+                                        // carries: this replaces the cockpit,
+                                        // and a trader mid-tape has to read
+                                        // that before the click, not after.
+                                        .on_hover_text(format!(
+                                            "Replaces the cockpit on screen\n{}",
+                                            path.display()
+                                        ))
                                         .clicked()
                                     {
                                         reopen = Some(path.clone());

@@ -326,9 +326,11 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
         return None;
     }
     let home = home()?;
-    rescue_into(&home, Path::new("."), &|env| {
+    let summary = rescue_into(&home, Path::new("."), &|env| {
         std::env::var_os(env).is_some()
-    })
+    })?;
+    let _ = RESCUE_NOTICE.set(rescue_toast(&summary, &home));
+    Some(summary)
 }
 
 /// [`consolidate_once`] with its home, legacy directory and the
@@ -414,6 +416,38 @@ fn rescue_into(
         write_marker(&marker);
     }
     Some(summary)
+}
+
+/// What the startup rescue has to say, waiting for a window to say it in.
+///
+/// The rescue runs in `main`, before any store is read and therefore before
+/// the app exists; the toast belongs to the app. One slot, written once by
+/// [`consolidate_once`] and read once by the window — rather than threading a
+/// message through a constructor that no other caller would ever pass.
+static RESCUE_NOTICE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// The rescue's message, if this launch had one. Read by the window as it
+/// opens; every later call answers the same, so it is safe to ask twice.
+pub(crate) fn rescue_notice() -> Option<String> {
+    RESCUE_NOTICE.get().cloned().flatten()
+}
+
+/// What the trader is told after a rescue, or `None` when nothing moved.
+///
+/// A silent rescue would look like the app relocated their settings behind
+/// their back — and worse, they would not know the folder to back up. Says
+/// "copies" out loud and names the folder, the way
+/// [`crate::paper_home::import_toast`] does for the journal: one app, one
+/// way of reporting a one-time import.
+pub(crate) fn rescue_toast(summary: &RescueSummary, home: &Path) -> Option<String> {
+    if summary.copied == 0 {
+        return None;
+    }
+    Some(format!(
+        "Your saved settings now live in {} — {} file(s) copied there, originals untouched",
+        home.display(),
+        summary.copied
+    ))
 }
 
 /// Stamp the home as consolidated. A failed write only means the rescue
