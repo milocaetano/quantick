@@ -14,35 +14,54 @@ runs for you first: see step 0.
 
 ## Step 0 — the native code review runs first, always
 
-Invoke the `code-review` skill over the same target as the scope below and wait
-for it to finish before reading a single file for shape. Correctness outranks
-architecture (priority 0), so a change that is wrong is not judged for elegance
-first.
+Correctness outranks architecture (priority 0), so the bug pass happens before
+any judgement about shape. Run the bundled `code-review` — the skill that takes
+a target plus an effort level (`low`…`ultra`). A plugin command of the same
+name appears prefixed, `code-review:code-review`; that one is a different thing
+that comments on the PR by itself, and it is not what this step calls.
 
 ```
-Skill(code-review)  →  args: the same target, e.g. `main...HEAD`, a PR number,
-                       or nothing for the working diff.
-                       Effort: `high` for a branch or PR, `medium` for a small
-                       uncommitted diff.
+Skill(code-review), args: "<target> <effort>"      one string, in that order
+
+  <target>   a PR number, a branch name, or omitted for the working diff.
+             Not a revision range — `main...HEAD` is not a target it parses,
+             and it re-derives its own scope from the local `main`.
+  <effort>   `high` for a branch or PR, `medium` for a working diff.
+             Never omit it: with no level the skill reuses whatever was typed
+             last, in some other session, and this review has to name the
+             level it used.
 ```
 
-That is the bundled review that takes a target plus an effort level
-(`low`…`ultra`) — not a plugin command that happens to share the name. If both
-are listed, the effort levels are how you tell them apart.
+**Fetch before calling it.** It scopes itself against the local `main`; behind
+`origin/main`, it reviews other branches' merged work as if this branch wrote
+it. The scope section below covers both with one fetch.
 
-Then:
+**Expect it in the background.** The skill dispatches an agent and returns only
+a name — the findings arrive later as a notification. Read for shape meanwhile,
+but do not publish: the review closes only with step 0's list in hand. If it
+never arrives, the header says so instead of implying a bug pass that never ran.
 
-- **Carry its findings in.** Every confirmed correctness finding enters this
-  review as a **Blocker** and is listed before any shape finding. A branch does
-  not pass arch-review with an open correctness finding from step 0.
-- **Never restate it.** Cite a finding the code review already reported by
-  `file:line` and move on. This review adds the six dimensions below; it does
-  not re-report bugs in different words.
-- **Say what ran.** The review header names the effort level used and how many
-  findings came back — including zero. A review that could not run the skill
-  says so in that same line instead of staying silent about it.
-- Do not pass `--fix` or `--comment` from here. Findings are resolved
-  deliberately, and arch-review is the thing that reports them.
+When the findings land:
+
+- **Sort before promoting.** The skill returns bugs and
+  reuse/simplification/efficiency cleanups in one flat list with no severity of
+  its own. Wrong *behaviour* — crash, wrong output, broken determinism, race —
+  becomes a **Blocker** here, listed before every shape finding, and the branch
+  does not pass with one open. A cleanup is not a Blocker: it enters the
+  dimension it belongs to (5 or 6) and takes this skill's severity.
+- **Confirm before promoting.** `high` and above deliberately include uncertain
+  findings. Item 2 of *Verify before reporting* applies to this list too: argue
+  the opposite case and drop what the refutation kills. *Confirmed* means it
+  survived that pass, not that the sub-agent sounded certain.
+- **Cite, never restate.** A finding step 0 already reported ships as its
+  `file:line` plus the severity assigned here — not re-described in new words
+  as though this review found it.
+- **Step 0 never publishes.** No `--fix`, no `--comment`, no `--post`, and
+  never the plugin variant that posts unasked. Findings are resolved
+  deliberately, and arch-review is the only thing that reports them.
+
+`code-review` stays callable on its own. On a docs/skills change — where
+`mission` waives arch-review — it *is* the review.
 
 ## Priority order
 
@@ -215,8 +234,9 @@ public API. A new local convention needs a stated reason or it is a finding.
 
 Reviews are judged on precision, not volume.
 
-0. Confirm step 0 actually ran and its findings are in hand. A shape review
-   published without it is incomplete, not "clean".
+0. Confirm step 0 ran and its findings are in hand — if it went to the
+   background, wait for the notification. A shape review published without
+   them is incomplete, not "clean".
 1. Open the file and read the surrounding code — most "this is missing"
    findings die here because the thing exists one function up.
 2. For each surviving finding, argue the opposite case for a moment: is this
@@ -235,9 +255,9 @@ A clean change gets a short review saying it is clean and why. Never pad.
 
 ## Severity
 
-- **Blocker** — reverse dependency edge; forked aggregator logic; determinism
-  broken; hot-path regression; new behaviour with no test; a feature that
-  activates itself.
+- **Blocker** — a confirmed correctness finding from step 0; reverse dependency
+  edge; forked aggregator logic; determinism broken; hot-path regression; new
+  behaviour with no test; a feature that activates itself.
 - **Should fix** — hardcoded value; extension point that forces edits to
   existing code; missing regression cover; unexplained complex algorithm;
   misleading name or missing unit; a second way to do a solved thing.
@@ -246,10 +266,17 @@ A clean change gets a short review saying it is clean and why. Never pad.
 
 ## Output
 
+Open with one line for step 0: the effort level it ran at and how many findings
+came back, including zero — `step 0: code-review at high, 12 findings, 3
+confirmed` — or why it did not run. On the `ReportFindings` path that line is
+the text accompanying the call, since the tool carries no header field. It is
+the only signal that the bug pass was skipped, so it is never dropped.
+
 Report findings with the `ReportFindings` tool when it is available, ranked
-most severe first, using categories `modularity`, `performance`,
-`hardcoded-values`, `test-coverage`, `standardisation`, `readability`. Without
-that tool, write the same list as markdown grouped by severity.
+most severe first, using categories `correctness` (step 0's, promoted here),
+`modularity`, `performance`, `hardcoded-values`, `test-coverage`,
+`standardisation`, `readability`. Without that tool, write the same list as
+markdown grouped by severity.
 
 Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
