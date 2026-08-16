@@ -89,6 +89,27 @@ impl Rgba8 {
     }
 }
 
+/// Resolve a stack of bar paint requests — front of the stack first — into
+/// the one colour a candle wears.
+///
+/// **The last request wins.** Indicators are held in insertion order, which
+/// is render order: the overlay added later already draws over the ones added
+/// before it, so paint obeys the rule the chart already has. Where the later
+/// indicator asks for nothing on *this* bar, the one below it still shows
+/// through — the resolution is per bar, not per chart.
+///
+/// One function rather than one rule per consumer: the host answers for the
+/// backtest and the bot, the chart answers from its own mirror of the same
+/// indicators, and a bot that saw a different colour than the trader would be
+/// a quiet lie. Both go through here.
+pub fn resolve_bar_paint<I>(stack: I) -> Option<Rgba8>
+where
+    I: IntoIterator<Item = Option<Rgba8>>,
+    I::IntoIter: DoubleEndedIterator,
+{
+    stack.into_iter().rev().find_map(|paint| paint)
+}
+
 /// A marker shape for `plotshape`/`plotchar` columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerShape {
@@ -167,11 +188,28 @@ pub struct PlotSpec {
 /// plot, one row per closed bar. `NaN` cells are `na` — "nothing to draw
 /// here" (warmup, conditional plots) — and renderers break lines on them.
 ///
+/// Alongside the plot columns sits the **bar paint channel**: the candle
+/// colour an indicator asks the chart to paint each bar with (Pine's
+/// `barcolor()`). It lives here, and not in a store of its own, because it is
+/// the same shape as a plot column — one value per committed bar, produced by
+/// the same commit run — and a second store would need its own alignment
+/// rules, its own clear, and its own way to be wrong.
+///
 /// Only *committed* rows live here; the forming bar's values travel in a
 /// [`PreviewFrame`] and are never appended.
 #[derive(Debug, Clone, Default)]
 pub struct PlotBuffer {
     columns: Vec<Vec<f64>>,
+    /// Packed `0xRRGGBBAA` paint per bar, `0` = this bar asked for none.
+    ///
+    /// Kept only as far as the last *painted* bar: an indicator that never
+    /// paints — every native one today — leaves it empty and pays a `Vec`
+    /// header, no allocation. Reads past the end answer "no paint", the same
+    /// honest out-of-range answer [`PlotBuffer::value`] gives.
+    ///
+    /// Fully transparent black packs to `0` and so collapses into "no paint".
+    /// Nothing renderable is lost: neither puts a pixel on screen.
+    bar_paint: Vec<u32>,
     /// Tracked explicitly rather than derived from a column: an indicator
     /// with zero plots (a draw-objects-only script) still commits rows.
     rows: usize,
@@ -187,6 +225,7 @@ impl PlotBuffer {
     pub fn new(plot_count: usize) -> Self {
         Self {
             columns: vec![Vec::new(); plot_count],
+            bar_paint: Vec::new(),
             rows: 0,
         }
     }
@@ -257,6 +296,44 @@ impl PlotBuffer {
         self.rows += 1;
     }
 
+    /// Append one row together with the candle paint that bar asks for.
+    ///
+    /// `None` — the common case — costs nothing: the paint channel is only
+    /// extended when a bar actually asks for a colour, and the bars skipped
+    /// in between are filled with "no paint" at that moment.
+    ///
+    /// # Panics
+    ///
+    /// Same as [`push_row`](PlotBuffer::push_row).
+    pub fn push_row_painted(&mut self, row: &[f64], paint: Option<Rgba8>) {
+        self.push_row(row);
+        if let Some(color) = paint {
+            // Every bar between the previous painted one and this one asked
+            // for nothing; `0` is that answer, written only now so an
+            // indicator that never paints never allocates here.
+            self.bar_paint.resize(self.rows - 1, 0);
+            self.bar_paint.push(color.to_u32());
+        }
+    }
+
+    /// The candle paint one committed bar asked for, if any. Out of range —
+    /// past the last painted bar, or past history entirely — is `None`.
+    #[must_use]
+    pub fn bar_paint(&self, row: usize) -> Option<Rgba8> {
+        match self.bar_paint.get(row).copied() {
+            None | Some(0) => None,
+            Some(packed) => Some(Rgba8::from_u32(packed)),
+        }
+    }
+
+    /// Whether this indicator has painted any bar at all — the cheap check a
+    /// renderer uses to skip the channel entirely for the indicators (all the
+    /// native ones today) that never touch it.
+    #[must_use]
+    pub fn paints_any(&self) -> bool {
+        !self.bar_paint.is_empty()
+    }
+
     /// The full committed column of one plot.
     ///
     /// # Panics
@@ -282,6 +359,7 @@ impl PlotBuffer {
         for column in &mut self.columns {
             column.clear();
         }
+        self.bar_paint.clear();
         self.rows = 0;
     }
 }
@@ -289,9 +367,6 @@ impl PlotBuffer {
 /// The output of one preview run: what the forming bar would plot if it
 /// closed right now. Never committed anywhere — the renderer keeps only the
 /// latest frame and replaces it wholesale (latest-wins).
-///
-/// Extended in later milestones with transient draw objects and per-bar
-/// colors for the forming bar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreviewFrame {
     /// One value per declared plot, in [`PlotId`] order; NaN = nothing to
@@ -301,15 +376,25 @@ pub struct PreviewFrame {
     /// indicator draws any: replaces the committed set while the bar forms,
     /// exactly like plot previews (latest-wins).
     pub objects: Option<crate::objects::ObjectSnapshot>,
+    /// The candle paint the forming bar asks for, `None` = none.
+    ///
+    /// As transient as the rest of the frame: it is what the bar would commit
+    /// if it closed on this print, it is replaced wholesale by the next
+    /// preview, and it never reaches the committed channel. A bar that reads
+    /// as exhaustion at one moment and as plain force at the next therefore
+    /// changes colour on screen while it forms — the preview is honest about
+    /// the state of an unfinished bar, not a promise about the closed one.
+    pub paint: Option<Rgba8>,
 }
 
 impl PreviewFrame {
-    /// A frame of plot values with no draw objects.
+    /// A frame of plot values with no draw objects and no paint.
     #[must_use]
     pub fn new(values: Vec<f64>) -> Self {
         Self {
             values,
             objects: None,
+            paint: None,
         }
     }
 }
@@ -354,6 +439,78 @@ mod tests {
         buffer.clear();
         assert!(buffer.is_empty());
         assert_eq!(buffer.plot_count(), 1);
+    }
+
+    #[test]
+    fn an_indicator_that_never_paints_carries_no_paint_channel() {
+        let mut buffer = PlotBuffer::new(1);
+        buffer.push_row(&[1.0]);
+        buffer.push_row(&[2.0]);
+        assert!(!buffer.paints_any(), "no bar asked for paint");
+        assert_eq!(buffer.bar_paint(0), None);
+        assert_eq!(buffer.bar_paint(1), None);
+    }
+
+    #[test]
+    fn paint_lands_on_its_own_bar_and_the_gaps_read_as_none() {
+        let red = Rgba8::opaque(255, 0, 0);
+        let mut buffer = PlotBuffer::new(1);
+        buffer.push_row_painted(&[1.0], None);
+        buffer.push_row_painted(&[2.0], Some(red));
+        buffer.push_row_painted(&[3.0], None);
+        assert_eq!(buffer.len(), 3);
+        assert!(buffer.paints_any());
+        assert_eq!(buffer.bar_paint(0), None, "before the first painted bar");
+        assert_eq!(buffer.bar_paint(1), Some(red));
+        assert_eq!(buffer.bar_paint(2), None, "after it, unpainted again");
+        assert_eq!(buffer.bar_paint(99), None, "past history entirely");
+    }
+
+    #[test]
+    fn painting_leaves_the_plot_columns_alone() {
+        // The channel rides beside the values; it must not shift them.
+        let mut buffer = PlotBuffer::new(2);
+        buffer.push_row_painted(&[1.0, 10.0], Some(Rgba8::opaque(0, 255, 0)));
+        buffer.push_row_painted(&[2.0, 20.0], None);
+        assert_eq!(buffer.column(PlotId::new(0)), &[1.0, 2.0]);
+        assert_eq!(buffer.column(PlotId::new(1)), &[10.0, 20.0]);
+    }
+
+    #[test]
+    fn clear_drops_the_paint_channel_too() {
+        let mut buffer = PlotBuffer::new(1);
+        buffer.push_row_painted(&[1.0], Some(Rgba8::opaque(255, 0, 0)));
+        buffer.clear();
+        assert!(!buffer.paints_any(), "a replay starts unpainted");
+        assert_eq!(buffer.bar_paint(0), None);
+    }
+
+    #[test]
+    fn fully_transparent_paint_reads_as_no_paint() {
+        // Both put zero pixels on screen, so collapsing them loses nothing —
+        // and it is what keeps the channel four bytes a bar.
+        let mut buffer = PlotBuffer::new(1);
+        buffer.push_row_painted(&[1.0], Some(Rgba8::new(0, 0, 0, 0)));
+        assert_eq!(buffer.bar_paint(0), None);
+    }
+
+    #[test]
+    fn a_fresh_preview_frame_asks_for_no_paint() {
+        assert_eq!(PreviewFrame::new(vec![1.0]).paint, None);
+    }
+
+    #[test]
+    fn the_last_request_in_the_stack_wins() {
+        let red = Rgba8::opaque(255, 0, 0);
+        let blue = Rgba8::opaque(0, 0, 255);
+        assert_eq!(resolve_bar_paint([Some(red), Some(blue)]), Some(blue));
+        assert_eq!(
+            resolve_bar_paint([Some(red), None]),
+            Some(red),
+            "the top of the stack asking for nothing uncovers the one below"
+        );
+        assert_eq!(resolve_bar_paint([None, None]), None);
+        assert_eq!(resolve_bar_paint(Vec::new()), None, "an empty chart");
     }
 
     fn spec(index: usize, title: &str) -> PlotSpec {

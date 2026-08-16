@@ -64,23 +64,43 @@ pub fn run_indicator(
 /// Serialise an indicator's committed plot columns as CSV: a header of plot
 /// titles, then one row per bar of `{:?}`-formatted f64 values.
 ///
-/// Deterministic by construction (fixed order, exact float formatting), so it
-/// doubles as the byte-identical representation two runs are diffed against.
+/// An indicator that painted at least one candle gets a trailing `bar_paint`
+/// column — `#RRGGBBAA` where it painted, `na` where it did not. The column
+/// is conditional so that the fixtures of the indicators that never paint
+/// stay exactly as they are: a colour channel nobody uses does not belong in
+/// their golden output. It also means a regression that stops the painting
+/// entirely removes the whole column, and the header diff says so.
+///
+/// Deterministic by construction (fixed order, exact float formatting, upper
+/// -case hex), so it doubles as the byte-identical representation two runs are
+/// diffed against.
 #[must_use]
 pub fn plot_csv(indicator: &dyn Indicator) -> String {
     let descriptor = indicator.descriptor();
     let plots = indicator.plots();
+    let paints = plots.paints_any();
     let mut out = String::new();
     out.push_str("bar_index");
     for spec in &descriptor.plots {
         out.push(',');
         out.push_str(&spec.title);
     }
+    if paints {
+        out.push_str(",bar_paint");
+    }
     out.push('\n');
     for row in 0..plots.len() {
         let _ = write!(out, "{row}");
         for spec in &descriptor.plots {
             let _ = write!(out, ",{:?}", plots.value(spec.id, row));
+        }
+        if paints {
+            match plots.bar_paint(row) {
+                Some(color) => {
+                    let _ = write!(out, ",#{:08X}", color.to_u32());
+                }
+                None => out.push_str(",na"),
+            }
         }
         out.push('\n');
     }

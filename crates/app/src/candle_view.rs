@@ -6,6 +6,7 @@
 
 use eframe::egui;
 use quantick_engine::Bar;
+use quantick_indicators::Rgba8;
 
 use crate::chart::{PriceScale, VerticalSegment, candle_geometry};
 use crate::style::{
@@ -37,22 +38,41 @@ pub fn is_bullish(bar: &Bar) -> bool {
     bar.close >= bar.open
 }
 
+/// Where one candle's column sits on screen: the centre of its slot and half
+/// the body width, both in pixels. The pair travels together because neither
+/// says anything alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BarSlot {
+    /// Centre x of the bar's slot.
+    pub xc: f32,
+    /// Half the body width.
+    pub half_width: f32,
+}
+
 /// Draw one candle from pure geometry and a resolved paint description.
 ///
 /// The heatmap is painted before this function and aggression bubbles after it.
 /// Translucent or absent fills therefore reveal liquidity without allowing
 /// candle contours to cover the aggression markers.
+///
+/// `bar_paint` is the colour an indicator asked this bar to wear (Pine's
+/// `barcolor`); `None` — the ordinary case — draws the trader's own direction
+/// colours.
 pub fn draw_candle(
     painter: &egui::Painter,
-    xc: f32,
-    half_width: f32,
+    slot: BarSlot,
     scale: &PriceScale,
     bar: &Bar,
     forming: bool,
     style: &CandleStyle,
+    bar_paint: Option<Rgba8>,
 ) {
-    let paint = style.resolved(is_bullish(bar), forming);
-    let geometry = candle_geometry(scale, bar, xc, half_width, paint.min_body_height);
+    let paint = style.resolved_painted(
+        is_bullish(bar),
+        forming,
+        bar_paint.map(|c| [c.r, c.g, c.b, c.a]),
+    );
+    let geometry = candle_geometry(scale, bar, slot.xc, slot.half_width, paint.min_body_height);
     let body = egui::Rect::from_min_max(
         egui::pos2(geometry.body.left, geometry.body.top),
         egui::pos2(geometry.body.right, geometry.body.bottom),

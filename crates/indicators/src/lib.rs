@@ -9,8 +9,11 @@
 //! reads columns from. A second, general-purpose series store is deliberately
 //! absent: an indicator that needs its own history (a script's `[n]` reads, a
 //! kernel's window) keeps it in its own state and stages it with the same
-//! commit/preview discipline. Per-bar color columns, when they land, extend
-//! `PlotBuffer` rather than opening a second store beside it.
+//! commit/preview discipline. The per-bar candle paint channel
+//! ([`PlotBuffer::bar_paint`], Pine's `barcolor`) honoured that rule when it
+//! landed: it extends `PlotBuffer` instead of opening a second store beside
+//! it, because it is the same shape as a plot column — one value per
+//! committed bar, produced by the same commit run.
 //!
 //! # The contract
 //!
@@ -63,5 +66,5 @@ pub use objects::{
 };
 pub use output::{
     FillSpec, MarkerLocation, MarkerShape, MarkerSpec, PlotBuffer, PlotId, PlotSpec, PlotStyle,
-    PreviewFrame, Rgba8,
+    PreviewFrame, Rgba8, resolve_bar_paint,
 };

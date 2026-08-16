@@ -245,6 +245,20 @@ pub(crate) struct StateSnapshot {
     objects: ObjectStore,
 }
 
+/// What one run stages for its caller: this bar's plot cells and the candle
+/// paint it asked for.
+///
+/// The two travel together because they *are* one thing — the output of one
+/// evaluation — and because the caller reads them together after a clean run:
+/// a row committed without its paint, or with a stale one, would put a colour
+/// on the wrong candle.
+pub(crate) struct Staged<'a> {
+    /// One cell per plot; pushed by the caller after a clean run.
+    pub row: &'a mut [f64],
+    /// The paint `barcolor` asked for; `None` = this bar asked for none.
+    pub paint: &'a mut Option<Rgba8>,
+}
+
 /// One run of the script over one bar (commit or preview).
 pub(crate) struct Eval<'a> {
     pub script: &'a CompiledScript,
@@ -254,6 +268,9 @@ pub(crate) struct Eval<'a> {
     pub state: &'a mut ScriptState,
     /// One staged cell per plot; pushed by the caller after a clean run.
     pub row: &'a mut [f64],
+    /// The bar paint this run asked for (`barcolor`), staged like the row and
+    /// read by the caller after a clean run. `None` = this bar asked for none.
+    pub paint: &'a mut Option<Rgba8>,
     /// True on commit runs (`barstate.isconfirmed`).
     pub is_commit: bool,
 
@@ -270,7 +287,7 @@ impl<'a> Eval<'a> {
         bar: &'a IndicatorBar,
         ctx: &'a Ctx<'a>,
         state: &'a mut ScriptState,
-        row: &'a mut [f64],
+        staged: Staged<'a>,
         is_commit: bool,
     ) -> Self {
         Self {
@@ -279,7 +296,8 @@ impl<'a> Eval<'a> {
             bar,
             ctx,
             state,
-            row,
+            row: staged.row,
+            paint: staged.paint,
             is_commit,
             path: 0,
             frame_base: 0,
@@ -865,14 +883,26 @@ impl<'a> Eval<'a> {
                 self.row[index] = marker_value;
                 return Ok(Value::Na);
             }
+            Builtin::Barcolor => {
+                // Each call settles the bar outright: a colour paints it, `na`
+                // leaves it unpainted, and the last call of the bar is the one
+                // that counts. Not calling it at all — the `if` that did not
+                // fire — leaves the candle exactly as the chart drew it.
+                let value = match args.first() {
+                    Some(arg) => self.eval(arg.value)?,
+                    None => Value::Na,
+                };
+                *self.paint = match value {
+                    Value::Color(rgba) => Some(Rgba8::from_u32(rgba)),
+                    Value::Na => None,
+                    other => return Err(self.type_err(id, "a color", &other)),
+                };
+                return Ok(Value::Na);
+            }
             // fill() is fully resolved at load time; at eval it is a no-op.
             // Accepted-but-inert output calls still evaluate their first
             // argument (consistency: kernels inside advance every bar).
-            Builtin::Fill
-            | Builtin::Bgcolor
-            | Builtin::Barcolor
-            | Builtin::AlertCondition
-            | Builtin::Indicator => {
+            Builtin::Fill | Builtin::Bgcolor | Builtin::AlertCondition | Builtin::Indicator => {
                 if let Some(arg) = args.first() {
                     let _ = self.eval(arg.value)?;
                 }
