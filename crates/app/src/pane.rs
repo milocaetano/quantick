@@ -917,6 +917,10 @@ pub struct ChartPane {
     // the live lane is a band of screen to its right that answers to nothing
     // it does.
     pub viewport: Viewport,
+    // The folded candles a grouped zoom draws, kept between frames. Empty
+    // whenever one bar owns one candle, which is where a chart spends nearly
+    // all of its time.
+    bar_groups: crate::bar_groups::BarGroups,
     // Where the history pane ended last frame — the lane's divider, and the
     // handle that resizes it. The input pass runs before the draw computes it.
     pub last_lane_divider_x: Option<f32>,
@@ -1116,6 +1120,7 @@ impl ChartPane {
             id,
             kind: spec.kind(),
             state: ChartState::new(spec),
+            bar_groups: crate::bar_groups::BarGroups::default(),
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
@@ -2247,6 +2252,11 @@ impl ChartPane {
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
         self.state = ChartState::new(self.current_spec());
+        // The folded candles were about a series that no longer exists. The
+        // cache would notice on its own (a fresh state restarts the revision
+        // at zero and the prefix went with it), but a cache that outlives the
+        // thing it caches is one refactor away from being wrong.
+        self.bar_groups.clear();
         self.viewport = Viewport::new();
         self.price_view = PriceView::new();
         self.last_auto_range = None;
@@ -4058,6 +4068,22 @@ impl ChartPane {
             self.state.set_footprint_group(base);
         }
 
+        // The folded candles a grouped chart draws, brought up to date before
+        // anything borrows the series. Ungrouped there is nothing to fold and
+        // the cache is left alone; grouped, this is one pass over the bars
+        // that arrived since the last frame — usually none.
+        let per_slot = self.viewport.bars_per_slot();
+        if per_slot > 1 {
+            let mut groups = std::mem::take(&mut self.bar_groups);
+            groups.refresh(
+                per_slot,
+                self.state.timeline_revision(),
+                &self.history_prefix,
+                self.state.bars(),
+            );
+            self.bar_groups = groups;
+        }
+
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
         let prefix = self.history_prefix.as_slice();
@@ -4322,13 +4348,50 @@ impl ChartPane {
         // sends the newest bars off the right of it, and they scroll out of
         // sight behind the tape instead of being drawn over it.
         let clip = painter.with_clip_rect(history_rect);
-        // How many bars share one drawn candle, and which slot holds the bar
-        // still forming. Both are read once here and used by every pass over
-        // the candles below.
-        let per_slot = self.viewport.bars_per_slot();
+        // Which slot holds the bar still forming, and the folded candles the
+        // grouped path draws. Read once here and used by every pass over the
+        // candles below.
         let per_bar_layers = self.per_bar_layers_drawable();
         let forming_slot = partial_visible.map(|_| closed_total / per_slot);
         let viewport = &self.viewport;
+        let groups = self.bar_groups.slots();
+        // Every candle this frame draws, in order: the index of the first bar
+        // behind it, the bar itself, and whether it is still forming.
+        //
+        // Ungrouped — every zoom a trader works at — that is the visible bars
+        // themselves, borrowed and drawn exactly as before. Grouped, the closed
+        // groups are read straight out of the cache above, and only the group
+        // holding the forming bar is folded here: one group's work per frame
+        // instead of the whole window's.
+        let visible_candles = |paint: &mut dyn FnMut(usize, &quantick_engine::Bar, bool)| {
+            if per_slot <= 1 {
+                for (offset, bar) in visible_closed().enumerate() {
+                    paint(closed_start + offset, bar, false);
+                }
+                if let Some(partial) = partial_visible {
+                    paint(closed_total, partial, true);
+                }
+                return;
+            }
+            let last_group = end.saturating_sub(1) / per_slot;
+            for group in (closed_start / per_slot)..=last_group {
+                if forming_slot == Some(group) {
+                    break;
+                }
+                let Some(bar) = groups.get(group) else { break };
+                paint(group * per_slot, bar, false);
+            }
+            // The forming bar joins the closed bars of its own group, which is
+            // the one group the cache deliberately cannot hold.
+            if let (Some(group), Some(partial)) = (forming_slot, partial_visible) {
+                let mut folded = partial.clone();
+                if let Some(closed_of_group) = groups.get(group) {
+                    folded = closed_of_group.clone();
+                    crate::resample::merge_into(&mut folded, partial);
+                }
+                paint(group * per_slot, &folded, true);
+            }
+        };
         // Clear the heat behind each candle's high–low span so a translucent
         // candle stays a clean divider — no liquidity band shows through it.
         // Where the price swept, the wall reads as consumed; bands survive only
@@ -4351,31 +4414,18 @@ impl ChartPane {
                     canvas_background,
                 );
             };
-            crate::resample::for_each_group(
-                visible_closed().chain(partial_visible),
-                closed_start,
-                per_slot,
-                |index, bar| clear_bar(viewport.slot_center_x(index, right, total), bar),
-            );
+            visible_candles(&mut |index, bar, _forming| {
+                clear_bar(viewport.slot_center_x(index, right, total), bar);
+            });
         }
-        // One candle per drawn slot. Ungrouped — every zoom a trader works at —
-        // that is one bar, borrowed and drawn exactly as before. Squeezed past
-        // the point where a bar can be drawn on its own, it is the exact fold
-        // of the bars sharing the slot (`Viewport::bars_per_slot`), so a
-        // compressed chart is a coarser record of the same tape rather than an
-        // invented one, and the cost of a frame stops growing with the zoom.
-        // The forming bar folds into the slot it belongs to, and that slot is
-        // drawn as forming.
-        crate::resample::for_each_group(
-            visible_closed().chain(partial_visible),
-            closed_start,
-            per_slot,
-            |index, bar| {
-                let xc = viewport.slot_center_x(index, right, total);
-                let forming = forming_slot == Some(index / per_slot);
-                draw_candle(&clip, xc, half, &scale, bar, forming, candles);
-            },
-        );
+        // One candle per drawn slot. Grouped, each is the exact fold of the
+        // bars sharing the slot (`Viewport::bars_per_slot`), so a compressed
+        // chart is a coarser record of the same tape rather than an invented
+        // one — and the cost of a frame stops growing with the zoom.
+        visible_candles(&mut |index, bar, forming| {
+            let xc = viewport.slot_center_x(index, right, total);
+            draw_candle(&clip, xc, half, &scale, bar, forming, candles);
+        });
         // The footprint rides directly on the candles, before everything
         // drawn over them: it is a representation of the bars themselves,
         // not an annotation. Prefix (venue) candles carry no tape and draw
@@ -7236,5 +7286,77 @@ mod tests {
         // one-way switch a trader has to go and undo somewhere else.
         pane.viewport.set_px_per_bar(8.0);
         assert!(pane.per_bar_layers_drawable());
+    }
+
+    /// Drag horizontally across `from`, over three frames: press, move,
+    /// release. egui reads a drag from the movement *between* frames, so a
+    /// single frame carrying both the press and the move reports no delta.
+    fn drag_across(
+        pane: &mut ChartPane,
+        ctx: &egui::Context,
+        area: egui::Rect,
+        from: egui::Pos2,
+        dx: f32,
+    ) {
+        let to = from + egui::vec2(dx, 0.0);
+        // The pointer arrives first: a widget only takes a press it can see
+        // the pointer over, and the press in the same frame as the move is
+        // read against last frame's position.
+        let _ = drive_navigation(pane, ctx, area, vec![egui::Event::PointerMoved(from)]);
+        let _ = drive_navigation(
+            pane,
+            ctx,
+            area,
+            vec![egui::Event::PointerButton {
+                pos: from,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+        let _ = drive_navigation(pane, ctx, area, vec![egui::Event::PointerMoved(to)]);
+        let _ = drive_navigation(
+            pane,
+            ctx,
+            area,
+            vec![egui::Event::PointerButton {
+                pos: to,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+    }
+
+    /// The x axis belongs to every chart. Dragging the time strip squeezes or
+    /// stretches the candles of the pane whose strip is under the pointer —
+    /// the flow pane *and* the timeframe pane beside it, which is the whole
+    /// point of the gesture living on each pane's own axis.
+    #[test]
+    fn dragging_the_time_strip_zooms_the_pane_it_belongs_to() {
+        let ctx = egui::Context::default();
+        for (label, mut pane) in [
+            (
+                "flow",
+                ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned()),
+            ),
+            ("time", ChartPane::time(2, 60_000)),
+        ] {
+            let start = test_areas(&pane, TEST_PLOT).time_strip.center();
+
+            let before = pane.viewport.px_per_bar();
+            drag_across(&mut pane, &ctx, TEST_PLOT, start, -120.0);
+            let squeezed = pane.viewport.px_per_bar();
+            assert!(
+                squeezed < before,
+                "{label}: dragging left squeezes ({squeezed} vs {before})"
+            );
+
+            drag_across(&mut pane, &ctx, TEST_PLOT, start, 120.0);
+            assert!(
+                pane.viewport.px_per_bar() > squeezed,
+                "{label}: dragging right stretches again"
+            );
+        }
     }
 }

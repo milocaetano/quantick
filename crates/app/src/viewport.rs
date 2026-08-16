@@ -23,21 +23,37 @@
 
 /// Narrowest a single **bar** can be, in pixels — the zoom-out floor.
 ///
-/// A fifth of a pixel: a 1600 px chart holds 8 000 bars there, ten times what
-/// the old 2 px floor allowed. That floor was a floor on *drawing* — two pixels
-/// is about the least a candle can be and still be one — and using it as the
-/// zoom limit tied how much history a trader could see to how small a candle
-/// can be drawn. Grouping ([`Viewport::bars_per_slot`]) separates the two: bars
-/// keep shrinking, the thing drawn for them does not.
-pub const MIN_PX_PER_BAR: f32 = 0.2;
+/// A hundredth of a pixel: a 1600 px chart holds 160 000 bars there, which is
+/// more than any pane in this app holds — the whole loaded series, whatever it
+/// is. That is the point. The floor before this one was a floor on *drawing*
+/// (two pixels is about the least a candle can be and still be one), and using
+/// it as the zoom limit tied how much history a trader could see to how small a
+/// candle can be drawn. Grouping ([`Viewport::bars_per_slot`]) separates the
+/// two: bars keep shrinking, the thing drawn for them does not, and the cost of
+/// a frame follows the candles rather than the bars behind them
+/// ([`crate::bar_groups`]).
+pub const MIN_PX_PER_BAR: f32 = 0.01;
 /// The slot width grouping aims for, in pixels.
 ///
 /// Four pixels is a two-pixel body with the default two-pixel gap around it —
-/// the narrowest candle that still reads as a candle rather than a smear. It is
-/// a *target*, not a floor: the multiple is the nearest whole number of bars to
-/// it, so the slot drifts between roughly three and five pixels as the zoom
-/// moves instead of doubling at every threshold, which a hard floor would do.
+/// the narrowest candle that still reads as a candle rather than a smear. The
+/// multiple is the first one on [`SLOT_SNAP`] that reaches it, so a slot is
+/// always at least this wide and at most a step over.
 pub const TARGET_SLOT_PX: f32 = 4.0;
+/// The grouping multiples, in order — the only counts of bars a candle is ever
+/// drawn from.
+///
+/// A ladder rather than "whatever number lands nearest the target", for two
+/// reasons that agree. It is the [`crate::bar_groups`] cache's rebuild trigger:
+/// a multiple free to change on every frame of a zoom gesture would re-fold the
+/// whole series on every frame of it, where a ladder re-folds once per step.
+/// And it is what a trader reads — a candle standing for 200 bars is a number
+/// they can hold, 187 is noise. Steps stay near a quarter apart, so the slot
+/// never drifts far past the target between them.
+const SLOT_SNAP: [usize; 30] = [
+    1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 30, 40, 50, 60, 80, 100, 120, 160, 200, 250, 300, 400,
+    500, 600, 800, 1000, 1200, 1600,
+];
 /// Widest a candle slot can be, in pixels (max zoom-in).
 ///
 /// Sized for the footprint's Detailed level: a `sell × buy` ladder cell is
@@ -110,22 +126,20 @@ impl Viewport {
     /// band: past this point, squeezing shows *more history at the same
     /// legibility* instead of thinner and thinner candles.
     ///
-    /// Nearest rather than "at least", so the slot drifts gently (roughly
-    /// three to five pixels) instead of doubling every time the multiple
-    /// steps. Bars group from index 0 up, so a group is the same group from
-    /// frame to frame and prepended history shifts every index by a count the
-    /// viewport already knows how to absorb.
+    /// The multiple is the first entry of [`SLOT_SNAP`] wide enough to bring a
+    /// slot back to [`TARGET_SLOT_PX`] — a ladder, not a free number, for the
+    /// reasons written there. Bars group from index 0 up, so a group is the
+    /// same group from frame to frame however far the view pans, and prepended
+    /// history shifts every index by a count the cache already watches for.
     #[must_use]
     pub fn bars_per_slot(&self) -> usize {
         if !self.px_per_bar.is_finite() || self.px_per_bar <= 0.0 {
             return 1;
         }
-        let nearest = (TARGET_SLOT_PX / self.px_per_bar).round();
-        if nearest.is_finite() && nearest >= 2.0 {
-            nearest as usize
-        } else {
-            1
-        }
+        SLOT_SNAP
+            .into_iter()
+            .find(|multiple| *multiple as f32 * self.px_per_bar >= TARGET_SLOT_PX)
+            .unwrap_or(SLOT_SNAP[SLOT_SNAP.len() - 1])
     }
 
     /// Whether several bars share one drawn candle at this zoom.
@@ -550,12 +564,47 @@ mod tests {
         assert!((v.candle_width() - 4.0).abs() < 0.001, "a drawable slot");
 
         v.set_px_per_bar(MIN_PX_PER_BAR); // as far out as it goes
-        assert_eq!(v.bars_per_slot(), 20);
+        assert_eq!(v.bars_per_slot(), 400);
         assert!(
             (v.candle_width() - TARGET_SLOT_PX).abs() < 0.001,
             "still a drawable slot: {}",
             v.candle_width()
         );
+    }
+
+    /// Whatever the zoom, a candle is drawn from a whole number of bars off the
+    /// ladder and is never narrower than the target. The first claim is what
+    /// keeps the grouping cache from rebuilding every frame of a gesture; the
+    /// second is what keeps the chart readable while it does.
+    #[test]
+    fn every_zoom_lands_on_the_ladder_with_a_drawable_slot() {
+        let mut v = Viewport::new();
+        let mut steps = 0;
+        let mut previous = v.bars_per_slot();
+        // Walk the whole zoom range in fine increments, as a gesture does.
+        let mut px = MAX_CANDLE_WIDTH;
+        while px > MIN_PX_PER_BAR {
+            v.set_px_per_bar(px);
+            let per_slot = v.bars_per_slot();
+            assert!(
+                SLOT_SNAP.contains(&per_slot),
+                "{per_slot} bars a candle is not on the ladder"
+            );
+            assert!(
+                per_slot == 1 || v.candle_width() >= TARGET_SLOT_PX - 0.001,
+                "slot {} px at {px} px per bar",
+                v.candle_width()
+            );
+            assert!(per_slot >= previous, "the multiple only grows on zoom-out");
+            if per_slot != previous {
+                steps += 1;
+                previous = per_slot;
+            }
+            px *= 0.99;
+        }
+        // A whole zoom-out is a couple of dozen rebuilds, not the thousand
+        // frames it takes to perform.
+        assert!(steps <= SLOT_SNAP.len(), "{steps} multiples used");
     }
 
     /// What the floor buys, stated as the trader feels it: ten times the

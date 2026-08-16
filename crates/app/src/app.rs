@@ -13863,6 +13863,58 @@ plot(close)
         assert!((again - settled).abs() < 0.001, "{again} vs {settled}");
     }
 
+    /// The x axis belongs to every chart on the canvas, not just the flow
+    /// pane. In the split, dragging the *timeframe* pane's own time strip has
+    /// to squeeze the *timeframe* pane — and leave the flow pane beside it
+    /// exactly where it was.
+    #[test]
+    fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
+        let (mut app, _cmd_rx) = app_with_history(400);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let plot = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split has a time pane")
+            .last_plot_area
+            .expect("laid out by the frames above");
+        // The time pane carries no tape and no indicator panes, so its own
+        // layout call reduces to this.
+        let strip = plot_split(plot, 0.0, &[]).time_strip;
+
+        let before_time = time_zoom(&app);
+        let before_flow = app.active_tab().flow_pane.viewport.px_per_bar();
+        drag_chart(
+            &mut app,
+            &ctx,
+            strip.center(),
+            strip.center() + egui::vec2(-120.0, 0.0),
+        );
+
+        assert!(
+            time_zoom(&app) < before_time,
+            "the timeframe pane squeezes: {} vs {before_time}",
+            time_zoom(&app)
+        );
+        assert!(
+            (app.active_tab().flow_pane.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
+            "and the flow pane beside it does not move"
+        );
+    }
+
+    fn time_zoom(app: &QuantickApp) -> f32 {
+        app.active_tab()
+            .time_pane
+            .as_ref()
+            .expect("time pane")
+            .viewport
+            .px_per_bar()
+    }
+
     /// "Zoom in for numbers" with no number is why the footprint read as slow
     /// to arrive — a trader could not tell a nudge from a different chart
     /// entirely. And grouped, there is no ladder to draw at all: one candle

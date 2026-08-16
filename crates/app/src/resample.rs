@@ -102,10 +102,14 @@ pub fn merge_into(folded: &mut Bar, bar: &Bar) {
 /// up with the same absolute grouping every frame (bar *n* belongs to run
 /// `n / per_slot`) rather than with wherever the window happens to start.
 ///
-/// `per_slot <= 1` is the path a chart spends nearly all its time on and costs
-/// nothing extra: the bars are passed straight through, borrowed, with no fold
-/// and no clone. Only a genuinely grouped chart builds bars, and then one per
-/// run rather than one per bar.
+/// **Test-only.** The chart draws its groups from
+/// [`crate::bar_groups::BarGroups`], which folds each bar once and keeps the
+/// answer between frames — re-folding a window of tens of thousands of bars at
+/// sixty hertz is the whole frame budget. This is the straight-line version
+/// that cache is checked against: two ways to *walk* the bars, one way to fold
+/// them (both call [`merge_into`]), so the oracle can differ about when work
+/// happens and never about what the answer is.
+#[cfg(test)]
 pub fn for_each_group<'a>(
     bars: impl Iterator<Item = &'a Bar>,
     first_index: usize,
