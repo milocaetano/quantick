@@ -83,18 +83,14 @@ impl BarSpec {
                 // the target counts trades in every unit.
                 let (unit, target) = match param.split_once(':') {
                     None => (ImbalanceUnit::Trades, param),
-                    Some((unit, target)) => {
-                        let unit = match unit.trim() {
-                            "trades" => ImbalanceUnit::Trades,
-                            "volume" => ImbalanceUnit::Volume,
-                            "dollar" => ImbalanceUnit::Dollar,
-                            other => {
-                                return Err(format!(
-                                    "unknown imbalance unit '{other}'; one of trades, \
-                                     volume, dollar"
-                                ));
-                            }
-                        };
+                    Some((token, target)) => {
+                        let token = token.trim();
+                        let unit = ImbalanceUnit::parse_token(token).ok_or_else(|| {
+                            format!(
+                                "unknown imbalance unit '{token}'; one of trades, \
+                                 volume, dollar"
+                            )
+                        })?;
                         (unit, target.trim())
                     }
                 };
@@ -123,8 +119,7 @@ impl BarSpec {
             Self::Dollar(d) => format!("dollar({})", d.normalize()),
             Self::Time(ms) => format!("time({})", fmt_interval(ms)),
             Self::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
-            Self::Imbalance(ImbalanceUnit::Volume, target) => format!("imbalance(volume {target})"),
-            Self::Imbalance(ImbalanceUnit::Dollar, target) => format!("imbalance(dollar {target})"),
+            Self::Imbalance(unit, target) => format!("imbalance({} {target})", unit.as_str()),
         }
     }
 }

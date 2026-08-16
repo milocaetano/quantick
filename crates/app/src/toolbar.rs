@@ -551,27 +551,18 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             // every unit. Size-measuring units are offered only where the
             // venue prints a real size, mirroring the kind combo's gate.
             let traded_volume = model.capabilities.traded_volume;
-            for (unit, label, hover) in [
-                (
-                    ImbalanceUnit::Trades,
-                    "trades",
-                    "θ sums ±1 per trade — tick imbalance bars",
-                ),
-                (
-                    ImbalanceUnit::Volume,
-                    "volume",
-                    "θ sums ±quantity — volume imbalance bars",
-                ),
-                (
-                    ImbalanceUnit::Dollar,
-                    "dollar",
-                    "θ sums ±(price × quantity) — dollar imbalance bars",
-                ),
-            ] {
+            for unit in ImbalanceUnit::ALL {
+                // The chip label is the unit's own spec token, so what the
+                // trader clicks is the word the spec string says.
+                let hover = match unit {
+                    ImbalanceUnit::Trades => "θ sums ±1 per trade — tick imbalance bars",
+                    ImbalanceUnit::Volume => "θ sums ±quantity — volume imbalance bars",
+                    ImbalanceUnit::Dollar => "θ sums ±(price × quantity) — dollar imbalance bars",
+                };
                 let usable = traded_volume || unit == ImbalanceUnit::Trades;
                 ui.add_enabled_ui(usable, |ui| {
                     let chip = ui
-                        .selectable_value(model.imbalance_unit, unit, label)
+                        .selectable_value(model.imbalance_unit, unit, unit.as_str())
                         .on_hover_text(hover);
                     if !usable {
                         chip.on_disabled_hover_text(
@@ -605,8 +596,7 @@ fn param_summary(model: &ToolbarModel) -> String {
         BarKind::Time => crate::state::fmt_time_interval(*model.time_interval_ms),
         BarKind::Imbalance => match *model.imbalance_unit {
             ImbalanceUnit::Trades => model.imbalance_target.to_string(),
-            ImbalanceUnit::Volume => format!("volume {}", model.imbalance_target),
-            ImbalanceUnit::Dollar => format!("dollar {}", model.imbalance_target),
+            unit => format!("{} {}", unit.as_str(), model.imbalance_target),
         },
     }
 }

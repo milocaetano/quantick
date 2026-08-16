@@ -60,7 +60,11 @@
 //!   EWMA of the unsigned weight, primed with the first trade's weight, so the
 //!   floor means "5% of a typical trade" in every unit (in the trades unit
 //!   `E[w]` is exactly 1 and the floor is the historical `0.05`) and the
-//!   threshold stays meaningfully positive in balanced flow;
+//!   threshold stays meaningfully positive in balanced flow. Weights are
+//!   magnitudes — direction comes from the aggressor side alone — and a tape
+//!   whose weights are all zero (a size unit over a size-less recording) has
+//!   no measure to read: its threshold is zero, an imbalance close never
+//!   fires, and only the trade cap below bounds the bar;
 //! - a bar always closes after `3 * target_trades` trades ([`CAP_MULT`]), so
 //!   perfectly offsetting flow cannot grow a bar without bound;
 //! - `E[T]` is clamped to `[target_trades / 4, 3 * target_trades]`, so a
@@ -77,7 +81,9 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, Side, Trade};
+use crate::{
+    Bar, BarBuilder, DollarMeasure, Measure as _, Side, TickMeasure, Trade, VolumeMeasure,
+};
 
 /// EWMA weight for the expected-trades-per-bar update, applied once per
 /// closed bar. `0.25` spans roughly the last seven bars.
@@ -109,15 +115,49 @@ pub enum ImbalanceUnit {
 }
 
 impl ImbalanceUnit {
-    /// The unsigned weight this trade contributes to `theta`.
+    /// Every unit, in the order the UI offers them.
+    pub const ALL: [Self; 3] = [Self::Trades, Self::Volume, Self::Dollar];
+
+    /// The spec token this unit is written as (`imbalance:volume:500`) —
+    /// one vocabulary, owned here, so the chart and the backtest cannot
+    /// drift apart on what a unit is called.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Trades => "trades",
+            Self::Volume => "volume",
+            Self::Dollar => "dollar",
+        }
+    }
+
+    /// Parse a spec token back into a unit — the inverse of
+    /// [`as_str`](Self::as_str). `None` for anything else; the caller owns
+    /// the error message its spec dialect wants.
+    #[must_use]
+    pub fn parse_token(token: &str) -> Option<Self> {
+        match token {
+            "trades" => Some(Self::Trades),
+            "volume" => Some(Self::Volume),
+            "dollar" => Some(Self::Dollar),
+            _ => None,
+        }
+    }
+
+    /// The unsigned weight this trade contributes to `theta`: the magnitude
+    /// of the engine's per-trade measures (tick / volume / dollar — one
+    /// definition each, delegated, never re-derived here).
     ///
-    /// Saturating: a notional beyond `Decimal`'s range clamps instead of
-    /// panicking, matching the engine-wide feed-arithmetic policy.
+    /// Magnitude on purpose: direction comes from the aggressor side alone,
+    /// so a signed-size export (negative quantity or price) can neither flip
+    /// a print's side nor drive the `E[w]` floor negative. Saturating via
+    /// the measures ([`Trade::notional`]): a notional beyond `Decimal`'s
+    /// range clamps instead of panicking, the engine-wide feed-arithmetic
+    /// policy.
     fn weight(self, trade: &Trade) -> Decimal {
         match self {
-            Self::Trades => Decimal::ONE,
-            Self::Volume => trade.quantity,
-            Self::Dollar => trade.price.saturating_mul(trade.quantity),
+            Self::Trades => TickMeasure.of(trade),
+            Self::Volume => VolumeMeasure.of(trade).abs(),
+            Self::Dollar => DollarMeasure.of(trade).abs(),
         }
     }
 }
@@ -141,6 +181,10 @@ pub struct ImbalanceBarBuilder {
     unit: ImbalanceUnit,
     /// Per-trade EWMA weight for `E[s]` and `E[w]`: `2 / (target_trades + 1)`.
     alpha_b: Decimal,
+    /// `1 - alpha_b`, precomputed once — the EWMA updates read it on every
+    /// trade, and the subtraction rescales `ONE` to scale 28 each time it is
+    /// redone inline.
+    keep_b: Decimal,
     /// Expected trades per bar, seeded with `target_trades`.
     e_t: Decimal,
     /// Expected signed weight per trade, primed from zero as trades arrive.
@@ -190,10 +234,12 @@ impl ImbalanceBarBuilder {
             target_trades >= 1,
             "imbalance bar target_trades must be >= 1, got {target_trades}"
         );
+        let alpha_b = Decimal::from(2) / Decimal::from(target_trades.saturating_add(1));
         Self {
             target_trades,
             unit,
-            alpha_b: Decimal::from(2) / Decimal::from(target_trades.saturating_add(1)),
+            alpha_b,
+            keep_b: Decimal::ONE - alpha_b,
             e_t: Decimal::from(target_trades),
             e_s: Decimal::ZERO,
             e_w: None,
@@ -216,6 +262,14 @@ impl ImbalanceBarBuilder {
         self.unit
     }
 
+    /// The hard cap: a bar always closes at this many trades, whatever the
+    /// imbalance says. Exposed so a consumer reporting *why* bars closed
+    /// (the replay audit example) reads the rule instead of guessing it.
+    #[must_use]
+    pub fn hard_cap_trades(&self) -> u64 {
+        CAP_MULT.saturating_mul(self.target_trades)
+    }
+
     /// Does the in-progress bar close, given the current expectations?
     fn should_close(&self) -> bool {
         if !self.warmed_up {
@@ -224,35 +278,51 @@ impl ImbalanceBarBuilder {
         if self.count >= CAP_MULT.saturating_mul(self.target_trades) {
             return true;
         }
-        // `e_w` is `None` exactly in the trades unit, whose typical weight is
-        // identically 1 — the floor multiplication would buy nothing on the
-        // per-trade hot path.
-        let floor = match self.e_w {
-            None => FLOOR_B,
-            Some(typical) => FLOOR_B.saturating_mul(typical),
+        // The floor scales with the unit's typical weight. The trades unit
+        // keeps the historical constant — its weight is identically 1 — and
+        // never spends the multiplication on the per-trade hot path. In the
+        // weighted units `e_w` is primed by the first `absorb`, which the
+        // `warmed_up` gate guarantees has run; the zero fallback merely keeps
+        // this line total instead of trusting that ordering.
+        let floor = if self.unit == ImbalanceUnit::Trades {
+            FLOOR_B
+        } else {
+            FLOOR_B.saturating_mul(self.e_w.unwrap_or(Decimal::ZERO))
         };
-        let threshold = self.e_t * self.e_s.abs().max(floor);
-        self.theta.abs() >= threshold
+        // Saturating like every arithmetic step feeding it: an adversarial
+        // print can pin `E[s]` near `Decimal::MAX`, and a threshold that
+        // saturates means "no imbalance close" — the trade cap above still
+        // bounds the bar — while a plain `*` would panic a builder on feed
+        // input, which the engine's arithmetic policy forbids.
+        let threshold = self.e_t.saturating_mul(self.e_s.abs().max(floor));
+        // A tape whose weights are all zero (a size unit over a size-less
+        // recording) has no measure to read: theta and the threshold are both
+        // zero, and closing on `0 >= 0` would cascade one-trade bars — the
+        // exact degeneration the floor exists to prevent. Such a bar closes
+        // only at the cap. In the trades unit the threshold is structurally
+        // positive, so this guard never fires there.
+        threshold > Decimal::ZERO && self.theta.abs() >= threshold
     }
 
-    /// Fold one trade's signed weight into the running expectations.
-    fn absorb(&mut self, s: Decimal, w: Decimal) {
-        let keep = Decimal::ONE - self.alpha_b;
+    /// Fold one trade's signed weight into the running expectations. The
+    /// unsigned weight is `s.abs()` by construction — deriving it here keeps
+    /// the two from ever being passed inconsistently.
+    fn absorb(&mut self, s: Decimal) {
         self.e_s = self
             .alpha_b
             .saturating_mul(s)
-            .saturating_add(keep.saturating_mul(self.e_s));
-        // The trades unit skips the typical-weight EWMA: `w` is identically 1,
-        // so the update is two Decimal multiplications per trade spent
-        // computing 1 — measurably slower on the hot path (bench: 2x) for a
-        // floor `should_close` can use as a constant instead.
+            .saturating_add(self.keep_b.saturating_mul(self.e_s));
+        // The trades unit skips the typical-weight EWMA: its weight is
+        // identically 1, so `should_close` uses a constant floor instead and
+        // the per-trade hot path saves these two multiplications.
         if self.unit != ImbalanceUnit::Trades {
+            let w = s.abs();
             self.e_w = Some(match self.e_w {
                 None => w,
                 Some(prev) => self
                     .alpha_b
                     .saturating_mul(w)
-                    .saturating_add(keep.saturating_mul(prev)),
+                    .saturating_add(self.keep_b.saturating_mul(prev)),
             });
         }
     }
@@ -293,11 +363,11 @@ impl BarBuilder for ImbalanceBarBuilder {
         // (the shipped behavior, kept bit-exact); the weighted units judge
         // the trade against the expectations formed before it.
         let close = if self.unit == ImbalanceUnit::Trades {
-            self.absorb(s, w);
+            self.absorb(s);
             self.should_close()
         } else {
             let close = self.should_close();
-            self.absorb(s, w);
+            self.absorb(s);
             close
         };
 
@@ -474,11 +544,33 @@ mod tests {
             ImbalanceBarBuilder::with_unit(10, ImbalanceUnit::Dollar).unit(),
             ImbalanceUnit::Dollar
         );
+        assert_eq!(
+            ImbalanceBarBuilder::new(10).hard_cap_trades(),
+            30,
+            "the cap accessor reports the same 3x rule should_close enforces"
+        );
     }
 
-    /// `with_unit(_, Trades)` is the same builder `new` always was: same tape
-    /// in, bit-identical bars out — existing charts and backtests must not
-    /// move by a single trade.
+    /// The token vocabulary is owned here so every consumer speaks it; the
+    /// round trip pins that emitting and parsing cannot drift apart.
+    #[test]
+    fn unit_tokens_round_trip() {
+        for unit in ImbalanceUnit::ALL {
+            assert_eq!(ImbalanceUnit::parse_token(unit.as_str()), Some(unit));
+        }
+        assert_eq!(ImbalanceUnit::parse_token("notional"), None);
+        assert_eq!(
+            ImbalanceUnit::parse_token("Trades"),
+            None,
+            "tokens are exact"
+        );
+    }
+
+    /// `new` must stay a pure delegation to `with_unit(_, Trades)`: if a
+    /// refactor ever gives it a code path of its own, the two builders here
+    /// diverge and this test catches it. It cannot certify the *historical*
+    /// behavior — both sides run today's code — that guarantee belongs to the
+    /// untouched golden fixture in `tests/golden_imbalance.rs`.
     #[test]
     fn with_unit_trades_is_bit_exact_with_new() {
         let tape: Vec<Trade> = (0..200)
@@ -618,5 +710,72 @@ mod tests {
         let ones = close_points("1");
         assert!(ones.len() >= 3, "fixture must actually close bars");
         assert_eq!(ones, close_points("9"));
+    }
+
+    /// The feed-arithmetic policy holds in the weighted units: adversarial
+    /// prints whose notional saturates `Decimal` must never panic the
+    /// builder. `E[s]` rides toward `Decimal::MAX` while bar closes drag
+    /// `E[T]` upward — a plain `*` in the threshold overflows within a few
+    /// prints; the saturating threshold instead means "no imbalance close"
+    /// and the trade cap keeps bounding every bar.
+    #[test]
+    fn adversarial_notional_never_panics_and_bars_stay_capped() {
+        let mut b = ImbalanceBarBuilder::with_unit(100, ImbalanceUnit::Dollar);
+        for i in 0..100 {
+            b.push(&priced(i, Side::Sell, "1", "100"));
+        }
+        let giant = Decimal::MAX.to_string();
+        let mut bars = Vec::new();
+        for i in 0..300 {
+            let side = if i % 2 == 0 { Side::Buy } else { Side::Sell };
+            bars.extend(b.push(&priced(100 + i, side, &giant, &giant)));
+        }
+        assert!(!bars.is_empty(), "the stream still produces bars");
+        for bar in &bars {
+            assert!(bar.trade_count <= 300, "no bar may exceed the hard cap");
+        }
+    }
+
+    /// A size unit over a tape that prints no size (every weight zero) has
+    /// no measure to read, so it must not cascade one-trade bars — the
+    /// degeneration the floor exists to prevent. Only the trade cap closes
+    /// such a bar.
+    #[test]
+    fn zero_weight_tape_closes_on_the_cap_not_in_cascade() {
+        let mut b = ImbalanceBarBuilder::with_unit(4, ImbalanceUnit::Volume);
+        let mut bars = Vec::new();
+        for i in 0..40 {
+            let side = if i % 2 == 0 { Side::Buy } else { Side::Sell };
+            bars.extend(b.push(&sized(i, side, "0")));
+        }
+        assert_eq!(bars[0].trade_count, 4, "warm-up still counts trades");
+        assert!(bars.len() >= 3, "the cap keeps the stream producing bars");
+        for bar in &bars[1..] {
+            assert_eq!(
+                bar.trade_count, 12,
+                "a measureless bar closes only at the 3x-target cap"
+            );
+        }
+    }
+
+    /// A signed export (negative price or quantity) weighs by magnitude:
+    /// direction comes from the aggressor side alone, so two taker buys
+    /// always reinforce theta — one of them printed negative must not cancel
+    /// the other out (nor drive the `E[w]` floor negative).
+    #[test]
+    fn signed_prints_weigh_as_magnitude_not_as_direction() {
+        let mut b = ImbalanceBarBuilder::with_unit(4, ImbalanceUnit::Dollar);
+        for i in 0..4 {
+            b.push(&priced(i, Side::Sell, "1", "100"));
+        }
+        // Threshold after the all-sell warm-up: 4 * 87.04 = 348.16.
+        assert!(
+            b.push(&priced(10, Side::Buy, "1", "300")).is_none(),
+            "one 300-notional buy is under the threshold"
+        );
+        let bar = b
+            .push(&priced(11, Side::Buy, "1", "-300"))
+            .expect("a second buy adds |-300| to theta; cancelling to zero would deny the close");
+        assert_eq!(bar.trade_count, 2);
     }
 }

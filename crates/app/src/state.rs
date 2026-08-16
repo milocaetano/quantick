@@ -158,12 +158,7 @@ impl BarSpec {
             BarSpec::Dollar(d) => format!("dollar({d})"),
             BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
             BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
-            BarSpec::Imbalance(ImbalanceUnit::Volume, target) => {
-                format!("imbalance(volume {target})")
-            }
-            BarSpec::Imbalance(ImbalanceUnit::Dollar, target) => {
-                format!("imbalance(dollar {target})")
-            }
+            BarSpec::Imbalance(unit, target) => format!("imbalance({} {target})", unit.as_str()),
         }
     }
 
@@ -186,12 +181,7 @@ impl BarSpec {
             // a workspace saved before units existed still reads back as the
             // same chart.
             BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance:{target}"),
-            BarSpec::Imbalance(ImbalanceUnit::Volume, target) => {
-                format!("imbalance:volume:{target}")
-            }
-            BarSpec::Imbalance(ImbalanceUnit::Dollar, target) => {
-                format!("imbalance:dollar:{target}")
-            }
+            BarSpec::Imbalance(unit, target) => format!("imbalance:{}:{target}", unit.as_str()),
         }
     }
 
@@ -236,18 +226,14 @@ impl BarSpec {
                 // what θ accumulates; the target counts trades in every unit.
                 let (unit, target) = match param.split_once(':') {
                     None => (ImbalanceUnit::Trades, param),
-                    Some((unit, target)) => {
-                        let unit = match unit.trim() {
-                            "trades" => ImbalanceUnit::Trades,
-                            "volume" => ImbalanceUnit::Volume,
-                            "dollar" => ImbalanceUnit::Dollar,
-                            other => {
-                                return Err(format!(
-                                    "unknown imbalance unit '{other}'; one of trades, \
-                                     volume, dollar"
-                                ));
-                            }
-                        };
+                    Some((token, target)) => {
+                        let token = token.trim();
+                        let unit = ImbalanceUnit::parse_token(token).ok_or_else(|| {
+                            format!(
+                                "unknown imbalance unit '{token}'; one of trades, \
+                                 volume, dollar"
+                            )
+                        })?;
                         (unit, target.trim())
                     }
                 };

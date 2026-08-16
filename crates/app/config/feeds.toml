@@ -29,7 +29,8 @@ default_symbol = "BTCUSDT"
 #                   it never overrides a layout chosen from View → Layout.
 #   default_bars  — optional: the bar spec a tab on this feed opens on, as
 #                   "kind:parameter" — time:1m, tick:50, volume:5,
-#                   dollar:500000, imbalance:100. Sets the flow pane's opening
+#                   dollar:500000, imbalance:100 (also imbalance:volume:500 /
+#                   imbalance:dollar:500). Sets the flow pane's opening
 #                   spec; with a time-showing default_layout and a time spec,
 #                   the timeframe pane opens on that interval too. A spec that
 #                   does not parse is refused at load, like any config error.
