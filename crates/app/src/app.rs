@@ -5712,9 +5712,20 @@ impl QuantickApp {
     /// overwrite it on the next selection; setting the flag without a position
     /// pins the window to wherever it happens to be. Neither half is a state
     /// worth being able to reach.
+    ///
+    /// Parking the window also counts as touching the pin, which is what stops
+    /// the narrow-chart auto-pin (§4.2) from overruling it. That rule reads
+    /// "no floating position here would not crowd the geometry", and it stands
+    /// down as soon as the trader says otherwise — until now the only way to
+    /// say it was the pin button. Choosing where the floating window goes is
+    /// the same statement made with a different gesture, and without this a
+    /// split canvas — where the flow pane is narrower than the threshold, which
+    /// is the everyday layout — would re-dock the panel on every selection and
+    /// the remembered position would never be reached at all.
     fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
         self.inspector_pos = Some(position);
         self.inspector_moved = true;
+        self.inspector_pin_touched = true;
     }
 
     /// The popup position a workspace should record: the one a hand placed,
@@ -14068,6 +14079,67 @@ plot(close)
         let _ = std::fs::remove_file(&app.ui_state_path);
     }
 
+    /// The everyday layout is the split canvas, and its flow pane is narrower
+    /// than the auto-pin threshold — so without this the panel would re-dock on
+    /// every selection and the remembered position would never be reached at
+    /// all. Parking the window is the trader saying they want it floating
+    /// *there*, which is the same statement the pin button makes.
+    #[test]
+    fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        // A chart under INSPECTOR_AUTO_PIN_CHART_WIDTH_PX, which is what a
+        // split canvas gives the pane a drawing lives on.
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+
+        // What a restored workspace does.
+        let remembered = egui::pos2(300.0, 200.0);
+        app.restore_inspector_position(Some([remembered.x, remembered.y]));
+        app.inspector_open = true;
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+
+        assert!(
+            !app.inspector_pinned,
+            "the parked position wins over the narrow-chart auto-pin"
+        );
+        assert!(
+            ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                .is_some(),
+            "and the floating window is the one on screen"
+        );
+    }
+
+    /// The opposite case, so the rule above does not quietly disable the
+    /// auto-pin for everyone: a workspace that remembers no position leaves the
+    /// narrow-chart rule exactly as it was.
+    #[test]
+    fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        app.restore_inspector_position(None);
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
+        app.inspector_open = true;
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+
+        assert!(
+            !app.inspector_pin_touched,
+            "silence in the file is not a preference about the pin"
+        );
+        assert!(
+            app.inspector_pinned,
+            "so a chart too narrow for a floating window still docks the panel"
+        );
+    }
+
     /// A remembered position is what the trader did, not a promise the screen
     /// can still keep. Reopened on a window too small for it — or with the rail
     /// on another edge — the popup is repaired into the chart rather than
@@ -17289,11 +17361,15 @@ plot(close)
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         app.tz = TzOffset::new(0);
+        // The properties popup is part of an arrangement like the dock and the
+        // rail are, so a bookmark carries where it was parked.
+        app.place_inspector_by_hand(egui::pos2(510.0, 240.0));
         app.save_named_workspace("context");
 
         // Drift away from it, then come back.
         app.active_tab_mut().set_layout(CanvasLayout::Single);
         app.tz = TzOffset::new(-180);
+        app.place_inspector_by_hand(egui::pos2(120.0, 640.0));
         run_frame(&mut app, &ctx);
 
         app.open_named_workspace("context");
@@ -17303,6 +17379,11 @@ plot(close)
         assert_eq!(app.tabs.len(), 1, "the strip is replaced, not appended to");
         assert_eq!(app.active_tab().layout, CanvasLayout::Time);
         assert_eq!(app.tz.minutes(), 0, "the chrome comes back with it");
+        assert_eq!(
+            app.inspector_pos,
+            Some(egui::pos2(510.0, 240.0)),
+            "including where the popup was parked when the bookmark was named"
+        );
         let _ = std::fs::remove_file(&app.ui_state_path);
     }
 
