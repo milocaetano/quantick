@@ -162,7 +162,15 @@ pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy
         for event in &events {
             anomalies.observe(event);
         }
-        strategy.on_events(&events);
+        // Self-protection commands (a dropped bracket's close) apply now;
+        // applying one emits nothing, so the echo terminates.
+        for command in strategy.on_events(&events) {
+            let events = sim.apply(command);
+            for event in &events {
+                anomalies.observe(event);
+            }
+            let _ = strategy.on_events(&events);
+        }
         let Some(bar) = builder.push(trade) else {
             continue;
         };
@@ -193,7 +201,7 @@ pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy
             for event in &events {
                 anomalies.observe(event);
             }
-            strategy.on_events(&events);
+            let _ = strategy.on_events(&events);
         }
     }
     strategy.end_of_session();

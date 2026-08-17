@@ -75,13 +75,13 @@ fn run() -> RunOutcome {
 
     for print in tape() {
         let events = sim.on_trade(&print);
-        instance.on_sim_events(&events);
+        let _ = instance.on_sim_events(&events);
         if let Some(bar) = builder.push(&print) {
             let flat = sim.position().is_none();
             for command in instance.on_closed_bar(&bar, &region, true, flat) {
                 commands.push(command);
                 let events = sim.apply(command);
-                instance.on_sim_events(&events);
+                let _ = instance.on_sim_events(&events);
             }
         }
     }

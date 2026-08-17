@@ -1970,8 +1970,14 @@ impl ChartPane {
         } else {
             let delete = ui.button("Delete");
             if delete.clicked() {
+                let doomed = self.drawings.items()[index].id;
                 self.drawings.select(Some(index));
-                self.drawings.delete_selected(false);
+                if self.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
+                    // The instance dies with its drawing, immediately — not
+                    // on the next closed bar, which a quiet tape may never
+                    // bring.
+                    self.strategies.remove_for_drawing(doomed);
+                }
                 self.context_menu_drawing = None;
                 ui.close_menu();
             }
@@ -1990,12 +1996,10 @@ impl ChartPane {
     fn paint_strategy_badge(
         &self,
         painter: &egui::Painter,
+        instance: &crate::strategy_anchors::AnchoredInstance,
         drawing: &drawings::Drawing,
         points: &[egui::Pos2],
     ) {
-        let Some(instance) = self.strategies.for_drawing(drawing.id) else {
-            return;
-        };
         let Some(first) = points.first() else {
             return;
         };
@@ -2020,7 +2024,12 @@ impl ChartPane {
         const BADGE_CORNER_PX: f32 = 3.0;
         /// Ground opacity: readable over candles, still a whisper.
         const BADGE_GROUND_ALPHA: f32 = 0.85;
-        let text = crate::strategy_anchors::badge_text(instance);
+        let mut text = crate::strategy_anchors::badge_text(instance);
+        // The one state the instance itself cannot know: its region is
+        // painted nowhere, so the bot is paused and the badge says why.
+        if drawing.hidden || self.drawings.all_hidden() {
+            text.push_str(" · region hidden — paused");
+        }
         let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
         // A whisper of ground behind the label so it stays readable over
         // candles; galley first, box after, text last.
@@ -2085,9 +2094,21 @@ impl ChartPane {
                 }
             }
             ArmedState::Done | ArmedState::Disarmed { .. } => {
+                // A drawing with no footing on this market/series cannot be
+                // honestly re-armed: the instance would show "armed" while
+                // the region test refuses it forever — the silent halt the
+                // named disarms exist to prevent.
+                let footed = {
+                    let drawing = &self.drawings.items()[index];
+                    !drawing.foreign_market && !drawing.off_series
+                };
                 let rearm = ui
-                    .button("Re-arm")
-                    .on_hover_text("watch this region again with the same parameters");
+                    .add_enabled(footed, egui::Button::new("Re-arm"))
+                    .on_hover_text("watch this region again with the same parameters")
+                    .on_disabled_hover_text(
+                        "this drawing belongs to another market or lost its series — redraw the \
+                         region here first",
+                    );
                 #[cfg(test)]
                 self.drawing_menu_rects.push(("Re-arm", rearm.rect));
                 if rearm.clicked()
@@ -2518,9 +2539,13 @@ impl ChartPane {
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed.clone()));
             // Queued for the armed instances only while any exist: an idle
-            // chart clones nothing on the per-trade path.
+            // chart clones nothing on the per-trade path. The slot is the
+            // *composed* one (venue history prefix + live bars) — the same
+            // space the drawings' anchors live in, or the region's time
+            // window would be off by the prefix length.
             if !self.strategies.is_empty() {
-                self.strategy_pending.push((closed, bars_after - 1));
+                let slot = self.history_prefix.len() + bars_after - 1;
+                self.strategy_pending.push((closed, slot));
             }
         }
     }
@@ -2547,6 +2572,12 @@ impl ChartPane {
         let index = self.drawings.index_of(id)?;
         let drawing = self.drawings.items().get(index)?;
         if drawing.foreign_market || drawing.off_series {
+            return None;
+        }
+        // A hidden drawing pauses its bot: an order fired from a region
+        // nobody can see is an invisible bot, and the badge (which stays
+        // painted) says so. Showing the drawing resumes it.
+        if drawing.hidden || self.drawings.all_hidden() {
             return None;
         }
         let [a, b] = drawing.points.as_slice() else {
@@ -3615,6 +3646,21 @@ impl ChartPane {
         // no crosshair chases it across the candles behind it.
         if chart.context_menu_opened() {
             self.hover_pos = None;
+        } else if let Some(id) = self.context_menu_drawing.take() {
+            // The menu just closed. An in-flight rename commits here too:
+            // dismissing the menu with an outside click is the natural
+            // blur-to-commit gesture, and the TextEdit's own lost_focus
+            // never runs once its closure stops being drawn.
+            if let Some(index) = self.drawings.index_of(id) {
+                let current = self.drawings.items()[index]
+                    .name
+                    .clone()
+                    .unwrap_or_default();
+                if self.context_menu_rename.trim() != current {
+                    let name = std::mem::take(&mut self.context_menu_rename);
+                    self.drawings.rename_at(index, &name);
+                }
+            }
         }
         let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
         let drawing_area = price_band.rect;
@@ -5855,9 +5901,23 @@ impl ChartPane {
                 selected && !drawing.locked && primary_band,
             );
             bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
-            if primary_band {
-                self.paint_strategy_badge(&clipped, drawing, &points);
+        }
+        // Badges paint outside the visibility gate above: a hidden drawing
+        // hides its geometry, never the fact that a bot rides it — an
+        // invisible armed instance is the one state this surface must not
+        // allow. O(armed instances), zero when none.
+        for instance in &self.strategies.instances {
+            let Some(index) = self.drawings.index_of(instance.drawing) else {
+                continue;
+            };
+            let drawing = &self.drawings.items()[index];
+            if !bands::drawing_in_band(drawing, band)
+                || (drawing.band == DrawingBand::AllBands && band_index != 0)
+            {
+                continue;
             }
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            self.paint_strategy_badge(&clipped, instance, drawing, &points);
         }
 
         // With hide-all engaged the finished object would be invisible, so

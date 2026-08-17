@@ -82,6 +82,12 @@ pub enum BarVerdict {
     },
 }
 
+/// Upper bound on the *pre-allocation* a window asks for, not on the
+/// window itself — far above any real ruler (the shipped input caps at
+/// 500), low enough that a corrupt config cannot turn a click into a
+/// multi-gigabyte allocation.
+const PREALLOC_CAP: usize = 4096;
+
 /// Incremental body window: the running state behind the ruler.
 ///
 /// Push every closed bar exactly once, in series order; the verdict for a
@@ -104,7 +110,10 @@ impl ForceWindow {
             ..params
         };
         Self {
-            bodies: VecDeque::with_capacity(params.window),
+            // Capacity is a hint, never a promise to a hand-edited config:
+            // an absurd window still *works* (the deque grows), it just
+            // does not pre-allocate the absurdity.
+            bodies: VecDeque::with_capacity(params.window.min(PREALLOC_CAP)),
             sum: Decimal::ZERO,
             params,
         }

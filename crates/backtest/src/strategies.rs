@@ -291,6 +291,12 @@ impl Strategy for PlotSignal {
 pub struct ForceRegion {
     name: String,
     region: quantick_strategy::Region,
+    /// Kept to rebuild a fresh instance per session (`end_of_session`):
+    /// bodies and a pending operation from one recorded day must not judge
+    /// the next, the same rule the per-session simulator and indicator
+    /// host already keep.
+    params: quantick_strategy::StrategyParams,
+    force: quantick_strategy::ForceParams,
     instance: quantick_strategy::ArmedStrategy,
 }
 
@@ -302,13 +308,16 @@ impl ForceRegion {
         params: quantick_strategy::StrategyParams,
         force: quantick_strategy::ForceParams,
     ) -> Self {
+        let instance = quantick_strategy::ArmedStrategy::new(
+            params.clone(),
+            Box::new(quantick_strategy::ForceTrigger::new(force.clone())),
+        );
         Self {
             name: format!("force-region({}..{})", region.low(), region.high()),
             region,
-            instance: quantick_strategy::ArmedStrategy::new(
-                params,
-                Box::new(quantick_strategy::ForceTrigger::new(force)),
-            ),
+            params,
+            force,
+            instance,
         }
     }
 }
@@ -320,18 +329,24 @@ impl Strategy for ForceRegion {
 
     fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
         // The recorded session is the region's whole life, so the time
-        // window is always active; price containment and the flat gate do
-        // the judging, exactly as on the chart.
-        self.instance.on_closed_bar(
-            view.bar,
-            &self.region,
-            true,
-            view.account.position.is_none(),
-        )
+        // window is always active. The flat gate mirrors the chart's:
+        // no position and no resting order (queued market actions are
+        // impossible here — the print that runs this bar's close drained
+        // the queue before the bar could close).
+        let flat = view.account.position.is_none() && view.account.orders.is_empty();
+        self.instance
+            .on_closed_bar(view.bar, &self.region, true, flat)
     }
 
-    fn on_events(&mut self, events: &[quantick_sim::SimEvent]) {
-        self.instance.on_sim_events(events);
+    fn on_events(&mut self, events: &[quantick_sim::SimEvent]) -> Vec<Command> {
+        self.instance.on_sim_events(events)
+    }
+
+    fn end_of_session(&mut self) {
+        self.instance = quantick_strategy::ArmedStrategy::new(
+            self.params.clone(),
+            Box::new(quantick_strategy::ForceTrigger::new(self.force.clone())),
+        );
     }
 }
 

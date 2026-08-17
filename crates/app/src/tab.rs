@@ -1662,11 +1662,27 @@ impl Tab {
             if pane.strategies.is_empty() {
                 continue;
             }
-            pane.strategies.on_sim_events(&print_events);
+            // The batch to each instance, applying what it answers with —
+            // the self-protection close after a dropped bracket. Applying
+            // a returned command emits no events of its own (kernel
+            // contract), so one echo settles it.
+            if !print_events.is_empty() {
+                for index in 0..pane.strategies.instances.len() {
+                    let responses = pane.strategies.instances[index]
+                        .armed
+                        .on_sim_events(&print_events);
+                    for command in responses {
+                        let events = paper.apply_strategy_command(command);
+                        let _ = pane.strategies.instances[index]
+                            .armed
+                            .on_sim_events(&events);
+                    }
+                }
+            }
             let bars = pane.take_strategy_bars();
             if !bars.is_empty() {
-                // An instance whose drawing was deleted dies here, in the
-                // sweep, never mid-frame under the menu that shows it.
+                // An instance whose drawing was deleted from a surface that
+                // could not remove it directly dies here, in the sweep.
                 let alive: Vec<crate::drawings::DrawingId> = pane
                     .strategies
                     .instances
@@ -1679,16 +1695,24 @@ impl Tab {
             for (bar, slot) in &bars {
                 for index in 0..pane.strategies.instances.len() {
                     let drawing = pane.strategies.instances[index].drawing;
-                    let Some((region, active)) = pane.strategy_region(drawing, *slot) else {
-                        continue;
-                    };
+                    // A region that cannot honestly be tested (hidden, off
+                    // its series, another market) holds fire but never
+                    // starves the ruler: the trigger's contract is every
+                    // closed bar, so the gates shut instead of the feed.
+                    let (region, active) = pane.strategy_region(drawing, *slot).unwrap_or((
+                        quantick_strategy::Region::new(
+                            rust_decimal::Decimal::ZERO,
+                            rust_decimal::Decimal::ZERO,
+                        ),
+                        false,
+                    ));
                     let flat = paper.is_flat();
                     let commands = pane.strategies.instances[index]
                         .armed
                         .on_closed_bar(bar, &region, active, flat);
                     for command in commands {
                         let events = paper.apply_strategy_command(command);
-                        pane.strategies.instances[index]
+                        let _ = pane.strategies.instances[index]
                             .armed
                             .on_sim_events(&events);
                     }

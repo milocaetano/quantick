@@ -35,6 +35,11 @@ const STORE_FORMAT_VERSION: u32 = 1;
 /// machine never changes.
 pub const FORCE_BAR_TRIGGER: &str = "force_bar";
 
+/// Widest body window a preset may ask for — the shipped script's own input
+/// ceiling, shared with the arming dialog's drag range. A hand-edited file
+/// beyond it is refused whole, like every other field it cannot honour.
+pub const MAX_FORCE_WINDOW: u32 = 500;
+
 /// One bank row, as it goes to disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoredPreset {
@@ -97,6 +102,17 @@ impl StoredPreset {
         if quantity <= Decimal::ZERO {
             return None;
         }
+        if self.window == 0 || self.window > MAX_FORCE_WINDOW {
+            return None;
+        }
+        let min_factor = Decimal::from_str(&self.min_factor).ok()?;
+        let max_factor = Decimal::from_str(&self.max_factor).ok()?;
+        // A non-positive band edge would classify every directional bar as
+        // force — one operation per bar under auto re-arm. Refused whole,
+        // like every other value the ruler cannot honestly hold.
+        if min_factor <= Decimal::ZERO || max_factor <= Decimal::ZERO {
+            return None;
+        }
         let params = StrategyParams {
             side,
             quantity,
@@ -105,9 +121,9 @@ impl StoredPreset {
             rearm,
         };
         let force = ForceParams {
-            window: self.window.max(1) as usize,
-            min_factor: Decimal::from_str(&self.min_factor).ok()?,
-            max_factor: Decimal::from_str(&self.max_factor).ok()?,
+            window: self.window as usize,
+            min_factor,
+            max_factor,
         };
         Some((params, force))
     }
@@ -277,5 +293,25 @@ mod tests {
             unknown.to_kernel().is_none(),
             "a trigger this build cannot execute is refused, not approximated"
         );
+
+        // The ruler's own limits are contract too: a zero window is not
+        // clamped into meaning, a giant one is not an allocation request,
+        // and a non-positive band edge is not "everything is force".
+        for (window, min, max) in [
+            (0u32, "1.5", "2.5"),
+            (MAX_FORCE_WINDOW + 1, "1.5", "2.5"),
+            (20, "0", "2.5"),
+            (20, "-1.5", "2.5"),
+            (20, "1.5", "0"),
+        ] {
+            let mut bad = StoredPreset::starting_point(Side::Buy);
+            bad.window = window;
+            bad.min_factor = min.to_owned();
+            bad.max_factor = max.to_owned();
+            assert!(
+                bad.to_kernel().is_none(),
+                "window={window} min={min} max={max} must be refused whole"
+            );
+        }
     }
 }

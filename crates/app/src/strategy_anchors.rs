@@ -8,7 +8,6 @@
 //! already carries one replaces it, so a rectangle never hides a stack of
 //! bots behind one badge.
 
-use quantick_sim::SimEvent;
 use quantick_strategy::{ArmedState, ArmedStrategy, DisarmReason};
 
 use crate::drawings::DrawingId;
@@ -77,17 +76,6 @@ impl StrategyAnchors {
     /// surface). Run once per evaluation sweep, never per frame.
     pub fn drop_orphans(&mut self, exists: impl Fn(DrawingId) -> bool) {
         self.instances.retain(|instance| exists(instance.drawing));
-    }
-
-    /// Fan simulator events out to every instance; each attributes by its
-    /// own order id and ignores the rest.
-    pub fn on_sim_events(&mut self, events: &[SimEvent]) {
-        if events.is_empty() {
-            return;
-        }
-        for instance in &mut self.instances {
-            instance.armed.on_sim_events(events);
-        }
     }
 
     /// How many instances are actively watching (armed or mid-operation) —

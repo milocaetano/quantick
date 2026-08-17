@@ -60,18 +60,27 @@ An instance never goes quiet silently. The badge states:
 
 | State | Colour | Meaning |
 | --- | --- | --- |
-| `armed` | accent | watching; tooltip narrates the trigger ("warmup 7/20", "quiet 0.8×") |
+| `armed` | accent | watching; the per-drawing menu narrates the trigger ("warmup 7/20", "quiet 0.8×") |
 | `fired` | amber | entry command queued, waiting for the next print |
 | `in position` | buy-green | entry filled; the bracket (or the human) will end it |
 | `done` | muted | one-shot completed |
-| `timeline reset` / `bar spec changed` / `market changed` / `drawing deleted` / `entry rejected` / `entry cancelled` / `disarmed` | faint | why it stopped watching |
+| `timeline reset` / `bar spec changed` / `market changed` / `entry rejected` / `entry cancelled` / `protection dropped — closed` / `disarmed` | faint | why it stopped watching |
 
 The sweeps behind those reasons: a replay seek or session reset, a bar
-spec change (the body average means something else under another cut), a
-symbol switch (the region belongs to the market that left), deleting the
-drawing (the instance dies with it; a live position keeps its bracket
-and becomes the human's), a simulator rejection (the reason is the
-curriculum), a manual flatten sweeping the pending entry.
+spec change (the body average means something else under another cut —
+re-arming after either resets the ruler and re-warms honestly), a symbol
+switch (the region belongs to the market that left), a simulator
+rejection (the reason is the curriculum), a manual flatten sweeping the
+pending entry, and a protective leg the simulator dropped at fill time —
+the market outran the level, so the instance closes the position at the
+next print (the exit the leg would have taken, late but honest) and
+stops. Deleting the drawing removes its instance outright — a live
+position keeps its bracket and becomes the human's. **Hiding** the
+drawing pauses the bot instead: the badge stays painted (it is the one
+mark that never hides) and says `region hidden — paused`; showing the
+drawing resumes it. The badge also counts the queued entry as occupying
+the account, which is what stops two instances co-triggered by one bar
+from stacking orders.
 
 ## The bank (`quantick-strategies.toml`)
 

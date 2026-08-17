@@ -898,9 +898,6 @@ impl PaperTrading {
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
         let events = self.sim.on_trade(trade);
-        if self.bot_listening && !events.is_empty() {
-            self.bot_events.extend(events.iter().cloned());
-        }
         self.handle_events(events);
         if self.demo.is_some() {
             self.run_demo_step();
@@ -924,12 +921,17 @@ impl PaperTrading {
         std::mem::take(&mut self.bot_events)
     }
 
-    /// Whether the account is flat — the gate an armed strategy checks
-    /// before firing: a bot never trades against an open position, the
-    /// human's included.
+    /// Whether the account is *clean* — the gate an armed strategy checks
+    /// before firing. Not just "no position": a queued market entry or a
+    /// resting order is a position about to exist, and two instances
+    /// co-triggered by one bar must not both pass this gate and stack.
+    /// A bot fires only into an account with no position, no resting
+    /// orders and nothing queued — the human's included.
     #[must_use]
     pub fn is_flat(&self) -> bool {
         self.sim.position().is_none()
+            && self.sim.orders().is_empty()
+            && self.sim.queued().is_empty()
     }
 
     /// Apply a strategy-issued command through the same funnel manual
@@ -3532,8 +3534,19 @@ impl PaperTrading {
     // ------------------------------------------------------------------
 
     /// One funnel for everything the simulator reports: closures are
-    /// journaled, fills and closures toast, rejections teach.
+    /// journaled, fills and closures toast, rejections teach — and while a
+    /// bot is listening, every batch is buffered for the armed instances
+    /// too. Buffering *here* is what lets a manual flatten's `Cancelled`
+    /// reach the instance whose pending entry it swept: manual commands
+    /// and prints flow through this one funnel alike. The strategy-issued
+    /// command path (`apply_strategy_command`) also lands here, so its
+    /// instance sees its own acknowledgement twice — once directly, once
+    /// via the buffer — which the state machine tolerates by design (every
+    /// transition consumes its trigger, so a replayed event finds no match).
     fn handle_events(&mut self, events: Vec<SimEvent>) {
+        if self.bot_listening && !events.is_empty() {
+            self.bot_events.extend(events.iter().cloned());
+        }
         for event in events {
             match event {
                 SimEvent::Rejected(reason) => self.show_toast(format!("SIM: {reason}")),

@@ -55,13 +55,18 @@ pub enum DisarmReason {
     BarSpecChanged,
     /// The tab moved to another market; the region belongs to the old one.
     MarketChanged,
-    /// The drawing that held the region was deleted.
-    DrawingGone,
     /// The simulator refused the entry; the reason is the curriculum.
     EntryRejected(RejectReason),
     /// The pending entry was swept away (a manual flatten or cancel-all)
     /// before it filled. A human overruled the bot; the bot does not insist.
     EntryCancelled,
+    /// A promised protective leg was dropped at fill time (the market
+    /// outran the level between the trigger close and the fill). The
+    /// instance closed the position at the next print — the exit the leg
+    /// would have taken, executed late — and stopped, because an operation
+    /// that lost its protection mid-flight is not the operation that was
+    /// armed.
+    ProtectionDropped,
 }
 
 impl DisarmReason {
@@ -73,9 +78,9 @@ impl DisarmReason {
             Self::TimelineReset => "timeline reset",
             Self::BarSpecChanged => "bar spec changed",
             Self::MarketChanged => "market changed",
-            Self::DrawingGone => "drawing deleted",
             Self::EntryRejected(_) => "entry rejected",
             Self::EntryCancelled => "entry cancelled",
+            Self::ProtectionDropped => "protection dropped — closed",
         }
     }
 }
@@ -209,12 +214,28 @@ impl ArmedStrategy {
         }]
     }
 
-    /// Feed simulator events back in. Call with the batch returned by
-    /// applying this instance's own commands (placement acknowledgements
-    /// and rejections are attributed by arrival there), and with every
-    /// batch the simulator emits on prints (fills and cancellations are
-    /// attributed by order id).
-    pub fn on_sim_events(&mut self, events: &[SimEvent]) {
+    /// Feed simulator events back in, and apply whatever the instance
+    /// answers with. Call with the batch returned by applying this
+    /// instance's own commands (placement acknowledgements and rejections
+    /// are attributed by arrival there), and with every batch the simulator
+    /// emits — prints *and* manual commands: a flatten from the human's
+    /// hand sweeps the bot's pending entry through the same stream.
+    ///
+    /// The returned commands are the instance protecting itself: today only
+    /// `ClosePosition` when the simulator dropped a promised protective leg
+    /// at fill time (`BracketDropped` in the same batch as this instance's
+    /// entry fill — netting and the flat gate make that attribution exact).
+    /// The market outran the level between trigger close and fill, so the
+    /// exit the leg would have taken is executed at the next print, late but
+    /// honest, and the instance disarms as [`DisarmReason::ProtectionDropped`].
+    /// Applying a returned `ClosePosition` emits no events of its own, so
+    /// feeding its (empty) apply-result back is a no-op by construction.
+    #[must_use]
+    pub fn on_sim_events(&mut self, events: &[SimEvent]) -> Vec<Command> {
+        // Whether this batch contains this instance's own entry fill: the
+        // window in which a BracketDropped can only be about our bracket.
+        let mut my_fill_in_batch = false;
+        let mut commands = Vec::new();
         for event in events {
             match (&self.state, event) {
                 (ArmedState::Fired { order_id: None }, SimEvent::Placed(order)) => {
@@ -231,6 +252,7 @@ impl ArmedStrategy {
                     if fill.role == quantick_sim::FillRole::Entry(*id) =>
                 {
                     self.state = ArmedState::InPosition;
+                    my_fill_in_batch = true;
                 }
                 (ArmedState::Fired { order_id: Some(id) }, SimEvent::Cancelled { order, .. })
                     if order.id == *id =>
@@ -239,9 +261,19 @@ impl ArmedStrategy {
                         reason: DisarmReason::EntryCancelled,
                     };
                 }
+                (ArmedState::InPosition, SimEvent::BracketDropped { .. }) if my_fill_in_batch => {
+                    // "Never fire unprotected" extends past the fill: an
+                    // operation whose promised leg could not be priced is
+                    // closed, not ridden bare.
+                    self.state = ArmedState::Disarmed {
+                        reason: DisarmReason::ProtectionDropped,
+                    };
+                    commands.push(Command::ClosePosition);
+                }
                 _ => {}
             }
         }
+        commands
     }
 
     /// Stop watching, with the reason the badge will show. An in-position
@@ -253,9 +285,27 @@ impl ArmedStrategy {
 
     /// Re-arm from `Done` or `Disarmed`. A live operation (`Fired`,
     /// `InPosition`) cannot be re-armed over; `Armed` is already armed.
+    ///
+    /// When the disarm reason says the *series itself* changed under the
+    /// ruler — a rebuilt timeline, another bar spec, another market — the
+    /// trigger's running window is reset too: an average blending bodies
+    /// from two different tapes would judge with a ruler no chart shows.
+    /// The honest cost is a fresh warmup, and the badge narrates it.
     pub fn rearm(&mut self) {
-        if matches!(self.state, ArmedState::Done | ArmedState::Disarmed { .. }) {
-            self.state = ArmedState::Armed;
+        match &self.state {
+            ArmedState::Disarmed {
+                reason:
+                    DisarmReason::TimelineReset
+                    | DisarmReason::BarSpecChanged
+                    | DisarmReason::MarketChanged,
+            } => {
+                self.trigger.reset();
+                self.state = ArmedState::Armed;
+            }
+            ArmedState::Done | ArmedState::Disarmed { .. } => {
+                self.state = ArmedState::Armed;
+            }
+            ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition => {}
         }
     }
 
@@ -484,7 +534,7 @@ mod tests {
             bracket: Bracket::none(),
             placed_ms: 0,
         };
-        instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
         assert_eq!(
             instance.state(),
             &ArmedState::Fired {
@@ -501,14 +551,14 @@ mod tests {
             quantity: Decimal::ONE,
             role: quantick_sim::FillRole::Entry(OrderId(99)),
         };
-        instance.on_sim_events(&[SimEvent::Filled(foreign_fill)]);
+        let _ = instance.on_sim_events(&[SimEvent::Filled(foreign_fill)]);
         assert!(matches!(instance.state(), ArmedState::Fired { .. }));
 
         let fill = quantick_sim::Fill {
             role: quantick_sim::FillRole::Entry(OrderId(7)),
             ..foreign_fill
         };
-        instance.on_sim_events(&[SimEvent::Filled(fill)]);
+        let _ = instance.on_sim_events(&[SimEvent::Filled(fill)]);
         assert_eq!(instance.state(), &ArmedState::InPosition);
 
         // Account flat again on the next closed bar: one shot → done, and
@@ -533,7 +583,7 @@ mod tests {
             })),
         );
         warm_then_force(&mut instance, &region);
-        instance.on_sim_events(&[SimEvent::Placed(quantick_sim::Order {
+        let _ = instance.on_sim_events(&[SimEvent::Placed(quantick_sim::Order {
             id: OrderId(1),
             side: Side::Buy,
             kind: quantick_sim::EntryKind::Market,
@@ -542,7 +592,7 @@ mod tests {
             bracket: Bracket::none(),
             placed_ms: 0,
         })]);
-        instance.on_sim_events(&[SimEvent::Filled(quantick_sim::Fill {
+        let _ = instance.on_sim_events(&[SimEvent::Filled(quantick_sim::Fill {
             timestamp_ms: 1,
             agg_id: 10,
             side: Side::Buy,
@@ -564,7 +614,7 @@ mod tests {
         let region = Region::new(dec("100"), dec("110"));
         let mut instance = force_instance(Side::Buy);
         warm_then_force(&mut instance, &region);
-        instance.on_sim_events(&[SimEvent::Rejected(RejectReason::NoMarketPrice)]);
+        let _ = instance.on_sim_events(&[SimEvent::Rejected(RejectReason::NoMarketPrice)]);
         assert_eq!(
             instance.state(),
             &ArmedState::Disarmed {
@@ -587,8 +637,8 @@ mod tests {
             bracket: Bracket::none(),
             placed_ms: 0,
         };
-        instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
-        instance.on_sim_events(&[SimEvent::Cancelled {
+        let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = instance.on_sim_events(&[SimEvent::Cancelled {
             order,
             reason: quantick_sim::CancelReason::Flatten,
         }]);
@@ -669,5 +719,99 @@ mod tests {
             }]
         );
         assert!(instance.status_line().starts_with("fired"));
+    }
+
+    /// "Never fire unprotected" extends past the fill: a bracket the
+    /// simulator dropped at fill time closes the operation at the next
+    /// print and disarms by name.
+    #[test]
+    fn a_dropped_bracket_closes_the_position_and_disarms_by_name() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        warm_then_force(&mut instance, &region);
+        let order = quantick_sim::Order {
+            id: OrderId(7),
+            side: Side::Buy,
+            kind: quantick_sim::EntryKind::Market,
+            price: None,
+            quantity: Decimal::ONE,
+            bracket: Bracket::none(),
+            placed_ms: 0,
+        };
+        let _ = instance.on_sim_events(&[SimEvent::Placed(order)]);
+
+        // The fill and the drop arrive in one batch, exactly as the
+        // simulator reports them when the market outran the level.
+        let fill = quantick_sim::Fill {
+            timestamp_ms: 1,
+            agg_id: 10,
+            side: Side::Buy,
+            price: dec("102.9"),
+            quantity: Decimal::ONE,
+            role: quantick_sim::FillRole::Entry(OrderId(7)),
+        };
+        let commands = instance.on_sim_events(&[
+            SimEvent::Filled(fill),
+            SimEvent::BracketDropped {
+                reason: RejectReason::StopLossOnWrongSide(Side::Buy),
+            },
+        ]);
+        assert_eq!(commands, vec![Command::ClosePosition]);
+        assert_eq!(
+            instance.state(),
+            &ArmedState::Disarmed {
+                reason: DisarmReason::ProtectionDropped
+            }
+        );
+
+        // A drop in some *later* batch (a manual SetBracket the human
+        // fumbled) is not this instance's to act on: no fill of ours
+        // arrived with it.
+        let mut bystander = force_instance(Side::Buy);
+        warm_then_force(&mut bystander, &region);
+        let _ = bystander.on_sim_events(&[SimEvent::Placed(quantick_sim::Order {
+            id: OrderId(9),
+            side: Side::Buy,
+            kind: quantick_sim::EntryKind::Market,
+            price: None,
+            quantity: Decimal::ONE,
+            bracket: Bracket::none(),
+            placed_ms: 0,
+        })]);
+        let commands = bystander.on_sim_events(&[SimEvent::BracketDropped {
+            reason: RejectReason::TakeProfitOnWrongSide(Side::Buy),
+        }]);
+        assert!(commands.is_empty());
+        assert!(matches!(bystander.state(), ArmedState::Fired { .. }));
+    }
+
+    /// Re-arming after the *series itself* changed resets the ruler — an
+    /// average blending two tapes judges with a ruler no chart shows — but
+    /// re-arming after a completed shot keeps the warm window.
+    #[test]
+    fn rearm_resets_the_ruler_only_when_the_series_changed_under_it() {
+        let region = Region::new(dec("100"), dec("110"));
+
+        // Series changed: the window restarts and the badge says warmup.
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
+        instance.disarm(DisarmReason::BarSpecChanged);
+        instance.rearm();
+        assert_eq!(instance.state(), &ArmedState::Armed);
+        assert_eq!(instance.trigger().status(), "waiting for bars 0/3");
+
+        // Same series, one-shot done: the window survives and the very
+        // next force bar fires without a fresh warmup.
+        let mut instance = force_instance(Side::Buy);
+        warm_then_force(&mut instance, &region);
+        instance.disarm(DisarmReason::User);
+        instance.rearm();
+        let commands = instance.on_closed_bar(&bar("102", "107.6"), &region, true, true);
+        assert_eq!(
+            commands.len(),
+            1,
+            "a user disarm keeps the warm window: {commands:?}"
+        );
     }
 }

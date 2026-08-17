@@ -55,10 +55,17 @@ pub trait Strategy {
     /// commands a bar's [`Strategy::on_bar`] issued were applied. The live
     /// chart feeds its armed instances the same stream, so a strategy that
     /// follows its own operation (the `force-region` kernel does) behaves
-    /// identically under both consumers. The default ignores them, which
-    /// is exactly right for the stateless signal-followers.
-    fn on_events(&mut self, events: &[SimEvent]) {
+    /// identically under both consumers.
+    ///
+    /// The returned commands are the strategy protecting itself mid-print —
+    /// the kernel closes an operation whose bracket the simulator dropped
+    /// at fill time. The run loop applies them immediately; applying such a
+    /// command emits no events of its own, so one echo settles it. The
+    /// default returns nothing, which is exactly right for the stateless
+    /// signal-followers.
+    fn on_events(&mut self, events: &[SimEvent]) -> Vec<Command> {
         let _ = events;
+        Vec::new()
     }
 
     /// Called once after the last print of a session, before the next one.

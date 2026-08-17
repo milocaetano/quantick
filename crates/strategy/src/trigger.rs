@@ -35,6 +35,11 @@ pub trait Trigger {
     /// One human-readable line for badges and tooltips: why the trigger is
     /// or is not firing ("warmup 7/20", "quiet 0.8×", "force 1.9×").
     fn status(&self) -> String;
+
+    /// Forget every bar seen: the series the ruler was measuring no longer
+    /// exists (a rebuilt timeline, another bar spec, another market). A
+    /// stateless trigger may keep the default no-op.
+    fn reset(&mut self) {}
 }
 
 /// The force-bar trigger: fires on a bar the [`ForceWindow`] rules force.
@@ -74,6 +79,11 @@ impl Trigger for ForceTrigger {
         };
         self.last = Some(verdict);
         signal
+    }
+
+    fn reset(&mut self) {
+        self.window = ForceWindow::new(self.window.params().clone());
+        self.last = None;
     }
 
     fn status(&self) -> String {
