@@ -75,6 +75,16 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
 
+Landing with the strategy anchors goal (`feat/strategy-anchors`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_STRATEGY_DEMO=1` | a named rectangle over the recent tape (spanning past the newest bar) with a force-bar strategy armed on it — the on-chart state badge, in `armed`. The rectangle covers the chart's middle on purpose: pair with `QUANTICK_CONTEXT_MENU=chart` and the scripted right-click lands *on* it, opening the per-drawing menu (name, rename, the strategy seat, lock/hide/delete) instead of the bare layer menu |
+| `QUANTICK_STRATEGY_DEMO=popup` | the same rectangle with the **arming dialog** open over it — preset picker, side, quantity, the force band, the projection multipliers, re-arm, save-preset. The form is the surface a screenshot of "how do I configure the bot" needs |
+| `QUANTICK_STRATEGY_PRESETS=<path>` | relocates the strategy bank (`quantick-strategies.toml`), so a validation run seeds or inspects presets without touching the trader's own bank |
+
+Once merged, move these into the table above.
+
 Landing with the progressive venue-history goal
 (`feat/progressive-venue-history`):
 
