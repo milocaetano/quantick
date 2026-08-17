@@ -541,6 +541,27 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
     )
 }
 
+/// What `QUANTICK_STRATEGY_DEMO` stages: the armed instance itself, or the
+/// arming dialog a screenshot of the form needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrategyDemoMode {
+    Armed,
+    Popup,
+}
+
+/// The arming dialog's state: which drawing on which pane, and the form —
+/// the stored-preset shape edited in place, so "form", "bank row" and
+/// "what a future NL layer emits" stay one structure.
+struct StrategyPopup {
+    side: pane::PaneSide,
+    drawing: drawings::DrawingId,
+    form: crate::strategy_presets::StoredPreset,
+    /// The bank preset the form was seeded from, shown on the badge.
+    preset_choice: Option<String>,
+    save_name: String,
+    error: Option<String>,
+}
+
 /// Which pane a scripted right-click should land on.
 ///
 /// The two panes now open different menus, so "open the context menu" is no
@@ -860,6 +881,16 @@ pub struct QuantickApp {
     /// hook can click it rather than guess at a coordinate.
     workspace_menu_rect: Option<egui::Rect>,
     scripted_context_menu: Option<ContextMenuPane>,
+    /// The strategy bank: named presets, loaded once and written back on
+    /// every save — the declarative store a future natural-language layer
+    /// would write into.
+    strategy_bank: crate::strategy_presets::StrategyBank,
+    /// The arming dialog, opened by a drawing menu's "Add strategy…".
+    strategy_popup: Option<StrategyPopup>,
+    /// `QUANTICK_STRATEGY_DEMO`: rectangle + armed instance (`1`) or the
+    /// arming dialog over it (`popup`), for validation runs. Consumed once
+    /// the chart has bars enough, like the drawings demo.
+    pending_strategy_demo: Option<StrategyDemoMode>,
     /// Where the scripted press landed, until its release goes out.
     ///
     /// A real right-click spans frames: the button goes down, the app draws,
@@ -1148,6 +1179,11 @@ impl QuantickApp {
             workspace_menu_rect: None,
             scripted_context_menu: None,
             scripted_context_menu_release: None,
+            strategy_bank: crate::strategy_presets::StrategyBank::load_from(
+                crate::strategy_presets::StrategyBank::default_path(),
+            ),
+            strategy_popup: None,
+            pending_strategy_demo: None,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
             scripted_pan_px: None,
@@ -1329,6 +1365,21 @@ impl QuantickApp {
         app.scripted_context_menu = std::env::var("QUANTICK_CONTEXT_MENU")
             .ok()
             .and_then(|value| ContextMenuPane::from_env_value(&value));
+
+        // A rectangle with an armed force-bar strategy riding it (`1`), or
+        // the arming dialog open over it (`popup`) — the strategy-anchor
+        // surfaces, reachable by a validation run without a click. The
+        // rectangle spans the recent tape and a stretch past its end, so
+        // the chart-centre click of `QUANTICK_CONTEXT_MENU=chart` lands on
+        // it and opens the per-drawing menu.
+        app.pending_strategy_demo =
+            std::env::var("QUANTICK_STRATEGY_DEMO")
+                .ok()
+                .and_then(|value| match value.trim() {
+                    "1" | "armed" => Some(StrategyDemoMode::Armed),
+                    "popup" => Some(StrategyDemoMode::Popup),
+                    _ => None,
+                });
 
         // The Workspace menu, open. Its entries are the only door to
         // exporting, opening and locating a workspace, and a menu bar button
@@ -6625,6 +6676,291 @@ impl QuantickApp {
         tab.deliver_ohlcv_slice(interval, bars, slice);
     }
 
+    /// Arm one instance on a drawing: compile the form, warm the trigger on
+    /// the bars already closed (gates shut, so nothing fires from history),
+    /// attach it, and start the paper host listening. `Err` carries the
+    /// human-readable refusal for the dialog to show.
+    fn arm_strategy_instance(
+        &mut self,
+        side: pane::PaneSide,
+        drawing: drawings::DrawingId,
+        form: &crate::strategy_presets::StoredPreset,
+        preset_label: String,
+    ) -> Result<(), String> {
+        let Some((params, force)) = form.to_kernel() else {
+            return Err(
+                "a field does not parse: quantity, factors and multipliers must be numbers"
+                    .to_owned(),
+            );
+        };
+        let tab = self.active_tab_mut();
+        {
+            let pane = tab.pane_mut(side);
+            if pane.drawings.index_of(drawing).is_none() {
+                return Err("the drawing is gone".to_owned());
+            }
+            let mut armed = quantick_strategy::ArmedStrategy::new(
+                params,
+                Box::new(quantick_strategy::ForceTrigger::new(force.clone())),
+            );
+            // Warm the ruler on the bars the chart is already showing —
+            // armed means armed now, not after another twenty bars of
+            // warmup the trader cannot see the reason for.
+            let slots = pane.slots();
+            let warmup = quantick_strategy::Region::new(
+                rust_decimal::Decimal::ZERO,
+                rust_decimal::Decimal::ZERO,
+            );
+            for slot in slots.saturating_sub(force.window)..slots {
+                if let Some(bar) = pane.closed_bar(slot).cloned() {
+                    let _ = armed.on_closed_bar(&bar, &warmup, false, false);
+                }
+            }
+            pane.strategies
+                .arm(crate::strategy_anchors::AnchoredInstance {
+                    drawing,
+                    preset: preset_label,
+                    armed,
+                });
+        }
+        tab.paper.set_bot_listening(true);
+        Ok(())
+    }
+
+    /// The arming dialog. Drains the panes' menu requests first, so the
+    /// click that chose "Add strategy…" opens the form on this same frame.
+    fn draw_strategy_popup(&mut self, ctx: &egui::Context) {
+        for side in [pane::PaneSide::Flow, pane::PaneSide::Time] {
+            let request = self
+                .active_tab_mut()
+                .pane_mut(side)
+                .strategy_popup_request
+                .take();
+            if let Some(drawing) = request {
+                self.strategy_popup = Some(StrategyPopup {
+                    side,
+                    drawing,
+                    form: crate::strategy_presets::StoredPreset::starting_point(
+                        quantick_engine::Side::Buy,
+                    ),
+                    preset_choice: None,
+                    save_name: String::new(),
+                    error: None,
+                });
+            }
+        }
+        let Some(mut popup) = self.strategy_popup.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut done = false;
+        egui::Window::new("Arm strategy")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("preset");
+                    let current = popup.preset_choice.as_deref().unwrap_or("custom");
+                    egui::ComboBox::from_id_salt("strategy_preset_pick")
+                        .selected_text(current.to_owned())
+                        .show_ui(ui, |ui| {
+                            let names: Vec<String> =
+                                self.strategy_bank.names().map(str::to_owned).collect();
+                            for name in names {
+                                let picked = popup.preset_choice.as_deref() == Some(name.as_str());
+                                if ui.selectable_label(picked, &name).clicked()
+                                    && let Some(stored) = self.strategy_bank.get(&name)
+                                {
+                                    popup.form = stored.clone();
+                                    popup.preset_choice = Some(name.clone());
+                                }
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("side");
+                    let buy = popup.form.side == "buy";
+                    if ui.selectable_label(buy, "BUY").clicked() {
+                        popup.form.side = "buy".to_owned();
+                    }
+                    if ui.selectable_label(!buy, "SELL").clicked() {
+                        popup.form.side = "sell".to_owned();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("quantity");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut popup.form.quantity).desired_width(60.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("force band: body between");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut popup.form.min_factor).desired_width(40.0),
+                    );
+                    ui.label("× and");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut popup.form.max_factor).desired_width(40.0),
+                    );
+                    ui.label("× the average of");
+                    ui.add(egui::DragValue::new(&mut popup.form.window).range(1..=500));
+                    ui.label("bodies");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("projection: TP");
+                    ui.add(egui::TextEdit::singleline(&mut popup.form.tp_mult).desired_width(40.0));
+                    ui.label("× range ahead, SL");
+                    ui.add(egui::TextEdit::singleline(&mut popup.form.sl_mult).desired_width(40.0));
+                    ui.label("× range behind (0 = no leg)");
+                });
+                let mut auto = popup.form.rearm == "auto";
+                if ui
+                    .checkbox(&mut auto, "re-arm automatically after the operation closes")
+                    .on_hover_text("off = one shot per arming, the over-fire guard")
+                    .changed()
+                {
+                    popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut popup.save_name)
+                            .hint_text("preset name")
+                            .desired_width(140.0),
+                    );
+                    let name = popup.save_name.trim().to_owned();
+                    if ui
+                        .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
+                        .clicked()
+                    {
+                        self.strategy_bank.save(&name, popup.form.clone());
+                        popup.preset_choice = Some(name);
+                    }
+                    if let Some(chosen) = popup.preset_choice.clone()
+                        && ui
+                            .button("Delete preset")
+                            .on_hover_text("remove it from the bank; the form keeps its values")
+                            .clicked()
+                    {
+                        self.strategy_bank.remove(&chosen);
+                        popup.preset_choice = None;
+                    }
+                });
+                if let Some(error) = &popup.error {
+                    ui.colored_label(theme::SELL, error);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Arm").clicked() {
+                        let label = popup
+                            .preset_choice
+                            .clone()
+                            .or_else(|| {
+                                let name = popup.save_name.trim();
+                                (!name.is_empty()).then(|| name.to_owned())
+                            })
+                            .unwrap_or_else(|| "custom".to_owned());
+                        match self.arm_strategy_instance(
+                            popup.side,
+                            popup.drawing,
+                            &popup.form.clone(),
+                            label,
+                        ) {
+                            Ok(()) => done = true,
+                            Err(error) => popup.error = Some(error),
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        done = true;
+                    }
+                });
+            });
+        if !done && open {
+            self.strategy_popup = Some(popup);
+        }
+    }
+
+    /// The `QUANTICK_STRATEGY_DEMO` hook: a named rectangle over the recent
+    /// tape with a force-bar instance armed on it (`1`), or the arming
+    /// dialog open over it (`popup`). The rectangle spans the visible
+    /// middle of the chart so `QUANTICK_CONTEXT_MENU=chart`'s centre click
+    /// lands on it and opens the per-drawing menu. Consumed once the chart
+    /// has bars enough, like the drawings demo.
+    fn apply_strategy_demo(&mut self) {
+        let Some(mode) = self.pending_strategy_demo else {
+            return;
+        };
+        let slots = self.active_tab_mut().flow_pane.slots();
+        if slots < 25 {
+            return;
+        }
+        self.pending_strategy_demo = None;
+        let Some(rectangle) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+        else {
+            return;
+        };
+        let drawing_id = {
+            let pane = &mut self.active_tab_mut().flow_pane;
+            let newest = slots - 1;
+            let Some(close) = pane
+                .closed_bar(newest)
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+            else {
+                return;
+            };
+            let start = newest.saturating_sub(40);
+            #[allow(clippy::cast_precision_loss)]
+            let anchors = [
+                drawings::ChartPoint::at_time(
+                    start as f32,
+                    close * 0.97,
+                    pane.slot_open_time(start),
+                ),
+                // Past the newest bar no market time exists to name; the
+                // anchor carries none, like a hand-dropped one would.
+                drawings::ChartPoint::at_time(newest as f32 + 6.0, close * 1.03, None),
+            ];
+            for point in anchors {
+                pane.drawings
+                    .place_with(rectangle, &drawings::DrawingBand::Price, point, |tool| {
+                        drawings::NewDrawing {
+                            style: drawings::DrawingStyle::default(),
+                            payload: tool.default_payload(),
+                        }
+                    });
+            }
+            let index = pane.drawings.items().len().saturating_sub(1);
+            pane.drawings.rename_at(index, "demo região");
+            pane.drawings.items()[index].id
+        };
+        let form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        match mode {
+            StrategyDemoMode::Armed => {
+                let _ = self.arm_strategy_instance(
+                    pane::PaneSide::Flow,
+                    drawing_id,
+                    &form,
+                    "demo BF".to_owned(),
+                );
+            }
+            StrategyDemoMode::Popup => {
+                self.strategy_popup = Some(StrategyPopup {
+                    side: pane::PaneSide::Flow,
+                    drawing: drawing_id,
+                    form,
+                    preset_choice: None,
+                    save_name: String::new(),
+                    error: None,
+                });
+            }
+        }
+    }
+
     /// The `QUANTICK_FRVP_DEMO` hook: one fixed-range volume profile on the
     /// flow pane. When the pane carries a venue history prefix the range
     /// starts inside it, so the partial-coverage honesty label ("profile
@@ -6897,6 +7233,7 @@ impl QuantickApp {
         self.apply_venue_history_demo();
         self.apply_frvp_demo();
         self.apply_avwap_demo();
+        self.apply_strategy_demo();
         self.maybe_emit_summary(now);
         self.maintain_workspace(ctx);
 
@@ -7122,6 +7459,7 @@ impl QuantickApp {
         self.draw_drawing_context_bar(ctx, now);
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
+        self.draw_strategy_popup(ctx);
         self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
@@ -9856,8 +10194,9 @@ plot(close)
             .collect();
         assert_eq!(
             labels,
-            ["Rename", "Lock", "Hide", "Delete"],
-            "the clicked object owns its section of the menu"
+            ["Rename", "Add strategy", "Lock", "Hide", "Delete"],
+            "the clicked object owns its section of the menu — rename, the \
+             strategy seat, and the guarded actions"
         );
 
         let click = |rects: &[(&'static str, egui::Rect)], label: &str| {
@@ -9915,6 +10254,140 @@ plot(close)
             app.active_tab().flow_pane.context_menu_drawing,
             None,
             "the section lets go of the object it deleted"
+        );
+    }
+
+    /// The whole semi-automatic loop in one place: a rectangle drawn on the
+    /// chart, a force-bar strategy armed on it through the same call the
+    /// dialog makes, and the tape walking the operation from trigger to
+    /// take profit. The human drew the fence; the machine pulled the
+    /// trigger; the simulator answered with fills the tape proves.
+    #[test]
+    fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        /// One Tick(50) bar: 49 prints at `open`, the fiftieth at `close`.
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        form.window = 3;
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
+            .expect("the form compiles and the drawing exists");
+
+        let mut id = 0u64;
+        // Three body-1 warmup bars inside the region: quiet, nothing fires.
+        bar(&mut app, &mut id, "100", "101");
+        bar(&mut app, &mut id, "101", "102");
+        bar(&mut app, &mut id, "102", "103");
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "warmup bars must not fire"
+        );
+
+        // The force bar: body 4 against an average of (1+1+4)/3 = 2, closing
+        // at 107 inside the region. The command queues on the close…
+        bar(&mut app, &mut id, "103", "107");
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "a market order fills on the *next* print, exactly like a hand"
+        );
+        // …and the next print fills it.
+        print(&mut app, &mut id, "107.5");
+        assert!(
+            !app.active_tab().paper.is_flat(),
+            "the entry met the tape at the print after the trigger"
+        );
+
+        // Take profit = close 107 + 1× range 4 = 111: a print at the level
+        // closes the operation.
+        print(&mut app, &mut id, "111");
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "the projected take profit closed the operation"
+        );
+
+        // The completion bar: the one-shot instance walks to done and holds
+        // fire forever after.
+        for _ in 0..48 {
+            print(&mut app, &mut id, "108");
+        }
+        let pane = &app.active_tab().flow_pane;
+        let instance = pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("the instance still rides the drawing");
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Done,
+            "one shot per arming: after the round trip the instance is done"
+        );
+    }
+
+    /// The safety sweeps are wired, not just written: a rebuilt timeline
+    /// disarms every instance with the reset's own reason on the badge.
+    #[test]
+    fn a_timeline_reset_disarms_the_armed_instances_by_name() {
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test".to_owned())
+            .expect("arms");
+
+        app.active_tab_mut().reset_market_state();
+
+        let pane = &app.active_tab().flow_pane;
+        let instance = pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("still attached");
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Disarmed {
+                reason: quantick_strategy::DisarmReason::TimelineReset
+            },
+            "a judgement armed on the old timeline must not carry into the new one"
         );
     }
 

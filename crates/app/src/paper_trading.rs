@@ -691,6 +691,14 @@ pub struct PaperTrading {
     /// The scripted demo (`QUANTICK_PAPER_DEMO=1`), for screenshot and
     /// validation runs; `None` in normal use.
     demo: Option<PaperDemo>,
+    /// Whether anything is listening for per-print simulator events (armed
+    /// strategy instances). Off, `on_trade` buffers nothing — the hot path
+    /// pays for the bot only while a bot exists.
+    bot_listening: bool,
+    /// Per-print events buffered for the strategy instances since the last
+    /// drain. Only ever non-empty while `bot_listening`, and prints with
+    /// nothing to report push nothing.
+    bot_events: Vec<SimEvent>,
     // Trades ledger.
     ledger_scope: ReportScope,
     /// Earlier sessions' journal rows, read on first draw and on demand —
@@ -789,6 +797,8 @@ impl PaperTrading {
             ledger_scope: ReportScope::Symbol,
             history_cache: None,
             selected_trade: None,
+            bot_listening: false,
+            bot_events: Vec::new(),
         }
     }
 
@@ -888,10 +898,47 @@ impl PaperTrading {
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
         let events = self.sim.on_trade(trade);
+        if self.bot_listening && !events.is_empty() {
+            self.bot_events.extend(events.iter().cloned());
+        }
         self.handle_events(events);
         if self.demo.is_some() {
             self.run_demo_step();
         }
+    }
+
+    /// Turn per-print event buffering for the strategy instances on or off.
+    /// The tab flips it from whether any instance exists, so an idle chart
+    /// never accumulates events nobody will drain.
+    pub fn set_bot_listening(&mut self, listening: bool) {
+        self.bot_listening = listening;
+        if !listening {
+            self.bot_events.clear();
+        }
+    }
+
+    /// Everything the simulator reported on prints since the last drain,
+    /// for the strategy instances to attribute by order id.
+    #[must_use]
+    pub fn drain_bot_events(&mut self) -> Vec<SimEvent> {
+        std::mem::take(&mut self.bot_events)
+    }
+
+    /// Whether the account is flat — the gate an armed strategy checks
+    /// before firing: a bot never trades against an open position, the
+    /// human's included.
+    #[must_use]
+    pub fn is_flat(&self) -> bool {
+        self.sim.position().is_none()
+    }
+
+    /// Apply a strategy-issued command through the same funnel manual
+    /// orders use — journal, toasts, everything — and hand the simulator's
+    /// immediate answer back for the instance to attribute.
+    pub fn apply_strategy_command(&mut self, command: Command) -> Vec<SimEvent> {
+        let events = self.sim.apply(command);
+        self.handle_events(events.clone());
+        events
     }
 
     /// One step of the scripted demo: a fixed command sequence by print
@@ -960,6 +1007,9 @@ impl PaperTrading {
         self.armed = None;
         self.drag = PaperDrag::None;
         self.drag_price = None;
+        // The instances disarm on the same reset; events from the torn-down
+        // timeline must not leak into their next life.
+        self.bot_events.clear();
         if had_position && all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),

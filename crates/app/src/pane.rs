@@ -1001,6 +1001,18 @@ pub struct ChartPane {
     /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
     #[cfg(test)]
     pub drawing_menu_rects: Vec<(&'static str, egui::Rect)>,
+    /// Armed strategy instances riding this pane's drawings. The kernel
+    /// (`quantick-strategy`) judges; this pane only anchors and paints.
+    pub strategies: crate::strategy_anchors::StrategyAnchors,
+    /// Closed bars awaiting strategy evaluation, each with the slot it
+    /// closed at. Pushed by `ingest_live_trade` only while instances
+    /// exist, drained by the tab in the same ingestion sweep — the slot
+    /// and the drawings' anchors are therefore read against one cut of
+    /// the series.
+    strategy_pending: Vec<(quantick_engine::Bar, usize)>,
+    /// The drawing whose "Add strategy…" was clicked; the app drains it
+    /// and opens the arming dialog over this pane.
+    pub(crate) strategy_popup_request: Option<drawings::DrawingId>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1171,6 +1183,9 @@ impl ChartPane {
             context_menu_rename: String::new(),
             #[cfg(test)]
             drawing_menu_rects: Vec::new(),
+            strategies: crate::strategy_anchors::StrategyAnchors::default(),
+            strategy_pending: Vec::new(),
+            strategy_popup_request: None,
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_band_hint: None,
@@ -1928,6 +1943,7 @@ impl ChartPane {
             self.drawings.rename_at(index, &name);
             self.context_menu_rename = name;
         }
+        self.draw_strategy_menu_entries(ui, index);
         let locked = self.drawings.items()[index].locked;
         let hidden = self.drawings.items()[index].hidden;
         let lock = ui
@@ -1965,6 +1981,117 @@ impl ChartPane {
         self.drawing_menu_rects.push(("Delete", delete.rect));
         #[cfg(not(test))]
         let _ = delete;
+    }
+
+    /// The armed instance's badge, pinned to its drawing's top-left corner:
+    /// state at a glance, in the state's colour. Per frame this is one
+    /// bounding-box fold and one text draw per *armed* drawing — a handful
+    /// at most, and nothing at all on a chart with no instances.
+    fn paint_strategy_badge(
+        &self,
+        painter: &egui::Painter,
+        drawing: &drawings::Drawing,
+        points: &[egui::Pos2],
+    ) {
+        let Some(instance) = self.strategies.for_drawing(drawing.id) else {
+            return;
+        };
+        let Some(first) = points.first() else {
+            return;
+        };
+        let anchor = points.iter().fold(*first, |corner, point| {
+            egui::pos2(corner.x.min(point.x), corner.y.min(point.y))
+        });
+        use quantick_strategy::ArmedState;
+        let color = match instance.armed.state() {
+            ArmedState::Armed => theme::ACCENT,
+            ArmedState::Fired { .. } => theme::AMBER,
+            ArmedState::InPosition => theme::BUY,
+            ArmedState::Done => theme::TEXT_MUTED,
+            ArmedState::Disarmed { .. } => theme::TEXT_FAINT,
+        };
+        let text = crate::strategy_anchors::badge_text(instance);
+        let position = anchor + egui::vec2(2.0, -4.0);
+        // A whisper of ground behind the label so it stays readable over
+        // candles; galley first, box after, text last.
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), color);
+        let rect = egui::Rect::from_min_size(
+            position - egui::vec2(3.0, galley.size().y + 3.0),
+            galley.size() + egui::vec2(6.0, 4.0),
+        );
+        painter.rect_filled(rect, 3.0, theme::CANVAS.gamma_multiply(0.85));
+        painter.galley(rect.min + egui::vec2(3.0, 2.0), galley, color);
+    }
+
+    /// The strategy seat of the per-drawing menu: arm a bot on this region,
+    /// or manage the one riding it. Price-band rectangles only — the one
+    /// shape whose two anchors honestly bound a price region today.
+    fn draw_strategy_menu_entries(&mut self, ui: &mut egui::Ui, index: usize) {
+        let drawing = &self.drawings.items()[index];
+        if drawing.tool.id() != "rectangle" || drawing.band != DrawingBand::Price {
+            return;
+        }
+        let id = drawing.id;
+        let Some(instance) = self.strategies.for_drawing(id) else {
+            let add = ui.button("Add strategy…").on_hover_text(
+                "arm a strategy on this region: it fires on the trigger bar, in paper trading",
+            );
+            #[cfg(test)]
+            self.drawing_menu_rects.push(("Add strategy", add.rect));
+            if add.clicked() {
+                self.strategy_popup_request = Some(id);
+                ui.close_menu();
+            }
+            return;
+        };
+        // One line of truth about the bot on this drawing, then its verbs.
+        ui.label(
+            egui::RichText::new(instance.armed.status_line())
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        let state = instance.armed.state().clone();
+        use quantick_strategy::ArmedState;
+        match state {
+            ArmedState::Armed | ArmedState::InPosition => {
+                let disarm = ui.button("Disarm").on_hover_text(
+                    "stop watching; an open operation keeps its position and bracket — yours to manage",
+                );
+                #[cfg(test)]
+                self.drawing_menu_rects.push(("Disarm", disarm.rect));
+                if disarm.clicked()
+                    && let Some(instance) = self.strategies.for_drawing_mut(id)
+                {
+                    instance.armed.disarm(quantick_strategy::DisarmReason::User);
+                    ui.close_menu();
+                }
+            }
+            ArmedState::Done | ArmedState::Disarmed { .. } => {
+                let rearm = ui
+                    .button("Re-arm")
+                    .on_hover_text("watch this region again with the same parameters");
+                #[cfg(test)]
+                self.drawing_menu_rects.push(("Re-arm", rearm.rect));
+                if rearm.clicked()
+                    && let Some(instance) = self.strategies.for_drawing_mut(id)
+                {
+                    instance.armed.rearm();
+                    ui.close_menu();
+                }
+            }
+            // Fired lives for exactly one print; nothing to offer on it.
+            ArmedState::Fired { .. } => {}
+        }
+        let remove = ui.button("Remove strategy").on_hover_text(
+            "detach the bot from this drawing; an open operation keeps its position and bracket",
+        );
+        #[cfg(test)]
+        self.drawing_menu_rects
+            .push(("Remove strategy", remove.rect));
+        if remove.clicked() {
+            self.strategies.remove_for_drawing(id);
+            ui.close_menu();
+        }
     }
 
     /// The bar spec implied by the current selector state.
@@ -2330,6 +2457,9 @@ impl ChartPane {
         self.price_view = PriceView::new();
         self.last_auto_range = None;
         self.hover_pos = None;
+        // Bars queued for the strategies belong to the series that just
+        // died; the tab disarms the instances with the reset's own reason.
+        self.strategy_pending.clear();
     }
 
     /// Fill a pane opened mid-session from the trades another pane of the same
@@ -2363,12 +2493,52 @@ impl ChartPane {
         self.state.ingest_live(trade);
         // At most one bar closes per trade (an atomic market event is never
         // split), so "grew" identifies exactly the bar that closed.
-        if self.state.bars().len() > bars_before
-            && let Some(closed) = self.state.bars().last()
+        let bars_after = self.state.bars().len();
+        if bars_after > bars_before
+            && let Some(closed) = self.state.bars().last().cloned()
         {
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed.clone()));
+            // Queued for the armed instances only while any exist: an idle
+            // chart clones nothing on the per-trade path.
+            if !self.strategies.is_empty() {
+                self.strategy_pending.push((closed, bars_after - 1));
+            }
         }
+    }
+
+    /// The closed bars awaiting strategy evaluation, slot each. Drained by
+    /// the tab right after the ingestion sweep that queued them.
+    #[must_use]
+    pub fn take_strategy_bars(&mut self) -> Vec<(quantick_engine::Bar, usize)> {
+        std::mem::take(&mut self.strategy_pending)
+    }
+
+    /// Resolve the drawing an instance is anchored to into the kernel's
+    /// terms, for the bar that closed at `slot`: the price band between the
+    /// rectangle's anchors, and whether that slot falls inside its span of
+    /// the tape. `None` when the drawing is gone, marks another market, or
+    /// lost its footing on this series — a region that cannot honestly be
+    /// tested holds fire.
+    #[must_use]
+    pub fn strategy_region(
+        &self,
+        id: drawings::DrawingId,
+        slot: usize,
+    ) -> Option<(quantick_strategy::Region, bool)> {
+        let index = self.drawings.index_of(id)?;
+        let drawing = self.drawings.items().get(index)?;
+        if drawing.foreign_market || drawing.off_series {
+            return None;
+        }
+        let [a, b] = drawing.points.as_slice() else {
+            return None;
+        };
+        let region = quantick_strategy::Region::new(dec_from_f64(a.price), dec_from_f64(b.price));
+        #[allow(clippy::cast_precision_loss)]
+        let slot = slot as f32;
+        let active = slot >= a.bar.min(b.bar) && slot <= a.bar.max(b.bar);
+        Some((region, active))
     }
 
     /// Hand the indicators the forming bar as it stands now.
@@ -5667,6 +5837,9 @@ impl ChartPane {
                 selected && !drawing.locked && primary_band,
             );
             bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
+            if primary_band {
+                self.paint_strategy_badge(&clipped, drawing, &points);
+            }
         }
 
         // With hide-all engaged the finished object would be invisible, so

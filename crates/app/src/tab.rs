@@ -1246,6 +1246,12 @@ impl Tab {
         // nothing there (§D7b).
         for pane in self.panes_mut() {
             pane.drawings.mark_market_changed();
+            // The regions those instances watched belong to the market that
+            // just left; a bot must never fire on a level from another
+            // instrument. Disarmed by name, never silently dropped.
+            pane.strategies
+                .disarm_all(quantick_strategy::DisarmReason::MarketChanged);
+            let _ = pane.take_strategy_bars();
         }
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
@@ -1496,6 +1502,12 @@ impl Tab {
                 // new bar space. Nothing is lost, so there is nothing to
                 // announce.
                 pane.reanchor_drawings(old_slots);
+                // The strategies do not follow: the body average that
+                // defines a force bar means something else under another
+                // bar spec, so the instances disarm and say why.
+                pane.strategies
+                    .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
+                let _ = pane.take_strategy_bars();
                 self.drop_overlay_gestures();
             }
         }
@@ -1628,6 +1640,63 @@ impl Tab {
         for pane in self.panes_mut() {
             pane.ingest_live_trade(trade);
         }
+        self.run_strategies();
+    }
+
+    /// Evaluate the armed instances against the bars that just closed and
+    /// route the simulator's answers back to them.
+    ///
+    /// Runs inside the same sweep that ingested the trades, so the slots
+    /// queued with each bar and the drawings' anchors are read against one
+    /// cut of the series. Order per pane: the prints' events first (they
+    /// resolve earlier operations), then closed bars oldest-first, each
+    /// instance's commands applied immediately so its own acknowledgement
+    /// reaches it before anything else does. Cost is zero on a chart with
+    /// no instances — the pane queues no bars and the paper host buffers no
+    /// events.
+    fn run_strategies(&mut self) {
+        let print_events = self.paper.drain_bot_events();
+        let paper = &mut self.paper;
+        let mut watching = 0;
+        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+            if pane.strategies.is_empty() {
+                continue;
+            }
+            pane.strategies.on_sim_events(&print_events);
+            let bars = pane.take_strategy_bars();
+            if !bars.is_empty() {
+                // An instance whose drawing was deleted dies here, in the
+                // sweep, never mid-frame under the menu that shows it.
+                let alive: Vec<crate::drawings::DrawingId> = pane
+                    .strategies
+                    .instances
+                    .iter()
+                    .map(|instance| instance.drawing)
+                    .filter(|id| pane.drawings.index_of(*id).is_some())
+                    .collect();
+                pane.strategies.drop_orphans(|id| alive.contains(&id));
+            }
+            for (bar, slot) in &bars {
+                for index in 0..pane.strategies.instances.len() {
+                    let drawing = pane.strategies.instances[index].drawing;
+                    let Some((region, active)) = pane.strategy_region(drawing, *slot) else {
+                        continue;
+                    };
+                    let flat = paper.is_flat();
+                    let commands = pane.strategies.instances[index]
+                        .armed
+                        .on_closed_bar(bar, &region, active, flat);
+                    for command in commands {
+                        let events = paper.apply_strategy_command(command);
+                        pane.strategies.instances[index]
+                            .armed
+                            .on_sim_events(&events);
+                    }
+                }
+            }
+            watching += pane.strategies.watching();
+        }
+        paper.set_bot_listening(watching > 0);
     }
 
     /// Throw away everything loaded and wait for the source to refill it.
@@ -1643,6 +1712,11 @@ impl Tab {
             // so seeking inherits correct indicator behavior for free).
             pane.send_indicator_rebuild();
             pane.last_lane_divider_x = None;
+            // Judgements armed on the old timeline do not carry into the
+            // rebuilt one — the same honesty rule the simulator's flatten
+            // follows, with the reason on the badge.
+            pane.strategies
+                .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         }
         self.drop_overlay_gestures();
         self.history_trades = 0;
