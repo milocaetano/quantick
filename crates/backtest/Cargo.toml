@@ -15,6 +15,7 @@ quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
+quantick-strategy = { path = "../strategy" }
 rust_decimal = "1"
 
 [[bin]]

@@ -2527,6 +2527,7 @@ dependencies = [
  "quantick-pine",
  "quantick-replay",
  "quantick-sim",
+ "quantick-strategy",
  "rust_decimal",
 ]
 

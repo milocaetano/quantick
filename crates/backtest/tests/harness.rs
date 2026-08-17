@@ -11,7 +11,7 @@ use std::path::Path;
 use quantick_backtest::bars::BarSpec;
 use quantick_backtest::report::{NOT_AVAILABLE, render_run, render_session};
 use quantick_backtest::run::{RunOutcome, run_session};
-use quantick_backtest::strategies::{EmaCross, PlotSignal, Protection};
+use quantick_backtest::strategies::{EmaCross, ForceRegion, PlotSignal, Protection};
 use quantick_backtest::strategy::{BarView, Strategy};
 use quantick_engine::{Side, Trade};
 use quantick_indicators::{
@@ -117,6 +117,82 @@ fn synthetic(text: &str) -> Session {
         ParseOptions::default(),
     )
     .expect("the synthetic session parses")
+}
+
+/// A tape of exactly these prices, one print per second, unit quantity.
+fn tape_of(prices: &[&str]) -> String {
+    let mut text = format::write_header(&WriteHeader {
+        symbol: "WINQ26".to_string(),
+        timezone: UtcOffset::UTC,
+        side_source: "flags".to_string(),
+        source: Some("synthetic".to_string()),
+    });
+    for (step, price) in prices.iter().enumerate() {
+        format::write_trade(
+            &mut text,
+            &Trade {
+                agg_id: (step + 1) as u64,
+                timestamp_ms: 1_786_233_600_000 + step as i64 * 1_000,
+                price: price.parse().expect("fixture price"),
+                quantity: Decimal::ONE,
+                side: if step % 2 == 0 { Side::Buy } else { Side::Sell },
+            },
+            None,
+            UtcOffset::UTC,
+        );
+    }
+    text
+}
+
+/// The chart's armed-rectangle kernel runs under the harness unchanged:
+/// same trigger, same gates, same projected bracket — one brain, two
+/// consumers. The tape mirrors the strategy crate's own golden walk
+/// (`crates/strategy/tests/full_operation.rs`), so any divergence between
+/// the live chart and this harness has nowhere to hide.
+#[test]
+fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
+    use quantick_strategy::{ForceParams, Rearm, Region, StrategyParams};
+
+    // Tick(2) bars: three body-1 warmup bars, a body-4 force bar closing
+    // at 107 inside the region, the fill print, the take-profit print.
+    let session = synthetic(&tape_of(&[
+        "100", "101", "101", "102", "102", "103", "103", "107", "107.5", "111",
+    ]));
+    let mut strategy = ForceRegion::new(
+        Region::new(Decimal::from(100), Decimal::from(110)),
+        StrategyParams {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            tp_mult: Decimal::ONE,
+            sl_mult: Decimal::ONE,
+            rearm: Rearm::OneShot,
+        },
+        ForceParams {
+            window: 3,
+            min_factor: "1.5".parse().expect("fixture factor"),
+            max_factor: "2.5".parse().expect("fixture factor"),
+        },
+    );
+    let run = run_session(&session, BarSpec::Tick(2), &mut strategy);
+
+    assert_eq!(run.trades.len(), 1, "one operation round-tripped");
+    let trade = &run.trades[0];
+    assert_eq!(
+        trade.entry_price,
+        "107.5".parse::<Decimal>().expect("price"),
+        "the market entry met the print after the trigger bar"
+    );
+    assert_eq!(trade.exit_price, Decimal::from(111));
+    assert_eq!(trade.exit_reason, ExitReason::TakeProfit);
+    assert_eq!(
+        trade.pnl_points,
+        "3.5".parse::<Decimal>().expect("points"),
+        "close 107 + 1x range 4 = take profit 111, entered from 107.5"
+    );
+    assert_eq!(
+        run.open_at_end, None,
+        "the take profit closed it before the recording ended"
+    );
 }
 
 #[test]

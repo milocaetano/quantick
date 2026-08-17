@@ -278,6 +278,63 @@ impl Strategy for PlotSignal {
     }
 }
 
+/// The armed-rectangle strategy, headless: the same `quantick-strategy`
+/// kernel the chart arms on a drawing, driven here by a fixed price region
+/// from configuration instead of a hand-drawn rectangle.
+///
+/// One brain, two consumers — the chart's paper trading and this harness
+/// run identical trigger, gates and projections, which is what makes a
+/// backtest of the mechanical half of the hybrid setup mean something. The
+/// human half (where the region sits) is exactly the part the harness
+/// cannot supply; a fixed region approximates it and the report must be
+/// read with that difference in mind.
+pub struct ForceRegion {
+    name: String,
+    region: quantick_strategy::Region,
+    instance: quantick_strategy::ArmedStrategy,
+}
+
+impl ForceRegion {
+    /// Arm the kernel on `region`, hunting `params.side` force bars.
+    #[must_use]
+    pub fn new(
+        region: quantick_strategy::Region,
+        params: quantick_strategy::StrategyParams,
+        force: quantick_strategy::ForceParams,
+    ) -> Self {
+        Self {
+            name: format!("force-region({}..{})", region.low(), region.high()),
+            region,
+            instance: quantick_strategy::ArmedStrategy::new(
+                params,
+                Box::new(quantick_strategy::ForceTrigger::new(force)),
+            ),
+        }
+    }
+}
+
+impl Strategy for ForceRegion {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
+        // The recorded session is the region's whole life, so the time
+        // window is always active; price containment and the flat gate do
+        // the judging, exactly as on the chart.
+        self.instance.on_closed_bar(
+            view.bar,
+            &self.region,
+            true,
+            view.account.position.is_none(),
+        )
+    }
+
+    fn on_events(&mut self, events: &[quantick_sim::SimEvent]) {
+        self.instance.on_sim_events(events);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

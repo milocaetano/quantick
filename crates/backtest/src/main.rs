@@ -32,7 +32,7 @@ use quantick_backtest::bars::BarSpec;
 use quantick_backtest::diagnostics::Event;
 use quantick_backtest::report::render_run;
 use quantick_backtest::run::{RunOutcome, SessionRun, run_session};
-use quantick_backtest::strategies::{EmaCross, PlotSignal, Protection};
+use quantick_backtest::strategies::{EmaCross, ForceRegion, PlotSignal, Protection};
 use quantick_backtest::strategy::Strategy;
 use quantick_engine::Side;
 use quantick_replay::format::ParseOptions;
@@ -77,6 +77,10 @@ const STRATEGIES: &[(&str, &str)] = &[
         "script",
         "signal from a compiled .pine plot column (needs --script)",
     ),
+    (
+        "force-region",
+        "the chart's armed-rectangle kernel over a fixed price region (needs --region)",
+    ),
 ];
 
 /// Which strategy a run uses.
@@ -84,6 +88,7 @@ const STRATEGIES: &[(&str, &str)] = &[
 enum StrategyKind {
     EmaCross,
     Script,
+    ForceRegion,
 }
 
 impl StrategyKind {
@@ -91,8 +96,44 @@ impl StrategyKind {
         match name {
             "ema-cross" => Some(Self::EmaCross),
             "script" => Some(Self::Script),
+            "force-region" => Some(Self::ForceRegion),
             _ => None,
         }
+    }
+}
+
+/// `--region low:high:side` — the fixed stand-in for the rectangle a hand
+/// draws on the chart. The harness can mechanise the trigger; where the
+/// region sits is the human half of the setup, so it must be *given*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RegionSpec {
+    low: Decimal,
+    high: Decimal,
+    side: Side,
+}
+
+impl RegionSpec {
+    fn parse(text: &str) -> Result<Self, String> {
+        let refuse = || {
+            format!(
+                "--region `{text}` is not low:high:side (side is buy or sell), e.g. \
+                 108000:109000:sell"
+            )
+        };
+        let mut parts = text.split(':');
+        let (Some(low), Some(high), Some(side), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(refuse());
+        };
+        let low = positive_decimal("--region", low).map_err(|_| refuse())?;
+        let high = positive_decimal("--region", high).map_err(|_| refuse())?;
+        let side = match side {
+            "buy" => Side::Buy,
+            "sell" => Side::Sell,
+            _ => return Err(refuse()),
+        };
+        Ok(Self { low, high, side })
     }
 }
 
@@ -110,6 +151,7 @@ struct Args {
     confirm_flow: bool,
     script: Option<PathBuf>,
     plot: usize,
+    region: Option<RegionSpec>,
     quantity: Decimal,
     protection: Protection,
     write_trades: Option<PathBuf>,
@@ -160,6 +202,9 @@ fn usage() -> String {
   --confirm-flow           require CVD to agree with the cross
   --script <file.pine>     the script the `script` strategy reads
   --plot <n>               which plot column of that script (default 0)
+  --region <low:high:side> the force-region strategy's price band and the
+                           side it hunts (buy|sell); auto re-arms so every
+                           qualifying bar in the recording is measured
   --quantity <n>           contracts per entry (default {DEFAULT_QUANTITY})
   --stop <points>          protective stop distance from the entry mark
   --target <points>        protective target distance from the entry mark
@@ -184,6 +229,7 @@ fn parse_args() -> Result<Args, String> {
         confirm_flow: false,
         script: None,
         plot: 0,
+        region: None,
         quantity: DEFAULT_QUANTITY,
         protection: Protection::default(),
         write_trades: None,
@@ -219,6 +265,7 @@ fn parse_args() -> Result<Args, String> {
             "--slow" => args.slow = positive_count("--slow", &value()?)?,
             "--confirm-flow" => args.confirm_flow = true,
             "--script" => args.script = Some(PathBuf::from(value()?)),
+            "--region" => args.region = Some(RegionSpec::parse(&value()?)?),
             "--plot" => {
                 let text = value()?;
                 args.plot = text
@@ -239,7 +286,11 @@ fn parse_args() -> Result<Args, String> {
     if args.dir.is_none() {
         args.dir = std::env::var_os(REPLAY_DIR_ENV).map(PathBuf::from);
     }
-    args.strategy = Some(resolve_strategy(args.strategy, args.script.is_some())?);
+    args.strategy = Some(resolve_strategy(
+        args.strategy,
+        args.script.is_some(),
+        args.region.is_some(),
+    )?);
 
     if args.strategy == Some(StrategyKind::EmaCross) && args.fast >= args.slow {
         return Err(format!(
@@ -263,19 +314,44 @@ fn parse_args() -> Result<Args, String> {
 /// either explicit or a contradiction, and a contradiction is refused rather
 /// than resolved by precedence — silently ignoring one of two flags a person
 /// typed on purpose is how a run measures something nobody asked for.
-fn resolve_strategy(asked: Option<StrategyKind>, has_script: bool) -> Result<StrategyKind, String> {
-    match (asked, has_script) {
-        (None, false) => Ok(StrategyKind::EmaCross),
-        (None, true) => Ok(StrategyKind::Script),
-        (Some(StrategyKind::Script), false) => {
+fn resolve_strategy(
+    asked: Option<StrategyKind>,
+    has_script: bool,
+    has_region: bool,
+) -> Result<StrategyKind, String> {
+    match (asked, has_script, has_region) {
+        (None, false, false) => Ok(StrategyKind::EmaCross),
+        (None, true, false) => Ok(StrategyKind::Script),
+        (None, false, true) => Ok(StrategyKind::ForceRegion),
+        (None, true, true) => Err(
+            "--script and --region name different strategies; drop one so the run \
+             measures the rule you meant"
+                .to_string(),
+        ),
+        (Some(StrategyKind::Script), false, _) => {
             Err("--strategy script needs --script <file.pine> to read a signal from".to_string())
         }
-        (Some(StrategyKind::EmaCross), true) => Err(
+        (Some(StrategyKind::ForceRegion), _, false) => Err(
+            "--strategy force-region needs --region <low:high:side>: the region is the \
+             human half of the setup and the harness never invents it"
+                .to_string(),
+        ),
+        (Some(StrategyKind::EmaCross), true, _) => Err(
             "--strategy ema-cross ignores --script; drop one of them so the run measures \
              the rule you meant"
                 .to_string(),
         ),
-        (Some(kind), _) => Ok(kind),
+        (Some(StrategyKind::EmaCross), _, true) | (Some(StrategyKind::Script), _, true) => Err(
+            "--region belongs to the force-region strategy; drop one of the flags so the \
+             run measures the rule you meant"
+                .to_string(),
+        ),
+        (Some(StrategyKind::ForceRegion), true, true) => Err(
+            "--strategy force-region ignores --script; drop one of them so the run \
+             measures the rule you meant"
+                .to_string(),
+        ),
+        (Some(kind), _, _) => Ok(kind),
     }
 }
 
@@ -480,6 +556,31 @@ fn build_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
             args.confirm_flow,
         ))),
         StrategyKind::Script => build_script_strategy(args),
+        StrategyKind::ForceRegion => {
+            let region = args
+                .region
+                .ok_or("the force-region strategy needs --region <low:high:side>")?;
+            if args.protection != Protection::default() {
+                return Err(
+                    "force-region projects its bracket from the trigger bar's own range; \
+                     --stop/--target (fixed points) do not apply to it"
+                        .to_owned(),
+                );
+            }
+            Ok(Box::new(ForceRegion::new(
+                quantick_strategy::Region::new(region.low, region.high),
+                quantick_strategy::StrategyParams {
+                    side: region.side,
+                    quantity: args.quantity,
+                    tp_mult: Decimal::ONE,
+                    sl_mult: Decimal::ONE,
+                    // The harness measures: every qualifying bar in the
+                    // recording counts, so the instance re-arms itself.
+                    rearm: quantick_strategy::Rearm::Auto,
+                },
+                quantick_strategy::ForceParams::default_band(),
+            )))
+        }
     }
 }
 
@@ -676,20 +777,50 @@ mod tests {
 
     #[test]
     fn strategy_selection_refuses_contradictions_instead_of_picking_one() {
-        assert_eq!(resolve_strategy(None, false), Ok(StrategyKind::EmaCross));
         assert_eq!(
-            resolve_strategy(None, true),
+            resolve_strategy(None, false, false),
+            Ok(StrategyKind::EmaCross)
+        );
+        assert_eq!(
+            resolve_strategy(None, true, false),
             Ok(StrategyKind::Script),
             "a bare --script means the script strategy"
         );
         assert_eq!(
-            resolve_strategy(Some(StrategyKind::Script), true),
+            resolve_strategy(None, false, true),
+            Ok(StrategyKind::ForceRegion),
+            "a bare --region means the force-region strategy"
+        );
+        assert_eq!(
+            resolve_strategy(Some(StrategyKind::Script), true, false),
             Ok(StrategyKind::Script)
         );
-        // Both of these would otherwise run a rule the operator did not ask
-        // for, and the report would look perfectly ordinary while doing it.
-        assert!(resolve_strategy(Some(StrategyKind::Script), false).is_err());
-        assert!(resolve_strategy(Some(StrategyKind::EmaCross), true).is_err());
+        // Every one of these would otherwise run a rule the operator did not
+        // ask for, and the report would look perfectly ordinary doing it.
+        assert!(resolve_strategy(Some(StrategyKind::Script), false, false).is_err());
+        assert!(resolve_strategy(Some(StrategyKind::EmaCross), true, false).is_err());
+        assert!(resolve_strategy(Some(StrategyKind::ForceRegion), false, false).is_err());
+        assert!(resolve_strategy(None, true, true).is_err());
+        assert!(resolve_strategy(Some(StrategyKind::EmaCross), false, true).is_err());
+        assert!(resolve_strategy(Some(StrategyKind::Script), true, true).is_err());
+        assert!(resolve_strategy(Some(StrategyKind::ForceRegion), true, true).is_err());
+    }
+
+    #[test]
+    fn a_region_spec_parses_or_refuses_whole() {
+        let spec = RegionSpec::parse("108000:109000:sell").expect("well-formed");
+        assert_eq!(spec.side, Side::Sell);
+        assert_eq!(spec.low, Decimal::from(108_000));
+        assert_eq!(spec.high, Decimal::from(109_000));
+        for broken in [
+            "108000:109000",
+            "108000:109000:short",
+            "a:b:buy",
+            "108000:109000:buy:extra",
+            "-1:2:buy",
+        ] {
+            assert!(RegionSpec::parse(broken).is_err(), "{broken}");
+        }
     }
 
     #[test]
