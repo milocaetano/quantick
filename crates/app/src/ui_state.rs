@@ -940,6 +940,56 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// The same migration against a file written by the shipped build rather
+    /// than by this module's own serializer.
+    ///
+    /// The test above proves the round trip; this one proves the *format*. A
+    /// real `ui-state.toml` puts the stars inside `[chrome]` and has no
+    /// top-level key at all, and it is the file every trader upgrading to this
+    /// build is holding — reading it wrong empties their rail on first launch.
+    #[test]
+    fn a_workspace_written_by_the_shipped_build_keeps_its_stars() {
+        let path = temp_path("shipped-file");
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             save_on_exit = true\n\
+             active_tab = 0\n\
+             saved = []\n\
+             \n\
+             [[tabs]]\n\
+             feed = \"binance\"\n\
+             symbol = \"WINQ26\"\n\
+             layout = \"time+flow\"\n\
+             flow_bars = \"imbalance:5000\"\n\
+             \n\
+             [chrome]\n\
+             timezone_minutes = -180\n\
+             dock_visible = false\n\
+             rail_visible = true\n\
+             rail_dock = \"left\"\n\
+             perf_readings = true\n\
+             favorite_tools = [\n\
+             \"fixed-range-profile\",\n\
+             \"measure\",\n\
+             \"horizontal-line\",\n\
+             ]\n\
+             progressive_history = true\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            load(&path).favorite_tools,
+            vec![
+                "fixed-range-profile".to_owned(),
+                "measure".to_owned(),
+                "horizontal-line".to_owned(),
+            ],
+            "the rail an upgrading trader already had is the rail they get"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// Migration is one-way and one-time: once lifted, the old key is gone
     /// from the file, so nothing can resurrect a stale list later.
     #[test]
