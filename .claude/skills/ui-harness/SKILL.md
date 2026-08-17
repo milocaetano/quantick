@@ -127,6 +127,14 @@ freehand path for the pencil, which declares no anchor count of its own.
 
 Once merged, move them into the table above.
 
+Landing with the popup-position goal (`feat/inspector-position-memory`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_DRAWING_INSPECTOR_POS=<x,y>` | the properties popup **parked where a trader dragged it**, in screen points, through the title-bar gesture's own function. That position is now remembered in the workspace and reused for every drawing selected afterwards, so it is a state a capture has to reach — and a drag is the only thing that sets one, which no scripted run has a hand for. Pair with `QUANTICK_DRAWING_INSPECTOR=1` and `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`. Off-screen coordinates are accepted on purpose (`3000,2000` photographs the clamp repairing a position from a bigger monitor); text that is not a point is refused, so a typo shows automatic placement rather than an invented pixel. To photograph the *restore* instead of the drag, hand-write `inspector_position = [x, y]` into the `[chrome]` table of a scratch `QUANTICK_UI_STATE` file |
+
+Once merged, move it into the table above.
+
 Landing with the paper-trading overhaul (`feat/paper-trading-overhaul`):
 
 | Hook | Reaches |
@@ -161,9 +169,13 @@ For a screen that represents the user's real setup, enable the trio:
 
 ## Launch and capture workflow
 
-1. **Own target dir**: build with `CARGO_TARGET_DIR=F:\src\quantick-agent-target`
-   so the user's running exe is never locked and rust-analyzer never poisons
-   fingerprints.
+1. **Own target dir, on a drive with room**: build with
+   `CARGO_TARGET_DIR=D:\quantick-agent-target` so the user's running exe is
+   never locked and rust-analyzer never poisons fingerprints. It was `F:` until
+   that drive stopped existing — check `Get-PSDrive -PSProvider FileSystem`
+   before trusting this line, and pick the drive with free space: `C:` runs
+   into single-digit gigabytes with a few worktrees on it, and a build that
+   dies of ENOSPC looks like a compile error until you read the message.
 2. **Fresh exe, proven fresh**: `cargo build -p quantick-app` immediately
    before capturing, then compare the exe `LastWriteTime` against your last
    edit. `cargo test` green does **not** imply the exe was rebuilt.

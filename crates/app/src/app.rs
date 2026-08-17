@@ -342,6 +342,20 @@ pub fn gesture_hits_lane(divider_x: Option<f32>, x: f32) -> bool {
     divider_x.is_some_and(|divider| x >= divider)
 }
 
+/// `X,Y` in screen points, for the harness hook that parks the properties
+/// popup. `None` when the text is not two finite numbers.
+///
+/// Off-screen coordinates are accepted rather than refused: a position outside
+/// the chart is a state the app already has an answer for
+/// ([`clamp_into_chart`]), and reaching it on purpose is how that answer gets
+/// photographed. Only text that is not a point at all is turned away.
+fn parse_point(raw: &str) -> Option<egui::Pos2> {
+    let (x, y) = raw.split_once(',')?;
+    let x: f32 = x.trim().parse().ok()?;
+    let y: f32 = y.trim().parse().ok()?;
+    (x.is_finite() && y.is_finite()).then_some(egui::pos2(x, y))
+}
+
 /// Clamp a window of `size` at `position` into `chart`, top-left biased when
 /// the window is larger than the pane.
 fn clamp_into_chart(position: egui::Pos2, size: egui::Vec2, chart: egui::Rect) -> egui::Pos2 {
@@ -794,6 +808,22 @@ pub struct QuantickApp {
     // would go. Consumed once.
     pending_drawing_draft: Option<usize>,
     inspector_pos: Option<egui::Pos2>,
+    /// The popup's position changed by hand this frame and the workspace has
+    /// not been told yet.
+    ///
+    /// A flag rather than a write on the spot, for two reasons. A drag reports
+    /// a new position on *every* frame the hand is moving, and writing the file
+    /// sixty times a second for a window that has not landed yet is a lot of
+    /// disk for one decision. And the write itself belongs beside the other
+    /// workspace writes ([`Self::maintain_workspace`]), not inside the closure
+    /// that is painting the window — one place that knows how a workspace
+    /// reaches the disk, not two.
+    ///
+    /// That host runs at the top of a frame, so the file is written on the
+    /// frame *after* the one the hand came off in — sixteen milliseconds, and
+    /// the frame that closes the window flushes this before taking the exit
+    /// save, so nothing can be dropped between the two.
+    inspector_position_dirty: bool,
     /// How wide the floating inspector may be where it was placed.
     ///
     /// `Some` only when it had to be narrowed into a gutter beside a drawing
@@ -1147,6 +1177,7 @@ impl QuantickApp {
             pending_venue_history_demo: None,
             pending_drawing_draft: None,
             inspector_pos: None,
+            inspector_position_dirty: false,
             inspector_max_width: None,
             inspector_size: None,
             inspector_pin_touched: false,
@@ -1355,6 +1386,18 @@ impl QuantickApp {
         // reach without a click.
         app.inspector_open =
             std::env::var("QUANTICK_DRAWING_INSPECTOR").is_ok_and(|value| value == "1");
+        // The trader's own drag, scripted: `x,y` in screen points parks the
+        // properties popup exactly as a hand on the title bar would, through
+        // that gesture's own function. Without it the remembered position is
+        // unreachable from a launch — a drag is the only way to set one, and a
+        // capture run has no hand. Nonsense is refused rather than guessed, so
+        // a typo photographs automatic placement instead of an invented pixel.
+        if let Some(position) = std::env::var("QUANTICK_DRAWING_INSPECTOR_POS")
+            .ok()
+            .and_then(|value| parse_point(&value))
+        {
+            app.place_inspector_by_hand(position);
+        }
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -3310,6 +3353,7 @@ impl QuantickApp {
                 .map(|tool| tool.id().to_owned())
                 .collect(),
             progressive_history: self.progressive_history,
+            inspector_position: self.remembered_inspector_position(),
         };
         (tabs, chrome)
     }
@@ -3345,6 +3389,7 @@ impl QuantickApp {
             self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
             self.progressive_history = chrome.progressive_history;
+            self.restore_inspector_position(chrome.inspector_position);
         }
         if workspace.is_empty() {
             return;
@@ -3786,6 +3831,28 @@ impl QuantickApp {
     /// "saved" and finding out at the next launch is the one outcome worth
     /// engineering against.
     fn save_workspace(&mut self, reason: &'static str) {
+        let saved = self.write_workspace(reason);
+        let tabs = self.tabs.len();
+        self.note_workspace(if saved {
+            format!(
+                "Workspace saved — quantick opens on {tabs} {}",
+                if tabs == 1 { "chart tab" } else { "chart tabs" }
+            )
+        } else {
+            "Workspace could not be saved — see the log".to_owned()
+        });
+    }
+
+    /// Write the workspace file, and say whether it landed. The quiet half of
+    /// [`Self::save_workspace`].
+    ///
+    /// Split out for the writes the trader did not ask for by name — parking
+    /// the properties popup is one. The toast is the answer to a deliberate
+    /// *Save*, and repeating it after every small gesture would turn the one
+    /// channel the window has for acknowledgements into wallpaper. The log line
+    /// still names every write, with the reason, so a save that went missing is
+    /// still answerable.
+    fn write_workspace(&mut self, reason: &'static str) -> bool {
         let workspace = self.capture_workspace();
         let saved = ui_state::save(&self.ui_state_path, &workspace);
         self.workspace_saved |= saved;
@@ -3800,19 +3867,7 @@ impl QuantickApp {
             action = if saved { "workspace_written" } else { "workspace_not_written" },
             "workspace save"
         );
-        self.note_workspace(if saved {
-            format!(
-                "Workspace saved — quantick opens on {} {}",
-                workspace.tabs.len(),
-                if workspace.tabs.len() == 1 {
-                    "chart tab"
-                } else {
-                    "chart tabs"
-                }
-            )
-        } else {
-            "Workspace could not be saved — see the log".to_owned()
-        });
+        saved
     }
 
     /// The Save-as box: one text field, Save and Cancel.
@@ -4043,6 +4098,7 @@ impl QuantickApp {
             self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
             self.progressive_history = chrome.progressive_history;
+            self.restore_inspector_position(chrome.inspector_position);
         }
         self.active_tab = entry.active_tab.min(self.tabs.len().saturating_sub(1));
         let config = self.config.clone();
@@ -4144,12 +4200,14 @@ impl QuantickApp {
         });
     }
 
-    /// Keep the window size the workspace would record, and take the exit
-    /// save when the window is closing.
+    /// Keep the window size the workspace would record, flush a popup the
+    /// trader just re-parked, and take the exit save when the window is
+    /// closing.
     ///
-    /// **Per-frame cost**: two reads off the frame's own input state and a
-    /// float compare. The save itself is not on this path — it happens on the
-    /// one frame the close is requested, and the window is going away anyway.
+    /// **Per-frame cost**: two reads off the frame's own input state, a float
+    /// compare and a `bool` test. No save is on this path — each of the three
+    /// happens on one frame: the frame a drag ends, and the frame the close is
+    /// requested, when the window is going away anyway.
     ///
     /// The size is tracked here rather than read at exit because by then the
     /// viewport has already been asked to close: what a workspace should
@@ -4170,6 +4228,20 @@ impl QuantickApp {
             && size[1] > 0.0
         {
             self.window_size = Some(size);
+        }
+        // Where the trader parks the properties popup is kept the moment the
+        // hand comes off it, without a trip through the Workspace menu: the
+        // window they dragged out of the way is the window they expect back,
+        // and a memory that only survived a clean exit would lose it to the
+        // one session that ended badly.
+        //
+        // Gated on the same switch the exit save is, because the menu already
+        // promises exactly this: "Off, only Save workspace changes what
+        // quantick opens on." A trader who curates their startup layout by hand
+        // still gets the position within the session — it is live state — and
+        // an explicit Save still records it.
+        if std::mem::take(&mut self.inspector_position_dirty) && self.save_on_exit {
+            self.write_workspace("inspector_position");
         }
         if closing && self.save_on_exit {
             self.save_workspace("exit");
@@ -5238,16 +5310,29 @@ impl QuantickApp {
                 let placed = self.inspector_target_placement(ui.ctx(), index);
                 self.inspector_pos = placed.map(|placed| placed.position);
                 self.inspector_max_width = placed.and_then(|placed| placed.max_width);
+                // Giving the placement back is a decision too, and it has to
+                // reach the file: a reset that lived only until the next launch
+                // would hand the trader back the very position they discarded.
+                self.inspector_position_dirty = true;
             } else if bar.dragged() {
-                self.inspector_moved = true;
                 let position = self.inspector_pos.or_else(|| {
                     ui.ctx()
                         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
                         .map(|rect| rect.min)
                 });
-                if let Some(position) = position {
-                    self.inspector_pos = Some(position + bar.drag_delta());
+                match position {
+                    Some(position) => self.place_inspector_by_hand(position + bar.drag_delta()),
+                    // No position to move yet — the window has not been laid
+                    // out. The hand is still down, so the flag alone records
+                    // that placement is no longer the app's to decide.
+                    None => self.inspector_moved = true,
                 }
+            }
+            // Written when the hand comes off the window, not while it is still
+            // moving: one file write per gesture, and the position it records
+            // is the one the trader stopped at.
+            if bar.drag_stopped() {
+                self.inspector_position_dirty = true;
             }
         }
         ui.separator();
@@ -5616,6 +5701,47 @@ impl QuantickApp {
                 INSPECTOR_DEFAULT_WIDTH_PX,
                 INSPECTOR_FALLBACK_HEIGHT_PX,
             ))
+    }
+
+    /// Park the properties popup where a hand put it: the position every later
+    /// selection reopens on, and the one the workspace records.
+    ///
+    /// The single door for all three callers — the title-bar drag, the harness
+    /// hook and a restored workspace — because the state is a *pair*. Setting
+    /// the position without the flag leaves automatic placement free to
+    /// overwrite it on the next selection; setting the flag without a position
+    /// pins the window to wherever it happens to be. Neither half is a state
+    /// worth being able to reach.
+    fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
+        self.inspector_pos = Some(position);
+        self.inspector_moved = true;
+    }
+
+    /// The popup position a workspace should record: the one a hand placed,
+    /// never one the app computed.
+    ///
+    /// Automatic placement is a *rule* — beside the object, on the side with
+    /// room. Writing down the pixel that rule produced for yesterday's drawing
+    /// would freeze a stale answer into the file and stop the rule from ever
+    /// running again, which is the same bug as never forgetting a drag.
+    fn remembered_inspector_position(&self) -> Option<[f32; 2]> {
+        self.inspector_moved
+            .then_some(self.inspector_pos)
+            .flatten()
+            .map(|position| [position.x, position.y])
+    }
+
+    /// Adopt what a workspace remembers about the popup, including its
+    /// silence: no recorded position hands the window back to automatic
+    /// placement rather than leaving the previous cockpit's position behind.
+    fn restore_inspector_position(&mut self, remembered: Option<[f32; 2]>) {
+        match remembered {
+            Some([x, y]) => self.place_inspector_by_hand(egui::pos2(x, y)),
+            None => {
+                self.inspector_pos = None;
+                self.inspector_moved = false;
+            }
+        }
     }
 
     /// The selected object's screen bounding box, expanded by the anchor
@@ -13744,6 +13870,244 @@ plot(close)
         );
     }
 
+    /// Put a horizontal line on the chart at that height and leave it there.
+    /// Two of them is the setup every "the next drawing too" claim needs.
+    fn draw_horizontal_line(app: &mut QuantickApp, ctx: &egui::Context, price_y: f32) {
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(app, ctx, egui::pos2(700.0, price_y));
+        run_frame(app, ctx);
+    }
+
+    /// Open the popup and drag its title bar by `delta`, returning where it
+    /// ended up. The gesture the whole feature is about.
+    fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2) -> egui::Pos2 {
+        open_inspector(app, ctx);
+        let popup = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the properties popup is open");
+        // Left of the trailing icons, which is the grip a trader gets.
+        let grip = egui::pos2(popup.left() + 60.0, popup.top() + 14.0);
+        drag_chart(app, ctx, grip, grip + delta);
+        // The write is queued during the release frame and flushed at the top
+        // of the next one, where every other workspace write lives.
+        run_frame(app, ctx);
+        app.inspector_pos.expect("the drag records a position")
+    }
+
+    /// The gesture the trader asked for: drag the properties popup somewhere
+    /// useful, take the hand off it, and the cockpit has kept it — with no trip
+    /// through the Workspace menu, because nobody arranging a chart mid-session
+    /// stops to save a layout.
+    #[test]
+    fn parking_the_properties_popup_autosaves_it_to_the_workspace() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        app.ui_state_path = scratch_ui_state("popup-parked");
+        run_frame(&mut app, &ctx);
+        draw_horizontal_line(&mut app, &ctx, 300.0);
+        assert!(
+            !app.ui_state_path.exists(),
+            "nothing has written a workspace yet, so the drag is the only \
+             thing that can have"
+        );
+
+        let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
+
+        let chrome = ui_state::load(&app.ui_state_path)
+            .chrome
+            .expect("the drag alone wrote the workspace");
+        assert_eq!(
+            chrome.inspector_position,
+            Some([parked.x, parked.y]),
+            "the file holds the position the hand came off at"
+        );
+        assert!(
+            !app.toast
+                .as_ref()
+                .is_some_and(|toast| toast.message.contains("Workspace saved")),
+            "an autosave nobody asked for by name does not talk over the trader"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Unless the trader switched autosave off, which the Workspace menu reads
+    /// as a promise: "Off, only Save workspace changes what quantick opens on."
+    /// The popup still moves — that is live state — but the curated startup
+    /// layout is not rewritten behind their back.
+    #[test]
+    fn autosave_off_means_the_popup_position_is_not_written_either() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        app.ui_state_path = scratch_ui_state("popup-no-autosave");
+        app.save_on_exit = false;
+        run_frame(&mut app, &ctx);
+        draw_horizontal_line(&mut app, &ctx, 300.0);
+
+        let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
+
+        assert_eq!(
+            app.inspector_pos,
+            Some(parked),
+            "the window still went where it was dragged"
+        );
+        assert!(
+            !app.ui_state_path.exists(),
+            "but autosave off leaves the saved workspace untouched"
+        );
+    }
+
+    /// And it is still there at the next launch, because that is the only
+    /// version of "remembers" worth having: a position that died with the
+    /// process would have the trader re-dragging the window every morning.
+    #[test]
+    fn a_parked_popup_comes_back_after_a_restart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        app.ui_state_path = scratch_ui_state("popup-restart");
+        run_frame(&mut app, &ctx);
+        draw_horizontal_line(&mut app, &ctx, 300.0);
+        let parked = park_the_popup(&mut app, &ctx, egui::vec2(120.0, 80.0));
+
+        // A second launch reading the same file.
+        let (mut next, _commands) = app_with_history(200);
+        next.restore_workspace(ui_state::load(&app.ui_state_path));
+
+        assert_eq!(
+            next.inspector_pos,
+            Some(parked),
+            "the popup opens where the last session left it"
+        );
+        assert!(
+            next.inspector_moved,
+            "and counts as hand-placed, so nothing places it again"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// One window, every tool: a position remembered from a *previous session*
+    /// greets whichever drawing is clicked next, not only the one that happened
+    /// to be selected when the hand let go.
+    #[test]
+    fn a_remembered_position_greets_the_next_drawing_too() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        draw_horizontal_line(&mut app, &ctx, 250.0);
+        draw_horizontal_line(&mut app, &ctx, 400.0);
+
+        // What a restored workspace does, through the same one door.
+        let remembered = egui::pos2(420.0, 200.0);
+        app.place_inspector_by_hand(remembered);
+
+        // A different drawing than the one selected when it was parked.
+        click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
+        run_frame(&mut app, &ctx);
+        open_inspector(&mut app, &ctx);
+
+        let popup = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the properties popup is open");
+        assert_eq!(
+            popup.min, remembered,
+            "the popup opens where it was left, not beside the object it configures"
+        );
+    }
+
+    /// The way back is a decision too. Double-clicking the title bar hands the
+    /// popup back to automatic placement, and that has to reach the file —
+    /// otherwise the next launch returns the position the trader just gave up.
+    #[test]
+    fn giving_the_placement_back_is_saved_as_well() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        app.ui_state_path = scratch_ui_state("popup-reset");
+        run_frame(&mut app, &ctx);
+        draw_horizontal_line(&mut app, &ctx, 300.0);
+        park_the_popup(&mut app, &ctx, egui::vec2(120.0, 90.0));
+        assert!(
+            ui_state::load(&app.ui_state_path)
+                .chrome
+                .is_some_and(|chrome| chrome.inspector_position.is_some()),
+            "the parked position is on disk before the reset"
+        );
+
+        let popup = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("still open");
+        let grip = egui::pos2(popup.left() + 60.0, popup.top() + 14.0);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(grip),
+                pointer_button(grip, true),
+                pointer_button(grip, false),
+                pointer_button(grip, true),
+                pointer_button(grip, false),
+            ],
+        );
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            ui_state::load(&app.ui_state_path)
+                .chrome
+                .expect("the chrome is still recorded")
+                .inspector_position,
+            None,
+            "the file forgets the position the trader discarded"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// A remembered position is what the trader did, not a promise the screen
+    /// can still keep. Reopened on a window too small for it — or with the rail
+    /// on another edge — the popup is repaired into the chart rather than
+    /// obeyed off the side of it.
+    #[test]
+    fn a_position_that_no_longer_fits_is_repaired_into_the_chart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        // The auto-pin owns a chart this narrow until the trader touches the
+        // pin; this test is about the floating window, so say they have.
+        app.inspector_pin_touched = true;
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+
+        // A position from a much larger monitor.
+        app.place_inspector_by_hand(egui::pos2(2_400.0, 1_500.0));
+        app.inspector_open = true;
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+        run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
+
+        let chart = app
+            .drawing_pane()
+            .last_chart_area
+            .expect("the pane has been laid out");
+        let popup = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the properties popup is open");
+        assert!(
+            chart.contains(popup.min),
+            "the popup opens inside the chart, not at yesterday's monitor: \
+             {popup:?} against {chart:?}"
+        );
+    }
+
+    /// A harness hook that guessed would photograph an invented pixel and call
+    /// it the trader's. Refuse instead, and the capture shows the default.
+    #[test]
+    fn the_popup_position_hook_refuses_what_is_not_a_point() {
+        assert_eq!(parse_point("420,200"), Some(egui::pos2(420.0, 200.0)));
+        assert_eq!(parse_point(" 420 , 200.5 "), Some(egui::pos2(420.0, 200.5)));
+        for raw in ["", "420", "420,", ",200", "left,top", "420x200"] {
+            assert_eq!(parse_point(raw), None, "{raw:?} is not a point");
+        }
+    }
+
     fn run_sized_frame(
         app: &mut QuantickApp,
         ctx: &egui::Context,
@@ -16592,6 +16956,7 @@ plot(close)
                 perf_readings: false,
                 favorite_tools: Vec::new(),
                 progressive_history: false,
+                inspector_position: Some([260.0, 480.0]),
             }),
         ));
         run_frame(&mut app, &ctx);
@@ -16631,6 +16996,15 @@ plot(close)
         assert!(
             app.tabs.iter().all(|tab| !tab.progressive_history),
             "and every tab phrases its request that way"
+        );
+        assert_eq!(
+            app.inspector_pos,
+            Some(egui::pos2(260.0, 480.0)),
+            "the properties popup reopens where the trader parked it"
+        );
+        assert!(
+            app.inspector_moved,
+            "and counts as hand-placed, so automatic placement does not undo it"
         );
     }
 

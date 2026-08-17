@@ -233,6 +233,26 @@ pub struct SavedChrome {
     /// no way to know why.
     #[serde(default = "yes")]
     pub progressive_history: bool,
+    /// Where the trader parked the drawing-properties popup, in screen points,
+    /// or absent while it still places itself beside the object it configures.
+    ///
+    /// One position for every tool on the rail, because there is one window:
+    /// the popup is rebuilt for whatever is selected, so a trader who drags it
+    /// out of the way once has moved it for the next drawing too — which is
+    /// the whole reason to move it. A position per tool would put the window
+    /// somewhere new on every selection, which is the behaviour being fixed.
+    ///
+    /// Absent in files written before this field, and absent again after the
+    /// double-click that restores automatic placement; either way the app
+    /// places the popup itself, exactly as it did before this field existed.
+    ///
+    /// Screen points, and deliberately *not* repaired here: a position that no
+    /// longer fits — a smaller window, the rail on another edge — is clamped
+    /// into the chart when the popup draws, by the same code that repairs one
+    /// dragged half off screen. The file records what the trader did; the
+    /// screen decides what is still possible.
+    #[serde(default)]
+    pub inspector_position: Option<[f32; 2]>,
 }
 
 /// The workspace as a whole: what the app opens on.
@@ -761,6 +781,7 @@ mod tests {
                 perf_readings: true,
                 favorite_tools: vec!["parallel-channel".to_owned()],
                 progressive_history: false,
+                inspector_position: Some([412.5, 640.0]),
             }),
             saved: Vec::new(),
             replay_folder: Some("D:/tape".to_owned()),
@@ -1112,6 +1133,30 @@ mod tests {
         let loaded = load(&path);
         assert_eq!(loaded.tabs.len(), 1, "the arrangement still reads");
         assert!(loaded.saved.is_empty(), "and it simply has no bookmarks");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Same rule for the popup position: a chrome section written before the
+    /// field existed describes a cockpit whose owner never dragged the popup,
+    /// and reading their silence as anything but "place it yourself" would
+    /// park the window at a pixel they never chose.
+    #[test]
+    fn a_chrome_written_before_the_popup_position_still_loads() {
+        let path = temp_path("no-popup-position");
+        std::fs::write(
+            &path,
+            "version = 1\nsave_on_exit = true\nactive_tab = 0\n\n\
+             [[tabs]]\nfeed = \"binance\"\nsymbol = \"BTCUSDT\"\n\
+             layout = \"flow\"\nflow_bars = \"tick:50\"\n\n\
+             [chrome]\ntimezone_minutes = 0\ndock_visible = true\n\
+             rail_visible = true\nrail_dock = \"left\"\nperf_readings = false\n",
+        )
+        .unwrap();
+        let chrome = load(&path).chrome.expect("the chrome still reads");
+        assert_eq!(
+            chrome.inspector_position, None,
+            "no remembered position means automatic placement, as before"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
