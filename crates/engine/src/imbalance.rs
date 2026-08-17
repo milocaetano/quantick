@@ -25,17 +25,57 @@
 //!
 //! # Closing rule
 //!
-//! The reference rule closes a bar when `|theta| >= E[T] * |E[s]|`, where both
-//! expectations adapt to the observed stream:
+//! A bar closes when `|theta| >= E[T] * |E[s]|`, floored at the scale
+//! balanced flow actually reaches:
 //!
-//! - `E[T]` — expected trades per bar: an EWMA (weight [`ALPHA_T`]) over the
-//!   trade counts of closed bars, seeded with the `target_trades` parameter.
+//! - `E[T]` — expected trades per bar: **the `target_trades` parameter**,
+//!   fixed. Not adaptive; see below for why.
 //! - `E[s]` — expected signed weight per trade: a per-trade EWMA of `s` whose
 //!   span is `target_trades` (weight `2 / (target_trades + 1)`), so the
 //!   imbalance estimate looks back roughly one expected bar.
+//! - the floor — `sqrt(target_trades)` typical trades' worth of weight; see
+//!   [`ImbalanceBarBuilder::noise_floor`].
 //!
 //! In the trades unit `|E[s]|` is exactly the book's `|2P[b=1] - 1|`; in the
 //! weighted units it estimates `|2v+ - E[v]|` the same way.
+//!
+//! # Why `E[T]` is fixed, and why the floor scales
+//!
+//! Both expectations used to adapt, and that made the knob mean nothing.
+//!
+//! The threshold is *linear* in `E[T]`, and `E[T]` was an EWMA of the bar
+//! lengths that same threshold produced: a loop with no damping term. For a
+//! driftless tape `theta` is a symmetric walk, so a bar of length `n` needs
+//! `threshold ~ sqrt(n)` — self-consistency therefore sat at
+//! `E[T] = 1 / floor^2`, a **repelling** fixed point that did not depend on
+//! `target_trades` at all. Whatever the trader asked for, `E[T]` ran away
+//! from it to one clamp or the other and stayed. The clamps did not prevent
+//! the degeneracy the guards were written for; they decided which one you
+//! got:
+//!
+//! - above the fixed point, `E[T]` pinned at `3 * target` and the threshold
+//!   became a four-sigma excursion — no bar ever closed on imbalance, only on
+//!   the hard cap, so an "imbalance" chart was a `3 * target`-tick chart;
+//! - below it, `E[T]` pinned at `target / 4` and the threshold fell far under
+//!   what a balanced walk reaches — a cascade of very short bars.
+//!
+//! Measured on a real WIN session under the tick rule the app runs live: at
+//! `target = 1500` the same setting gave 3,720 trades per bar in one hour and
+//! 226 in another, and `target = 1600` produced *shorter* bars than
+//! `target = 1500` over the whole day. The parameter was neither monotone nor
+//! reproducible.
+//!
+//! Fixing `E[T]` at `target_trades` removes the loop. The adaptivity that
+//! carries information lives in `E[s]`, which is where the reference rule
+//! puts it, and a fixed `E[T]` is what makes one knob mean one thing.
+//!
+//! The floor then has to carry balanced flow on its own, because that is
+//! exactly when `|E[s]| -> 0`. A constant cannot: a walk of length `n`
+//! reaches `|theta| ~ sqrt(n)` typical weights, so any fixed floor is
+//! unreachable at large targets and trivial at small ones. At
+//! `sqrt(target)` typical weights the expected first passage is `~target`
+//! trades at every setting and in every unit — which is what "expected trades
+//! per bar in balanced flow" has always claimed to mean, and now is.
 //!
 //! **Evaluation order.** The trades unit folds the arriving trade into `E[s]`
 //! *before* testing the threshold — the behavior this bar type shipped with,
@@ -47,29 +87,20 @@
 //! against the expectations formed *before* it (the book's `E_0[.]`), and fold
 //! it in afterwards.
 //!
-//! # Structural guards (and why they are honest)
+//! # Structural guards
 //!
-//! The textbook rule is known to degenerate: in near-balanced flow
-//! `|E[s]| -> 0` collapses the threshold (a cascade of one-trade bars), and a
-//! feedback loop between shrinking bars and shrinking `E[T]` can pin it there.
-//! Rather than patch the stream, the closing rule itself is bounded by three
-//! fixed, documented guards — every one deterministic and part of the rule,
-//! not silent data repair:
+//! Two, both deterministic and part of the rule, not silent data repair:
 //!
-//! - the effective `|E[s]|` never drops below [`FLOOR_B`] times `E[w]` — an
-//!   EWMA of the unsigned weight, primed with the first trade's weight, so the
-//!   floor means "5% of a typical trade" in every unit (in the trades unit
-//!   `E[w]` is exactly 1 and the floor is the historical `0.05`) and the
-//!   threshold stays meaningfully positive in balanced flow. Weights are
-//!   magnitudes — direction comes from the aggressor side alone — and a tape
-//!   whose weights are all zero (a size unit over a size-less recording) has
-//!   no measure to read: its threshold is zero, an imbalance close never
-//!   fires, and only the trade cap below bounds the bar;
-//! - a bar always closes after `3 * target_trades` trades ([`CAP_MULT`]), so
-//!   perfectly offsetting flow cannot grow a bar without bound;
-//! - `E[T]` is clamped to `[target_trades / 4, 3 * target_trades]`, so a
-//!   transient regime cannot drag the expectation somewhere it takes forever
-//!   to recover from.
+//! - a bar always closes after `3 * target_trades` trades ([`CAP_MULT`]). A
+//!   backstop against a tape that offsets perfectly for an unbounded stretch,
+//!   and nothing more: when it starts firing routinely, the threshold above
+//!   it has stopped working;
+//! - the floor is at least one typical trade's weight, so a bar can never
+//!   close on the single trade that opened it — and a tape whose weights are
+//!   all zero (a size unit over a size-less recording) has no measure to
+//!   read: its threshold is zero, an imbalance close never fires, and only
+//!   the trade cap bounds the bar. Weights are magnitudes; direction comes
+//!   from the aggressor side alone.
 //!
 //! The **first** bar is a warm-up: with no history there is no meaningful
 //! expectation, so it closes at exactly `target_trades` trades (like a tick
@@ -85,18 +116,14 @@ use crate::{
     Bar, BarBuilder, DollarMeasure, Measure as _, Side, TickMeasure, Trade, VolumeMeasure,
 };
 
-/// EWMA weight for the expected-trades-per-bar update, applied once per
-/// closed bar. `0.25` spans roughly the last seven bars.
-const ALPHA_T: Decimal = Decimal::from_parts(25, 0, 0, false, 2);
-
-/// Lower bound on the effective `|E[s]|` in the threshold, as a fraction of
-/// `E[w]` (the typical per-trade weight), so near-balanced flow cannot
-/// collapse the threshold to zero. In the trades unit `E[w]` is exactly 1 and
-/// this is the historical absolute floor of `0.05`.
-const FLOOR_B: Decimal = Decimal::from_parts(5, 0, 0, false, 2);
-
 /// A bar always closes after `CAP_MULT * target_trades` trades, whatever the
 /// imbalance says.
+///
+/// A backstop against a tape that offsets perfectly for an unbounded stretch,
+/// and nothing more: with the threshold below working, it should fire on its
+/// own long before this does. When this guard becomes the *usual* way bars
+/// close, the rule above it has stopped working — which is exactly what
+/// happened before the `E[T]` feedback loop was removed.
 const CAP_MULT: u64 = 3;
 
 /// The measure a trade's aggression is weighed in — what `theta` accumulates.
@@ -185,14 +212,25 @@ pub struct ImbalanceBarBuilder {
     /// trade, and the subtraction rescales `ONE` to scale 28 each time it is
     /// redone inline.
     keep_b: Decimal,
-    /// Expected trades per bar, seeded with `target_trades`.
+    /// `E[T]` — expected trades per bar. The configured target, fixed.
+    ///
+    /// Deliberately *not* adaptive. It used to be an EWMA of the lengths the
+    /// threshold produced, while the threshold was linear in it: a loop with
+    /// no damping, whose fixed point sits at `1 / floor^2` regardless of what
+    /// the trader asked for, and is unstable — so `E[T]` always ran to one of
+    /// its clamps and stayed. The adaptivity that carries information lives
+    /// in `E[s]`; taking it out of `E[T]` is what makes the knob mean one
+    /// thing.
     e_t: Decimal,
+    /// `sqrt(target_trades)`, at least one — how many *typical trades' worth*
+    /// of weight the floor is. Integer `isqrt`, so the engine keeps its exact
+    /// arithmetic and no transcendental ever runs on the hot path.
+    floor_trades: Decimal,
     /// Expected signed weight per trade, primed from zero as trades arrive.
     e_s: Decimal,
     /// Typical unsigned weight per trade: an EWMA primed with the first
     /// trade's weight (`None` until then). The trades unit never sets it —
-    /// its weight is identically 1 — and the floor falls back to the
-    /// historical constant `0.05`.
+    /// its weight is identically 1, so the floor is `floor_trades` alone.
     e_w: Option<Decimal>,
     /// Signed imbalance of the in-progress bar, in the configured unit.
     theta: Decimal,
@@ -241,6 +279,9 @@ impl ImbalanceBarBuilder {
             alpha_b,
             keep_b: Decimal::ONE - alpha_b,
             e_t: Decimal::from(target_trades),
+            // At least one: a floor below a single typical trade would let a
+            // bar close on the very trade that opened it.
+            floor_trades: Decimal::from(target_trades.isqrt().max(1)),
             e_s: Decimal::ZERO,
             e_w: None,
             theta: Decimal::ZERO,
@@ -278,23 +319,7 @@ impl ImbalanceBarBuilder {
         if self.count >= CAP_MULT.saturating_mul(self.target_trades) {
             return true;
         }
-        // The floor scales with the unit's typical weight. The trades unit
-        // keeps the historical constant — its weight is identically 1 — and
-        // never spends the multiplication on the per-trade hot path. In the
-        // weighted units `e_w` is primed by the first `absorb`, which the
-        // `warmed_up` gate guarantees has run; the zero fallback merely keeps
-        // this line total instead of trusting that ordering.
-        let floor = if self.unit == ImbalanceUnit::Trades {
-            FLOOR_B
-        } else {
-            FLOOR_B.saturating_mul(self.e_w.unwrap_or(Decimal::ZERO))
-        };
-        // Saturating like every arithmetic step feeding it: an adversarial
-        // print can pin `E[s]` near `Decimal::MAX`, and a threshold that
-        // saturates means "no imbalance close" — the trade cap above still
-        // bounds the bar — while a plain `*` would panic a builder on feed
-        // input, which the engine's arithmetic policy forbids.
-        let threshold = self.e_t.saturating_mul(self.e_s.abs().max(floor));
+        let threshold = self.threshold();
         // A tape whose weights are all zero (a size unit over a size-less
         // recording) has no measure to read: theta and the threshold are both
         // zero, and closing on `0 >= 0` would cascade one-trade bars — the
@@ -302,6 +327,53 @@ impl ImbalanceBarBuilder {
         // only at the cap. In the trades unit the threshold is structurally
         // positive, so this guard never fires there.
         threshold > Decimal::ZERO && self.theta.abs() >= threshold
+    }
+
+    /// The imbalance a bar must reach to close.
+    ///
+    /// `E[T] * |E[s]|` is the reference rule: the imbalance a *typical* bar
+    /// ends on, so a bar closes as soon as it looks unusual. `E[s]` adapts
+    /// over roughly one bar, so a burst arriving inside a bar is measured
+    /// against the flow that came before it — the whole point of sampling
+    /// this way.
+    ///
+    /// Floored at [`noise_floor`](Self::noise_floor) rather than at a
+    /// fraction of `E[s]`: in balanced flow `|E[s]| -> 0` and the floor is
+    /// the only thing left holding the rule up.
+    ///
+    /// Saturating like every arithmetic step feeding it: an adversarial print
+    /// can pin `E[s]` near `Decimal::MAX`, and a threshold that saturates
+    /// means "no imbalance close" — the trade cap above still bounds the bar
+    /// — while a plain `*` would panic a builder on feed input, which the
+    /// engine's arithmetic policy forbids.
+    fn threshold(&self) -> Decimal {
+        self.e_t
+            .saturating_mul(self.e_s.abs())
+            .max(self.noise_floor())
+    }
+
+    /// The imbalance balanced flow reaches on its own in `target_trades`
+    /// trades: `sqrt(target)` typical trades' worth of weight.
+    ///
+    /// A driftless signed walk of `n` steps of typical size `E[w]` has
+    /// `|theta| ~ E[w] * sqrt(n)`, so this is the level whose expected first
+    /// passage is `~target_trades` — at every setting and in every unit,
+    /// which is what the parameter has always claimed to mean. A floor that
+    /// did not scale this way was unreachable at large targets (every bar ran
+    /// to the cap) and trivial at small ones.
+    ///
+    /// The trades unit skips the multiplication entirely: its weight is
+    /// identically 1, so the floor is `sqrt(target)` and the per-trade hot
+    /// path stays one field read. In the weighted units `e_w` is primed by
+    /// the first `absorb`, which the `warmed_up` gate guarantees has run; the
+    /// zero fallback keeps this total instead of trusting that ordering.
+    fn noise_floor(&self) -> Decimal {
+        match self.unit {
+            ImbalanceUnit::Trades => self.floor_trades,
+            _ => self
+                .floor_trades
+                .saturating_mul(self.e_w.unwrap_or(Decimal::ZERO)),
+        }
     }
 
     /// Fold one trade's signed weight into the running expectations. The
@@ -327,16 +399,13 @@ impl ImbalanceBarBuilder {
         }
     }
 
-    /// Close the in-progress bar: fold its length into `E[T]`, reset the
-    /// per-bar accumulators (no carry), and hand the bar out.
+    /// Close the in-progress bar: reset the per-bar accumulators (no carry)
+    /// and hand the bar out.
+    ///
+    /// `E[T]` is deliberately untouched here — folding the closed length back
+    /// into it is precisely the feedback loop that made the target
+    /// meaningless.
     fn close_bar(&mut self) -> Option<Bar> {
-        let closed_len = Decimal::from(self.count);
-        let updated = ALPHA_T * closed_len + (Decimal::ONE - ALPHA_T) * self.e_t;
-        let min = Decimal::from(self.target_trades) / Decimal::from(4);
-        // Saturating to match `should_close`'s hard cap and stay panic-free for
-        // any configured `target_trades`.
-        let max = Decimal::from(CAP_MULT.saturating_mul(self.target_trades));
-        self.e_t = updated.clamp(min, max);
         self.warmed_up = true;
         self.theta = Decimal::ZERO;
         self.count = 0;
@@ -401,6 +470,216 @@ mod tests {
             .enumerate()
             .filter_map(|(i, side)| builder.push(&trade(i as u64, *side)))
             .collect()
+    }
+
+    /// A fixed-seed LCG. Not randomness the engine ever sees: it runs in the
+    /// *test* to build a fixture tape, identical on every machine and every
+    /// run, with no clock and no entropy. The determinism rule is about the
+    /// builders, and a reproducible pseudo-tape is what lets these tests
+    /// assert on first-passage behaviour at all.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn new() -> Self {
+            Self(0x2545_f491_4f6c_dd1d)
+        }
+
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 33
+        }
+    }
+
+    /// A tape with a chosen buy share, in per-mille.
+    ///
+    /// It has to be a genuine walk rather than an evenly spread alternation:
+    /// alternating sides pin `|theta|` at one and would test nothing but the
+    /// hard cap. Real balanced flow wanders, and the wandering is exactly
+    /// what the threshold is calibrated against.
+    fn tape(len: usize, buy_per_mille: u64) -> Vec<Side> {
+        let mut lcg = Lcg::new();
+        (0..len)
+            .map(|_| {
+                if lcg.next() % 1000 < buy_per_mille {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                }
+            })
+            .collect()
+    }
+
+    /// Mean trades per closed bar over `sides`, in the trades unit.
+    fn mean_len(target: u64, sides: &[Side]) -> f64 {
+        let mut builder = ImbalanceBarBuilder::new(target);
+        let bars = run(&mut builder, sides);
+        assert!(!bars.is_empty(), "target {target} closed no bar at all");
+        sides.len() as f64 / bars.len() as f64
+    }
+
+    /// The promise the knob makes, and the one it did not keep: in balanced
+    /// flow a bar is about `target_trades` long.
+    ///
+    /// Before this rule was fixed, `E[T]` was an EWMA feeding a threshold
+    /// linear in `E[T]` — a loop whose only resting places were the clamps at
+    /// `target/4` and `3 * target`. Measured on a real WIN session under the
+    /// tick rule the app runs live, target 1500 gave 3,720 trades per bar in
+    /// hour 12 and 226 in hour 14: 14x apart, same setting, same day.
+    #[test]
+    fn a_bar_is_about_the_target_long_in_balanced_flow() {
+        for target in [100_u64, 500, 2000, 5000] {
+            let sides = tape(target as usize * 60, 500);
+            let mean = mean_len(target, &sides);
+            let ratio = mean / f64::from(u32::try_from(target).unwrap());
+            assert!(
+                (0.5..=2.0).contains(&ratio),
+                "target {target}: mean bar length {mean:.0} is {ratio:.2}x the target"
+            );
+        }
+    }
+
+    /// Asking for longer bars must give longer bars.
+    ///
+    /// The old rule was not monotone on real data: on the trader's own tape
+    /// under the tick rule, target 1500 gave 626 trades per bar and target
+    /// 1600 gave 284 — a 100-trade nudge halved the bar, because the two
+    /// settings landed in different attractors.
+    #[test]
+    fn a_larger_target_makes_longer_bars() {
+        let sides = tape(400_000, 500);
+        let mut previous = 0.0;
+        for target in [100_u64, 500, 1500, 1600, 2000, 5000] {
+            let mean = mean_len(target, &sides);
+            assert!(
+                mean > previous,
+                "target {target} gave mean {mean:.0}, not longer than the previous {previous:.0}"
+            );
+            previous = mean;
+        }
+    }
+
+    /// The same setting must mean the same thing whatever came before it.
+    ///
+    /// `E[T]`'s EWMA carried the previous regime into the next one and the
+    /// clamps kept it there, so one target drifted more than an order of
+    /// magnitude across a single session with nothing touched.
+    #[test]
+    fn the_bar_length_does_not_depend_on_the_regime_before_it() {
+        let target = 2000;
+        let measure = |lead: &[Side]| {
+            let mut builder = ImbalanceBarBuilder::new(target);
+            let _ = run(&mut builder, lead);
+            let steady = tape(200_000, 500);
+            let bars = run(&mut builder, &steady);
+            steady.len() as f64 / bars.len() as f64
+        };
+        let after_burst = measure(&vec![Side::Buy; 40_000]);
+        let after_balance = measure(&tape(40_000, 500));
+        let ratio = after_burst / after_balance;
+        assert!(
+            (0.6..=1.6).contains(&ratio),
+            "the same target settles at {after_burst:.0} after a burst and {after_balance:.0} \
+             after balanced flow ({ratio:.2}x apart)"
+        );
+    }
+
+    /// The low end of the toolbar's range has to work too.
+    ///
+    /// The old minimum threshold was `(target/4) * FLOOR_B` = `target/80`,
+    /// below 1 for every target under 80 — so the whole band the toolbar
+    /// offers below 80 collapsed into a cascade of one- and two-trade bars.
+    #[test]
+    fn small_targets_are_not_a_one_trade_cascade() {
+        for target in [4_u64, 10, 50, 79] {
+            let sides = tape(target as usize * 400, 500);
+            let mean = mean_len(target, &sides);
+            let ratio = mean / f64::from(u32::try_from(target).unwrap());
+            assert!(
+                (0.5..=2.0).contains(&ratio),
+                "target {target}: mean bar length {mean:.1} is {ratio:.2}x the target"
+            );
+        }
+    }
+
+    /// The cap is a backstop, not the closing rule.
+    ///
+    /// When bars routinely close at `3 * target` the threshold above has
+    /// stopped working and the chart is a tick chart wearing an imbalance
+    /// label. On the trader's sparse session that is exactly what happened:
+    /// 47% of bars closed on the cap at target 1500 and 55% at target 2000,
+    /// and on the dense one 39-59% in the morning hours.
+    ///
+    /// Not zero, and the bound says so honestly: the first-passage time to a
+    /// fixed level has a tail, and `E[s]` is estimated from a finite window,
+    /// so a minority of bars legitimately runs long. A quarter is the line
+    /// between "a backstop fires sometimes" and "the backstop *is* the rule";
+    /// measured here it sits at 9% (target 100) and 2% (target 2000).
+    #[test]
+    fn the_hard_cap_is_not_how_bars_normally_close() {
+        for target in [100_u64, 2000] {
+            let sides = tape(target as usize * 60, 500);
+            let mut builder = ImbalanceBarBuilder::new(target);
+            let bars = run(&mut builder, &sides);
+            let cap = builder.hard_cap_trades();
+            let capped = bars.iter().filter(|b| b.trade_count >= cap).count();
+            assert!(
+                capped * 4 < bars.len(),
+                "target {target}: {capped} of {} bars closed on the cap",
+                bars.len()
+            );
+        }
+    }
+
+    /// A weighted tape: sizes wander over an order of magnitude, the way a
+    /// real one does, so the floor cannot be calibrated against a constant
+    /// lot size it never sees.
+    fn weighted_tape(len: usize, buy_per_mille: u64) -> Vec<Trade> {
+        let mut lcg = Lcg::new();
+        (0..len)
+            .map(|i| {
+                let side = if lcg.next() % 1000 < buy_per_mille {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                };
+                let qty = Decimal::from(1 + lcg.next() % 20);
+                Trade {
+                    agg_id: i as u64,
+                    timestamp_ms: 1000 + i as i64 * 100,
+                    price: Decimal::from_str("100.0").unwrap(),
+                    quantity: qty,
+                    side,
+                }
+            })
+            .collect()
+    }
+
+    /// The target means trades per bar in *every* unit — the module doc has
+    /// always said so, and the weighted units have to honour it too.
+    ///
+    /// The floor is what carries balanced flow, and in a weighted unit
+    /// `theta` is measured in lots or currency, not counts. A floor
+    /// calibrated for the trades unit is off by the typical trade size here,
+    /// which on WIN is a factor of several.
+    #[test]
+    fn weighted_units_also_target_the_configured_trade_count() {
+        for unit in [ImbalanceUnit::Volume, ImbalanceUnit::Dollar] {
+            for target in [100_u64, 2000] {
+                let trades = weighted_tape(target as usize * 60, 500);
+                let mut builder = ImbalanceBarBuilder::with_unit(target, unit);
+                let bars: Vec<Bar> = trades.iter().filter_map(|t| builder.push(t)).collect();
+                assert!(!bars.is_empty(), "{unit:?} target {target} closed no bar");
+                let mean = trades.len() as f64 / bars.len() as f64;
+                let ratio = mean / f64::from(u32::try_from(target).unwrap());
+                assert!(
+                    (0.5..=2.0).contains(&ratio),
+                    "{unit:?} target {target}: mean bar length {mean:.0} is {ratio:.2}x the target"
+                );
+            }
+        }
     }
 
     #[test]

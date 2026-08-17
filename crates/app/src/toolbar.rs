@@ -572,15 +572,23 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
                 });
             }
             ui.label("target trades");
+            // A promise the engine now keeps, so the tooltip can state it
+            // plainly. `E[T]` used to be an EWMA seeded with this number
+            // while the threshold was linear in it — a feedback loop that
+            // parked on a clamp and delivered `3 * target` or a fraction of
+            // it instead, which is what made a trader set 1500, then 2000,
+            // and get two unrecognisably different charts.
+            // `quantick_engine`'s `a_bar_is_about_the_target_long_in_balanced_flow`
+            // is what keeps the sentence honest.
             ui.add(
                 egui::DragValue::new(model.imbalance_target)
                     .range(2.0..=1_000_000.0)
                     .speed(25.0),
             )
             .on_hover_text(
-                "expected trades per bar in balanced flow — the seed of the \
-                 adaptive threshold, not a fixed length: dense two-way tape \
-                 closes bars well short of it, one-sided aggression sooner still",
+                "expected trades per bar in balanced flow — a real \
+                 expectation, not a fixed length: one-sided aggression closes \
+                 a bar well short of it, which is what this bar type is for",
             );
         }
     }

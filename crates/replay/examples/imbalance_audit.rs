@@ -10,13 +10,24 @@
 //!
 //! Usage:
 //!   cargo run -p quantick-replay --release --example imbalance_audit -- \
-//!     <session.csv> [[unit:]target ...]
+//!     <session.csv> [--tick-rule] [--hourly] [[unit:]target ...]
 //!
 //! `unit` is the spec token (`trades`, `volume`, `dollar`), defaulting to
 //! `trades`; bare targets default to `2000 5000`. `volume:2000` audits the
 //! same target in volume imbalance bars.
+//!
+//! `--tick-rule` re-derives every aggressor side from the recorded prices the
+//! way [`SideMode::TickRule`] does live, instead of trusting the sides in the
+//! file. A recording made from venue flags and the same symbol traded live
+//! under the tick rule are two different tapes, and the bar rule reads the
+//! side stream — so auditing a target for a live MT5 chart has to audit the
+//! side policy that chart actually runs.
+//!
+//! `--hourly` breaks the same statistics down by session hour. A trader does
+//! not see a whole day at once; a rule that averages out over a session can
+//! still be unusable inside the window on screen.
 
-use quantick_engine::{BarBuilder, ImbalanceBarBuilder, ImbalanceUnit, Side};
+use quantick_engine::{BarBuilder, ImbalanceBarBuilder, ImbalanceUnit, Side, Trade};
 use quantick_replay::ParseOptions;
 use quantick_replay::format::parse_file;
 
@@ -26,6 +37,33 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
     }
     let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
     sorted[idx]
+}
+
+/// Re-label every trade's side with López de Prado's tick rule — uptick buy,
+/// downtick sell, unchanged carries the previous side — the policy
+/// `feed-mt5`'s `SideMode::TickRule` runs live and the MT5 default.
+///
+/// Trades before the first price move have no side to infer; the live mapper
+/// drops them, so this drops them too rather than inventing one.
+fn relabel_tick_rule(trades: Vec<Trade>) -> Vec<Trade> {
+    let mut prev_price = None;
+    let mut prev_side = None;
+    let mut out = Vec::with_capacity(trades.len());
+    for mut t in trades {
+        let side = match prev_price {
+            Some(prev) if t.price > prev => Some(Side::Buy),
+            Some(prev) if t.price < prev => Some(Side::Sell),
+            Some(_) => prev_side,
+            None => None,
+        };
+        prev_price = Some(t.price);
+        prev_side = side;
+        if let Some(side) = side {
+            t.side = side;
+            out.push(t);
+        }
+    }
+    out
 }
 
 fn parse_target(arg: &str) -> (ImbalanceUnit, u64) {
@@ -41,23 +79,46 @@ fn parse_target(arg: &str) -> (ImbalanceUnit, u64) {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args
-        .next()
-        .expect("usage: imbalance_audit <session.csv> [[unit:]target ...]");
-    let mut targets: Vec<(ImbalanceUnit, u64)> = args.map(|a| parse_target(&a)).collect();
+    let path = args.next().expect(
+        "usage: imbalance_audit <session.csv> [--tick-rule] [--hourly] [[unit:]target ...]",
+    );
+    let rest: Vec<String> = args.collect();
+    let tick_rule = rest.iter().any(|a| a == "--tick-rule");
+    let hourly = rest.iter().any(|a| a == "--hourly");
+    let mut targets: Vec<(ImbalanceUnit, u64)> = rest
+        .iter()
+        .filter(|a| !a.starts_with("--"))
+        .map(|a| parse_target(a))
+        .collect();
     if targets.is_empty() {
         targets = vec![(ImbalanceUnit::Trades, 2000), (ImbalanceUnit::Trades, 5000)];
     }
 
     let text = std::fs::read_to_string(&path).expect("read session file");
     let parsed = parse_file(&text, ParseOptions::default()).expect("parse session");
-    let trades = parsed.trades;
+    let recorded_source = parsed
+        .header
+        .side_source
+        .as_deref()
+        .unwrap_or("?")
+        .to_owned();
+    let recorded_len = parsed.trades.len();
+    let trades = if tick_rule {
+        relabel_tick_rule(parsed.trades)
+    } else {
+        parsed.trades
+    };
     let n = trades.len();
     println!("== session {path}");
-    println!(
-        "side_source={}  trades={n}",
-        parsed.header.side_source.as_deref().unwrap_or("?")
-    );
+    if tick_rule {
+        println!(
+            "side_source={recorded_source} -> tick_rule (re-derived)  trades={n} \
+             (of {recorded_len}; {} dropped before the first price move)",
+            recorded_len - n
+        );
+    } else {
+        println!("side_source={recorded_source}  trades={n}");
+    }
     if n == 0 {
         return;
     }
@@ -104,6 +165,12 @@ fn main() {
         let mut counts: Vec<u64> = Vec::new();
         let mut durs_ms: Vec<u64> = Vec::new();
         let mut cap_closes = 0usize;
+        // Per clock hour, in the recording's own timezone: (bars, trades in
+        // them, bars that hit the cap). A `BTreeMap` so the report comes out
+        // in session order whatever the tape did.
+        let mut by_hour: std::collections::BTreeMap<i64, (u64, u64, u64)> =
+            std::collections::BTreeMap::new();
+        let tz_ms = parsed.header.timezone.millis();
         for t in &trades {
             if let Some(bar) = b.push(t) {
                 counts.push(bar.trade_count);
@@ -115,6 +182,13 @@ fn main() {
                     if bar.trade_count >= cap {
                         cap_closes += 1;
                     }
+                    let hour = (bar.close_time + tz_ms)
+                        .div_euclid(3_600_000)
+                        .rem_euclid(24);
+                    let slot = by_hour.entry(hour).or_insert((0, 0, 0));
+                    slot.0 += 1;
+                    slot.1 += bar.trade_count;
+                    slot.2 += u64::from(bar.trade_count >= cap);
                 }
             }
         }
@@ -164,5 +238,17 @@ fn main() {
             percentile(&durs_ms, 0.90) as f64 / 1000.0,
             durs_ms.last().copied().unwrap_or(0) as f64 / 1000.0,
         );
+        if hourly {
+            // What the trader actually sees: one hour on screen, not a day
+            // averaged. A target whose bar length swings between hours is a
+            // different chart every hour at the same setting.
+            for (hour, (bars, trades_in, capped)) in &by_hour {
+                println!(
+                    "   h{hour:02}: bars={bars:<5} trades/bar={:<7.0} cap_closes={capped} ({:.0}%)",
+                    *trades_in as f64 / *bars as f64,
+                    100.0 * *capped as f64 / *bars as f64,
+                );
+            }
+        }
     }
 }
