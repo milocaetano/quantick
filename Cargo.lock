@@ -2622,6 +2622,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-strategy"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-sim",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
