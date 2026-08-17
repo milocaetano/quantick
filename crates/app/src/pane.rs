@@ -2010,17 +2010,35 @@ impl ChartPane {
             ArmedState::Done => theme::TEXT_MUTED,
             ArmedState::Disarmed { .. } => theme::TEXT_FAINT,
         };
+        /// Badge label size — the small-annotation size the band chips use.
+        const BADGE_FONT_PX: f32 = 11.0;
+        /// Ground padding around the label, and the gap that lifts the
+        /// badge off the drawing's top-left corner.
+        const BADGE_PAD_X_PX: f32 = 3.0;
+        const BADGE_PAD_Y_PX: f32 = 2.0;
+        const BADGE_LIFT_PX: f32 = 4.0;
+        const BADGE_CORNER_PX: f32 = 3.0;
+        /// Ground opacity: readable over candles, still a whisper.
+        const BADGE_GROUND_ALPHA: f32 = 0.85;
         let text = crate::strategy_anchors::badge_text(instance);
-        let position = anchor + egui::vec2(2.0, -4.0);
+        let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
         // A whisper of ground behind the label so it stays readable over
         // candles; galley first, box after, text last.
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), color);
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(BADGE_FONT_PX), color);
         let rect = egui::Rect::from_min_size(
-            position - egui::vec2(3.0, galley.size().y + 3.0),
-            galley.size() + egui::vec2(6.0, 4.0),
+            position - egui::vec2(BADGE_PAD_X_PX, galley.size().y + BADGE_PAD_Y_PX + 1.0),
+            galley.size() + egui::vec2(2.0 * BADGE_PAD_X_PX, 2.0 * BADGE_PAD_Y_PX),
         );
-        painter.rect_filled(rect, 3.0, theme::CANVAS.gamma_multiply(0.85));
-        painter.galley(rect.min + egui::vec2(3.0, 2.0), galley, color);
+        painter.rect_filled(
+            rect,
+            BADGE_CORNER_PX,
+            theme::CANVAS.gamma_multiply(BADGE_GROUND_ALPHA),
+        );
+        painter.galley(
+            rect.min + egui::vec2(BADGE_PAD_X_PX, BADGE_PAD_Y_PX),
+            galley,
+            color,
+        );
     }
 
     /// The strategy seat of the per-drawing menu: arm a bot on this region,
@@ -2028,7 +2046,7 @@ impl ChartPane {
     /// shape whose two anchors honestly bound a price region today.
     fn draw_strategy_menu_entries(&mut self, ui: &mut egui::Ui, index: usize) {
         let drawing = &self.drawings.items()[index];
-        if drawing.tool.id() != "rectangle" || drawing.band != DrawingBand::Price {
+        if drawing.tool.id() != drawings::RECTANGLE_TOOL_ID || drawing.band != DrawingBand::Price {
             return;
         }
         let id = drawing.id;

@@ -6892,14 +6892,24 @@ impl QuantickApp {
         let Some(mode) = self.pending_strategy_demo else {
             return;
         };
+        /// Fewest bars before the demo stages: enough for the shipped
+        /// 20-body window to be warm and the rectangle to have tape to span.
+        const DEMO_STRATEGY_MIN_SLOTS: usize = 25;
+        /// How far back of the newest bar the rectangle's left edge sits.
+        const DEMO_STRATEGY_LOOKBACK_BARS: usize = 40;
+        /// How far past the newest bar its right edge reaches, keeping the
+        /// region alive into the future like a stretched hand-drawn one.
+        const DEMO_STRATEGY_AHEAD_BARS: f32 = 6.0;
+        /// Half-height of the region, as a fraction of the newest close.
+        const DEMO_STRATEGY_BAND_FRACTION: f64 = 0.03;
         let slots = self.active_tab_mut().flow_pane.slots();
-        if slots < 25 {
+        if slots < DEMO_STRATEGY_MIN_SLOTS {
             return;
         }
         self.pending_strategy_demo = None;
         let Some(rectangle) = drawings::DRAWING_TOOLS
             .into_iter()
-            .find(|tool| tool.id() == "rectangle")
+            .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
         else {
             return;
         };
@@ -6912,17 +6922,21 @@ impl QuantickApp {
             else {
                 return;
             };
-            let start = newest.saturating_sub(40);
+            let start = newest.saturating_sub(DEMO_STRATEGY_LOOKBACK_BARS);
             #[allow(clippy::cast_precision_loss)]
             let anchors = [
                 drawings::ChartPoint::at_time(
                     start as f32,
-                    close * 0.97,
+                    close * (1.0 - DEMO_STRATEGY_BAND_FRACTION),
                     pane.slot_open_time(start),
                 ),
                 // Past the newest bar no market time exists to name; the
                 // anchor carries none, like a hand-dropped one would.
-                drawings::ChartPoint::at_time(newest as f32 + 6.0, close * 1.03, None),
+                drawings::ChartPoint::at_time(
+                    newest as f32 + DEMO_STRATEGY_AHEAD_BARS,
+                    close * (1.0 + DEMO_STRATEGY_BAND_FRACTION),
+                    None,
+                ),
             ];
             for point in anchors {
                 pane.drawings

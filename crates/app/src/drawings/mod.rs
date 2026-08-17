@@ -895,6 +895,11 @@ register_drawing_tools!(
     text,
 );
 
+// The rectangle's registry id, re-exported for the strategy seat — the one
+// gate that names a specific shape (two anchors honestly bound a price
+// region), in the `frvp::TOOL_ID` idiom.
+pub use rectangle::TOOL_ID as RECTANGLE_TOOL_ID;
+
 // The profile drawing's payload types, re-exported for `crate::frvp` — the
 // refresh pass that folds engine ladders into the cache the paint reads.
 pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
