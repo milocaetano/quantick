@@ -45,6 +45,21 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
 ///
 /// Trades before the first price move have no side to infer; the live mapper
 /// drops them, so this drops them too rather than inventing one.
+///
+/// **A deliberate second copy, and the reason it is one.** `feed-mt5`'s
+/// `map::tick_rule` calls itself "the one place the rule lives", and it is
+/// right to: this example cannot call it, because `replay` depending on
+/// `feed-mt5` would be a reverse edge (feeds are producers, and no domain
+/// crate links one). The rule is pure, deterministic and clock-free, so it
+/// belongs in `engine` with both callers delegating — a port extraction worth
+/// its own change, not a drive-by here.
+///
+/// Until then, the divergence to know about: the live mapper rejects bad
+/// prices, zero volumes and missing quotes *before* recording `prev_price`,
+/// so a rejected tick does not move the reference. This copy advances
+/// `prev_price` on every row, which is exact for a parsed recording — every
+/// row already survived `parse_file`'s validation — and would not be for a
+/// raw tick stream.
 fn relabel_tick_rule(trades: Vec<Trade>) -> Vec<Trade> {
     let mut prev_price = None;
     let mut prev_side = None;
@@ -85,6 +100,16 @@ fn main() {
     let rest: Vec<String> = args.collect();
     let tick_rule = rest.iter().any(|a| a == "--tick-rule");
     let hourly = rest.iter().any(|a| a == "--hourly");
+    // Reject unknown flags rather than ignoring them. A silently swallowed
+    // `--tickrule` would print a full, confident report built on the
+    // recording's venue sides — a different tape from the live one — and this
+    // is the tool a trader picks a live target with.
+    if let Some(bad) = rest
+        .iter()
+        .find(|a| a.starts_with("--") && a != &"--tick-rule" && a != &"--hourly")
+    {
+        panic!("unknown flag {bad}; expected --tick-rule or --hourly");
+    }
     let mut targets: Vec<(ImbalanceUnit, u64)> = rest
         .iter()
         .filter(|a| !a.starts_with("--"))
@@ -158,6 +183,9 @@ fn main() {
         runs.last().unwrap(),
     );
 
+    // Depends on the header alone, so it is read once rather than per target.
+    let tz_ms = parsed.header.timezone.millis();
+
     for (unit, target) in &targets {
         let (unit, target) = (*unit, *target);
         let mut b = ImbalanceBarBuilder::with_unit(target, unit);
@@ -167,10 +195,11 @@ fn main() {
         let mut cap_closes = 0usize;
         // Per clock hour, in the recording's own timezone: (bars, trades in
         // them, bars that hit the cap). A `BTreeMap` so the report comes out
-        // in session order whatever the tape did.
+        // in session order whatever the tape did. Only filled when `--hourly`
+        // asks for it — otherwise the whole map is built and thrown away once
+        // per target over a session of hundreds of thousands of rows.
         let mut by_hour: std::collections::BTreeMap<i64, (u64, u64, u64)> =
             std::collections::BTreeMap::new();
-        let tz_ms = parsed.header.timezone.millis();
         for t in &trades {
             if let Some(bar) = b.push(t) {
                 counts.push(bar.trade_count);
@@ -182,13 +211,22 @@ fn main() {
                     if bar.trade_count >= cap {
                         cap_closes += 1;
                     }
-                    let hour = (bar.close_time + tz_ms)
-                        .div_euclid(3_600_000)
-                        .rem_euclid(24);
-                    let slot = by_hour.entry(hour).or_insert((0, 0, 0));
-                    slot.0 += 1;
-                    slot.1 += bar.trade_count;
-                    slot.2 += u64::from(bar.trade_count >= cap);
+                    if hourly {
+                        // Saturating like every other timestamp path in the
+                        // crate: `parse_file` builds `timestamp_ms` with
+                        // saturating arithmetic, so an absurd `Date` column
+                        // can reach `i64::MAX` and a plain `+` on an
+                        // east-of-UTC offset would panic a debug build.
+                        let hour = bar
+                            .close_time
+                            .saturating_add(tz_ms)
+                            .div_euclid(3_600_000)
+                            .rem_euclid(24);
+                        let slot = by_hour.entry(hour).or_insert((0, 0, 0));
+                        slot.0 += 1;
+                        slot.1 += bar.trade_count;
+                        slot.2 += u64::from(bar.trade_count >= cap);
+                    }
                 }
             }
         }
