@@ -67,11 +67,12 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("orderbook", &[]),
     ("replay", &["engine"]),
     ("sim", &["engine"]),
+    ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
     ("pine", &["indicators"]),
     (
         "backtest",
-        &["engine", "indicators", "pine", "replay", "sim"],
+        &["engine", "indicators", "pine", "replay", "sim", "strategy"],
     ),
 ];
 

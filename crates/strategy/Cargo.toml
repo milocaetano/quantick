@@ -1,0 +1,11 @@
+[package]
+name = "quantick-strategy"
+description = "Deterministic strategy kernel: closed bars and a human-drawn region in, sim commands out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+quantick-sim = { path = "../sim" }
+rust_decimal = "1"

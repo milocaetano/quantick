@@ -15,6 +15,7 @@ quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
+quantick-strategy = { path = "../strategy" }
 rust_decimal = "1"
 # The user's documents folder (Known Folders on Windows, XDG on Linux) —
 # the paper-trading journal's durable default home. Path lookup only; no

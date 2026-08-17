@@ -1651,9 +1651,10 @@ mod paint_tests {
     use quantick_engine::{Side, TickBarBuilder, Trade, golden as engine_golden};
     use rust_decimal::Decimal;
 
-    /// `color.yellow` in the dialect's palette — what a bullish biggest bar
-    /// wears with the script's declared defaults.
-    const YELLOW: Rgba8 = Rgba8::new(0xFD, 0xD8, 0x35, 0xFF);
+    /// `color.silver` in the dialect's palette — what a bullish biggest bar
+    /// wears with the script's declared defaults (force holds the loud
+    /// white/yellow pair; the range extreme is context and whispers).
+    const SILVER: Rgba8 = Rgba8::new(0xB2, 0xB5, 0xBE, 0xFF);
 
     fn print(id: u64, price: i64) -> Trade {
         Trade {
@@ -1721,7 +1722,7 @@ mod paint_tests {
         assert!(views.paints_any(), "the chart now has paint to look up");
         assert_eq!(
             views.bar_paint(20),
-            Some(YELLOW),
+            Some(SILVER),
             "the widest bar of its window, bullish, with the declared defaults"
         );
         assert_eq!(views.bar_paint(0), None, "warm-up paints nothing");

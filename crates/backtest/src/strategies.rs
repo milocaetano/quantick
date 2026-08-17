@@ -278,6 +278,78 @@ impl Strategy for PlotSignal {
     }
 }
 
+/// The armed-rectangle strategy, headless: the same `quantick-strategy`
+/// kernel the chart arms on a drawing, driven here by a fixed price region
+/// from configuration instead of a hand-drawn rectangle.
+///
+/// One brain, two consumers — the chart's paper trading and this harness
+/// run identical trigger, gates and projections, which is what makes a
+/// backtest of the mechanical half of the hybrid setup mean something. The
+/// human half (where the region sits) is exactly the part the harness
+/// cannot supply; a fixed region approximates it and the report must be
+/// read with that difference in mind.
+pub struct ForceRegion {
+    name: String,
+    region: quantick_strategy::Region,
+    /// Kept to rebuild a fresh instance per session (`end_of_session`):
+    /// bodies and a pending operation from one recorded day must not judge
+    /// the next, the same rule the per-session simulator and indicator
+    /// host already keep.
+    params: quantick_strategy::StrategyParams,
+    force: quantick_strategy::ForceParams,
+    instance: quantick_strategy::ArmedStrategy,
+}
+
+impl ForceRegion {
+    /// Arm the kernel on `region`, hunting `params.side` force bars.
+    #[must_use]
+    pub fn new(
+        region: quantick_strategy::Region,
+        params: quantick_strategy::StrategyParams,
+        force: quantick_strategy::ForceParams,
+    ) -> Self {
+        let instance = quantick_strategy::ArmedStrategy::new(
+            params.clone(),
+            Box::new(quantick_strategy::ForceTrigger::new(force.clone())),
+        );
+        Self {
+            name: format!("force-region({}..{})", region.low(), region.high()),
+            region,
+            params,
+            force,
+            instance,
+        }
+    }
+}
+
+impl Strategy for ForceRegion {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
+        // The recorded session is the region's whole life, so the time
+        // window is always active. The flat gate mirrors the chart's:
+        // no position and no resting order (queued market actions are
+        // impossible here — the print that runs this bar's close drained
+        // the queue before the bar could close).
+        let flat = view.account.position.is_none() && view.account.orders.is_empty();
+        self.instance
+            .on_closed_bar(view.bar, &self.region, true, flat)
+    }
+
+    fn on_events(&mut self, events: &[quantick_sim::SimEvent]) -> Vec<Command> {
+        self.instance.on_sim_events(events)
+    }
+
+    fn end_of_session(&mut self) {
+        self.instance = quantick_strategy::ArmedStrategy::new(
+            self.params.clone(),
+            Box::new(quantick_strategy::ForceTrigger::new(self.force.clone())),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
