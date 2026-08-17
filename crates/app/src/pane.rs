@@ -3360,6 +3360,17 @@ impl ChartPane {
         // out once, and the default buy modifier is Shift, the very key
         // that levels a channel corner.
         //
+        // **Handles only, never a body.** A handle is a 12 px target where
+        // the two gestures genuinely collide: Shift on a corner levels the
+        // object, and there is no other way to ask for that. A body is a
+        // region, and some bodies are enormous — a fixed-range profile's
+        // hit test claims its whole histogram strip on purpose
+        // (`fixed_range_profile.rs`), so yielding bodies meant a chart with
+        // a profile on it had a hole where the aim simply did not appear.
+        // Moving a body needs no modifier at all, and a body drag reads
+        // Shift every frame, so pressing first and then holding it still
+        // constrains the move.
+        //
         // The canvas's own chrome counts too, and it does *not* live in a
         // floating layer, so `over_chrome` never sees it: the tape chip
         // and an indicator pane's header or divider are pixels a press
@@ -3368,10 +3379,9 @@ impl ChartPane {
         //
         // Per-frame path, so it costs nothing on a frame with no modifier
         // down: the aim cannot exist without one, and only then is the
-        // pick worth running (the same bounded, visible-objects-only pick
-        // the drag initiation below performs — `drawing_pick_at`, so a
-        // press that would grab an *unselected* object's handle keeps its
-        // pixel too).
+        // pick worth running — the same bounded, visible-objects-only
+        // handle pick the drag initiation below performs, so an
+        // *unselected* object's handle keeps its pixel too.
         let modifiers = ui.input(|input| input.modifiers);
         let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
         let canvas_claimed = pointer_position
@@ -3384,7 +3394,7 @@ impl ChartPane {
                         && bands::band_at(&bands, position)
                             .filter(|band| band.drawable())
                             .is_some_and(|band| {
-                                self.drawing_pick_at(position, band, history_right, total)
+                                self.drawing_handle_at(position, band, history_right, total)
                                     .is_some()
                             }))
             });

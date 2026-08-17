@@ -184,11 +184,17 @@ plot, so everything already holding a pixel outranks it, and the aim is
 cursor, no place. That is what keeps the promise: the label can never
 advertise an order the press will not make. It yields to
 
-- an annotation a press would grab, and the canvas's own chrome — the tape
-  chip, an indicator pane's header or divider (`ChartInput::canvas_claimed`,
-  answered by the pane exactly as "a tool is armed" is). The default buy
-  modifier is Shift, the very key that levels a channel corner mid-drag, so
-  without this the drawing gesture would be gone;
+- a drawing's **handle**, and the canvas's own chrome — the tape chip, an
+  indicator pane's header or divider (`ChartInput::canvas_claimed`, answered
+  by the pane exactly as "a tool is armed" is). The default buy modifier is
+  Shift, the very key that levels a channel corner mid-drag, so without this
+  the drawing gesture would be gone. **Handles only, never a body:** a handle
+  is a 12 px target where the two gestures genuinely collide, while a body is
+  a region — and some bodies are enormous, since a fixed-range profile claims
+  its whole histogram strip on purpose. Yielding bodies left a chart with a
+  profile on it with a region where the aim never appeared. Moving a body
+  needs no modifier, and a body drag reads Shift every frame, so pressing
+  first and then holding it still constrains the move;
 - an armed limit/stop from the ticket — an intent already stated, with its
   own hint on screen;
 - this module's own furniture: an overlay ✕ or bracket handle, and any

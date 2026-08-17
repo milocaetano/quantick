@@ -11310,14 +11310,20 @@ plot(close)
         );
     }
 
-    /// The pane's half of the cmd aim's yield rule, end to end: a held buy
-    /// modifier over an annotation places nothing — the press goes to the
-    /// drawing, as it always did — while the same modifier over bare
-    /// canvas rests the order. The paper-side tests hand `canvas_claimed`
-    /// in by hand and so prove only what the module does with the answer;
-    /// this is what proves the pane computes it.
+    /// The pane's half of the cmd aim's yield rule, end to end, and where
+    /// it draws the line: a held buy modifier over a drawing's **handle**
+    /// places nothing — the press goes to the drawing, so Shift still
+    /// levels a corner — while over its **body** and over bare canvas it
+    /// rests the order.
+    ///
+    /// The body half is not a detail. A fixed-range profile's hit test
+    /// claims its whole histogram strip, so yielding bodies left a chart
+    /// with a profile on it with a region where the aim never appeared at
+    /// all. The paper-side tests hand `canvas_claimed` in by hand and so
+    /// prove only what the module does with the answer; this proves what
+    /// the pane puts in it.
     #[test]
-    fn a_held_modifier_over_a_drawing_places_no_order_but_bare_canvas_does() {
+    fn the_aim_yields_a_drawings_handle_but_not_its_body() {
         let (mut app, _commands) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
@@ -11337,7 +11343,18 @@ plot(close)
             "placing it rested nothing"
         );
 
-        // On the line the trader drew: the annotation keeps its pixel.
+        // The line's own endpoint handle: Shift there means "level this",
+        // and it is the only way to ask for that.
+        click_chart_with(&mut app, &ctx, end, egui::Modifiers::SHIFT);
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "a held modifier over a handle rests no order"
+        );
+
+        // Its body, midway between the anchors: a region, not a target.
+        // Moving a body needs no modifier, so the aim wins here — this is
+        // the pixel a volume profile's histogram strip used to swallow.
         click_chart_with(
             &mut app,
             &ctx,
@@ -11345,9 +11362,10 @@ plot(close)
             egui::Modifiers::SHIFT,
         );
         run_frame(&mut app, &ctx);
-        assert!(
-            app.active_tab().paper.working_orders().is_empty(),
-            "a held modifier over a drawing rests no order"
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            1,
+            "over a body the aim still places"
         );
 
         // Bare canvas well clear of it: the aim is the last claimant, and
@@ -11361,7 +11379,7 @@ plot(close)
         run_frame(&mut app, &ctx);
         assert_eq!(
             app.active_tab().paper.working_orders().len(),
-            1,
+            2,
             "and on empty canvas the click is the order"
         );
     }
