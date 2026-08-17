@@ -3272,6 +3272,20 @@ impl QuantickApp {
         // `QUANTICK_REPLAY_DIR` must not write a QA scratch path into their
         // workspace, and accepting the default home is not a choice either.
         .with_replay_folder(self.replay_view.stored_pick().map(str::to_owned))
+        // And the starred tools, for the third time and the same reason. They
+        // are already on disk the moment the star is clicked; riding along
+        // here keeps a full-file write from erasing what the star wrote.
+        .with_favorites(self.starred_tool_ids())
+    }
+
+    /// The rail's pinned section as tool ids, in star order — the form the
+    /// workspace file keeps it in.
+    fn starred_tool_ids(&self) -> Vec<String> {
+        self.toolrail
+            .favorites()
+            .iter()
+            .map(|tool| tool.id().to_owned())
+            .collect()
     }
 
     /// The tabs and the chrome as they stand — the part a startup workspace
@@ -3303,12 +3317,10 @@ impl QuantickApp {
             rail_visible: self.toolrail.visible(),
             rail_dock: self.toolrail.dock().into(),
             perf_readings: self.show_perf,
-            favorite_tools: self
-                .toolrail
-                .favorites()
-                .iter()
-                .map(|tool| tool.id().to_owned())
-                .collect(),
+            // Never written any more: the stars are a standing choice and live
+            // at the top of the file. An arrangement that carried a copy would
+            // be an arrangement that could overwrite them on open.
+            legacy_favorite_tools: Vec::new(),
             progressive_history: self.progressive_history,
         };
         (tabs, chrome)
@@ -3336,13 +3348,16 @@ impl QuantickApp {
         // still counts: it carries the autosave setting, and Reset is how the
         // trader gets rid of it.
         self.workspace_saved = self.ui_state_path.exists();
+        // Outside the chrome block deliberately: the stars belong to the file,
+        // not to the arrangement, so a workspace with nothing else in it still
+        // hands the rail back its pinned section.
+        self.toolrail.set_favorites(&workspace.favorite_tools);
         if let Some(chrome) = &workspace.chrome {
             self.tz = TzOffset::new(chrome.timezone_minutes);
             self.dock
                 .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
             self.toolrail.set_dock(chrome.rail_dock.into());
             self.toolrail.set_visible(chrome.rail_visible);
-            self.toolrail.set_favorites(&chrome.favorite_tools);
             self.show_perf = chrome.perf_readings;
             self.progressive_history = chrome.progressive_history;
         }
@@ -3926,6 +3941,38 @@ impl QuantickApp {
         );
     }
 
+    /// Write down the tools the trader just starred or unstarred, without
+    /// disturbing anything else the workspace holds.
+    ///
+    /// The same read-swap-write as [`Self::write_replay_folder`], for the same
+    /// reason and with one addition: `save_on_exit` is not consulted. That
+    /// switch governs whether closing the window redefines the *arrangement* —
+    /// which tabs open, how the panes are split. A starred tool is not an
+    /// arrangement, and a trader who turned autosave off to keep their layout
+    /// from moving has not asked to lose their rail every session.
+    fn write_favorites(&mut self) {
+        let mut file = ui_state::load(&self.ui_state_path);
+        // Carried like [`Self::write_bookmarks`] does: it is the one live
+        // setting that belongs to the file rather than to an arrangement, and
+        // a star clicked before the file exists must not create one that says
+        // autosave is on when the trader switched it off.
+        file.save_on_exit = self.save_on_exit;
+        let tools = self.starred_tool_ids();
+        let count = tools.len();
+        file.favorite_tools = tools;
+        let written = ui_state::save(&self.ui_state_path, &file);
+        self.workspace_saved |= written;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "TOOL_FAVORITES_REMEMBERED",
+            tools = count,
+            written,
+            action = if written { "favorites_written" } else { "favorites_not_written" },
+            "the rail's pinned tools are now what this workspace opens on"
+        );
+    }
+
     /// Keep the window as it stands under `name`.
     ///
     /// A bookmark, not a startup setting: what the app opens on is untouched.
@@ -4040,7 +4087,10 @@ impl QuantickApp {
                 .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
             self.toolrail.set_dock(chrome.rail_dock.into());
             self.toolrail.set_visible(chrome.rail_visible);
-            self.toolrail.set_favorites(&chrome.favorite_tools);
+            // The pinned section is deliberately untouched. A bookmark
+            // rearranges the cockpit; the tools the trader keeps at hand are
+            // not part of the arrangement, and a bookmark named before they
+            // starred anything used to wipe the rail on open.
             self.show_perf = chrome.perf_readings;
             self.progressive_history = chrome.progressive_history;
         }
@@ -4104,17 +4154,25 @@ impl QuantickApp {
         // because coming back after a reset is the whole reason to name one:
         // deleting the safety net as part of the act it exists to undo would
         // be the single worst thing this menu could do.
-        let kept = !self.bookmarks.is_empty();
+        let bookmarks_kept = !self.bookmarks.is_empty();
+        // The starred tools survive it too, and for a plainer reason: they
+        // were never part of the arrangement being reset. Resetting a layout
+        // is not asking to rebuild the rail by hand.
+        let stars = self.starred_tool_ids();
+        // Which is why deleting the file is only right when it holds neither.
+        let kept = bookmarks_kept || !stars.is_empty();
         let forgotten = if kept {
-            let mut file = ui_state::Workspace::default().with_saved(self.bookmarks.clone());
+            let mut file = ui_state::Workspace::default()
+                .with_saved(self.bookmarks.clone())
+                .with_favorites(stars);
             file.save_on_exit = self.save_on_exit;
             ui_state::save(&self.ui_state_path, &file)
         } else {
             ui_state::forget(&self.ui_state_path)
         };
-        // The file still exists while it holds bookmarks, so Reset stays
-        // available — it is now a no-op for the startup screen and the entry
-        // says as much.
+        // The file still exists while it holds bookmarks or stars, so Reset
+        // stays available — it is now a no-op for the startup screen and the
+        // entry says as much.
         self.workspace_saved = kept && forgotten;
         tracing::info!(
             target: "quantick::app",
@@ -4123,10 +4181,11 @@ impl QuantickApp {
             path = %self.ui_state_path.display(),
             forgotten,
             bookmarks_kept = self.bookmarks.len(),
+            favorites_kept = self.toolrail.favorites().len(),
             action = if forgotten { "open_on_config_defaults" } else { "workspace_kept" },
             "workspace reset"
         );
-        self.note_workspace(match (forgotten, kept) {
+        self.note_workspace(match (forgotten, bookmarks_kept) {
             (true, true) => format!(
                 "Startup layout reset — the next launch opens on the configured default. \
                  {} saved {} kept.",
@@ -7415,6 +7474,13 @@ impl QuantickApp {
             } = self;
             let tab = &mut tabs[*active_tab];
             toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, drawing_manager_open);
+        }
+        // A star clicked this frame is on disk this frame, like the replay
+        // folder above: the pinned rail is what the trader reaches for without
+        // looking, and rebuilding it after a crash is not a thing anyone
+        // should have to do twice.
+        if self.toolrail.take_favorites_change() {
+            self.write_favorites();
         }
         let dock_response = {
             let Self {
@@ -16590,7 +16656,7 @@ plot(close)
                 rail_visible: false,
                 rail_dock: ui_state::SavedRailDock::Bottom,
                 perf_readings: false,
-                favorite_tools: Vec::new(),
+                legacy_favorite_tools: Vec::new(),
                 progressive_history: false,
             }),
         ));
@@ -17053,6 +17119,168 @@ plot(close)
         assert!(
             !ui_state::load(&app.ui_state_path).save_on_exit,
             "a trader who switched autosave off must not find it back on"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// A tool the tests can star without caring which one it is.
+    fn starrable_tool() -> crate::drawings::DrawingTool {
+        crate::drawings::DrawingTool::by_id("measure").expect("a registered drawing tool")
+    }
+
+    /// A star clicked is a star kept, on the frame it was clicked. Waiting for
+    /// a clean exit means one crash — or one session that ends any other way —
+    /// costs the trader the rail they curated.
+    #[test]
+    fn starring_a_tool_reaches_the_disk_on_the_spot() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("star-written");
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            ui_state::load(&app.ui_state_path).favorite_tools,
+            vec!["measure".to_owned()],
+            "the star is on disk with nobody having saved the workspace"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Unstarring is a choice too — it must reach the disk exactly as starring
+    /// does, or a tool the trader took off the rail would be back tomorrow.
+    #[test]
+    fn unstarring_a_tool_reaches_the_disk_too() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("star-removed");
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+
+        assert!(
+            ui_state::load(&app.ui_state_path).favorite_tools.is_empty(),
+            "the rail the trader emptied stays empty"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Autosave governs the arrangement, never the rail: a trader who switched
+    /// it off to stop their layout drifting has not asked to rebuild their
+    /// tools every session. And the write that keeps the stars must carry
+    /// nothing else — no tabs, and not autosave switched back on.
+    #[test]
+    fn starring_a_tool_is_written_with_autosave_off_and_drags_nothing_along() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("star-no-autosave");
+        app.save_on_exit = false;
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+
+        let file = ui_state::load(&app.ui_state_path);
+        assert_eq!(
+            file.favorite_tools,
+            vec!["measure".to_owned()],
+            "the star survives autosave being off"
+        );
+        assert!(
+            file.tabs.is_empty(),
+            "one standing choice was written, not the cockpit around it"
+        );
+        assert!(
+            !file.save_on_exit,
+            "and the trader's autosave switch stayed off"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Restoring a saved list is not the trader making a choice, so it must
+    /// not write one back — otherwise every launch rewrites the file for
+    /// nothing, and a startup that read a stale list would cement it.
+    #[test]
+    fn restoring_the_saved_stars_writes_nothing() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("star-restore");
+        app.toolrail.set_favorites(&["measure".to_owned()]);
+        run_frame(&mut app, &ctx);
+
+        assert!(
+            !app.ui_state_path.exists(),
+            "a restore is not a save: nothing was written"
+        );
+    }
+
+    /// A bookmark rearranges the cockpit; it does not curate the rail. One
+    /// named before the trader starred anything used to wipe the pinned
+    /// section the moment they opened it.
+    #[test]
+    fn opening_a_bookmark_leaves_the_starred_tools_alone() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("bookmark-stars");
+        // Named while the rail was empty, which is the case that used to hurt.
+        app.save_named_workspace("scalp");
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+
+        app.open_named_workspace("scalp");
+
+        assert_eq!(
+            app.starred_tool_ids(),
+            vec!["measure".to_owned()],
+            "the tools the trader keeps at hand outlive the arrangement"
+        );
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// Reset throws away the *startup arrangement*. The stars were never part
+    /// of it, so they survive — like the bookmarks beside them, and the file
+    /// stays on disk to hold them.
+    #[test]
+    fn resetting_the_startup_layout_keeps_the_starred_tools() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("reset-stars");
+        app.save_workspace("test");
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+
+        app.forget_workspace();
+
+        let file = ui_state::load(&app.ui_state_path);
+        assert_eq!(
+            file.favorite_tools,
+            vec!["measure".to_owned()],
+            "resetting a layout is not asking to rebuild the rail"
+        );
+        assert!(file.tabs.is_empty(), "and the arrangement really was reset");
+        let _ = std::fs::remove_file(&app.ui_state_path);
+    }
+
+    /// The end-to-end promise, at the seam that used to break it: stars saved
+    /// by one session are on the rail of the next one, whatever the
+    /// arrangement in between says.
+    #[test]
+    fn the_next_session_opens_on_the_stars_the_last_one_left() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.ui_state_path = scratch_ui_state("star-next-session");
+        app.toolrail.toggle_favorite(starrable_tool());
+        run_frame(&mut app, &ctx);
+
+        // A second session reading the same file, restoring as startup does.
+        let (mut next, _commands) = app_with_history(50);
+        next.ui_state_path = app.ui_state_path.clone();
+        let saved = ui_state::load(&next.ui_state_path).restore(&next.config.clone());
+        next.restore_workspace(saved);
+
+        assert_eq!(
+            next.starred_tool_ids(),
+            vec!["measure".to_owned()],
+            "the rail opens on what the trader starred"
         );
         let _ = std::fs::remove_file(&app.ui_state_path);
     }

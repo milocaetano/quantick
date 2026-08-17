@@ -443,6 +443,12 @@ pub struct ToolRail {
     /// section at the rail's tool end. Star order, not registry order, so a
     /// favorite keeps the position the trader learned.
     favorites: Vec<DrawingTool>,
+    /// A star was clicked and the choice has not been written down yet. Read
+    /// and cleared by [`ToolRail::take_favorites_change`]; set by the toggle
+    /// only, never by [`ToolRail::set_favorites`] — restoring the saved list
+    /// is not the trader making a choice, and saving it straight back would
+    /// rewrite the file on every launch for nothing.
+    favorites_changed: bool,
     /// Scroll offset of the tool band along the rail's long axis, in px.
     /// Only the Scroll stage spends it; every other stage clamps it back to
     /// zero, so unstarring back down to a rail that fits leaves no residue.
@@ -509,6 +515,7 @@ impl Default for ToolRail {
             magnet: false,
             last_family_member: BTreeMap::new(),
             favorites: Vec::new(),
+            favorites_changed: false,
             band_offset: 0.0,
             band_target: None,
             reveal_armed: false,
@@ -629,6 +636,18 @@ impl ToolRail {
         } else {
             self.favorites.push(tool);
         }
+        self.favorites_changed = true;
+    }
+
+    /// Whether the trader starred or unstarred something since this was last
+    /// asked, clearing the flag.
+    ///
+    /// The rail curates the list; it does not know where lists are kept. The
+    /// app reads this on the frame the star was clicked and writes the choice
+    /// down — the same hand-off the replay browser's folder pick uses, and for
+    /// the same reason: "it forgot my tools again" must not be one crash away.
+    pub fn take_favorites_change(&mut self) -> bool {
+        std::mem::take(&mut self.favorites_changed)
     }
 
     /// Restore the starred list from saved tool ids — the workspace file
