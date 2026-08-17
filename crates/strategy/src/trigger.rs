@@ -137,6 +137,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
+            min_body: Decimal::ZERO,
         });
         assert_eq!(trigger.on_closed_bar(&bar("100", "101")), None);
         assert_eq!(trigger.on_closed_bar(&bar("101", "102")), None);
@@ -156,6 +157,7 @@ mod tests {
             window: 2,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
+            min_body: Decimal::ZERO,
         });
         assert_eq!(trigger.status(), "waiting for bars 0/2");
         trigger.on_closed_bar(&bar("100", "101"));

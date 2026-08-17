@@ -67,6 +67,7 @@ fn run() -> RunOutcome {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
+            min_body: Decimal::ZERO,
         })),
     );
     let mut sim = Simulator::new();

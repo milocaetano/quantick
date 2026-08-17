@@ -52,6 +52,12 @@ pub struct StoredPreset {
     pub window: u32,
     pub min_factor: String,
     pub max_factor: String,
+    /// Absolute body floor in price points; `0` disables it. Added after
+    /// the format shipped, so it is optional and defaults to `0` — a bank
+    /// file written before it existed reads clean with the old behaviour,
+    /// which is why the version does not move.
+    #[serde(default = "zero_points")]
+    pub min_body: String,
     /// Take profit = close + `tp_mult` × range, in the trade's favour;
     /// `0` means no leg.
     pub tp_mult: String,
@@ -74,6 +80,12 @@ impl StoredPreset {
             window: u32::try_from(band.window).unwrap_or(20),
             min_factor: band.min_factor.to_string(),
             max_factor: band.max_factor.to_string(),
+            // The one place the form departs from the script: without an
+            // absolute floor the relative band is promiscuous on
+            // activity-cut bars (247 "forces" in one measured WIN session;
+            // 7 with this floor). Per-instrument, so it lives in the
+            // preset the trader edits, not in the kernel's defaults.
+            min_body: "100".to_owned(),
             tp_mult: "1.0".to_owned(),
             sl_mult: "1.0".to_owned(),
             rearm: "one_shot".to_owned(),
@@ -113,6 +125,10 @@ impl StoredPreset {
         if min_factor <= Decimal::ZERO || max_factor <= Decimal::ZERO {
             return None;
         }
+        let min_body = Decimal::from_str(&self.min_body).ok()?;
+        if min_body < Decimal::ZERO {
+            return None;
+        }
         let params = StrategyParams {
             side,
             quantity,
@@ -124,6 +140,7 @@ impl StoredPreset {
             window: self.window as usize,
             min_factor,
             max_factor,
+            min_body,
         };
         Some((params, force))
     }
@@ -133,6 +150,12 @@ impl StoredPreset {
 #[must_use]
 pub fn side_token(side: Side) -> &'static str {
     side.as_str()
+}
+
+/// Serde default for [`StoredPreset::min_body`]: rows from before the field
+/// existed read as "floor off".
+fn zero_points() -> String {
+    "0".to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -266,7 +289,50 @@ mod tests {
         assert_eq!(params.side, Side::Buy);
         assert_eq!(params.rearm, Rearm::OneShot);
         assert_eq!(force.window, 20);
+        assert_eq!(
+            force.min_body,
+            Decimal::from(100),
+            "the form's starting point carries the elephant floor"
+        );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// A bank written before the body floor existed reads clean with the
+    /// floor off — the optional-field contract that keeps the version at 1.
+    #[test]
+    fn a_pre_floor_bank_row_reads_with_the_floor_off() {
+        let path = scratch("prefloor");
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.\"BF antiga\"]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"1.5\"\n\
+             max_factor = \"2.5\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.0\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        let bank = StrategyBank::load_from(&path);
+        let preset = bank.get("BF antiga").expect("old row reads");
+        let (_, force) = preset.to_kernel().expect("and still compiles");
+        assert_eq!(
+            force.min_body,
+            Decimal::ZERO,
+            "absent floor means off, not refused"
+        );
+        std::fs::remove_file(&path).ok();
+
+        let mut negative = StoredPreset::starting_point(Side::Buy);
+        negative.min_body = "-5".to_owned();
+        assert!(
+            negative.to_kernel().is_none(),
+            "a negative floor is refused whole"
+        );
     }
 
     #[test]

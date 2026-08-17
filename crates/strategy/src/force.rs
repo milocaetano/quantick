@@ -16,7 +16,8 @@ use std::collections::VecDeque;
 use quantick_engine::{Bar, Side};
 use rust_decimal::Decimal;
 
-/// The force-bar band, mirroring the `force_bar.pine` inputs.
+/// The force-bar band, mirroring the `force_bar.pine` inputs — plus one
+/// gate the script never needed on time candles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForceParams {
     /// How many bodies the average looks back over (the script's
@@ -27,17 +28,29 @@ pub struct ForceParams {
     /// Upper edge of the band (inclusive). Above it the bar is exhaustion,
     /// not force.
     pub max_factor: Decimal,
+    /// Absolute floor on the body, in price units. Zero disables it.
+    ///
+    /// The relative band alone is honest on time candles but promiscuous
+    /// on activity-cut bars: a volume bar carries the same volume as every
+    /// neighbour by construction, congestion shrinks the average body, and
+    /// a 35-point body reads "1.7× force". Measured on a WINV26 session,
+    /// the bare band marked 247 of 1,355 bars as force; a 100-point floor
+    /// left 7. An elephant has a size, not only a ratio.
+    pub min_body: Decimal,
 }
 
 impl ForceParams {
     /// The script's shipped defaults: body between 1.5× and 2.5× the
-    /// average of 20 bodies.
+    /// average of 20 bodies, no absolute floor — faithful to the
+    /// TradingView original. Consumers pick their own floor per
+    /// instrument (the app's preset form defaults to 100 points).
     #[must_use]
     pub fn default_band() -> Self {
         Self {
             window: 20,
             min_factor: Decimal::new(15, 1),
             max_factor: Decimal::new(25, 1),
+            min_body: Decimal::ZERO,
         }
     }
 }
@@ -162,7 +175,7 @@ impl ForceWindow {
         let (min, max) = ordered_band(&self.params);
         if ratio > max {
             BarVerdict::Exhaustion { side, ratio }
-        } else if ratio >= min {
+        } else if ratio >= min && body >= self.params.min_body {
             BarVerdict::Force(ForceBar {
                 side,
                 body,
@@ -170,6 +183,8 @@ impl ForceWindow {
                 ratio,
             })
         } else {
+            // Inside the band but under the absolute floor is still quiet:
+            // a ratio without a size is not an elephant.
             BarVerdict::Quiet { ratio }
         }
     }
@@ -217,6 +232,7 @@ mod tests {
             window: len,
             min_factor: dec(min),
             max_factor: dec(max),
+            min_body: Decimal::ZERO,
         })
     }
 
@@ -318,6 +334,46 @@ mod tests {
         match w.classify(&bar("100", "103")) {
             BarVerdict::Force(force) => assert_eq!(force.ratio, dec("1.2")),
             other => panic!("expected force after eviction, got {other:?}"),
+        }
+    }
+
+    /// The absolute floor: a ratio without a size is not an elephant. In
+    /// congestion the average body shrinks and modest bars clear the
+    /// relative band — measured on a real WINV26 session, the bare band
+    /// marked 247 of 1,355 volume bars as force; this gate is what turns
+    /// the ruler back into "elephant".
+    #[test]
+    fn the_body_floor_holds_quiet_what_the_band_alone_would_call_force() {
+        let mut gated = ForceWindow::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_body: dec("100"),
+        });
+        // Bodies 30, 30, then 60: ratio 1.5 — band says force, floor says no.
+        gated.classify(&bar("100", "130"));
+        gated.classify(&bar("130", "160"));
+        assert_eq!(
+            gated.classify(&bar("160", "220")),
+            BarVerdict::Quiet { ratio: dec("1.5") },
+            "60 points of body is not an elephant under a 100-point floor"
+        );
+
+        // Bodies 100, 100, then 200: ratio 1.5 and body 200 — both gates pass.
+        let mut gated = ForceWindow::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_body: dec("100"),
+        });
+        gated.classify(&bar("1000", "1100"));
+        gated.classify(&bar("1100", "1200"));
+        match gated.classify(&bar("1200", "1400")) {
+            BarVerdict::Force(force) => {
+                assert_eq!(force.body, dec("200"));
+                assert_eq!(force.ratio, dec("1.5"));
+            }
+            other => panic!("a 200-point body at 1.5x is force, got {other:?}"),
         }
     }
 

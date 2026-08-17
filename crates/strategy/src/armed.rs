@@ -411,6 +411,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
             })),
         )
     }
@@ -580,6 +581,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
             })),
         );
         warm_then_force(&mut instance, &region);
@@ -675,6 +677,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
             })),
         );
         let commands = warm_then_force(&mut instance, &region);

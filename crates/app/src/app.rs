@@ -6863,8 +6863,21 @@ impl QuantickApp {
                         egui::TextEdit::singleline(&mut popup.form.max_factor).desired_width(40.0),
                     );
                     ui.label("× the average of");
-                    ui.add(egui::DragValue::new(&mut popup.form.window).range(1..=500));
+                    ui.add(
+                        egui::DragValue::new(&mut popup.form.window)
+                            .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
+                    );
                     ui.label("bodies");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("and body ≥");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut popup.form.min_body).desired_width(50.0),
+                    );
+                    ui.label("pts (0 = off)").on_hover_text(
+                        "the elephant floor: the relative band alone marks dozens of small \
+                         bars as force on activity-cut bars; an elephant has a size",
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("projection: TP");
@@ -10382,6 +10395,9 @@ plot(close)
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         form.window = 3;
+        // The fixture's bodies are 4 points; the elephant floor is off so
+        // the test exercises the band, not the floor (which has its own).
+        form.min_body = "0".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
             .expect("the form compiles and the drawing exists");
 
@@ -10503,6 +10519,7 @@ plot(close)
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         form.window = 3;
+        form.min_body = "0".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, first, &form, "a".to_owned())
             .expect("arms");
         app.arm_strategy_instance(pane::PaneSide::Flow, second, &form, "b".to_owned())

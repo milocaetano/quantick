@@ -37,9 +37,15 @@ headless over recorded sessions. Never fork strategy logic per consumer.
 - **Trigger — force bar**: body between `min_factor`× and `max_factor`×
   the simple average of the last `window` bodies, the judged bar
   included, exactly the shipped `force_bar.pine` ruler (defaults 1.5,
-  2.5, 20). A body above the band is **exhaustion and does not fire** —
-  too big to chase, by design. Dojis have no side. The window must be
-  full; warmup is a badge state, not a silent zero.
+  2.5, 20) — **plus an absolute body floor in points** (`min_body`, form
+  default 100; `0` disables). The relative band alone is honest on time
+  candles but promiscuous on activity-cut bars: measured on a live WINV26
+  session, the bare band called 247 of 1,355 volume bars "force" (a
+  55-point body at 1.62× fired a real paper entry); the 100-point floor
+  left 7. An elephant has a size, not only a ratio. A body above the band
+  is **exhaustion and does not fire** — too big to chase, by design.
+  Dojis have no side. The window must be full; warmup is a badge state,
+  not a silent zero.
 - **Region**: the rectangle's price band, inclusive of its edges; the
   bar's *close* must sit inside it, and the bar's slot inside the
   rectangle's span of the tape. A rectangle that ended in the past is an

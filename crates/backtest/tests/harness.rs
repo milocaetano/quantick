@@ -171,6 +171,7 @@ fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
             window: 3,
             min_factor: "1.5".parse().expect("fixture factor"),
             max_factor: "2.5".parse().expect("fixture factor"),
+            min_body: Decimal::ZERO,
         },
     );
     let run = run_session(&session, BarSpec::Tick(2), &mut strategy);
