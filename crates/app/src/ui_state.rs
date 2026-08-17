@@ -705,31 +705,60 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
-/// Load the saved workspace; the default (nothing saved) when the file is
-/// missing, unreadable or from an unknown version — reported, never half-read.
-#[must_use]
-pub fn load(path: &Path) -> Workspace {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Workspace::default();
+/// What reading the file produced, before a caller decides what to do about
+/// one it cannot use.
+///
+/// The two readers below want opposite things from a file this build cannot
+/// parse — [`load`] wants a window on screen, [`load_for_edit`] wants the file
+/// left alone — and the parse itself is the same either way. Naming the
+/// outcomes keeps that one parse in one place.
+enum Read {
+    /// Parsed, this build's version, legacy fields already lifted.
+    Workspace(Box<Workspace>),
+    /// No file here yet.
+    Missing,
+    /// A file that is here and did not parse.
+    Unreadable(String),
+    /// A file from a version this build does not know.
+    UnknownVersion(u32),
+}
+
+fn read(path: &Path) -> Read {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Read::Missing,
+        Err(error) => return Read::Unreadable(error.to_string()),
     };
     match toml::from_str::<Workspace>(&text) {
         Ok(mut workspace) if workspace.version == FORMAT_VERSION => {
             workspace.lift_legacy_favorites();
-            workspace
+            Read::Workspace(Box::new(workspace))
         }
-        Ok(workspace) => {
+        Ok(workspace) => Read::UnknownVersion(workspace.version),
+        Err(error) => Read::Unreadable(error.to_string()),
+    }
+}
+
+/// Load the saved workspace; the default (nothing saved) when the file is
+/// missing, unreadable or from an unknown version — reported, never half-read.
+#[must_use]
+pub fn load(path: &Path) -> Workspace {
+    match read(path) {
+        Read::Workspace(workspace) => *workspace,
+        Read::Missing => Workspace::default(),
+        Read::UnknownVersion(version) => {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "UI_STATE_VERSION",
                 path = %path.display(),
-                version = workspace.version,
+                version,
                 action = "opening_on_defaults",
                 "workspace file is from an unknown version"
             );
             Workspace::default()
         }
-        Err(error) => {
+        Read::Unreadable(error) => {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -740,6 +769,51 @@ pub fn load(path: &Path) -> Workspace {
                 "workspace file is unreadable"
             );
             Workspace::default()
+        }
+    }
+}
+
+/// The file as it stands, for an edit that changes one field and writes the
+/// rest back untouched. `None` means "do not write here".
+///
+/// [`load`] answers "open on the defaults" for a file it cannot use, which is
+/// right at startup: a trader launching the app wants a window either way, and
+/// nothing is written until they ask for it. It is the wrong answer for a
+/// read-swap-write. Swapping one field into `Workspace::default()` and saving
+/// *that* would replace a workspace this build merely failed to understand —
+/// one written by a newer build, one a bad shutdown truncated — with an empty
+/// one, and it would happen on a single click, with the trader's tabs,
+/// bookmarks and replay folder inside the file being discarded.
+///
+/// A missing file is `Some(default)`: writing the first one loses nothing.
+#[must_use]
+pub fn load_for_edit(path: &Path) -> Option<Workspace> {
+    match read(path) {
+        Read::Workspace(workspace) => Some(*workspace),
+        Read::Missing => Some(Workspace::default()),
+        Read::UnknownVersion(version) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_NOT_OURS_TO_EDIT",
+                path = %path.display(),
+                version,
+                action = "leave_the_file_alone",
+                "a workspace from an unknown version is not rewritten"
+            );
+            None
+        }
+        Read::Unreadable(error) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_NOT_OURS_TO_EDIT",
+                path = %path.display(),
+                %error,
+                action = "leave_the_file_alone",
+                "an unreadable workspace is not rewritten"
+            );
+            None
         }
     }
 }

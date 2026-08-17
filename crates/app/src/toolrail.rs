@@ -654,15 +654,26 @@ impl ToolRail {
     /// path. An id no registered tool carries is dropped, a duplicate keeps
     /// its first position, and saved order is kept: it is the order the
     /// trader starred in.
-    pub fn set_favorites(&mut self, ids: &[String]) {
+    ///
+    /// Returns the ids it did not recognise, so the caller can say so. The
+    /// prune used to be private and harmless — it only reached the disk on an
+    /// explicit save. Now the trader's next star click writes this list back,
+    /// which makes the loss permanent, and losing a saved id without a word is
+    /// exactly the silent patching `CLAUDE.md` rules out. The sibling restore
+    /// logs `UI_STATE_TAB_DROPPED` for a tab it cannot open, for the same
+    /// reason.
+    pub fn set_favorites(&mut self, ids: &[String]) -> Vec<String> {
         self.favorites.clear();
+        let mut unknown = Vec::new();
         for id in ids {
-            if let Some(tool) = DrawingTool::by_id(id)
-                && !self.favorites.contains(&tool)
-            {
-                self.favorites.push(tool);
+            match DrawingTool::by_id(id) {
+                Some(tool) if !self.favorites.contains(&tool) => self.favorites.push(tool),
+                // A duplicate is not a loss: the first position stands.
+                Some(_) => {}
+                None => unknown.push(id.clone()),
             }
         }
+        unknown
     }
 
     /// Park the scrolling tool band at `offset` px along the rail — the
@@ -2448,6 +2459,33 @@ mod tests {
         assert!(
             rail.is_favorite(members[1]),
             "arming a favorite must never unstar it"
+        );
+    }
+
+    /// A saved id this build does not offer is reported, not swallowed.
+    ///
+    /// It used to be harmless: the pruned list only reached the disk on an
+    /// explicit save. Now the trader's next star click writes it back, so the
+    /// drop is permanent — and dropping something a file said without a word
+    /// is the silent patching `CLAUDE.md` rules out.
+    #[test]
+    fn a_starred_id_this_build_does_not_offer_is_reported() {
+        let mut rail = ToolRail::default();
+
+        let unknown = rail.set_favorites(&[
+            "measure".to_owned(),
+            "volume-profile-from-tomorrow".to_owned(),
+        ]);
+
+        assert_eq!(
+            unknown,
+            vec!["volume-profile-from-tomorrow".to_owned()],
+            "the caller is told exactly what it lost"
+        );
+        assert_eq!(
+            rail.favorites().len(),
+            1,
+            "and the rail keeps the tools it does have"
         );
     }
 
