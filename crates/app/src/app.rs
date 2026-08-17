@@ -5985,14 +5985,14 @@ impl QuantickApp {
                         let shared = drawing.scope == drawings::DrawingScope::AllCharts;
                         let off_series = drawing.off_series;
                         let foreign_market = drawing.foreign_market;
-                        let name = drawing.tool.name();
+                        let name = drawing.display_label(index);
                         // Read out with the rest of the row's facts, so the
                         // row closure holds no borrow of the pane.
                         let band = self.focused_pane().band_label(drawing);
                         let band_hint = band.hint();
                         let band_chip = band.chip();
                         ui.horizontal(|ui| {
-                            let mut label = egui::RichText::new(format!("{} {}", name, index + 1));
+                            let mut label = egui::RichText::new(name);
                             if hidden {
                                 label = label.weak();
                             }
@@ -9803,6 +9803,119 @@ plot(close)
             "an unavailable layer is still listed, just not switchable"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// A right-click that lands on a drawing owns a section of the menu:
+    /// the object by name, rename, lock, hide, delete — and the lock keeps
+    /// guarding the delete there like everywhere else.
+    #[test]
+    fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
+        let (mut app, _events, _commands, _book) = test_app();
+
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(1.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(5.0, 110.0));
+            let id = pane.drawings.items()[0].id;
+            // The press half of the gesture, staged: the click resolved the
+            // object and seeded the rename buffer, like the canvas path does.
+            pane.context_menu_drawing = Some(id);
+        }
+
+        let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
+            with_flow_pane(app, |pane, chrome| {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .show(ctx, |ui| pane.draw_layer_menu(ui, chrome));
+                    },
+                );
+            });
+        };
+
+        menu_frame(&mut app, Vec::new());
+        let labels: Vec<&str> = app
+            .active_tab()
+            .flow_pane
+            .drawing_menu_rects
+            .iter()
+            .map(|(label, _)| *label)
+            .collect();
+        assert_eq!(
+            labels,
+            ["Rename", "Lock", "Hide", "Delete"],
+            "the clicked object owns its section of the menu"
+        );
+
+        let click = |rects: &[(&'static str, egui::Rect)], label: &str| {
+            let pos = rects
+                .iter()
+                .find(|(entry, _)| *entry == label)
+                .unwrap_or_else(|| panic!("{label} is offered"))
+                .1
+                .center();
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ]
+        };
+
+        // Locked first: the delete is offered disabled and must do nothing.
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .set_locked_at(0, true);
+        menu_frame(&mut app, Vec::new());
+        let rects = app.active_tab().flow_pane.drawing_menu_rects.clone();
+        let events = click(&rects, "Delete");
+        menu_frame(&mut app, events);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "a locked object never deletes from the menu"
+        );
+
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .set_locked_at(0, false);
+        menu_frame(&mut app, Vec::new());
+        let rects = app.active_tab().flow_pane.drawing_menu_rects.clone();
+        let events = click(&rects, "Delete");
+        menu_frame(&mut app, events);
+        assert!(
+            app.active_tab().flow_pane.drawings.items().is_empty(),
+            "unlocked, the menu's delete removes the object"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.context_menu_drawing,
+            None,
+            "the section lets go of the object it deleted"
+        );
     }
 
     /// The two panes open different menus, so the scripted right-click has to

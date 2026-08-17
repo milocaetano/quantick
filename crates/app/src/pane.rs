@@ -989,6 +989,18 @@ pub struct ChartPane {
     /// `anchor_snap` resolved for that click — so the menu never re-derives
     /// a projection and a new tool's snap rule needs no edit here.
     context_menu_places: Vec<(drawings::DrawingTool, ChartPoint)>,
+    /// The drawing under the last right-click, resolved at press time like
+    /// the price and the tape flag. Held as an id, not an index: the menu
+    /// stays open across frames, and an index can go stale under it.
+    /// `pub(crate)` so the menu tests can stage the click's outcome.
+    pub(crate) context_menu_drawing: Option<drawings::DrawingId>,
+    /// Rename buffer for the layer menu's drawing section, seeded from the
+    /// clicked object's current name on the press that opened the menu.
+    context_menu_rename: String,
+    /// Test-only trace of the drawing section's widgets, the
+    /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
+    #[cfg(test)]
+    pub drawing_menu_rects: Vec<(&'static str, egui::Rect)>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1155,6 +1167,10 @@ impl ChartPane {
             paper_hud_anchor: None,
             context_menu_price: None,
             context_menu_places: Vec::new(),
+            context_menu_drawing: None,
+            context_menu_rename: String::new(),
+            #[cfg(test)]
+            drawing_menu_rects: Vec::new(),
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_band_hint: None,
@@ -1795,6 +1811,22 @@ impl ChartPane {
     }
 
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        // The drawing under the click is the most specific thing the click
+        // named, so its section rides above everything — including the
+        // trade actions, which answer for a bare price, not an object.
+        #[cfg(test)]
+        self.drawing_menu_rects.clear();
+        if let Some(id) = self.context_menu_drawing {
+            match self.drawings.index_of(id) {
+                Some(index) => {
+                    self.draw_drawing_menu_section(ui, index);
+                    ui.separator();
+                }
+                // Deleted while the menu was open (undo, another surface):
+                // the section vanishes instead of acting on a ghost.
+                None => self.context_menu_drawing = None,
+            }
+        }
         // The trade section rides on top, on the pane that owns order
         // entry, anchored at the price the right-click landed on.
         if chrome.paper_owns_input
@@ -1869,6 +1901,70 @@ impl ChartPane {
             self.indicators.toggle_hidden(slot);
             chrome.layers.indicators_changed = true;
         }
+    }
+
+    /// The per-drawing section of the layer menu: the object the
+    /// right-click landed on, by name, with its own actions. This is the
+    /// context-menu host `drawings/action_bar.rs` reserved a seat for.
+    fn draw_drawing_menu_section(&mut self, ui: &mut egui::Ui, index: usize) {
+        let label = self.drawings.items()[index].display_label(index);
+        ui.label(
+            egui::RichText::new(label)
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        // Rename applies when the field loses focus (Enter included) — one
+        // undo step, not one per keystroke. Whitespace clears back to the
+        // derived label; the store normalises it.
+        let rename = ui.add(
+            egui::TextEdit::singleline(&mut self.context_menu_rename)
+                .hint_text("name this object")
+                .desired_width(150.0),
+        );
+        #[cfg(test)]
+        self.drawing_menu_rects.push(("Rename", rename.rect));
+        if rename.lost_focus() {
+            let name = std::mem::take(&mut self.context_menu_rename);
+            self.drawings.rename_at(index, &name);
+            self.context_menu_rename = name;
+        }
+        let locked = self.drawings.items()[index].locked;
+        let hidden = self.drawings.items()[index].hidden;
+        let lock = ui
+            .button(if locked { "Unlock" } else { "Lock" })
+            .on_hover_text("a locked object rejects geometry edits and plain deletes");
+        #[cfg(test)]
+        self.drawing_menu_rects
+            .push((if locked { "Unlock" } else { "Lock" }, lock.rect));
+        if lock.clicked() {
+            self.drawings.set_locked_at(index, !locked);
+            ui.close_menu();
+        }
+        let eye = ui.button(if hidden { "Show" } else { "Hide" });
+        #[cfg(test)]
+        self.drawing_menu_rects
+            .push((if hidden { "Show" } else { "Hide" }, eye.rect));
+        if eye.clicked() {
+            self.drawings.set_hidden_at(index, !hidden);
+            ui.close_menu();
+        }
+        let delete = if locked {
+            ui.add_enabled(false, egui::Button::new("Delete"))
+                .on_disabled_hover_text("unlock first — a locked object never deletes by accident")
+        } else {
+            let delete = ui.button("Delete");
+            if delete.clicked() {
+                self.drawings.select(Some(index));
+                self.drawings.delete_selected(false);
+                self.context_menu_drawing = None;
+                ui.close_menu();
+            }
+            delete
+        };
+        #[cfg(test)]
+        self.drawing_menu_rects.push(("Delete", delete.rect));
+        #[cfg(not(test))]
+        let _ = delete;
     }
 
     /// The bar spec implied by the current selector state.
@@ -3292,6 +3388,20 @@ impl ChartPane {
             // snap — the anchored VWAP's candle magnet included.
             let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
             self.context_menu_on_tape = self.click_on_tape(position.x);
+            // The most specific thing under the click: a drawing, resolved
+            // on the band the click actually landed in (a CVD line and a
+            // price line can share the pixel). Right-click selects like the
+            // primary press does, so the menu and the context bar agree on
+            // which object is being acted on.
+            let clicked = bands::band_at(&bands, position)
+                .filter(|band| band.drawable())
+                .and_then(|band| self.drawing_at(position, band, history_right, total));
+            self.context_menu_drawing = clicked.map(|index| {
+                self.drawings.select(Some(index));
+                let drawing = &self.drawings.items()[index];
+                self.context_menu_rename = drawing.name.clone().unwrap_or_default();
+                drawing.id
+            });
             self.context_menu_places.clear();
             for tool in drawings::DRAWING_TOOLS {
                 if tool.context_menu_label().is_none() {
