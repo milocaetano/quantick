@@ -6666,6 +6666,14 @@ impl QuantickApp {
         if bands {
             Self::seed_band_demo(pane, first, visible, slots);
         }
+        // Carry a `QUANTICK_DRAWING_INSPECTOR=1` request across the selection
+        // this demo just made. The context bar closes the panel on every
+        // selection change — right, for a trader clicking around — and the demo
+        // makes one on the frame it places, so pairing the two hooks the way
+        // the harness table says to used to photograph a chart with no panel on
+        // it. This is the same door the tool that asks for its own settings on
+        // placement uses, applied after the clear rather than before it.
+        self.pending_open_settings |= self.inspector_open;
         self.apply_drawing_demo_recut();
     }
 
@@ -14094,6 +14102,32 @@ plot(close)
             chart.contains(popup.min),
             "the popup opens inside the chart, not at yesterday's monitor: \
              {popup:?} against {chart:?}"
+        );
+    }
+
+    /// The harness table tells an agent to pair `QUANTICK_DRAWING_INSPECTOR=1`
+    /// with the drawings demo. That instruction is only true if the demo's own
+    /// selection does not close the panel the hook asked for — it did, so
+    /// every capture of the popup was a capture of a chart without one.
+    #[test]
+    fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(500);
+        app.pending_drawing_demo = true;
+        app.inspector_open = true;
+
+        for _ in 0..4 {
+            run_frame(&mut app, &ctx);
+        }
+
+        assert!(!app.pending_drawing_demo, "the demo has run");
+        assert!(
+            app.drawing_pane().drawings.selected().is_some(),
+            "and left an object selected, which is what closes the panel"
+        );
+        assert!(
+            app.inspector_open,
+            "the panel the hook asked for survives the demo's own selection"
         );
     }
 
