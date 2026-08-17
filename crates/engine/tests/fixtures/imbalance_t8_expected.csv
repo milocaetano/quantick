@@ -1,7 +1,7 @@
 # Expected imbalance bars for imbalance_trades.csv with target_trades = 8.
 # bar[0]: warm-up, closes at exactly the 8-trade target.
 # bar[1]: sell regime the threshold has adapted to — full-length bar.
-# bar[2]: contrary 2-buy burst beats the adapted threshold — early close.
+# bar[2]: contrary 3-buy burst beats the adapted threshold — early close.
 #
 # And then nothing. The choppy two-way flow that follows carries no
 # information, so it closes no bar — it waits in the forming one.
@@ -11,9 +11,9 @@
 # module doc promises to prevent. The threshold floor was a constant 0.05
 # multiplied by an E[T] that had run to its lower clamp (target/4 = 2), a
 # product of 0.1 that any single trade cleared. The floor is now
-# sqrt(target) = 2 — the imbalance a balanced walk actually reaches in
-# target trades — so a bar closes on imbalance or it does not close.
+# round(sqrt(target)) = 3 — the imbalance a balanced walk actually reaches
+# in target trades — so a bar closes on imbalance or it does not close.
 open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
 1700000000000,1700000001750,36010.00,36010.00,36000.00,36000.00,0,2.25,8
 1700000002000,1700000003750,35998.00,35998.00,35986.50,35986.50,0,5.40,8
-1700000004000,1700000004250,35990.00,35994.50,35990.00,35994.50,2.20,0,2
+1700000004000,1700000004500,35990.00,35997.00,35990.00,35997.00,2.50,0,3

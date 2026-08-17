@@ -116,6 +116,26 @@ use crate::{
     Bar, BarBuilder, DollarMeasure, Measure as _, Side, TickMeasure, Trade, VolumeMeasure,
 };
 
+/// `sqrt(n)` rounded to the nearest integer, in exact integer arithmetic.
+///
+/// The floor is `sqrt(target)` typical weights, and truncating that square
+/// root is not a rounding detail at the low end of the range: the error is
+/// worst just below a perfect square, and the *bar length* it implies is the
+/// floor squared. Truncated, `target = 3` floors at 1 — a bar closing on the
+/// trade after the one that opened it, the cascade the floor exists to
+/// prevent — and `target = 8` floors at 2, half the length asked for.
+/// Rounded, they floor at 2 and 3, and the low end of the toolbar's range
+/// means what it says.
+///
+/// `isqrt` gives `k` with `k^2 <= n`, so `n - k*k` is the distance past the
+/// square and the nearest root is `k + 1` exactly when that distance exceeds
+/// `k` (i.e. `n > (k + 0.5)^2`). Written as a subtraction rather than
+/// `k*k + k` so a target near `u64::MAX` cannot overflow.
+const fn rounded_isqrt(n: u64) -> u64 {
+    let k = n.isqrt();
+    if n - k * k > k { k + 1 } else { k }
+}
+
 /// A bar always closes after `CAP_MULT * target_trades` trades, whatever the
 /// imbalance says.
 ///
@@ -223,8 +243,8 @@ pub struct ImbalanceBarBuilder {
     /// thing.
     e_t: Decimal,
     /// `sqrt(target_trades)`, at least one — how many *typical trades' worth*
-    /// of weight the floor is. Integer `isqrt`, so the engine keeps its exact
-    /// arithmetic and no transcendental ever runs on the hot path.
+    /// of weight the floor is. Integer [`rounded_isqrt`], so the engine keeps
+    /// its exact arithmetic and no transcendental ever runs on the hot path.
     floor_trades: Decimal,
     /// Expected signed weight per trade, primed from zero as trades arrive.
     e_s: Decimal,
@@ -279,9 +299,10 @@ impl ImbalanceBarBuilder {
             alpha_b,
             keep_b: Decimal::ONE - alpha_b,
             e_t: Decimal::from(target_trades),
-            // At least one: a floor below a single typical trade would let a
-            // bar close on the very trade that opened it.
-            floor_trades: Decimal::from(target_trades.isqrt().max(1)),
+            // `target_trades >= 1` is asserted above, and `rounded_isqrt(1)`
+            // is 1, so the floor is never below a single typical trade — a
+            // bar can never close on the very trade that opened it.
+            floor_trades: Decimal::from(rounded_isqrt(target_trades)),
             e_s: Decimal::ZERO,
             e_w: None,
             theta: Decimal::ZERO,
@@ -586,14 +607,38 @@ mod tests {
         );
     }
 
+    /// `sqrt` rounded, not truncated — and why the difference is not cosmetic.
+    ///
+    /// The floor is a bar-length target under a square root, so truncating it
+    /// squares the error back up: a truncated `sqrt(3)` is 1, and a floor of
+    /// one closes a bar on the trade after the one that opened it. The
+    /// toolbar's minimum is 2, so this is inside the range a trader can set.
+    #[test]
+    fn the_floor_rounds_the_square_root_instead_of_truncating_it() {
+        // Perfect squares are exact either way.
+        assert_eq!(rounded_isqrt(1), 1);
+        assert_eq!(rounded_isqrt(4), 2);
+        assert_eq!(rounded_isqrt(2_250_000), 1500);
+        // Just below a square is where truncation hurts most.
+        assert_eq!(rounded_isqrt(3), 2, "truncating would floor at 1");
+        assert_eq!(rounded_isqrt(8), 3, "truncating would floor at 2");
+        assert_eq!(rounded_isqrt(80), 9, "truncating would floor at 8");
+        // Below the half-step it still rounds down.
+        assert_eq!(rounded_isqrt(2), 1);
+        assert_eq!(rounded_isqrt(6), 2);
+        // A target near the top of `u64` must not overflow the comparison.
+        assert_eq!(rounded_isqrt(u64::MAX), 4_294_967_296);
+    }
+
     /// The low end of the toolbar's range has to work too.
     ///
     /// The old minimum threshold was `(target/4) * FLOOR_B` = `target/80`,
     /// below 1 for every target under 80 — so the whole band the toolbar
     /// offers below 80 collapsed into a cascade of one- and two-trade bars.
+    /// `2` is the toolbar's own minimum, so the range starts there.
     #[test]
     fn small_targets_are_not_a_one_trade_cascade() {
-        for target in [4_u64, 10, 50, 79] {
+        for target in [2_u64, 3, 4, 8, 10, 50, 79] {
             let sides = tape(target as usize * 400, 500);
             let mean = mean_len(target, &sides);
             let ratio = mean / f64::from(u32::try_from(target).unwrap());
