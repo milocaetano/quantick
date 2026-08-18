@@ -131,9 +131,11 @@ Landing with the paper-trading overhaul (`feat/paper-trading-overhaul`):
 
 | Hook | Reaches |
 | --- | --- |
-| `QUANTICK_CMD_PREVIEW=<buy\|sell>` | the cmd-trading preview painted with nobody at the keyboard: the dashed y-locked line, its clickable side/kind/qty label and the gutter price chip, parked mid-chart for that side. The held modifier is the one input a capture run cannot supply (the ParkedHand rule). Needs prints on the tape for a mark — pair with a live feed or `QUANTICK_PAPER_DEMO=1`. |
+| `QUANTICK_CMD_PREVIEW=<buy\|sell>[@<0..1>]` | the cmd-trading preview painted with nobody at the keyboard: the dashed line out to the axis, the side/kind/qty label riding beside the cursor and the gutter price chip. The held modifier is one input a capture run cannot supply (the ParkedHand rule) — and since the label follows the pointer, so is the pointer's **x**: `buy@0.15` parks the aim a sixth of the way in, `sell@0.9` next to the axis, and a bare `buy` keeps the old mid-band park. A stated fraction wins over a real pointer that happens to be over the window; the y still comes from the real hand when there is one. A forced aim **paints but never places** — a run with nobody at the keyboard is holding no modifier, so a stray click during one must not write orders into a journal, and no hand cursor is shown for it. Needs prints on the tape for a mark — pair with a live feed or `QUANTICK_PAPER_DEMO=1`. |
+| `QUANTICK_PAPER_ORDER_HOVER=1` | every resting order's in-plot tag in its **open** form (`#3 BUY LMT 2 @ 95.0` with the ✕). At rest the tag is a compact pill and only opens under the pointer, so the full statement is otherwise unreachable from a scripted run — the same ParkedHand problem as above. Pair with `QUANTICK_PAPER_ORDERS`. |
+| `QUANTICK_PAPER_ORDERS=<rungs>` | rests orders around the mark on the **first print**, 1–4 rungs, each a buy limit below and a sell limit above at 6 bp × rung. This is what makes the in-plot order tag photographable at all: `QUANTICK_PAPER_DEMO=1`'s own order is 220 prints away and sits 0.4 % out — far enough to fall outside the chart's autoscaled price range (a line off-range paints no tag), close enough that a lively tape fills it before the shutter. Both sides per rung is the point: whichever way the tape moves, only one side can fill and a tag survives on screen. Combine with `QUANTICK_PAPER_ORDER_HOVER=1` for the open form, and with `QUANTICK_TRADES_DIR` at scratch. |
 
-Once merged, move it into the table above.
+Once merged, move them into the table above.
 
 Landing with the tape-configuration goal (`feat/tape-own-config`):
 

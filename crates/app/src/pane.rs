@@ -3695,6 +3695,54 @@ impl ChartPane {
         // can only be handed out once. Without this gate a click meant to
         // drop an anchor would *also* reach an order's ✕ and cancel it —
         // the early return this replaced used to hide that.
+        //
+        // The cmd-trading aim is the one paper gesture that claims the
+        // *whole* plot rather than a line or a ✕, so it alone yields to an
+        // annotation already under the pointer. The pane answers that
+        // question here — paper never reads the drawings — for the same
+        // reason it answers "a tool is armed": the button can be handed
+        // out once, and the default buy modifier is Shift, the very key
+        // that levels a channel corner.
+        //
+        // **Handles only, never a body.** A handle is a 12 px target where
+        // the two gestures genuinely collide: Shift on a corner levels the
+        // object, and there is no other way to ask for that. A body is a
+        // region, and some bodies are enormous — a fixed-range profile's
+        // hit test claims its whole histogram strip on purpose
+        // (`fixed_range_profile.rs`), so yielding bodies meant a chart with
+        // a profile on it had a hole where the aim simply did not appear.
+        // Moving a body needs no modifier at all, and a body drag reads
+        // Shift every frame, so pressing first and then holding it still
+        // constrains the move.
+        //
+        // The canvas's own chrome counts too, and it does *not* live in a
+        // floating layer, so `over_chrome` never sees it: the tape chip
+        // and an indicator pane's header or divider are pixels a press
+        // already means something on, and a modifier resting under the
+        // hand must not turn "put the tape back" into "rest an order".
+        //
+        // Per-frame path, so it costs nothing on a frame with no modifier
+        // down: the aim cannot exist without one, and only then is the
+        // pick worth running — the same bounded, visible-objects-only
+        // handle pick the drag initiation below performs, so an
+        // *unselected* object's handle keeps its pixel too.
+        let modifiers = ui.input(|input| input.modifiers);
+        let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
+        let canvas_claimed = pointer_position
+            .filter(|_| modifier_down)
+            .is_some_and(|position| {
+                Self::pane_chrome_hit(&areas, position)
+                    || tape_switch_rect(areas.chart).contains(position)
+                    || (chrome.toolrail.tool() == Tool::Pointer
+                        && !over_chrome
+                        && bands::band_at(&bands, position)
+                            .filter(|band| band.drawable())
+                            .is_some_and(|band| {
+                                self.drawing_handle_at(position, band, history_right, total)
+                                    .is_some()
+                            }))
+            });
+        let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
         let paper_gesture = if chrome.paper_owns_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
@@ -3703,7 +3751,9 @@ impl ChartPane {
                 primary_pressed: primary_pressed && !over_chrome,
                 primary_down,
                 primary_released,
-                modifiers: ui.input(|input| input.modifiers),
+                modifiers,
+                canvas_claimed,
+                layer_visible: paper_layer_visible,
             })
         } else {
             if chrome.paper_owns_input {
@@ -3717,6 +3767,8 @@ impl ChartPane {
         // drawings get hover cursors below, and a draggable stop must not
         // feel deader than an annotation — nor may the entry line's blocked
         // band refuse a pan with no explanation at all.
+        // The layer gate lives inside `hover_cursor` itself, next to the
+        // frame's other decisions, so it cannot be forgotten by a caller.
         if chrome.paper_owns_input
             && !over_chrome
             && !tool_armed

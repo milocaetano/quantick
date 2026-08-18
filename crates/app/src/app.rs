@@ -11012,12 +11012,19 @@ plot(close)
         }
         // One frame to settle: the live lane's divider and the price range are
         // computed by a draw and read by the next one, so the first frame is
-        // not yet the chart this test is counting.
-        let _ = shapes(&mut app);
-        let all_on = shapes(&mut app);
+        // not yet the chart this test is counting. **Every** measurement gets
+        // that frame, not just the baseline — an exact shape count taken one
+        // frame after a switch is counting a chart still converging on its
+        // price range, and the asymmetry made this test fail on a loaded CI
+        // runner and pass on the next attempt.
+        let settled = |app: &mut QuantickApp| {
+            let _ = shapes(app);
+            shapes(app)
+        };
+        let all_on = settled(&mut app);
         for layer in under_test {
             switch_layer(&mut app, layer, false);
-            let off = shapes(&mut app);
+            let off = settled(&mut app);
             assert!(
                 off < all_on,
                 "{} kept painting after it was switched off ({off} shapes vs {all_on})",
@@ -11025,7 +11032,7 @@ plot(close)
             );
             switch_layer(&mut app, layer, true);
             assert_eq!(
-                shapes(&mut app),
+                settled(&mut app),
                 all_on,
                 "{} did not come back exactly as it was",
                 layer.id()
@@ -12263,6 +12270,80 @@ plot(close)
             (draft.points[0].price - draft.points[1].price).abs() < 1e-9,
             "clicking below still lands level: {:?}",
             draft.points
+        );
+    }
+
+    /// The pane's half of the cmd aim's yield rule, end to end, and where
+    /// it draws the line: a held buy modifier over a drawing's **handle**
+    /// places nothing — the press goes to the drawing, so Shift still
+    /// levels a corner — while over its **body** and over bare canvas it
+    /// rests the order.
+    ///
+    /// The body half is not a detail. A fixed-range profile's hit test
+    /// claims its whole histogram strip, so yielding bodies left a chart
+    /// with a profile on it with a region where the aim never appeared at
+    /// all. The paper-side tests hand `canvas_claimed` in by hand and so
+    /// prove only what the module does with the answer; this proves what
+    /// the pane puts in it.
+    #[test]
+    fn the_aim_yields_a_drawings_handle_but_not_its_body() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "trend-line");
+        let start = egui::pos2(600.0, 400.0);
+        let end = egui::pos2(800.0, 400.0);
+        click_chart_with(&mut app, &ctx, start, egui::Modifiers::NONE);
+        click_chart_with(&mut app, &ctx, end, egui::Modifiers::NONE);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items().len(),
+            1,
+            "the line is on the canvas"
+        );
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "placing it rested nothing"
+        );
+
+        // The line's own endpoint handle: Shift there means "level this",
+        // and it is the only way to ask for that.
+        click_chart_with(&mut app, &ctx, end, egui::Modifiers::SHIFT);
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "a held modifier over a handle rests no order"
+        );
+
+        // Its body, midway between the anchors: a region, not a target.
+        // Moving a body needs no modifier, so the aim wins here — this is
+        // the pixel a volume profile's histogram strip used to swallow.
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(700.0, 400.0),
+            egui::Modifiers::SHIFT,
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            1,
+            "over a body the aim still places"
+        );
+
+        // Bare canvas well clear of it: the aim is the last claimant, and
+        // there is nothing left to claim.
+        click_chart_with(
+            &mut app,
+            &ctx,
+            egui::pos2(700.0, 200.0),
+            egui::Modifiers::SHIFT,
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            2,
+            "and on empty canvas the click is the order"
         );
     }
 
