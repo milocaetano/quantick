@@ -267,9 +267,8 @@ pub struct ContextBar {
     /// So the hand outranks the placement here exactly as it does for the
     /// properties popup, and by the same argument: a trader who chose where
     /// this goes has already answered the question the rule exists to guess.
-    /// The way back is the grip's double-click, named in its own tooltip, or
-    /// Escape, which takes this layer before it touches the selection — see
-    /// [`Self::clear_manual`].
+    /// The way back is the grip's double-click, named in its own tooltip and
+    /// aimed at the bar and nothing else — see [`Self::clear_manual`].
     ///
     /// The host clamps it into the chart before drawing — see
     /// `QuantickApp::draw_drawing_context_bar` — so a position parked under a
@@ -410,10 +409,16 @@ impl ContextBar {
     /// Give the placement back to the rule, reporting whether there was
     /// anything to give.
     ///
-    /// The bool is what lets Escape be a *layer*: the host takes this press
-    /// only when a parked position was actually undone, so the bar goes back
-    /// on the object and the selection survives the same key — one press, one
-    /// thing. The grip's double-click is the pointer's door to the same call.
+    /// The named door out of the parked state, for a hand and for an operator
+    /// without one: the grip's double-click *calls* this rather than clearing
+    /// the field itself, so there is one way back and not two.
+    ///
+    /// Not Escape. This doc used to say it was, and the code never wired it:
+    /// what happened on that key was the selection dropping and
+    /// [`Self::note_selection`] discarding the position along with it. Now
+    /// that the position outlives a selection, wiring Escape to it would mean
+    /// a key a trader presses many times an hour quietly undoing where they
+    /// put the bar — see the escape stack in `QuantickApp::drawing_keys`.
     pub fn clear_manual(&mut self) -> bool {
         self.manual.take().is_some()
     }

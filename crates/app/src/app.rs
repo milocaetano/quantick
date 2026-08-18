@@ -5391,10 +5391,21 @@ impl QuantickApp {
             }
         });
         // The escape stack: rail drag → paper interaction → pending
-        // confirmation → draft → parked context bar → selection → Pointer,
-        // one layer per press. Paper trading's armed placement / grabbed line
-        // reads Escape here, in the single stack — what keeps one press from
-        // firing two cancels at once.
+        // confirmation → draft → selection → Pointer, one layer per press.
+        // Paper trading's armed placement / grabbed line reads Escape here,
+        // in the single stack — what keeps one press from firing two
+        // cancels at once.
+        //
+        // The context bar's parked position is deliberately *not* a layer of
+        // this stack. It is a preference, not a gesture left half-finished:
+        // a trader who moved the bar out of the way wants it to stay out of
+        // the way, and Escape is a key they press many times an hour to drop
+        // a selection. Spending it on the parked point would undo, several
+        // times a session and without being asked, the very thing parking it
+        // was for. The way back is the grip's double-click, which is aimed at
+        // the bar and at nothing else — and, for an operator with no hand on
+        // the mouse, `ContextBar::clear_manual`, which is what that
+        // double-click calls rather than reimplements.
         if keys.escape {
             if self.toolrail.drag_active() {
                 // The rail consumes this Esc to abort its dock drag.
@@ -5408,28 +5419,6 @@ impl QuantickApp {
             } else if self.drawing_pane().drawings.draft().is_some() {
                 self.drawing_pane_mut().drawings.cancel_draft();
                 self.toolrail.arm(Tool::Pointer);
-            } else if self.context_bar_on_screen() && self.context_bar.clear_manual() {
-                // A parked context bar is a layer of its own — the keyboard's
-                // half of the grip's double-click, and the reason
-                // `clear_manual` reports whether it undid anything.
-                //
-                // It has to be a layer, not a side effect of the layer below.
-                // Dropping the selection used to take the parked position with
-                // it, so one press did two things and the trader could not put
-                // the bar back on the object without also losing what they had
-                // selected. And it has to exist at all: the double-click is a
-                // gesture, and a state reachable only by mouse is a state the
-                // second operator can enter (`QUANTICK_CONTEXT_BAR_POS`) and
-                // never leave.
-                //
-                // Gated on the bar being *visible*, because the parked point
-                // is one position for the session and outlives every bar drawn
-                // from it. Without the gate this rung would swallow a press
-                // aimed at the layer below whenever a position was parked
-                // earlier — disarming a tool with nothing selected would
-                // silently discard the point instead, and move nothing on
-                // screen. A layer of the escape stack answers for what the
-                // trader can see.
             } else if self.drawing_pane().drawings.selected().is_some() {
                 self.drawing_pane_mut().drawings.select(None);
             } else {
@@ -6184,18 +6173,6 @@ impl QuantickApp {
         Some((index, self.drawing_pane().drawings.items()[index].clone()))
     }
 
-    /// Whether the context bar is a surface on screen right now: something is
-    /// selected, and no drawing tool is armed over it.
-    ///
-    /// One statement, read by the host that draws the bar and by the escape
-    /// stack that offers to un-park it. Two copies of this condition would
-    /// drift on the next PR, and the direction they would drift is a key
-    /// press answering for a bar the trader cannot see.
-    fn context_bar_on_screen(&self) -> bool {
-        self.drawing_pane().drawings.selected().is_some()
-            && !matches!(self.toolrail.tool(), Tool::Drawing(_))
-    }
-
     /// The selected object's context bar.
     ///
     /// This is what a selection raises now — one row of icons, where the
@@ -6224,10 +6201,8 @@ impl QuantickApp {
         // An armed tool means the trader is drawing, not editing. The bar is
         // opaque to the pointer, so leaving it up would let it eat the click
         // that places the next object — the selection it belongs to is the
-        // one they just finished, not the one they are starting. Asked
-        // through [`Self::context_bar_on_screen`], which is also what the
-        // escape stack consults.
-        if !self.context_bar_on_screen() {
+        // one they just finished, not the one they are starting.
+        if matches!(self.toolrail.tool(), Tool::Drawing(_)) {
             return;
         }
         // Which gestures hide the bar is decided here, once, from the raw
@@ -14792,21 +14767,20 @@ plot(close)
         );
     }
 
-    /// The keyboard's half of the grip's double-click, and its own layer of
-    /// the escape stack.
+    /// Escape does not spend itself on the parked bar.
     ///
-    /// Two claims, and the second is why it is a layer rather than a side
-    /// effect of the one below it. Escape puts the bar back on the object,
-    /// and the selection survives that same press — a trader undoing where
-    /// the bar sits has not asked to lose what they had selected. The press
-    /// after it is the one that drops the selection, as before.
+    /// The escape stack unwinds gestures a trader left half-finished — a
+    /// draft, an armed order, a confirmation. Where the bar sits is not one
+    /// of those; it is a preference, and Escape is a key pressed many times
+    /// an hour to drop a selection. Undoing the parking with it would take
+    /// away, several times a session and unasked, the thing parking was for.
     ///
-    /// Without this the state would be enterable by script
-    /// (`QUANTICK_CONTEXT_BAR_POS`) and leavable only by mouse, which is the
-    /// rule in `CLAUDE.md` about never shipping a capability reachable by
-    /// mouse alone.
+    /// This is also the behaviour on `main`, reached from the other side:
+    /// there, Escape dropped the selection and `note_selection` discarded the
+    /// parked point with it. The point surviving is what is new — the press
+    /// still does exactly one thing.
     #[test]
-    fn escape_gives_the_parked_bar_back_before_it_touches_the_selection() {
+    fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(200);
         run_frame(&mut app, &ctx);
@@ -14819,95 +14793,13 @@ plot(close)
         app.toolrail.arm(Tool::Pointer);
         app.drawing_pane_mut().drawings.select(Some(line));
         run_frame(&mut app, &ctx);
-        app.context_bar.set_manual(egui::pos2(320.0, 240.0));
+        let parked = egui::pos2(320.0, 240.0);
+        app.context_bar.set_manual(parked);
         app.context_bar_rect = None;
         run_frame(&mut app, &ctx);
-        let parked = app
-            .context_bar_rect
-            .expect("the bar is up where it was put");
-
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![key_press_with(egui::Key::Escape, egui::Modifiers::NONE)],
-        );
-        run_frame(&mut app, &ctx);
-        assert_eq!(
-            app.context_bar.manual_position(),
-            None,
-            "Escape hands the placement back to the rule"
-        );
-        assert_eq!(
-            app.drawing_pane().drawings.selected(),
-            Some(line),
-            "…and the object the trader was working on is still selected"
-        );
-        let placed = app.context_bar_rect.expect("the bar is still up");
-        // Not merely "somewhere else": back at the point the rule computes,
-        // so a regression that drops the parked position and then places the
-        // bar at a third wrong spot cannot pass.
-        let chart = app.drawing_pane().last_chart_area.expect("the pane drew");
-        let expected = drawings::context_bar::place(
-            chart,
-            app.drawing_pane()
-                .last_lane_divider_x
-                .unwrap_or(chart.right()),
-            app.drawing_bbox_on_screen(chart, line)
-                .expect("the object projects"),
-            placed.size(),
-        );
-        assert_ne!(
-            expected, parked.min,
-            "the setup has to park it somewhere the rule would not have chosen"
-        );
-        assert_eq!(
-            placed.min, expected,
-            "Escape puts the bar back where automatic placement wants it"
-        );
-
-        // The next press is the one that drops the selection, as before.
-        run_frame_with_events(
-            &mut app,
-            &ctx,
-            vec![key_press_with(egui::Key::Escape, egui::Modifiers::NONE)],
-        );
-        run_frame(&mut app, &ctx);
-        assert_eq!(
-            app.drawing_pane().drawings.selected(),
-            None,
-            "the escape stack still takes one layer per press"
-        );
-    }
-
-    /// A press the trader aimed at the layer below must not be eaten undoing
-    /// something they cannot see.
-    ///
-    /// The parked point is one position for the session and outlives every
-    /// bar drawn from it, so "is there a parked position?" is not the same
-    /// question as "is there a bar on screen?". Answering the first would let
-    /// Escape swallow the press that puts a drawing tool down — and throw the
-    /// parked point away in the same silence.
-    #[test]
-    fn escape_with_no_bar_on_screen_belongs_to_the_layer_below() {
-        let ctx = egui::Context::default();
-        let (mut app, _commands) = app_with_history(200);
-        run_frame(&mut app, &ctx);
-        place_drawing(
-            &mut app,
-            &ctx,
-            "horizontal-line",
-            &[egui::pos2(700.0, 300.0)],
-        );
-        app.context_bar.set_manual(egui::pos2(320.0, 240.0));
-
-        // Nothing selected and a tool in hand: no bar anywhere on screen.
-        app.drawing_pane_mut().drawings.select(None);
-        app.toolrail
-            .arm(Tool::Drawing(drawing_tool("anchored-vwap")));
-        run_frame(&mut app, &ctx);
         assert!(
-            !app.context_bar_on_screen(),
-            "the setup has to actually take the bar off the canvas"
+            app.context_bar_rect.is_some(),
+            "the bar is up where it was put"
         );
 
         run_frame_with_events(
@@ -14915,15 +14807,27 @@ plot(close)
             &ctx,
             vec![key_press_with(egui::Key::Escape, egui::Modifiers::NONE)],
         );
+        run_frame(&mut app, &ctx);
         assert_eq!(
-            app.toolrail.tool(),
-            Tool::Pointer,
-            "the press goes where the trader aimed it: the tool goes down"
+            app.drawing_pane().drawings.selected(),
+            None,
+            "the press does what the trader aimed it at: the selection goes"
         );
         assert_eq!(
             app.context_bar.manual_position(),
-            Some(egui::pos2(320.0, 240.0)),
-            "and the position they chose is not thrown away behind their back"
+            Some(parked),
+            "and the position they chose is still theirs on the next object"
+        );
+
+        // Which is the whole claim: select something else and it opens there.
+        app.drawing_pane_mut().drawings.select(Some(line));
+        app.context_bar_rect = None;
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.context_bar_rect.expect("the bar is back").min,
+            parked,
+            "the bar comes back parked, not beside the object"
         );
     }
 
