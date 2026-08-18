@@ -58,6 +58,8 @@ mod resample;
 mod state;
 mod statusbar;
 mod store_home;
+mod strategy_anchors;
+mod strategy_presets;
 mod style;
 mod symbols_file;
 mod tab;

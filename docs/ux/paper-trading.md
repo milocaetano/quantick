@@ -348,7 +348,12 @@ stay visible but disabled, wearing the sim core's own rejection text
 
 - Real order routing of any kind.
 - Fees, margin, multi-account, per-instrument currency P&L.
-- Automated strategies (the growth map's bot row remains future work).
+- ~~Automated strategies (the growth map's bot row remains future work).~~
+  **Revoked** by the strategy-anchors work: an armed instance on a chart
+  drawing now fires `PlaceMarket` through this same funnel (journal,
+  toasts, ledger, report — no separate path). The bot never trades
+  against an open position and every way it stops watching is a named
+  badge state; see `docs/ux/strategy-anchors.md`. Real routing stays out.
 - Persisting open positions across restarts. Deliberately kept out even in
   v2: an honest restore would need the same feed and symbol back, a
   `restored — not proven by the current tape` label until the first print,

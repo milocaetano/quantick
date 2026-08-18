@@ -7,13 +7,18 @@ use super::{
     drawing_stroke,
 };
 
+/// Registry id, named like `frvp::TOOL_ID` for the callers that gate on
+/// this one shape (the strategy seat does: two anchors honestly bound a
+/// price region).
+pub const TOOL_ID: &str = "rectangle";
+
 pub(super) static TOOL: Rectangle = Rectangle;
 
 pub(super) struct Rectangle;
 
 impl DrawingToolImpl for Rectangle {
     fn id(&self) -> &'static str {
-        "rectangle"
+        TOOL_ID
     }
     fn name(&self) -> &'static str {
         "Rectangle"

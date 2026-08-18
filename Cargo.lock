@@ -2505,6 +2505,7 @@ dependencies = [
  "quantick-pine",
  "quantick-replay",
  "quantick-sim",
+ "quantick-strategy",
  "rfd",
  "rust_decimal",
  "serde",
@@ -2526,6 +2527,7 @@ dependencies = [
  "quantick-pine",
  "quantick-replay",
  "quantick-sim",
+ "quantick-strategy",
  "rust_decimal",
 ]
 
@@ -2618,6 +2620,15 @@ name = "quantick-sim"
 version = "0.1.0"
 dependencies = [
  "quantick-engine",
+ "rust_decimal",
+]
+
+[[package]]
+name = "quantick-strategy"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-sim",
  "rust_decimal",
 ]
 

@@ -895,6 +895,11 @@ register_drawing_tools!(
     text,
 );
 
+// The rectangle's registry id, re-exported for the strategy seat — the one
+// gate that names a specific shape (two anchors honestly bound a price
+// region), in the `frvp::TOOL_ID` idiom.
+pub use rectangle::TOOL_ID as RECTANGLE_TOOL_ID;
+
 // The profile drawing's payload types, re-exported for `crate::frvp` — the
 // refresh pass that folds engine ladders into the cache the paint reads.
 pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
@@ -1034,8 +1039,27 @@ pub enum DrawingBand {
     AllBands,
 }
 
+/// Stable identity of one drawn object, unique within its pane's store for
+/// the life of the session.
+///
+/// The `Vec` index is a *position* — `bring_to_front` and deletes reorder
+/// it under anything that remembers it. Everything that must keep pointing
+/// at "that drawing" across frames (an armed strategy on a rectangle, a
+/// future alert) holds this id instead and resolves it through
+/// [`Drawings::index_of`] each time. Ids are never reused; an undone delete
+/// restores the object under the id it always had, so a reference held
+/// across the undo keeps meaning the same object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DrawingId(pub u64);
+
 #[derive(Debug, Clone)]
 pub struct Drawing {
+    /// See [`DrawingId`]: identity, where the index is only position.
+    pub id: DrawingId,
+    /// The trader's own name for the object ("congestão 108k"). `None`
+    /// falls back to the derived `"<tool> <n>"` label everywhere a label is
+    /// shown; empty strings are normalised to `None` on edit.
+    pub name: Option<String>,
     pub tool: DrawingTool,
     pub points: Vec<ChartPoint>,
     /// The value axis the anchors were placed against.
@@ -1075,6 +1099,16 @@ pub struct Drawing {
 }
 
 impl Drawing {
+    /// The label every list and menu shows: the trader's name when one was
+    /// given, the tool name plus the 1-based position otherwise.
+    #[must_use]
+    pub fn display_label(&self, index: usize) -> String {
+        match &self.name {
+            Some(name) => name.clone(),
+            None => format!("{} {}", self.tool.name(), index + 1),
+        }
+    }
+
     /// Whether this object *can* be shared: every anchor has to name a market
     /// instant, because that is the only coordinate two panes agree on. An
     /// anchor dropped past the newest bar has none, and no time is invented
@@ -1093,7 +1127,12 @@ impl Drawing {
 
 impl PartialEq for Drawing {
     fn eq(&self, other: &Self) -> bool {
-        self.tool == other.tool
+        // `id` stays out: identity is not content, and an undo snapshot
+        // holding the same objects under the same ids must compare equal to
+        // the live store by their *edits* alone. `name` is content — a
+        // rename is an edit the undo history records.
+        self.name == other.name
+            && self.tool == other.tool
             && self.points == other.points
             && self.band == other.band
             && self.style == other.style
@@ -1135,6 +1174,10 @@ pub struct Drawings {
     items: Vec<Drawing>,
     draft: Option<Drawing>,
     selected: Option<usize>,
+    /// Source of [`DrawingId`]s: incremented on every allocation and never
+    /// rewound — not by undo, not by delete — so an id can never be reborn
+    /// as a different object.
+    next_id: u64,
     /// Global hide layer. Independent from each drawing's own eye, so
     /// "show all" restores exactly the per-object visibility it found.
     all_hidden: bool,
@@ -1175,6 +1218,32 @@ impl Drawings {
     #[must_use]
     pub fn shared_count(&self) -> usize {
         self.items.iter().filter(|item| item.shared()).count()
+    }
+
+    fn alloc_id(&mut self) -> DrawingId {
+        self.next_id += 1;
+        DrawingId(self.next_id)
+    }
+
+    /// Where the object with this identity currently sits, if it still
+    /// exists. The answer is only good for this frame: every reorder or
+    /// delete moves it, which is the whole reason callers hold the id.
+    #[must_use]
+    pub fn index_of(&self, id: DrawingId) -> Option<usize> {
+        self.items.iter().position(|item| item.id == id)
+    }
+
+    /// Rename the object at `index` as one undo step. Whitespace-only input
+    /// clears the name back to the derived label.
+    pub fn rename_at(&mut self, index: usize, name: &str) {
+        if index >= self.items.len() {
+            return;
+        }
+        let trimmed = name.trim();
+        let name = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+        let before = self.snapshot();
+        self.items[index].name = name;
+        self.record(before);
     }
 
     #[must_use]
@@ -1316,7 +1385,10 @@ impl Drawings {
     ) -> bool {
         if self.draft.as_ref().is_none_or(|draft| draft.tool != tool) {
             let fresh = new_drawing(tool);
+            let id = self.alloc_id();
             self.draft = Some(Drawing {
+                id,
+                name: None,
                 tool,
                 points: Vec::with_capacity(tool.required_points()),
                 // The band the *first* anchor landed in owns the whole
@@ -1400,6 +1472,11 @@ impl Drawings {
         };
         let before = self.snapshot();
         let mut copy = self.items[index].clone();
+        // A copy is a new object: its own identity, and never the
+        // original's name — two drawings answering to "congestão 108k"
+        // would make every reference ambiguous.
+        copy.id = self.alloc_id();
+        copy.name = None;
         for point in &mut copy.points {
             point.bar += offset_bars;
         }
@@ -2079,6 +2156,94 @@ mod tests {
 
         assert!(drawings.items().is_empty());
         assert_eq!(drawings.selected(), None);
+    }
+
+    /// The id is identity where the index is only position: reorders and
+    /// deletes move objects around the `Vec`, and the id keeps naming the
+    /// same object through all of it.
+    #[test]
+    fn ids_survive_reorder_and_delete_where_indices_do_not() {
+        let mut drawings = Drawings::default();
+        let line = tool("horizontal-line");
+        for price in [100.0, 110.0, 120.0] {
+            drawings.place(line, ChartPoint::at(1.0, price));
+        }
+        let second = drawings.items()[1].id;
+        assert_eq!(drawings.index_of(second), Some(1));
+
+        drawings.bring_to_front(0);
+        drawings.select(Some(drawings.index_of(drawings.items()[0].id).unwrap()));
+        assert_eq!(
+            drawings.index_of(second),
+            Some(0),
+            "the reorder moved it; the id still finds it"
+        );
+
+        drawings.select(drawings.index_of(second));
+        drawings.delete_selected(false);
+        assert_eq!(
+            drawings.index_of(second),
+            None,
+            "deleted is gone, not renumbered"
+        );
+    }
+
+    #[test]
+    fn an_undone_delete_restores_the_object_under_its_old_id() {
+        let mut drawings = Drawings::default();
+        drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
+        let id = drawings.items()[0].id;
+        drawings.delete_selected(false);
+        assert_eq!(drawings.index_of(id), None);
+        drawings.undo();
+        assert_eq!(
+            drawings.index_of(id),
+            Some(0),
+            "an undo restores identity, not a lookalike"
+        );
+
+        // And a fresh object after the undo still gets an id never seen
+        // before — the counter does not rewind with the history.
+        drawings.place(tool("horizontal-line"), ChartPoint::at(2.0, 105.0));
+        assert!(drawings.items()[1].id > id);
+    }
+
+    #[test]
+    fn a_duplicate_is_a_new_object_with_no_name() {
+        let mut drawings = Drawings::default();
+        drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
+        drawings.rename_at(0, "congestão 108k");
+        drawings.duplicate_selected(2.0);
+        let [original, copy] = drawings.items() else {
+            panic!("one original and one copy");
+        };
+        assert_ne!(original.id, copy.id);
+        assert_eq!(original.name.as_deref(), Some("congestão 108k"));
+        assert_eq!(copy.name, None);
+    }
+
+    #[test]
+    fn rename_is_one_undo_step_and_whitespace_clears_it() {
+        let mut drawings = Drawings::default();
+        let line = tool("horizontal-line");
+        drawings.place(line, ChartPoint::at(1.0, 100.0));
+        assert_eq!(
+            drawings.items()[0].display_label(0),
+            format!("{} 1", line.name()),
+            "no name falls back to the derived label"
+        );
+
+        drawings.rename_at(0, "  zona de venda  ");
+        assert_eq!(drawings.items()[0].name.as_deref(), Some("zona de venda"));
+        assert_eq!(drawings.items()[0].display_label(0), "zona de venda");
+
+        drawings.rename_at(0, "   ");
+        assert_eq!(drawings.items()[0].name, None, "whitespace clears the name");
+
+        drawings.undo();
+        assert_eq!(drawings.items()[0].name.as_deref(), Some("zona de venda"));
+        drawings.undo();
+        assert_eq!(drawings.items()[0].name, None);
     }
 
     #[test]

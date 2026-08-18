@@ -18,7 +18,7 @@
 
 use quantick_engine::Bar;
 use quantick_indicators::{Indicator, IndicatorHost, InstanceId, PlotId};
-use quantick_sim::{Command, Order, Position};
+use quantick_sim::{Command, Order, Position, SimEvent};
 use rust_decimal::Decimal;
 
 /// A trading rule the harness can run.
@@ -49,6 +49,24 @@ pub trait Strategy {
     /// already happened. A strategy that returns nothing is the common case
     /// and costs nothing — an empty `Vec` does not allocate.
     fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command>;
+
+    /// What the simulator reported — fills, placements, rejections,
+    /// closures — in tape order: once after each print, and once after the
+    /// commands a bar's [`Strategy::on_bar`] issued were applied. The live
+    /// chart feeds its armed instances the same stream, so a strategy that
+    /// follows its own operation (the `force-region` kernel does) behaves
+    /// identically under both consumers.
+    ///
+    /// The returned commands are the strategy protecting itself mid-print —
+    /// the kernel closes an operation whose bracket the simulator dropped
+    /// at fill time. The run loop applies them immediately; applying such a
+    /// command emits no events of its own, so one echo settles it. The
+    /// default returns nothing, which is exactly right for the stateless
+    /// signal-followers.
+    fn on_events(&mut self, events: &[SimEvent]) -> Vec<Command> {
+        let _ = events;
+        Vec::new()
+    }
 
     /// Called once after the last print of a session, before the next one.
     /// The default does nothing; a stateful rule resets here.
