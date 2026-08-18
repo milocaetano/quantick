@@ -35,6 +35,11 @@ pub struct Anomalies {
     /// Protective prices dropped at fill time — the tape had already run
     /// past the level between the command and the fill — by reason code.
     pub brackets_dropped: BTreeMap<&'static str, u64>,
+    /// Orders removed without filling, by reason code. Not a failure: the
+    /// retest policy's self-cancels (`price_touched`, `account_occupied`)
+    /// land here, and without them a zero-trade run under `--retest-limit`
+    /// is indistinguishable from "no cut ever happened".
+    pub cancels: BTreeMap<&'static str, u64>,
 }
 
 impl Anomalies {
@@ -50,7 +55,15 @@ impl Anomalies {
         self.brackets_dropped.values().sum()
     }
 
-    /// True when the run produced no refusal of any kind.
+    /// Total orders removed without filling.
+    #[must_use]
+    pub fn cancellations(&self) -> u64 {
+        self.cancels.values().sum()
+    }
+
+    /// True when the run produced no refusal of any kind. Cancels are not
+    /// refusals — an order standing down by its own rule is the rule
+    /// working — so they do not dirty a run.
     #[must_use]
     pub fn is_clean(&self) -> bool {
         self.rejected.is_empty() && self.brackets_dropped.is_empty()
@@ -64,6 +77,9 @@ impl Anomalies {
         for (code, count) in &other.brackets_dropped {
             *self.brackets_dropped.entry(code).or_default() += count;
         }
+        for (code, count) in &other.cancels {
+            *self.cancels.entry(code).or_default() += count;
+        }
     }
 
     fn observe(&mut self, event: &SimEvent) {
@@ -76,6 +92,9 @@ impl Anomalies {
                     .brackets_dropped
                     .entry(reject_code(reason))
                     .or_default() += 1;
+            }
+            SimEvent::Cancelled { reason, .. } => {
+                *self.cancels.entry(cancel_code(reason)).or_default() += 1;
             }
             _ => {}
         }
@@ -94,10 +113,25 @@ pub fn reject_code(reason: &RejectReason) -> &'static str {
         RejectReason::PriceNotPositive => "price_not_positive",
         RejectReason::LimitOnWrongSide(_) => "limit_on_wrong_side",
         RejectReason::StopOnWrongSide(_) => "stop_on_wrong_side",
+        RejectReason::CancelAtOnWrongSide(_) => "cancel_at_on_wrong_side",
         RejectReason::StopLossOnWrongSide(_) => "stop_loss_on_wrong_side",
         RejectReason::TakeProfitOnWrongSide(_) => "take_profit_on_wrong_side",
         RejectReason::NoPosition => "no_position",
         RejectReason::UnknownOrder(_) => "unknown_order",
+    }
+}
+
+/// A stable snake_case token per cancellation, same contract as
+/// [`reject_code`].
+#[must_use]
+pub fn cancel_code(reason: &quantick_sim::CancelReason) -> &'static str {
+    use quantick_sim::CancelReason;
+    match reason {
+        CancelReason::User => "user",
+        CancelReason::Flatten => "flatten",
+        CancelReason::Reset => "reset",
+        CancelReason::PriceTouched => "price_touched",
+        CancelReason::AccountOccupied => "account_occupied",
     }
 }
 
@@ -129,6 +163,11 @@ pub struct SessionRun {
     /// facing, because "a trade was left open" and "a *short* was left open
     /// into a rally" are not the same warning.
     pub open_at_end: Option<(Side, Decimal)>,
+    /// Entry orders still resting when the recording ended — the retest
+    /// limit's analogue of `open_at_end`: silently dropping it would make
+    /// "the order never filled" and "the order was still waiting" read the
+    /// same in the report.
+    pub resting_at_end: usize,
 }
 
 /// Run one strategy over one recorded session.
@@ -219,6 +258,7 @@ pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy
         open_at_end: sim
             .position()
             .map(|position| (position.side, position.quantity)),
+        resting_at_end: sim.orders().len(),
     }
 }
 

@@ -40,6 +40,16 @@ pub trait Trigger {
     /// exists (a rebuilt timeline, another bar spec, another market). A
     /// stateless trigger may keep the default no-op.
     fn reset(&mut self) {}
+
+    /// How many recent closed bars re-warm this ruler after a [`reset`]
+    /// (or a fresh arm) — the consumer replays that many from its series,
+    /// gates shut, so "armed" means armed *now* instead of after another
+    /// unexplained warmup. A stateless trigger needs none.
+    ///
+    /// [`reset`]: Self::reset
+    fn warmup_bars(&self) -> usize {
+        0
+    }
 }
 
 /// The force-bar trigger: fires on a bar the [`ForceWindow`] rules force.
@@ -86,6 +96,10 @@ impl Trigger for ForceTrigger {
         self.last = None;
     }
 
+    fn warmup_bars(&self) -> usize {
+        self.window.params().window
+    }
+
     fn status(&self) -> String {
         match &self.last {
             None => format!("waiting for bars 0/{}", self.window.params().window),
@@ -94,6 +108,11 @@ impl Trigger for ForceTrigger {
             Some(BarVerdict::NoSide) => "doji — no side".to_owned(),
             Some(BarVerdict::Quiet { ratio }) => format!("quiet {}×", round_ratio(*ratio)),
             Some(BarVerdict::Force(force)) => format!("force {}×", round_ratio(force.ratio)),
+            Some(BarVerdict::UnderFloor { ratio, body }) => {
+                // The band said force; the absolute floor said no. Saying
+                // "quiet" here would hide the one number the trader needs.
+                format!("{}× in band · body {body} under floor", round_ratio(*ratio))
+            }
             Some(BarVerdict::Exhaustion { ratio, .. }) => {
                 format!("exhaustion {}×", round_ratio(*ratio))
             }

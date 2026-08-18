@@ -23,13 +23,20 @@
 //! the average body), and later rulers — the operational document's BEI is
 //! the expected next tenant — dock beside it without surgery on the state
 //! machine.
+//!
+//! A trigger bar that closes *inside* the region fires a market entry. One
+//! that cuts **through** the region — closing beyond its edge in the
+//! trade's own direction — follows [`BreakPolicy`]: hold fire (the
+//! default), or rest a limit at the cut edge, bracketed off the trigger
+//! bar and cancelled if the tape reaches the bar's projected target before
+//! returning for the retest.
 
 mod armed;
 mod force;
 mod region;
 mod trigger;
 
-pub use armed::{ArmedState, ArmedStrategy, DisarmReason, Rearm, StrategyParams};
+pub use armed::{ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Rearm, StrategyParams};
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
 pub use region::Region;
 pub use trigger::{ForceTrigger, Signal, Trigger};

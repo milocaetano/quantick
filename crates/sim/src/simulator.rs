@@ -64,6 +64,18 @@ pub enum Command {
         quantity: Decimal,
         price: Decimal,
         bracket: Bracket,
+        /// Optional price-cancel level: a print trading at or through it
+        /// before the fill removes the order
+        /// ([`CancelReason::PriceTouched`]). Must sit on the far side of
+        /// the market from `price` — above it for a buy, below it for a
+        /// sell — so fill and cancel can never share a print.
+        cancel_at: Option<Decimal>,
+        /// Fill only into an account with no open position; if the fill
+        /// print arrives while one is open, the order cancels instead
+        /// ([`CancelReason::AccountOccupied`]). For entries whose owner
+        /// (the strategy kernel) promised never to trade against a
+        /// position it did not open.
+        flat_only: bool,
     },
     /// Arm at `trigger` until the tape trades at or through it, then fill
     /// at that print's price.
@@ -269,7 +281,10 @@ impl Simulator {
             }
         }
 
-        // 3) Resting orders, in placement order.
+        // 3) Resting orders, in placement order. The cancel-at check comes
+        //    first, but never races the fill: placement validation keeps the
+        //    two levels on opposite sides of the market, so one print price
+        //    cannot satisfy both.
         let resting = std::mem::take(&mut self.resting);
         let mut kept = Vec::with_capacity(resting.len());
         for order in resting {
@@ -278,6 +293,18 @@ impl Simulator {
                 kept.push(order);
                 continue;
             };
+            let price_cancelled = order.kind == EntryKind::Limit
+                && order.cancel_at.is_some_and(|cancel| match order.side {
+                    Side::Buy => price >= cancel,
+                    Side::Sell => price <= cancel,
+                });
+            if price_cancelled {
+                events.push(SimEvent::Cancelled {
+                    order,
+                    reason: CancelReason::PriceTouched,
+                });
+                continue;
+            }
             let fill_at = match (order.kind, order.side) {
                 (EntryKind::Limit, Side::Buy) if price <= level => Some(level),
                 (EntryKind::Limit, Side::Sell) if price >= level => Some(level),
@@ -286,6 +313,16 @@ impl Simulator {
                 _ => None,
             };
             match fill_at {
+                // A flat-only order whose moment arrives over an open
+                // position stands down at that moment — never before it
+                // (the position may close first), never after (filling
+                // would trade against a position its owner never saw).
+                Some(_) if order.flat_only && self.position.is_some() => {
+                    events.push(SimEvent::Cancelled {
+                        order,
+                        reason: CancelReason::AccountOccupied,
+                    });
+                }
                 Some(at) => self.fill_entry_at(&order, at, trade, &mut events),
                 None => kept.push(order),
             }
@@ -366,6 +403,8 @@ impl Simulator {
                     None,
                     quantity,
                     bracket,
+                    None,
+                    false,
                     mark.timestamp_ms,
                 );
                 let placed = SimEvent::Placed(order.clone());
@@ -377,18 +416,26 @@ impl Simulator {
                 quantity,
                 price,
                 bracket,
+                cancel_at,
+                flat_only,
             } => {
                 let mark = self.mark.ok_or(RejectReason::NoMarketPrice)?;
                 require_positive_quantity(quantity)?;
                 require_positive_price(price)?;
                 validate_limit_side(side, price, mark.price)?;
                 validate_bracket(side, price, bracket)?;
+                if let Some(cancel) = cancel_at {
+                    require_positive_price(cancel)?;
+                    validate_cancel_at_side(side, cancel, mark.price)?;
+                }
                 let order = self.make_order(
                     side,
                     EntryKind::Limit,
                     Some(price),
                     quantity,
                     bracket,
+                    cancel_at,
+                    flat_only,
                     mark.timestamp_ms,
                 );
                 let placed = SimEvent::Placed(order.clone());
@@ -412,6 +459,8 @@ impl Simulator {
                     Some(trigger),
                     quantity,
                     bracket,
+                    None,
+                    false,
                     mark.timestamp_ms,
                 );
                 let placed = SimEvent::Placed(order.clone());
@@ -517,6 +566,10 @@ impl Simulator {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one order has one natural field list; bundling it into a struct would name nothing"
+    )]
     fn make_order(
         &mut self,
         side: Side,
@@ -524,6 +577,8 @@ impl Simulator {
         price: Option<Decimal>,
         quantity: Decimal,
         bracket: Bracket,
+        cancel_at: Option<Decimal>,
+        flat_only: bool,
         placed_ms: i64,
     ) -> Order {
         self.next_id += 1;
@@ -534,6 +589,8 @@ impl Simulator {
             price,
             quantity,
             bracket,
+            cancel_at,
+            flat_only,
             placed_ms,
         }
     }
@@ -827,6 +884,22 @@ fn validate_limit_side(side: Side, price: Decimal, mark: Decimal) -> Result<(), 
     }
 }
 
+/// A limit's cancel-at level must sit on the far side of the market from
+/// the limit price — above it for a buy (which rests below), below it for a
+/// sell. That keeps the two levels on opposite sides of every future print,
+/// so no single print can both fill and cancel the order.
+fn validate_cancel_at_side(side: Side, cancel: Decimal, mark: Decimal) -> Result<(), RejectReason> {
+    let far_side = match side {
+        Side::Buy => cancel > mark,
+        Side::Sell => cancel < mark,
+    };
+    if far_side {
+        Ok(())
+    } else {
+        Err(RejectReason::CancelAtOnWrongSide(side))
+    }
+}
+
 /// A stop must arm beyond the market: a buy above it, a sell below it.
 fn validate_stop_side(side: Side, trigger: Decimal, mark: Decimal) -> Result<(), RejectReason> {
     let arms = match side {
@@ -964,6 +1037,8 @@ mod tests {
             quantity: Decimal::ONE,
             price: dec(95),
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         assert!(
             fills(&sim.on_trade(&print(1, 96))).is_empty(),
@@ -987,12 +1062,231 @@ mod tests {
             quantity: Decimal::ONE,
             price: dec(100),
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         assert_eq!(
             events,
             vec![SimEvent::Rejected(RejectReason::LimitOnWrongSide(
                 Side::Buy
             ))]
+        );
+    }
+
+    /// The retest scenario the strategy kernel places: the market broke
+    /// below a region, a sell limit rests at the broken edge, and the
+    /// cancel-at level names the projected target below. Whichever the tape
+    /// reaches first decides the order's fate.
+    #[test]
+    fn a_print_through_the_cancel_at_level_removes_the_limit_unfilled() {
+        // Market at 95 after a break: sell limit back up at 100 (the region
+        // edge), cancelled if 88 (the target) trades first.
+        let mut sim = seeded(95);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket::none(),
+            cancel_at: Some(dec(88)),
+            flat_only: false,
+        });
+        // Prints between the two levels leave the order resting.
+        assert!(sim.on_trade(&print(1, 94)).is_empty());
+        assert_eq!(sim.orders().len(), 1);
+
+        // The tape gaps through the target: the order goes, no fill.
+        let events = sim.on_trade(&print(2, 87));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SimEvent::Cancelled {
+                    reason: CancelReason::PriceTouched,
+                    ..
+                }]
+            ),
+            "the target print cancels the resting limit: {events:?}"
+        );
+        assert!(sim.orders().is_empty());
+        assert!(sim.position().is_none());
+    }
+
+    #[test]
+    fn the_retest_fill_still_wins_when_the_tape_returns_first() {
+        let mut sim = seeded(95);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket {
+                stop_loss: Some(dec(104)),
+                take_profit: Some(dec(88)),
+            },
+            cancel_at: Some(dec(88)),
+            flat_only: false,
+        });
+        // The tape returns to the edge before reaching the target: a normal
+        // limit fill at its own price, bracket armed, cancel-at forgotten.
+        let events = sim.on_trade(&print(1, 100));
+        let filled = fills(&events);
+        assert_eq!(filled.len(), 1);
+        assert_eq!(filled[0].price, dec(100));
+        let position = sim.position().expect("short opened at the edge");
+        assert_eq!(position.side, Side::Sell);
+        assert_eq!(position.take_profit, Some(dec(88)));
+
+        // The later target print is now the position's take profit, not a
+        // cancel of anything.
+        let events = sim.on_trade(&print(2, 88));
+        assert_eq!(fills(&events).len(), 1);
+        assert!(sim.position().is_none());
+    }
+
+    /// Mirrored for a buy: the limit rests below, the cancel-at sits above.
+    #[test]
+    fn a_buy_retest_limit_cancels_upward_and_fills_downward() {
+        let mut sim = seeded(105);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket::none(),
+            cancel_at: Some(dec(112)),
+            flat_only: false,
+        });
+        let events = sim.on_trade(&print(1, 112));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SimEvent::Cancelled {
+                    reason: CancelReason::PriceTouched,
+                    ..
+                }]
+            ),
+            "the upward target print cancels the buy limit: {events:?}"
+        );
+
+        let mut sim = seeded(105);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket::none(),
+            cancel_at: Some(dec(112)),
+            flat_only: false,
+        });
+        let events = sim.on_trade(&print(1, 100));
+        assert_eq!(fills(&events).len(), 1, "the retest fills as usual");
+    }
+
+    /// A flat-only order's moment arriving over an open position stands the
+    /// order down instead of filling it — the position a human opened while
+    /// the order rested is never traded against, closed, or re-bracketed.
+    #[test]
+    fn a_flat_only_limit_stands_down_when_its_moment_finds_a_position() {
+        let mut sim = seeded(95);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket {
+                stop_loss: Some(dec(104)),
+                take_profit: Some(dec(88)),
+            },
+            cancel_at: Some(dec(88)),
+            flat_only: true,
+        });
+        // A human buys at market while the order rests.
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(2),
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 96));
+        assert_eq!(sim.position().expect("manual long").quantity, dec(2));
+
+        // The tape returns to the edge: the flat-only order stands down —
+        // no fill, and the human's position is untouched.
+        let events = sim.on_trade(&print(2, 100));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SimEvent::Cancelled {
+                    reason: CancelReason::AccountOccupied,
+                    ..
+                }]
+            ),
+            "the occupied account cancels the flat-only order: {events:?}"
+        );
+        let position = sim.position().expect("the human's long survives");
+        assert_eq!(position.side, Side::Buy);
+        assert_eq!(position.quantity, dec(2));
+        assert_eq!(position.stop_loss, None, "their bracket is untouched");
+        assert!(sim.orders().is_empty());
+    }
+
+    /// The stand-down judges the *fill moment*, not history: a position
+    /// that opened and closed while the order rested changes nothing.
+    #[test]
+    fn a_position_that_closed_before_the_moment_does_not_stand_the_order_down() {
+        let mut sim = seeded(95);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: true,
+        });
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: Decimal::ONE,
+            bracket: Bracket::none(),
+        });
+        sim.on_trade(&print(1, 96));
+        sim.apply(Command::ClosePosition);
+        sim.on_trade(&print(2, 97));
+        assert!(sim.position().is_none(), "the round trip closed");
+
+        let events = sim.on_trade(&print(3, 100));
+        assert_eq!(fills(&events).len(), 1, "flat again, the order fills");
+        assert_eq!(sim.position().expect("short opened").side, Side::Sell);
+    }
+
+    /// A cancel-at level on the fill side of the market would cancel
+    /// instantly (or race its own fill) — refused with advice, like every
+    /// other level the simulator cannot honestly hold.
+    #[test]
+    fn a_cancel_at_on_the_wrong_side_is_rejected_whole() {
+        let mut sim = seeded(95);
+        let events = sim.apply(Command::PlaceLimit {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket::none(),
+            cancel_at: Some(dec(97)),
+            flat_only: false,
+        });
+        assert_eq!(
+            events,
+            vec![SimEvent::Rejected(RejectReason::CancelAtOnWrongSide(
+                Side::Sell
+            ))],
+            "a sell's cancel-at above the market is refused"
+        );
+        assert!(sim.orders().is_empty());
+
+        let events = sim.apply(Command::PlaceLimit {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            price: dec(100),
+            bracket: Bracket::none(),
+            cancel_at: Some(Decimal::ZERO),
+            flat_only: false,
+        });
+        assert_eq!(
+            events,
+            vec![SimEvent::Rejected(RejectReason::PriceNotPositive)],
+            "a non-positive cancel-at is refused"
         );
     }
 
@@ -1281,6 +1575,8 @@ mod tests {
             quantity: dec(1),
             price: dec(95),
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         let events = sim.apply(Command::Flatten);
         assert!(
@@ -1367,6 +1663,8 @@ mod tests {
             quantity: dec(1),
             price: dec(95),
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         let id = sim.orders()[0].id;
         let events = sim.apply(Command::ModifyOrder { id, price: dec(93) });
@@ -1399,6 +1697,8 @@ mod tests {
             quantity: dec(1),
             price: dec(95),
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         let id = sim.orders()[0].id;
         let events = sim.apply(Command::ModifyOrder {
@@ -1432,6 +1732,8 @@ mod tests {
             quantity: dec(1),
             price: dec(90),
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         sim.on_trade(&print(2, 104));
 
@@ -1475,6 +1777,8 @@ mod tests {
             quantity: Decimal::ONE,
             price: Decimal::ZERO,
             bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
         });
         assert_eq!(
             events,
@@ -1697,6 +2001,8 @@ mod tests {
                             stop_loss: Some(dec(90)),
                             take_profit: Some(dec(104)),
                         },
+                        cancel_at: None,
+                        flat_only: false,
                     }) {
                         log.push(format!("{event:?}"));
                     }

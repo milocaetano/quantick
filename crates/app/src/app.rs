@@ -5330,7 +5330,7 @@ impl QuantickApp {
                 // The instance dies with its drawing, immediately — not on
                 // the next closed bar, which a quiet tape may never bring.
                 if let Some((id, _)) = &doomed {
-                    self.drawing_pane_mut().strategies.remove_for_drawing(*id);
+                    self.drawing_pane_mut().remove_strategy_for_drawing(*id);
                 }
                 let name = doomed.map(|(_, label)| label);
                 let message = name.map_or_else(
@@ -5435,10 +5435,18 @@ impl QuantickApp {
             self.request_delete_selected(now);
         }
         if keys.undo {
-            self.drawing_pane_mut().drawings.undo();
+            let pane = self.drawing_pane_mut();
+            pane.drawings.undo();
+            // Undoing a rectangle's placement takes its drawing away from
+            // any armed instance without passing through the removal
+            // funnel; the sweep keeps a resting bot order from outliving
+            // its badge (redo below, and delete-all, share the risk).
+            pane.sweep_strategy_orphans();
         }
         if keys.redo {
-            self.drawing_pane_mut().drawings.redo();
+            let pane = self.drawing_pane_mut();
+            pane.drawings.redo();
+            pane.sweep_strategy_orphans();
         }
         if keys.lock
             && let Some(index) = self.drawing_pane().drawings.selected()
@@ -5550,7 +5558,11 @@ impl QuantickApp {
             self.toast_undo_rect = undo_rect;
         }
         if undo_clicked {
-            self.drawing_pane_mut().drawings.undo();
+            let pane = self.drawing_pane_mut();
+            pane.drawings.undo();
+            // Same orphan risk as the keyboard undo: the drawing an armed
+            // instance rides may just have been taken away.
+            pane.sweep_strategy_orphans();
             self.toast = None;
         }
     }
@@ -6000,7 +6012,7 @@ impl QuantickApp {
             };
             if self.drawing_pane_mut().drawings.delete_selected(true) == DeleteOutcome::Deleted {
                 if let Some(id) = doomed {
-                    self.drawing_pane_mut().strategies.remove_for_drawing(id);
+                    self.drawing_pane_mut().remove_strategy_for_drawing(id);
                 }
                 self.toast = Some(Toast {
                     message: "Drawing deleted.".into(),
@@ -6761,7 +6773,11 @@ impl QuantickApp {
         });
         self.drawing_manager_open = open;
         if delete_all {
-            let deleted = self.drawing_pane_mut().drawings.delete_all();
+            let pane = self.drawing_pane_mut();
+            let deleted = pane.drawings.delete_all();
+            // Every armed instance just lost its drawing at once; sweep
+            // them now so no resting bot order outlives its badge.
+            pane.sweep_strategy_orphans();
             if deleted > 0 {
                 self.toast = Some(Toast {
                     message: "All drawings deleted.".into(),
@@ -7287,7 +7303,7 @@ impl QuantickApp {
             );
         };
         let tab = self.active_tab_mut();
-        {
+        let replaced_cleanup = {
             let pane = tab.pane_mut(side);
             // Re-validate everything the menu's gate promised: this is also
             // the seam a future programmatic caller (the NL layer) comes
@@ -7314,33 +7330,42 @@ impl QuantickApp {
             if target.hidden || pane.drawings.all_hidden() {
                 return Err("unhide the drawing first — an armed region stays visible".to_owned());
             }
+            // A region whose drawn span can no longer cover a future bar
+            // can never fire: the badge would show "armed" over a bot that
+            // is structurally done — the silent halt the named disarms
+            // exist to prevent. One predicate, shared with re-arm and the
+            // evaluation sweep (`Pane::strategy_region_can_fire`), refuses
+            // it with the fix in hand.
+            if !pane.strategy_region_can_fire(drawing) {
+                return Err(
+                    "the region ends before the next bar, so nothing can ever fire — \
+                     stretch it past the right edge, or turn on \"extend right\" in its \
+                     Region settings"
+                        .to_owned(),
+                );
+            }
             let mut armed = quantick_strategy::ArmedStrategy::new(
                 params,
                 Box::new(quantick_strategy::ForceTrigger::new(force.clone())),
             );
             // Warm the ruler on the bars the chart is already showing —
             // armed means armed now, not after another twenty bars of
-            // warmup the trader cannot see the reason for. Only bars this
-            // app cut from prints: venue prefix candles measure another
-            // ruler entirely (a 1-minute body dwarfs a tick-bar body), so
-            // the warmup starts at the seam.
-            let slots = pane.slots();
-            let first_live = pane.seam_slot();
-            let warmup = quantick_strategy::Region::new(
-                rust_decimal::Decimal::ZERO,
-                rust_decimal::Decimal::ZERO,
-            );
-            for slot in slots.saturating_sub(force.window).max(first_live)..slots {
-                if let Some(bar) = pane.closed_bar(slot).cloned() {
-                    let _ = armed.on_closed_bar(&bar, &warmup, false, false);
-                }
-            }
+            // warmup the trader cannot see the reason for. The trigger
+            // declares its own depth (`warmup_bars`), and the pane keeps
+            // venue-prefix candles out: they measure another ruler
+            // entirely (a 1-minute body dwarfs a tick-bar body).
+            armed.warm(&pane.strategy_warmup_bars(armed.trigger().warmup_bars()));
             pane.strategies
                 .arm(crate::strategy_anchors::AnchoredInstance {
                     drawing,
                     preset: preset_label,
                     armed,
-                });
+                })
+        };
+        for command in replaced_cleanup {
+            // Arming over an instance with a pending entry sweeps that
+            // entry — a resting order must never outlive its bot.
+            let _ = tab.paper.apply_strategy_command(command);
         }
         tab.paper.set_bot_listening(true);
         Ok(())
@@ -7461,6 +7486,22 @@ impl QuantickApp {
                     .changed()
                 {
                     popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
+                }
+                let mut retest = popup.form.on_break == "retest_limit";
+                if ui
+                    .checkbox(
+                        &mut retest,
+                        "on a cut: rest a limit at the region edge until the target",
+                    )
+                    .on_hover_text(
+                        "a trigger bar closing beyond the region in the trade's direction \
+                         rests a limit at the edge it cut — the retest entry — bracketed \
+                         off the bar; the order removes itself if the bar's projected \
+                         target trades first. Off = a cut holds fire, as before.",
+                    )
+                    .changed()
+                {
+                    popup.form.on_break = if retest { "retest_limit" } else { "ignore" }.to_owned();
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -8148,6 +8189,15 @@ impl QuantickApp {
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
         self.draw_strategy_popup(ctx);
+        // The menus above may have disarmed a bot over a resting retest
+        // limit; its cancel goes to the simulator on this same frame, not
+        // on the next print. Every tab, not just the active one: a menu
+        // click and a tab switch can land on the same frame, and the old
+        // tab's feed keeps running — its cancel must not sit stranded
+        // until the tab is looked at again.
+        for tab in &mut self.tabs {
+            tab.apply_strategy_cleanup();
+        }
         self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
@@ -11050,6 +11100,551 @@ plot(close)
         );
     }
 
+    /// The replay-seek trap: a disarm that reset the ruler (timeline reset,
+    /// bar-spec change, market switch) used to leave "re-armed" silently
+    /// meaning "warming up for another N bars", so a force bar right after
+    /// the seek never fired. The pane's re-arm re-warms the ruler from the
+    /// bars the chart already shows; a bare kernel re-arm does not.
+    #[test]
+    fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+        fn state_of(
+            app: &QuantickApp,
+            drawing: drawings::DrawingId,
+        ) -> quantick_strategy::ArmedState {
+            app.active_tab()
+                .flow_pane
+                .strategies
+                .for_drawing(drawing)
+                .expect("instance")
+                .armed
+                .state()
+                .clone()
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(60.0, 110.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
+            .expect("the form compiles and the drawing exists");
+
+        // Two quiet bars on the chart, then the series "changes" under the
+        // ruler (the disarm reason a bar-spec change or replay seek names).
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "100", "101");
+        bar(&mut app, &mut id, "101", "102");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let _ = pane
+                .strategies
+                .for_drawing_mut(drawing)
+                .expect("instance")
+                .armed
+                .disarm(quantick_strategy::DisarmReason::BarSpecChanged);
+            // The pane's re-arm: kernel re-arm (which resets the ruler)
+            // plus the re-warm from the chart's own closed bars.
+            pane.rearm_strategy_for_drawing(drawing);
+        }
+        assert_eq!(
+            state_of(&app, drawing),
+            quantick_strategy::ArmedState::Armed
+        );
+
+        // The very next force bar fires: bodies 1, 1 re-warmed the window,
+        // and this bar's body 4 makes ratio 2 on a full window of 3.
+        bar(&mut app, &mut id, "102", "106");
+        assert!(
+            matches!(
+                state_of(&app, drawing),
+                quantick_strategy::ArmedState::Fired { .. }
+            ),
+            "the first eligible force bar after the re-arm fires; got {:?}",
+            state_of(&app, drawing)
+        );
+    }
+
+    /// An extended rectangle's region never expires off its right anchor;
+    /// an unextended one holds fire past it and the badge names the gate.
+    #[test]
+    fn extend_right_keeps_the_region_active_past_the_drawn_end() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            // The drawn span ends at slot 2; the force bars land past it.
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(2.0, 110.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
+            .expect("arming before any bar closed skips the span guard");
+
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "100", "101");
+        bar(&mut app, &mut id, "101", "102");
+        bar(&mut app, &mut id, "102", "103");
+        // Slot 3, past the drawn end: a force bar in price, held in time —
+        // and the badge says exactly which gate held it.
+        bar(&mut app, &mut id, "103", "107");
+        {
+            let instance = app
+                .active_tab()
+                .flow_pane
+                .strategies
+                .for_drawing(drawing)
+                .expect("instance");
+            assert_eq!(
+                instance.armed.state(),
+                &quantick_strategy::ArmedState::Armed,
+                "past the right anchor the region is inactive"
+            );
+            assert_eq!(
+                instance.armed.status_line(),
+                "armed · trigger held: region not active on this bar"
+            );
+        }
+
+        // Turn on extend right — the drawn band now runs to the chart's
+        // edge, and the region with it.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let index = pane.drawings.index_of(drawing).expect("drawing lives");
+            pane.drawings.items_mut()[index]
+                .payload
+                .as_any_mut()
+                .downcast_mut::<drawings::RectanglePayload>()
+                .expect("a rectangle carries a rectangle payload")
+                .extend_right = true;
+        }
+        // Three quiet bars drain the held force bar's body out of the
+        // window (back to an average of 1), then a fresh buy force bar
+        // closes at 110 — inside the price band, far past the drawn end.
+        bar(&mut app, &mut id, "107", "108");
+        bar(&mut app, &mut id, "108", "107");
+        bar(&mut app, &mut id, "107", "106");
+        bar(&mut app, &mut id, "106", "110");
+        assert!(
+            matches!(
+                app.active_tab()
+                    .flow_pane
+                    .strategies
+                    .for_drawing(drawing)
+                    .expect("instance")
+                    .armed
+                    .state(),
+                quantick_strategy::ArmedState::Fired { .. }
+            ),
+            "with extend right on, the region stays active past the drawn end"
+        );
+    }
+
+    /// Arming a region whose drawn span already ended is refused with the
+    /// fix in hand — "armed" over a structurally dead region is the silent
+    /// halt the named disarms exist to prevent.
+    #[test]
+    fn arming_a_region_that_already_ended_is_refused() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        // Sixteen closed Tick(50) bars, so "the newest bar" is slot 15.
+        let mut id = 0u64;
+        for _ in 0..16 {
+            for _ in 0..50 {
+                print(&mut app, &mut id, "100");
+            }
+        }
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 99.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(4.0, 101.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        let refused = app
+            .arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "dead".to_owned())
+            .expect_err("a region ending before the next bar cannot arm");
+        assert!(
+            refused.contains("extend right"),
+            "the refusal hands over the fix: {refused}"
+        );
+
+        // The boundary the guard once let through: a right anchor exactly
+        // on the newest *closed* bar (slot 15 of 16) still cannot cover
+        // the next bar to close (slot 16) — refused, not armed dead.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 99.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(15.0, 101.0));
+        }
+        let boundary = app.active_tab().flow_pane.drawings.items()[1].id;
+        app.arm_strategy_instance(pane::PaneSide::Flow, boundary, &form, "edge".to_owned())
+            .expect_err("a span ending on the newest closed bar covers no future bar");
+        // One anchored past the next slot arms fine without extend right.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 99.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(16.0, 101.0));
+        }
+        let alive = app.active_tab().flow_pane.drawings.items()[2].id;
+        app.arm_strategy_instance(pane::PaneSide::Flow, alive, &form, "ok".to_owned())
+            .expect("a span covering the next slot arms");
+
+        // The same dead drawing with extend right on arms fine.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let index = pane.drawings.index_of(drawing).expect("drawing lives");
+            pane.drawings.items_mut()[index]
+                .payload
+                .as_any_mut()
+                .downcast_mut::<drawings::RectanglePayload>()
+                .expect("a rectangle carries a rectangle payload")
+                .extend_right = true;
+        }
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "live".to_owned())
+            .expect("extend right keeps the region alive, so arming is honest");
+    }
+
+    /// Delete-all (and by the same sweep, undo/redo) must not leave a
+    /// resting bot order behind when the drawings vanish outside the
+    /// per-drawing removal funnel.
+    #[test]
+    fn delete_all_sweeps_the_armed_instances_pending_entries() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 115.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.on_break = "retest_limit".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF".to_owned())
+            .expect("the form compiles");
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "110", "109");
+        bar(&mut app, &mut id, "109", "108");
+        bar(&mut app, &mut id, "108", "104");
+        assert_eq!(
+            app.active_tab().paper.working_orders().len(),
+            1,
+            "the retest limit rests"
+        );
+
+        // Delete every drawing the way the manager's button does, then run
+        // the same-frame sweep + drain the tab applies.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings.delete_all();
+            pane.sweep_strategy_orphans();
+        }
+        app.active_tab_mut().apply_strategy_cleanup();
+        assert!(
+            app.active_tab().paper.working_orders().is_empty(),
+            "no resting bot order outlives its badge"
+        );
+        assert!(app.active_tab().flow_pane.strategies.is_empty());
+    }
+
+    /// The user's retest flow end to end in the app: a sell preset with the
+    /// retest option armed on a region, a force bar cutting below it, the
+    /// limit resting at the cut edge — then the tape reaching the target
+    /// first, the order removing itself, and the badge saying so.
+    #[test]
+    fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 115.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.on_break = "retest_limit".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF retest".to_owned())
+            .expect("the retest form compiles");
+
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "110", "109");
+        bar(&mut app, &mut id, "109", "108");
+        // Body 4 over average (1+1+4)/3 = 2: force, closing below the 105
+        // edge. The bar's range is 4 (prints at 108 and 104): TP 100.
+        bar(&mut app, &mut id, "108", "104");
+        {
+            let tab = app.active_tab();
+            assert_eq!(
+                tab.paper.working_orders().len(),
+                1,
+                "the retest limit rests at the cut edge"
+            );
+            let instance = tab
+                .flow_pane
+                .strategies
+                .for_drawing(drawing)
+                .expect("instance");
+            assert!(
+                matches!(
+                    instance.armed.state(),
+                    quantick_strategy::ArmedState::Fired { retest: true, .. }
+                ),
+                "the instance narrates a resting retest, got {:?}",
+                instance.armed.state()
+            );
+        }
+
+        // The tape walks straight down through the projected target (100):
+        // the order removes itself — no fill, no trade — and the one-shot
+        // instance stops with the reason on the badge.
+        print(&mut app, &mut id, "100");
+        let tab = app.active_tab();
+        assert!(
+            tab.paper.working_orders().is_empty(),
+            "the target print removed the resting limit"
+        );
+        assert!(tab.paper.is_flat(), "no trade happened");
+        let instance = tab
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Disarmed {
+                reason: quantick_strategy::DisarmReason::TargetBeforeRetest
+            }
+        );
+        assert_eq!(instance.armed.status_line(), "target hit before retest");
+    }
+
+    /// The resting retest limit never trades against a hand: if the trader
+    /// opens a manual position while the order rests, the fill moment
+    /// stands the order down — the trader's position and bracket survive
+    /// untouched, and the badge says why the bot declined.
+    #[test]
+    fn a_resting_retest_limit_stands_down_over_a_manual_position() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 115.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.on_break = "retest_limit".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF retest".to_owned())
+            .expect("the retest form compiles");
+
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "110", "109");
+        bar(&mut app, &mut id, "109", "108");
+        bar(&mut app, &mut id, "108", "104");
+        assert_eq!(app.active_tab().paper.working_orders().len(), 1);
+
+        // The trader buys at market while the bot's limit rests.
+        app.active_tab_mut().paper.apply_sim_command_for_tests(
+            quantick_sim::Command::PlaceMarket {
+                side: quantick_engine::Side::Buy,
+                quantity: Decimal::ONE,
+                bracket: quantick_sim::Bracket::none(),
+            },
+        );
+        print(&mut app, &mut id, "104");
+        assert!(
+            app.active_tab().paper.position_summary().is_some(),
+            "the manual long filled"
+        );
+
+        // The tape returns to the edge: the bot's fill moment finds the
+        // account occupied and stands down instead of netting the trader's
+        // long closed.
+        print(&mut app, &mut id, "105");
+        let tab = app.active_tab();
+        assert!(
+            tab.paper.working_orders().is_empty(),
+            "the bot's order stood down"
+        );
+        assert!(
+            tab.paper.position_summary().is_some(),
+            "the trader's long survives untouched"
+        );
+        let instance = tab
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Disarmed {
+                reason: quantick_strategy::DisarmReason::AccountOccupied
+            }
+        );
+        assert_eq!(instance.armed.status_line(), "stood down — account busy");
+    }
+
     /// Two instances co-triggered by one closed bar must not stack: the
     /// first one's *queued* entry already occupies the account, so the
     /// second holds fire — "at most one live operation per chart" is a
@@ -11528,6 +12123,8 @@ plot(close)
                 quantity: Decimal::ONE,
                 price,
                 bracket: quantick_sim::Bracket::none(),
+                cancel_at: None,
+                flat_only: false,
             });
         assert_eq!(app.active_tab().paper.working_orders().len(), 1);
         run_frame(&mut app, &ctx);
@@ -11584,6 +12181,8 @@ plot(close)
                 quantity: Decimal::ONE,
                 price,
                 bracket: quantick_sim::Bracket::none(),
+                cancel_at: None,
+                flat_only: false,
             });
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);

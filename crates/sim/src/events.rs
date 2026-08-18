@@ -88,6 +88,14 @@ pub enum CancelReason {
     Flatten,
     /// A session reset discarded it.
     Reset,
+    /// The tape traded at or through the order's cancel-at price before the
+    /// order filled — the move the order was waiting to fade completed
+    /// without it, so the order removed itself as instructed.
+    PriceTouched,
+    /// A flat-only order's price was reached while a position was open:
+    /// filling would have traded against (or piled onto) a position the
+    /// order's owner never accounted for, so it stood down instead.
+    AccountOccupied,
 }
 
 /// Why a command was refused. Messages are written for a beginner: they say
@@ -104,6 +112,9 @@ pub enum RejectReason {
     LimitOnWrongSide(Side),
     /// A stop at or through the market would trigger immediately.
     StopOnWrongSide(Side),
+    /// A cancel-at price on the fill side of the market would cancel the
+    /// order immediately (or race its own fill).
+    CancelAtOnWrongSide(Side),
     /// A stop loss on the profit side of the reference price.
     StopLossOnWrongSide(Side),
     /// A take profit on the losing side of the reference price.
@@ -147,6 +158,18 @@ impl std::fmt::Display for RejectReason {
                 write!(
                     f,
                     "a sell stop must sit below the market (it chases weakness) - to sell above the market use a limit"
+                )
+            }
+            Self::CancelAtOnWrongSide(Side::Buy) => {
+                write!(
+                    f,
+                    "a buy limit's cancel-at price must sit above the market - it names the move that makes waiting pointless; below the market it would cancel the order instantly"
+                )
+            }
+            Self::CancelAtOnWrongSide(Side::Sell) => {
+                write!(
+                    f,
+                    "a sell limit's cancel-at price must sit below the market - it names the move that makes waiting pointless; above the market it would cancel the order instantly"
                 )
             }
             Self::StopLossOnWrongSide(Side::Buy) => {

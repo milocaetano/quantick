@@ -152,6 +152,10 @@ struct Args {
     script: Option<PathBuf>,
     plot: usize,
     region: Option<RegionSpec>,
+    /// Force-region only: on a bar cutting through the region, rest a limit
+    /// at the cut edge (cancelled at the bar's target) instead of holding
+    /// fire — the chart's "retest limit" option, measured headless.
+    retest_limit: bool,
     quantity: Decimal,
     protection: Protection,
     write_trades: Option<PathBuf>,
@@ -205,6 +209,9 @@ fn usage() -> String {
   --region <low:high:side> the force-region strategy's price band and the
                            side it hunts (buy|sell); auto re-arms so every
                            qualifying bar in the recording is measured
+  --retest-limit           force-region: a bar cutting through the region
+                           rests a limit at the cut edge, cancelled if the
+                           bar's projected target trades first
   --quantity <n>           contracts per entry (default {DEFAULT_QUANTITY})
   --stop <points>          protective stop distance from the entry mark
   --target <points>        protective target distance from the entry mark
@@ -230,6 +237,7 @@ fn parse_args() -> Result<Args, String> {
         script: None,
         plot: 0,
         region: None,
+        retest_limit: false,
         quantity: DEFAULT_QUANTITY,
         protection: Protection::default(),
         write_trades: None,
@@ -266,6 +274,7 @@ fn parse_args() -> Result<Args, String> {
             "--confirm-flow" => args.confirm_flow = true,
             "--script" => args.script = Some(PathBuf::from(value()?)),
             "--region" => args.region = Some(RegionSpec::parse(&value()?)?),
+            "--retest-limit" => args.retest_limit = true,
             "--plot" => {
                 let text = value()?;
                 args.plot = text
@@ -298,6 +307,12 @@ fn parse_args() -> Result<Args, String> {
              shorter is the same signal read backwards",
             args.fast, args.slow
         ));
+    }
+    if args.retest_limit && args.strategy != Some(StrategyKind::ForceRegion) {
+        return Err(
+            "--retest-limit belongs to the force-region strategy — pass --region <low:high:side>"
+                .to_owned(),
+        );
     }
     if let (Some(from), Some(to)) = (args.from, args.to)
         && from > to
@@ -577,6 +592,11 @@ fn build_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
                     // The harness measures: every qualifying bar in the
                     // recording counts, so the instance re-arms itself.
                     rearm: quantick_strategy::Rearm::Auto,
+                    on_break: if args.retest_limit {
+                        quantick_strategy::BreakPolicy::RetestLimit
+                    } else {
+                        quantick_strategy::BreakPolicy::Ignore
+                    },
                 },
                 quantick_strategy::ForceParams::default_band(),
             )))

@@ -88,6 +88,15 @@ pub enum BarVerdict {
         ratio: Decimal,
     },
     Force(ForceBar),
+    /// Ratio inside the band but body under the absolute floor — the bar
+    /// the *relative* ruler would call force and the elephant gate holds.
+    /// Distinct from [`BarVerdict::Quiet`] so the badge can say which rule
+    /// held it: "quiet 1.7×" over a bar visibly inside the band reads as a
+    /// broken ruler.
+    UnderFloor {
+        ratio: Decimal,
+        body: Decimal,
+    },
     /// Body above the band — too big to chase.
     Exhaustion {
         side: Side,
@@ -175,7 +184,9 @@ impl ForceWindow {
         let (min, max) = ordered_band(&self.params);
         if ratio > max {
             BarVerdict::Exhaustion { side, ratio }
-        } else if ratio >= min && body >= self.params.min_body {
+        } else if ratio < min {
+            BarVerdict::Quiet { ratio }
+        } else if body >= self.params.min_body {
             BarVerdict::Force(ForceBar {
                 side,
                 body,
@@ -183,9 +194,10 @@ impl ForceWindow {
                 ratio,
             })
         } else {
-            // Inside the band but under the absolute floor is still quiet:
-            // a ratio without a size is not an elephant.
-            BarVerdict::Quiet { ratio }
+            // Inside the band but under the absolute floor: a ratio without
+            // a size is not an elephant — and the verdict says which rule
+            // held it, because "quiet" over a band-clearing bar is a lie.
+            BarVerdict::UnderFloor { ratio, body }
         }
     }
 }
@@ -350,12 +362,16 @@ mod tests {
             max_factor: dec("2.5"),
             min_body: dec("100"),
         });
-        // Bodies 30, 30, then 60: ratio 1.5 — band says force, floor says no.
+        // Bodies 30, 30, then 60: ratio 1.5 — band says force, floor says
+        // no, and the verdict names the floor rather than calling it quiet.
         gated.classify(&bar("100", "130"));
         gated.classify(&bar("130", "160"));
         assert_eq!(
             gated.classify(&bar("160", "220")),
-            BarVerdict::Quiet { ratio: dec("1.5") },
+            BarVerdict::UnderFloor {
+                ratio: dec("1.5"),
+                body: dec("60"),
+            },
             "60 points of body is not an elephant under a 100-point floor"
         );
 
