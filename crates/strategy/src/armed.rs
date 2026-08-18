@@ -27,6 +27,24 @@ pub enum Rearm {
     Auto,
 }
 
+/// What the instance does when the trigger bar cuts *through* the region —
+/// same side, region active, but the close beyond the region's edge in the
+/// trade's direction. Closing inside still fires at market; closing beyond
+/// the *opposite* edge never fires at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BreakPolicy {
+    /// Hold fire, exactly as before this option existed. The default.
+    #[default]
+    Ignore,
+    /// Rest a limit at the cut edge — the price the tape must revisit to
+    /// retest the region — bracketed off the trigger bar like the market
+    /// entry would have been, and cancelled if the tape reaches the bar's
+    /// projected take profit before returning. With no take-profit leg
+    /// there is no target to reach, so the order rests until it fills or
+    /// the instance disarms.
+    RetestLimit,
+}
+
 /// The preset half of an instance: everything a strategy bank row stores.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyParams {
@@ -41,6 +59,8 @@ pub struct StrategyParams {
     /// Zero or negative means "no stop leg".
     pub sl_mult: Decimal,
     pub rearm: Rearm,
+    /// What a region-cutting trigger bar does. See [`BreakPolicy`].
+    pub on_break: BreakPolicy,
 }
 
 /// Why an instance stopped watching the market.
@@ -67,6 +87,12 @@ pub enum DisarmReason {
     /// that lost its protection mid-flight is not the operation that was
     /// armed.
     ProtectionDropped,
+    /// The retest limit was cancelled by its own cancel-at level: the tape
+    /// reached the trigger bar's projected target before returning to the
+    /// region edge. The move completed without the retest — no trade
+    /// happened, and a one-shot instance stops and says so rather than
+    /// pretending an operation ran.
+    TargetBeforeRetest,
 }
 
 impl DisarmReason {
@@ -81,6 +107,7 @@ impl DisarmReason {
             Self::EntryRejected(_) => "entry rejected",
             Self::EntryCancelled => "entry cancelled",
             Self::ProtectionDropped => "protection dropped — closed",
+            Self::TargetBeforeRetest => "target hit before retest",
         }
     }
 }
@@ -94,6 +121,11 @@ pub enum ArmedState {
     /// is filled in when the simulator acknowledges placement.
     Fired {
         order_id: Option<OrderId>,
+        /// `true` when the entry is a resting retest limit at the region
+        /// edge (which may wait a long time and cancel itself at the
+        /// target) rather than a market order meeting the next print.
+        /// Badges narrate the difference; the machine walks the same path.
+        retest: bool,
     },
     /// The entry filled; the operation is live until the account is flat
     /// again (its bracket, a manual close — the instance does not care
@@ -183,14 +215,24 @@ impl ArmedStrategy {
         if self.state != ArmedState::Armed {
             return Vec::new();
         }
+        // Every gate that holds a seen trigger names itself in the note, so
+        // the badge never shows a bare "armed" over a force bar that did
+        // nothing — the mystery that reads as a broken bot. A bar with no
+        // signal clears the note and lets the trigger's own status narrate.
         let Some(signal) = signal else {
+            self.note = None;
             return Vec::new();
         };
-        if signal.side != self.params.side
-            || !region_active
-            || !region.contains(signal.reference)
-            || !account_flat
-        {
+        if signal.side != self.params.side {
+            self.note = Some("trigger held: opposite side");
+            return Vec::new();
+        }
+        if !region_active {
+            self.note = Some("trigger held: region not active on this bar");
+            return Vec::new();
+        }
+        if !account_flat {
+            self.note = Some("trigger held: account not flat");
             return Vec::new();
         }
         let Some(bracket) = project_bracket(
@@ -205,12 +247,61 @@ impl ArmedStrategy {
             self.note = Some("projection invalid — held fire");
             return Vec::new();
         };
+        if region.contains(signal.reference) {
+            self.note = None;
+            self.state = ArmedState::Fired {
+                order_id: None,
+                retest: false,
+            };
+            return vec![Command::PlaceMarket {
+                side: self.params.side,
+                quantity: self.params.quantity,
+                bracket,
+            }];
+        }
+        // The close sits outside the region. A cut — beyond the edge in the
+        // trade's own direction — may still become a retest limit at that
+        // edge; beyond the opposite edge it is just a miss.
+        let edge = match self.params.side {
+            Side::Sell if signal.reference < region.low() => Some(region.low()),
+            Side::Buy if signal.reference > region.high() => Some(region.high()),
+            _ => None,
+        };
+        let (BreakPolicy::RetestLimit, Some(edge)) = (self.params.on_break, edge) else {
+            self.note = Some("trigger held: closed outside region");
+            return Vec::new();
+        };
+        // The projected legs anchor on the trigger bar, but the entry now
+        // prices at the edge: a leg that does not clear the edge would be
+        // dropped (or rejected) by the simulator, and "never fire
+        // unprotected" makes that a reason to hold, not to fire bare.
+        let legs_clear_edge = match self.params.side {
+            Side::Sell => {
+                bracket.stop_loss.is_none_or(|level| level > edge)
+                    && bracket.take_profit.is_none_or(|level| level < edge)
+            }
+            Side::Buy => {
+                bracket.stop_loss.is_none_or(|level| level < edge)
+                    && bracket.take_profit.is_none_or(|level| level > edge)
+            }
+        };
+        if !legs_clear_edge {
+            self.note = Some("retest bracket does not clear the edge — held fire");
+            return Vec::new();
+        }
         self.note = None;
-        self.state = ArmedState::Fired { order_id: None };
-        vec![Command::PlaceMarket {
+        self.state = ArmedState::Fired {
+            order_id: None,
+            retest: true,
+        };
+        vec![Command::PlaceLimit {
             side: self.params.side,
             quantity: self.params.quantity,
+            price: edge,
             bracket,
+            // The projected target doubles as the order's expiry: the move
+            // completing without the retest removes the reason to enter.
+            cancel_at: bracket.take_profit,
         }]
     }
 
@@ -238,27 +329,54 @@ impl ArmedStrategy {
         let mut commands = Vec::new();
         for event in events {
             match (&self.state, event) {
-                (ArmedState::Fired { order_id: None }, SimEvent::Placed(order)) => {
+                (
+                    ArmedState::Fired {
+                        order_id: None,
+                        retest,
+                    },
+                    SimEvent::Placed(order),
+                ) => {
                     self.state = ArmedState::Fired {
                         order_id: Some(order.id),
+                        retest: *retest,
                     };
                 }
-                (ArmedState::Fired { order_id: None }, SimEvent::Rejected(reason)) => {
+                (ArmedState::Fired { order_id: None, .. }, SimEvent::Rejected(reason)) => {
                     self.state = ArmedState::Disarmed {
                         reason: DisarmReason::EntryRejected(*reason),
                     };
                 }
-                (ArmedState::Fired { order_id: Some(id) }, SimEvent::Filled(fill))
-                    if fill.role == quantick_sim::FillRole::Entry(*id) =>
-                {
+                (
+                    ArmedState::Fired {
+                        order_id: Some(id), ..
+                    },
+                    SimEvent::Filled(fill),
+                ) if fill.role == quantick_sim::FillRole::Entry(*id) => {
                     self.state = ArmedState::InPosition;
                     my_fill_in_batch = true;
                 }
-                (ArmedState::Fired { order_id: Some(id) }, SimEvent::Cancelled { order, .. })
-                    if order.id == *id =>
-                {
-                    self.state = ArmedState::Disarmed {
-                        reason: DisarmReason::EntryCancelled,
+                (
+                    ArmedState::Fired {
+                        order_id: Some(id), ..
+                    },
+                    SimEvent::Cancelled { order, reason },
+                ) if order.id == *id => {
+                    self.state = match reason {
+                        // The order's own cancel-at level: the tape reached
+                        // the projected target before the retest. No trade
+                        // happened — an auto instance goes straight back to
+                        // hunting, a one-shot stops with the reason named.
+                        quantick_sim::CancelReason::PriceTouched => match self.params.rearm {
+                            Rearm::Auto => ArmedState::Armed,
+                            Rearm::OneShot => ArmedState::Disarmed {
+                                reason: DisarmReason::TargetBeforeRetest,
+                            },
+                        },
+                        // A human hand (or a reset) swept the entry away;
+                        // the bot does not insist.
+                        _ => ArmedState::Disarmed {
+                            reason: DisarmReason::EntryCancelled,
+                        },
                     };
                 }
                 (ArmedState::InPosition, SimEvent::BracketDropped { .. }) if my_fill_in_batch => {
@@ -279,8 +397,30 @@ impl ArmedStrategy {
     /// Stop watching, with the reason the badge will show. An in-position
     /// instance hands its operation to the human: the position and its
     /// bracket live on in the simulator untouched.
-    pub fn disarm(&mut self, reason: DisarmReason) {
+    ///
+    /// A *pending* entry is different — the bot asked for it and no human
+    /// ever saw it fill, so the instance sweeps it on the way out: the
+    /// returned commands cancel it, and the caller applies them to the
+    /// simulator. (Under [`DisarmReason::TimelineReset`] the simulator's
+    /// own reset is already cancelling everything with the honest reason,
+    /// so nothing is returned — a second cancel would only address an id
+    /// that no longer exists.) Before retest limits a pending entry lived
+    /// for exactly one print; now it can rest for hours, which is what
+    /// makes the sweep worth commanding.
+    #[must_use = "apply the returned cleanup commands to the simulator"]
+    pub fn disarm(&mut self, reason: DisarmReason) -> Vec<Command> {
+        let cleanup = match (&self.state, reason) {
+            (_, DisarmReason::TimelineReset) => Vec::new(),
+            (
+                ArmedState::Fired {
+                    order_id: Some(id), ..
+                },
+                _,
+            ) => vec![Command::CancelOrder { id: *id }],
+            _ => Vec::new(),
+        };
         self.state = ArmedState::Disarmed { reason };
+        cleanup
     }
 
     /// Re-arm from `Done` or `Disarmed`. A live operation (`Fired`,
@@ -317,7 +457,10 @@ impl ArmedStrategy {
                 Some(note) => format!("armed · {note}"),
                 None => format!("armed · {}", self.trigger.status()),
             },
-            ArmedState::Fired { .. } => "fired · waiting for fill".to_owned(),
+            ArmedState::Fired { retest: false, .. } => "fired · waiting for fill".to_owned(),
+            ArmedState::Fired { retest: true, .. } => {
+                "retest limit resting at the edge · cancels at target".to_owned()
+            }
             ArmedState::InPosition => "in position".to_owned(),
             ArmedState::Done => "done · one shot".to_owned(),
             ArmedState::Disarmed { reason } => reason.label().to_owned(),
@@ -401,6 +544,7 @@ mod tests {
             tp_mult: Decimal::ONE,
             sl_mult: Decimal::ONE,
             rearm: Rearm::OneShot,
+            on_break: BreakPolicy::Ignore,
         }
     }
 
@@ -449,7 +593,13 @@ mod tests {
                 },
             }]
         );
-        assert_eq!(instance.state(), &ArmedState::Fired { order_id: None });
+        assert_eq!(
+            instance.state(),
+            &ArmedState::Fired {
+                order_id: None,
+                retest: false
+            }
+        );
     }
 
     #[test]
@@ -508,7 +658,7 @@ mod tests {
 
         // Disarmed instances keep their window warm but never fire.
         let mut instance = force_instance(Side::Buy);
-        instance.disarm(DisarmReason::User);
+        let _ = instance.disarm(DisarmReason::User);
         assert!(warm_then_force(&mut instance, &region).is_empty());
         instance.rearm();
         // The window is already warm: the next force bar fires immediately.
@@ -533,13 +683,15 @@ mod tests {
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
+            cancel_at: None,
             placed_ms: 0,
         };
         let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
         assert_eq!(
             instance.state(),
             &ArmedState::Fired {
-                order_id: Some(OrderId(7))
+                order_id: Some(OrderId(7)),
+                retest: false
             }
         );
 
@@ -592,6 +744,7 @@ mod tests {
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
+            cancel_at: None,
             placed_ms: 0,
         })]);
         let _ = instance.on_sim_events(&[SimEvent::Filled(quantick_sim::Fill {
@@ -637,6 +790,7 @@ mod tests {
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
+            cancel_at: None,
             placed_ms: 0,
         };
         let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
@@ -739,6 +893,7 @@ mod tests {
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
+            cancel_at: None,
             placed_ms: 0,
         };
         let _ = instance.on_sim_events(&[SimEvent::Placed(order)]);
@@ -779,6 +934,7 @@ mod tests {
             price: None,
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
+            cancel_at: None,
             placed_ms: 0,
         })]);
         let commands = bystander.on_sim_events(&[SimEvent::BracketDropped {
@@ -799,7 +955,7 @@ mod tests {
         let mut instance = force_instance(Side::Buy);
         instance.on_closed_bar(&bar("100", "101"), &region, true, true);
         instance.on_closed_bar(&bar("101", "102"), &region, true, true);
-        instance.disarm(DisarmReason::BarSpecChanged);
+        let _ = instance.disarm(DisarmReason::BarSpecChanged);
         instance.rearm();
         assert_eq!(instance.state(), &ArmedState::Armed);
         assert_eq!(instance.trigger().status(), "waiting for bars 0/3");
@@ -808,7 +964,7 @@ mod tests {
         // next force bar fires without a fresh warmup.
         let mut instance = force_instance(Side::Buy);
         warm_then_force(&mut instance, &region);
-        instance.disarm(DisarmReason::User);
+        let _ = instance.disarm(DisarmReason::User);
         instance.rearm();
         let commands = instance.on_closed_bar(&bar("102", "107.6"), &region, true, true);
         assert_eq!(
@@ -816,5 +972,348 @@ mod tests {
             1,
             "a user disarm keeps the warm window: {commands:?}"
         );
+    }
+
+    // ---- the break/retest policy ----
+
+    fn retest_instance(side: Side) -> ArmedStrategy {
+        ArmedStrategy::new(
+            StrategyParams {
+                on_break: BreakPolicy::RetestLimit,
+                ..params(side)
+            },
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: dec("1.5"),
+                max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
+            })),
+        )
+    }
+
+    /// Warm the window, then close a body-4 sell force bar at 104, cutting
+    /// below the 105–115 region. Range 6 (high 109, low 103): the bracket
+    /// anchored on the bar is SL 110 / TP 98.
+    fn warm_then_sell_cut(instance: &mut ArmedStrategy, region: &Region) -> Vec<Command> {
+        assert!(
+            instance
+                .on_closed_bar(&bar("110", "109"), region, true, true)
+                .is_empty()
+        );
+        assert!(
+            instance
+                .on_closed_bar(&bar("109", "108"), region, true, true)
+                .is_empty()
+        );
+        instance.on_closed_bar(&bar("108", "104"), region, true, true)
+    }
+
+    #[test]
+    fn a_sell_cut_below_the_region_rests_a_retest_limit_at_the_cut_edge() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = retest_instance(Side::Sell);
+        let commands = warm_then_sell_cut(&mut instance, &region);
+        assert_eq!(
+            commands,
+            vec![Command::PlaceLimit {
+                side: Side::Sell,
+                quantity: Decimal::ONE,
+                price: dec("105"),
+                bracket: Bracket {
+                    stop_loss: Some(dec("110")),
+                    take_profit: Some(dec("98")),
+                },
+                cancel_at: Some(dec("98")),
+            }],
+            "the limit rests at the cut edge, bracketed off the trigger bar, \
+             expiring at the bar's own target"
+        );
+        assert_eq!(
+            instance.state(),
+            &ArmedState::Fired {
+                order_id: None,
+                retest: true
+            }
+        );
+        assert!(instance.status_line().starts_with("retest limit resting"));
+    }
+
+    #[test]
+    fn a_buy_cut_above_the_region_mirrors_the_retest() {
+        let region = Region::new(dec("90"), dec("100"));
+        let mut instance = retest_instance(Side::Buy);
+        instance.on_closed_bar(&bar("95", "96"), &region, true, true);
+        instance.on_closed_bar(&bar("96", "97"), &region, true, true);
+        let commands = instance.on_closed_bar(&bar("97", "101"), &region, true, true);
+        // Close 101, range 6 (high 102, low 96): TP 107, SL 95, edge 100.
+        assert_eq!(
+            commands,
+            vec![Command::PlaceLimit {
+                side: Side::Buy,
+                quantity: Decimal::ONE,
+                price: dec("100"),
+                bracket: Bracket {
+                    stop_loss: Some(dec("95")),
+                    take_profit: Some(dec("107")),
+                },
+                cancel_at: Some(dec("107")),
+            }]
+        );
+    }
+
+    /// Default off: the cut holds fire exactly as before the option
+    /// existed, and the badge names the gate instead of staying mute.
+    #[test]
+    fn the_default_policy_ignores_the_cut_and_names_the_gate() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = ArmedStrategy::new(
+            params(Side::Sell),
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: dec("1.5"),
+                max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
+            })),
+        );
+        assert!(warm_then_sell_cut(&mut instance, &region).is_empty());
+        assert_eq!(instance.state(), &ArmedState::Armed);
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: closed outside region"
+        );
+    }
+
+    /// A close beyond the *opposite* edge is a miss, never a retest: a sell
+    /// bar closing above the region has not cut anything downward.
+    #[test]
+    fn a_cut_beyond_the_opposite_edge_never_arms_a_retest() {
+        let region = Region::new(dec("90"), dec("100"));
+        let mut instance = retest_instance(Side::Sell);
+        instance.on_closed_bar(&bar("110", "109"), &region, true, true);
+        instance.on_closed_bar(&bar("109", "108"), &region, true, true);
+        // A body-4 sell force bar closing at 104 — above the whole region.
+        let commands = instance.on_closed_bar(&bar("108", "104"), &region, true, true);
+        assert!(commands.is_empty());
+        assert_eq!(instance.state(), &ArmedState::Armed);
+    }
+
+    /// The option only changes what a *cut* does: a close inside the region
+    /// still fires the market entry.
+    #[test]
+    fn inside_the_region_still_fires_at_market_with_retest_on() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = retest_instance(Side::Buy);
+        let commands = warm_then_force(&mut instance, &region);
+        assert!(
+            matches!(commands.as_slice(), [Command::PlaceMarket { .. }]),
+            "a close inside the region is the market path: {commands:?}"
+        );
+    }
+
+    fn retest_order(id: u64) -> quantick_sim::Order {
+        quantick_sim::Order {
+            id: OrderId(id),
+            side: Side::Sell,
+            kind: quantick_sim::EntryKind::Limit,
+            price: Some(dec("105")),
+            quantity: Decimal::ONE,
+            bracket: Bracket {
+                stop_loss: Some(dec("110")),
+                take_profit: Some(dec("98")),
+            },
+            cancel_at: Some(dec("98")),
+            placed_ms: 0,
+        }
+    }
+
+    /// The tape reaching the target first cancels the order by price: no
+    /// trade happened, so one-shot stops with the reason named and auto
+    /// goes straight back to hunting.
+    #[test]
+    fn the_target_cancel_walks_by_rearm_policy() {
+        let region = Region::new(dec("105"), dec("115"));
+
+        let mut one_shot = retest_instance(Side::Sell);
+        warm_then_sell_cut(&mut one_shot, &region);
+        let order = retest_order(4);
+        let _ = one_shot.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = one_shot.on_sim_events(&[SimEvent::Cancelled {
+            order,
+            reason: quantick_sim::CancelReason::PriceTouched,
+        }]);
+        assert_eq!(
+            one_shot.state(),
+            &ArmedState::Disarmed {
+                reason: DisarmReason::TargetBeforeRetest
+            }
+        );
+        assert_eq!(one_shot.status_line(), "target hit before retest");
+
+        let mut auto = ArmedStrategy::new(
+            StrategyParams {
+                rearm: Rearm::Auto,
+                on_break: BreakPolicy::RetestLimit,
+                ..params(Side::Sell)
+            },
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: dec("1.5"),
+                max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
+            })),
+        );
+        warm_then_sell_cut(&mut auto, &region);
+        let order = retest_order(5);
+        let _ = auto.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = auto.on_sim_events(&[SimEvent::Cancelled {
+            order,
+            reason: quantick_sim::CancelReason::PriceTouched,
+        }]);
+        assert_eq!(
+            auto.state(),
+            &ArmedState::Armed,
+            "auto re-arms and keeps hunting after the target kills the order"
+        );
+    }
+
+    /// A human sweep (flatten / cancel-all) of the resting retest limit is
+    /// still the old story: the bot does not insist.
+    #[test]
+    fn a_swept_retest_limit_disarms_as_entry_cancelled() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = retest_instance(Side::Sell);
+        warm_then_sell_cut(&mut instance, &region);
+        let order = retest_order(6);
+        let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = instance.on_sim_events(&[SimEvent::Cancelled {
+            order,
+            reason: quantick_sim::CancelReason::Flatten,
+        }]);
+        assert_eq!(
+            instance.state(),
+            &ArmedState::Disarmed {
+                reason: DisarmReason::EntryCancelled
+            }
+        );
+    }
+
+    #[test]
+    fn the_retest_fill_walks_to_in_position() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = retest_instance(Side::Sell);
+        warm_then_sell_cut(&mut instance, &region);
+        let _ = instance.on_sim_events(&[SimEvent::Placed(retest_order(7))]);
+        let fill = quantick_sim::Fill {
+            timestamp_ms: 9,
+            agg_id: 30,
+            side: Side::Sell,
+            price: dec("105"),
+            quantity: Decimal::ONE,
+            role: quantick_sim::FillRole::Entry(OrderId(7)),
+        };
+        let _ = instance.on_sim_events(&[SimEvent::Filled(fill)]);
+        assert_eq!(instance.state(), &ArmedState::InPosition);
+    }
+
+    /// Disarming over a resting entry sweeps it: the returned commands
+    /// cancel the order the bot placed — except under a timeline reset,
+    /// where the simulator's own reset already cancels everything with the
+    /// honest reason.
+    #[test]
+    fn disarm_sweeps_the_pending_retest_limit() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = retest_instance(Side::Sell);
+        warm_then_sell_cut(&mut instance, &region);
+        let _ = instance.on_sim_events(&[SimEvent::Placed(retest_order(8))]);
+        let commands = instance.disarm(DisarmReason::User);
+        assert_eq!(commands, vec![Command::CancelOrder { id: OrderId(8) }]);
+
+        let mut instance = retest_instance(Side::Sell);
+        warm_then_sell_cut(&mut instance, &region);
+        let _ = instance.on_sim_events(&[SimEvent::Placed(retest_order(9))]);
+        let commands = instance.disarm(DisarmReason::TimelineReset);
+        assert!(
+            commands.is_empty(),
+            "the simulator's reset owns that cancellation"
+        );
+    }
+
+    /// A projected leg that does not clear the entry edge would be dropped
+    /// at fill time — so it holds fire instead, and says why.
+    #[test]
+    fn a_bracket_leg_that_does_not_clear_the_edge_holds_fire() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = ArmedStrategy::new(
+            StrategyParams {
+                sl_mult: dec("0.1"),
+                on_break: BreakPolicy::RetestLimit,
+                ..params(Side::Sell)
+            },
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: dec("1.5"),
+                max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
+            })),
+        );
+        // SL = 104 + 0.1 × 6 = 104.6, below the 105 edge a short entered
+        // there needs it above.
+        assert!(warm_then_sell_cut(&mut instance, &region).is_empty());
+        assert_eq!(instance.state(), &ArmedState::Armed);
+        assert_eq!(
+            instance.status_line(),
+            "armed · retest bracket does not clear the edge — held fire"
+        );
+    }
+
+    /// Every gate that holds a seen trigger names itself, and the note
+    /// clears on the next signal-less bar so the ruler narrates again.
+    #[test]
+    fn held_triggers_name_their_gate_on_the_badge() {
+        let region = Region::new(dec("100"), dec("110"));
+
+        // Opposite side: a buy force bar for a sell instance.
+        let mut instance = force_instance(Side::Sell);
+        warm_then_force(&mut instance, &region);
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: opposite side"
+        );
+
+        // Region not active on this bar.
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
+        instance.on_closed_bar(&bar("102", "106"), &region, false, true);
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: region not active on this bar"
+        );
+
+        // Account not flat.
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
+        instance.on_closed_bar(&bar("102", "106"), &region, true, false);
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: account not flat"
+        );
+
+        // The next quiet bar clears the note: the ruler speaks again.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        assert!(
+            instance.status_line().starts_with("armed · quiet"),
+            "a signal-less bar hands the badge back to the ruler: {}",
+            instance.status_line()
+        );
+    }
+
+    /// The force ruler declares its own warmup depth, so a consumer can
+    /// re-warm it from the series after a reset instead of hardcoding 20.
+    #[test]
+    fn the_force_trigger_declares_its_warmup_depth() {
+        let instance = force_instance(Side::Buy);
+        assert_eq!(instance.trigger().warmup_bars(), 3);
     }
 }

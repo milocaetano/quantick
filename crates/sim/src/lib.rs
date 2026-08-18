@@ -28,6 +28,13 @@
 //! is rejected with advice rather than silently filled — a didactic
 //! simulator teaches the difference instead of papering over it.
 //!
+//! A **limit with a cancel-at price** ([`Command::PlaceLimit`]'s
+//! `cancel_at`) removes itself, unfilled, on a print trading at or through
+//! that level ([`CancelReason::PriceTouched`]) — "the move completed
+//! without the retest, so stop waiting for one". Validation keeps the
+//! cancel level on the far side of the market from the limit price, so no
+//! single print can ever satisfy both fill and cancel.
+//!
 //! A protective level attached to a market or stop entry is re-checked
 //! against the *actual* fill price: validation ran against the mark, but
 //! the fill lands on a later print, and when the tape outran the level in

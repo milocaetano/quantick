@@ -900,6 +900,11 @@ register_drawing_tools!(
 // region), in the `frvp::TOOL_ID` idiom.
 pub use rectangle::TOOL_ID as RECTANGLE_TOOL_ID;
 
+// The rectangle's payload, re-exported for the strategy seat too: whether
+// the drawn band extends right decides whether an armed region ever
+// expires off its right anchor.
+pub use rectangle::RectanglePayload;
+
 // The profile drawing's payload types, re-exported for `crate::frvp` — the
 // refresh pass that folds engine ladders into the cache the paint reads.
 pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};

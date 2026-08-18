@@ -1248,8 +1248,11 @@ impl Tab {
             pane.drawings.mark_market_changed();
             // The regions those instances watched belong to the market that
             // just left; a bot must never fire on a level from another
-            // instrument. Disarmed by name, never silently dropped.
-            pane.strategies
+            // instrument. Disarmed by name, never silently dropped. Their
+            // pending entries need no sweep of ours: the paper reset a few
+            // lines down cancels every order with the honest `reset` label.
+            let _ = pane
+                .strategies
                 .disarm_all(quantick_strategy::DisarmReason::MarketChanged);
             let _ = pane.take_strategy_bars();
         }
@@ -1504,10 +1507,16 @@ impl Tab {
                 pane.reanchor_drawings(old_slots);
                 // The strategies do not follow: the body average that
                 // defines a force bar means something else under another
-                // bar spec, so the instances disarm and say why.
-                pane.strategies
+                // bar spec, so the instances disarm and say why. The tape
+                // itself continues, so any pending bot entry is swept here
+                // and now — through the same funnel manual orders use.
+                let cleanup = pane
+                    .strategies
                     .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
                 let _ = pane.take_strategy_bars();
+                for command in cleanup {
+                    let _ = self.paper.apply_strategy_command(command);
+                }
                 self.drop_overlay_gestures();
             }
         }
@@ -1690,7 +1699,12 @@ impl Tab {
                     .map(|instance| instance.drawing)
                     .filter(|id| pane.drawings.index_of(*id).is_some())
                     .collect();
-                pane.strategies.drop_orphans(|id| alive.contains(&id));
+                let orphan_cleanup = pane.strategies.drop_orphans(|id| alive.contains(&id));
+                for command in orphan_cleanup {
+                    // A dead drawing's bot must not leave its entry resting
+                    // with no badge over it; swept through the same funnel.
+                    let _ = paper.apply_strategy_command(command);
+                }
             }
             for (bar, slot) in &bars {
                 for index in 0..pane.strategies.instances.len() {
@@ -1723,6 +1737,19 @@ impl Tab {
         paper.set_bot_listening(watching > 0);
     }
 
+    /// Apply the cleanup commands the panes' drawing menus queued this
+    /// frame — a disarm or removal over a resting retest limit cancels the
+    /// order. Runs on the UI frame that clicked, not on the next print: a
+    /// cancel that waits for the market to move may lose the race to it.
+    pub fn apply_strategy_cleanup(&mut self) {
+        let paper = &mut self.paper;
+        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+            for command in pane.take_strategy_cleanup() {
+                let _ = paper.apply_strategy_command(command);
+            }
+        }
+    }
+
     /// Throw away everything loaded and wait for the source to refill it.
     ///
     /// Sent by a source that rewound — seeking a replay, for instance. The
@@ -1738,8 +1765,11 @@ impl Tab {
             pane.last_lane_divider_x = None;
             // Judgements armed on the old timeline do not carry into the
             // rebuilt one — the same honesty rule the simulator's flatten
-            // follows, with the reason on the badge.
-            pane.strategies
+            // follows, with the reason on the badge. No cleanup commands
+            // come back under this reason: `paper.on_timeline_reset` below
+            // sweeps every order with the honest `reset` label.
+            let _ = pane
+                .strategies
                 .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         }
         self.drop_overlay_gestures();

@@ -94,6 +94,7 @@ pub fn reject_code(reason: &RejectReason) -> &'static str {
         RejectReason::PriceNotPositive => "price_not_positive",
         RejectReason::LimitOnWrongSide(_) => "limit_on_wrong_side",
         RejectReason::StopOnWrongSide(_) => "stop_on_wrong_side",
+        RejectReason::CancelAtOnWrongSide(_) => "cancel_at_on_wrong_side",
         RejectReason::StopLossOnWrongSide(_) => "stop_loss_on_wrong_side",
         RejectReason::TakeProfitOnWrongSide(_) => "take_profit_on_wrong_side",
         RejectReason::NoPosition => "no_position",

@@ -21,7 +21,7 @@ use quantick_engine::Side;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use quantick_strategy::{ForceParams, Rearm, StrategyParams};
+use quantick_strategy::{BreakPolicy, ForceParams, Rearm, StrategyParams};
 
 /// Environment override for the bank's location.
 pub const STRATEGIES_ENV: &str = "QUANTICK_STRATEGY_PRESETS";
@@ -65,6 +65,13 @@ pub struct StoredPreset {
     pub sl_mult: String,
     /// `one_shot` (default, the over-fire guard) or `auto`.
     pub rearm: String,
+    /// What a trigger bar cutting through the region does: `ignore`
+    /// (default — hold fire, the behaviour before the option existed) or
+    /// `retest_limit` (rest a limit at the cut edge, cancelled at the
+    /// bar's projected target). Optional for the same vintage reason as
+    /// `min_body`, which is why the version does not move.
+    #[serde(default = "ignore_break")]
+    pub on_break: String,
 }
 
 impl StoredPreset {
@@ -89,6 +96,7 @@ impl StoredPreset {
             tp_mult: "1.0".to_owned(),
             sl_mult: "1.0".to_owned(),
             rearm: "one_shot".to_owned(),
+            on_break: "ignore".to_owned(),
         }
     }
 
@@ -108,6 +116,11 @@ impl StoredPreset {
         let rearm = match self.rearm.as_str() {
             "one_shot" => Rearm::OneShot,
             "auto" => Rearm::Auto,
+            _ => return None,
+        };
+        let on_break = match self.on_break.as_str() {
+            "ignore" => BreakPolicy::Ignore,
+            "retest_limit" => BreakPolicy::RetestLimit,
             _ => return None,
         };
         let quantity = Decimal::from_str(&self.quantity).ok()?;
@@ -135,6 +148,7 @@ impl StoredPreset {
             tp_mult: Decimal::from_str(&self.tp_mult).ok()?,
             sl_mult: Decimal::from_str(&self.sl_mult).ok()?,
             rearm,
+            on_break,
         };
         let force = ForceParams {
             window: self.window as usize,
@@ -156,6 +170,12 @@ pub fn side_token(side: Side) -> &'static str {
 /// existed read as "floor off".
 fn zero_points() -> String {
     "0".to_owned()
+}
+
+/// Serde default for [`StoredPreset::on_break`]: rows from before the field
+/// existed read as "hold fire on a cut", the old behaviour.
+fn ignore_break() -> String {
+    "ignore".to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -319,11 +339,16 @@ mod tests {
         .unwrap();
         let bank = StrategyBank::load_from(&path);
         let preset = bank.get("BF antiga").expect("old row reads");
-        let (_, force) = preset.to_kernel().expect("and still compiles");
+        let (params, force) = preset.to_kernel().expect("and still compiles");
         assert_eq!(
             force.min_body,
             Decimal::ZERO,
             "absent floor means off, not refused"
+        );
+        assert_eq!(
+            params.on_break,
+            BreakPolicy::Ignore,
+            "absent break policy means the old hold-fire behaviour"
         );
         std::fs::remove_file(&path).ok();
 
@@ -359,6 +384,16 @@ mod tests {
             unknown.to_kernel().is_none(),
             "a trigger this build cannot execute is refused, not approximated"
         );
+        let mut unknown_break = StoredPreset::starting_point(Side::Sell);
+        unknown_break.on_break = "chase".to_owned();
+        assert!(
+            unknown_break.to_kernel().is_none(),
+            "a break policy this build cannot execute is refused, not approximated"
+        );
+        let mut retest = StoredPreset::starting_point(Side::Sell);
+        retest.on_break = "retest_limit".to_owned();
+        let (params, _) = retest.to_kernel().expect("the retest policy compiles");
+        assert_eq!(params.on_break, BreakPolicy::RetestLimit);
 
         // The ruler's own limits are contract too: a zero window is not
         // clamped into meaning, a giant one is not an allocation request,

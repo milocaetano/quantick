@@ -1076,6 +1076,7 @@ impl PaperTrading {
                     quantity: Decimal::ONE,
                     price,
                     bracket: Bracket::none(),
+                    cancel_at: None,
                 });
                 self.handle_events(events);
             }
@@ -1165,6 +1166,7 @@ impl PaperTrading {
                 quantity: Decimal::ONE,
                 price: mark.saturating_sub(offset.saturating_add(offset)),
                 bracket: Bracket::none(),
+                cancel_at: None,
             },
             260 => Command::PlaceMarket {
                 side: Side::Sell,
@@ -2304,6 +2306,7 @@ impl PaperTrading {
                 quantity,
                 price,
                 bracket,
+                cancel_at: None,
             },
             EntryKind::Stop => Command::PlaceStop {
                 side,
@@ -7669,6 +7672,7 @@ mod tests {
             quantity: Decimal::ONE,
             price: Decimal::from(95),
             bracket: Bracket::none(),
+            cancel_at: None,
         });
         paper.handle_events(events);
         // The trap that used to swallow every chart click.

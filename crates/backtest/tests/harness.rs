@@ -166,6 +166,7 @@ fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
             tp_mult: Decimal::ONE,
             sl_mult: Decimal::ONE,
             rearm: Rearm::OneShot,
+            on_break: quantick_strategy::BreakPolicy::Ignore,
         },
         ForceParams {
             window: 3,
@@ -305,6 +306,7 @@ fn refusals_are_counted_not_swallowed() {
                 // Far above the market: a buy limit there fills instantly.
                 price: Decimal::from(10_000),
                 bracket: quantick_sim::Bracket::none(),
+                cancel_at: None,
             },
         ),
     ]);

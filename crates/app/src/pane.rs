@@ -1013,6 +1013,11 @@ pub struct ChartPane {
     /// The drawing whose "Add strategy…" was clicked; the app drains it
     /// and opens the arming dialog over this pane.
     pub(crate) strategy_popup_request: Option<drawings::DrawingId>,
+    /// Simulator commands the drawing menu owes the paper host — cancelling
+    /// a resting retest limit on disarm/removal. The pane cannot reach the
+    /// tab's simulator from inside the menu, so the tab drains this on the
+    /// same frame ([`crate::tab::TabState::apply_strategy_cleanup`]).
+    strategy_cleanup: Vec<quantick_sim::Command>,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1186,6 +1191,7 @@ impl ChartPane {
             strategies: crate::strategy_anchors::StrategyAnchors::default(),
             strategy_pending: Vec::new(),
             strategy_popup_request: None,
+            strategy_cleanup: Vec::new(),
             drawings: Drawings::default(),
             drawing_hover: None,
             drawing_band_hint: None,
@@ -1976,7 +1982,7 @@ impl ChartPane {
                     // The instance dies with its drawing, immediately — not
                     // on the next closed bar, which a quiet tape may never
                     // bring.
-                    self.strategies.remove_for_drawing(doomed);
+                    self.remove_strategy_for_drawing(doomed);
                 }
                 self.context_menu_drawing = None;
                 ui.close_menu();
@@ -2078,7 +2084,7 @@ impl ChartPane {
                 .color(theme::TEXT_MUTED),
         );
         let state = instance.armed.state().clone();
-        use quantick_strategy::ArmedState;
+        use quantick_strategy::{ArmedState, DisarmReason};
         match state {
             ArmedState::Armed | ArmedState::InPosition => {
                 let disarm = ui.button("Disarm").on_hover_text(
@@ -2089,7 +2095,8 @@ impl ChartPane {
                 if disarm.clicked()
                     && let Some(instance) = self.strategies.for_drawing_mut(id)
                 {
-                    instance.armed.disarm(quantick_strategy::DisarmReason::User);
+                    let cleanup = instance.armed.disarm(DisarmReason::User);
+                    self.strategy_cleanup.extend(cleanup);
                     ui.close_menu();
                 }
             }
@@ -2111,15 +2118,29 @@ impl ChartPane {
                     );
                 #[cfg(test)]
                 self.drawing_menu_rects.push(("Re-arm", rearm.rect));
-                if rearm.clicked()
-                    && let Some(instance) = self.strategies.for_drawing_mut(id)
-                {
-                    instance.armed.rearm();
+                if rearm.clicked() {
+                    self.rearm_strategy_for_drawing(id);
                     ui.close_menu();
                 }
             }
-            // Fired lives for exactly one print; nothing to offer on it.
-            ArmedState::Fired { .. } => {}
+            ArmedState::Fired { retest: true, .. } => {
+                // A resting retest limit can wait for hours; the trader
+                // must be able to call it off from the same menu.
+                let disarm = ui
+                    .button("Disarm")
+                    .on_hover_text("cancel the resting retest limit and stop watching");
+                #[cfg(test)]
+                self.drawing_menu_rects.push(("Disarm", disarm.rect));
+                if disarm.clicked()
+                    && let Some(instance) = self.strategies.for_drawing_mut(id)
+                {
+                    let cleanup = instance.armed.disarm(DisarmReason::User);
+                    self.strategy_cleanup.extend(cleanup);
+                    ui.close_menu();
+                }
+            }
+            // A market entry lives for exactly one print; nothing to offer.
+            ArmedState::Fired { retest: false, .. } => {}
         }
         let remove = ui.button("Remove strategy").on_hover_text(
             "detach the bot from this drawing; an open operation keeps its position and bracket",
@@ -2128,9 +2149,83 @@ impl ChartPane {
         self.drawing_menu_rects
             .push(("Remove strategy", remove.rect));
         if remove.clicked() {
-            self.strategies.remove_for_drawing(id);
+            self.remove_strategy_for_drawing(id);
             ui.close_menu();
         }
+    }
+
+    /// Re-arm the instance riding `drawing`, re-warming its ruler when the
+    /// disarm named a *rebuilt series* (a replay seek, a bar-spec change, a
+    /// market switch reset the trigger's window). Without the re-warm,
+    /// "re-armed" silently means "warming up for another twenty bars" — the
+    /// replay-seek trap where force bars right after a seek never fire.
+    pub(crate) fn rearm_strategy_for_drawing(&mut self, drawing: drawings::DrawingId) {
+        use quantick_strategy::{ArmedState, DisarmReason};
+        let Some(instance) = self.strategies.for_drawing(drawing) else {
+            return;
+        };
+        let series_changed = matches!(
+            instance.armed.state(),
+            ArmedState::Disarmed {
+                reason: DisarmReason::TimelineReset
+                    | DisarmReason::BarSpecChanged
+                    | DisarmReason::MarketChanged
+            }
+        );
+        if let Some(instance) = self.strategies.for_drawing_mut(drawing) {
+            instance.armed.rearm();
+        }
+        if series_changed {
+            self.rewarm_strategy_trigger(drawing);
+        }
+    }
+
+    /// Feed the last `warmup_bars` closed bars of the live series back into
+    /// an instance's trigger, gates shut — the arm-time warmup, repeated
+    /// after a rearm whose disarm reset the ruler. Venue-prefix candles are
+    /// excluded for the same reason as at arm time: they measure another
+    /// ruler entirely.
+    fn rewarm_strategy_trigger(&mut self, id: drawings::DrawingId) {
+        let Some(instance) = self.strategies.for_drawing(id) else {
+            return;
+        };
+        let bars = self.strategy_warmup_bars(instance.armed.trigger().warmup_bars());
+        let warmup = quantick_strategy::Region::new(
+            rust_decimal::Decimal::ZERO,
+            rust_decimal::Decimal::ZERO,
+        );
+        let Some(instance) = self.strategies.for_drawing_mut(id) else {
+            return;
+        };
+        for bar in &bars {
+            let _ = instance.armed.on_closed_bar(bar, &warmup, false, false);
+        }
+    }
+
+    /// The last `want` closed bars of the live series — never venue-prefix
+    /// candles, whose bodies measure another ruler — for warming a strategy
+    /// trigger at arm or re-arm time.
+    pub fn strategy_warmup_bars(&self, want: usize) -> Vec<quantick_engine::Bar> {
+        let slots = self.slots();
+        let first_live = self.seam_slot();
+        (slots.saturating_sub(want).max(first_live)..slots)
+            .filter_map(|slot| self.closed_bar(slot).cloned())
+            .collect()
+    }
+
+    /// Drain the cleanup commands the drawing menu queued; the tab applies
+    /// them to the paper host on this same frame.
+    #[must_use]
+    pub fn take_strategy_cleanup(&mut self) -> Vec<quantick_sim::Command> {
+        std::mem::take(&mut self.strategy_cleanup)
+    }
+
+    /// Remove the instance riding `drawing` and queue the sweep of its
+    /// pending entry — every "the bot dies with its drawing" path funnels
+    /// through here so none of them can orphan a resting retest limit.
+    pub(crate) fn remove_strategy_for_drawing(&mut self, drawing: drawings::DrawingId) {
+        let cleanup = self.strategies.remove_for_drawing(drawing);
+        self.strategy_cleanup.extend(cleanup);
     }
 
     /// The bar spec implied by the current selector state.
@@ -2584,9 +2679,18 @@ impl ChartPane {
             return None;
         };
         let region = quantick_strategy::Region::new(dec_from_f64(a.price), dec_from_f64(b.price));
+        // An extended rectangle runs to the chart's right edge until
+        // further notice, and its region does too — otherwise the bot
+        // silently expires at the drawn end while the band visibly keeps
+        // going (the replay trap this option exists to close).
+        let extend_right = drawing
+            .payload
+            .as_any()
+            .downcast_ref::<drawings::RectanglePayload>()
+            .is_some_and(|payload| payload.extend_right);
         #[allow(clippy::cast_precision_loss)]
         let slot = slot as f32;
-        let active = slot >= a.bar.min(b.bar) && slot <= a.bar.max(b.bar);
+        let active = slot >= a.bar.min(b.bar) && (extend_right || slot <= a.bar.max(b.bar));
         Some((region, active))
     }
 
