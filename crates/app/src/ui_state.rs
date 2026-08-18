@@ -219,11 +219,21 @@ pub struct SavedChrome {
     pub rail_dock: SavedRailDock,
     /// Whether the status bar showed fps/frame time.
     pub perf_readings: bool,
-    /// Starred drawing tools pinned to the rail, by tool id, in the order
-    /// the trader starred them. Default empty — a file from before the
-    /// feature simply has no pinned section.
-    #[serde(default)]
-    pub favorite_tools: Vec<String>,
+    /// Where starred tools used to live, kept only to read files that still
+    /// hold them there.
+    ///
+    /// Favorites were part of the arrangement once, which meant a bookmark
+    /// saved before the trader starred anything wiped the rail on open and a
+    /// dirty exit lost the stars outright. They are a standing choice, so they
+    /// moved up to [`Workspace::favorite_tools`]; [`load`] lifts what an older
+    /// file kept here and empties this, and an empty list writes no key — so a
+    /// file migrates once and never carries two answers.
+    #[serde(
+        default,
+        rename = "favorite_tools",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub legacy_favorite_tools: Vec<String>,
     /// Whether venue candle history was fetched in slices, newest first.
     ///
     /// Defaults to on rather than to `false`, which is what a missing field
@@ -307,6 +317,30 @@ pub struct Workspace {
     /// nothing.
     #[serde(default)]
     pub replay_folder: Option<String>,
+    /// Starred drawing tools pinned to the rail, by tool id, in the order the
+    /// trader starred them.
+    ///
+    /// Top-level for the reason `replay_folder` is, and it is the same reason
+    /// twice: this is a standing choice about how the trader works, not a
+    /// description of one arrangement of panes. Kept inside [`SavedChrome`] it
+    /// was written only when the whole cockpit was — so a crash or a session
+    /// with autosave off lost it — and opening a bookmark saved before the
+    /// star existed replaced the rail's pinned section with that bookmark's
+    /// emptiness. Up here it is written the moment a star is clicked and
+    /// nothing that restores an arrangement touches it.
+    ///
+    /// Empty means "nothing starred", which is also what a file written before
+    /// the field existed says once [`load`] has lifted anything the old chrome
+    /// key held.
+    ///
+    /// Deliberately *not* in [`LOCAL_KEYS`], unlike the folder above: a
+    /// starred tool is part of the cockpit being shared, and it travelled in a
+    /// bundle back when it lived in the chrome. Where the trader's recordings
+    /// live is a fact about their machine; which tools they keep at hand is
+    /// not, and a colleague opening the bundle wants the rail that goes with
+    /// the screen.
+    #[serde(default)]
+    pub favorite_tools: Vec<String>,
     /// Workspace files exported or imported recently, newest first.
     ///
     /// Paths, not arrangements: the file on disk is the truth, and a copy
@@ -389,6 +423,7 @@ impl Default for Workspace {
             chrome: None,
             saved: Vec::new(),
             replay_folder: None,
+            favorite_tools: Vec::new(),
             recent_workspaces: Vec::new(),
         }
     }
@@ -417,6 +452,7 @@ impl Workspace {
             chrome,
             saved: Vec::new(),
             replay_folder: None,
+            favorite_tools: Vec::new(),
             recent_workspaces: Vec::new(),
         }
     }
@@ -441,6 +477,17 @@ impl Workspace {
     #[must_use]
     pub fn with_replay_folder(mut self, folder: Option<String>) -> Self {
         self.replay_folder = folder;
+        self
+    }
+
+    /// The same, carrying the starred tools through.
+    ///
+    /// Threaded like the folder above and for the same reason: a capture of
+    /// the live window describes panes, and the rail's pinned section is not
+    /// one of them — it outlives every arrangement the trader opens.
+    #[must_use]
+    pub fn with_favorites(mut self, favorites: Vec<String>) -> Self {
+        self.favorite_tools = favorites;
         self
     }
 
@@ -516,6 +563,50 @@ impl Workspace {
             true
         });
         self
+    }
+
+    /// Lift starred tools out of the old chrome key and leave nothing behind.
+    ///
+    /// Read once, on load, so every reader of this file — the app at startup,
+    /// the read-swap-write that records a single standing choice — sees one
+    /// answer in one place. The startup chrome is the only source: it is the
+    /// list the rail was actually wearing, since restoring a bookmark used to
+    /// apply that bookmark's copy and then the app captured it back here. The
+    /// bookmarks' copies are dropped rather than merged — nothing reads them
+    /// any more, and a key that is written but never applied is a lie a later
+    /// reader would believe.
+    ///
+    /// A file that already carries the top-level list keeps it: the trader's
+    /// current stars win over whatever an arrangement remembers.
+    fn lift_legacy_favorites(&mut self) {
+        let lifted = if self.favorite_tools.is_empty() {
+            let chrome = self
+                .chrome
+                .as_mut()
+                .map(|chrome| std::mem::take(&mut chrome.legacy_favorite_tools));
+            self.favorite_tools = chrome.unwrap_or_default();
+            !self.favorite_tools.is_empty()
+        } else {
+            if let Some(chrome) = self.chrome.as_mut() {
+                chrome.legacy_favorite_tools.clear();
+            }
+            false
+        };
+        for entry in &mut self.saved {
+            if let Some(chrome) = entry.chrome.as_mut() {
+                chrome.legacy_favorite_tools.clear();
+            }
+        }
+        if lifted {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_FAVORITES_LIFTED",
+                tools = self.favorite_tools.len(),
+                action = "favorites_are_a_standing_choice",
+                "starred tools moved out of the saved arrangement"
+            );
+        }
     }
 
     /// The market a restored workspace opens its first tab on, if it has one.
@@ -634,28 +725,60 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
+/// What reading the file produced, before a caller decides what to do about
+/// one it cannot use.
+///
+/// The two readers below want opposite things from a file this build cannot
+/// parse — [`load`] wants a window on screen, [`load_for_edit`] wants the file
+/// left alone — and the parse itself is the same either way. Naming the
+/// outcomes keeps that one parse in one place.
+enum Read {
+    /// Parsed, this build's version, legacy fields already lifted.
+    Workspace(Box<Workspace>),
+    /// No file here yet.
+    Missing,
+    /// A file that is here and did not parse.
+    Unreadable(String),
+    /// A file from a version this build does not know.
+    UnknownVersion(u32),
+}
+
+fn read(path: &Path) -> Read {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Read::Missing,
+        Err(error) => return Read::Unreadable(error.to_string()),
+    };
+    match toml::from_str::<Workspace>(&text) {
+        Ok(mut workspace) if workspace.version == FORMAT_VERSION => {
+            workspace.lift_legacy_favorites();
+            Read::Workspace(Box::new(workspace))
+        }
+        Ok(workspace) => Read::UnknownVersion(workspace.version),
+        Err(error) => Read::Unreadable(error.to_string()),
+    }
+}
+
 /// Load the saved workspace; the default (nothing saved) when the file is
 /// missing, unreadable or from an unknown version — reported, never half-read.
 #[must_use]
 pub fn load(path: &Path) -> Workspace {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Workspace::default();
-    };
-    match toml::from_str::<Workspace>(&text) {
-        Ok(workspace) if workspace.version == FORMAT_VERSION => workspace,
-        Ok(workspace) => {
+    match read(path) {
+        Read::Workspace(workspace) => *workspace,
+        Read::Missing => Workspace::default(),
+        Read::UnknownVersion(version) => {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "UI_STATE_VERSION",
                 path = %path.display(),
-                version = workspace.version,
+                version,
                 action = "opening_on_defaults",
                 "workspace file is from an unknown version"
             );
             Workspace::default()
         }
-        Err(error) => {
+        Read::Unreadable(error) => {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -666,6 +789,51 @@ pub fn load(path: &Path) -> Workspace {
                 "workspace file is unreadable"
             );
             Workspace::default()
+        }
+    }
+}
+
+/// The file as it stands, for an edit that changes one field and writes the
+/// rest back untouched. `None` means "do not write here".
+///
+/// [`load`] answers "open on the defaults" for a file it cannot use, which is
+/// right at startup: a trader launching the app wants a window either way, and
+/// nothing is written until they ask for it. It is the wrong answer for a
+/// read-swap-write. Swapping one field into `Workspace::default()` and saving
+/// *that* would replace a workspace this build merely failed to understand —
+/// one written by a newer build, one a bad shutdown truncated — with an empty
+/// one, and it would happen on a single click, with the trader's tabs,
+/// bookmarks and replay folder inside the file being discarded.
+///
+/// A missing file is `Some(default)`: writing the first one loses nothing.
+#[must_use]
+pub fn load_for_edit(path: &Path) -> Option<Workspace> {
+    match read(path) {
+        Read::Workspace(workspace) => Some(*workspace),
+        Read::Missing => Some(Workspace::default()),
+        Read::UnknownVersion(version) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_NOT_OURS_TO_EDIT",
+                path = %path.display(),
+                version,
+                action = "leave_the_file_alone",
+                "a workspace from an unknown version is not rewritten"
+            );
+            None
+        }
+        Read::Unreadable(error) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "UI_STATE_NOT_OURS_TO_EDIT",
+                path = %path.display(),
+                %error,
+                action = "leave_the_file_alone",
+                "an unreadable workspace is not rewritten"
+            );
+            None
         }
     }
 }
@@ -779,12 +947,13 @@ mod tests {
                 rail_visible: true,
                 rail_dock: SavedRailDock::Left,
                 perf_readings: true,
-                favorite_tools: vec!["parallel-channel".to_owned()],
+                legacy_favorite_tools: Vec::new(),
                 progressive_history: false,
                 inspector_position: Some([412.5, 640.0]),
             }),
             saved: Vec::new(),
             replay_folder: Some("D:/tape".to_owned()),
+            favorite_tools: vec!["parallel-channel".to_owned()],
             recent_workspaces: vec!["D:/desk/scalp.qws.toml".to_owned()],
         }
     }
@@ -822,6 +991,166 @@ mod tests {
             "an absent pick writes no key: {body}"
         );
         assert_eq!(load(&path).replay_folder, None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The whole point of moving the field up: a star clicked once is still
+    /// there at the next launch, whatever the arrangement did in between.
+    #[test]
+    fn the_starred_tools_survive_a_round_trip() {
+        let path = temp_path("favorites");
+        assert!(save(&path, &sample()));
+        assert_eq!(
+            load(&path).favorite_tools,
+            vec!["parallel-channel".to_owned()]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file written while favorites lived in the chrome opens with the stars
+    /// it had. The trader starred those tools; a format change is not a reason
+    /// to make them do it again.
+    #[test]
+    fn a_file_that_kept_its_stars_in_the_chrome_still_opens_on_them() {
+        let path = temp_path("legacy-favorites");
+        let mut older = sample();
+        older.favorite_tools = Vec::new();
+        older.chrome.as_mut().expect("chrome").legacy_favorite_tools =
+            vec!["measure".to_owned(), "fib-retracement".to_owned()];
+        assert!(save(&path, &older));
+        let loaded = load(&path);
+        assert_eq!(
+            loaded.favorite_tools,
+            vec!["measure".to_owned(), "fib-retracement".to_owned()],
+            "the stars move up rather than vanish"
+        );
+        assert!(
+            loaded
+                .chrome
+                .expect("chrome")
+                .legacy_favorite_tools
+                .is_empty(),
+            "and the old key is left empty, so the file carries one answer"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The same migration against a file written by the shipped build rather
+    /// than by this module's own serializer.
+    ///
+    /// The test above proves the round trip; this one proves the *format*. A
+    /// real `ui-state.toml` puts the stars inside `[chrome]` and has no
+    /// top-level key at all, and it is the file every trader upgrading to this
+    /// build is holding — reading it wrong empties their rail on first launch.
+    #[test]
+    fn a_workspace_written_by_the_shipped_build_keeps_its_stars() {
+        let path = temp_path("shipped-file");
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             save_on_exit = true\n\
+             active_tab = 0\n\
+             saved = []\n\
+             \n\
+             [[tabs]]\n\
+             feed = \"binance\"\n\
+             symbol = \"WINQ26\"\n\
+             layout = \"time+flow\"\n\
+             flow_bars = \"imbalance:5000\"\n\
+             \n\
+             [chrome]\n\
+             timezone_minutes = -180\n\
+             dock_visible = false\n\
+             rail_visible = true\n\
+             rail_dock = \"left\"\n\
+             perf_readings = true\n\
+             favorite_tools = [\n\
+             \"fixed-range-profile\",\n\
+             \"measure\",\n\
+             \"horizontal-line\",\n\
+             ]\n\
+             progressive_history = true\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            load(&path).favorite_tools,
+            vec![
+                "fixed-range-profile".to_owned(),
+                "measure".to_owned(),
+                "horizontal-line".to_owned(),
+            ],
+            "the rail an upgrading trader already had is the rail they get"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Migration is one-way and one-time: once lifted, the old key is gone
+    /// from the file, so nothing can resurrect a stale list later.
+    #[test]
+    fn a_migrated_file_stops_writing_the_old_key() {
+        let path = temp_path("legacy-rewritten");
+        let mut older = sample();
+        older.favorite_tools = Vec::new();
+        older.chrome.as_mut().expect("chrome").legacy_favorite_tools = vec!["measure".to_owned()];
+        assert!(save(&path, &older));
+        let lifted = load(&path);
+        assert!(save(&path, &lifted));
+        let body = std::fs::read_to_string(&path).expect("written");
+        assert_eq!(
+            body.matches("favorite_tools").count(),
+            1,
+            "exactly one favorites key, at the top level: {body}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The trader's live stars beat whatever an old arrangement remembers —
+    /// otherwise unstarring a tool would come back on the next launch.
+    #[test]
+    fn the_top_level_stars_win_over_the_old_chrome_key() {
+        let path = temp_path("both-favorites");
+        let mut mixed = sample();
+        mixed.favorite_tools = vec!["measure".to_owned()];
+        mixed.chrome.as_mut().expect("chrome").legacy_favorite_tools =
+            vec!["parallel-channel".to_owned()];
+        assert!(save(&path, &mixed));
+        assert_eq!(load(&path).favorite_tools, vec!["measure".to_owned()]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A bookmark's copy is dropped, not merged: nothing applies it any more,
+    /// and a key that is written but never read is a lie in waiting.
+    #[test]
+    fn a_bookmarks_copy_of_the_stars_is_dropped() {
+        let path = temp_path("bookmark-favorites");
+        let mut with_bookmark = sample();
+        with_bookmark.saved = vec![NamedArrangement {
+            name: "scalp".to_owned(),
+            window: None,
+            active_tab: 0,
+            tabs: sample().tabs,
+            chrome: Some(SavedChrome {
+                legacy_favorite_tools: vec!["measure".to_owned()],
+                ..sample().chrome.expect("chrome")
+            }),
+        }];
+        assert!(save(&path, &with_bookmark));
+        let loaded = load(&path);
+        assert!(
+            loaded.saved[0]
+                .chrome
+                .as_ref()
+                .expect("chrome")
+                .legacy_favorite_tools
+                .is_empty(),
+            "a bookmark no longer carries stars"
+        );
+        assert_eq!(
+            loaded.favorite_tools,
+            vec!["parallel-channel".to_owned()],
+            "and it does not overwrite the trader's own"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

@@ -469,6 +469,18 @@ It persists through the UI-state file named as the open question in
 visibility, whenever that file lands. Until then a restart returns to `Left`.
 No new persistence mechanism is invented for this feature alone.
 
+The **pinned favorites are the exception to the tier above**, and the reason is
+the same one that made the star worth having: a star means "keep this under my
+pointer", and a promise that lasts until the next crash is not that. The dock,
+the rail's visibility and the tabs describe an *arrangement* — they ride the
+workspace save, whether the trader takes it from the menu or lets the exit take
+it. The stars are a standing choice about how the trader works, so they sit at
+the top of `ui-state.toml` beside the replay folder, are written on the frame
+the star is clicked, and are ignored by everything that restores an
+arrangement: opening a named bookmark leaves the pinned section exactly as it
+was, resetting the startup layout keeps it, and switching `Save on exit` off
+does not switch the stars off with it.
+
 ---
 
 ## 4. Properties inspector
