@@ -6291,18 +6291,6 @@ impl QuantickApp {
             .last_lane_divider_x
             .unwrap_or(chart.right());
         let reachable = context_bar_bounds(chart, right_limit, size);
-        // The popover's bound is the same rectangle *without* the bar's width
-        // floor. That floor exists so a history area narrower than the bar
-        // still has somewhere to put one — `place` makes the same call — and
-        // it is the bar's reason, not the palette's: a palette can be pushed
-        // left, so nothing buys it the right to sit on the forming column.
-        let popover_bounds = egui::Rect::from_min_max(
-            chart.min,
-            egui::pos2(
-                right_limit.min(chart.right()).max(chart.left()),
-                chart.bottom(),
-            ),
-        );
         let position = match self.context_bar.manual_position() {
             // Repair for drawing, never overwrite — the rule the properties
             // popup already follows, for the same reason. A bar parked out
@@ -6329,6 +6317,24 @@ impl QuantickApp {
         // bound honest: the palette is clamped into `reachable`, so a bar
         // outside it would hang its own palette somewhere it is not.
         let position = clamp_into_chart(position, size, reachable);
+        // What the popovers are clamped into: the same rectangle *without* the
+        // bar's width floor, but never narrower than the bar that was actually
+        // drawn.
+        //
+        // The floor exists so a history area narrower than the bar still has
+        // somewhere to put one — `place` makes the same call — and it is the
+        // bar's reason, not the palette's: a palette can be pushed left, so
+        // nothing buys it the right to sit on the forming column. But when the
+        // floor did have to push the bar into the lane, a bound that stopped
+        // short of it would leave the palette hanging off nothing, which is
+        // the failure the placement rule spends its effort on.
+        let popover_bounds = egui::Rect::from_min_max(
+            chart.min,
+            egui::pos2(
+                right_limit.min(chart.right()).max(position.x + size.x),
+                chart.bottom(),
+            ),
+        );
         let intent = drawings::context_bar::show(
             &mut self.context_bar,
             ctx,
@@ -14784,11 +14790,36 @@ plot(close)
                 pointer_button(grip, false),
             ],
         );
+        app.context_bar_rect = None;
         run_frame(&mut app, &ctx);
         assert_eq!(
             app.context_bar.manual_position(),
             None,
             "the double-click hands placement back to the rule"
+        );
+
+        // And the bar is drawn where that rule wants it, not merely somewhere
+        // that is no longer the parked point. This is the only door out of the
+        // parked state, and a door that clears the flag while leaving the bar
+        // in a third place would be no door at all.
+        let placed = app.context_bar_rect.expect("the bar is still up");
+        let chart = app.drawing_pane().last_chart_area.expect("the pane drew");
+        let expected = drawings::context_bar::place(
+            chart,
+            app.drawing_pane()
+                .last_lane_divider_x
+                .unwrap_or(chart.right()),
+            app.drawing_bbox_on_screen(chart, profile)
+                .expect("the object projects"),
+            placed.size(),
+        );
+        assert_ne!(
+            expected, parked,
+            "the setup has to park it somewhere the rule would not have chosen"
+        );
+        assert_eq!(
+            placed.min, expected,
+            "the double-click puts it back beside the object it belongs to"
         );
     }
 

@@ -55,6 +55,16 @@ const SWATCH_SIDE_PX: f32 = 20.0;
 const PALETTE_SWATCH_PX: f32 = 22.0;
 /// Length of the stroke preview painted inside the width slot.
 const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
+/// Width of one row inside the width and size popovers.
+///
+/// Stated, not inherited. Those two popovers are a preview and a right-aligned
+/// label — neither has an intrinsic width — so a row sized from
+/// `ui.available_width()` reports back whatever the Area was laid out at and
+/// the two agree on it forever: an Area egui has not seen starts at its
+/// 600 px default, the rows fill it, and the measurement confirms it. The
+/// palette next door does have an intrinsic width, which is the only reason
+/// this stayed invisible while all three popovers shared one Area id.
+const POPOVER_ROW_WIDTH_PX: f32 = 132.0;
 /// Height of one row inside the width and size popovers.
 const POPOVER_ROW_HEIGHT_PX: f32 = 26.0;
 
@@ -834,10 +844,18 @@ fn hover_text(object: &BarObject<'_>, idle: &'static str, locked: &'static str) 
 /// neighbouring chart of a split, or off the window, and rows a trader cannot
 /// reach read as rows that do not exist.
 ///
-/// `size` is what egui measured last frame — zero on the frame a popover
-/// opens, so the first frame goes downward and the flip lands on the next
+/// `size` is what egui measured last time this popover was open — zero the
+/// first time, so that frame goes downward and the flip lands on the next
 /// one. That is one frame of a surface the trader just clicked open, and the
 /// alternative is measuring a panel before laying it out.
+///
+/// egui keeps the last word, and against the *window* rather than `bounds`:
+/// `Area` constrains by default, and its constraint rectangle doubles as the
+/// clip rectangle, so handing it the pane would make a popover taller than
+/// the pane lose its lower rows silently — and rows a trader cannot reach
+/// read as rows that do not exist. Covering the bar is the better failure of
+/// the two, and it is the one this rule spends its effort avoiding rather
+/// than the one it falls back to.
 fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) -> egui::Pos2 {
     let below = anchor.left_bottom() + egui::vec2(0.0, POPOVER_GAP_PX);
     let y = if below.y + size.y > bounds.bottom()
@@ -870,7 +888,14 @@ fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) ->
 /// different heights depending on the object. A shared id hands the shorter
 /// one the taller one's height, flips a popover that had room below, and
 /// snaps it back a frame later in front of a trader who has just clicked.
+///
+/// Keyed on *only* that, though: the width and size popovers do not read
+/// `supports_fill`, and splitting them on it would hand a fresh Area — and
+/// with it egui's invisible sizing pass, one frame of nothing where the
+/// trader clicked — every time the selection alternates between a tool with
+/// an interior and one without.
 fn popover_id(popover: Popover, fill: bool) -> egui::Id {
+    let fill = fill && matches!(popover, Popover::Color);
     egui::Id::new(("drawing_context_bar_popover", popover as u8, fill))
 }
 
@@ -902,13 +927,6 @@ fn draw_popover(
     let response = egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(at)
-        // Against the same rectangle [`popover_position`] reasons about. egui
-        // constrains to the *window* by default, so the two would disagree
-        // exactly where it matters: a popover that fits neither above nor
-        // below deliberately keeps its downward position, and egui would then
-        // slide it up until it fit the window — over the bar, covering the
-        // slot the trader had just clicked.
-        .constrain_to(bounds)
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
                 .fill(theme::CONTROL)
@@ -1094,9 +1112,8 @@ fn draw_preview_row(
     label: &str,
     preview: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
 ) -> bool {
-    let width = ui.available_width().max(120.0);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, POPOVER_ROW_HEIGHT_PX),
+        egui::vec2(POPOVER_ROW_WIDTH_PX, POPOVER_ROW_HEIGHT_PX),
         egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
@@ -1520,8 +1537,10 @@ mod tests {
 
     #[test]
     fn each_popover_remembers_only_a_size_that_is_its_own() {
-        // The size read back from egui decides which way the popover opens, so
-        // anything that changes it has to change the id it is stored under.
+        // The size read back from egui decides which way a popover opens, so
+        // the id it is stored under has to split on everything that changes
+        // that size — and on nothing else, because a fresh id costs a frame
+        // of egui's invisible sizing pass right where the trader clicked.
         assert_ne!(
             popover_id(Popover::Color, false),
             popover_id(Popover::Width, false),
@@ -1534,7 +1553,16 @@ mod tests {
         assert_ne!(
             popover_id(Popover::Color, true),
             popover_id(Popover::Color, false),
-            "nor does the palette with a fill row answer for the one without"
+            "the palette with a fill row is a different height"
+        );
+        assert_eq!(
+            popover_id(Popover::Width, true),
+            popover_id(Popover::Width, false),
+            "but the width rows do not read fill, so they must not split on it"
+        );
+        assert_eq!(
+            popover_id(Popover::GlyphSize, true),
+            popover_id(Popover::GlyphSize, false)
         );
     }
 
