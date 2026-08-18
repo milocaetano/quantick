@@ -1,6 +1,6 @@
 ---
 name: arch-review
-description: The full pre-PR review for quantick — runs the bundled code-review for bugs first, then checks that a change docks as a module, declares its performance impact, proves itself with tests, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change is modular, extensible or fast enough.
+description: The full pre-PR review for quantick — runs the bundled code-review for bugs first, then checks that a change docks as a module, declares its performance impact, proves itself with tests, stays drivable by an operator without a mouse, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change is modular, extensible, fast enough, or reachable by a script or an embedded AI assistant.
 ---
 
 # Architecture-first code review
@@ -9,8 +9,8 @@ A new feature should dock like a spacecraft to the ISS: a standard port, no
 modification to the station. Review every change against that bar.
 
 This skill reviews *shape* — modularity, performance, extensibility, tests,
-naming. Bug hunting belongs to the bundled `code-review` skill, which this one
-runs for you first: see step 0.
+operability, naming. Bug hunting belongs to the bundled `code-review` skill,
+which this one runs for you first: see step 0.
 
 ## Step 0 — the native code review runs first, always
 
@@ -83,7 +83,8 @@ State the order explicitly in the review when a trade-off is at stake.
 1. **Performance.** The highest-ranked quality. Never spend runtime cost to
    make code friendlier to read.
 2. **Modularity and extensibility.** The next feature must dock without
-   surgery on this one.
+   surgery on this one — and the next *operator*, a script or the embedded
+   assistant, must be able to drive it without a mouse (dimension 7).
 3. **Tests that prove the behaviour**, so the next feature cannot break it
    silently.
 4. **Standardisation.** One way to do a thing, repo-wide.
@@ -116,7 +117,7 @@ Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
 already solved is a finding, even when the new way is prettier in isolation.
 
-## The six dimensions
+## The seven dimensions
 
 ### 1. The docking test — modularity and extensibility
 
@@ -242,6 +243,81 @@ public API. A new local convention needs a stated reason or it is a finding.
   `_ =>` catch-alls, early returns over nesting. All compile away.
 - No comment restating obvious code, and no dead or commented-out code.
 
+### 7. The second operator — could an agent do this without the mouse?
+
+quantick is going to grow an embedded assistant: something the trader talks to
+mid-session — *read this chart, build me a strategy from that region, put a
+trade here, lock the platform down, I am tilting*. It is not being built by
+this PR, and this dimension never asks for assistant code. It asks that the
+change not **close the door** on one. A capability that exists only as a
+gesture is a capability the assistant can never have, and retrofitting it later
+means reopening the very file under review.
+
+The question to answer for every user-facing capability:
+
+> Could an operator that is not holding the mouse — a script, a test, the
+> future assistant — trigger this action, read back what it did, and discover
+> that it exists, without a human clicking?
+
+Three capabilities, each its own finding when it is missing:
+
+- **Act — the action exists as a named call, not only as a gesture.** State
+  mutated inside `if response.clicked() { … }` is not an action, it is a
+  click. Lift the body into a named function that takes data
+  (`place_drawing(tool, anchors)`, `arm_strategy(preset, region)`) and let the
+  click call it. One path, never two: a separate "for the agent" entry point
+  drifts from the one the trader uses and the operator ends up driving a ghost
+  platform — the same reason `ui-harness` hooks call the manual toggle's own
+  function instead of a parallel activation path.
+- **Read — the result is legible as data, not only as pixels.** "Analyse this
+  chart" is answerable only if bars, drawings, the position, the levels and the
+  indicator readings can be enumerated by something that is not looking at the
+  screen. A feature whose outcome lives in a widget's private fields, or exists
+  only inside the paint call, is opaque — name the accessor or the snapshot
+  type that is missing.
+- **Discover — the capability announces itself in a registry.** Stable id,
+  parameters with names and units, and the *same* registry feeds the UI.
+  `DRAWING_TOOLS` is the pattern: `QUANTICK_DRAWING_TOOL=<id>` reaches every
+  tool precisely because one registry backs both the rail and the hook. A list
+  kept by hand beside a registry — one for the buttons, one for the agent — is
+  a finding: the two diverge on the next PR.
+
+**Content is data, not a rebuild.** When the new capability is *content* the
+trader (or the assistant) will vary — a strategy, an indicator, an alert, a
+checklist, a preset, a layout — it belongs in a script or a config file loaded
+at runtime, not in an `enum` that only grows through a build. The repo already
+decided this: `pine` turns a `.pine` file into an `Indicator` with no
+recompilation, strategy presets live in `quantick-strategies.toml`, looks live
+in `bubbles.toml`. A content capability shipped as a compiled variant is a
+Should-fix, and the finding names the script or config file that would have
+avoided the rebuild.
+
+**Where this layer does not go.** Priority 1 still outranks this one. A command
+is emitted at *human* rate — a click, a closed bar, a panel edit — never per
+trade and never per frame. An interpreter, a string lookup or a dynamic
+dispatch table in the aggregator or the renderer is a performance finding
+first and an operability merit second. `strategy` decides on closed bars and
+`Indicator` has commit/preview for exactly this reason: keep script off the hot
+path, and let an agent operate at the rate a human would.
+
+**Authority is declared, and so is the author.** An exposed action states which
+kind it is: observation, cockpit change, or market/safety action (send an
+order, lock the platform). The last two cross the same arming and confirmation
+the trader crosses — a surface that lets a non-human operator reach an order by
+a shorter path than the trader's is a Blocker. And whatever acted is recorded:
+an order, a drawing or a preset produced by something other than the trader's
+own hand is labelled as such, under the same data-honesty rule that labels an
+inferred side. An object the assistant placed that is indistinguishable from
+one the trader placed is a finding.
+
+This is the runtime twin of the `ui-harness` hook rule, not a duplicate of it:
+a hook proves a surface can be *reached from a launch*, this dimension asks
+whether the action can be *taken while the session runs*. One extraction
+usually satisfies both — the hook and the agent call the same named function.
+
+Naming note: the repo's `copilot.pine` is an indicator, not this assistant. Do
+not reuse the name for the agent surface.
+
 ## Verify before reporting
 
 Reviews are judged on precision, not volume.
@@ -269,10 +345,15 @@ A clean change gets a short review saying it is clean and why. Never pad.
 
 - **Blocker** — a confirmed correctness finding from step 0; reverse dependency
   edge; forked aggregator logic; determinism broken; hot-path regression; new
-  behaviour with no test; a feature that activates itself.
+  behaviour with no test; a feature that activates itself; a market or safety
+  action a non-human operator can reach by a shorter path than the trader's,
+  or one that leaves no record of who acted.
 - **Should fix** — hardcoded value; extension point that forces edits to
   existing code; missing regression cover; unexplained complex algorithm;
-  misleading name or missing unit; a second way to do a solved thing.
+  misleading name or missing unit; a second way to do a solved thing; a
+  capability reachable only from a click handler; state that exists only as
+  pixels; content shipped as a compiled variant; a hand-kept list beside a
+  registry.
 - **Consider** — clarity and structure improvements with no correctness,
   performance or extensibility consequence.
 
@@ -289,17 +370,20 @@ requires there. Chat scrolls away; the PR is where the next reader looks.
 Report findings with the `ReportFindings` tool when it is available, ranked
 most severe first, using categories `correctness` (step 0's, promoted here),
 `modularity`, `performance`, `hardcoded-values`, `test-coverage`,
-`standardisation`, `readability`. Without that tool, write the same list as
-markdown grouped by severity.
+`standardisation`, `agent-surface`, `readability`. Without that tool, write the
+same list as markdown grouped by severity.
 
 Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
 name, the test to add. Never a vague "consider refactoring".
 
-Close with a verdict in four lines:
+Close with a verdict in five lines:
 
 - **Correctness** — what the step 0 code review returned, and whether anything
   from it is still open.
 - **Docking** — can the next feature attach without opening these files?
 - **Performance** — what got faster, slower, or stayed flat, and at what rate.
+- **Operability** — could a script or the future assistant trigger this, read
+  the result and discover it exists? Say "no surface" when the change adds no
+  user-facing capability; never drop the line.
 - **Proof** — which test would fail if this change regressed.

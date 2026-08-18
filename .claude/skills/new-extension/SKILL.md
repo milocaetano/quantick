@@ -84,6 +84,15 @@ never panics.
 - **Prove it on screen**: any user-visible surface registers a
   `QUANTICK_*` hook per `ui-harness` in the same commit, and passes a
   `visual-qa` + `trader-ux-review` pass before the PR.
+- **Prove it without a mouse**: whatever the package lets a trader *do* is a
+  named call that the click merely triggers, its result readable as data
+  rather than only painted, and its id in the same registry that feeds the
+  UI — `arch-review` dimension 7, the door the embedded assistant will come
+  through. Content the trader will vary (a strategy, an indicator, an alert,
+  a preset, a layout) ships as a script or a config file loaded at runtime,
+  never as one more arm of an `enum` that needs a build. Market and safety
+  actions still cross the trader's own arming path, and whatever acted is
+  recorded.
 
 ## 6. Definition of done for a package
 
@@ -91,4 +100,5 @@ Port named · registration is the only edit to existing behaviour · defaults
 preserve today · capabilities not identities · rate class declared and its
 budget proven (bench or health-summary vs. `main`) · fake second
 implementation tested · golden test if determinism is touchable ·
-ui-harness hook if visible · four checks green · arch-review clean.
+ui-harness hook if visible · drivable without a mouse (named call, readable
+result, registry id) · four checks green · arch-review clean.
