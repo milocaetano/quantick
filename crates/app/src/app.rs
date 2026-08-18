@@ -17434,6 +17434,29 @@ plot(close)
         );
     }
 
+    /// The arrows speak the screen's language: upside down, ArrowUp still
+    /// moves the object up — which on an inverted chart means a lower price.
+    #[test]
+    fn arrow_nudges_follow_the_screen_when_the_chart_is_inverted() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let start = app.active_tab().flow_pane.drawings.items()[0].points[0];
+
+        app.active_tab_mut().flow_pane.price_view.set_inverted(true);
+        // One frame so the bands are re-carved with the new orientation —
+        // the nudge reads the band the last frame published.
+        run_frame(&mut app, &ctx);
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::ArrowUp)]);
+        assert!(
+            app.active_tab().flow_pane.drawings.items()[0].points[0].price < start.price,
+            "upside down, up on screen is a lower price"
+        );
+    }
+
     #[test]
     fn the_repeat_pin_keeps_the_drawing_tool_armed() {
         let (mut app, _commands) = app_with_history(200);

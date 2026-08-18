@@ -5691,8 +5691,13 @@ impl ChartPane {
     pub fn selected_value_per_px(&self) -> Option<f64> {
         let drawing = self.drawings.items().get(self.drawings.selected()?)?;
         let band = bands::band_of(&self.last_bands, drawing)?;
-        let (lo, hi) = band.scale?.range();
-        Some((hi - lo) / f64::from(band.rect.height().max(1.0)))
+        let scale = band.scale?;
+        let (lo, hi) = scale.range();
+        let per_px = (hi - lo) / f64::from(band.rect.height().max(1.0));
+        // Signed for the *screen* gesture: an upward step raises the value on
+        // an upright band and lowers it on an inverted one, so the arrows
+        // keep moving the object the way the key points.
+        Some(if scale.is_inverted() { -per_px } else { per_px })
     }
 
     /// The band drawings live in: the candles minus the live lane.
