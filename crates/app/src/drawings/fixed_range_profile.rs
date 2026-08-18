@@ -1314,6 +1314,7 @@ mod tests {
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
+            content_editing: false,
         };
         let (left, right) = range_edges(&payload, &points, &ctxt);
         assert_eq!(left, 100.0, "the drawn left edge is untouched");
@@ -1381,6 +1382,7 @@ mod tests {
             style: DrawingStyle::default(),
             selected: true,
             halo: false,
+            content_editing: false,
         };
 
         let handles = TOOL.handles(chart_rect, &points, &ctxt).expect("overridden");

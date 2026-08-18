@@ -126,6 +126,7 @@ mod tests {
             style,
             selected: false,
             halo: false,
+            content_editing: false,
         };
         body(&ctxt)
     }

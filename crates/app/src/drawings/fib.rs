@@ -29,29 +29,31 @@ use super::{
 /// tools apart in the flyout at a glance, which is exactly how every drawing
 /// platform draws them.
 pub(super) const FIB_RETRACEMENT_ICON: IconStrokes = &[
-    &[(0.08, 0.16), (0.92, 0.16)],
-    &[(0.08, 0.39), (0.92, 0.39)],
-    &[(0.08, 0.62), (0.92, 0.62)],
-    &[(0.08, 0.85), (0.92, 0.85)],
-    &[(0.22, 0.85), (0.78, 0.16)],
+    &[(0.30, 0.16), (0.98, 0.16)],
+    &[(0.30, 0.50), (0.98, 0.50)],
+    &[(0.30, 0.84), (0.98, 0.84)],
+    &[(0.06, 0.84), (0.60, 0.16)],
 ];
 
-/// The two ends of the leg the retracement is dragged across.
-pub(super) const FIB_RETRACEMENT_DOTS: IconDots = &[(0.22, 0.85), (0.78, 0.16)];
+/// The two ends of the leg the retracement is dragged across. They sit on the
+/// outer levels because that is where they really are: the anchors *are* 0
+/// and 1, and every other line hangs between them.
+pub(super) const FIB_RETRACEMENT_DOTS: IconDots = &[(0.06, 0.84), (0.60, 0.16)];
 
 /// The extension icon: the same ladder under the *three*-anchor path —
 /// impulse, pullback, projection origin — because that is the gesture, and
 /// the third dot is what says so.
 pub(super) const FIB_EXTENSION_ICON: IconStrokes = &[
-    &[(0.08, 0.14), (0.92, 0.14)],
-    &[(0.08, 0.38), (0.92, 0.38)],
-    &[(0.08, 0.62), (0.92, 0.62)],
-    &[(0.08, 0.86), (0.92, 0.86)],
-    &[(0.14, 0.80), (0.45, 0.20), (0.74, 0.58)],
+    &[(0.30, 0.16), (0.98, 0.16)],
+    &[(0.30, 0.50), (0.98, 0.50)],
+    &[(0.30, 0.84), (0.98, 0.84)],
+    &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)],
 ];
 
-/// The three anchors of the trend-based extension.
-pub(super) const FIB_EXTENSION_DOTS: IconDots = &[(0.14, 0.80), (0.45, 0.20), (0.74, 0.58)];
+/// The three anchors of the trend-based extension — impulse, pullback and the
+/// origin the projection hangs from. Three dots against two is what tells the
+/// two Fib rows apart in the flyout at icon size.
+pub(super) const FIB_EXTENSION_DOTS: IconDots = &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)];
 
 /// The one rail family both Fib tools declare, shared here so the two
 /// members can never drift onto different family ids.
@@ -1105,6 +1107,11 @@ pub(super) fn draw_levels_tab(
     // redone every single session.
     ui.separator();
     ui.horizontal(|ui| {
+        // Named, because "Set as default" sits four rows up and means the
+        // neighbouring thing: that one promotes a preset the trader *named*,
+        // this one takes the setup in front of them as it stands. Without the
+        // words in front, two buttons a thumb apart read as the same button.
+        ui.label(egui::RichText::new("New objects").small());
         if ui
             .small_button("Save as default")
             .on_hover_text("New objects of this tool open with these levels, colours and labels")

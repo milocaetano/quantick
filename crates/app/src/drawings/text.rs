@@ -207,7 +207,10 @@ impl DrawingToolImpl for Text {
     ) {
         // The halo pass widens strokes; type has none, and a second draw of
         // the same glyphs would only smear them.
-        if ctxt.halo {
+        //
+        // The editor holding these words paints them itself, so the object
+        // stands down while it is open — see `DrawContext::content_editing`.
+        if ctxt.halo || ctxt.content_editing {
             return;
         }
         let Some(anchor) = points.first() else {

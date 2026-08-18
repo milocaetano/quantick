@@ -303,7 +303,7 @@ const ICON_STROKE_WIDTH_PX: f32 = 1.4;
 
 /// Radius of an icon's anchor dot, in pixels at the rail's glyph size. Small
 /// enough to read as a handle on the leg rather than as a sixth level line.
-const ICON_DOT_RADIUS_PX: f32 = 1.5;
+const ICON_DOT_RADIUS_PX: f32 = 1.9;
 
 /// Paint a vector icon: each polyline's unit-square points scaled into
 /// `rect`, then the anchor dots over them. A handful of line segments and at

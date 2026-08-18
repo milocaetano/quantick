@@ -285,6 +285,13 @@ pub struct DrawContext<'a> {
     /// True while the wrapper paints the selection halo pass: tools draw
     /// only their stroke geometry then — no fills, no labels.
     pub halo: bool,
+    /// True while this object's *content* is being edited somewhere else on
+    /// screen — the on-chart note editor holding the words while they are
+    /// typed. A tool whose content is words paints none of it then: the
+    /// field is showing the same thing, one line lower, and an empty note
+    /// showed its "Note" placeholder stacked over the field's "Add text",
+    /// which reads as two objects.
+    pub content_editing: bool,
 }
 
 /// What the trader is holding down while they shape an object.
@@ -868,6 +875,7 @@ impl DrawingTool {
             };
             let halo_ctxt = DrawContext {
                 halo: true,
+                content_editing: false,
                 ..*ctxt
             };
             self.0
@@ -2822,6 +2830,7 @@ mod tests {
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
+            content_editing: false,
         };
         assert!(rectangle.hit_test(chart, &points, center, 5.0, &filled));
 
@@ -2911,6 +2920,7 @@ mod tests {
                 style,
                 selected: true,
                 halo: false,
+                content_editing: false,
             };
             line.paint(
                 &painter,
@@ -3212,6 +3222,7 @@ mod tests {
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
+            content_editing: false,
         };
         assert!(line.hit_test(chart, &points, egui::pos2(450.0, 123.0), 5.0, &ctxt));
     }
@@ -3309,6 +3320,7 @@ mod tests {
             style: DrawingStyle::default(),
             selected: true,
             halo: false,
+            content_editing: false,
         };
         let handle = egui::pos2(50.0, 30.0);
         assert_eq!(tool.handles(chart, &points, &ctxt).as_slice(), &[handle]);
@@ -3429,6 +3441,7 @@ mod tests {
                 style: DrawingStyle::default(),
                 selected: true,
                 halo: false,
+                content_editing: false,
             };
             let handles = drawing_tool.handles(chart, &points, &ctxt);
             if drawing_tool.id() == "parallel-channel" {
@@ -3509,6 +3522,7 @@ mod tests {
                 style: DrawingStyle::default(),
                 selected: false,
                 halo: false,
+                content_editing: false,
             };
             assert!(
                 drawing_tool.hit_test(chart, &points, hit, 5.0, &ctxt),

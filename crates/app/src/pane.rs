@@ -1025,6 +1025,11 @@ pub struct ChartPane {
     // Drawing placement/movement state. Anchors are chart coordinates; only
     // the current hover and press position are transient pixels.
     pub drawing_hover: Option<ChartPoint>,
+    /// The object whose *content* is being edited off-canvas right now —
+    /// the on-chart note editor's subject. Told to the pane by the host each
+    /// frame, because the editor is chrome and lives above the canvas; the
+    /// object it holds the words for must not paint them twice.
+    pub content_editing: Option<usize>,
     /// The band the next anchor would land in, as the input pass resolved it.
     /// The draw pass puts the accent hairline on its top edge — one band at a
     /// time, and none at all when no tool is armed.
@@ -1194,6 +1199,7 @@ impl ChartPane {
             strategy_cleanup: Vec::new(),
             drawings: Drawings::default(),
             drawing_hover: None,
+            content_editing: None,
             drawing_band_hint: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
@@ -3471,6 +3477,7 @@ impl ChartPane {
                     style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
+                    content_editing: false,
                 };
                 drawing
                     .tool
@@ -3507,6 +3514,7 @@ impl ChartPane {
                     style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
+                    content_editing: false,
                 };
                 drawing
                     .tool
@@ -3555,6 +3563,7 @@ impl ChartPane {
             style: drawing.style,
             selected: self.drawings.selected() == Some(drawing_index),
             halo: false,
+            content_editing: false,
         };
         anchor_hit(&drawing.tool.handles(band.rect, &projected, &ctxt), pos)
     }
@@ -3607,6 +3616,7 @@ impl ChartPane {
                 style: drawing.style,
                 selected: true,
                 halo: false,
+                content_editing: false,
             };
             let to = self.drawing_screen_point(target, history_right, total, scale);
             drawing
@@ -5764,6 +5774,7 @@ impl ChartPane {
                 style: drawing.style,
                 selected: source.drawings.selected() == Some(index),
                 halo: false,
+                content_editing: false,
             };
             // Handle drags cross the pane boundary as "move anchor N", so a
             // tool whose handles are not its anchors — a channel's rail
@@ -5935,6 +5946,7 @@ impl ChartPane {
                     style,
                     selected,
                     halo: false,
+                    content_editing: false,
                 };
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.
@@ -6071,6 +6083,7 @@ impl ChartPane {
                 style,
                 selected,
                 halo: false,
+                content_editing: self.content_editing == Some(index),
             };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
@@ -6132,6 +6145,7 @@ impl ChartPane {
                 style: draft.style,
                 selected: false,
                 halo: false,
+                content_editing: false,
             };
             draft
                 .tool

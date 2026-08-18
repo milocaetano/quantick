@@ -1469,6 +1469,20 @@ impl QuantickApp {
         // unreachable from a launch — a drag is the only way to set one, and a
         // capture run has no hand. Nonsense is refused rather than guessed, so
         // a typo photographs automatic placement instead of an invented pixel.
+        // Which tab the panel opens on. The panel is one hook away, but its
+        // tool-owned tab — where a Fib's levels and colours are built, and
+        // where the two default controls sit — is a click deeper, and a
+        // capture has no hand for it.
+        if let Ok(tab) = std::env::var("QUANTICK_DRAWING_INSPECTOR_TAB") {
+            match tab.trim() {
+                "style" => app.inspector_tab = InspectorTab::Style,
+                "extra" => app.inspector_tab = InspectorTab::Extra,
+                "coordinates" => app.inspector_tab = InspectorTab::Coordinates,
+                // Refused rather than guessed: a typo shows the default tab,
+                // never a confident capture of the wrong one.
+                other => tracing::warn!(tab = other, "unknown drawing inspector tab"),
+            }
+        }
         if let Some(position) = std::env::var("QUANTICK_DRAWING_INSPECTOR_POS")
             .ok()
             .and_then(|value| parse_point(&value))
@@ -6345,20 +6359,34 @@ impl QuantickApp {
             .fixed_pos(egui::pos2(bbox.left(), bbox.bottom()))
             .pivot(egui::Align2::LEFT_BOTTOM)
             .show(ctx, |ui| {
-                let response = ui.add(
-                    egui::TextEdit::multiline(&mut buffer)
-                        .font(egui::FontId::proportional(size_px))
-                        .text_color(color)
-                        .hint_text(INLINE_TEXT_HINT)
-                        .desired_rows(1)
-                        .desired_width(INLINE_TEXT_WIDTH_PX),
-                );
-                // The caret on the first frame: a field that opens unfocused
-                // asks for a click nobody was told about.
-                if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
-                    response.request_focus();
-                }
-                response
+                // A frame around it, in the accent: over a candle chart an
+                // unframed field is a rectangle of dark on dark, and the one
+                // thing this surface has to say is "the keyboard is here
+                // now". The fill is opaque for the same reason — words typed
+                // over wicks are words nobody can read back.
+                egui::Frame::none()
+                    .fill(theme::CHROME)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT))
+                    .rounding(egui::Rounding::same(3.0))
+                    .inner_margin(egui::Margin::symmetric(4.0, 2.0))
+                    .show(ui, |ui| {
+                        let response = ui.add(
+                            egui::TextEdit::multiline(&mut buffer)
+                                .font(egui::FontId::proportional(size_px))
+                                .text_color(color)
+                                .hint_text(INLINE_TEXT_HINT)
+                                .desired_rows(1)
+                                .frame(false)
+                                .desired_width(INLINE_TEXT_WIDTH_PX),
+                        );
+                        // The caret on the first frame: a field that opens
+                        // unfocused asks for a click nobody was told about.
+                        if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
+                            response.request_focus();
+                        }
+                        response
+                    })
+                    .inner
             })
             .inner;
 
@@ -8388,6 +8416,11 @@ impl QuantickApp {
         // Same one-per-frame resolution for the side-honesty label the
         // footprint legend carries.
         let side_inferred = self.active_tab().side_note(&self.config).is_some();
+        // Told before the canvas paints, not after: the object holding the
+        // words the editor is showing must stand down on the *same* frame,
+        // or the note flashes its placeholder under the field for one.
+        let editing = self.inline_text_editing();
+        self.drawing_pane_mut().content_editing = editing;
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -16640,6 +16673,34 @@ plot(close)
             drawing.tool.inline_text(drawing.payload.as_ref()),
             Some(""),
             "one undo, the whole note"
+        );
+    }
+
+    /// One note, one placeholder. The object paints "Note" when it is empty
+    /// and the field offers "Add text" — stacked, they read as two objects,
+    /// which is what the first capture of this editor showed. The object
+    /// stands down for as long as the field is holding its words.
+    #[test]
+    fn the_note_stops_painting_itself_while_its_editor_is_open() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "text");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let painted = painted_text(&run_frame(&mut app, &ctx));
+        assert!(app.inline_text_editing().is_some(), "the editor is open");
+        assert!(
+            !painted.iter().any(|text| text == "Note"),
+            "the object's placeholder must not sit over the field: {painted:?}"
+        );
+
+        // Closed again, the object is the only thing holding the words — so
+        // an empty note goes back to saying it is there.
+        app.end_inline_text_edit();
+        let painted = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            painted.iter().any(|text| text == "Note"),
+            "an empty note must stay findable once nothing is editing it: {painted:?}"
         );
     }
 
