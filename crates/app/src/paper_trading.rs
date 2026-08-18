@@ -27,7 +27,7 @@ use rust_decimal::prelude::ToPrimitive;
 use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
 use crate::paper_calendar::{
-    CalendarAction, CalendarState, CivilDate, DateRange, DayIndex, civil_utc,
+    CalendarAction, CalendarState, CivilDate, DAY_MS, DateRange, DayIndex, DaySelection, civil_utc,
 };
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -290,7 +290,7 @@ enum ReportScope {
 /// replayed session's trades may be years old; a wall-clock "7 days" would
 /// report a perfectly good replay as empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReportPeriod {
+pub(crate) enum ReportPeriod {
     Today,
     Week,
     Month,
@@ -340,13 +340,11 @@ impl ReportPeriod {
     /// times, so the day must break where the user sees midnight, not
     /// where UTC does.
     fn cutoff_ms(self, anchor_ms: i64, tz: TzOffset) -> Option<i64> {
-        const DAY_MS: i64 = 86_400_000;
         match self {
-            Self::Today => {
-                let local = anchor_ms.saturating_add(tz.offset_ms());
-                let local_day_start = local.div_euclid(DAY_MS) * DAY_MS;
-                Some(local_day_start.saturating_sub(tz.offset_ms()))
-            }
+            // The same civil day the calendar highlights and the ledger
+            // stamps: one date law, so a pill and a picked cell can never
+            // disagree about where midnight is.
+            Self::Today => Some(CivilDate::from_ms(anchor_ms, tz).start_ms(tz)),
             Self::Week => Some(anchor_ms.saturating_sub(7 * DAY_MS)),
             Self::Month => Some(anchor_ms.saturating_sub(30 * DAY_MS)),
             Self::Quarter => Some(anchor_ms.saturating_sub(90 * DAY_MS)),
@@ -383,7 +381,8 @@ fn parse_period(text: &str) -> Option<i64> {
 fn fmt_period_ms(period_ms: i64) -> String {
     const MINUTE_MS: i64 = 60_000;
     const HOUR_MS: i64 = 3_600_000;
-    const DAY_MS: i64 = 86_400_000;
+    // `DAY_MS` is the calendar's, not a local copy: the pills and the
+    // month grid measure a day the same way or they are two features.
     const WEEK_MS: i64 = 7 * DAY_MS;
     let (value, unit) = if period_ms % WEEK_MS == 0 {
         (period_ms / WEEK_MS, 'w')
@@ -428,6 +427,37 @@ struct ReportView {
     report: PerformanceReport,
 }
 
+/// The report as data: what is being asked, and what came back. Handed
+/// out by [`PaperTrading::report_snapshot`] so an operator that cannot see
+/// the window can still say which trades produced which numbers.
+pub(crate) struct ReportSnapshot<'a> {
+    /// `None` — every symbol folder in scope.
+    pub(crate) symbol: Option<&'a str>,
+    pub(crate) source: SourceFilter,
+    /// The picked dates, when the calendar is what is cutting.
+    pub(crate) range: Option<DateRange>,
+    /// The anchor-relative period, when it is — never both at once.
+    pub(crate) period: Option<ReportPeriod>,
+    /// Saved trades the window keeps out, and those the Source filter does.
+    pub(crate) hidden_outside: usize,
+    pub(crate) hidden_by_source: usize,
+    pub(crate) rows: &'a [HistoryRow],
+    pub(crate) report: &'a PerformanceReport,
+}
+
+impl ReportSnapshot<'_> {
+    /// The window in force, in one phrase — picked dates when the calendar
+    /// is cutting, the anchor-relative period otherwise. The two are never
+    /// both in force, so one phrase can always say which it is.
+    pub(crate) fn window_label(&self) -> String {
+        match (self.range, self.period) {
+            (Some(range), _) => range.label(),
+            (None, Some(period)) => period.phrase(),
+            (None, None) => "nothing".to_owned(),
+        }
+    }
+}
+
 /// The realized-equity walk `E_0..E_n` (`E_0 = 0` before the first trade),
 /// in the two shapes its two readers need: exact points for the trade
 /// list's running total, and plot-ready `f32` with its bounds for the
@@ -470,13 +500,13 @@ impl EquityWalk {
 /// One journal row loaded from disk: the trade, the symbol folder it came
 /// from, and the session source its file recorded.
 #[derive(Clone)]
-struct HistoryRow {
-    symbol: String,
+pub(crate) struct HistoryRow {
+    pub(crate) symbol: String,
     /// `None` — a file from before the source was recorded. The report's
     /// Real view includes it: that era *was* live trading, and hiding it
     /// would "lose" the user's history all over again.
-    source: Option<history::SessionSource>,
-    trade: ClosedTrade,
+    pub(crate) source: Option<history::SessionSource>,
+    pub(crate) trade: ClosedTrade,
 }
 
 /// Journal rows loaded from disk, each remembering the symbol folder it
@@ -494,7 +524,7 @@ struct LoadedHistory {
 /// The report's session-source filter. Default `Real`: practice runs must
 /// never inflate the real track record unasked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SourceFilter {
+pub(crate) enum SourceFilter {
     /// Live sessions, plus files from before the source was recorded.
     Real,
     /// Replay-driven practice sessions only.
@@ -3183,18 +3213,51 @@ impl PaperTrading {
         self.open_report();
     }
 
+    /// Filter the report by dates. The calendar's click and the harness
+    /// hook both come through here — one named action taking data, so an
+    /// operator that is not holding the mouse reaches exactly the state a
+    /// click reaches rather than a parallel one that drifts from it.
+    pub(crate) fn pick_report_dates(&mut self, selection: DaySelection) {
+        self.calendar.selection = selection;
+        self.report_view = None;
+    }
+
+    /// Page the month grid to the month holding `date`. Separate from the
+    /// pick on purpose: clicking a cell must not yank the grid to another
+    /// month, while a hook naming a date must land where that date is.
+    pub(crate) fn show_report_month(&mut self, date: CivilDate) {
+        self.calendar.month = Some(date.month_start());
+    }
+
+    /// What the report is currently showing, as data rather than pixels:
+    /// the window in force and the trades inside it. The second operator
+    /// reads this instead of the screen — a filter whose result exists
+    /// only inside a paint call cannot be reported back to anyone.
+    pub(crate) fn report_snapshot(&self) -> Option<ReportSnapshot<'_>> {
+        let view = self.report_view.as_ref()?;
+        Some(ReportSnapshot {
+            symbol: self.report_symbol.as_deref(),
+            source: view.source,
+            range: view.range,
+            period: view.range.is_none().then_some(view.period),
+            hidden_outside: view.hidden_outside,
+            hidden_by_source: view.hidden_by_source,
+            rows: &view.rows,
+            report: &view.report,
+        })
+    }
+
     /// The `QUANTICK_PAPER_CALENDAR` hook: the report open with the month
     /// grid expanded and `selection` picked — the report's own path, so a
     /// scripted run reaches exactly the state a click would.
-    pub(crate) fn autostart_calendar(&mut self, selection: crate::paper_calendar::DaySelection) {
+    pub(crate) fn autostart_calendar(&mut self, selection: DaySelection) {
         self.autostart_report();
         self.calendar.open = true;
-        self.calendar.selection = selection;
-        // The month follows the pick, not the newest day on record.
+        self.pick_report_dates(selection);
+        // A hook naming a date must land on it, not a month away.
         if let Some(range) = selection.range() {
-            self.calendar.month = Some(range.start.month_start());
+            self.show_report_month(range.start);
         }
-        self.report_view = None;
     }
 
     /// The `QUANTICK_LEDGER_PAGES` hook: the ledger already scrolled past
@@ -3302,6 +3365,24 @@ impl PaperTrading {
             equity,
             report,
         });
+        // The cut states itself as data. A trader reads the window; an
+        // operator that cannot see it reads this line — and it is the same
+        // snapshot either of them would be handed.
+        if let Some(snapshot) = self.report_snapshot() {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "PAPER_REPORT_CUT",
+                symbol = snapshot.symbol.unwrap_or("*"),
+                source = snapshot.source.label(),
+                window = %snapshot.window_label(),
+                trades = snapshot.rows.len(),
+                hidden_outside = snapshot.hidden_outside,
+                hidden_by_source = snapshot.hidden_by_source,
+                net_points = %snapshot.report.net_points,
+                "the simulated performance report was re-cut"
+            );
+        }
     }
 
     /// The performance report, computed from what is actually on disk.
@@ -3710,9 +3791,11 @@ impl PaperTrading {
             &mut calendar,
             egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
         );
-        self.calendar = calendar;
+        // The grid reports a pick; applying it is the named action's job,
+        // never the paint's — the click and the hook take one path.
+        self.calendar.month = calendar.month;
         if action == Some(CalendarAction::SelectionChanged) {
-            self.report_view = None;
+            self.pick_report_dates(calendar.selection);
         }
     }
 
@@ -6674,6 +6757,74 @@ mod tests {
     fn utc_dates_format_from_the_same_civil_math() {
         assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
         assert_eq!(fmt_utc_minute(1_773_666_068_000), "2026-03-16 13:01");
+    }
+
+    /// The report answers as data, not only as pixels: the snapshot names
+    /// the window in force and hands back the very rows the tiles, the
+    /// curve and the list were computed from. An operator that cannot see
+    /// the screen reads this.
+    #[test]
+    fn the_report_reports_itself_as_data() {
+        let tz = TzOffset::new(-180);
+        let day = CivilDate::from_ymd(2026, 8, 17);
+        let mut paper = PaperTrading::new();
+        assert!(
+            paper.report_snapshot().is_none(),
+            "nothing loaded, nothing to report"
+        );
+        paper.report = Some(LoadedHistory {
+            rows: vec![
+                row("WINV26", None, trade_at(day.start_ms(tz) + 60_000, 5)),
+                row(
+                    "WINV26",
+                    Some(history::SessionSource::Replay),
+                    trade_at(day.start_ms(tz) + 120_000, 9),
+                ),
+                row(
+                    "WINV26",
+                    None,
+                    trade_at(day.offset_days(1).start_ms(tz) + 60_000, -3),
+                ),
+            ],
+            files: 1,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        paper.report_symbol = Some("WINV26".to_owned());
+
+        // The pills in force, no dates picked.
+        paper.report_period = ReportPeriod::All;
+        paper.ensure_report_view(tz);
+        let snapshot = paper.report_snapshot().expect("a snapshot");
+        assert_eq!(snapshot.symbol, Some("WINV26"));
+        assert_eq!(snapshot.source, SourceFilter::Real);
+        assert!(snapshot.range.is_none());
+        assert_eq!(snapshot.period, Some(ReportPeriod::All));
+        assert_eq!(snapshot.rows.len(), 2, "the practice run is filtered out");
+        assert_eq!(snapshot.hidden_by_source, 1);
+        assert_eq!(snapshot.report.net_points, Decimal::from(2));
+        assert_eq!(snapshot.window_label(), "everything saved");
+
+        // The named action a script would call, then the same read-back.
+        paper.pick_report_dates(DaySelection::None.click(day));
+        paper.ensure_report_view(tz);
+        let snapshot = paper.report_snapshot().expect("a snapshot");
+        assert_eq!(snapshot.range.map(DateRange::label), Some(day.iso()));
+        assert!(
+            snapshot.period.is_none(),
+            "a range and a period are never both in force"
+        );
+        assert_eq!(snapshot.rows.len(), 1);
+        assert_eq!(snapshot.rows[0].symbol, "WINV26");
+        assert_eq!(snapshot.hidden_outside, 1, "the next day sits outside");
+        assert_eq!(snapshot.window_label(), day.iso(), "and it names itself");
+        // The numbers the tiles show come from the very rows handed back.
+        let net: Decimal = snapshot
+            .rows
+            .iter()
+            .map(|row| row.trade.pnl_points)
+            .sum::<Decimal>();
+        assert_eq!(snapshot.report.net_points, net);
     }
 
     /// The equity walk is cut with the view, not re-walked per frame, so

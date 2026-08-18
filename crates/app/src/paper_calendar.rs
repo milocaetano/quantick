@@ -37,7 +37,7 @@ const WEEK_DAYS: i64 = 7;
 /// Rows a month grid always paints. Six is the worst case (a 31-day month
 /// starting on a Sunday), and painting a fixed six keeps the calendar from
 /// resizing the report window as the user pages through months.
-pub(crate) const MONTH_GRID_ROWS: usize = 6;
+const MONTH_GRID_ROWS: usize = 6;
 
 // ----------------------------------------------------------------------
 // Civil dates
