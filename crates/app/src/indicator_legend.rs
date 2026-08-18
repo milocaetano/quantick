@@ -11,12 +11,20 @@
 //! message on hover. An errored indicator used to disappear from the render
 //! with its message computed and never shown (B1) — against the project's
 //! data-honesty rule; this surface is where that statement now lives.
+//!
+//! The legend collapses to a count puck, because the corner it sits in is the
+//! corner a trader reads the newest bars in — and with a position open the
+//! HUD is already there. What collapses is only what is said twice: an
+//! overlay's value is on its own line against the price scale, a sub-pane's
+//! is in that pane's header. What is said *once* never collapses — see
+//! [`survives_collapse`], which is the invariant, not a promise.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_indicators::Rgba8;
 
 use crate::chart;
+use crate::indicator_render::{COLLAPSED_CHEVRON, EXPANDED_CHEVRON, PANE_DISCLOSURE_PX};
 use crate::indicator_worker::SlotId;
 use crate::indicators::IndicatorView;
 use crate::theme;
@@ -50,6 +58,11 @@ pub(crate) enum LegendAction {
     OpenSettings(SlotId),
     /// Remove the indicator.
     Remove(SlotId),
+    /// Fold the legend down to its count puck, or open it back up. Carries the
+    /// state it wants rather than "toggle", so the hotkey, the harness hook
+    /// and the chevron all name one outcome instead of three flips that can
+    /// disagree about what they started from.
+    SetCollapsed(bool),
 }
 
 /// How far down this legend starts when the position HUD claims the very
@@ -77,15 +90,48 @@ pub(crate) fn hud_offset_px(hud_paints_here: bool) -> f32 {
 /// legend that had not been laid out yet. `the_predicted_stack_height_covers_
 /// what_the_legend_actually_draws` keeps the prediction honest against the
 /// real layout.
-pub(crate) fn stack_height_px(views: &[IndicatorView]) -> f32 {
+pub(crate) fn stack_height_px(views: &[IndicatorView], collapsed: bool) -> f32 {
     if views.is_empty() {
         return 0.0;
     }
-    let rows = views.len() as f32;
+    let rows = row_count(views, collapsed) as f32;
     LEGEND_MARGIN_PX
         + FRAME_PADDING_Y_PX * 2.0
         + rows * ROW_HEIGHT_PX
         + (rows - 1.0) * ROW_SPACING_PX
+}
+
+/// Whether a row keeps its place while the legend is collapsed.
+///
+/// The exception, and only the exception. A healthy row repeats what the
+/// chart says elsewhere, so folding it costs the trader nothing. A row that
+/// is errored or stale says something no other surface says — and B1 in this
+/// module's docs is what an indicator disappearing with its message unread
+/// already cost once.
+///
+/// It is written as a predicate over the view, not as a rule the drawing
+/// remembers to apply, because both the painter and [`stack_height_px`] ask
+/// it: there is no code path where the collapse holds power over a broken
+/// indicator, which is a stronger statement than promising not to hide one.
+pub(crate) fn survives_collapse(view: &IndicatorView) -> bool {
+    view.error.is_some() || view.stale.is_some()
+}
+
+/// How many rows the legend draws — the count puck included, since it is a
+/// row of the same height as any other.
+fn row_count(views: &[IndicatorView], collapsed: bool) -> usize {
+    if !collapsed {
+        return views.len();
+    }
+    1 + views.iter().filter(|view| survives_collapse(view)).count()
+}
+
+/// How many indicators the collapse actually folded away — what the puck
+/// counts. Zero when every indicator on the pane is unhealthy: they are all
+/// still on screen, and a puck claiming otherwise would be counting rows it
+/// did not hide.
+fn folded_count(views: &[IndicatorView]) -> usize {
+    views.iter().filter(|view| !survives_collapse(view)).count()
 }
 
 /// Draw the legend over `chart_rect`. A no-op with no indicators — an empty
@@ -96,6 +142,7 @@ pub(crate) fn draw(
     chart_rect: egui::Rect,
     views: &[IndicatorView],
     preview_slot: Option<SlotId>,
+    collapsed: bool,
 ) -> Vec<LegendAction> {
     let mut actions = Vec::new();
     if views.is_empty() {
@@ -114,24 +161,140 @@ pub(crate) fn draw(
                 .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
-                    for view in views {
-                        draw_row(ui, view, preview_slot == Some(view.slot), &mut actions);
+                    if collapsed {
+                        // The puck leads, then the rows the collapse has no
+                        // power over. Preview rides the puck rather than
+                        // unfolding a row: settings being previewed is a fact
+                        // about the dialog in front of the trader, not a fault
+                        // in the indicator — but it is still stated here,
+                        // because the dialog may be sitting behind the chart.
+                        draw_puck(ui, views, preview_slot.is_some(), &mut actions);
+                        for view in views.iter().filter(|view| survives_collapse(view)) {
+                            draw_row(ui, view, false, false, &mut actions);
+                        }
+                    } else {
+                        for (index, view) in views.iter().enumerate() {
+                            draw_row(
+                                ui,
+                                view,
+                                preview_slot == Some(view.slot),
+                                index == 0,
+                                &mut actions,
+                            );
+                        }
                     }
                 });
         });
     actions
 }
 
-/// One legend row. Status precedence matches the toolbar menu's dot:
-/// errored beats stale beats hidden — a broken indicator must never read as
-/// merely hidden.
-fn draw_row(
+/// The collapsed legend's one row: a disclosure that opens it, and the count
+/// of the indicators it folded away.
+///
+/// The count is the puck's whole job — "is anything running here" is the
+/// question a fold has to keep answering, and the hover names them so the
+/// answer never costs a click. It reads nothing back that the rows below it
+/// are already saying: unhealthy indicators are listed there in full, not
+/// tallied here.
+fn draw_puck(
     ui: &mut egui::Ui,
-    view: &IndicatorView,
+    views: &[IndicatorView],
     previewing: bool,
     actions: &mut Vec<LegendAction>,
 ) {
     ui.horizontal(|ui| {
+        if chevron(ui, Some(COLLAPSED_CHEVRON))
+            .is_some_and(|response| response.on_hover_text(EXPAND_HINT).clicked())
+        {
+            actions.push(LegendAction::SetCollapsed(false));
+        }
+        let folded = folded_count(views);
+        if folded > 0 {
+            ui.label(
+                egui::RichText::new(folded.to_string())
+                    .small()
+                    .color(theme::TEXT_MUTED),
+            )
+            .on_hover_text(folded_summary(views));
+        }
+        if previewing {
+            ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
+                .on_hover_text("showing un-applied settings — Apply keeps, Discard reverts");
+        }
+    });
+}
+
+/// What the puck's hover says: one line per folded indicator, named and
+/// valued, so "which four?" is answered without opening anything.
+fn folded_summary(views: &[IndicatorView]) -> String {
+    let mut lines = Vec::new();
+    for view in views.iter().filter(|view| !survives_collapse(view)) {
+        let value = (!view.hidden)
+            .then(|| view.columns.first().and_then(|column| column.last()))
+            .flatten();
+        match value {
+            Some(value) => {
+                lines.push(format!(
+                    "{}  {}",
+                    view.label(),
+                    chart::compact_value(*value)
+                ));
+            }
+            // A hidden row has no value worth quoting — the same silence its
+            // expanded row keeps, for the same reason.
+            None => lines.push(view.label().to_owned()),
+        }
+    }
+    lines.join("\n")
+}
+
+/// The disclosure column every row reserves, whether or not it draws one.
+///
+/// `Some(glyph)` draws the control and hands back its response; `None`
+/// allocates the same width and draws nothing, which is what keeps the colour
+/// dots of rows 2..n in the same column as the dot of the row that leads. The
+/// square is [`PANE_DISCLOSURE_PX`] — the same target the collapsed sub-pane
+/// offers, because a control you have to aim at is one a trader does not use
+/// mid-tape.
+fn chevron(ui: &mut egui::Ui, glyph: Option<&str>) -> Option<egui::Response> {
+    let size = egui::vec2(PANE_DISCLOSURE_PX, PANE_DISCLOSURE_PX);
+    let Some(glyph) = glyph else {
+        ui.allocate_exact_size(size, egui::Sense::hover());
+        return None;
+    };
+    Some(ui.add_sized(
+        size,
+        egui::Button::new(egui::RichText::new(glyph).small().color(theme::TEXT_MUTED)).frame(false),
+    ))
+}
+
+/// What the chevron's hover says on both halves of the gesture. One string so
+/// the two never drift into naming different keys.
+const EXPAND_HINT: &str = "show every indicator (L)";
+const COLLAPSE_HINT: &str = "collapse to a count — broken ones stay (L)";
+
+/// One legend row. Status precedence matches the toolbar menu's dot:
+/// errored beats stale beats hidden — a broken indicator must never read as
+/// merely hidden.
+///
+/// `leads` marks the row that carries the open disclosure: the first one of an
+/// expanded legend. It costs the expanded state no height at all — the
+/// chevron rides *in* the row rather than above it, which is the whole reason
+/// this legend folds without the state a trader spends most of the session in
+/// growing a header.
+fn draw_row(
+    ui: &mut egui::Ui,
+    view: &IndicatorView,
+    previewing: bool,
+    leads: bool,
+    actions: &mut Vec<LegendAction>,
+) {
+    ui.horizontal(|ui| {
+        if chevron(ui, leads.then_some(EXPANDED_CHEVRON))
+            .is_some_and(|response| response.on_hover_text(COLLAPSE_HINT).clicked())
+        {
+            actions.push(LegendAction::SetCollapsed(true));
+        }
         // Everything that *names* the indicator — dot, label, value, status,
         // preview and "N off" chips — laid out as one region so the whole of
         // it answers a double click. Only the text used to, which meant the
@@ -324,11 +487,15 @@ mod tests {
     }
 
     fn painted(ctx: &egui::Context, views: &IndicatorViews) -> String {
+        painted_folded(ctx, views, false)
+    }
+
+    fn painted_folded(ctx: &egui::Context, views: &IndicatorViews, collapsed: bool) -> String {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
         let mut text = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let actions = draw(ctx, 0, chart, views.all(), None);
+                let actions = draw(ctx, 0, chart, views.all(), None, collapsed);
                 assert!(actions.is_empty(), "no clicks, no actions");
             });
             text.clear();
@@ -351,34 +518,219 @@ mod tests {
     fn the_predicted_stack_height_covers_what_the_legend_actually_draws() {
         let ctx = egui::Context::default();
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-        assert_eq!(stack_height_px(&[]), 0.0, "nothing drawn, nothing claimed");
+        for collapsed in [false, true] {
+            assert_eq!(
+                stack_height_px(&[], collapsed),
+                0.0,
+                "nothing drawn, nothing claimed"
+            );
+        }
 
-        let mut views = IndicatorViews::new();
+        // The matrix the fold opened up: rows, times how many of them are
+        // unhealthy, times folded or not. A collapsed legend's height is no
+        // longer a function of the row count alone — an errored indicator
+        // keeps its row through the fold, so the prediction has to count the
+        // survivors, and this is what catches it if it ever stops.
         for rows in 1..=3_usize {
+            for sick in 0..=rows {
+                let mut views = IndicatorViews::new();
+                for row in 0..rows {
+                    let slot = views.allocate_slot("test.indicator");
+                    views.apply(IndicatorEvent::rebuilt(
+                        slot,
+                        descriptor(&format!("EMA({row}, close)")),
+                        vec![vec![101.5, 1_234.0]],
+                    ));
+                    if row < sick {
+                        views.apply(IndicatorEvent::Error {
+                            slot,
+                            error: EvalError {
+                                bar_index: 7,
+                                message: "broken".to_owned(),
+                            },
+                        });
+                    }
+                }
+                for collapsed in [false, true] {
+                    let mut bottom = f32::NEG_INFINITY;
+                    for _ in 0..2 {
+                        let output = ctx.run(egui::RawInput::default(), |ctx| {
+                            draw(ctx, 0, chart, views.all(), None, collapsed);
+                        });
+                        bottom = f32::NEG_INFINITY;
+                        for shape in output.shapes {
+                            let rect = shape.shape.visual_bounding_rect();
+                            if rect.is_positive() {
+                                bottom = bottom.max(rect.bottom());
+                            }
+                        }
+                    }
+                    let claimed = chart.top() + stack_height_px(views.all(), collapsed);
+                    assert!(
+                        bottom <= claimed,
+                        "{rows} row(s), {sick} broken, collapsed={collapsed}: \
+                         the legend reaches {bottom}, the prediction claims {claimed}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The fold's whole promise, as a test rather than a comment: an errored
+    /// indicator is still named, and still says "error", with the legend
+    /// collapsed. B1 cost the project an indicator that vanished with its
+    /// message computed and never shown; a fold that could re-hide one would
+    /// be the same bug wearing a chevron.
+    #[test]
+    fn a_folded_legend_still_states_a_broken_indicator() {
+        let ctx = egui::Context::default();
+        let views = views_with(|views, slot| {
+            views.apply(IndicatorEvent::rebuilt(
+                slot,
+                descriptor("zigzag.pine"),
+                vec![vec![1.0]],
+            ));
+            views.apply(IndicatorEvent::Error {
+                slot,
+                error: EvalError {
+                    bar_index: 7,
+                    message: "PINE_NO_SECURITY: security() is not supported".to_owned(),
+                },
+            });
+        });
+        let text = painted_folded(&ctx, &views, true);
+        assert!(text.contains("zigzag.pine"), "folded: {text}");
+        assert!(text.contains("error"), "folded: {text}");
+    }
+
+    /// Stale is the same promise: the chart is drawing an older version than
+    /// the one on disk, and folding the legend must not be a way to stop
+    /// saying so.
+    #[test]
+    fn a_folded_legend_still_states_a_stale_indicator() {
+        let ctx = egui::Context::default();
+        let views = views_with(|views, slot| {
+            views.apply(IndicatorEvent::Rebuilt {
+                slot,
+                descriptor: descriptor("cvd.pine"),
+                columns: vec![vec![2.0]],
+                bar_paint: Vec::new(),
+                rows: 1,
+                inputs: Vec::new(),
+                stale: Some("edit has errors; running the previous version".to_owned()),
+            });
+        });
+        let text = painted_folded(&ctx, &views, true);
+        assert!(text.contains("cvd.pine"), "folded: {text}");
+        assert!(text.contains("stale"), "folded: {text}");
+    }
+
+    /// What the fold *is* allowed to do: take the healthy rows off the chart
+    /// and leave a count in their place. The puck counts what it folded, not
+    /// what is on the pane — the broken row below it is still visible and
+    /// counting it would be claiming to have hidden something that is right
+    /// there.
+    #[test]
+    fn folding_hides_healthy_rows_and_counts_them() {
+        let ctx = egui::Context::default();
+        let mut views = IndicatorViews::new();
+        for name in ["EMA(9, close)", "ATR(14)"] {
             let slot = views.allocate_slot("test.indicator");
             views.apply(IndicatorEvent::rebuilt(
                 slot,
-                descriptor(&format!("EMA({rows}, close)")),
+                descriptor(name),
                 vec![vec![101.5, 1_234.0]],
             ));
+        }
+        let broken = views.allocate_slot("test.indicator");
+        views.apply(IndicatorEvent::rebuilt(
+            broken,
+            descriptor("zigzag.pine"),
+            vec![vec![1.0]],
+        ));
+        views.apply(IndicatorEvent::Error {
+            slot: broken,
+            error: EvalError {
+                bar_index: 7,
+                message: "broken".to_owned(),
+            },
+        });
 
-            let mut bottom = f32::NEG_INFINITY;
+        let folded = painted_folded(&ctx, &views, true);
+        assert!(
+            !folded.contains("EMA(9, close)") && !folded.contains("ATR(14)"),
+            "the healthy rows fold away: {folded}"
+        );
+        assert!(
+            folded.contains('2'),
+            "the puck counts the two it hid: {folded}"
+        );
+        assert!(
+            folded.contains("zigzag.pine"),
+            "the broken one stays: {folded}"
+        );
+
+        let open = painted_folded(&ctx, &views, false);
+        assert!(open.contains("EMA(9, close)"), "expanded: {open}");
+        assert!(open.contains("ATR(14)"), "expanded: {open}");
+    }
+
+    /// Both halves of the gesture reach the app as one named outcome, so the
+    /// chevron, the hotkey and the harness hook cannot disagree about what
+    /// they toggled from.
+    #[test]
+    fn the_chevron_asks_to_fold_and_to_unfold() {
+        let ctx = egui::Context::default();
+        let views = views_with(|views, slot| {
+            views.apply(IndicatorEvent::rebuilt(
+                slot,
+                descriptor("EMA(9, close)"),
+                vec![vec![101.5, 1_234.0]],
+            ));
+        });
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+
+        for (collapsed, want) in [(false, true), (true, false)] {
+            // Aim at the glyph the legend really painted rather than at a
+            // position computed from the paddings: the arithmetic would be a
+            // second copy of the layout, and a test that agrees with its own
+            // copy proves nothing about the one on screen.
+            let glyph = if collapsed {
+                COLLAPSED_CHEVRON
+            } else {
+                EXPANDED_CHEVRON
+            };
+            let mut target = None;
             for _ in 0..2 {
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw(ctx, 0, chart, views.all(), None);
+                    draw(ctx, 0, chart, views.all(), None, collapsed);
                 });
-                bottom = f32::NEG_INFINITY;
                 for shape in output.shapes {
-                    let rect = shape.shape.visual_bounding_rect();
-                    if rect.is_positive() {
-                        bottom = bottom.max(rect.bottom());
+                    if let egui::epaint::Shape::Text(galley) = &shape.shape
+                        && galley.galley.text() == glyph
+                    {
+                        target = Some(galley.visual_bounding_rect().center());
                     }
                 }
             }
-            let claimed = chart.top() + stack_height_px(views.all());
+            let target = target.expect("the legend paints its disclosure");
+            let mut actions = Vec::new();
+            for pressed in [true, false] {
+                let mut input = egui::RawInput::default();
+                input.events.push(egui::Event::PointerMoved(target));
+                input.events.push(egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+                let _ = ctx.run(input, |ctx| {
+                    actions.extend(draw(ctx, 0, chart, views.all(), None, collapsed));
+                });
+            }
             assert!(
-                bottom <= claimed,
-                "{rows} row(s): the legend reaches {bottom}, the prediction claims {claimed}"
+                actions.contains(&LegendAction::SetCollapsed(want)),
+                "collapsed={collapsed}: the chevron must ask for {want}, got {actions:?}"
             );
         }
     }
@@ -408,7 +760,7 @@ mod tests {
         let mut target = None;
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                draw(ctx, 0, chart, views.all(), None);
+                draw(ctx, 0, chart, views.all(), None, false);
             });
             for shape in output.shapes {
                 if let egui::epaint::Shape::Text(galley) = &shape.shape
@@ -431,7 +783,7 @@ mod tests {
                 modifiers: egui::Modifiers::default(),
             });
             let _ = ctx.run(input, |ctx| {
-                actions.extend(draw(ctx, 0, chart, views.all(), None));
+                actions.extend(draw(ctx, 0, chart, views.all(), None, false));
             });
         }
         assert!(

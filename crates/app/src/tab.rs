@@ -199,6 +199,19 @@ impl SharedPicks {
     }
 }
 
+/// Which of a restored tab's panes open with their indicator legend folded.
+///
+/// A named pair rather than two positional bools: `restore_canvas(.., true,
+/// false)` at the call site says nothing about which chart is which, and the
+/// two panes are exactly the thing a reader would have to guess.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegendFold {
+    /// The flow pane's legend.
+    pub flow: bool,
+    /// The time pane's legend, when the tab has one.
+    pub time: bool,
+}
+
 pub struct Tab {
     /// Stable for as long as the tab is open, and never reused. The indicator
     /// state file names one of these (see `QuantickApp::persisted_tab`), and
@@ -1412,6 +1425,7 @@ impl Tab {
         split_fraction: Option<f32>,
         focus: Option<PaneSide>,
         time_interval_ms: Option<i64>,
+        legends: LegendFold,
     ) {
         if let Some(ms) = time_interval_ms {
             self.time_pane_opening_interval_ms = ms;
@@ -1422,6 +1436,13 @@ impl Tab {
         }
         if let Some(side) = focus {
             self.focus = side;
+        }
+        // After `set_layout`, which is what brings the time pane into
+        // existence: a fold applied before it exists would be applied to
+        // nothing and the pane would open expanded.
+        self.flow_pane.legend_collapsed = legends.flow;
+        if let Some(time) = self.time_pane.as_mut() {
+            time.legend_collapsed = legends.time;
         }
     }
 

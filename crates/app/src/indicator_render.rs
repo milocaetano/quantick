@@ -70,13 +70,13 @@ const AXIS_LABEL_EDGE_MARGIN_PX: f32 = 7.0;
 /// From the bundled Phosphor font, like every other glyph in the chrome. The
 /// Unicode geometric triangles (`▸`, `▾`) are *not* in it and drew as
 /// tofu boxes — a visual capture caught it, which is exactly what one is for.
-const COLLAPSED_CHEVRON: &str = icons::CARET_RIGHT;
+pub(crate) const COLLAPSED_CHEVRON: &str = icons::CARET_RIGHT;
 /// Marks an expanded pane: an open disclosure, pointing the way it closes.
-const EXPANDED_CHEVRON: &str = icons::CARET_DOWN;
+pub(crate) const EXPANDED_CHEVRON: &str = icons::CARET_DOWN;
 /// Side of the square at a pane's top-left corner that toggles it open or
 /// shut. Bigger than the glyph it holds, because a control you have to aim at
 /// is a control a trader does not use mid-tape.
-const PANE_DISCLOSURE_PX: f32 = 18.0;
+pub(crate) const PANE_DISCLOSURE_PX: f32 = 18.0;
 
 /// The square at a pane's top-left that opens or closes it.
 ///

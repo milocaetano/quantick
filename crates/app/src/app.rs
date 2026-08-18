@@ -44,7 +44,7 @@ use crate::state::BarSpec;
 use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
 use crate::symbols_file::{self, AddedSymbols};
-use crate::tab::{CanvasChrome, CanvasLayout, Tab};
+use crate::tab::{CanvasChrome, CanvasLayout, LegendFold, Tab};
 use crate::tabstrip::{self, PickerOutcome, SourcePicker, TabAction};
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -1581,6 +1581,14 @@ impl QuantickApp {
             });
             pane.add_indicator(IndicatorSource::NativeCvd);
         }
+        // The folded legend, reachable from a clean launch: without it the
+        // collapsed state is un-photographable by an agent, and a surface no
+        // harness can reach is a surface no visual QA covers. Goes through
+        // `set_focused_legend_collapsed`, the same call the chevron and the
+        // menu entry make — never a field poked from the side.
+        if std::env::var("QUANTICK_LEGEND_COLLAPSED").is_ok_and(|value| value == "1") {
+            app.set_focused_legend_collapsed(true);
+        }
         // Restore the persisted indicator set before any autostart hook:
         // the file is what the user actually had open.
         app.restore_indicator_state();
@@ -2387,6 +2395,37 @@ impl QuantickApp {
         }
     }
 
+    /// Fold or unfold one pane's indicator legend.
+    ///
+    /// The one place the state changes. The chevron, the menu entry, the
+    /// hotkey and the harness hook all arrive here with the outcome they want,
+    /// so none of them can leave a pane in a state the others would not have
+    /// produced — and an operator that is not holding the mouse names this
+    /// call rather than a click.
+    fn set_legend_collapsed(&mut self, tab_id: u64, side: PaneSide, collapsed: bool) {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+            return;
+        };
+        tab.pane_mut(side).legend_collapsed = collapsed;
+    }
+
+    /// Whether the focused pane's legend is folded — what the menu label and
+    /// the hotkey read before deciding which way to flip it.
+    fn focused_legend_collapsed(&self) -> bool {
+        let tab = self.active_tab();
+        tab.pane(tab.focused_side()).legend_collapsed
+    }
+
+    /// Fold or unfold the legend of the pane the chrome speaks for. The menu
+    /// entry and the hotkey both act through this, so "which chart did that
+    /// affect" has one answer: the focused one, the same pane every other
+    /// chrome control acts on.
+    fn set_focused_legend_collapsed(&mut self, collapsed: bool) {
+        let tab_id = self.active_tab().id;
+        let side = self.active_tab().focused_side();
+        self.set_legend_collapsed(tab_id, side, collapsed);
+    }
+
     fn toggle_indicator_hidden_at(&mut self, target: TabSlot) {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
@@ -2484,9 +2523,14 @@ impl QuantickApp {
                         && self.indicator_settings_target.side == side
                 })
                 .map(|dialog| dialog.slot);
-            for action in
-                indicator_legend::draw(ctx, pane.id, rect, pane.indicators.all(), preview_slot)
-            {
+            for action in indicator_legend::draw(
+                ctx,
+                pane.id,
+                rect,
+                pane.indicators.all(),
+                preview_slot,
+                pane.legend_collapsed,
+            ) {
                 pending.push((side, action));
             }
         }
@@ -2505,6 +2549,9 @@ impl QuantickApp {
                 }
                 indicator_legend::LegendAction::Remove(slot) => {
                     self.remove_indicator_at(at(slot));
+                }
+                indicator_legend::LegendAction::SetCollapsed(collapsed) => {
+                    self.set_legend_collapsed(tab_id, side, collapsed);
                 }
             }
         }
@@ -3485,6 +3532,14 @@ impl QuantickApp {
                     .time_pane
                     .as_ref()
                     .map(|pane| pane.state.spec().to_config_string()),
+                flow_legend_collapsed: tab.flow_pane.legend_collapsed,
+                // A tab with no time pane has no second legend, and `false`
+                // is what it will restore into when one is opened: a pane
+                // that never existed cannot have been folded.
+                time_legend_collapsed: tab
+                    .time_pane
+                    .as_ref()
+                    .is_some_and(|pane| pane.legend_collapsed),
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -3616,6 +3671,10 @@ impl QuantickApp {
                 saved.split_fraction,
                 focus,
                 time_interval,
+                LegendFold {
+                    flow: saved.flow_legend_collapsed,
+                    time: saved.time_legend_collapsed,
+                },
             );
         }
         // The markets that were on screen before this workspace was opened.
@@ -4378,6 +4437,10 @@ impl QuantickApp {
                 saved.split_fraction,
                 saved.focus.map(Into::into),
                 time_interval,
+                LegendFold {
+                    flow: saved.flow_legend_collapsed,
+                    time: saved.time_legend_collapsed,
+                },
             );
         }
         for _ in 0..replaced {
@@ -4837,6 +4900,14 @@ const REPLAY_SHORTCUT: egui::KeyboardShortcut =
 /// Shows/hides the panels dock (§10).
 const DOCK_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
+/// Folds the focused pane's on-chart indicator legend to its count puck, or
+/// opens it back up (see [`crate::indicator_legend`]).
+///
+/// Ctrl+letter like the dock's own switch above, not the bare `L` the drawing
+/// tools answer to: bare letters are the toolbox's namespace, and a chrome
+/// switch borrowing one would arm a tool on every trader who learned it there.
+const LEGEND_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L);
 /// Saves the workspace — the arrangement the next launch opens on.
 ///
 /// Ctrl+Shift+S rather than the Ctrl+S every editor uses, deliberately: a
@@ -4892,6 +4963,10 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
+            let collapsed = self.focused_legend_collapsed();
+            self.set_focused_legend_collapsed(!collapsed);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&SAVE_WORKSPACE_SHORTCUT)) {
             self.save_workspace("shortcut");
@@ -5013,6 +5088,28 @@ impl QuantickApp {
                             .clicked()
                         {
                             self.dock.toggle_visible();
+                            ui.close_menu();
+                        }
+                        // The legend belongs to a pane, so this entry names
+                        // the focused one's state — the same pane the chevron
+                        // on screen would fold.
+                        let collapsed = self.focused_legend_collapsed();
+                        let legend_label = if collapsed {
+                            "Show indicator legend"
+                        } else {
+                            "Collapse indicator legend"
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(legend_label)
+                                    .shortcut_text(ui.ctx().format_shortcut(&LEGEND_SHORTCUT)),
+                            )
+                            .on_hover_text(
+                                "Folds the healthy rows to a count. Errored and stale indicators stay on the chart.",
+                            )
+                            .clicked()
+                        {
+                            self.set_focused_legend_collapsed(!collapsed);
                             ui.close_menu();
                         }
                         ui.menu_button("Drawing toolbar", |ui| {
@@ -9572,6 +9669,8 @@ mod tests {
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
+                    flow_legend_collapsed: false,
+                    time_legend_collapsed: false,
                 }],
                 None,
             )
@@ -18679,6 +18778,8 @@ plot(close)
                 focus: Some(ui_state::SavedFocus::Flow),
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
             }],
             Some(ui_state::SavedChrome {
                 timezone_minutes: 330,
@@ -18759,6 +18860,8 @@ plot(close)
                 focus: None,
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
             }],
             None,
         ));
