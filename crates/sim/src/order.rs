@@ -87,6 +87,13 @@ pub struct Order {
     /// validation keeps it on the far side of the market from the limit
     /// price, so no single print can ever satisfy both fill and cancel.
     pub cancel_at: Option<Decimal>,
+    /// Fill only into an account with no open position: if the print that
+    /// would fill this order arrives while a position is open, the order
+    /// cancels instead ([`crate::CancelReason::AccountOccupied`]). The
+    /// strategy kernel sets this on its resting entries — an order whose
+    /// reason to exist assumed a flat account must never execute against a
+    /// position a human opened while it rested.
+    pub flat_only: bool,
     /// Venue time of the last print seen when the order was placed. The
     /// simulator has no clock of its own.
     pub placed_ms: i64,

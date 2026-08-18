@@ -84,6 +84,14 @@ pub fn render_session(run: &SessionRun) -> String {
             quantity.normalize()
         );
     }
+    if run.resting_at_end > 0 {
+        let _ = writeln!(
+            out,
+            "  {} entry order(s) still resting at the last print — never filled, \
+             never cancelled; the recording ended first",
+            run.resting_at_end
+        );
+    }
     out
 }
 
@@ -234,7 +242,7 @@ fn push_metrics(out: &mut String, report: &PerformanceReport) {
 }
 
 fn push_anomalies(out: &mut String, anomalies: &Anomalies) {
-    if anomalies.is_clean() {
+    if anomalies.is_clean() && anomalies.cancels.is_empty() {
         return;
     }
     let detail = |counts: &std::collections::BTreeMap<&'static str, u64>| {
@@ -260,6 +268,18 @@ fn push_anomalies(out: &mut String, anomalies: &Anomalies) {
             "brackets dropped",
             anomalies.dropped_brackets(),
             detail(&anomalies.brackets_dropped)
+        );
+    }
+    if !anomalies.cancels.is_empty() {
+        // Not a refusal: the retest policy's self-cancels land here, and a
+        // zero-trade run with a hundred `price_touched` rows is a policy
+        // that kept declining, not a tape with no cuts.
+        let _ = writeln!(
+            out,
+            "  {:<LABEL_WIDTH$}{} ({})",
+            "order cancels",
+            anomalies.cancellations(),
+            detail(&anomalies.cancels)
         );
     }
 }

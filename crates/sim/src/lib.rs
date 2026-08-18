@@ -35,6 +35,13 @@
 //! cancel level on the far side of the market from the limit price, so no
 //! single print can ever satisfy both fill and cancel.
 //!
+//! A **flat-only limit** ([`Command::PlaceLimit`]'s `flat_only`) fills only
+//! into an account with no open position: if its fill print arrives while
+//! one is open, the order stands down instead
+//! ([`CancelReason::AccountOccupied`]). The strategy kernel rests its
+//! entries this way — an order placed under a flat-account promise must
+//! never net a position a human opened while it rested.
+//!
 //! A protective level attached to a market or stop entry is re-checked
 //! against the *actual* fill price: validation ran against the mark, but
 //! the fill lands on a later print, and when the tape outran the level in

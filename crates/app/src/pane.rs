@@ -2086,10 +2086,16 @@ impl ChartPane {
         let state = instance.armed.state().clone();
         use quantick_strategy::{ArmedState, DisarmReason};
         match state {
-            ArmedState::Armed | ArmedState::InPosition => {
-                let disarm = ui.button("Disarm").on_hover_text(
-                    "stop watching; an open operation keeps its position and bracket — yours to manage",
-                );
+            // One Disarm arm for every state that can be called off — a
+            // resting retest limit included (it can wait for hours). Only
+            // the hover varies; the cleanup plumbing must never fork.
+            ArmedState::Armed | ArmedState::InPosition | ArmedState::Fired { retest: true, .. } => {
+                let hover = if matches!(state, ArmedState::Fired { .. }) {
+                    "cancel the resting retest limit and stop watching"
+                } else {
+                    "stop watching; an open operation keeps its position and bracket — yours to manage"
+                };
+                let disarm = ui.button("Disarm").on_hover_text(hover);
                 #[cfg(test)]
                 self.drawing_menu_rects.push(("Disarm", disarm.rect));
                 if disarm.clicked()
@@ -2102,40 +2108,29 @@ impl ChartPane {
             }
             ArmedState::Done | ArmedState::Disarmed { .. } => {
                 // A drawing with no footing on this market/series cannot be
-                // honestly re-armed: the instance would show "armed" while
-                // the region test refuses it forever — the silent halt the
+                // honestly re-armed — and neither can a region whose drawn
+                // span already ended: the instance would show "armed" while
+                // the region test refuses it forever, the silent halt the
                 // named disarms exist to prevent.
                 let footed = {
                     let drawing = &self.drawings.items()[index];
                     !drawing.foreign_market && !drawing.off_series
                 };
+                let span_alive = self.strategy_region_can_fire(id);
                 let rearm = ui
-                    .add_enabled(footed, egui::Button::new("Re-arm"))
+                    .add_enabled(footed && span_alive, egui::Button::new("Re-arm"))
                     .on_hover_text("watch this region again with the same parameters")
-                    .on_disabled_hover_text(
+                    .on_disabled_hover_text(if footed {
+                        "the region ends before the next bar — stretch it right, or turn on \
+                         \"extend right\" in its Region settings"
+                    } else {
                         "this drawing belongs to another market or lost its series — redraw the \
-                         region here first",
-                    );
+                         region here first"
+                    });
                 #[cfg(test)]
                 self.drawing_menu_rects.push(("Re-arm", rearm.rect));
                 if rearm.clicked() {
                     self.rearm_strategy_for_drawing(id);
-                    ui.close_menu();
-                }
-            }
-            ArmedState::Fired { retest: true, .. } => {
-                // A resting retest limit can wait for hours; the trader
-                // must be able to call it off from the same menu.
-                let disarm = ui
-                    .button("Disarm")
-                    .on_hover_text("cancel the resting retest limit and stop watching");
-                #[cfg(test)]
-                self.drawing_menu_rects.push(("Disarm", disarm.rect));
-                if disarm.clicked()
-                    && let Some(instance) = self.strategies.for_drawing_mut(id)
-                {
-                    let cleanup = instance.armed.disarm(DisarmReason::User);
-                    self.strategy_cleanup.extend(cleanup);
                     ui.close_menu();
                 }
             }
@@ -2160,17 +2155,13 @@ impl ChartPane {
     /// "re-armed" silently means "warming up for another twenty bars" — the
     /// replay-seek trap where force bars right after a seek never fire.
     pub(crate) fn rearm_strategy_for_drawing(&mut self, drawing: drawings::DrawingId) {
-        use quantick_strategy::{ArmedState, DisarmReason};
+        use quantick_strategy::ArmedState;
         let Some(instance) = self.strategies.for_drawing(drawing) else {
             return;
         };
         let series_changed = matches!(
             instance.armed.state(),
-            ArmedState::Disarmed {
-                reason: DisarmReason::TimelineReset
-                    | DisarmReason::BarSpecChanged
-                    | DisarmReason::MarketChanged
-            }
+            ArmedState::Disarmed { reason } if reason.resets_series()
         );
         if let Some(instance) = self.strategies.for_drawing_mut(drawing) {
             instance.armed.rearm();
@@ -2181,25 +2172,65 @@ impl ChartPane {
     }
 
     /// Feed the last `warmup_bars` closed bars of the live series back into
-    /// an instance's trigger, gates shut — the arm-time warmup, repeated
-    /// after a rearm whose disarm reset the ruler. Venue-prefix candles are
-    /// excluded for the same reason as at arm time: they measure another
-    /// ruler entirely.
+    /// an instance's trigger — the arm-time warmup, repeated after a rearm
+    /// whose disarm reset the ruler. Venue-prefix candles are excluded for
+    /// the same reason as at arm time: they measure another ruler entirely.
     fn rewarm_strategy_trigger(&mut self, id: drawings::DrawingId) {
         let Some(instance) = self.strategies.for_drawing(id) else {
             return;
         };
         let bars = self.strategy_warmup_bars(instance.armed.trigger().warmup_bars());
-        let warmup = quantick_strategy::Region::new(
-            rust_decimal::Decimal::ZERO,
-            rust_decimal::Decimal::ZERO,
-        );
         let Some(instance) = self.strategies.for_drawing_mut(id) else {
             return;
         };
-        for bar in &bars {
-            let _ = instance.armed.on_closed_bar(bar, &warmup, false, false);
+        instance.armed.warm(&bars);
+    }
+
+    /// Whether the drawing's drawn span can still cover a future closed
+    /// bar — the liveness half of [`Self::strategy_region`]'s `active`
+    /// test, shared by arming, re-arming and the menu so the three cannot
+    /// drift. The next bar to close lands at slot `closed_slots()`, so an
+    /// unextended region needs its right anchor at or past that slot; an
+    /// extended one never expires right.
+    pub(crate) fn strategy_region_can_fire(&self, id: drawings::DrawingId) -> bool {
+        let Some(index) = self.drawings.index_of(id) else {
+            return false;
+        };
+        let drawing = &self.drawings.items()[index];
+        let extend_right = drawing
+            .payload
+            .as_any()
+            .downcast_ref::<drawings::RectanglePayload>()
+            .is_some_and(|payload| payload.extend_right);
+        if extend_right {
+            return true;
         }
+        let [a, b] = drawing.points.as_slice() else {
+            return false;
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let next_slot = self.closed_slots() as f32;
+        a.bar.max(b.bar) >= next_slot
+    }
+
+    /// Sweep instances whose drawing no longer exists — for the deletion
+    /// paths that cannot call [`Self::remove_strategy_for_drawing`] with an
+    /// id in hand (delete-all, undo, redo), so no path leaves a resting bot
+    /// order with no badge over it. Cleanup is queued for the tab's
+    /// same-frame drain like the menu's.
+    pub(crate) fn sweep_strategy_orphans(&mut self) {
+        if self.strategies.is_empty() {
+            return;
+        }
+        let alive: Vec<drawings::DrawingId> = self
+            .strategies
+            .instances
+            .iter()
+            .map(|instance| instance.drawing)
+            .filter(|id| self.drawings.index_of(*id).is_some())
+            .collect();
+        let cleanup = self.strategies.drop_orphans(|id| alive.contains(&id));
+        self.strategy_cleanup.extend(cleanup);
     }
 
     /// The last `want` closed bars of the live series — never venue-prefix

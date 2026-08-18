@@ -50,10 +50,22 @@ impl StrategyAnchors {
     }
 
     /// Attach `instance`, replacing any instance already on its drawing.
-    pub fn arm(&mut self, instance: AnchoredInstance) {
-        self.instances
-            .retain(|existing| existing.drawing != instance.drawing);
+    /// The replaced instance's pending entry is swept like every other way
+    /// an instance leaves the anchors — the mouse path cannot reach a
+    /// replace over `Fired` (the menu offers no "Add strategy…" then), but
+    /// the programmatic seam can, and it must not orphan a resting order.
+    #[must_use = "apply the returned cleanup commands to the simulator"]
+    pub fn arm(&mut self, instance: AnchoredInstance) -> Vec<Command> {
+        let mut cleanup = Vec::new();
+        self.instances.retain(|existing| {
+            if existing.drawing != instance.drawing {
+                return true;
+            }
+            cleanup.extend(existing.armed.pending_entry_cancel());
+            false
+        });
         self.instances.push(instance);
+        cleanup
     }
 
     /// Remove the instance riding `drawing`, whatever its state. The
@@ -69,7 +81,7 @@ impl StrategyAnchors {
             if instance.drawing != drawing {
                 return true;
             }
-            cleanup.extend(pending_entry_cleanup(&instance.armed));
+            cleanup.extend(instance.armed.pending_entry_cancel());
             false
         });
         cleanup
@@ -98,7 +110,7 @@ impl StrategyAnchors {
             if exists(instance.drawing) {
                 return true;
             }
-            cleanup.extend(pending_entry_cleanup(&instance.armed));
+            cleanup.extend(instance.armed.pending_entry_cancel());
             false
         });
         cleanup
@@ -117,18 +129,6 @@ impl StrategyAnchors {
                 )
             })
             .count()
-    }
-}
-
-/// The cleanup an instance leaving the anchors owes the simulator: its
-/// pending entry, if one is still resting or queued. Removal is not a
-/// [`DisarmReason`], so the kernel's disarm sweep cannot cover this path.
-fn pending_entry_cleanup(armed: &ArmedStrategy) -> Option<Command> {
-    match armed.state() {
-        ArmedState::Fired {
-            order_id: Some(id), ..
-        } => Some(Command::CancelOrder { id: *id }),
-        _ => None,
     }
 }
 
@@ -179,9 +179,9 @@ mod tests {
     #[test]
     fn one_instance_per_drawing_and_orphans_die_with_their_drawing() {
         let mut anchors = StrategyAnchors::default();
-        anchors.arm(instance(DrawingId(1)));
-        anchors.arm(instance(DrawingId(2)));
-        anchors.arm(instance(DrawingId(1)));
+        let _ = anchors.arm(instance(DrawingId(1)));
+        let _ = anchors.arm(instance(DrawingId(2)));
+        let _ = anchors.arm(instance(DrawingId(1)));
         assert_eq!(
             anchors.instances.len(),
             2,
@@ -259,11 +259,12 @@ mod tests {
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
             placed_ms: 0,
         })]);
 
         let mut anchors = StrategyAnchors::default();
-        anchors.arm(riding);
+        let _ = anchors.arm(riding);
         let cleanup = anchors.remove_for_drawing(DrawingId(3));
         assert_eq!(
             cleanup,
@@ -273,11 +274,85 @@ mod tests {
         assert!(anchors.is_empty());
     }
 
+    /// Arming over an instance whose entry is still pending sweeps that
+    /// entry too — the programmatic seam must not orphan a resting order
+    /// by replacing its bot.
+    #[test]
+    fn arming_over_a_pending_entry_sweeps_it() {
+        use quantick_sim::{Bracket, Command, EntryKind, Order, OrderId, SimEvent};
+
+        fn bar(open: i64, close: i64) -> quantick_engine::Bar {
+            quantick_engine::Bar {
+                open_time: 0,
+                close_time: 0,
+                open: Decimal::from(open),
+                high: Decimal::from(open.max(close)) + Decimal::ONE,
+                low: Decimal::from(open.min(close)) - Decimal::ONE,
+                close: Decimal::from(close),
+                buy_volume: Decimal::ONE,
+                sell_volume: Decimal::ONE,
+                trade_count: 2,
+            }
+        }
+
+        let mut riding = AnchoredInstance {
+            drawing: DrawingId(5),
+            preset: "test".to_owned(),
+            armed: ArmedStrategy::new(
+                StrategyParams {
+                    side: Side::Buy,
+                    quantity: Decimal::ONE,
+                    tp_mult: Decimal::ONE,
+                    sl_mult: Decimal::ONE,
+                    rearm: Rearm::OneShot,
+                    on_break: quantick_strategy::BreakPolicy::Ignore,
+                },
+                Box::new(ForceTrigger::new(ForceParams {
+                    window: 3,
+                    min_factor: "1.5".parse().expect("fixture"),
+                    max_factor: "2.5".parse().expect("fixture"),
+                    min_body: Decimal::ZERO,
+                })),
+            ),
+        };
+        let region = quantick_strategy::Region::new(Decimal::from(100), Decimal::from(110));
+        let _ = riding
+            .armed
+            .on_closed_bar(&bar(100, 101), &region, true, true);
+        let _ = riding
+            .armed
+            .on_closed_bar(&bar(101, 102), &region, true, true);
+        let _ = riding
+            .armed
+            .on_closed_bar(&bar(102, 106), &region, true, true);
+        let _ = riding.armed.on_sim_events(&[SimEvent::Placed(Order {
+            id: OrderId(21),
+            side: Side::Buy,
+            kind: EntryKind::Market,
+            price: None,
+            quantity: Decimal::ONE,
+            bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
+            placed_ms: 0,
+        })]);
+
+        let mut anchors = StrategyAnchors::default();
+        let _ = anchors.arm(riding);
+        let cleanup = anchors.arm(instance(DrawingId(5)));
+        assert_eq!(
+            cleanup,
+            vec![Command::CancelOrder { id: OrderId(21) }],
+            "the replaced instance's pending entry is swept"
+        );
+        assert_eq!(anchors.instances.len(), 1, "replaced, not stacked");
+    }
+
     #[test]
     fn disarm_all_names_the_reason_and_watching_counts_live_states() {
         let mut anchors = StrategyAnchors::default();
-        anchors.arm(instance(DrawingId(1)));
-        anchors.arm(instance(DrawingId(2)));
+        let _ = anchors.arm(instance(DrawingId(1)));
+        let _ = anchors.arm(instance(DrawingId(2)));
         assert_eq!(anchors.watching(), 2);
 
         let cleanup = anchors.disarm_all(DisarmReason::TimelineReset);

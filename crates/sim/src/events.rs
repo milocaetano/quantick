@@ -92,6 +92,10 @@ pub enum CancelReason {
     /// order filled — the move the order was waiting to fade completed
     /// without it, so the order removed itself as instructed.
     PriceTouched,
+    /// A flat-only order's price was reached while a position was open:
+    /// filling would have traded against (or piled onto) a position the
+    /// order's owner never accounted for, so it stood down instead.
+    AccountOccupied,
 }
 
 /// Why a command was refused. Messages are written for a beginner: they say

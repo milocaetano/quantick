@@ -307,6 +307,7 @@ fn refusals_are_counted_not_swallowed() {
                 price: Decimal::from(10_000),
                 bracket: quantick_sim::Bracket::none(),
                 cancel_at: None,
+                flat_only: false,
             },
         ),
     ]);

@@ -93,9 +93,29 @@ pub enum DisarmReason {
     /// happened, and a one-shot instance stops and says so rather than
     /// pretending an operation ran.
     TargetBeforeRetest,
+    /// The retest limit stood down at its own fill moment because a
+    /// position was open — a human traded while the order rested, and a
+    /// bot never trades against an open manual position. No fill, no
+    /// trade; the badge says why the opportunity was declined.
+    AccountOccupied,
 }
 
 impl DisarmReason {
+    /// Whether the disarm named a *rebuilt series* — a timeline reset, a
+    /// bar-spec change, a market switch. Re-arming after one resets the
+    /// trigger's window (an average blending two tapes judges with a ruler
+    /// no chart shows), and the consumer re-warms it from its own series.
+    /// One list, shared by the kernel's [`ArmedStrategy::rearm`] and the
+    /// chart's re-warm, so a new series-changing reason cannot reset the
+    /// ruler while silently skipping the re-warm.
+    #[must_use]
+    pub fn resets_series(&self) -> bool {
+        matches!(
+            self,
+            Self::TimelineReset | Self::BarSpecChanged | Self::MarketChanged
+        )
+    }
+
     /// Short badge label; the full story goes in tooltips.
     #[must_use]
     pub fn label(&self) -> &'static str {
@@ -108,6 +128,7 @@ impl DisarmReason {
             Self::EntryCancelled => "entry cancelled",
             Self::ProtectionDropped => "protection dropped — closed",
             Self::TargetBeforeRetest => "target hit before retest",
+            Self::AccountOccupied => "stood down — account busy",
         }
     }
 }
@@ -302,6 +323,13 @@ impl ArmedStrategy {
             // The projected target doubles as the order's expiry: the move
             // completing without the retest removes the reason to enter.
             cancel_at: bracket.take_profit,
+            // The flat gate held at fire time, but this order can rest for
+            // hours: if a human opens a position while it waits, filling
+            // would trade against that position — so the simulator stands
+            // the order down at its own fill moment instead. "A bot never
+            // trades against an open manual position" has to survive the
+            // resting window, not just the trigger bar.
+            flat_only: true,
         }]
     }
 
@@ -372,6 +400,17 @@ impl ArmedStrategy {
                                 reason: DisarmReason::TargetBeforeRetest,
                             },
                         },
+                        // The order stood down because a human's position
+                        // occupied the account at its fill moment. An auto
+                        // instance returns to hunting (its fire gate will
+                        // hold until the account is clean again); one shot
+                        // stops with the reason on the badge.
+                        quantick_sim::CancelReason::AccountOccupied => match self.params.rearm {
+                            Rearm::Auto => ArmedState::Armed,
+                            Rearm::OneShot => ArmedState::Disarmed {
+                                reason: DisarmReason::AccountOccupied,
+                            },
+                        },
                         // A human hand (or a reset) swept the entry away;
                         // the bot does not insist.
                         _ => ArmedState::Disarmed {
@@ -407,17 +446,27 @@ impl ArmedStrategy {
     /// that no longer exists.) Before retest limits a pending entry lived
     /// for exactly one print; now it can rest for hours, which is what
     /// makes the sweep worth commanding.
+    /// The cancel for this instance's still-pending entry, if one is
+    /// resting or queued. One definition of "what the instance owes the
+    /// simulator on the way out", shared by [`Self::disarm`] and every
+    /// removal path in the consumer — two copies of this match would drift
+    /// over the money path.
+    #[must_use]
+    pub fn pending_entry_cancel(&self) -> Option<Command> {
+        match &self.state {
+            ArmedState::Fired {
+                order_id: Some(id), ..
+            } => Some(Command::CancelOrder { id: *id }),
+            _ => None,
+        }
+    }
+
     #[must_use = "apply the returned cleanup commands to the simulator"]
     pub fn disarm(&mut self, reason: DisarmReason) -> Vec<Command> {
-        let cleanup = match (&self.state, reason) {
-            (_, DisarmReason::TimelineReset) => Vec::new(),
-            (
-                ArmedState::Fired {
-                    order_id: Some(id), ..
-                },
-                _,
-            ) => vec![Command::CancelOrder { id: *id }],
-            _ => Vec::new(),
+        let cleanup = if matches!(reason, DisarmReason::TimelineReset) {
+            Vec::new()
+        } else {
+            self.pending_entry_cancel().into_iter().collect()
         };
         self.state = ArmedState::Disarmed { reason };
         cleanup
@@ -427,26 +476,36 @@ impl ArmedStrategy {
     /// `InPosition`) cannot be re-armed over; `Armed` is already armed.
     ///
     /// When the disarm reason says the *series itself* changed under the
-    /// ruler — a rebuilt timeline, another bar spec, another market — the
-    /// trigger's running window is reset too: an average blending bodies
-    /// from two different tapes would judge with a ruler no chart shows.
-    /// The honest cost is a fresh warmup, and the badge narrates it.
+    /// ruler ([`DisarmReason::resets_series`]) the trigger's running window
+    /// is reset too: an average blending bodies from two different tapes
+    /// would judge with a ruler no chart shows. The honest cost is a fresh
+    /// warmup — which the consumer can pay down with [`Self::warm`] — and
+    /// the badge narrates whatever remains.
     pub fn rearm(&mut self) {
         match &self.state {
-            ArmedState::Disarmed {
-                reason:
-                    DisarmReason::TimelineReset
-                    | DisarmReason::BarSpecChanged
-                    | DisarmReason::MarketChanged,
-            } => {
+            ArmedState::Disarmed { reason } if reason.resets_series() => {
                 self.trigger.reset();
+                self.note = None;
                 self.state = ArmedState::Armed;
             }
             ArmedState::Done | ArmedState::Disarmed { .. } => {
+                self.note = None;
                 self.state = ArmedState::Armed;
             }
             ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition => {}
         }
+    }
+
+    /// Feed already-closed bars to the trigger only — the arm-time (and
+    /// post-reset re-arm) warmup. The state machine and its gates never
+    /// see these bars: they closed before the instance existed, so a force
+    /// bar among them must warm the ruler without stamping a "trigger
+    /// held" note about a judgement that never happened.
+    pub fn warm(&mut self, bars: &[Bar]) {
+        for bar in bars {
+            let _ = self.trigger.on_closed_bar(bar);
+        }
+        self.note = None;
     }
 
     /// One line for the on-chart badge.
@@ -458,8 +517,14 @@ impl ArmedStrategy {
                 None => format!("armed · {}", self.trigger.status()),
             },
             ArmedState::Fired { retest: false, .. } => "fired · waiting for fill".to_owned(),
+            // Only promise the self-cancel when the order actually carries
+            // one: without a take-profit leg there is no target level.
             ArmedState::Fired { retest: true, .. } => {
-                "retest limit resting at the edge · cancels at target".to_owned()
+                if self.params.tp_mult > Decimal::ZERO {
+                    "retest limit resting at the edge · cancels at target".to_owned()
+                } else {
+                    "retest limit resting at the edge · until filled or disarmed".to_owned()
+                }
             }
             ArmedState::InPosition => "in position".to_owned(),
             ArmedState::Done => "done · one shot".to_owned(),
@@ -684,6 +749,7 @@ mod tests {
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
             placed_ms: 0,
         };
         let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
@@ -745,6 +811,7 @@ mod tests {
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
             placed_ms: 0,
         })]);
         let _ = instance.on_sim_events(&[SimEvent::Filled(quantick_sim::Fill {
@@ -791,6 +858,7 @@ mod tests {
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
             placed_ms: 0,
         };
         let _ = instance.on_sim_events(&[SimEvent::Placed(order.clone())]);
@@ -894,6 +962,7 @@ mod tests {
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
             placed_ms: 0,
         };
         let _ = instance.on_sim_events(&[SimEvent::Placed(order)]);
@@ -935,6 +1004,7 @@ mod tests {
             quantity: Decimal::ONE,
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
             placed_ms: 0,
         })]);
         let commands = bystander.on_sim_events(&[SimEvent::BracketDropped {
@@ -1024,6 +1094,7 @@ mod tests {
                     take_profit: Some(dec("98")),
                 },
                 cancel_at: Some(dec("98")),
+                flat_only: true,
             }],
             "the limit rests at the cut edge, bracketed off the trigger bar, \
              expiring at the bar's own target"
@@ -1057,6 +1128,7 @@ mod tests {
                     take_profit: Some(dec("107")),
                 },
                 cancel_at: Some(dec("107")),
+                flat_only: true,
             }]
         );
     }
@@ -1122,6 +1194,7 @@ mod tests {
                 take_profit: Some(dec("98")),
             },
             cancel_at: Some(dec("98")),
+            flat_only: true,
             placed_ms: 0,
         }
     }
@@ -1174,6 +1247,52 @@ mod tests {
             &ArmedState::Armed,
             "auto re-arms and keeps hunting after the target kills the order"
         );
+    }
+
+    /// The stand-down (the simulator declined the fill because a human's
+    /// position occupied the account) walks like the target cancel: named
+    /// stop for one-shot, straight back to hunting for auto.
+    #[test]
+    fn the_stand_down_walks_by_rearm_policy() {
+        let region = Region::new(dec("105"), dec("115"));
+
+        let mut one_shot = retest_instance(Side::Sell);
+        warm_then_sell_cut(&mut one_shot, &region);
+        let order = retest_order(14);
+        let _ = one_shot.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = one_shot.on_sim_events(&[SimEvent::Cancelled {
+            order,
+            reason: quantick_sim::CancelReason::AccountOccupied,
+        }]);
+        assert_eq!(
+            one_shot.state(),
+            &ArmedState::Disarmed {
+                reason: DisarmReason::AccountOccupied
+            }
+        );
+        assert_eq!(one_shot.status_line(), "stood down — account busy");
+
+        let mut auto = ArmedStrategy::new(
+            StrategyParams {
+                rearm: Rearm::Auto,
+                on_break: BreakPolicy::RetestLimit,
+                ..params(Side::Sell)
+            },
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: dec("1.5"),
+                max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
+            })),
+        );
+        warm_then_sell_cut(&mut auto, &region);
+        let order = retest_order(15);
+        let _ = auto.on_sim_events(&[SimEvent::Placed(order.clone())]);
+        let _ = auto.on_sim_events(&[SimEvent::Cancelled {
+            order,
+            reason: quantick_sim::CancelReason::AccountOccupied,
+        }]);
+        assert_eq!(auto.state(), &ArmedState::Armed);
     }
 
     /// A human sweep (flatten / cancel-all) of the resting retest limit is

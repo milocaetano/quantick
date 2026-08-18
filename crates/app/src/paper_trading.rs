@@ -1077,6 +1077,7 @@ impl PaperTrading {
                     price,
                     bracket: Bracket::none(),
                     cancel_at: None,
+                    flat_only: false,
                 });
                 self.handle_events(events);
             }
@@ -1167,6 +1168,7 @@ impl PaperTrading {
                 price: mark.saturating_sub(offset.saturating_add(offset)),
                 bracket: Bracket::none(),
                 cancel_at: None,
+                flat_only: false,
             },
             260 => Command::PlaceMarket {
                 side: Side::Sell,
@@ -2312,6 +2314,7 @@ impl PaperTrading {
                 price,
                 bracket,
                 cancel_at: None,
+                flat_only: false,
             },
             EntryKind::Stop => Command::PlaceStop {
                 side,
@@ -3952,6 +3955,25 @@ impl PaperTrading {
                             trade.exit_reason.as_str().replace('_', " "),
                         ));
                     }
+                }
+                // The two cancels the *tape* performs, not a hand: a
+                // working-order chip vanishing with no narration reads as
+                // a glitch, so these toast like every other simulator act
+                // the trader did not click.
+                SimEvent::Cancelled {
+                    order,
+                    reason: quantick_sim::CancelReason::PriceTouched,
+                } => {
+                    self.show_toast(format!("SIM cancelled {}: target traded first", order.id));
+                }
+                SimEvent::Cancelled {
+                    order,
+                    reason: quantick_sim::CancelReason::AccountOccupied,
+                } => {
+                    self.show_toast(format!(
+                        "SIM stood down {}: account busy at its price",
+                        order.id
+                    ));
                 }
                 _ => {}
             }
@@ -7684,6 +7706,7 @@ mod tests {
             price: Decimal::from(95),
             bracket: Bracket::none(),
             cancel_at: None,
+            flat_only: false,
         });
         paper.handle_events(events);
         // The trap that used to swallow every chart click.

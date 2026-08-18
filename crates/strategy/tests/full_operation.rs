@@ -217,6 +217,7 @@ fn the_retest_fills_at_the_edge_and_rides_to_the_target() {
                 take_profit: Some(dec("100")),
             },
             cancel_at: Some(dec("100")),
+            flat_only: true,
         }]
     );
     assert_eq!(outcome.closed.len(), 1, "the retest round-tripped");
