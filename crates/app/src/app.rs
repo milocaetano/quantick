@@ -17499,6 +17499,29 @@ plot(close)
         );
     }
 
+    /// The time pane a split builds inherits the orientation of the chart it
+    /// splits away from. It is built a frame after the layout change, so the
+    /// boot's `QUANTICK_INVERTED` hook fires before it exists — without the
+    /// inheritance a scripted inverted capture is silently half-inverted.
+    #[test]
+    fn a_time_pane_born_into_an_inverted_tab_opens_upside_down() {
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().flow_pane.price_view.set_inverted(true);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let time_pane = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split built a time pane");
+        assert!(
+            time_pane.price_view.is_inverted(),
+            "the second view keeps the market the way the trader has it"
+        );
+    }
+
     #[test]
     fn the_repeat_pin_keeps_the_drawing_tool_armed() {
         let (mut app, _commands) = app_with_history(200);

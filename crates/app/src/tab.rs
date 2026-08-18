@@ -978,8 +978,13 @@ impl Tab {
         );
         // The pane opens looking like the one it splits away from: a user who
         // switched the crosshair off is not asking for it back by opening a
-        // second view of the same market.
+        // second view of the same market. Orientation is part of that look —
+        // an upside-down market does not turn back over by being given a
+        // second view, and the boot's QUANTICK_INVERTED hook fires before
+        // this pane exists at all.
         pane.hidden_layers = self.flow_pane.hidden_layers.clone();
+        pane.price_view
+            .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_pane = Some(pane);
         self.loading.end(LoadingTask::BarRebuild);
         // The pane exists now, so there is something for a prefix to go in
