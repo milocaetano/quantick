@@ -505,6 +505,24 @@ pub struct BarObject<'a> {
     pub tool_name: &'static str,
 }
 
+/// Which controls this object earns a slot for.
+///
+/// One derivation, not two. The host has to know the bar's width before it can
+/// repair a parked position into the pane — and a second `Capabilities` literal
+/// written beside this one would agree today and drift on the PR that adds a
+/// capability to one of them, leaving the bar drawn wider than the rectangle it
+/// was repaired into, out over the live lane, with nothing failing.
+#[must_use]
+pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
+    Capabilities {
+        // A glyph object has type size, not stroke width: a width control on
+        // a text note moves nothing.
+        stroke_width: object.glyph_size.is_none(),
+        glyph_size: object.glyph_size.is_some(),
+        settings: object.settings_available,
+    }
+}
+
 /// Draw the bar at `position` and report what was asked of it.
 ///
 /// The caller owns every mutation except the style and glyph size, which are
@@ -513,18 +531,11 @@ pub fn show(
     bar: &mut ContextBar,
     ctx: &egui::Context,
     position: egui::Pos2,
-    bounds: egui::Rect,
+    popover_bounds: egui::Rect,
     object: &mut BarObject<'_>,
 ) -> ContextBarIntent {
     let mut intent = ContextBarIntent::default();
-    let caps = Capabilities {
-        // A glyph object has type size, not stroke width: a width control on
-        // a text note moves nothing.
-        stroke_width: object.glyph_size.is_none(),
-        glyph_size: object.glyph_size.is_some(),
-        settings: object.settings_available,
-    };
-    let cells = slots(caps);
+    let cells = slots(capabilities(object));
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
     bar.rect = Some(rect);
@@ -572,7 +583,7 @@ pub fn show(
                 });
             });
         });
-    draw_popover(bar, ctx, bounds, object, &mut intent);
+    draw_popover(bar, ctx, popover_bounds, object, &mut intent);
     intent
 }
 
@@ -810,8 +821,9 @@ fn hover_text(object: &BarObject<'_>, idle: &'static str, locked: &'static str) 
     if object.locked { locked } else { idle }
 }
 
-/// Where a popover opens: under the slot it hangs from, flipped above it
-/// when there is no room, and never outside `bounds`.
+/// Where a popover opens: hanging off the slot it belongs to — under it,
+/// flipped above when there is no room, right-aligned on it rather than
+/// pushed off it — and never outside `bounds`.
 ///
 /// Downward is the default because that is where the eye goes from a control
 /// it just pressed. It cannot be the only answer: the bar can sit one bar's
@@ -835,8 +847,31 @@ fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) ->
     } else {
         below.y
     };
+    // Horizontally it hangs from the slot's left edge, and when that would run
+    // past the pane it right-aligns on the slot instead of being clamped to an
+    // arbitrary column: a palette that no longer touches the control that
+    // opened it reads as a panel that belongs to nothing. The clamp stays as
+    // the last word, for a popover wider than the pane itself.
+    let x = if below.x + size.x > bounds.right() {
+        anchor.right() - size.x
+    } else {
+        below.x
+    };
     let max_x = (bounds.right() - size.x).max(bounds.left());
-    egui::pos2(below.x.clamp(bounds.left(), max_x), y)
+    egui::pos2(x.clamp(bounds.left(), max_x), y)
+}
+
+/// The Area id a popover is laid out under.
+///
+/// Keyed on everything that changes its measured size, because that size is
+/// read back from egui a frame late and decides which way it opens. The kind
+/// is the obvious half; `fill` is the other one — the colour palette carries
+/// an extra row for a tool that has an interior, so the same kind is two
+/// different heights depending on the object. A shared id hands the shorter
+/// one the taller one's height, flips a popover that had room below, and
+/// snaps it back a frame later in front of a trader who has just clicked.
+fn popover_id(popover: Popover, fill: bool) -> egui::Id {
+    egui::Id::new(("drawing_context_bar_popover", popover as u8, fill))
 }
 
 fn draw_popover(
@@ -850,9 +885,14 @@ fn draw_popover(
         (Popover::None, _) | (_, None) => return,
         (popover, Some(anchor)) => (popover, anchor),
     };
-    let id = egui::Id::new("drawing_context_bar_popover");
-    // The size egui measured last frame. Zero on the frame a popover opens,
-    // which is what makes the default answer the downward one.
+    // One Area id per kind, not one for all three. egui keeps an Area's rect
+    // after it stops being shown, so a shared id would hand the width list the
+    // colour palette's height and flip a short popover that had room below —
+    // then correct itself on the next frame, in front of a trader who has just
+    // clicked. Each kind now remembers only its own size.
+    let id = popover_id(popover, object.supports_fill);
+    // The size egui measured last time this kind was open. Zero the first
+    // time, which is what makes the default answer the downward one.
     let size = ctx
         .memory(|memory| memory.area_rect(id))
         .map_or(egui::Vec2::ZERO, |rect| rect.size());
@@ -862,6 +902,13 @@ fn draw_popover(
     let response = egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(at)
+        // Against the same rectangle [`popover_position`] reasons about. egui
+        // constrains to the *window* by default, so the two would disagree
+        // exactly where it matters: a popover that fits neither above nor
+        // below deliberately keeps its downward position, and egui would then
+        // slide it up until it fit the window — over the bar, covering the
+        // slot the trader had just clicked.
+        .constrain_to(bounds)
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
                 .fill(theme::CONTROL)
@@ -1451,6 +1498,43 @@ mod tests {
             at.x,
             wide.x,
             bounds.right()
+        );
+        assert_eq!(
+            at.x + wide.x,
+            slot.right(),
+            "and it right-aligns on the slot, so it still hangs off the control"
+        );
+    }
+
+    #[test]
+    fn a_popover_that_fits_hangs_from_the_slot_it_belongs_to() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let slot = egui::Rect::from_min_max(egui::pos2(120.0, 100.0), egui::pos2(152.0, 132.0));
+        let at = popover_position(slot, egui::vec2(200.0, 60.0), bounds);
+        assert_eq!(
+            at.x,
+            slot.left(),
+            "left edge to left edge is the resting rule"
+        );
+    }
+
+    #[test]
+    fn each_popover_remembers_only_a_size_that_is_its_own() {
+        // The size read back from egui decides which way the popover opens, so
+        // anything that changes it has to change the id it is stored under.
+        assert_ne!(
+            popover_id(Popover::Color, false),
+            popover_id(Popover::Width, false),
+            "one kind never answers for another"
+        );
+        assert_ne!(
+            popover_id(Popover::Width, false),
+            popover_id(Popover::GlyphSize, false)
+        );
+        assert_ne!(
+            popover_id(Popover::Color, true),
+            popover_id(Popover::Color, false),
+            "nor does the palette with a fill row answer for the one without"
         );
     }
 
