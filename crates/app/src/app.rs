@@ -1412,6 +1412,15 @@ impl QuantickApp {
         {
             app.place_inspector_by_hand(position);
         }
+        // And the same drag on the context bar, which now keeps its position
+        // across selections too. Its own gesture is the grip, and a capture
+        // run has no more hand for that one than for the title bar.
+        if let Some(position) = std::env::var("QUANTICK_CONTEXT_BAR_POS")
+            .ok()
+            .and_then(|value| parse_point(&value))
+        {
+            app.context_bar.set_manual(position);
+        }
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -6239,20 +6248,32 @@ impl QuantickApp {
             confirming_delete: self.drawing_delete_confirm && locked,
             tool_name: tool.name(),
         };
-        let position = self.context_bar.manual_position().unwrap_or_else(|| {
-            let right_limit = self
-                .drawing_pane()
-                .last_lane_divider_x
-                .unwrap_or(chart.right());
-            let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
-                drawings::context_bar::Capabilities {
-                    stroke_width: glyph_before.is_none(),
-                    glyph_size: glyph_before.is_some(),
-                    settings: !self.inspector_pinned,
-                },
-            ));
-            drawings::context_bar::place(chart, right_limit, bbox, size)
-        });
+        let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
+            drawings::context_bar::Capabilities {
+                stroke_width: glyph_before.is_none(),
+                glyph_size: glyph_before.is_some(),
+                settings: !self.inspector_pinned,
+            },
+        ));
+        let position = match self.context_bar.manual_position() {
+            // Repair for drawing, never overwrite — the rule the properties
+            // popup already follows, for the same reason. A bar parked out
+            // near the right edge of a wide pane must stay reachable when the
+            // canvas is split and that pane is half as wide, and the point the
+            // hand chose survives untouched, so widening it gives it back.
+            //
+            // The clamp is against the pane the *selection* lives on, which is
+            // what makes a bar parked over one chart of a split come back
+            // inside the other one rather than hovering over its neighbour.
+            Some(parked) => clamp_into_chart(parked, size, chart),
+            None => {
+                let right_limit = self
+                    .drawing_pane()
+                    .last_lane_divider_x
+                    .unwrap_or(chart.right());
+                drawings::context_bar::place(chart, right_limit, bbox, size)
+            }
+        };
         let intent = drawings::context_bar::show(&mut self.context_bar, ctx, position, &mut object);
         let glyph_after = object.glyph_size;
         #[cfg(test)]
@@ -14518,6 +14539,209 @@ plot(close)
         assert_eq!(
             popup.min, remembered,
             "the popup opens where it was left, not beside the object it configures"
+        );
+    }
+
+    /// Place a tool by its registry id through the pointer, anchor by anchor,
+    /// and hand back its index. The mission's tools need one click and two
+    /// respectively, so the helper takes the anchors as a list rather than
+    /// assuming either.
+    fn place_drawing(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        id: &str,
+        anchors: &[egui::Pos2],
+    ) -> usize {
+        app.toolrail.arm(Tool::Drawing(drawing_tool(id)));
+        for anchor in anchors {
+            click_chart(app, ctx, *anchor);
+        }
+        run_frame(app, ctx);
+        app.drawing_pane()
+            .drawings
+            .items()
+            .iter()
+            .rposition(|drawing| drawing.tool.id() == id)
+            .unwrap_or_else(|| panic!("{id} was placed"))
+    }
+
+    /// Select `index` the way a click on the object does, raise the properties
+    /// popup through the gear's own door, and report where it opened.
+    fn select_and_open_popup(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        index: usize,
+    ) -> egui::Pos2 {
+        app.drawing_pane_mut().drawings.select(Some(index));
+        run_frame(app, ctx);
+        open_inspector(app, ctx);
+        ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the properties popup is open")
+            .min
+    }
+
+    /// The remembered position is one window's, shared by every tool on the
+    /// rail: parked while an **anchored VWAP** is selected, it is where the
+    /// **volume profile** opens, and the other way round.
+    ///
+    /// The rule was proved on horizontal lines, and a line is the easy case.
+    /// These two paint far past their anchors — the VWAP is a series across
+    /// the whole view, the profile covers the price axis — so they are the
+    /// objects automatic placement has the most to say about, and therefore
+    /// the ones where a hand overriding it has the most to lose.
+    #[test]
+    fn a_parked_popup_greets_the_avwap_and_the_profile_too() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let avwap = place_drawing(&mut app, &ctx, "anchored-vwap", &[egui::pos2(500.0, 300.0)]);
+        let profile = place_drawing(
+            &mut app,
+            &ctx,
+            "fixed-range-profile",
+            &[egui::pos2(700.0, 300.0), egui::pos2(820.0, 420.0)],
+        );
+
+        // Park it with the VWAP selected, through the title-bar gesture.
+        select_and_open_popup(&mut app, &ctx, avwap);
+        let popup = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("open on the VWAP");
+        let grip = egui::pos2(popup.left() + 60.0, popup.top() + 14.0);
+        drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-220.0, 150.0));
+        run_frame(&mut app, &ctx);
+        assert!(app.inspector_moved, "the drag records the manual move");
+        let parked = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("still open")
+            .min;
+
+        assert_eq!(
+            select_and_open_popup(&mut app, &ctx, profile),
+            parked,
+            "the volume profile's settings open where the hand left the window"
+        );
+        assert_eq!(
+            select_and_open_popup(&mut app, &ctx, avwap),
+            parked,
+            "and so do the VWAP's, coming back to it"
+        );
+    }
+
+    /// The bar a *click* raises — the row of icons beside the object, the
+    /// first surface a trader meets and the one they drag aside when it
+    /// covers the price action they are reading.
+    ///
+    /// It used to snap back to the next object, which handed the covered
+    /// chart straight back, once per click, with no way to answer it once.
+    #[test]
+    fn a_parked_context_bar_greets_the_next_drawing_too() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let avwap = place_drawing(&mut app, &ctx, "anchored-vwap", &[egui::pos2(500.0, 300.0)]);
+        let profile = place_drawing(
+            &mut app,
+            &ctx,
+            "fixed-range-profile",
+            &[egui::pos2(700.0, 300.0), egui::pos2(820.0, 420.0)],
+        );
+
+        // A finished object with the tool disarmed is what a trader has in
+        // hand when they reach for the bar.
+        app.toolrail.arm(Tool::Pointer);
+        app.drawing_pane_mut().drawings.select(Some(avwap));
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let bar = app.context_bar_rect.expect("the selection raised the bar");
+        let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
+        drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-180.0, 200.0));
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.context_bar.manual_position().is_some(),
+            "the grip drag records a hand-placed position"
+        );
+        let parked = app.context_bar_rect.expect("still up").min;
+
+        app.drawing_pane_mut().drawings.select(Some(profile));
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.context_bar_rect
+                .expect("the next object raises it too")
+                .min,
+            parked,
+            "the bar stays where the hand put it, on the next object too"
+        );
+
+        // …and the way back is still one gesture on the same grip.
+        // Far enough after the last click that egui reads the pair below as a
+        // double and not the tail of a triple: it counts a third click inside
+        // twice `max_double_click_delay` (0.6 s), and every frame here is one
+        // 60 Hz tick of the harness clock.
+        for _ in 0..45 {
+            run_frame(&mut app, &ctx);
+        }
+        let bar = app.context_bar_rect.expect("still up");
+        let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(grip),
+                pointer_button(grip, true),
+                pointer_button(grip, false),
+                pointer_button(grip, true),
+                pointer_button(grip, false),
+            ],
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.context_bar.manual_position(),
+            None,
+            "the double-click hands placement back to the rule"
+        );
+    }
+
+    /// A position parked on a full-width canvas has to survive the canvas
+    /// being split under it: the bar is repaired into the pane the selection
+    /// lives on, never left hovering over its neighbour or off the view — and
+    /// the point the hand chose is repaired for drawing, never overwritten.
+    #[test]
+    fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let line = place_drawing(
+            &mut app,
+            &ctx,
+            "horizontal-line",
+            &[egui::pos2(700.0, 300.0)],
+        );
+        app.toolrail.arm(Tool::Pointer);
+        app.drawing_pane_mut().drawings.select(Some(line));
+        run_frame(&mut app, &ctx);
+
+        // Parked far to the right of what either pane of a split will offer.
+        let parked = egui::pos2(1200.0, 780.0);
+        app.context_bar.set_manual(parked);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let chart = app
+            .drawing_pane()
+            .last_chart_area
+            .expect("the pane holding the selection drew");
+        let bar = app.context_bar_rect.expect("the bar is still up");
+        assert!(
+            chart.contains_rect(bar),
+            "the parked bar is repaired into {chart:?}, drawn at {bar:?}"
+        );
+        assert_eq!(
+            app.context_bar.manual_position(),
+            Some(parked),
+            "and the point the hand chose survives the repair"
         );
     }
 

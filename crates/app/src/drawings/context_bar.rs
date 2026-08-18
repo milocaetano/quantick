@@ -251,10 +251,26 @@ pub struct Suppression {
 #[derive(Debug, Default)]
 pub struct ContextBar {
     open: Popover,
-    /// Where the trader dragged the bar. Absolute screen position, cleared
-    /// on every selection change: a remembered position belongs to the
-    /// object it was chosen for, and reappearing far from the *next* object
-    /// is the failure mode of remembering it globally.
+    /// Where the trader dragged the bar. Absolute screen position, and it
+    /// outlives the selection it was chosen under.
+    ///
+    /// It used to be dropped on every selection change, on the reading that a
+    /// position belongs to the object it was picked for. That reading is
+    /// wrong about the gesture: nobody drags this bar to a corner *for one
+    /// object*. They drag it because it was covering the price action they
+    /// are reading, and the next object is on the same chart with the same
+    /// thing behind it. Snapping back to the next drawing hands them the
+    /// problem again, once per click, with no way to answer it once.
+    ///
+    /// So the hand outranks the placement here exactly as it does for the
+    /// properties popup, and by the same argument: a trader who chose where
+    /// this goes has already answered the question the rule exists to guess.
+    /// The way back is the grip's double-click, which is one gesture and
+    /// named in its own tooltip.
+    ///
+    /// The host clamps it into the chart before drawing — see
+    /// `QuantickApp::draw_drawing_context_bar` — so a position parked under a
+    /// wide layout can never leave the view under a narrow one.
     manual: Option<egui::Pos2>,
     suppression: Suppression,
     last_selection: Option<usize>,
@@ -319,13 +335,18 @@ impl ContextBar {
     }
 
     /// Called every frame with the current selection. Answers whether the
-    /// selection changed, and drops any manual position with it.
+    /// selection changed.
+    ///
+    /// What a new object drops is what belongs to the *old* one: an open
+    /// popover (a colour palette hanging off a bar that is about to move is
+    /// pointing at nothing) and the last rect (the wake radius must not
+    /// measure against geometry from the previous object). A hand-placed
+    /// position is not one of those — see [`Self::manual`].
     pub fn note_selection(&mut self, selection: Option<usize>) -> bool {
         if self.last_selection == selection {
             return false;
         }
         self.last_selection = selection;
-        self.manual = None;
         self.open = Popover::None;
         self.rect = None;
         true
@@ -1310,15 +1331,46 @@ mod tests {
     }
 
     #[test]
-    fn a_new_selection_drops_the_hand_placed_position() {
-        // A position chosen for one object reappearing beside the next one
-        // is the failure mode of remembering it globally.
+    fn a_new_selection_keeps_the_hand_placed_position() {
+        // The bar a trader moved out of the way stays out of the way. It is
+        // the same chart behind the next object, so snapping back would hand
+        // them the covered price action again, once per click.
         let mut bar = ContextBar::default();
         bar.note_selection(Some(0));
         bar.set_manual(egui::pos2(120.0, 40.0));
-        assert_eq!(bar.manual_position(), Some(egui::pos2(120.0, 40.0)));
         assert!(bar.note_selection(Some(1)));
-        assert_eq!(bar.manual_position(), None);
+        assert_eq!(bar.manual_position(), Some(egui::pos2(120.0, 40.0)));
+    }
+
+    #[test]
+    fn a_new_selection_still_drops_what_belonged_to_the_old_object() {
+        // The popover hangs off a slot of the bar as it stood for the object
+        // that is no longer selected, and the rect is what the wake radius
+        // measures against. Both are stale the instant the selection moves.
+        let mut bar = ContextBar::default();
+        bar.note_selection(Some(0));
+        bar.toggle(Popover::Width, egui::Rect::ZERO);
+        assert!(bar.popover_open());
+        assert!(bar.note_selection(Some(1)));
+        assert!(!bar.popover_open(), "a popover cannot outlive its object");
+        assert_eq!(
+            bar.last_rect(),
+            None,
+            "nor can the geometry it was drawn at"
+        );
+    }
+
+    #[test]
+    fn the_double_click_is_still_the_way_back() {
+        let mut bar = ContextBar::default();
+        bar.note_selection(Some(0));
+        bar.set_manual(egui::pos2(120.0, 40.0));
+        bar.clear_manual();
+        assert_eq!(
+            bar.manual_position(),
+            None,
+            "the grip's double-click hands placement back to the rule"
+        );
     }
 
     #[test]
