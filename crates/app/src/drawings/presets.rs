@@ -260,6 +260,12 @@ impl PresetHost for PresetStore {
         slot.config = value;
         self.persist();
     }
+
+    fn has_default_config(&self, tool_id: &str) -> bool {
+        self.tools
+            .get(tool_id)
+            .is_some_and(|slot| slot.config.is_some())
+    }
 }
 
 #[cfg(test)]

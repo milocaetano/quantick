@@ -142,6 +142,11 @@ pub trait PresetHost {
     /// dialogs to answer "like this one, from now on".
     fn default_config(&self, tool_id: &str) -> Option<toml::Value>;
     fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>);
+    /// Whether one is stored, without building it. The inspector asks this
+    /// every frame it is open, purely to decide whether a button exists —
+    /// answering it through [`Self::default_config`] would deep-clone a whole
+    /// level list per frame and drop it on the next line.
+    fn has_default_config(&self, tool_id: &str) -> bool;
 }
 
 /// What a new object of `tool` should open with, given everything the trader
@@ -200,7 +205,7 @@ pub fn reset_tool_default(host: &mut dyn PresetHost, tool: DrawingTool) {
 pub fn has_saved_default(host: &dyn PresetHost, tool: DrawingTool) -> bool {
     let tool_id = tool.id();
     host.default_style(tool_id).is_some()
-        || host.default_config(tool_id).is_some()
+        || host.has_default_config(tool_id)
         || host.default_preset(tool_id).is_some()
 }
 
@@ -240,6 +245,9 @@ impl PresetHost for NullPresetHost {
         None
     }
     fn set_default_config(&mut self, _tool_id: &str, _value: Option<toml::Value>) {}
+    fn has_default_config(&self, _tool_id: &str) -> bool {
+        false
+    }
 }
 
 /// What an anchor's second coordinate means in the band being painted.
@@ -485,6 +493,14 @@ trait DrawingToolImpl: Sync {
     /// Write the words back. Paired with [`Self::inline_text`]: a tool that
     /// answers one answers both, and the editor is the only caller.
     fn set_inline_text(&self, _payload: &mut dyn DrawingPayload, _text: String) {}
+    /// Whether this tool's content is words at all — asked of the *tool*,
+    /// with no object in hand, on the placement path. Answering it by
+    /// building a payload just to look at it would allocate a box to learn
+    /// something that is fixed at compile time. A test holds the two answers
+    /// together, so a tool cannot claim one and implement the other.
+    fn holds_text(&self) -> bool {
+        false
+    }
     /// Whether this tool is placed by a held drag instead of by N clicks.
     ///
     /// A freehand tool answers `0` from [`Self::required_points`], because
@@ -743,7 +759,7 @@ impl DrawingTool {
     /// freshly placed object to decide whether it needs the caret.
     #[must_use]
     pub fn holds_text(self) -> bool {
-        self.inline_text(self.default_payload().as_ref()).is_some()
+        self.0.holds_text()
     }
 
     /// The stock look of a fresh object of this tool, before the trader's
@@ -2064,6 +2080,9 @@ mod tests {
                 None => self.configs.remove(tool_id),
             };
         }
+        fn has_default_config(&self, tool_id: &str) -> bool {
+            self.configs.contains_key(tool_id)
+        }
     }
 
     /// The complaint this closes, in one flow: configure a Fib once, say
@@ -2263,6 +2282,34 @@ mod tests {
                 !tool(id).icon_strokes().is_empty(),
                 "{id} replaced its glyph and must keep vector strokes"
             );
+        }
+    }
+
+    /// The two halves of the note port answer together: `holds_text` is the
+    /// cheap question the placement path asks with no object in hand, and
+    /// `inline_text` is the borrow the editor reads. A tool that claimed one
+    /// and implemented the other would take the caret and then have nowhere
+    /// to put the words — or hold words nothing ever opens.
+    #[test]
+    fn a_tool_that_claims_words_can_actually_hand_them_over() {
+        for tool in DRAWING_TOOLS {
+            let payload = tool.default_payload();
+            assert_eq!(
+                tool.holds_text(),
+                tool.inline_text(payload.as_ref()).is_some(),
+                "{}: holds_text and inline_text disagree",
+                tool.id()
+            );
+            if tool.holds_text() {
+                let mut payload = tool.default_payload();
+                tool.set_inline_text(payload.as_mut(), "typed".to_owned());
+                assert_eq!(
+                    tool.inline_text(payload.as_ref()),
+                    Some("typed"),
+                    "{}: what is written must read back",
+                    tool.id()
+                );
+            }
         }
     }
 

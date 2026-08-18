@@ -3426,7 +3426,14 @@ impl ChartPane {
             }
             // A tool whose content is words asks for the caret, not for a
             // panel — see `PaneChrome::begin_text_edit`.
+            //
+            // The object stands down here rather than waiting for the host to
+            // notice next frame: the placement happens *inside* the canvas
+            // pass, so a note placed by click would otherwise paint its grey
+            // placeholder under the field that opens over it, for the one
+            // frame between the two.
             if tool.holds_text() {
+                self.content_editing = self.drawings.selected();
                 *chrome.begin_text_edit = true;
             }
             self.drawing_hover = None;
@@ -3996,6 +4003,26 @@ impl ChartPane {
                     })
                 };
                 self.drawings.select(selected);
+                // A note under the pointer takes a double click: its words
+                // *are* the object, so pointing at one and double clicking
+                // asks to type in it — the same reading as double clicking a
+                // curve to open its settings. It is read here rather than in
+                // the free-chart branch above because a click on an object
+                // starts a translate gesture, which is exactly what clears
+                // that branch's `primary_free`. Without this, fixing a typo
+                // meant hunting for a field in a panel that placing a note no
+                // longer opens.
+                if chart.double_clicked()
+                    && let Some(index) = selected
+                    && self
+                        .drawings
+                        .items()
+                        .get(index)
+                        .is_some_and(|drawing| drawing.tool.holds_text() && !drawing.locked)
+                {
+                    self.content_editing = Some(index);
+                    *chrome.begin_text_edit = true;
+                }
             }
             // Drag initiation reads the raw press (an `interact` per object
             // would be unbounded work), so it must honour the chrome gate
@@ -5946,7 +5973,12 @@ impl ChartPane {
                     style,
                     selected,
                     halo: false,
-                    content_editing: false,
+                    // The object lives on `source`, so that is the pane that knows
+                    // whether its words are in an editor right now. Left
+                    // hardcoded, a shared note being typed kept painting its
+                    // old words on the companion chart — the same double
+                    // render the editor stands the original down to avoid.
+                    content_editing: source.content_editing == Some(index),
                 };
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.

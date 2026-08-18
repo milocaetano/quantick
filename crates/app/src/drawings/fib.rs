@@ -28,32 +28,40 @@ use super::{
 /// looked like. Two dots against three is how the eye tells the two Fib
 /// tools apart in the flyout at a glance, which is exactly how every drawing
 /// platform draws them.
+/// The leg itself, named once: the strokes draw it and the dots mark its
+/// ends, so nudging the glyph cannot leave the anchors behind on the old line.
+const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.06, 0.84), (0.60, 0.16)];
+
 pub(super) const FIB_RETRACEMENT_ICON: IconStrokes = &[
     &[(0.30, 0.16), (0.98, 0.16)],
     &[(0.30, 0.50), (0.98, 0.50)],
     &[(0.30, 0.84), (0.98, 0.84)],
-    &[(0.06, 0.84), (0.60, 0.16)],
+    RETRACEMENT_LEG,
 ];
 
 /// The two ends of the leg the retracement is dragged across. They sit on the
 /// outer levels because that is where they really are: the anchors *are* 0
 /// and 1, and every other line hangs between them.
-pub(super) const FIB_RETRACEMENT_DOTS: IconDots = &[(0.06, 0.84), (0.60, 0.16)];
+pub(super) const FIB_RETRACEMENT_DOTS: IconDots = RETRACEMENT_LEG;
 
 /// The extension icon: the same ladder under the *three*-anchor path —
 /// impulse, pullback, projection origin — because that is the gesture, and
 /// the third dot is what says so.
+/// The extension's three-anchor path, named once for the same reason as
+/// [`RETRACEMENT_LEG`].
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)];
+
 pub(super) const FIB_EXTENSION_ICON: IconStrokes = &[
     &[(0.30, 0.16), (0.98, 0.16)],
     &[(0.30, 0.50), (0.98, 0.50)],
     &[(0.30, 0.84), (0.98, 0.84)],
-    &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)],
+    EXTENSION_LEG,
 ];
 
 /// The three anchors of the trend-based extension — impulse, pullback and the
 /// origin the projection hangs from. Three dots against two is what tells the
 /// two Fib rows apart in the flyout at icon size.
-pub(super) const FIB_EXTENSION_DOTS: IconDots = &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)];
+pub(super) const FIB_EXTENSION_DOTS: IconDots = EXTENSION_LEG;
 
 /// The one rail family both Fib tools declare, shared here so the two
 /// members can never drift onto different family ids.
@@ -1122,7 +1130,11 @@ pub(super) fn draw_levels_tab(
         if super::has_saved_default(host, drawing.tool)
             && ui
                 .small_button("Reset to factory")
-                .on_hover_text("New objects go back to the built-in levels and colours")
+                .on_hover_text(concat!(
+                    "New objects go back to the built-in levels and ",
+                    "colours. Clears the default preset choice too; ",
+                    "saved presets are kept"
+                ))
                 .clicked()
         {
             super::reset_tool_default(host, drawing.tool);

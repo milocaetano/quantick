@@ -143,6 +143,9 @@ impl DrawingToolImpl for Text {
             payload.text = text;
         }
     }
+    fn holds_text(&self) -> bool {
+        true
+    }
     /// …and what the width slot offers instead: the type size, so the size
     /// of a note is one click away from the note itself.
     fn glyph_size(&self, payload: &dyn DrawingPayload) -> Option<GlyphSize> {

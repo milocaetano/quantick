@@ -829,6 +829,25 @@ impl Tab {
     }
 
     /// See [`Self::pane`].
+    /// Point exactly one of this tab's panes at the object whose content is
+    /// being typed off-canvas, and clear the other.
+    ///
+    /// Both are written every time on purpose: the flag suppresses an
+    /// object's own painting, so a pane left holding a stale index keeps a
+    /// note invisible for the rest of the session. The tab is what knows
+    /// whether a time pane exists at all, which is why the loop lives here
+    /// rather than in the host.
+    pub fn set_content_editing(&mut self, target: Option<(PaneSide, usize)>) {
+        self.flow_pane.content_editing = target
+            .filter(|(side, _)| *side == PaneSide::Flow)
+            .map(|(_, index)| index);
+        if let Some(time) = self.time_pane.as_mut() {
+            time.content_editing = target
+                .filter(|(side, _)| *side == PaneSide::Time)
+                .map(|(_, index)| index);
+        }
+    }
+
     pub fn pane_mut(&mut self, side: PaneSide) -> &mut ChartPane {
         match side {
             PaneSide::Time => self.time_pane.as_mut().unwrap_or(&mut self.flow_pane),

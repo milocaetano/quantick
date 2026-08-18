@@ -324,6 +324,14 @@ pub fn paint_vector_icon(
     };
     let stroke = egui::Stroke::new(ICON_STROKE_WIDTH_PX, color);
     for polyline in strokes {
+        // `Shape::line` and its `Vec`, deliberately, even for the two-point
+        // strokes that make up most of an icon: `line_segment` would avoid
+        // the allocation, but a rail icon in the armed accent then counts as
+        // a drawing stroke everywhere the tests measure what a tool painted
+        // by filtering `Shape::LineSegment` on the drawing colour. Trading a
+        // handful of two-element `Vec`s per frame for that ambiguity is the
+        // wrong side of the bargain — this is chrome, painted a dozen times
+        // a frame, not the per-trade path.
         let points: Vec<egui::Pos2> = polyline.iter().copied().map(at).collect();
         painter.add(egui::Shape::line(points, stroke));
     }
