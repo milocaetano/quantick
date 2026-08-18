@@ -1451,9 +1451,16 @@ impl QuantickApp {
         }
         // The chart upside down, through the very setter the axis menu's
         // checkbox calls. The inverted frame is otherwise only reachable by
-        // a long axis drag no scripted run can perform.
+        // a long axis drag no scripted run can perform. Both panes of a
+        // split layout: the hook exists so one capture audits every
+        // price-mapped surface at once, and a half-inverted frame would
+        // silently audit the time pane the right way up.
         if std::env::var("QUANTICK_INVERTED").is_ok_and(|value| value.trim() == "1") {
-            app.active_tab_mut().flow_pane.price_view.set_inverted(true);
+            let tab = app.active_tab_mut();
+            tab.flow_pane.price_view.set_inverted(true);
+            if let Some(time_pane) = tab.time_pane.as_mut() {
+                time_pane.price_view.set_inverted(true);
+            }
         }
         // The right-click itself, on the pane it names. The two panes open
         // different menus now, so a capture has to say which canvas it is
@@ -2033,6 +2040,16 @@ impl QuantickApp {
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
         // with the settings every other tab already carries.
         let cmd_trading = self.active_tab().paper.cmd_trading();
+        // Orientation travels with the working state the new tab inherits —
+        // a market opened to compare against the active one is only
+        // comparable the same way up. Per pane; a pane the source tab does
+        // not have follows its flow chart.
+        let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
+        let time_inverted = self
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
         let mut tab = Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
         self.tabs.push(tab);
@@ -2057,6 +2074,13 @@ impl QuantickApp {
         }
         if let Some(px) = self.scripted_candle_width {
             self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+        }
+        // After the declared layout ran: that is what decides whether the
+        // new tab has a time pane to orient at all.
+        let tab = self.active_tab_mut();
+        tab.flow_pane.price_view.set_inverted(flow_inverted);
+        if let Some(time_pane) = tab.time_pane.as_mut() {
+            time_pane.price_view.set_inverted(time_inverted);
         }
     }
 
@@ -9111,8 +9135,19 @@ mod tests {
             .expect("the draw published the gutter");
         assert!(!app.active_tab().flow_pane.price_view.is_inverted());
 
-        // One long pull down: exp(600/150) ≈ 54.6× expansion, past the 40×
-        // flip threshold in a single gesture.
+        // One violent pull down flattens the chart to the flip threshold —
+        // still upright, whatever the speed of the flick...
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() + egui::vec2(0.0, 600.0),
+        );
+        assert!(
+            !app.active_tab().flow_pane.price_view.is_inverted(),
+            "the first pull only flattens"
+        );
+        // ...and the next pull turns it over.
         drag_chart(
             &mut app,
             &ctx,
@@ -9121,7 +9156,7 @@ mod tests {
         );
         assert!(
             app.active_tab().flow_pane.price_view.is_inverted(),
-            "the drag crossed the threshold and flipped the chart"
+            "the second pull crossed the threshold and flipped the chart"
         );
 
         // Upside down, the same downward motion grows the chart back. The
@@ -9144,12 +9179,19 @@ mod tests {
         );
         assert!(app.active_tab().flow_pane.price_view.is_inverted());
 
-        // And the opposite pull shrinks it until it flips back to normal.
+        // And the opposite motion shrinks it back to the threshold, where
+        // the following pull turns it upright again.
         drag_chart(
             &mut app,
             &ctx,
             gutter.center(),
             gutter.center() - egui::vec2(0.0, 900.0),
+        );
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 300.0),
         );
         assert!(
             !app.active_tab().flow_pane.price_view.is_inverted(),

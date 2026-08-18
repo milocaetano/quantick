@@ -137,6 +137,21 @@ impl PriceScale {
         self.top + frac * (self.bottom - self.top)
     }
 
+    /// The screen band covering the price interval between `a` and `b`
+    /// (either order): `(top_y, bottom_y)` with `top_y <= bottom_y`,
+    /// whichever way up the scale is.
+    ///
+    /// The one way to turn two prices into a rect's vertical edges.
+    /// Hand-rolling `(y(hi), y(lo))` reads correctly upright and produces a
+    /// negative — silently dropped — rect upside down, which is how three
+    /// layers vanished the first time the chart flipped.
+    #[must_use]
+    pub fn band(&self, a: f64, b: f64) -> (f32, f32) {
+        let ya = self.y(a);
+        let yb = self.y(b);
+        (ya.min(yb), ya.max(yb))
+    }
+
     /// The price at a given y-pixel — the inverse of [`y`](PriceScale::y), for a
     /// crosshair readout.
     #[must_use]

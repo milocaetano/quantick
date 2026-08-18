@@ -756,9 +756,7 @@ fn zones_of(
 /// would give every rect a negative height.
 fn row_band(frame: &LayerFrame<'_>, row: i64, row_group: f64) -> (f32, f32) {
     let low = row as f64 * row_group;
-    let a = frame.scale.y(low + row_group);
-    let b = frame.scale.y(low);
-    (a.min(b), a.max(b))
+    frame.scale.band(low, low + row_group)
 }
 
 fn side_color(side: Side) -> egui::Color32 {
@@ -812,8 +810,13 @@ fn draw_bar(
         && level >= DetailLevel::Profile
         && let (Some(&first), Some(&last)) = (rows.keys().next(), rows.keys().next_back())
     {
-        let (_, bar_bottom) = row_band(frame, first, row_group);
-        let (bar_top, _) = row_band(frame, last, row_group);
+        // Composed from both rows' screen bands, not from the price names:
+        // upside down the highest bucket renders lowest, and reading "top"
+        // off it would hand the rect a negative height.
+        let (first_top, first_bottom) = row_band(frame, first, row_group);
+        let (last_top, last_bottom) = row_band(frame, last, row_group);
+        let bar_top = first_top.min(last_top);
+        let bar_bottom = first_bottom.max(last_bottom);
         let reach = (frame.half - 1.0).max(1.0);
         painter.rect_filled(
             egui::Rect::from_min_max(
@@ -1166,8 +1169,13 @@ fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
 }
 
 fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
-    let (top, _) = row_band(frame, mark.high_bucket, row_group);
-    let (_, bottom) = row_band(frame, mark.low_bucket, row_group);
+    // Composed from both rows' screen bands: upside down the high bucket
+    // renders below the low one, and reading "top" off it would hand both
+    // rects a negative height (see the Split backdrop above).
+    let (high_top, high_bottom) = row_band(frame, mark.high_bucket, row_group);
+    let (low_top, low_bottom) = row_band(frame, mark.low_bucket, row_group);
+    let top = high_top.min(low_top);
+    let bottom = high_bottom.max(low_bottom);
     let left = (frame.x_center)(mark.first_slot) - frame.half;
     let right = (frame.x_center)(mark.last_slot) + frame.half;
     // A zone is memory: it outlives its bars to the right edge as a hairline,

@@ -512,7 +512,11 @@ fn axis_zoom_gesture(
     let Some(auto) = auto else {
         return response;
     };
-    if response.dragged() {
+    // Primary only: the band now also answers a right-click with its context
+    // menu, and egui's `dragged()` counts any button — an unfiltered check
+    // would let a slipped right-press zoom (or, on the price gutter, flip)
+    // the chart while swallowing the menu it was aiming for.
+    if response.dragged_by(egui::PointerButton::Primary) {
         // Drag up → compress the span (a taller trace); down → expand it —
         // mirrored once the chart is upside down.
         let sense = if flips && view.is_inverted() {
@@ -4918,8 +4922,10 @@ impl ChartPane {
                 .is_some_and(OrderflowView::depth_visible)
         {
             let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
-                let top = scale.y(bar.high.to_f64().unwrap_or(0.0));
-                let bottom = scale.y(bar.low.to_f64().unwrap_or(0.0));
+                let (top, bottom) = scale.band(
+                    bar.high.to_f64().unwrap_or(0.0),
+                    bar.low.to_f64().unwrap_or(0.0),
+                );
                 clip.rect_filled(
                     egui::Rect::from_min_max(
                         egui::pos2(xc - half, top),

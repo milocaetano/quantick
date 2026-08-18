@@ -1852,17 +1852,23 @@ impl PaperTrading {
                 // own geometry, so a revealed handle is always pressable.
                 let entry_center =
                     clamp_tag_center(entry_y, ctx.chart_rect.top(), ctx.chart_rect.bottom());
+                // Each handle sits on its leg's *price* side of the entry,
+                // mapped through the chart's orientation: upside down the TP
+                // handle keeps pointing at take-profit prices instead of
+                // trading places with the stop's — the same price-not-pixels
+                // rule `decide_pending_leg` follows.
+                let flip = ctx.scale.is_inverted();
                 let legs = [
                     (
                         position.stop_loss.is_none(),
                         "SL",
-                        position.side == Side::Sell,
+                        (position.side == Side::Sell) != flip,
                         theme::SELL,
                     ),
                     (
                         position.take_profit.is_none(),
                         "TP",
-                        position.side == Side::Buy,
+                        (position.side == Side::Buy) != flip,
                         theme::BUY,
                     ),
                 ];
@@ -2317,15 +2323,26 @@ impl PaperTrading {
         if close_button_rect(tag_right, entry_center).contains(pointer) {
             return Some(PaperControl::ClosePosition);
         }
+        // Same orientation mapping as the paint's `legs`: the hit-test and
+        // the pixels must name the same handle or a press acts on the leg
+        // the trader was not looking at.
         if position.take_profit.is_none()
-            && bracket_handle_rect(tag_right, entry_center, position.side == Side::Buy)
-                .contains(pointer)
+            && bracket_handle_rect(
+                tag_right,
+                entry_center,
+                (position.side == Side::Buy) != scale.is_inverted(),
+            )
+            .contains(pointer)
         {
             return Some(PaperControl::HandleTakeProfit);
         }
         if position.stop_loss.is_none()
-            && bracket_handle_rect(tag_right, entry_center, position.side == Side::Sell)
-                .contains(pointer)
+            && bracket_handle_rect(
+                tag_right,
+                entry_center,
+                (position.side == Side::Sell) != scale.is_inverted(),
+            )
+            .contains(pointer)
         {
             return Some(PaperControl::HandleStopLoss);
         }

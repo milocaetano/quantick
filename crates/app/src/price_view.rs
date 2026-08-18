@@ -22,6 +22,17 @@ use crate::chart::PriceScale;
 /// legitimate ask that must not turn the chart over.
 pub const FLIP_SPAN_FACTOR: f64 = 40.0;
 
+/// How far back inside [`FLIP_SPAN_FACTOR`] the span must contract before the
+/// drag may flip again.
+///
+/// A flip parks the window at the threshold, where any expanding pixel would
+/// cross it again: without this band a hand tremor at the boundary would
+/// strobe the chart's orientation at frame rate. 5% is ~8px of gutter travel
+/// (`AXIS_ZOOM_DRAG_PX · ln(1/0.95)`) — beyond any tremor, and invisible
+/// inside the ~550px gesture that reaches the threshold at all (the bars are
+/// equally flat at 95% and 100% of forty auto-fit spans).
+pub const FLIP_REARM_FRACTION: f64 = 0.95;
+
 /// The vertical price view: auto-fit or a manual price range, either way up.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PriceView {
@@ -29,6 +40,10 @@ pub struct PriceView {
     manual: Option<(f64, f64)>,
     /// Upside down: low prices at the top of the pane.
     inverted: bool,
+    /// A drag flip just happened and the span still sits at the threshold:
+    /// further expanding drags do nothing until a real contraction re-arms
+    /// the flip ([`FLIP_REARM_FRACTION`]).
+    flip_parked: bool,
 }
 
 impl PriceView {
@@ -115,32 +130,53 @@ impl PriceView {
         self.manual = Some((center - half, center + half));
     }
 
-    /// [`Self::zoom`] for the gutter drag: expanding past [`FLIP_SPAN_FACTOR`]
+    /// [`Self::zoom`] for the gutter drag: expanding to [`FLIP_SPAN_FACTOR`]
     /// auto-fit spans flips the chart upside down instead of shrinking it
     /// further.
     ///
-    /// Crossing the threshold parks the span *at* the threshold — the
-    /// increment that crossed is consumed by the flip, so the size the eye
-    /// reads is continuous through it. A window some other gesture already
-    /// pushed wider (the wheel zooms without flipping) keeps its span and only
+    /// Below the threshold an expanding drag walks *up to* it, never through:
+    /// however fast the flick, the chart flattens first and turns over on the
+    /// next pull, so the flip always lands where nothing legible is left to
+    /// mirror — the documented [`FLIP_SPAN_FACTOR`] contract. After a flip
+    /// the boundary is parked until a real contraction re-arms it
+    /// ([`FLIP_REARM_FRACTION`]), so a hand tremor at the threshold cannot
+    /// strobe the orientation. A window some other gesture already pushed
+    /// wider (the wheel zooms without a ceiling) keeps its span and only
     /// turns over: snapping it back to the threshold would jump.
     pub fn drag_zoom(&mut self, factor: f64, auto: (f64, f64)) {
         if factor <= 0.0 || !factor.is_finite() {
             return;
         }
         let auto_span = auto.1 - auto.0;
-        if factor > 1.0 && auto_span > 0.0 {
-            let (lo, hi) = self.resolve(auto);
-            let flip_span = auto_span * FLIP_SPAN_FACTOR;
-            if (hi - lo) * factor >= flip_span {
-                self.inverted = !self.inverted;
-                let center = f64::midpoint(lo, hi);
-                let half = (hi - lo).max(flip_span) / 2.0;
-                self.manual = Some((center - half, center + half));
-                return;
+        // The boundary zone: at 99% of the threshold and beyond the chart is
+        // equally flat, so this one band is both where an expanding drag
+        // flips and what a contraction must leave to re-arm — and comparing
+        // against the zone rather than the exact threshold keeps a span the
+        // cap parked one float ulp short of it from missing the flip.
+        let flip_zone = auto_span * FLIP_SPAN_FACTOR * FLIP_REARM_FRACTION;
+        if factor <= 1.0 || auto_span <= 0.0 {
+            // Contracting: a plain zoom — and once the span drops back out
+            // of the boundary zone, the next crossing may flip again.
+            self.zoom(factor, auto);
+            if auto_span > 0.0 {
+                let (lo, hi) = self.resolve(auto);
+                if hi - lo < flip_zone {
+                    self.flip_parked = false;
+                }
             }
+            return;
         }
-        self.zoom(factor, auto);
+        let (lo, hi) = self.resolve(auto);
+        let span = hi - lo;
+        if span >= flip_zone {
+            if !self.flip_parked {
+                self.inverted = !self.inverted;
+                self.flip_parked = true;
+            }
+            return;
+        }
+        let flip_span = auto_span * FLIP_SPAN_FACTOR;
+        self.zoom(factor.min(flip_span / span), auto);
     }
 }
 
@@ -212,24 +248,59 @@ mod tests {
     }
 
     #[test]
-    fn an_expanding_drag_past_the_threshold_flips_and_parks_at_it() {
+    fn the_drag_flattens_to_the_threshold_and_flips_on_the_next_pull() {
         let mut v = PriceView::new();
-        // span 10 × 41 crosses 40 auto-spans (400): flip, span parked at 400.
-        v.drag_zoom(41.0, AUTO);
-        assert!(v.is_inverted());
+        // One violent flick: capped at the 40-auto-span threshold (400),
+        // still upright — the chart flattens first, whatever the speed.
+        v.drag_zoom(1000.0, AUTO);
+        assert!(!v.is_inverted());
         let (lo, hi) = v.resolve(AUTO);
-        assert!((lo - -95.0).abs() < 1e-9 && (hi - 305.0).abs() < 1e-9);
+        assert!(
+            ((hi - lo) - 400.0).abs() < 1e-9,
+            "capped at the threshold: {lo}..{hi}"
+        );
+        // The next expanding increment is the flip, keeping the span.
+        v.drag_zoom(1.01, AUTO);
+        assert!(v.is_inverted());
+        assert_eq!(v.resolve(AUTO), (lo, hi));
     }
 
     #[test]
     fn the_opposite_drag_flips_back() {
         let mut v = PriceView::new();
-        v.drag_zoom(41.0, AUTO);
+        v.drag_zoom(1000.0, AUTO);
+        v.drag_zoom(1.01, AUTO);
         assert!(v.is_inverted());
-        // Inverted, the gutter feeds the mirrored sense: the drag back toward
-        // normal expands the span again, crossing the same threshold.
-        v.drag_zoom(1.1, AUTO);
-        assert!(!v.is_inverted(), "the second crossing turns it back over");
+        // The gesture carries on: the mirrored sense contracts, growing the
+        // upside-down chart and re-arming the flip.
+        v.drag_zoom(0.5, AUTO);
+        // The way back expands to the threshold again — the first crossing
+        // only flattens, the next pull turns it upright.
+        v.drag_zoom(1000.0, AUTO);
+        assert!(v.is_inverted(), "the first crossing only flattens");
+        v.drag_zoom(1.01, AUTO);
+        assert!(!v.is_inverted());
+    }
+
+    #[test]
+    fn a_tremor_at_the_boundary_cannot_strobe_the_orientation() {
+        let mut v = PriceView::new();
+        v.drag_zoom(1000.0, AUTO);
+        v.drag_zoom(1.01, AUTO); // flip, parked
+        assert!(v.is_inverted());
+        // ±1px of hand tremor at the parked boundary: expanding pixels find
+        // the flip parked, and a 1px contraction stays inside the re-arm
+        // band — the chart must not turn over again.
+        for _ in 0..10 {
+            v.drag_zoom((1.0 / 150.0_f64).exp(), AUTO);
+            v.drag_zoom((-1.0 / 150.0_f64).exp(), AUTO);
+            assert!(v.is_inverted(), "still upside down");
+        }
+        // A real contraction re-arms; the next crossing flips back.
+        v.drag_zoom(0.9, AUTO);
+        v.drag_zoom(1000.0, AUTO);
+        v.drag_zoom(1.01, AUTO);
+        assert!(!v.is_inverted());
     }
 
     #[test]
