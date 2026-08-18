@@ -1,6 +1,8 @@
 //! The selected drawing's context bar: one floating row of icons that opens
-//! where the object is, so the actions a trader takes with their eye on the
-//! chart never cost a trip to a panel.
+//! where the object is — until a hand puts it somewhere else, after which
+//! that point is where it opens for every object until it is given back — so
+//! the actions a trader takes with their eye on the chart never cost a trip
+//! to a panel.
 //!
 //! It is the second host of [`ActionBarIntent`] — the first being the
 //! inspector's textual bar — so lock and delete keep exactly one set of
@@ -53,6 +55,16 @@ const SWATCH_SIDE_PX: f32 = 20.0;
 const PALETTE_SWATCH_PX: f32 = 22.0;
 /// Length of the stroke preview painted inside the width slot.
 const WIDTH_PREVIEW_LEN_PX: f32 = 18.0;
+/// Width of one row inside the width and size popovers.
+///
+/// Stated, not inherited. Those two popovers are a preview and a right-aligned
+/// label — neither has an intrinsic width — so a row sized from
+/// `ui.available_width()` reports back whatever the Area was laid out at and
+/// the two agree on it forever: an Area egui has not seen starts at its
+/// 600 px default, the rows fill it, and the measurement confirms it. The
+/// palette next door does have an intrinsic width, which is the only reason
+/// this stayed invisible while all three popovers shared one Area id.
+const POPOVER_ROW_WIDTH_PX: f32 = 132.0;
 /// Height of one row inside the width and size popovers.
 const POPOVER_ROW_HEIGHT_PX: f32 = 26.0;
 
@@ -251,10 +263,33 @@ pub struct Suppression {
 #[derive(Debug, Default)]
 pub struct ContextBar {
     open: Popover,
-    /// Where the trader dragged the bar. Absolute screen position, cleared
-    /// on every selection change: a remembered position belongs to the
-    /// object it was chosen for, and reappearing far from the *next* object
-    /// is the failure mode of remembering it globally.
+    /// Where the trader dragged the bar. Absolute screen position, and it
+    /// outlives the selection it was chosen under.
+    ///
+    /// It used to be dropped on every selection change, on the reading that a
+    /// position belongs to the object it was picked for. That reading is
+    /// wrong about the gesture: nobody drags this bar to a corner *for one
+    /// object*. They drag it because it was covering the price action they
+    /// are reading, and the next object is on the same chart with the same
+    /// thing behind it. Snapping back to the next drawing hands them the
+    /// problem again, once per click, with no way to answer it once.
+    ///
+    /// So the hand outranks the placement here exactly as it does for the
+    /// properties popup, and by the same argument: a trader who chose where
+    /// this goes has already answered the question the rule exists to guess.
+    /// The way back is the grip's double-click, named in its own tooltip and
+    /// aimed at the bar and nothing else — see [`Self::clear_manual`].
+    ///
+    /// The host clamps it into the chart before drawing — see
+    /// `QuantickApp::draw_drawing_context_bar` — so a position parked under a
+    /// wide layout can never leave the view under a narrow one.
+    ///
+    /// Session-only, and deliberately: the properties popup records its parked
+    /// point in the workspace (`SavedChrome::inspector_position`) because it is
+    /// a window of settings, while a *context* bar reappearing in a corner at
+    /// the next launch, far from any object and with nothing to explain it,
+    /// is a different decision and not one this change makes. The argument
+    /// below is about which of hand and rule wins within a session.
     manual: Option<egui::Pos2>,
     suppression: Suppression,
     last_selection: Option<usize>,
@@ -319,13 +354,18 @@ impl ContextBar {
     }
 
     /// Called every frame with the current selection. Answers whether the
-    /// selection changed, and drops any manual position with it.
+    /// selection changed.
+    ///
+    /// What a new object drops is what belongs to the *old* one: an open
+    /// popover (a colour palette hanging off a bar that is about to move is
+    /// pointing at nothing) and the last rect (the wake radius must not
+    /// measure against geometry from the previous object). A hand-placed
+    /// position is not one of those — see [`Self::manual`].
     pub fn note_selection(&mut self, selection: Option<usize>) -> bool {
         if self.last_selection == selection {
             return false;
         }
         self.last_selection = selection;
-        self.manual = None;
         self.open = Popover::None;
         self.rect = None;
         true
@@ -337,8 +377,17 @@ impl ContextBar {
     }
 
     /// The trader dragged the bar by the grip: it stops following the object
-    /// and stops being suppressed by pan and zoom — it is where they put it,
-    /// on purpose.
+    /// and stays where they put it, across the selections that come after —
+    /// see [`Self::manual`].
+    ///
+    /// It does *not* stop being suppressed. This line used to claim it did,
+    /// and the code never has: a parked bar hides through a pan, a wheel zoom
+    /// or a canvas drag exactly like a following one, and comes back in the
+    /// same place. Exempting it is a change to how the bar behaves during
+    /// gestures, not to where it opens, so it is not smuggled in here — and
+    /// it would turn the parked bar into a patch of chart that never yields
+    /// the pointer, since suppression is also what lets a drag reach the
+    /// canvas underneath it.
     pub fn set_manual(&mut self, position: egui::Pos2) {
         self.manual = Some(position);
     }
@@ -367,8 +416,19 @@ impl ContextBar {
         self.press_rect
     }
 
-    /// Escape with a hand-placed bar puts it back on the object before it
-    /// touches the selection.
+    /// Give the placement back to the rule, reporting whether there was
+    /// anything to give.
+    ///
+    /// The named door out of the parked state, for a hand and for an operator
+    /// without one: the grip's double-click *calls* this rather than clearing
+    /// the field itself, so there is one way back and not two.
+    ///
+    /// Not Escape. This doc used to say it was, and the code never wired it:
+    /// what happened on that key was the selection dropping and
+    /// [`Self::note_selection`] discarding the position along with it. Now
+    /// that the position outlives a selection, wiring Escape to it would mean
+    /// a key a trader presses many times an hour quietly undoing where they
+    /// put the bar — see the escape stack in `QuantickApp::drawing_keys`.
     pub fn clear_manual(&mut self) -> bool {
         self.manual.take().is_some()
     }
@@ -455,6 +515,24 @@ pub struct BarObject<'a> {
     pub tool_name: &'static str,
 }
 
+/// Which controls this object earns a slot for.
+///
+/// One derivation, not two. The host has to know the bar's width before it can
+/// repair a parked position into the pane — and a second `Capabilities` literal
+/// written beside this one would agree today and drift on the PR that adds a
+/// capability to one of them, leaving the bar drawn wider than the rectangle it
+/// was repaired into, out over the live lane, with nothing failing.
+#[must_use]
+pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
+    Capabilities {
+        // A glyph object has type size, not stroke width: a width control on
+        // a text note moves nothing.
+        stroke_width: object.glyph_size.is_none(),
+        glyph_size: object.glyph_size.is_some(),
+        settings: object.settings_available,
+    }
+}
+
 /// Draw the bar at `position` and report what was asked of it.
 ///
 /// The caller owns every mutation except the style and glyph size, which are
@@ -463,17 +541,11 @@ pub fn show(
     bar: &mut ContextBar,
     ctx: &egui::Context,
     position: egui::Pos2,
+    popover_bounds: egui::Rect,
     object: &mut BarObject<'_>,
 ) -> ContextBarIntent {
     let mut intent = ContextBarIntent::default();
-    let caps = Capabilities {
-        // A glyph object has type size, not stroke width: a width control on
-        // a text note moves nothing.
-        stroke_width: object.glyph_size.is_none(),
-        glyph_size: object.glyph_size.is_some(),
-        settings: object.settings_available,
-    };
-    let cells = slots(caps);
+    let cells = slots(capabilities(object));
     let size = bar_size(&cells);
     let rect = egui::Rect::from_min_size(position, size);
     bar.rect = Some(rect);
@@ -521,7 +593,7 @@ pub fn show(
                 });
             });
         });
-    draw_popover(bar, ctx, object, &mut intent);
+    draw_popover(bar, ctx, popover_bounds, object, &mut intent);
     intent
 }
 
@@ -759,9 +831,78 @@ fn hover_text(object: &BarObject<'_>, idle: &'static str, locked: &'static str) 
     if object.locked { locked } else { idle }
 }
 
+/// Where a popover opens: hanging off the slot it belongs to — under it,
+/// flipped above when there is no room, right-aligned on it rather than
+/// pushed off it — and never outside `bounds`.
+///
+/// Downward is the default because that is where the eye goes from a control
+/// it just pressed. It cannot be the only answer: the bar can sit one bar's
+/// height off the bottom of the pane — automatic placement reaches that for
+/// an object at the bottom, and a *parked* bar stays there for every object
+/// after it — while the colour palette and the width rows are several times
+/// that tall. A palette painted past the pane lands on the time axis, on the
+/// neighbouring chart of a split, or off the window, and rows a trader cannot
+/// reach read as rows that do not exist.
+///
+/// `size` is what egui measured last time this popover was open — zero the
+/// first time, so that frame goes downward and the flip lands on the next
+/// one. That is one frame of a surface the trader just clicked open, and the
+/// alternative is measuring a panel before laying it out.
+///
+/// egui keeps the last word, and against the *window* rather than `bounds`:
+/// `Area` constrains by default, and its constraint rectangle doubles as the
+/// clip rectangle, so handing it the pane would make a popover taller than
+/// the pane lose its lower rows silently — and rows a trader cannot reach
+/// read as rows that do not exist. Covering the bar is the better failure of
+/// the two, and it is the one this rule spends its effort avoiding rather
+/// than the one it falls back to.
+fn popover_position(anchor: egui::Rect, size: egui::Vec2, bounds: egui::Rect) -> egui::Pos2 {
+    let below = anchor.left_bottom() + egui::vec2(0.0, POPOVER_GAP_PX);
+    let y = if below.y + size.y > bounds.bottom()
+        && anchor.top() - POPOVER_GAP_PX - size.y >= bounds.top()
+    {
+        anchor.top() - POPOVER_GAP_PX - size.y
+    } else {
+        below.y
+    };
+    // Horizontally it hangs from the slot's left edge, and when that would run
+    // past the pane it right-aligns on the slot instead of being clamped to an
+    // arbitrary column: a palette that no longer touches the control that
+    // opened it reads as a panel that belongs to nothing. The clamp stays as
+    // the last word, for a popover wider than the pane itself.
+    let x = if below.x + size.x > bounds.right() {
+        anchor.right() - size.x
+    } else {
+        below.x
+    };
+    let max_x = (bounds.right() - size.x).max(bounds.left());
+    egui::pos2(x.clamp(bounds.left(), max_x), y)
+}
+
+/// The Area id a popover is laid out under.
+///
+/// Keyed on everything that changes its measured size, because that size is
+/// read back from egui a frame late and decides which way it opens. The kind
+/// is the obvious half; `fill` is the other one — the colour palette carries
+/// an extra row for a tool that has an interior, so the same kind is two
+/// different heights depending on the object. A shared id hands the shorter
+/// one the taller one's height, flips a popover that had room below, and
+/// snaps it back a frame later in front of a trader who has just clicked.
+///
+/// Keyed on *only* that, though: the width and size popovers do not read
+/// `supports_fill`, and splitting them on it would hand a fresh Area — and
+/// with it egui's invisible sizing pass, one frame of nothing where the
+/// trader clicked — every time the selection alternates between a tool with
+/// an interior and one without.
+fn popover_id(popover: Popover, fill: bool) -> egui::Id {
+    let fill = fill && matches!(popover, Popover::Color);
+    egui::Id::new(("drawing_context_bar_popover", popover as u8, fill))
+}
+
 fn draw_popover(
     bar: &mut ContextBar,
     ctx: &egui::Context,
+    bounds: egui::Rect,
     object: &mut BarObject<'_>,
     intent: &mut ContextBarIntent,
 ) {
@@ -769,12 +910,23 @@ fn draw_popover(
         (Popover::None, _) | (_, None) => return,
         (popover, Some(anchor)) => (popover, anchor),
     };
-    let id = egui::Id::new("drawing_context_bar_popover");
+    // One Area id per kind, not one for all three. egui keeps an Area's rect
+    // after it stops being shown, so a shared id would hand the width list the
+    // colour palette's height and flip a short popover that had room below —
+    // then correct itself on the next frame, in front of a trader who has just
+    // clicked. Each kind now remembers only its own size.
+    let id = popover_id(popover, object.supports_fill);
+    // The size egui measured last time this kind was open. Zero the first
+    // time, which is what makes the default answer the downward one.
+    let size = ctx
+        .memory(|memory| memory.area_rect(id))
+        .map_or(egui::Vec2::ZERO, |rect| rect.size());
+    let at = popover_position(anchor, size, bounds);
     #[cfg(test)]
     let mut swatch_rects = Vec::new();
     let response = egui::Area::new(id)
         .order(egui::Order::Foreground)
-        .fixed_pos(anchor.left_bottom() + egui::vec2(0.0, POPOVER_GAP_PX))
+        .fixed_pos(at)
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
                 .fill(theme::CONTROL)
@@ -960,9 +1112,8 @@ fn draw_preview_row(
     label: &str,
     preview: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
 ) -> bool {
-    let width = ui.available_width().max(120.0);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(width, POPOVER_ROW_HEIGHT_PX),
+        egui::vec2(POPOVER_ROW_WIDTH_PX, POPOVER_ROW_HEIGHT_PX),
         egui::Sense::click(),
     );
     if ui.is_rect_visible(rect) {
@@ -1310,15 +1461,152 @@ mod tests {
     }
 
     #[test]
-    fn a_new_selection_drops_the_hand_placed_position() {
-        // A position chosen for one object reappearing beside the next one
-        // is the failure mode of remembering it globally.
+    fn a_popover_flips_above_the_bar_rather_than_off_the_pane() {
+        // A bar parked low is the ordinary case, not the corner one: parking
+        // it low is how a trader uncovers the price action above it. The
+        // palette is several times the bar's own height, so downward-only
+        // would put every colour swatch on the time axis for the session.
+        let bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let slot = egui::Rect::from_min_max(egui::pos2(100.0, 552.0), egui::pos2(132.0, 584.0));
+
+        assert_eq!(
+            popover_position(slot, egui::Vec2::ZERO, bounds).y,
+            slot.bottom() + POPOVER_GAP_PX,
+            "with nothing measured yet the answer is the usual downward one"
+        );
+
+        let tall = egui::vec2(160.0, 120.0);
+        assert_eq!(
+            popover_position(slot, tall, bounds).y,
+            slot.top() - POPOVER_GAP_PX - tall.y,
+            "no room below the pane, so it opens upward from the slot"
+        );
+
+        let short = egui::vec2(160.0, 10.0);
+        assert_eq!(
+            popover_position(slot, short, bounds).y,
+            slot.bottom() + POPOVER_GAP_PX,
+            "and one that does fit stays where the eye expects it"
+        );
+    }
+
+    #[test]
+    fn a_popover_with_no_room_either_way_still_opens_downward() {
+        // Above is the fallback, not a second rule: if it does not fit there
+        // either, the popover keeps the position the eye is already on.
+        let bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 200.0));
+        let slot = egui::Rect::from_min_max(egui::pos2(100.0, 150.0), egui::pos2(132.0, 182.0));
+        let tall = egui::vec2(160.0, 400.0);
+        assert_eq!(
+            popover_position(slot, tall, bounds).y,
+            slot.bottom() + POPOVER_GAP_PX
+        );
+    }
+
+    #[test]
+    fn a_popover_never_runs_off_the_right_of_the_pane() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let slot = egui::Rect::from_min_max(egui::pos2(960.0, 100.0), egui::pos2(992.0, 132.0));
+        let wide = egui::vec2(200.0, 60.0);
+        let at = popover_position(slot, wide, bounds);
+        assert!(
+            at.x + wide.x <= bounds.right(),
+            "the palette stays inside the pane: {} + {} > {}",
+            at.x,
+            wide.x,
+            bounds.right()
+        );
+        assert_eq!(
+            at.x + wide.x,
+            slot.right(),
+            "and it right-aligns on the slot, so it still hangs off the control"
+        );
+    }
+
+    #[test]
+    fn a_popover_that_fits_hangs_from_the_slot_it_belongs_to() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let slot = egui::Rect::from_min_max(egui::pos2(120.0, 100.0), egui::pos2(152.0, 132.0));
+        let at = popover_position(slot, egui::vec2(200.0, 60.0), bounds);
+        assert_eq!(
+            at.x,
+            slot.left(),
+            "left edge to left edge is the resting rule"
+        );
+    }
+
+    #[test]
+    fn each_popover_remembers_only_a_size_that_is_its_own() {
+        // The size read back from egui decides which way a popover opens, so
+        // the id it is stored under has to split on everything that changes
+        // that size — and on nothing else, because a fresh id costs a frame
+        // of egui's invisible sizing pass right where the trader clicked.
+        assert_ne!(
+            popover_id(Popover::Color, false),
+            popover_id(Popover::Width, false),
+            "one kind never answers for another"
+        );
+        assert_ne!(
+            popover_id(Popover::Width, false),
+            popover_id(Popover::GlyphSize, false)
+        );
+        assert_ne!(
+            popover_id(Popover::Color, true),
+            popover_id(Popover::Color, false),
+            "the palette with a fill row is a different height"
+        );
+        assert_eq!(
+            popover_id(Popover::Width, true),
+            popover_id(Popover::Width, false),
+            "but the width rows do not read fill, so they must not split on it"
+        );
+        assert_eq!(
+            popover_id(Popover::GlyphSize, true),
+            popover_id(Popover::GlyphSize, false)
+        );
+    }
+
+    #[test]
+    fn a_new_selection_keeps_the_hand_placed_position() {
+        // The bar a trader moved out of the way stays out of the way. It is
+        // the same chart behind the next object, so snapping back would hand
+        // them the covered price action again, once per click.
         let mut bar = ContextBar::default();
         bar.note_selection(Some(0));
         bar.set_manual(egui::pos2(120.0, 40.0));
-        assert_eq!(bar.manual_position(), Some(egui::pos2(120.0, 40.0)));
         assert!(bar.note_selection(Some(1)));
-        assert_eq!(bar.manual_position(), None);
+        assert_eq!(bar.manual_position(), Some(egui::pos2(120.0, 40.0)));
+    }
+
+    #[test]
+    fn a_new_selection_still_drops_what_belonged_to_the_old_object() {
+        // The popover hangs off a slot of the bar as it stood for the object
+        // that is no longer selected, and the rect is what the wake radius
+        // measures against. Both are stale the instant the selection moves.
+        let mut bar = ContextBar::default();
+        bar.note_selection(Some(0));
+        bar.toggle(Popover::Width, egui::Rect::ZERO);
+        assert!(bar.popover_open());
+        assert!(bar.note_selection(Some(1)));
+        assert!(!bar.popover_open(), "a popover cannot outlive its object");
+        assert_eq!(
+            bar.last_rect(),
+            None,
+            "nor can the geometry it was drawn at"
+        );
+    }
+
+    #[test]
+    fn the_double_click_is_still_the_way_back() {
+        let mut bar = ContextBar::default();
+        bar.note_selection(Some(0));
+        bar.set_manual(egui::pos2(120.0, 40.0));
+        bar.clear_manual();
+        assert_eq!(
+            bar.manual_position(),
+            None,
+            "the grip's double-click hands placement back to the rule"
+        );
     }
 
     #[test]

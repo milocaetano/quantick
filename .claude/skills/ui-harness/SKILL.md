@@ -130,8 +130,8 @@ Landing with the drawing context bar goal (`feat/drawing-context-bar`):
 | --- | --- |
 | `QUANTICK_DRAWING_INSPECTOR=1` | the full settings panel open at launch. Selecting a drawing no longer opens it — it raises the context bar, and the gear on that bar is the one door — so this is the only way to photograph the panel without a click. Pair with `QUANTICK_DRAWINGS_DEMO_SELECT` |
 
-The context bar itself has no hook of its own and needs none: it exists for
-as long as something is selected, so `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`
+The context bar's *existence* needs no hook: it is up for as long as
+something is selected, so `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`
 *is* the hook that reaches it — and it reaches a different bar per tool,
 which is the thing worth photographing, since the bar is built from the
 selected object's capabilities. `QUANTICK_DRAWING_TOOL` covers the two new
@@ -146,6 +146,14 @@ Landing with the popup-position goal (`feat/inspector-position-memory`):
 | Hook | Reaches |
 | --- | --- |
 | `QUANTICK_DRAWING_INSPECTOR_POS=<x,y>` | the properties popup **parked where a trader dragged it**, in screen points, through the title-bar gesture's own function. That position is now remembered in the workspace and reused for every drawing selected afterwards, so it is a state a capture has to reach — and a drag is the only thing that sets one, which no scripted run has a hand for. Pair with `QUANTICK_DRAWING_INSPECTOR=1` and `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`. Off-screen coordinates are accepted on purpose (`3000,2000` photographs the clamp repairing a position from a bigger monitor); text that is not a point is refused, so a typo shows automatic placement rather than an invented pixel. To photograph the *restore* instead of the drag, hand-write `inspector_position = [x, y]` into the `[chrome]` table of a scratch `QUANTICK_UI_STATE` file |
+
+Once merged, move it into the table above.
+
+Landing with the parked-context-bar fix (`fix/popup-position-every-tool`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_CONTEXT_BAR_POS=<x,y>` | the selected object's context bar **parked where a trader dragged it by the grip**, in screen points. The bar now keeps that position when the selection moves, so "parked" is a state that outlives one object and therefore one a capture has to be able to reach — and the grip drag that sets it is a gesture no scripted run has a hand for (the ParkedHand rule), exactly as with the popup's title bar. Pair with `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`, which is what puts a bar on screen at all. Same *input* contract as `QUANTICK_DRAWING_INSPECTOR_POS`: off-screen coordinates are accepted on purpose (`3000,2000` photographs the host repairing the bar back into the pane the selection lives on, and clear of the live lane, which the parked path is held to exactly as the automatic one is), and text that is not a point is refused, so a typo shows automatic placement rather than an invented pixel. Not the same *lifetime*: the popup's parked point is a workspace field, this one is session state, so there is no `[chrome]` key to hand-write and no restore to photograph — a launch without the hook is the unparked bar. The way back is `ContextBar::clear_manual`, which the grip's double-click calls rather than reimplements — deliberately not Escape, a key a trader presses many times an hour to drop a selection |
 
 Once merged, move it into the table above.
 
