@@ -116,6 +116,11 @@ const DETAIL_RIGHT_PAD_PX: f32 = 6.0;
 /// gap is what separates one day's block from the previous day's last row.
 const DAY_HEADER_INSET_PX: f32 = 6.0;
 
+/// The report's floor while the month grid is expanded: the grid's own
+/// six rows plus a weekday rule, on top of everything the collapsed report
+/// already had to fit.
+const REPORT_MIN_HEIGHT_CALENDAR_PX: f32 = 620.0;
+
 /// One calendar day cell. Seven of them plus the report's own margins fit
 /// inside `REPORT_MIN_WIDTH_PX`, so the grid never forces the window wider
 /// than the trader sized it.
@@ -3316,7 +3321,14 @@ impl PaperTrading {
             .resizable(true)
             .default_size(egui::vec2(600.0, 520.0))
             .min_width(REPORT_MIN_WIDTH_PX)
-            .min_height(REPORT_MIN_HEIGHT_PX)
+            // An expanded month grid needs its own room. Without this the
+            // report at its smallest pushed the tiles, the curve and the
+            // disclosure lines out through the bottom of the window.
+            .min_height(if self.calendar.open {
+                REPORT_MIN_HEIGHT_CALENDAR_PX
+            } else {
+                REPORT_MIN_HEIGHT_PX
+            })
             .show(ctx, |ui| {
                 reload = self.draw_report_filters(ui);
                 self.draw_report_calendar(ui);
@@ -3501,17 +3513,22 @@ impl PaperTrading {
                     .color(theme::TEXT_MUTED)
                     .small(),
             );
+            // A picked calendar range takes the cut over, so no pill may
+            // keep looking armed: a lit "Today" beside a date chip reads as
+            // the filter that produced the numbers, and it is not.
+            let ranged = self.calendar.selection.range().is_some();
             for period in ReportPeriod::PILLS {
-                let on = self.report_period == period;
-                if pill_toggle(
-                    ui,
-                    period.label(),
-                    on,
-                    "measured back from the newest saved trade in scope, not the wall clock",
-                )
-                .clicked()
-                    && !on
-                {
+                let on = !ranged && self.report_period == period;
+                let hover = if ranged {
+                    "standing down while a date range is picked - clear the dates to use the \
+                     period pills again"
+                } else {
+                    "measured back from the newest saved trade in scope, not the wall clock"
+                };
+                if pill_toggle(ui, period.label(), on, hover).clicked() && !on {
+                    // Reaching for a pill is a decision to stop filtering
+                    // by date, so it says so rather than doing nothing.
+                    self.calendar.clear();
                     self.report_period = period;
                     self.report_view = None;
                 }
@@ -4451,7 +4468,7 @@ fn draw_hover_card(
 /// The trade list's columns: caption and width in pixels, in paint order.
 /// One table, so the header row and every trade row can only ever agree
 /// about where a column begins.
-const TRADE_LIST_COLUMNS: [(&str, f32); 10] = [
+const TRADE_LIST_COLUMNS: [(&str, f32); 11] = [
     ("#", 38.0),
     ("DATE", 70.0),
     ("TIME", 58.0),
@@ -4462,6 +4479,10 @@ const TRADE_LIST_COLUMNS: [(&str, f32); 10] = [
     ("EXIT", 74.0),
     ("PTS", 52.0),
     ("EQUITY", 60.0),
+    // Not a hover: under Source "Both" a practice trade and a real one
+    // are otherwise the same row, and a replay result readable as a real
+    // one is the worst thing this window could do.
+    ("SOURCE", 58.0),
 ];
 
 /// One trade-list row's height. Tight on purpose: this is a table to scan,
@@ -4644,6 +4665,18 @@ fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
                             points_color(trade.pnl_points),
                         ),
                         (fmt_signed_points(equity), points_color(equity)),
+                        match row.source {
+                            Some(history::SessionSource::Live) => {
+                                ("live".to_owned(), theme::TEXT_FAINT)
+                            }
+                            Some(history::SessionSource::Replay) => {
+                                ("replay".to_owned(), theme::WARN)
+                            }
+                            // Unrecorded is not "live": a file from before
+                            // the source line existed says so with a mark
+                            // that reads as absence, never as a fact.
+                            None => ("—".to_owned(), theme::TEXT_FAINT),
+                        },
                     ];
                     paint_list_row(ui.painter(), rect, glyph_w, &cells);
                     // Every fact the columns cannot hold whole, on hover -
@@ -4660,7 +4693,7 @@ fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
                         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
                         match row.source {
                             Some(source) => format!("{} session", source.as_str()),
-                            None => "saved before quantick recorded a source".to_owned(),
+                            None => "saved before quantick recorded a session source".to_owned(),
                         },
                     ));
                 }
@@ -6679,7 +6712,7 @@ mod tests {
         let saved: Vec<ClosedTrade> = (0..5_000)
             .map(|index| {
                 trade_at(
-                    day.offset_days(-(index / 100)).start_ms(tz) + i64::from(index % 100) * 60_000,
+                    day.offset_days(-(index / 100)).start_ms(tz) + (index % 100) * 60_000,
                     1,
                 )
             })

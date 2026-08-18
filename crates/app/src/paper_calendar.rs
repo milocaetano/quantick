@@ -417,10 +417,6 @@ impl DaySelection {
         self.range()
             .is_some_and(|range| day >= range.start && day <= range.end)
     }
-
-    pub(crate) fn is_none(self) -> bool {
-        matches!(self, Self::None)
-    }
 }
 
 /// Everything the calendar widget remembers between frames: which month is
@@ -538,17 +534,10 @@ pub(crate) fn draw_month(
         {
             state.month = Some(newest.month_start());
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !state.selection.is_none()
-                && ui
-                    .small_button(icons::X)
-                    .on_hover_text("clear the date filter and go back to the period pills")
-                    .clicked()
-            {
-                state.clear();
-                action = Some(CalendarAction::SelectionChanged);
-            }
-        });
+        // No clear button here: the row above the grid already carries one,
+        // and two identical controls a hand-width apart invite the wrong
+        // click — the same reason the Source filter does not spell its
+        // third option "All".
     });
 
     // The grid starts on the Monday on or before the 1st, so every month
