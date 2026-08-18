@@ -36,6 +36,7 @@ Market replay is a *source*, not a chart mode: `app/src/feed/replay.rs` releases
 - **One engine, three consumers**: chart, backtest and bot consume the same aggregator code path. Never fork bar-building logic per consumer.
 - **Data honesty**: inferred or incomplete data is labeled as such, never silently patched.
 - **Small and focused**: this is not a trading platform. Build bars, show bars, expose bars to code.
+- **Operable without a hand**: an embedded assistant that works the app the way a trader does — read the chart, build a strategy, place a trade, lock the platform — is a planned direction, so a capability never ships reachable by mouse alone. It is "expose bars to code" extended to the actions around them: a named call, a readable result, a registry entry. The rule above still governs *what* gets built; this one governs how it is exposed. The review gate is `arch-review`'s *The second operator*.
 
 ## Verification loop (mandatory)
 
