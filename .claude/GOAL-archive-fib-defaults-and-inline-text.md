@@ -56,3 +56,35 @@ worktree `../quantick-worktrees/feat-fib-defaults-and-inline-text`
    e **trader-ux-review** sem Blocker em aberto.
 9. **PR aberto** com as evidências e o blast radius (arquivos adicionados vs.
    editados) no corpo. Merge não faz parte da missão.
+
+## Evidência (fechamento)
+
+1. **Ícone** ✔ — `IconDots` no port (default `&[]`), duas Fib declaram 2 e 3
+   âncoras; testes `icon_dots_stay_in_the_unit_square_and_only_accompany_strokes`
+   e o contrato dos strokes. Lido no tamanho real e redesenhado depois da
+   primeira captura (4 linhas em 14 px eram uma mancha).
+2. **Retração a partir do primeiro clique** ✔ — `Extend::for_kind`;
+   `a_retracement_being_dragged_draws_from_the_first_click`,
+   `an_extension_still_projects_from_its_last_anchor`,
+   `each_fib_kind_opens_reaching_current_price_from_its_own_start`. Captura do
+   arrasto com `QUANTICK_DRAWING_DRAFT=1`.
+3. **Padrão salvável** ✔ — `save_tool_default` / `reset_tool_default` /
+   `has_saved_default` + slot `config` no `PresetStore`; round-trip, absence,
+   arquivo antigo, fluxo completo com um segundo host (`MemoryPresetHost`) e
+   precedência do preset nomeado. Capturas das abas Levels e Style.
+4. **Texto inline** ✔ — `inline_text` / `set_inline_text` / `holds_text` no
+   port; editor com moldura, flip e clamp; duplo clique reabre; undo de uma
+   entrada; identidade de aba/pane. Seis testes, hook `QUANTICK_TEXT_NOTE`.
+5. **Quatro checks** ✔ — fmt/clippy/build/test verdes (1477 no app).
+6. **Performance** ✔ — `frame_cpu_ms` mediana: main 2,747 / 2,658 ms contra
+   branch 2,744 / 2,769 ms, alternado A/B/A/B, 22 objetos, fps 59 nas quatro.
+   A corrida mais cara da branch teve tape 3,6× mais denso (3,05 vs 0,84
+   trades/s).
+7. **arch-review** ✔ — step 0 (`code-review high`) trouxe 15 achados; 13
+   corrigidos, 1 deferido (persistência 2–3 gravações por clique, caminho
+   raro), 1 já corrigido antes do relatório chegar.
+8. **visual-qa / trader-ux-review** ✔ — 5 superfícies capturadas com fps 58–59;
+   3 defeitos achados e corrigidos (placeholder duplicado, campo sem moldura,
+   rótulo ambíguo), 1 achado de UX corrigido (o reset não dizia que limpa a
+   escolha de preset padrão).
+9. **PR** — aberto no fim desta sessão.
