@@ -31,6 +31,13 @@ for something complete and professional: no missing information.
 4. **Report shows the trades behind the curve**: the filtered trade list, in the report
    window itself, in closing order, with date, symbol, side, quantity, entry → exit, points
    and exit reason — so a curve is never an anonymous shape.
+5. **Ledger days fold** (added mid-session at the user's request, 2026-08-18): a day header
+   is a control — click it and that day collapses to its one summary line, count and net
+   intact. A fold-all control beside the refresh button does every day at once, so a month
+   is read rather than scrolled.
+6. **Ledger filters by instrument** (same request): the "All symbols" pill becomes a picker
+   with three cases — the chart's own market, one the trader names, or all of them mixed.
+   Naming a market must not require retuning the chart to it.
 
 Out of scope (state, do not build): editing or annotating trades, currency conversion
 (the workspace knows no per-instrument tick value), any change to how trades are journaled

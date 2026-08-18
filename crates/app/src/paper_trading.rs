@@ -106,6 +106,10 @@ const TOTALS_STRIP_PX: f32 = 26.0;
 /// older" control adds another page and says how many are left.
 const LEDGER_PAGE_TRADES: usize = 50;
 
+/// The ledger's instrument picker. Wide enough for "This chart · BTCUSDT"
+/// without pushing the refresh and fold controls off the row.
+const LEDGER_SCOPE_COMBO_PX: f32 = 150.0;
+
 /// Gap between a detail line and the date stamp anchored opposite it.
 const DETAIL_GAP_PX: f32 = 8.0;
 
@@ -116,10 +120,27 @@ const DETAIL_RIGHT_PAD_PX: f32 = 6.0;
 /// gap is what separates one day's block from the previous day's last row.
 const DAY_HEADER_INSET_PX: f32 = 6.0;
 
+/// Where a day header's date starts, clear of its fold caret.
+const DAY_HEADER_TEXT_X_PX: f32 = 20.0;
+
 /// The report's floor while the month grid is expanded: the grid's own
-/// six rows plus a weekday rule, on top of everything the collapsed report
-/// already had to fit.
-const REPORT_MIN_HEIGHT_CALENDAR_PX: f32 = 620.0;
+/// six rows plus a weekday rule, on top of what the collapsed report had
+/// to fit. Kept under the app's own 560 px minimum height so the report
+/// can never be taller than the window it lives in.
+const REPORT_MIN_HEIGHT_CALENDAR_PX: f32 = 540.0;
+
+/// The size the report opens at. The trade list is eleven columns wide and
+/// the curve wants room above it; opening cramped and making the trader
+/// drag the corner every session is not a default.
+const REPORT_DEFAULT_W_PX: f32 = 900.0;
+/// See [`REPORT_DEFAULT_W_PX`].
+const REPORT_DEFAULT_H_PX: f32 = 720.0;
+
+/// The floor the equity curve shrinks to while the month grid is open. The
+/// curve is a shape to glance at; the list under it is the answer to
+/// "which trades", so when the two compete for a short window the curve is
+/// what gives way.
+const CURVE_MIN_H_CALENDAR_PX: f32 = 104.0;
 
 /// One calendar day cell. Seven of them plus the report's own margins fit
 /// inside `REPORT_MIN_WIDTH_PX`, so the grid never forces the window wider
@@ -278,11 +299,39 @@ struct PaperDemo {
     prints: u64,
 }
 
-/// Report scope: one symbol's history or the whole folder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReportScope {
-    Symbol,
+/// Which saved history the ledger lists. Three cases, not two: following
+/// the chart is what the panel opens on, but a trader reviewing yesterday
+/// wants to name an instrument without retuning the chart to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LedgerScope {
+    /// Whatever the chart is showing — the panel's default, and the only
+    /// one that moves when the chart does.
+    Chart,
+    /// One named instrument, whatever the chart shows.
+    Symbol(String),
+    /// Every instrument in the folder, mixed into one timeline.
     All,
+}
+
+impl LedgerScope {
+    /// The symbol folder to read, or `None` for the whole folder.
+    fn folder<'a>(&'a self, chart: &'a str) -> Option<&'a str> {
+        match self {
+            Self::Chart => Some(chart),
+            Self::Symbol(symbol) => Some(symbol.as_str()),
+            Self::All => None,
+        }
+    }
+
+    /// What the picker shows for this scope.
+    fn label(&self, chart: &str) -> String {
+        match self {
+            Self::Chart if chart.is_empty() => "This chart".to_owned(),
+            Self::Chart => format!("This chart · {chart}"),
+            Self::Symbol(symbol) => symbol.clone(),
+            Self::All => "All symbols".to_owned(),
+        }
+    }
 }
 
 /// The report's period filter, measured back from the newest saved trade
@@ -609,10 +658,11 @@ enum LedgerRow<'a> {
     /// A group caption and its count.
     Header(&'static str, usize),
     /// A civil day's caption: the date, how many of the rows under it
-    /// closed on that day, and what they netted. A ledger of bare clock
-    /// times cannot answer "which session was that" — the day header is
-    /// where the answer lives, and it carries the day's result for free.
-    Day(CivilDate, usize, Decimal),
+    /// closed on that day, what they netted, and whether it is folded
+    /// shut. A ledger of bare clock times cannot answer "which session was
+    /// that" — the day header is where the answer lives, it carries the
+    /// day's result for free, and clicking it folds the day away.
+    Day(CivilDate, usize, Decimal, bool),
     /// A closed trade from this session's simulator: selectable, and its
     /// round trip is on the current tape.
     Session(usize, &'a ClosedTrade),
@@ -915,7 +965,20 @@ pub struct PaperTrading {
     /// nothing to report push nothing.
     bot_events: Vec<SimEvent>,
     // Trades ledger.
-    ledger_scope: ReportScope,
+    /// Which saved history the ledger lists — see [`LedgerScope`].
+    ledger_scope: LedgerScope,
+    /// Symbol folders on disk, for the ledger's own picker. Read with the
+    /// history, never scanned on the frame.
+    ledger_symbols: Vec<String>,
+    /// Civil days the trader has folded shut in the ledger, by day number.
+    /// A folded day keeps its header — the date, the count and the net —
+    /// so collapsing summarises rather than hides.
+    collapsed_days: std::collections::BTreeSet<i64>,
+    /// The display timezone the ledger last drew with. The fold controls
+    /// group by civil day and run outside the draw call, so they need the
+    /// same clock the rows were stamped on or they would fold a day the
+    /// list never showed.
+    ledger_tz: TzOffset,
     /// Earlier sessions' journal rows, read on first draw and on demand —
     /// the live session file is excluded (its trades are already in the
     /// simulator).
@@ -1020,7 +1083,10 @@ impl PaperTrading {
             demo: std::env::var(PAPER_DEMO_ENV)
                 .is_ok_and(|value| value == "1")
                 .then_some(PaperDemo { prints: 0 }),
-            ledger_scope: ReportScope::Symbol,
+            ledger_scope: LedgerScope::Chart,
+            ledger_symbols: Vec::new(),
+            collapsed_days: std::collections::BTreeSet::new(),
+            ledger_tz: TzOffset::new(0),
             ledger_pages: 1,
             history_cache: None,
             saved_totals: LedgerTotals::default(),
@@ -1115,8 +1181,14 @@ impl PaperTrading {
             self.symbol = symbol.to_owned();
             self.journal_path = None;
             self.history_cache = None;
-            self.ledger_pages = 1;
             self.selected_trade = None;
+            // The revealed page is deliberately left alone. Every tab
+            // syncs its journal to its symbol on every drain, so this
+            // runs on the frame — resetting here retired the
+            // `QUANTICK_LEDGER_PAGES` hook before the first row was
+            // painted, and would retire a trader's scroll-back just as
+            // silently. `LedgerPage::of` already clamps a page count the
+            // new history cannot back.
         }
     }
 
@@ -2987,15 +3059,59 @@ impl PaperTrading {
     /// current symbol or the whole folder. The live session's own file is
     /// excluded — its trades are already in the simulator.
     fn reload_ledger(&mut self) {
-        let symbol = match self.ledger_scope {
-            ReportScope::Symbol => Some(self.symbol.as_str()),
-            ReportScope::All => None,
-        };
+        let symbol = self.ledger_scope.folder(&self.symbol);
         let history = load_history(&self.dir, symbol, &self.session_journal_paths);
         // The strip under the list sums every saved trade, not the revealed
         // page, so it is summed once here rather than on every frame.
         self.saved_totals = LedgerTotals::of(history.rows.iter().map(|row| &row.trade));
         self.history_cache = Some(history);
+        self.ledger_symbols = list_symbol_folders(&self.dir);
+    }
+
+    /// Fold or unfold one civil day in the ledger. A named action taking
+    /// data, like every other capability here: the header click calls it,
+    /// and so does anything else that ever wants to.
+    pub(crate) fn set_day_collapsed(&mut self, day: CivilDate, collapsed: bool) {
+        if collapsed {
+            self.collapsed_days.insert(day.day_number());
+        } else {
+            self.collapsed_days.remove(&day.day_number());
+        }
+    }
+
+    /// Whether every day currently in the ledger is folded shut. Read from
+    /// the loaded history, so the control can name what it will do.
+    fn all_days_collapsed(&self) -> bool {
+        let mut any = false;
+        for day in self.ledger_days() {
+            any = true;
+            if !self.collapsed_days.contains(&day) {
+                return false;
+            }
+        }
+        any
+    }
+
+    /// Every civil day the ledger currently lists, saved and live alike.
+    fn ledger_days(&self) -> std::collections::BTreeSet<i64> {
+        let tz = self.ledger_tz;
+        let saved = self
+            .history_cache
+            .iter()
+            .flat_map(|cache| cache.rows.iter().map(|row| &row.trade));
+        saved
+            .chain(self.sim.closed_trades().iter())
+            .map(|trade| CivilDate::from_ms(trade.closed_ms, tz).day_number())
+            .collect()
+    }
+
+    /// Fold every day shut, or open every one back up.
+    pub(crate) fn toggle_all_days(&mut self, expand: bool) {
+        if expand {
+            self.collapsed_days.clear();
+        } else {
+            self.collapsed_days = self.ledger_days();
+        }
     }
 
     /// Re-read the folder for a *changed scope* — the refresh button and
@@ -3014,20 +3130,42 @@ impl PaperTrading {
         if self.history_cache.is_none() {
             self.reload_ledger();
         }
+        self.ledger_tz = tz;
         let mut action = None;
 
-        // Scope row: which symbols the saved history contributes.
+        // Scope row: which instrument's saved history the ledger lists.
         let mut reload = false;
+        let mut picked: Option<LedgerScope> = None;
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(if self.symbol.is_empty() {
-                    "—"
-                } else {
-                    &self.symbol
+            let chart = self.symbol.clone();
+            egui::ComboBox::from_id_salt("paper_ledger_scope")
+                .width(LEDGER_SCOPE_COMBO_PX)
+                .selected_text(
+                    egui::RichText::new(self.ledger_scope.label(&chart))
+                        .monospace()
+                        .size(11.0),
+                )
+                .show_ui(ui, |ui| {
+                    let mut option = |ui: &mut egui::Ui, scope: LedgerScope| {
+                        let on = self.ledger_scope == scope;
+                        if ui.selectable_label(on, scope.label(&chart)).clicked() && !on {
+                            picked = Some(scope);
+                        }
+                    };
+                    option(ui, LedgerScope::Chart);
+                    option(ui, LedgerScope::All);
+                    if !self.ledger_symbols.is_empty() {
+                        ui.separator();
+                    }
+                    for symbol in self.ledger_symbols.clone() {
+                        option(ui, LedgerScope::Symbol(symbol));
+                    }
                 })
-                .monospace()
-                .color(theme::TEXT_MUTED),
-            );
+                .response
+                .on_hover_text(
+                    "which instrument's saved history this list shows - the chart's, one you \
+                     name, or all of them mixed into one timeline",
+                );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button(icons::ARROWS_CLOCKWISE)
@@ -3036,24 +3174,27 @@ impl PaperTrading {
                 {
                     reload = true;
                 }
-                let all = self.ledger_scope == ReportScope::All;
-                if pill_toggle(
-                    ui,
-                    "All symbols",
-                    all,
-                    "include every symbol's saved history, not just this chart's",
-                )
-                .clicked()
-                {
-                    self.ledger_scope = if all {
-                        ReportScope::Symbol
-                    } else {
-                        ReportScope::All
-                    };
-                    reload = true;
+                // Folding every earlier day at once: the list becomes one
+                // line per day, which is how a week is read rather than
+                // scrolled.
+                let folded = self.all_days_collapsed();
+                let (icon, hover) = if folded {
+                    (icons::ARROWS_OUT_LINE_VERTICAL, "open every day back up")
+                } else {
+                    (
+                        icons::ARROWS_IN_LINE_VERTICAL,
+                        "fold every day shut - each keeps its date, count and net",
+                    )
+                };
+                if ui.small_button(icon).on_hover_text(hover).clicked() {
+                    self.toggle_all_days(folded);
                 }
             });
         });
+        if let Some(scope) = picked {
+            self.ledger_scope = scope;
+            reload = true;
+        }
         if reload {
             self.rescope_ledger();
         }
@@ -3109,9 +3250,9 @@ impl PaperTrading {
         if session.is_empty() && saved_len == 0 {
             if self.position_summary().is_none() {
                 ui.add_space(12.0);
-                let headline = match self.ledger_scope {
-                    ReportScope::Symbol if !self.symbol.is_empty() => {
-                        format!("No trades for {}.", self.symbol)
+                let headline = match self.ledger_scope.folder(&self.symbol) {
+                    Some(symbol) if !symbol.is_empty() => {
+                        format!("No trades for {symbol}.")
                     }
                     _ => "No simulated trades yet.".to_owned(),
                 };
@@ -3145,6 +3286,7 @@ impl PaperTrading {
                 &mut rows,
                 &session,
                 tz,
+                &self.collapsed_days,
                 |item| item.1,
                 |item| LedgerRow::Session(item.0, item.1),
             );
@@ -3155,6 +3297,7 @@ impl PaperTrading {
                 &mut rows,
                 earlier,
                 tz,
+                &self.collapsed_days,
                 |item| item.1,
                 |item| LedgerRow::Earlier(item.0, item.1),
             );
@@ -3180,6 +3323,7 @@ impl PaperTrading {
         // exists.
         let own_symbol = (!self.symbol.is_empty()).then_some(self.symbol.as_str());
         let mut reveal_more = false;
+        let mut fold: Option<(CivilDate, bool)> = None;
         let mut clicked: Option<Option<usize>> = None;
         let mut navigate = None;
         egui::ScrollArea::vertical()
@@ -3190,8 +3334,10 @@ impl PaperTrading {
                 for index in range {
                     match &rows[index] {
                         LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
-                        LedgerRow::Day(date, count, net) => {
-                            draw_day_header(ui, *date, *count, *net);
+                        LedgerRow::Day(date, count, net, folded) => {
+                            if draw_day_header(ui, *date, *count, *net, *folded) {
+                                fold = Some((*date, !*folded));
+                            }
                         }
                         LedgerRow::Session(trade_index, trade) => {
                             let is_selected = selected == Some(*trade_index);
@@ -3221,6 +3367,9 @@ impl PaperTrading {
         }
         if reveal_more {
             self.ledger_pages = self.ledger_pages.saturating_add(1);
+        }
+        if let Some((day, collapsed)) = fold {
+            self.set_day_collapsed(day, collapsed);
         }
 
         ui.separator();
@@ -3334,6 +3483,25 @@ impl PaperTrading {
         if let Some(range) = selection.range() {
             self.show_report_month(range.start);
         }
+    }
+
+    /// The `QUANTICK_LEDGER_SCOPE` hook: the ledger listing that
+    /// instrument's saved history — the picker's own path, so a scripted
+    /// run lands where a click would.
+    pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
+        self.ledger_scope = scope;
+        self.history_cache = None;
+    }
+
+    /// The `QUANTICK_LEDGER_FOLD` hook: every day in the ledger folded
+    /// shut, the one-line-per-day read. Folding is otherwise a click on
+    /// each header, which a capture cannot perform.
+    pub(crate) fn autostart_folded_days(&mut self, tz: TzOffset) {
+        if self.history_cache.is_none() {
+            self.reload_ledger();
+        }
+        self.ledger_tz = tz;
+        self.toggle_all_days(false);
     }
 
     /// The `QUANTICK_LEDGER_PAGES` hook: the ledger already scrolled past
@@ -3478,7 +3646,10 @@ impl PaperTrading {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size(egui::vec2(600.0, 520.0))
+            // Wide enough for every column of the trade list and tall
+            // enough for the tiles, the curve and a readable page of it.
+            // Both are still only a starting size — the window resizes.
+            .default_size(egui::vec2(REPORT_DEFAULT_W_PX, REPORT_DEFAULT_H_PX))
             .min_width(REPORT_MIN_WIDTH_PX)
             // An expanded month grid needs its own room. Without this the
             // report at its smallest pushed the tiles, the curve and the
@@ -3498,11 +3669,20 @@ impl PaperTrading {
                 self.ensure_report_view(tz);
                 ui.separator();
                 let list_open = self.report_list_open;
+                let calendar_open = self.calendar.open;
                 match &self.report_view {
                     Some(view) if !view.rows.is_empty() => {
                         draw_report_tiles(ui, &view.report);
                         ui.add_space(8.0);
-                        draw_equity_curve(ui, view);
+                        draw_equity_curve(
+                            ui,
+                            view,
+                            if calendar_open {
+                                CURVE_MIN_H_CALENDAR_PX
+                            } else {
+                                CURVE_MIN_H_PX
+                            },
+                        );
                         ui.add_space(4.0);
                         // The grids fill whatever height the user gave the
                         // window and scroll inside it. Letting them take
@@ -4348,14 +4528,13 @@ fn draw_tile(
 /// what is plotted. One quiet line; a diverging fill against the zero
 /// baseline answers "was I ever under water?" at a glance; the deepest
 /// drawdown is annotated so the number in the grid below is locatable.
-fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView) {
+fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32) {
     let n = view.rows.len();
     if n == 0 {
         return;
     }
     ui.label(caption("REALIZED EQUITY"));
-    let height =
-        (ui.available_height() - CURVE_GRID_RESERVE_PX).clamp(CURVE_MIN_H_PX, CURVE_MAX_H_PX);
+    let height = (ui.available_height() - CURVE_GRID_RESERVE_PX).clamp(floor, CURVE_MAX_H_PX);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::hover(),
@@ -5552,6 +5731,7 @@ fn push_by_day<'a, T>(
     rows: &mut Vec<LedgerRow<'a>>,
     items: &'a [T],
     tz: TzOffset,
+    collapsed: &std::collections::BTreeSet<i64>,
     trade_of: impl Fn(&'a T) -> &'a ClosedTrade,
     row_of: impl Fn(&'a T) -> LedgerRow<'a>,
 ) {
@@ -5564,8 +5744,15 @@ fn push_by_day<'a, T>(
             net = net.saturating_add(trade_of(&items[end]).pnl_points);
             end += 1;
         }
-        rows.push(LedgerRow::Day(day, end - start, net));
-        rows.extend(items[start..end].iter().map(&row_of));
+        let folded = collapsed.contains(&day.day_number());
+        rows.push(LedgerRow::Day(day, end - start, net, folded));
+        // A folded day builds no trade rows at all — the header keeps the
+        // date, the count and the net, so the day is summarised rather
+        // than merely hidden, and the frame does not pay for what it does
+        // not show.
+        if !folded {
+            rows.extend(items[start..end].iter().map(&row_of));
+        }
         start = end;
     }
 }
@@ -5590,24 +5777,40 @@ fn draw_group_header(ui: &mut egui::Ui, label: &str, count: usize) {
     );
 }
 
-/// A civil day's caption: the date on the left, the day's trade count and
-/// net on the right, tinted by the result. The row is the ledger's answer
-/// to "which day am I looking at" while scrolling back through months.
-fn draw_day_header(ui: &mut egui::Ui, date: CivilDate, count: usize, net: Decimal) {
+/// A civil day's caption: a fold caret and the date on the left, the
+/// day's trade count and net on the right, tinted by the result. The row
+/// is the ledger's answer to "which day am I looking at" while scrolling
+/// back through months, and clicking it folds that day to this one line.
+/// Returns whether it was clicked.
+fn draw_day_header(
+    ui: &mut egui::Ui,
+    date: CivilDate,
+    count: usize,
+    net: Decimal,
+    folded: bool,
+) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
     if !ui.is_rect_visible(rect) {
-        return;
+        return response.clicked();
     }
     let painter = ui.painter();
     let band = egui::Rect::from_min_max(
         egui::pos2(rect.left(), rect.top() + DAY_HEADER_INSET_PX),
         rect.right_bottom(),
     );
-    painter.rect_filled(band, egui::Rounding::ZERO, theme::INSET);
+    painter.rect_filled(
+        band,
+        egui::Rounding::ZERO,
+        if response.hovered() {
+            theme::BORDER
+        } else {
+            theme::INSET
+        },
+    );
     painter.line_segment(
         [
             egui::pos2(rect.left(), band.top()),
@@ -5615,12 +5818,29 @@ fn draw_day_header(ui: &mut egui::Ui, date: CivilDate, count: usize, net: Decima
         ],
         egui::Stroke::new(1.0_f32, theme::BORDER),
     );
+    // The caret is the affordance: a header that folds must look like it
+    // folds, or the click is a secret.
     painter.text(
         egui::pos2(rect.left() + 6.0, band.center().y),
         egui::Align2::LEFT_CENTER,
+        if folded {
+            icons::CARET_RIGHT
+        } else {
+            icons::CARET_DOWN
+        },
+        egui::FontId::proportional(10.0),
+        theme::TEXT_FAINT,
+    );
+    painter.text(
+        egui::pos2(rect.left() + DAY_HEADER_TEXT_X_PX, band.center().y),
+        egui::Align2::LEFT_CENTER,
         date.long(),
         egui::FontId::monospace(10.0),
-        theme::TEXT_MUTED,
+        if folded {
+            theme::TEXT_FAINT
+        } else {
+            theme::TEXT_MUTED
+        },
     );
     painter.text(
         egui::pos2(rect.right() - 6.0, band.center().y),
@@ -5629,11 +5849,14 @@ fn draw_day_header(ui: &mut egui::Ui, date: CivilDate, count: usize, net: Decima
         egui::FontId::monospace(10.0),
         points_color(net),
     );
-    response.on_hover_text(format!(
-        "{} · {count} trade(s) closed · {} pts on the day",
-        date.iso(),
-        fmt_signed_points(net),
-    ));
+    response
+        .on_hover_text(format!(
+            "{} · {count} trade(s) closed · {} pts on the day - click to {}",
+            date.iso(),
+            fmt_signed_points(net),
+            if folded { "open it" } else { "fold it shut" },
+        ))
+        .clicked()
 }
 
 /// The "show older" control at the foot of the saved history: it names how
@@ -6965,6 +7188,74 @@ mod tests {
         assert_eq!((empty.low, empty.high), (0.0, 0.0));
     }
 
+    /// The ledger lists the chart's instrument, one the trader names, or
+    /// all of them — and the picker's label always says which.
+    #[test]
+    fn the_ledger_lists_the_chart_a_named_market_or_all_of_them() {
+        assert_eq!(LedgerScope::Chart.folder("BTCUSDT"), Some("BTCUSDT"));
+        assert_eq!(
+            LedgerScope::Symbol("WINV26".to_owned()).folder("BTCUSDT"),
+            Some("WINV26"),
+            "a named market does not follow the chart"
+        );
+        assert_eq!(LedgerScope::All.folder("BTCUSDT"), None, "the whole folder");
+        assert_eq!(LedgerScope::Chart.label("BTCUSDT"), "This chart · BTCUSDT");
+        assert_eq!(
+            LedgerScope::Chart.label(""),
+            "This chart",
+            "before a feed settles there is no market to name"
+        );
+        assert_eq!(
+            LedgerScope::Symbol("WINV26".to_owned()).label("BTCUSDT"),
+            "WINV26"
+        );
+        assert_eq!(LedgerScope::All.label("BTCUSDT"), "All symbols");
+    }
+
+    /// Folding is per civil day and reversible, and the "fold everything"
+    /// control reports honestly whether it has anything left to fold.
+    #[test]
+    fn days_fold_shut_one_at_a_time_or_all_at_once() {
+        let tz = TzOffset::new(-180);
+        let day = CivilDate::from_ymd(2026, 8, 17);
+        let mut paper = PaperTrading::new();
+        paper.ledger_tz = tz;
+        paper.history_cache = Some(LoadedHistory {
+            rows: vec![
+                row("X", None, trade_at(day.start_ms(tz) + 60_000, 5)),
+                row("X", None, trade_at(day.end_ms(tz) - 1, -2)),
+                row("X", None, trade_at(day.offset_days(1).start_ms(tz), 7)),
+            ],
+            files: 1,
+            unreadable_files: 0,
+            problem_rows: 0,
+        });
+        assert!(
+            !paper.all_days_collapsed(),
+            "nothing is folded to begin with"
+        );
+
+        paper.set_day_collapsed(day, true);
+        assert!(paper.collapsed_days.contains(&day.day_number()));
+        assert!(
+            !paper.all_days_collapsed(),
+            "the next day is still open, so the control still offers to fold"
+        );
+
+        paper.toggle_all_days(false);
+        assert!(paper.all_days_collapsed(), "both days shut");
+        assert_eq!(paper.collapsed_days.len(), 2);
+
+        paper.toggle_all_days(true);
+        assert!(paper.collapsed_days.is_empty());
+        assert!(!paper.all_days_collapsed());
+
+        // An empty ledger has nothing folded *and* nothing to fold: the
+        // control must not claim everything is already shut.
+        let empty = PaperTrading::new();
+        assert!(!empty.all_days_collapsed());
+    }
+
     /// A revealed page must survive the ledger's own lazy first load.
     /// `QUANTICK_LEDGER_PAGES` sets the page count during construction,
     /// long before the Trades tab is first drawn; the load that tab
@@ -6987,6 +7278,14 @@ mod tests {
         assert_eq!(
             paper.ledger_pages, 3,
             "the lazy load must not retire the hook's page count"
+        );
+        // And what every tab does on every drain: sync the journal to its
+        // symbol. This runs on the frame, so it must not retire the page
+        // either — the hook set it before the feed had a symbol at all.
+        paper.set_symbol("PAGEY");
+        assert_eq!(
+            paper.ledger_pages, 3,
+            "the per-frame symbol sync must not retire the page"
         );
 
         // A *scope* change is the one thing that does reset it: a deep
@@ -7025,6 +7324,7 @@ mod tests {
             &mut rows,
             &items[..page.shown],
             tz,
+            &std::collections::BTreeSet::new(),
             |item| item.1,
             |item| LedgerRow::Earlier(item.0, item.1),
         );
@@ -7168,21 +7468,23 @@ mod tests {
             &mut rows,
             &items,
             tz,
+            &std::collections::BTreeSet::new(),
             |item| item.1,
             |item| LedgerRow::Earlier(item.0, item.1),
         );
         assert_eq!(rows.len(), 5, "two day captions over three trades");
         match rows[0] {
-            LedgerRow::Day(date, count, net) => {
+            LedgerRow::Day(date, count, net, folded) => {
                 assert_eq!(date, day.offset_days(1));
                 assert_eq!(count, 1);
                 assert_eq!(net, Decimal::from(8));
+                assert!(!folded);
             }
             _ => panic!("the list opens on a day caption"),
         }
         assert!(matches!(rows[1], LedgerRow::Earlier(..)));
         match rows[2] {
-            LedgerRow::Day(date, count, net) => {
+            LedgerRow::Day(date, count, net, _) => {
                 assert_eq!(date, day);
                 assert_eq!(count, 2, "both of the 17th's trades");
                 assert_eq!(net, Decimal::from(114), "and what the day netted");
@@ -7191,6 +7493,30 @@ mod tests {
         }
         assert!(matches!(rows[3], LedgerRow::Earlier(..)));
         assert!(matches!(rows[4], LedgerRow::Earlier(..)));
+
+        // Folded, the 17th keeps its caption — with its count and its net
+        // intact — and contributes no trade rows at all.
+        let mut folded_days = std::collections::BTreeSet::new();
+        folded_days.insert(day.day_number());
+        let mut rows = Vec::new();
+        push_by_day(
+            &mut rows,
+            &items,
+            tz,
+            &folded_days,
+            |item| item.1,
+            |item| LedgerRow::Earlier(item.0, item.1),
+        );
+        assert_eq!(rows.len(), 3, "two captions and only the open day's row");
+        match rows[2] {
+            LedgerRow::Day(date, count, net, folded) => {
+                assert_eq!(date, day);
+                assert!(folded, "and it says it is folded");
+                assert_eq!(count, 2, "a folded day still counts its trades");
+                assert_eq!(net, Decimal::from(114), "and still states its net");
+            }
+            _ => panic!("a folded day keeps its caption"),
+        }
     }
 
     /// A picked day cuts the report to that civil day, and a picked span
@@ -7240,7 +7566,7 @@ mod tests {
         assert_eq!(view.rows.len(), 3, "both ends of the span are inside");
         assert_eq!(
             view.range.map(DateRange::label),
-            Some("2026-08-12 → 2026-08-17".to_owned())
+            Some("2026-08-12 to 2026-08-17".to_owned())
         );
         assert_eq!(view.hidden_outside, 1, "only the 18th sits outside");
         assert_eq!(view.report.net_points, Decimal::from(10));

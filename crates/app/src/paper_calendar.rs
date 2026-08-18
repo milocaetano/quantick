@@ -351,13 +351,19 @@ impl DateRange {
         self.end.day_number() - self.start.day_number() + 1
     }
 
-    /// `2026-08-17` for a single day, `2026-08-12 → 2026-08-17` for a span
-    /// — what the report's support line reads out loud.
+    /// `2026-08-17` for a single day, `2026-08-12 to 2026-08-17` for a
+    /// span — what the report's support line reads out loud.
+    ///
+    /// Spelled with a word, not an arrow: this string is rendered in the
+    /// proportional UI font, whose fallback has no `→` and draws a tofu
+    /// box instead. The arrow survives where the text is monospace (the
+    /// trade list's `ENTRY → EXIT`, a ledger row's round trip); here it
+    /// would be a missing glyph in the one label naming the filter.
     pub(crate) fn label(self) -> String {
         if self.start == self.end {
             self.start.iso()
         } else {
-            format!("{} → {}", self.start.iso(), self.end.iso())
+            format!("{} to {}", self.start.iso(), self.end.iso())
         }
     }
 }
@@ -811,7 +817,7 @@ mod tests {
         let backwards = DaySelection::None.click(later).click(earlier);
         assert_eq!(forwards, backwards, "click order must not change the span");
         let range = forwards.range().expect("a closed span");
-        assert_eq!(range.label(), "2026-08-12 → 2026-08-17");
+        assert_eq!(range.label(), "2026-08-12 to 2026-08-17");
         assert_eq!(range.days(), 6, "both ends counted");
     }
 

@@ -1657,6 +1657,26 @@ impl QuantickApp {
                 ),
             }
         }
+        // Which instrument's saved history the ledger lists.
+        if let Ok(spec) = std::env::var("QUANTICK_LEDGER_SCOPE") {
+            let scope = match spec.trim() {
+                "chart" => Some(crate::paper_trading::LedgerScope::Chart),
+                "all" => Some(crate::paper_trading::LedgerScope::All),
+                "" => None,
+                symbol => Some(crate::paper_trading::LedgerScope::Symbol(symbol.to_owned())),
+            };
+            match scope {
+                Some(scope) => app.active_tab_mut().paper.set_ledger_scope(scope),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LEDGER_SCOPE_AUTOSTART_UNKNOWN",
+                    scope = %spec,
+                    action = "ledger_left_on_the_chart",
+                    "QUANTICK_LEDGER_SCOPE wants `chart`, `all`, or a symbol folder name"
+                ),
+            }
+        }
         // And the ledger past its first page of saved history — a state
         // only a click on "show older" otherwise reaches.
         if let Ok(text) = std::env::var("QUANTICK_LEDGER_PAGES") {
@@ -1673,6 +1693,12 @@ impl QuantickApp {
                     "QUANTICK_LEDGER_PAGES wants a whole number of pages, one or more"
                 ),
             }
+        }
+        // Every day folded shut — the one-line-per-day read, which is
+        // otherwise a click on each header.
+        if std::env::var("QUANTICK_LEDGER_FOLD").is_ok_and(|value| value == "1") {
+            let tz = app.tz;
+            app.active_tab_mut().paper.autostart_folded_days(tz);
         }
         // The report's trade list is open by default, so the hook is how a
         // capture reaches it collapsed.
