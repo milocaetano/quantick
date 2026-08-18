@@ -2279,10 +2279,21 @@ impl QuantickApp {
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
+            // Adding an indicator by hand is the plainest possible request to
+            // see one, so it opens a folded legend rather than letting the new
+            // row land inside the puck — the trader would get one more dot and
+            // no way to tell the add from a no-op. Not the auto-collapse the
+            // design ruled out: that rule protects against hiding what nobody
+            // asked to hide, and unfolding hides nothing. It lives on this
+            // path, the trader's own, and not in `ChartPane::add_indicator`,
+            // which the workspace restore and the harness hooks also travel —
+            // there it would erase the fold on every launch.
             ToolbarAction::AddEmaIndicator => {
+                self.set_focused_legend_collapsed(false);
                 self.add_native_indicator(SavedKind::NativeEma);
             }
             ToolbarAction::AddCvdIndicator => {
+                self.set_focused_legend_collapsed(false);
                 self.add_native_indicator(SavedKind::NativeCvd);
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
@@ -2294,6 +2305,7 @@ impl QuantickApp {
                 self.remove_indicator_at(target);
             }
             ToolbarAction::AddScriptIndicator(index) => {
+                self.set_focused_legend_collapsed(false);
                 self.add_script_indicator(index);
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
@@ -5094,18 +5106,42 @@ impl QuantickApp {
                         // the focused one's state — the same pane the chevron
                         // on screen would fold.
                         let collapsed = self.focused_legend_collapsed();
-                        let legend_label = if collapsed {
-                            "Show indicator legend"
-                        } else {
-                            "Collapse indicator legend"
+                        // Split open: say *which* chart, the way the layout
+                        // entries above name the charts they show. The action
+                        // follows the focus like every other chrome control,
+                        // and a trader reading "Collapse indicator legend"
+                        // over two charts has no way to know which corner is
+                        // about to change.
+                        let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
+                            && self.active_tab().time_pane.is_some();
+                        let pane_name = match self.active_tab().focused_side() {
+                            PaneSide::Flow => "Flow",
+                            PaneSide::Time => "Timeframe",
+                        };
+                        let legend_label = match (collapsed, split) {
+                            (true, false) => "Show indicator legend".to_owned(),
+                            (false, false) => "Collapse indicator legend".to_owned(),
+                            (true, true) => format!("Show indicator legend ({pane_name})"),
+                            (false, true) => format!("Collapse indicator legend ({pane_name})"),
+                        };
+                        // A pane with no indicators has no legend to fold, and
+                        // an entry that is enabled and does nothing reads as a
+                        // broken feature rather than as an empty chart.
+                        let has_legend = {
+                            let tab = self.active_tab();
+                            !tab.pane(tab.focused_side()).indicators.all().is_empty()
                         };
                         if ui
-                            .add(
+                            .add_enabled(
+                                has_legend,
                                 egui::Button::new(legend_label)
                                     .shortcut_text(ui.ctx().format_shortcut(&LEGEND_SHORTCUT)),
                             )
                             .on_hover_text(
-                                "Folds the healthy rows to a count. Errored and stale indicators stay on the chart.",
+                                "Folds the healthy rows to a count on the focused chart. Errored and stale indicators stay on it.",
+                            )
+                            .on_disabled_hover_text(
+                                "This chart has no indicators, so there is no legend to fold",
                             )
                             .clicked()
                         {
@@ -18840,6 +18876,59 @@ plot(close)
             app.inspector_moved,
             "and counts as hand-placed, so automatic placement does not undo it"
         );
+    }
+
+    /// Both folded legends come back folded — the time pane's included.
+    ///
+    /// The time pane does not exist on the frame the workspace is restored:
+    /// `set_layout` only arms it and `apply_pending_layout` builds it on the
+    /// next one. A restore that wrote the fold straight into `time_pane`
+    /// would write it into `None`, the pane would open expanded, and the
+    /// following `capture_arrangement` would persist that `false` back over
+    /// the trader's choice — losing it permanently rather than for one
+    /// session. Driving two frames is what makes this test able to fail.
+    #[test]
+    fn both_panes_reopen_with_the_legend_the_trader_folded() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(50);
+        app.restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::TimeAndFlow,
+                split_fraction: Some(0.5),
+                focus: Some(ui_state::SavedFocus::Flow),
+                flow_bars: "tick:50".to_owned(),
+                time_bars: Some("time:1m".to_owned()),
+                flow_legend_collapsed: true,
+                time_legend_collapsed: true,
+            }],
+            None,
+        ));
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let tab = app.active_tab();
+        assert!(
+            tab.flow_pane.legend_collapsed,
+            "the flow pane reopens folded"
+        );
+        assert!(
+            tab.time_pane
+                .as_ref()
+                .expect("the split was restored")
+                .legend_collapsed,
+            "and so does the time pane, built a frame after the restore"
+        );
+
+        // The round trip closes here: what is captured next must be what was
+        // restored, or the choice survives the open and dies on the save.
+        let (tabs, _chrome) = app.capture_arrangement();
+        assert!(tabs[0].flow_legend_collapsed);
+        assert!(tabs[0].time_legend_collapsed);
     }
 
     /// The BARS selectors read the pane's own fields, so restoring the state

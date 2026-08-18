@@ -12,12 +12,18 @@
 //! with its message computed and never shown (B1) — against the project's
 //! data-honesty rule; this surface is where that statement now lives.
 //!
-//! The legend collapses to a count puck, because the corner it sits in is the
+//! The legend collapses to a puck, because the corner it sits in is the
 //! corner a trader reads the newest bars in — and with a position open the
-//! HUD is already there. What collapses is only what is said twice: an
-//! overlay's value is on its own line against the price scale, a sub-pane's
-//! is in that pane's header. What is said *once* never collapses — see
-//! [`survives_collapse`], which is the invariant, not a promise.
+//! HUD is already there. A sub-pane's indicator keeps its name and value in
+//! that pane's own header, so folding its row costs nothing. An overlay's
+//! does *not*: nothing tags an overlay's last value against the price scale
+//! today, so what the fold takes from an overlay is its only readout. That is
+//! why the puck carries the plot colours rather than a bare count — the
+//! colour is what maps the line on the chart back to a name, and the hover
+//! gives the name and the number without unfolding.
+//!
+//! What is said *once* by the legend and nowhere else never collapses at all
+//! — see [`survives_collapse`], which is the invariant, not a promise.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
@@ -43,6 +49,17 @@ const ROW_HEIGHT_PX: f32 = 20.0;
 const ROW_SPACING_PX: f32 = 3.0;
 /// The frame's own vertical padding, top and bottom.
 const FRAME_PADDING_Y_PX: f32 = 5.0;
+/// How many folded indicators the puck names with their own colour dot before
+/// it gives up and counts the rest.
+///
+/// Four fits the puck without turning it into the row it replaced. Past that
+/// the dots stop being countable at a glance anyway, and the overflow reads
+/// as `+N` — still never a bare integer, which beside the position HUD is a
+/// number in the vocabulary of contracts.
+const MAX_PUCK_DOTS: usize = 4;
+/// How many folded indicators the puck's hover names before it says "+N more".
+/// A tooltip taller than the chart it covers is not a way to read anything.
+const MAX_HOVER_LINES: usize = 8;
 /// How far this legend drops below the position HUD when both claim the
 /// chart's top-left corner. See [`hud_offset_px`].
 const HUD_OFFSET_PX: f32 = 64.0;
@@ -126,14 +143,6 @@ fn row_count(views: &[IndicatorView], collapsed: bool) -> usize {
     1 + views.iter().filter(|view| survives_collapse(view)).count()
 }
 
-/// How many indicators the collapse actually folded away — what the puck
-/// counts. Zero when every indicator on the pane is unhealthy: they are all
-/// still on screen, and a puck claiming otherwise would be counting rows it
-/// did not hide.
-fn folded_count(views: &[IndicatorView]) -> usize {
-    views.iter().filter(|view| !survives_collapse(view)).count()
-}
-
 /// Draw the legend over `chart_rect`. A no-op with no indicators — an empty
 /// legend frame would be chart chrome with nothing to say.
 pub(crate) fn draw(
@@ -168,9 +177,27 @@ pub(crate) fn draw(
                         // about the dialog in front of the trader, not a fault
                         // in the indicator — but it is still stated here,
                         // because the dialog may be sitting behind the chart.
-                        draw_puck(ui, views, preview_slot.is_some(), &mut actions);
+                        // The chip belongs to the puck only when the
+                        // previewed indicator is one the puck actually hid.
+                        // An errored row that is also previewing keeps its
+                        // own line, and a puck announcing a preview beside a
+                        // row that says `error` describes a state the pane is
+                        // not in.
+                        let previewing_folded = views.iter().any(|view| {
+                            Some(view.slot) == preview_slot && !survives_collapse(view)
+                        });
+                        draw_puck(ui, views, previewing_folded, &mut actions);
                         for view in views.iter().filter(|view| survives_collapse(view)) {
-                            draw_row(ui, view, false, false, &mut actions);
+                            // Its own preview, not the puck's: a row that
+                            // kept its place through the fold states
+                            // everything about itself.
+                            draw_row(
+                                ui,
+                                view,
+                                preview_slot == Some(view.slot),
+                                false,
+                                &mut actions,
+                            );
                         }
                     } else {
                         for (index, view) in views.iter().enumerate() {
@@ -203,49 +230,107 @@ fn draw_puck(
     actions: &mut Vec<LegendAction>,
 ) {
     ui.horizontal(|ui| {
-        if chevron(ui, Some(COLLAPSED_CHEVRON))
-            .is_some_and(|response| response.on_hover_text(EXPAND_HINT).clicked())
+        // The whole puck answers the click, not just the 18 px glyph inside
+        // it. A control that looks bigger than it is teaches a trader to miss
+        // it — the same reason `draw_row` senses its identity region rather
+        // than its label. Laid out first, interacted with after, so the rect
+        // is the one that really got drawn.
+        let puck = ui
+            .scope(|ui| {
+                ui.horizontal(|ui| {
+                    chevron(ui, Some(COLLAPSED_CHEVRON));
+                    draw_folded_dots(ui, views);
+                    if previewing {
+                        ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
+                            .on_hover_text(
+                                "showing un-applied settings — Apply keeps, Discard reverts",
+                            );
+                    }
+                });
+            })
+            .response;
+        if ui
+            .interact(puck.rect, ui.id().with("legend-puck"), egui::Sense::click())
+            // Lazy: the summary is a string per folded indicator plus a join,
+            // and the eager form would build all of it every frame the legend
+            // is shut, for a tooltip shown on almost none of them. This is the
+            // render path.
+            .on_hover_ui(|ui| {
+                ui.label(EXPAND_HINT);
+                let summary = folded_summary(views);
+                if !summary.is_empty() {
+                    ui.label(summary);
+                }
+            })
+            .clicked()
         {
             actions.push(LegendAction::SetCollapsed(false));
-        }
-        let folded = folded_count(views);
-        if folded > 0 {
-            ui.label(
-                egui::RichText::new(folded.to_string())
-                    .small()
-                    .color(theme::TEXT_MUTED),
-            )
-            .on_hover_text(folded_summary(views));
-        }
-        if previewing {
-            ui.label(egui::RichText::new("preview").small().color(theme::ACCENT))
-                .on_hover_text("showing un-applied settings — Apply keeps, Discard reverts");
         }
     });
 }
 
-/// What the puck's hover says: one line per folded indicator, named and
-/// valued, so "which four?" is answered without opening anything.
-fn folded_summary(views: &[IndicatorView]) -> String {
-    let mut lines = Vec::new();
-    for view in views.iter().filter(|view| !survives_collapse(view)) {
-        let value = (!view.hidden)
-            .then(|| view.columns.first().and_then(|column| column.last()))
-            .flatten();
-        match value {
-            Some(value) => {
-                lines.push(format!(
-                    "{}  {}",
-                    view.label(),
-                    chart::compact_value(*value)
-                ));
-            }
-            // A hidden row has no value worth quoting — the same silence its
-            // expanded row keeps, for the same reason.
-            None => lines.push(view.label().to_owned()),
-        }
+/// The folded indicators, as their own plot colours.
+///
+/// A colour is what maps a line on the chart back to a name, so this says the
+/// most the puck can in the least room — and unlike a bare count it can never
+/// be read as a position size by a trader glancing under the HUD, where the
+/// numbers next door are quantities and prices. Past [`MAX_PUCK_DOTS`] the
+/// rest becomes `+N`, which keeps the number attached to the dots explaining
+/// it.
+fn draw_folded_dots(ui: &mut egui::Ui, views: &[IndicatorView]) {
+    let folded = folded_views(views);
+    for view in folded.iter().take(MAX_PUCK_DOTS) {
+        draw_status_dot(ui, view);
     }
-    lines.join("\n")
+    if folded.len() > MAX_PUCK_DOTS {
+        ui.label(
+            egui::RichText::new(format!("+{}", folded.len() - MAX_PUCK_DOTS))
+                .small()
+                .color(theme::TEXT_MUTED),
+        );
+    }
+}
+
+/// The rows the fold took off the chart, in the order they were added.
+fn folded_views(views: &[IndicatorView]) -> Vec<&IndicatorView> {
+    views
+        .iter()
+        .filter(|view| !survives_collapse(view))
+        .collect()
+}
+
+/// What the puck's hover says: one line per folded indicator, named and
+/// valued, so "which ones?" is answered without opening anything.
+///
+/// A row that is hidden or has display layers switched off says so here, in
+/// the words its expanded row used. Without them the summary would report a
+/// name and no number and leave the trader to guess whether the indicator is
+/// off, broken, or merely new — the same guess the expanded row never makes
+/// them make.
+fn folded_summary(views: &[IndicatorView]) -> String {
+    let folded = folded_views(views);
+    let mut lines: Vec<String> = folded
+        .iter()
+        .take(MAX_HOVER_LINES)
+        .map(|view| {
+            let value = (!view.hidden)
+                .then(|| view.columns.first().and_then(|column| column.last()))
+                .flatten();
+            match value {
+                Some(value) => format!("{}  {}", view.label(), chart::compact_value(*value)),
+                // A hidden row has no value worth quoting — the same silence
+                // its expanded row keeps, for the same reason.
+                None => format!("{}  hidden", view.label()),
+            }
+        })
+        .collect();
+    if folded.len() > MAX_HOVER_LINES {
+        lines.push(format!("+{} more", folded.len() - MAX_HOVER_LINES));
+    }
+    lines.join(
+        "
+",
+    )
 }
 
 /// The disclosure column every row reserves, whether or not it draws one.
@@ -268,10 +353,14 @@ fn chevron(ui: &mut egui::Ui, glyph: Option<&str>) -> Option<egui::Response> {
     ))
 }
 
-/// What the chevron's hover says on both halves of the gesture. One string so
-/// the two never drift into naming different keys.
-const EXPAND_HINT: &str = "show every indicator (L)";
-const COLLAPSE_HINT: &str = "collapse to a count — broken ones stay (L)";
+/// What the chevron's hover says on each half of the gesture.
+///
+/// The key is spelled the way `LEGEND_SHORTCUT` binds it — Ctrl+L. A tooltip
+/// that names a key the app does not answer to is worse than one that names
+/// none: the trader presses it, nothing happens, and the feature reads as
+/// broken rather than as mis-documented.
+const EXPAND_HINT: &str = "show every indicator (Ctrl+L)";
+const COLLAPSE_HINT: &str = "collapse to a count — broken ones stay (Ctrl+L)";
 
 /// One legend row. Status precedence matches the toolbar menu's dot:
 /// errored beats stale beats hidden — a broken indicator must never read as
@@ -662,17 +751,108 @@ mod tests {
             "the healthy rows fold away: {folded}"
         );
         assert!(
-            folded.contains('2'),
-            "the puck counts the two it hid: {folded}"
+            folded.contains("zigzag.pine") && folded.contains("error"),
+            "the broken one stays, and still says why: {folded}"
         );
-        assert!(
-            folded.contains("zigzag.pine"),
-            "the broken one stays: {folded}"
+
+        // The puck names what it hid with the plots' own colours. Counted as
+        // shapes rather than as text on purpose: a bare integer beside the
+        // position HUD reads as a quantity, so "there is no naked count here"
+        // is part of what this test holds.
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let mut dots = 0_usize;
+        for _ in 0..2 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                draw(ctx, 0, rect, views.all(), None, true);
+            });
+            dots = output
+                .shapes
+                .iter()
+                .filter(|shape| matches!(shape.shape, egui::epaint::Shape::Circle(_)))
+                .count();
+        }
+        assert_eq!(
+            dots, 2,
+            "one dot per folded indicator, and none for the row that stayed"
         );
 
         let open = painted_folded(&ctx, &views, false);
         assert!(open.contains("EMA(9, close)"), "expanded: {open}");
         assert!(open.contains("ATR(14)"), "expanded: {open}");
+    }
+
+    /// Preview rides the puck, and only when the puck actually hid the
+    /// indicator being previewed.
+    ///
+    /// Folding must not become a way to stop saying "the chart is showing
+    /// settings the state file does not hold" — the dialog that holds them
+    /// may be sitting behind the chart, which is why the chip exists at all.
+    /// The second half is the honesty half: an errored indicator keeps its
+    /// own row through the fold, so a puck that announced *its* preview would
+    /// be describing a state the pane is not in.
+    #[test]
+    fn preview_rides_the_puck_and_only_for_what_the_puck_hid() {
+        let ctx = egui::Context::default();
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+
+        let healthy = views_with(|views, slot| {
+            views.apply(IndicatorEvent::rebuilt(
+                slot,
+                descriptor("EMA(9, close)"),
+                vec![vec![101.5, 1_234.0]],
+            ));
+        });
+        let slot = healthy.all()[0].slot;
+        let painted = |views: &IndicatorViews, preview: Option<SlotId>| {
+            let mut text = String::new();
+            for _ in 0..2 {
+                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                    draw(ctx, 0, chart, views.all(), preview, true);
+                });
+                text.clear();
+                for shape in output.shapes {
+                    if let egui::epaint::Shape::Text(galley) = shape.shape {
+                        text.push_str(galley.galley.text());
+                        text.push(' ');
+                    }
+                }
+            }
+            text
+        };
+
+        let folded = painted(&healthy, Some(slot));
+        assert!(folded.contains("preview"), "the puck says it: {folded}");
+        assert!(
+            !folded.contains("EMA(9, close)"),
+            "without unfolding the row: {folded}"
+        );
+
+        // Same indicator, now broken and previewing: it keeps its own row, so
+        // the puck has nothing of its own to announce.
+        let broken = views_with(|views, slot| {
+            views.apply(IndicatorEvent::rebuilt(
+                slot,
+                descriptor("EMA(9, close)"),
+                vec![vec![101.5]],
+            ));
+            views.apply(IndicatorEvent::Error {
+                slot,
+                error: EvalError {
+                    bar_index: 3,
+                    message: "broken".to_owned(),
+                },
+            });
+        });
+        let broken_slot = broken.all()[0].slot;
+        let folded = painted(&broken, Some(broken_slot));
+        assert!(
+            !folded.contains("preview"),
+            "the puck folded nothing, so it announces no preview: {folded}"
+        );
+        assert!(
+            folded.contains("error"),
+            "the row still states it: {folded}"
+        );
     }
 
     /// Both halves of the gesture reach the app as one named outcome, so the

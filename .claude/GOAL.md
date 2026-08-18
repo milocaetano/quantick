@@ -11,10 +11,17 @@ Consultoria de UX com três desenhos concorrentes; o trader escolheu o C.
 - **Colapsado**: um puck `> N` com a contagem dos indicadores ocultos. O canto
   volta ao gráfico — com posição aberta e 4 indicadores, o topo-esquerdo
   ocupado cai de 163 px para 94 px, e a order-flow key sobe junto.
-- **A exceção não colapsa**: toda linha `error`, `stale` ou `preview` continua
-  desenhada inteira, com seus botões, **com a legenda fechada**. Não é
-  política, é invariante: o colapso nunca recebe poder sobre uma linha doente,
-  então nenhum refactor futuro consegue enterrar um erro ali.
+- **A exceção não colapsa**: toda linha `error` ou `stale` continua desenhada
+  inteira, com seus botões, **com a legenda fechada**. Não é política, é
+  invariante: o colapso nunca recebe poder sobre uma linha doente, então
+  nenhum refactor futuro consegue enterrar um erro ali.
+- **Preview veste o puck**, decidido durante a implementação e não no desenho
+  original: o chip âmbar "preview" vai para o próprio puck em vez de promover
+  a linha. Diz a mesma verdade no chart — que o gráfico mostra ajustes não
+  aplicados, e o dialog pode estar atrás dele — sem obrigar `stack_height_px`
+  a aprender qual slot está em preview através de três construtores de
+  `PaneChrome`. Preview é um estado da *sessão de configuração*, não uma
+  doença do indicador.
 - **Expandido**: idêntico a hoje, com o chevron prefixando a primeira linha —
   custo zero de altura no estado em que o trader mais fica.
 - **Por pane e persistente**: no split, fechar a legenda do pane de fluxo não
@@ -32,9 +39,10 @@ Consultoria de UX com três desenhos concorrentes; o trader escolheu o C.
    (`indicator_render.rs`), e não um segundo idioma de colapso.
 2. Colapsada, ela mostra o puck com a contagem dos ocultos; expandida, desenha
    exatamente o que desenha hoje.
-3. **Teste** provando que um indicador em `error` (e um em `stale`, e um em
-   `preview`) continua pintando sua linha e sua mensagem com a legenda
-   colapsada. A regra de honestidade de dados vira teste, não comentário.
+3. **Teste** provando que um indicador em `error` e um em `stale` continuam
+   pintando sua linha e sua mensagem com a legenda colapsada, e que o chip de
+   `preview` aparece no puck sem que a linha seja promovida. A regra de
+   honestidade de dados vira teste, não comentário.
 4. `stack_height_px` aprende o estado colapsado, e o teste de predição
    (`the_predicted_stack_height_covers_what_the_legend_actually_draws`) cobre a
    matriz colapsado × expandido × nº de linhas doentes. A order-flow key nunca
