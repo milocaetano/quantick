@@ -74,6 +74,17 @@ struct ToolPresets {
     /// the version does not move.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     style: Option<StoredStyle>,
+    /// The tool's own configuration for new objects — a payload export,
+    /// exactly the shape a named preset holds. Added the same way and for
+    /// the same reason as `style`: absent in an older file, ignored by an
+    /// older build, so the format version stays put.
+    ///
+    /// Stored as the tool's opaque export rather than parsed here: this file
+    /// knows about tools, not about Fib levels, and the tool that wrote the
+    /// table is the one that reads it back through `import_preset` — which
+    /// already refuses a table it does not recognise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    config: Option<toml::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -239,6 +250,16 @@ impl PresetHost for PresetStore {
         slot.style = style.map(StoredStyle::from_style);
         self.persist();
     }
+
+    fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
+        self.tools.get(tool_id)?.config.clone()
+    }
+
+    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
+        let slot = self.tools.entry(tool_id.to_owned()).or_default();
+        slot.config = value;
+        self.persist();
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +336,69 @@ mod tests {
         store.delete_custom_preset("fib-extension", "targets+");
         assert_eq!(store.default_preset("fib-extension"), None);
         assert!(store.custom_preset_names("fib-extension").is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The chore this removes is the one the trader actually complained
+    /// about: a Fib whose levels, per-level colours and labels had to be
+    /// rebuilt every session, because the only thing that survived a restart
+    /// was the outline colour.
+    #[test]
+    fn a_default_configuration_survives_a_restart() {
+        let path = scratch_path("default-config");
+        let mine = sample_value("my-levels");
+        {
+            let mut store = PresetStore::load_from(&path);
+            assert_eq!(store.default_config("fib-retracement"), None);
+            store.set_default_config("fib-retracement", Some(mine.clone()));
+        }
+        let store = PresetStore::load_from(&path);
+        assert_eq!(store.default_config("fib-retracement"), Some(mine));
+        assert_eq!(
+            store.default_config("fib-extension"),
+            None,
+            "one tool's configuration is not every tool's"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Clearing it is a real state, not an absence the next save has to fix:
+    /// the reset button writes `None` and the file must come back empty.
+    #[test]
+    fn resetting_the_configuration_writes_the_absence_through() {
+        let path = scratch_path("reset-config");
+        {
+            let mut store = PresetStore::load_from(&path);
+            store.set_default_config("rectangle", Some(sample_value("boxy")));
+            store.set_default_config("rectangle", None);
+        }
+        let store = PresetStore::load_from(&path);
+        assert_eq!(store.default_config("rectangle"), None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file written before the configuration slot existed still reads —
+    /// the key is optional and the format version does not move for it.
+    #[test]
+    fn a_file_without_the_configuration_slot_still_loads() {
+        let path = scratch_path("older-file");
+        std::fs::write(
+            &path,
+            "version = 1
+
+[tools.\"trend-line\".style]
+color = \"#ff0000\"
+width_px = 2.0
+fill_alpha = 12
+",
+        )
+        .expect("the scratch file is writable");
+        let store = PresetStore::load_from(&path);
+        assert!(
+            store.default_style("trend-line").is_some(),
+            "the older file must still be read, not rejected"
+        );
+        assert_eq!(store.default_config("trend-line"), None);
         let _ = std::fs::remove_file(&path);
     }
 

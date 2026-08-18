@@ -129,11 +129,19 @@ impl DrawingToolImpl for Text {
     fn supports_stroke_width(&self) -> bool {
         false
     }
-    /// The one tool placed empty: its words are its content, and the field
-    /// that takes them is in the panel. Placing a note and being shown only
-    /// style icons leaves the trader with a grey "Note" and no way in.
-    fn opens_settings_on_place(&self) -> bool {
-        true
+    /// The one tool placed empty: its words are its content, so it takes the
+    /// caret on the chart the moment it lands. Placing a note and being shown
+    /// only style icons left the trader with a grey "Note" and no way in.
+    fn inline_text<'a>(&self, payload: &'a dyn DrawingPayload) -> Option<&'a str> {
+        payload
+            .as_any()
+            .downcast_ref::<TextPayload>()
+            .map(|payload| payload.text.as_str())
+    }
+    fn set_inline_text(&self, payload: &mut dyn DrawingPayload, text: String) {
+        if let Some(payload) = payload.as_any_mut().downcast_mut::<TextPayload>() {
+            payload.text = text;
+        }
     }
     /// …and what the width slot offers instead: the type size, so the size
     /// of a note is one click away from the note itself.

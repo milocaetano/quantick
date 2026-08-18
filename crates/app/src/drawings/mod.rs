@@ -131,6 +131,77 @@ pub trait PresetHost {
     /// asking me for this look every single time".
     fn default_style(&self, tool_id: &str) -> Option<DrawingStyle>;
     fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>);
+    /// Everything else a new object of this tool opens with — whatever the
+    /// tool's own payload exports, which for a Fib is the level list, the
+    /// per-level colours, the labels, the band and the span.
+    ///
+    /// The style pair above could not answer this: a Fib's colours are *per
+    /// level*, and they live in the payload, so "remember my look" was only
+    /// ever remembering the outline. Reaching for a named preset instead
+    /// meant inventing a name and then setting it as the default — two
+    /// dialogs to answer "like this one, from now on".
+    fn default_config(&self, tool_id: &str) -> Option<toml::Value>;
+    fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>);
+}
+
+/// What a new object of `tool` should open with, given everything the trader
+/// has told the app to remember. The one place that answer is assembled, so
+/// the click path, the scripted hooks and the tests can never open different
+/// objects from the same saved defaults.
+///
+/// Order is precedence, weakest first: the built-in look, then the saved
+/// default configuration, then the explicitly *named* default preset — a
+/// name the trader chose beats one they saved by pressing a button.
+#[must_use]
+pub fn new_drawing_from_defaults(host: &dyn PresetHost, tool: DrawingTool) -> NewDrawing {
+    let style = host
+        .default_style(tool.id())
+        .unwrap_or_else(|| tool.default_style());
+    let mut payload = tool.default_payload();
+    if let Some(value) = host.default_config(tool.id()) {
+        payload.import_preset(&value);
+    }
+    if let Some(name) = host.default_preset(tool.id())
+        && let Some(value) = host.load_custom_preset(tool.id(), &name)
+    {
+        payload.import_preset(&value);
+    }
+    NewDrawing { style, payload }
+}
+
+/// Remember this object's whole configuration as what new objects of its tool
+/// open with — the named call behind the inspector's "save as default", so a
+/// script or the future assistant can do it without the button.
+///
+/// Objects already on the chart are never touched: a default is a statement
+/// about the *next* object, and repainting the marks a trader has placed is a
+/// bulk edit nobody asked for.
+pub fn save_tool_default(host: &mut dyn PresetHost, drawing: &Drawing) {
+    let tool_id = drawing.tool.id();
+    host.set_default_style(tool_id, Some(drawing.style));
+    host.set_default_config(tool_id, drawing.payload.export_preset());
+}
+
+/// Forget everything saved for this tool, so new objects open the way they
+/// did out of the box — style, configuration and the named default preset.
+///
+/// The named preset itself is kept: this restores the factory *start*, it
+/// does not delete work the trader saved under a name.
+pub fn reset_tool_default(host: &mut dyn PresetHost, tool: DrawingTool) {
+    let tool_id = tool.id();
+    host.set_default_style(tool_id, None);
+    host.set_default_config(tool_id, None);
+    host.set_default_preset(tool_id, None);
+}
+
+/// Whether this tool has anything saved to forget — what the reset control
+/// reads, so it is absent rather than inert when there is nothing to undo.
+#[must_use]
+pub fn has_saved_default(host: &dyn PresetHost, tool: DrawingTool) -> bool {
+    let tool_id = tool.id();
+    host.default_style(tool_id).is_some()
+        || host.default_config(tool_id).is_some()
+        || host.default_preset(tool_id).is_some()
 }
 
 /// A host with no storage: custom presets are absent, saving reports success
@@ -165,6 +236,10 @@ impl PresetHost for NullPresetHost {
         None
     }
     fn set_default_style(&mut self, _tool_id: &str, _style: Option<DrawingStyle>) {}
+    fn default_config(&self, _tool_id: &str) -> Option<toml::Value> {
+        None
+    }
+    fn set_default_config(&mut self, _tool_id: &str, _value: Option<toml::Value>) {}
 }
 
 /// What an anchor's second coordinate means in the band being painted.
@@ -287,6 +362,9 @@ pub struct ToolFamily {
     /// Vector icon for the slot, painted instead of `icon` when non-empty —
     /// same contract as [`DrawingTool::icon_strokes`].
     pub icon_strokes: IconStrokes,
+    /// Anchor dots for the slot icon — same contract as
+    /// [`DrawingTool::icon_dots`].
+    pub icon_dots: IconDots,
 }
 
 /// A vector icon: polylines in the unit square (x right, y down), scaled to
@@ -295,6 +373,17 @@ pub struct ToolFamily {
 /// channel, Fibonacci levels — so the icon is registry data, not a special
 /// case in the chrome.
 pub type IconStrokes = &'static [&'static [(f32, f32)]];
+
+/// The dots of a vector icon: points in the same unit square, painted as
+/// small filled circles over the strokes.
+///
+/// They exist because the icons that needed them are icons *of a gesture*.
+/// A Fib is not a stack of lines — it is a leg the trader dragged, with the
+/// levels hung off it, and the two ends of that drag are what tells it apart
+/// from the extension's three. Every drawing platform draws these tools with
+/// their anchors marked for that reason. Registry data like the strokes, so
+/// the chrome never learns which tool it is painting.
+pub type IconDots = &'static [(f32, f32)];
 
 /// The implementation port every drawing plugs into. Selection visuals (halo
 /// and anchor handles) are common chrome painted by the wrapper, so a tool
@@ -310,6 +399,11 @@ trait DrawingToolImpl: Sync {
     /// Vector strokes painted in place of [`Self::icon`] when non-empty —
     /// see [`IconStrokes`].
     fn icon_strokes(&self) -> IconStrokes {
+        &[]
+    }
+    /// Anchor dots painted over [`Self::icon_strokes`] — see [`IconDots`].
+    /// Only meaningful alongside strokes: a font glyph draws its own.
+    fn icon_dots(&self) -> IconDots {
         &[]
     }
     fn hover_text(&self) -> &'static str;
@@ -366,16 +460,24 @@ trait DrawingToolImpl: Sync {
     fn anchor_snap(&self) -> AnchorSnap {
         AnchorSnap::Pointer
     }
-    /// Whether a freshly placed object of this tool needs its settings panel
-    /// opened straight away.
+    /// The words this object holds, when its content is words rather than
+    /// geometry. `None` for every tool but the note.
     ///
-    /// `false` for every tool whose object is complete the moment it is
-    /// drawn — which is all of them but one. A text note is placed *empty*,
-    /// and the field that gives it words is in the panel: without this it
-    /// arrives as a grey placeholder with no visible way to write in it.
-    fn opens_settings_on_place(&self) -> bool {
-        false
+    /// Declaring it is what earns the on-chart editor: a tool that holds
+    /// text is placed *empty*, so the host puts the caret in the object
+    /// itself the moment it lands. That used to be answered by opening the
+    /// settings panel, which typed the note in one place and showed it in
+    /// another — the eye crossing the screen between keystrokes, and the
+    /// object under the pointer reading "Note" in grey the whole time.
+    ///
+    /// Borrowed, never cloned: this is read on the frame path while the
+    /// editor is open, and a note can be a paragraph.
+    fn inline_text<'a>(&self, _payload: &'a dyn DrawingPayload) -> Option<&'a str> {
+        None
     }
+    /// Write the words back. Paired with [`Self::inline_text`]: a tool that
+    /// answers one answers both, and the editor is the only caller.
+    fn set_inline_text(&self, _payload: &mut dyn DrawingPayload, _text: String) {}
     /// Whether this tool is placed by a held drag instead of by N clicks.
     ///
     /// A freehand tool answers `0` from [`Self::required_points`], because
@@ -577,6 +679,12 @@ impl DrawingTool {
         self.0.icon_strokes()
     }
 
+    /// Anchor dots of the vector icon, `&[]` when it has none.
+    #[must_use]
+    pub fn icon_dots(self) -> IconDots {
+        self.0.icon_dots()
+    }
+
     #[must_use]
     pub fn name(self) -> &'static str {
         self.0.name()
@@ -613,9 +721,22 @@ impl DrawingTool {
         self.0.painted_bounds(anchors, chart)
     }
 
+    /// See [`DrawingToolImpl::inline_text`].
     #[must_use]
-    pub fn opens_settings_on_place(self) -> bool {
-        self.0.opens_settings_on_place()
+    pub fn inline_text(self, payload: &dyn DrawingPayload) -> Option<&str> {
+        self.0.inline_text(payload)
+    }
+
+    /// See [`DrawingToolImpl::set_inline_text`].
+    pub fn set_inline_text(self, payload: &mut dyn DrawingPayload, text: String) {
+        self.0.set_inline_text(payload, text);
+    }
+
+    /// Whether this tool's content is words — the question the host asks a
+    /// freshly placed object to decide whether it needs the caret.
+    #[must_use]
+    pub fn holds_text(self) -> bool {
+        self.inline_text(self.default_payload().as_ref()).is_some()
     }
 
     /// The stock look of a fresh object of this tool, before the trader's
@@ -1866,6 +1987,200 @@ mod tests {
             .expect("registered test tool")
     }
 
+    /// A second implementation of the preset port, remembering everything in
+    /// memory. The store on disk is the first; this one proves the port is a
+    /// port — nothing above it knows a file is involved — and lets the
+    /// defaults flow be tested without touching a real preset file.
+    #[derive(Debug, Default)]
+    struct MemoryPresetHost {
+        presets: std::collections::BTreeMap<(String, String), toml::Value>,
+        default_preset: std::collections::BTreeMap<String, String>,
+        styles: std::collections::BTreeMap<String, DrawingStyle>,
+        configs: std::collections::BTreeMap<String, toml::Value>,
+    }
+
+    impl PresetHost for MemoryPresetHost {
+        fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
+            self.presets
+                .keys()
+                .filter(|(id, _)| id == tool_id)
+                .map(|(_, name)| name.clone())
+                .collect()
+        }
+        fn load_custom_preset(&self, tool_id: &str, name: &str) -> Option<toml::Value> {
+            self.presets
+                .get(&(tool_id.to_owned(), name.to_owned()))
+                .cloned()
+        }
+        fn save_custom_preset(
+            &mut self,
+            tool_id: &str,
+            name: &str,
+            value: toml::Value,
+            overwrite: bool,
+        ) -> bool {
+            let key = (tool_id.to_owned(), name.to_owned());
+            if self.presets.contains_key(&key) && !overwrite {
+                return false;
+            }
+            self.presets.insert(key, value);
+            true
+        }
+        fn delete_custom_preset(&mut self, tool_id: &str, name: &str) {
+            self.presets.remove(&(tool_id.to_owned(), name.to_owned()));
+        }
+        fn default_preset(&self, tool_id: &str) -> Option<String> {
+            self.default_preset.get(tool_id).cloned()
+        }
+        fn set_default_preset(&mut self, tool_id: &str, name: Option<String>) {
+            match name {
+                Some(name) => self.default_preset.insert(tool_id.to_owned(), name),
+                None => self.default_preset.remove(tool_id),
+            };
+        }
+        fn default_style(&self, tool_id: &str) -> Option<DrawingStyle> {
+            self.styles.get(tool_id).copied()
+        }
+        fn set_default_style(&mut self, tool_id: &str, style: Option<DrawingStyle>) {
+            match style {
+                Some(style) => self.styles.insert(tool_id.to_owned(), style),
+                None => self.styles.remove(tool_id),
+            };
+        }
+        fn default_config(&self, tool_id: &str) -> Option<toml::Value> {
+            self.configs.get(tool_id).cloned()
+        }
+        fn set_default_config(&mut self, tool_id: &str, value: Option<toml::Value>) {
+            match value {
+                Some(value) => self.configs.insert(tool_id.to_owned(), value),
+                None => self.configs.remove(tool_id),
+            };
+        }
+    }
+
+    /// The complaint this closes, in one flow: configure a Fib once, say
+    /// "like this from now on", and the next one opens that way — colours,
+    /// levels and all — while the ones already drawn stay exactly as they
+    /// are. Then reset, and the tool opens the way it did out of the box.
+    #[test]
+    fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
+        use crate::drawings::fib::{FibPayload, LabelMode};
+
+        let mut host = MemoryPresetHost::default();
+        let fib = tool("fib-retracement");
+        let factory_levels = {
+            let payload = fib.default_payload();
+            payload
+                .as_any()
+                .downcast_ref::<FibPayload>()
+                .expect("fib payload")
+                .levels
+                .len()
+        };
+
+        // One object, configured by hand the way a trader would: fewer
+        // levels, one of them in its own colour, ratios read as ratios.
+        let mut drawings = Drawings::default();
+        assert!(!drawings.place(fib, ChartPoint::at(1.0, 100.0)));
+        assert!(drawings.place(fib, ChartPoint::at(9.0, 200.0)));
+        let mine = DrawingStyle {
+            color: egui::Color32::from_rgb(0x20, 0xC0, 0x80),
+            width_px: 2.5,
+            fill_alpha: 30,
+        };
+        {
+            let drawing = drawings.selected_mut().expect("placement selects");
+            drawing.style = mine;
+            let payload = drawing
+                .payload
+                .as_any_mut()
+                .downcast_mut::<FibPayload>()
+                .expect("fib payload");
+            payload.levels.truncate(3);
+            payload.levels[1].color = Some([0xFF, 0x00, 0x88]);
+            payload.label_mode = LabelMode::RatioPrice;
+        }
+        save_tool_default(&mut host, &drawings.items()[0].clone());
+
+        // The next one opens configured, with no name invented for it.
+        let fresh = new_drawing_from_defaults(&host, fib);
+        assert_eq!(fresh.style, mine, "the look travels with the configuration");
+        let fresh_fib = fresh
+            .payload
+            .as_any()
+            .downcast_ref::<FibPayload>()
+            .expect("fib payload");
+        assert_eq!(fresh_fib.levels.len(), 3);
+        assert_eq!(fresh_fib.levels[1].color, Some([0xFF, 0x00, 0x88]));
+        assert_eq!(fresh_fib.label_mode, LabelMode::RatioPrice);
+
+        // A tool that was never taught anything still opens factory-fresh.
+        let untouched = new_drawing_from_defaults(&host, tool("fib-extension"));
+        assert_eq!(untouched.style, tool("fib-extension").default_style());
+
+        // Reset puts the tool back the way it shipped...
+        reset_tool_default(&mut host, fib);
+        assert!(!has_saved_default(&host, fib));
+        let after_reset = new_drawing_from_defaults(&host, fib);
+        assert_eq!(
+            after_reset
+                .payload
+                .as_any()
+                .downcast_ref::<FibPayload>()
+                .expect("fib payload")
+                .levels
+                .len(),
+            factory_levels
+        );
+        assert_eq!(after_reset.style, fib.default_style());
+
+        // ...and the object on the chart never moved through any of it.
+        let on_chart = drawings.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<FibPayload>()
+            .expect("fib payload");
+        assert_eq!(on_chart.levels.len(), 3);
+        assert_eq!(drawings.items()[0].style, mine);
+    }
+
+    /// Precedence, stated once: a preset the trader *named* and chose as the
+    /// default beats one they saved by pressing a button, because naming it
+    /// was the more deliberate act.
+    #[test]
+    fn a_named_default_preset_outranks_the_button_saved_configuration() {
+        use crate::drawings::fib::{FibKind, FibPayload};
+
+        let mut host = MemoryPresetHost::default();
+        let fib = tool("fib-retracement");
+        let mut by_button = FibPayload::new(FibKind::Retracement);
+        by_button.levels.truncate(2);
+        host.set_default_config(fib.id(), by_button.export_preset());
+
+        let mut named = FibPayload::new(FibKind::Retracement);
+        named.levels.truncate(5);
+        host.save_custom_preset(
+            fib.id(),
+            "mine",
+            named.export_preset().expect("export"),
+            false,
+        );
+        host.set_default_preset(fib.id(), Some("mine".to_owned()));
+
+        let fresh = new_drawing_from_defaults(&host, fib);
+        assert_eq!(
+            fresh
+                .payload
+                .as_any()
+                .downcast_ref::<FibPayload>()
+                .expect("fib payload")
+                .levels
+                .len(),
+            5,
+            "the named default preset wins"
+        );
+    }
+
     /// The rectangle a popup must keep clear of is what the tool *paints*,
     /// not where its anchors sit. A fixed-range profile carries two anchors at
     /// one price and covers the axis; placing against the anchors walks around
@@ -1939,6 +2254,45 @@ mod tests {
             assert!(
                 !tool(id).icon_strokes().is_empty(),
                 "{id} replaced its glyph and must keep vector strokes"
+            );
+        }
+    }
+
+    /// The dots half of the same port: they live in the same unit square,
+    /// and a tool only has them alongside strokes — a font glyph draws its
+    /// own anchors or none at all, and dots floating over one would land
+    /// wherever the typeface happened to put its ink.
+    ///
+    /// The two Fib tools are named because their anchor counts are the whole
+    /// difference between their icons: drop the dots and the flyout offers
+    /// two rows of the same picture.
+    #[test]
+    fn icon_dots_stay_in_the_unit_square_and_only_accompany_strokes() {
+        for tool in DRAWING_TOOLS {
+            let dots = tool.icon_dots();
+            assert!(
+                dots.is_empty() || !tool.icon_strokes().is_empty(),
+                "{}: anchor dots need strokes to sit on",
+                tool.id()
+            );
+            for (x, y) in dots {
+                assert!(
+                    (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y),
+                    "{}: icon dot ({x}, {y}) leaves the unit square",
+                    tool.id()
+                );
+            }
+        }
+        for (id, anchors) in [("fib-retracement", 2), ("fib-extension", 3)] {
+            assert_eq!(
+                tool(id).icon_dots().len(),
+                anchors,
+                "{id}: the icon marks one dot per anchor of the gesture"
+            );
+            assert_eq!(
+                tool(id).icon_dots().len(),
+                tool(id).required_points(),
+                "{id}: the icon and the tool must agree on how many anchors it takes"
             );
         }
     }

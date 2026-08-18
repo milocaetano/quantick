@@ -27,7 +27,7 @@ use crate::chart::{self, PriceScale};
 use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
 use crate::drawings::{
-    self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings, PresetHost,
+    self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings,
 };
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
@@ -768,15 +768,15 @@ fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
 pub struct PaneChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
-    /// Raised when a tool that arrives empty was just placed, so the host
-    /// opens the settings panel for it.
+    /// Raised when a tool whose content is words was just placed, so the
+    /// host puts the caret in the object it just made.
     ///
-    /// Selecting a drawing raises the context bar, not the panel — but a
-    /// text note has no *content* until someone types it, and the field that
-    /// takes those words lives in the panel. Placing one and being shown a
-    /// row of style icons leaves the trader with an object that says "Note"
-    /// in grey and no way to make it say anything else.
-    pub open_settings: &'a mut bool,
+    /// Selecting a drawing raises the context bar, which is everything a
+    /// note needs *except* somewhere to type. This is that somewhere, and it
+    /// is on the chart: a note typed in a panel is read with the eye crossing
+    /// the screen between keystrokes, and until the first word lands the
+    /// object under the pointer just says "Note" in grey.
+    pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
     /// The symbol to name while the series is still empty.
@@ -3404,20 +3404,13 @@ impl ChartPane {
         point: ChartPoint,
         chrome: &mut PaneChrome<'_>,
     ) {
-        // A new object starts from the user's explicit default preset when
-        // one is set; existing objects are never touched by that choice.
+        // A new object starts from whatever the trader told the app to
+        // remember for this tool — assembled in one place, so the click path
+        // and the scripted one open the same object. Existing objects are
+        // never touched by that choice.
         let presets = chrome.presets;
         let completed = self.drawings.place_with(tool, band, point, |tool| {
-            let style = presets
-                .default_style(tool.id())
-                .unwrap_or_else(|| tool.default_style());
-            let mut payload = tool.default_payload();
-            if let Some(name) = presets.default_preset(tool.id())
-                && let Some(value) = presets.load_custom_preset(tool.id(), &name)
-            {
-                payload.import_preset(&value);
-            }
-            drawings::NewDrawing { style, payload }
+            drawings::new_drawing_from_defaults(presets, tool)
         });
         if completed {
             // One-shot by default; the toolbox repeat pin keeps the tool
@@ -3425,8 +3418,10 @@ impl ChartPane {
             if !chrome.toolrail.repeat() {
                 chrome.toolrail.arm(Tool::Pointer);
             }
-            if tool.opens_settings_on_place() {
-                *chrome.open_settings = true;
+            // A tool whose content is words asks for the caret, not for a
+            // panel — see `PaneChrome::begin_text_edit`.
+            if tool.holds_text() {
+                *chrome.begin_text_edit = true;
             }
             self.drawing_hover = None;
         }
@@ -6880,7 +6875,7 @@ mod tests {
         let mut toolrail = crate::toolrail::ToolRail::new();
         let presets =
             drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
-        let mut open_settings = false;
+        let mut begin_text_edit = false;
         let style = crate::style::ChartStyle::default();
         let mut paper = crate::paper_trading::PaperTrading::new();
         let footprint = crate::footprint_config::FootprintConfig::default();
@@ -6898,7 +6893,7 @@ mod tests {
                 let mut chrome = PaneChrome {
                     toolrail: &mut toolrail,
                     presets: &presets,
-                    open_settings: &mut open_settings,
+                    begin_text_edit: &mut begin_text_edit,
                     style: &style,
                     tz: crate::timezone::TzOffset::default(),
                     symbol: "TESTUSDT",

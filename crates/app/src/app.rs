@@ -68,6 +68,31 @@ const FIRST_TAB_ID: u64 = 0;
 const fn pane_ids(tab: u64) -> (u64, u64) {
     (tab * 2, tab * 2 + 1)
 }
+/// The note being typed on the chart: which object, and how it looked before
+/// the first keystroke.
+///
+/// The baseline rides here rather than in the collection's gesture
+/// coalescing, and that is not a style choice: the inspector, the context bar
+/// and every drag share that one gesture slot, and any of them closing theirs
+/// while a note is being typed would swallow the note's undo entry — leaving
+/// Ctrl+Z to take back the *placement* instead of the words. Same shape as
+/// `inspector_edit_baseline`, same reason.
+struct InlineTextEdit {
+    index: usize,
+    before: drawings::Drawing,
+}
+
+/// Id of the on-chart note editor's floating area. One editor at a time —
+/// the keyboard has one caret.
+const INLINE_TEXT_AREA_ID: &str = "inline-text-editor";
+/// What an empty note's field says before anything is typed.
+const INLINE_TEXT_HINT: &str = "Add text";
+/// Width of the field. Wide enough for a sentence, narrow enough that it does
+/// not cover the price it is annotating.
+const INLINE_TEXT_WIDTH_PX: f32 = 180.0;
+/// Type size the editor falls back to when the tool declares none.
+const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
+
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
 /// lands on screen — a demo the camera cannot see proves nothing.
@@ -226,9 +251,9 @@ enum SavedDefault {
 impl SavedDefault {
     const fn message(self) -> &'static str {
         match self {
-            Self::OneTool => "Saved - new drawings of this tool open with this look.",
-            Self::EveryTool => "Saved - every new drawing opens with this look.",
-            Self::Forgotten => "Forgotten - this tool goes back to the built-in look.",
+            Self::OneTool => "Saved - new drawings of this tool open configured like this one.",
+            Self::EveryTool => "Saved - every new drawing opens with this colour, width and fill.",
+            Self::Forgotten => "Reset - this tool goes back to how it opened out of the box.",
         }
     }
 }
@@ -792,6 +817,16 @@ pub struct QuantickApp {
     /// the placement just made. The request survives that and is applied on
     /// the far side of it.
     pending_open_settings: bool,
+    /// Raised by a placement whose tool holds words: the object just made
+    /// wants the caret. Consumed by [`Self::draw_inline_text_editor`] on the
+    /// same frame, which turns it into `inline_text_edit`.
+    pending_text_edit: bool,
+    /// The `QUANTICK_TEXT_NOTE` hook: place a note and open its editor on the
+    /// first drawn frame. See [`Self::apply_text_note_hook`].
+    pending_text_note: bool,
+    /// The note being typed on the chart — the on-chart editor's whole
+    /// state. See [`InlineTextEdit`].
+    inline_text_edit: Option<InlineTextEdit>,
     inspector_moved: bool,
     inspector_last_selection: Option<usize>,
     /// The selected object's context bar: the floating row of icons that
@@ -1199,6 +1234,9 @@ impl QuantickApp {
             inspector_pinned: false,
             inspector_open: false,
             pending_open_settings: false,
+            pending_text_edit: false,
+            pending_text_note: false,
+            inline_text_edit: None,
             inspector_moved: false,
             inspector_last_selection: None,
             context_bar: drawings::context_bar::ContextBar::default(),
@@ -1368,6 +1406,11 @@ impl QuantickApp {
         if let Ok(family_id) = std::env::var("QUANTICK_TOOLBOX_FLYOUT") {
             app.toolrail.request_flyout(family_id.trim().to_owned());
         }
+        // The on-chart note editor exists only between a placement and the
+        // first click elsewhere, so no click-free launch could photograph it
+        // without a hook — the same gap `QUANTICK_DRAWING_DRAFT` fills for a
+        // half-placed object.
+        app.pending_text_note = std::env::var("QUANTICK_TEXT_NOTE").is_ok_and(|value| value == "1");
         app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
         // How many anchors of the armed tool are already down when the run
@@ -5416,6 +5459,14 @@ impl QuantickApp {
                 // no pointer over it to arm or grab with.
             } else if self.drawing_delete_confirm {
                 self.drawing_delete_confirm = false;
+            } else if self.inline_text_edit.is_some() {
+                // A note being typed is its own layer, and it has to be one:
+                // egui clears widget focus at the top of the frame Escape
+                // arrives on, so by the time this stack runs the editor no
+                // longer looks focused — and without a layer of its own the
+                // press fell straight through to "drop the selection",
+                // taking away the context bar for the note just written.
+                self.end_inline_text_edit();
             } else if self.drawing_pane().drawings.draft().is_some() {
                 self.drawing_pane_mut().drawings.cancel_draft();
                 self.toolrail.arm(Tool::Pointer);
@@ -5878,18 +5929,21 @@ impl QuantickApp {
                 ui.horizontal(|ui| {
                     let style = drawing.style;
                     if ui
-                        .button("This tool")
+                        .button("Save as default")
                         .on_hover_text(format!(
-                            "New {} objects open with this colour, width and fill",
+                            "New {} objects open configured exactly like this one",
                             tool.name().to_lowercase()
                         ))
                         .clicked()
                     {
-                        drawing_presets.set_default_style(tool.id(), Some(style));
+                        drawings::save_tool_default(drawing_presets, drawing);
                         actions.saved_default = Some(SavedDefault::OneTool);
                     }
+                    // Style only, and that is not a shortcut: a Fib's level
+                    // list means nothing to a rectangle, so the one property
+                    // every tool shares is the only one this can carry.
                     if ui
-                        .button("All tools")
+                        .button("Colour on all tools")
                         .on_hover_text("Every new drawing opens with this colour, width and fill")
                         .clicked()
                     {
@@ -5898,16 +5952,16 @@ impl QuantickApp {
                         }
                         actions.saved_default = Some(SavedDefault::EveryTool);
                     }
-                    if drawing_presets.default_style(tool.id()).is_some()
+                    if drawings::has_saved_default(drawing_presets, tool)
                         && ui
-                            .button("Forget")
+                            .button("Reset to factory")
                             .on_hover_text(format!(
-                                "New {} objects go back to the built-in look",
+                                "New {} objects go back to how they opened out of the box",
                                 tool.name().to_lowercase()
                             ))
                             .clicked()
                     {
-                        drawing_presets.set_default_style(tool.id(), None);
+                        drawings::reset_tool_default(drawing_presets, tool);
                         actions.saved_default = Some(SavedDefault::Forgotten);
                     }
                 });
@@ -6183,6 +6237,195 @@ impl QuantickApp {
             self.commit_inspector_gesture();
         }
         Some((index, self.drawing_pane().drawings.items()[index].clone()))
+    }
+
+    /// Put the caret in a note, on the chart — the one call that opens the
+    /// editor, whether a placement, a double click or a script asked for it.
+    ///
+    /// Refused for an object that holds no words or is locked: a locked
+    /// object's geometry and content are both protected, and an editor that
+    /// opened and then dropped every keystroke would be worse than none.
+    fn begin_inline_text_edit(&mut self, index: usize) -> bool {
+        let Some(drawing) = self.drawing_pane().drawings.items().get(index) else {
+            return false;
+        };
+        if drawing.locked || drawing.tool.inline_text(drawing.payload.as_ref()).is_none() {
+            return false;
+        }
+        // Typing is one edit: the note as it stands is kept here and recorded
+        // when the editor closes, so undo takes back the note, not the last
+        // letter of it.
+        let before = drawing.clone();
+        self.drawing_pane_mut().drawings.select(Some(index));
+        self.inline_text_edit = Some(InlineTextEdit { index, before });
+        true
+    }
+
+    /// Close the editor, keeping whatever was typed and recording it as the
+    /// one edit it was.
+    fn end_inline_text_edit(&mut self) {
+        let Some(edit) = self.inline_text_edit.take() else {
+            return;
+        };
+        self.drawing_pane_mut()
+            .drawings
+            .record_edit_of(edit.index, edit.before);
+    }
+
+    /// Which note is being typed on the chart right now — what a second
+    /// operator reads to know the keyboard belongs to an object.
+    #[must_use]
+    pub fn inline_text_editing(&self) -> Option<usize> {
+        self.inline_text_edit.as_ref().map(|edit| edit.index)
+    }
+
+    /// The on-chart note editor: a field where the words will be, opened by
+    /// the placement that made the note.
+    ///
+    /// The panel used to be the only way in, which put the note under the
+    /// pointer and the field that fills it on the far side of the screen. The
+    /// context bar the selection already raises carries the rest — colour,
+    /// type size, lock, delete — so what was missing was never a panel, only
+    /// a caret.
+    fn draw_inline_text_editor(&mut self, ctx: &egui::Context) {
+        // A placement that asked for the caret gets it here, on the frame it
+        // happened: the object it made is the selected one.
+        if std::mem::take(&mut self.pending_text_edit)
+            && let Some(index) = self.drawing_pane().drawings.selected()
+        {
+            self.begin_inline_text_edit(index);
+        }
+        let Some(index) = self.inline_text_editing() else {
+            return;
+        };
+        // The object can go away underneath the editor — undo, delete, a tab
+        // switch — and the selection can move to another one. Either way the
+        // editor is over, and it must not write into whatever now sits at
+        // that index.
+        if self.drawing_pane().drawings.selected() != Some(index) {
+            self.end_inline_text_edit();
+            return;
+        }
+        let Some(chart) = self.drawing_pane().last_chart_area else {
+            self.end_inline_text_edit();
+            return;
+        };
+        let Some(bbox) = self.drawing_bbox_on_screen(chart, index) else {
+            self.end_inline_text_edit();
+            return;
+        };
+        let Some(drawing) = self.drawing_pane().drawings.items().get(index) else {
+            self.end_inline_text_edit();
+            return;
+        };
+        let tool = drawing.tool;
+        let Some(text) = tool.inline_text(drawing.payload.as_ref()) else {
+            self.end_inline_text_edit();
+            return;
+        };
+        // Read once, and only what the field needs: this runs every frame the
+        // editor is open, and the drawing behind it carries a boxed payload.
+        let mut buffer = text.to_owned();
+        let before = buffer.clone();
+        let size_px = tool
+            .glyph_size(drawing)
+            .map_or(INLINE_TEXT_FALLBACK_PX, |size| size.px);
+        let color = drawing.style.color;
+        let locked = drawing.locked;
+        if locked {
+            self.end_inline_text_edit();
+            return;
+        }
+
+        // Anchored where the words are painted, so the field opens over the
+        // object rather than beside it: the note is typed exactly where it
+        // will be read.
+        let inner = egui::Area::new(egui::Id::new(INLINE_TEXT_AREA_ID))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(bbox.left(), bbox.bottom()))
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .show(ctx, |ui| {
+                let response = ui.add(
+                    egui::TextEdit::multiline(&mut buffer)
+                        .font(egui::FontId::proportional(size_px))
+                        .text_color(color)
+                        .hint_text(INLINE_TEXT_HINT)
+                        .desired_rows(1)
+                        .desired_width(INLINE_TEXT_WIDTH_PX),
+                );
+                // The caret on the first frame: a field that opens unfocused
+                // asks for a click nobody was told about.
+                if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
+                    response.request_focus();
+                }
+                response
+            })
+            .inner;
+
+        if buffer != before {
+            let text = buffer.clone();
+            if let Some(drawing) = self.drawing_pane_mut().drawings.items_mut().get_mut(index) {
+                tool.set_inline_text(drawing.payload.as_mut(), text);
+            }
+        }
+        // Escape and clicking away both mean "done" — and Escape must not
+        // also fall through to the escape stack, which would drop the
+        // selection the bar is hanging off.
+        let escaped = inner.has_focus() && ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        if escaped {
+            ctx.memory_mut(|memory| memory.surrender_focus(inner.id));
+        }
+        if escaped || inner.lost_focus() {
+            self.end_inline_text_edit();
+        }
+    }
+
+    /// The `QUANTICK_TEXT_NOTE` hook: place a note in the middle of the
+    /// window and open its editor, through the same two calls a click makes.
+    fn apply_text_note_hook(&mut self) {
+        if !self.pending_text_note {
+            return;
+        }
+        let Some(tool) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.holds_text())
+        else {
+            return;
+        };
+        let (point, ready) = {
+            let pane = &self.active_tab().flow_pane;
+            let slots = pane.slots();
+            if pane.last_chart_area.is_none() || slots == 0 {
+                return;
+            }
+            let close = pane
+                .closed_bar(slots.saturating_sub(1))
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+                .unwrap_or(1.0);
+            let centre = pane
+                .last_auto_range
+                .filter(|(lo, hi)| hi > lo)
+                .map_or(close, |(lo, hi)| (lo + hi) / 2.0);
+            let visible = DEMO_VISIBLE_SLOTS.min(slots);
+            let slot = (slots - visible / 2).min(slots.saturating_sub(1));
+            (
+                drawings::ChartPoint::at_time(slot as f32 + 0.5, centre, pane.slot_open_time(slot)),
+                true,
+            )
+        };
+        debug_assert!(ready);
+        self.pending_text_note = false;
+        // Through the same door the click path uses, saved defaults and all.
+        let fresh = drawings::new_drawing_from_defaults(&self.drawing_presets, tool);
+        let placed = self.active_tab_mut().flow_pane.drawings.place_with(
+            tool,
+            &drawings::DrawingBand::Price,
+            point,
+            |_| fresh,
+        );
+        if placed && let Some(index) = self.drawing_pane().drawings.selected() {
+            self.begin_inline_text_edit(index);
+        }
     }
 
     /// The selected object's context bar.
@@ -7952,6 +8195,7 @@ impl QuantickApp {
         self.apply_scripted_view();
         self.apply_drawing_demo();
         self.apply_drawing_draft();
+        self.apply_text_note_hook();
         self.apply_venue_history_demo();
         self.apply_frvp_demo();
         self.apply_avwap_demo();
@@ -8154,7 +8398,7 @@ impl QuantickApp {
                         active_tab,
                         toolrail,
                         drawing_presets,
-                        pending_open_settings,
+                        pending_text_edit,
                         style,
                         tz,
                         layer_actions,
@@ -8164,7 +8408,7 @@ impl QuantickApp {
                     let mut chrome = CanvasChrome {
                         toolrail,
                         presets: drawing_presets,
-                        open_settings: pending_open_settings,
+                        begin_text_edit: pending_text_edit,
                         style,
                         tz: *tz,
                         capabilities,
@@ -8186,6 +8430,7 @@ impl QuantickApp {
         // Floating drawing controls must be registered after the opaque
         // central canvas so they stay in front of the chart.
         self.draw_drawing_context_bar(ctx, now);
+        self.draw_inline_text_editor(ctx);
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
         self.draw_strategy_popup(ctx);
@@ -10500,7 +10745,7 @@ plot(close)
             active_tab,
             toolrail,
             drawing_presets,
-            pending_open_settings,
+            pending_text_edit,
             style,
             tz,
             layer_actions,
@@ -10511,7 +10756,7 @@ plot(close)
         let mut chrome = pane::PaneChrome {
             toolrail,
             presets: drawing_presets,
-            open_settings: pending_open_settings,
+            begin_text_edit: pending_text_edit,
             style,
             tz: *tz,
             symbol: &tab.symbol,
@@ -12896,28 +13141,32 @@ plot(close)
         }
     }
 
-    /// A Fib level is something price is *going* to meet. Drawn only between
-    /// the anchors, an extension's targets sit to the left of the leg that
-    /// projects them — backwards on its face — and they disappear behind the
-    /// tape the moment the market moves on. Reported from the running build.
+    /// A Fib level is something price is *going* to meet, so every kind opens
+    /// running to the right edge — a level nobody can see at current price is
+    /// not a level. Where the lines *begin* is the part that differs, and it
+    /// is the tool's question, not one shared default:
+    ///
+    /// - a retracement is read across the leg it measures, so it begins at
+    ///   the first anchor and the levels fill in under the pointer during the
+    ///   drag (reported from the running build: starting at the last anchor
+    ///   put every line on the far side of the cursor);
+    /// - an extension projects what comes *after* its last anchor, so drawing
+    ///   its targets back over the measured leg is backwards on its face.
     #[test]
-    fn fib_levels_project_forward_from_the_swing_by_default() {
+    fn each_fib_kind_opens_reaching_current_price_from_its_own_start() {
         use crate::drawings::fib::{Extend, FibPayload};
-        assert_eq!(
-            Extend::default(),
-            Extend::Forward,
-            "a level nobody can see at current price is not a level"
-        );
-        for tool in ["fib-retracement", "fib-extension"] {
+        for (tool, expected) in [
+            ("fib-retracement", Extend::Right),
+            ("fib-extension", Extend::Forward),
+        ] {
             let payload = drawing_tool(tool).default_payload();
             let fib = payload
                 .as_any()
                 .downcast_ref::<FibPayload>()
                 .expect("the fib tools carry a fib payload");
             assert_eq!(
-                fib.extend,
-                Extend::Forward,
-                "{tool} must open projecting forward from its last point"
+                fib.extend, expected,
+                "{tool} must open with the span its own question asks for"
             );
         }
     }
@@ -16275,32 +16524,141 @@ plot(close)
         }
     }
 
-    /// A text note is placed *empty* and its words live in the panel. Left to
-    /// the context bar alone, the trader gets a grey "Note" and a row of
-    /// style icons with no way in.
+    /// A text note is placed *empty*, and its words are its content — so the
+    /// caret goes into the object, on the chart, on the frame it lands. It
+    /// used to open the settings panel instead, which put the field on the
+    /// far side of the screen from the note being written.
     #[test]
-    fn placing_a_text_note_opens_the_panel_that_takes_its_words() {
+    fn placing_a_text_note_opens_the_editor_in_the_note_itself() {
         let (mut app, _commands) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        assert!(!app.inspector_open);
+        assert_eq!(app.inline_text_editing(), None);
 
         arm_drawing_from_toolbox(&mut app, &ctx, "text");
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
+        let index = app
+            .inline_text_editing()
+            .expect("the one tool that arrives empty takes the caret");
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items()[index].tool.id(),
+            "text"
+        );
         assert!(
-            app.inspector_open,
-            "the one tool that arrives empty opens the field that fills it"
+            ctx.memory(|memory| memory.focused().is_some()),
+            "the field opens focused: a caret nobody can see is a click nobody was told about"
+        );
+        assert!(
+            !app.inspector_open,
+            "the panel is no longer how a note is written"
         );
 
-        // …and no other tool does: the panel staying shut is the whole point.
-        app.inspector_open = false;
+        // …and no other tool takes the caret: the keyboard stays with the
+        // chart for everything whose content is geometry.
         arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
         click_chart(&mut app, &ctx, egui::pos2(640.0, 320.0));
         run_frame(&mut app, &ctx);
-        assert!(
-            !app.inspector_open,
-            "a line is complete when it is drawn; it gets the bar, not the panel"
+        assert_eq!(
+            app.inline_text_editing(),
+            None,
+            "a line is complete when it is drawn; it gets the bar, not a caret"
+        );
+    }
+
+    /// What is typed lands in the object, and Escape closes the editor
+    /// without eating the words — nor the selection the context bar hangs
+    /// off, which is the row that styles the note that was just written.
+    #[test]
+    fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "text");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        let index = app.inline_text_editing().expect("the editor is open");
+
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("daily high".to_owned())],
+        );
+        run_frame(&mut app, &ctx);
+        let note = |app: &QuantickApp| -> String {
+            let drawing = &app.active_tab().flow_pane.drawings.items()[index];
+            drawing
+                .tool
+                .inline_text(drawing.payload.as_ref())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        assert_eq!(note(&app), "daily high", "the words reach the object");
+
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.inline_text_editing(), None, "Escape closes the editor");
+        assert_eq!(note(&app), "daily high", "and keeps what was typed");
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.selected(),
+            Some(index),
+            "the note stays selected, so its context bar is still there"
+        );
+    }
+
+    /// Typing is one edit, not one per keystroke: undo takes the note back,
+    /// not the last letter of it.
+    #[test]
+    fn undo_after_typing_takes_the_whole_note_back() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        arm_drawing_from_toolbox(&mut app, &ctx, "text");
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        run_frame(&mut app, &ctx);
+        let index = app.inline_text_editing().expect("the editor is open");
+
+        for word in ["swing ", "low"] {
+            run_frame_with_events(&mut app, &ctx, vec![egui::Event::Text(word.to_owned())]);
+        }
+        run_frame(&mut app, &ctx);
+        // Close the editor: the typing gesture commits with it.
+        app.end_inline_text_edit();
+        assert!(app.active_tab_mut().flow_pane.drawings.undo());
+        let drawing = &app.active_tab().flow_pane.drawings.items()[index];
+        assert_eq!(
+            drawing.tool.inline_text(drawing.payload.as_ref()),
+            Some(""),
+            "one undo, the whole note"
+        );
+    }
+
+    /// The `QUANTICK_TEXT_NOTE` hook reaches the editor without a hand: it
+    /// places a note and opens it through the very calls a click makes, so a
+    /// screenshot of this state is a screenshot of the real surface.
+    #[test]
+    fn the_text_note_hook_opens_the_editor_without_a_click() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.pending_text_note = true;
+        run_frame(&mut app, &ctx);
+        let index = app
+            .inline_text_editing()
+            .expect("the hook opened the editor");
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items()[index].tool.id(),
+            "text"
         );
     }
 

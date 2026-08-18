@@ -104,8 +104,8 @@ impl From<CanvasLayout> for crate::config::DeclaredLayout {
 pub struct CanvasChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a crate::drawings::presets::PresetStore,
-    /// See [`PaneChrome::open_settings`].
-    pub open_settings: &'a mut bool,
+    /// See [`PaneChrome::begin_text_edit`].
+    pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
     /// What the running source can produce, for the layer menu's disabled
@@ -2088,7 +2088,7 @@ impl Tab {
             let mut chrome = PaneChrome {
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,
-                open_settings: chrome.open_settings,
+                begin_text_edit: chrome.begin_text_edit,
                 style: chrome.style,
                 tz: chrome.tz,
                 symbol,
