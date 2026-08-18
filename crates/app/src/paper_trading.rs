@@ -417,7 +417,49 @@ struct ReportView {
     /// a list that could not name its instrument would be the very gap
     /// this window exists to close.
     rows: Vec<HistoryRow>,
+    /// The realized-equity walk over `rows`, cut with the view rather than
+    /// re-walked on every frame.
+    equity: EquityWalk,
     report: PerformanceReport,
+}
+
+/// The realized-equity walk `E_0..E_n` (`E_0 = 0` before the first trade),
+/// in the two shapes its two readers need: exact points for the trade
+/// list's running total, and plot-ready `f32` with its bounds for the
+/// curve. Computed once when the view is cut — a window holding a year of
+/// trades must not walk them again sixty times a second.
+struct EquityWalk {
+    /// `n + 1` exact running totals in points.
+    points: Vec<Decimal>,
+    /// The same walk as the curve plots it.
+    plot: Vec<f32>,
+    low: f32,
+    high: f32,
+}
+
+impl EquityWalk {
+    fn of(rows: &[HistoryRow]) -> Self {
+        let mut points = Vec::with_capacity(rows.len() + 1);
+        let mut plot = Vec::with_capacity(rows.len() + 1);
+        points.push(Decimal::ZERO);
+        plot.push(0.0_f32);
+        let (mut low, mut high) = (0.0_f32, 0.0_f32);
+        let mut sum = Decimal::ZERO;
+        for row in rows {
+            sum = sum.saturating_add(row.trade.pnl_points);
+            points.push(sum);
+            let value = sum.to_f64().unwrap_or_default() as f32;
+            low = low.min(value);
+            high = high.max(value);
+            plot.push(value);
+        }
+        Self {
+            points,
+            plot,
+            low,
+            high,
+        }
+    }
 }
 
 /// One journal row loaded from disk: the trade, the symbol folder it came
@@ -3242,6 +3284,7 @@ impl PaperTrading {
         let hidden_outside = in_scope.len().saturating_sub(rows.len());
         let trades: Vec<ClosedTrade> = rows.iter().map(|row| row.trade.clone()).collect();
         let report = PerformanceReport::from_trades(&trades);
+        let equity = EquityWalk::of(&rows);
         self.report_view = Some(ReportView {
             period: self.report_period,
             source: self.report_source,
@@ -3251,6 +3294,7 @@ impl PaperTrading {
             hidden_outside,
             hidden_by_source,
             rows,
+            equity,
             report,
         });
     }
@@ -4133,19 +4177,9 @@ fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView) {
     }
     let painter = ui.painter_at(rect);
 
-    // The walk E_0..E_n, with E_0 = 0 before the first trade.
-    let mut equity = Vec::with_capacity(n + 1);
-    equity.push(0.0_f32);
-    let mut sum = Decimal::ZERO;
-    for row in &view.rows {
-        sum = sum.saturating_add(row.trade.pnl_points);
-        equity.push(sum.to_f64().unwrap_or_default() as f32);
-    }
-    let (mut low, mut high) = (0.0_f32, 0.0_f32);
-    for value in &equity {
-        low = low.min(*value);
-        high = high.max(*value);
-    }
+    // The walk E_0..E_n was cut with the view; the frame only plots it.
+    let equity = &view.equity.plot;
+    let (low, high) = (view.equity.low, view.equity.high);
     let span = (high - low).max(f32::EPSILON);
     let plot = egui::Rect::from_min_max(
         egui::pos2(rect.left() + CURVE_GUTTER_PX, rect.top() + 4.0),
@@ -4414,12 +4448,68 @@ fn draw_hover_card(
     }
 }
 
+/// The trade list's columns: caption and width in pixels, in paint order.
+/// One table, so the header row and every trade row can only ever agree
+/// about where a column begins.
+const TRADE_LIST_COLUMNS: [(&str, f32); 10] = [
+    ("#", 38.0),
+    ("DATE", 70.0),
+    ("TIME", 58.0),
+    ("SYMBOL", 66.0),
+    ("SIDE", 56.0),
+    ("ENTRY → EXIT", 122.0),
+    ("HELD", 52.0),
+    ("EXIT", 74.0),
+    ("PTS", 52.0),
+    ("EQUITY", 60.0),
+];
+
+/// One trade-list row's height. Tight on purpose: this is a table to scan,
+/// not a list to browse.
+const REPORT_LIST_ROW_H_PX: f32 = 17.0;
+
+/// Left padding inside a trade-list cell.
+const TRADE_LIST_CELL_PAD_PX: f32 = 4.0;
+
+/// The trade list's full width — the sum of its columns.
+fn trade_list_width() -> f32 {
+    TRADE_LIST_COLUMNS.iter().map(|(_, width)| width).sum()
+}
+
+/// Paint one row of cells on the shared column grid, each cut to its own
+/// column rather than allowed to run into the next one.
+fn paint_list_row(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    glyph_w: f32,
+    cells: &[(String, egui::Color32)],
+) {
+    let font = egui::FontId::monospace(10.0);
+    let mut x = rect.left();
+    for ((text, color), (_, width)) in cells.iter().zip(TRADE_LIST_COLUMNS) {
+        let budget = ((width - 2.0 * TRADE_LIST_CELL_PAD_PX) / glyph_w)
+            .floor()
+            .max(0.0) as usize;
+        painter.text(
+            egui::pos2(x + TRADE_LIST_CELL_PAD_PX, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            elide_tail(text, budget),
+            font.clone(),
+            *color,
+        );
+        x += width;
+    }
+}
+
 /// The trades behind the curve: every trade the filters kept, in closing
 /// order, each naming its date, instrument, side, round trip, result and
 /// why it ended. A performance screen without this is a shape with no
 /// story — "I see the chart and the number, but not which trades those
-/// were" is exactly the gap it closes. Returns whether the section's
-/// collapse control was clicked.
+/// were" is exactly the gap it closes.
+///
+/// Virtualised: the list holds whatever the filters kept — an "All" window
+/// can be thousands of trades — and only the rows on screen are ever laid
+/// out. Returns whether the section's collapse control was clicked.
 fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
     let mut toggled = false;
     ui.horizontal(|ui| {
@@ -4451,99 +4541,131 @@ fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
     if !open {
         return toggled;
     }
+    let width = trade_list_width();
+    let glyph_w = ui
+        .painter()
+        .layout_no_wrap(
+            "0".to_owned(),
+            egui::FontId::monospace(10.0),
+            theme::TEXT_MUTED,
+        )
+        .size()
+        .x
+        .max(1.0);
     // Wide by nature — ten columns of facts — and long by nature too. It
-    // scrolls inside its own bounded strip rather than pushing the window
-    // wider, being clipped into a half-read number, or growing until the
-    // metric grids beneath it are unreachable.
+    // scrolls both ways inside a bounded strip rather than pushing the
+    // window wider, clipping a number in half, or growing until the metric
+    // grids beneath it are out of reach. Row zero is the header, so it
+    // rides the same column grid and the same horizontal scroll.
     egui::ScrollArea::both()
         .id_salt("paper_report_trade_list")
         .max_height(REPORT_LIST_MAX_H_PX)
+        // Vertically it shrinks to its content: a five-trade window must
+        // not reserve the whole strip and push the grids off the screen.
         .auto_shrink([false, true])
-        .show(ui, |ui| {
-            egui::Grid::new("paper_report_trades")
-                .striped(true)
-                .spacing(egui::vec2(10.0, 2.0))
-                .show(ui, |ui| {
-                    for column in [
-                        "#",
-                        "DATE",
-                        "TIME",
-                        "SYMBOL",
-                        "SIDE",
-                        "ENTRY → EXIT",
-                        "HELD",
-                        "EXIT",
-                        "PTS",
-                        "EQUITY",
-                    ] {
-                        ui.label(caption(column));
+        .show_rows(
+            ui,
+            REPORT_LIST_ROW_H_PX,
+            view.rows.len() + 1,
+            |ui, range| {
+                for index in range {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(width, REPORT_LIST_ROW_H_PX),
+                        egui::Sense::hover(),
+                    );
+                    if !ui.is_rect_visible(rect) {
+                        continue;
                     }
-                    ui.end_row();
-                    let mut equity = Decimal::ZERO;
-                    for (index, row) in view.rows.iter().enumerate() {
-                        let trade = &row.trade;
-                        equity = equity.saturating_add(trade.pnl_points);
-                        let ink = |text: String| {
-                            egui::RichText::new(text)
-                                .monospace()
-                                .size(10.0)
-                                .color(theme::TEXT_MUTED)
-                        };
-                        ui.label(ink(format!("{}", index + 1)));
-                        ui.label(
-                            egui::RichText::new(CivilDate::from_ms(trade.closed_ms, view.tz).iso())
-                                .monospace()
-                                .size(10.0)
-                                .color(theme::TEXT_PRIMARY),
+                    if index == 0 {
+                        let cells: Vec<(String, egui::Color32)> = TRADE_LIST_COLUMNS
+                            .iter()
+                            .map(|(label, _)| ((*label).to_owned(), theme::TEXT_FAINT))
+                            .collect();
+                        paint_list_row(ui.painter(), rect, glyph_w, &cells);
+                        ui.painter().line_segment(
+                            [
+                                egui::pos2(rect.left(), rect.bottom()),
+                                egui::pos2(rect.right(), rect.bottom()),
+                            ],
+                            egui::Stroke::new(1.0_f32, theme::BORDER),
                         );
-                        ui.label(ink(crate::app::fmt_time(trade.closed_ms, view.tz)));
-                        ui.label(
-                            egui::RichText::new(row.symbol.clone())
-                                .monospace()
-                                .size(10.0)
-                                .color(theme::TEXT_PRIMARY),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!(
+                        continue;
+                    }
+                    let ordinal = index - 1;
+                    let row = &view.rows[ordinal];
+                    let trade = &row.trade;
+                    // The running total was cut with the view, so a row
+                    // deep in the list costs no more than the first.
+                    let equity = view
+                        .equity
+                        .points
+                        .get(index)
+                        .copied()
+                        .unwrap_or(Decimal::ZERO);
+                    if response.hovered() {
+                        ui.painter()
+                            .rect_filled(rect, egui::Rounding::ZERO, theme::BORDER);
+                    } else if ordinal % 2 == 1 {
+                        ui.painter()
+                            .rect_filled(rect, egui::Rounding::ZERO, theme::INSET);
+                    }
+                    let muted = theme::TEXT_MUTED;
+                    let cells = [
+                        (format!("{}", ordinal + 1), theme::TEXT_FAINT),
+                        (
+                            CivilDate::from_ms(trade.closed_ms, view.tz).iso(),
+                            theme::TEXT_PRIMARY,
+                        ),
+                        (crate::app::fmt_time(trade.closed_ms, view.tz), muted),
+                        (row.symbol.clone(), theme::TEXT_PRIMARY),
+                        (
+                            format!(
                                 "{} {}",
                                 position_word(trade.side),
                                 fmt_decimal(trade.quantity)
-                            ))
-                            .monospace()
-                            .size(10.0)
-                            .color(side_color(trade.side)),
-                        );
-                        ui.label(ink(format!(
-                            "{} → {}",
-                            fmt_decimal(trade.entry_price),
-                            fmt_decimal(trade.exit_price)
-                        )));
-                        ui.label(ink(fmt_duration_ms(
-                            trade.closed_ms.saturating_sub(trade.opened_ms),
-                        )));
-                        ui.label(ink(trade.exit_reason.as_str().replace('_', " ")));
-                        ui.label(
-                            egui::RichText::new(fmt_signed_points(trade.pnl_points))
-                                .monospace()
-                                .size(10.0)
-                                .color(points_color(trade.pnl_points)),
-                        );
-                        ui.label(
-                            egui::RichText::new(fmt_signed_points(equity))
-                                .monospace()
-                                .size(10.0)
-                                .color(points_color(equity)),
-                        )
-                        .on_hover_text(match row.source {
-                            Some(source) => format!("journaled as a {} session", source.as_str()),
-                            // Unrecorded is not live: a file from before
-                            // the source line existed says so out loud.
-                            None => "saved before quantick recorded a session source".to_owned(),
-                        });
-                        ui.end_row();
-                    }
-                });
-        });
+                            ),
+                            side_color(trade.side),
+                        ),
+                        (
+                            format!(
+                                "{} → {}",
+                                fmt_decimal(trade.entry_price),
+                                fmt_decimal(trade.exit_price)
+                            ),
+                            muted,
+                        ),
+                        (
+                            fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
+                            muted,
+                        ),
+                        (trade.exit_reason.as_str().replace('_', " "), muted),
+                        (
+                            fmt_signed_points(trade.pnl_points),
+                            points_color(trade.pnl_points),
+                        ),
+                        (fmt_signed_points(equity), points_color(equity)),
+                    ];
+                    paint_list_row(ui.painter(), rect, glyph_w, &cells);
+                    // Every fact the columns cannot hold whole, on hover -
+                    // including the session source, which is never guessed.
+                    response.on_hover_text(format!(
+                        "#{} · {} {} · {} → {} · {} pts · {} · held {} · {}",
+                        ordinal + 1,
+                        position_word(trade.side),
+                        fmt_decimal(trade.quantity),
+                        fmt_decimal(trade.entry_price),
+                        fmt_decimal(trade.exit_price),
+                        fmt_signed_points(trade.pnl_points),
+                        trade.exit_reason.as_str().replace('_', " "),
+                        fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
+                        match row.source {
+                            Some(source) => format!("{} session", source.as_str()),
+                            None => "saved before quantick recorded a source".to_owned(),
+                        },
+                    ));
+                }
+            },
+        );
     ui.add_space(6.0);
     toggled
 }
@@ -6519,6 +6641,74 @@ mod tests {
     fn utc_dates_format_from_the_same_civil_math() {
         assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
         assert_eq!(fmt_utc_minute(1_773_666_068_000), "2026-03-16 13:01");
+    }
+
+    /// The equity walk is cut with the view, not re-walked per frame, so
+    /// the curve above the list and the running total beside each trade
+    /// are literally the same numbers.
+    #[test]
+    fn the_equity_walk_is_cut_once_and_both_readers_share_it() {
+        let rows = vec![
+            row("X", None, trade_at(1_000, 5)),
+            row("X", None, trade_at(2_000, -12)),
+            row("X", None, trade_at(3_000, 4)),
+        ];
+        let walk = EquityWalk::of(&rows);
+        assert_eq!(walk.points.len(), rows.len() + 1, "E_0 rides in front");
+        assert_eq!(walk.points[0], Decimal::ZERO, "flat before the first trade");
+        assert_eq!(walk.points[1], Decimal::from(5));
+        assert_eq!(walk.points[2], Decimal::from(-7));
+        assert_eq!(walk.points[3], Decimal::from(-3));
+        assert_eq!(walk.plot.len(), walk.points.len());
+        assert!((walk.low - (-7.0)).abs() < f32::EPSILON, "the trough");
+        assert!((walk.high - 5.0).abs() < f32::EPSILON, "the peak");
+        // A view with no trades still has a walk, and it is the flat one.
+        let empty = EquityWalk::of(&[]);
+        assert_eq!(empty.points, vec![Decimal::ZERO]);
+        assert_eq!((empty.low, empty.high), (0.0, 0.0));
+    }
+
+    /// The rows the ledger builds each frame are bounded by the revealed
+    /// page, not by how much history is on disk. A trader with a year of
+    /// sessions must pay the same per-frame cost as one with a week.
+    #[test]
+    fn the_ledger_builds_a_bounded_number_of_rows_however_deep_the_history() {
+        let tz = TzOffset::new(-180);
+        let day = CivilDate::from_ymd(2026, 8, 17);
+        // Five thousand saved trades over fifty days.
+        let saved: Vec<ClosedTrade> = (0..5_000)
+            .map(|index| {
+                trade_at(
+                    day.offset_days(-(index / 100)).start_ms(tz) + i64::from(index % 100) * 60_000,
+                    1,
+                )
+            })
+            .collect();
+        let items: Vec<(&str, &ClosedTrade)> =
+            saved.iter().map(|trade| ("WINV26", trade)).collect();
+
+        let page = LedgerPage::of(items.len(), 1);
+        assert_eq!(page.shown, LEDGER_PAGE_TRADES);
+        assert_eq!(page.remaining, 4_950, "and the control says so out loud");
+        let mut rows = Vec::new();
+        push_by_day(
+            &mut rows,
+            &items[..page.shown],
+            tz,
+            |item| item.1,
+            |item| LedgerRow::Earlier(item.0, item.1),
+        );
+        // Fifty trades plus at most one day caption each — nowhere near
+        // the five thousand rows the pre-paging ledger would have built.
+        assert!(
+            rows.len() <= 2 * LEDGER_PAGE_TRADES,
+            "{} rows for a page of {LEDGER_PAGE_TRADES}",
+            rows.len()
+        );
+        // Revealing pages grows the list by one page at a time, never all
+        // at once.
+        let deeper = LedgerPage::of(items.len(), 2);
+        assert_eq!(deeper.shown - page.shown, LEDGER_PAGE_TRADES);
     }
 
     /// Everything a trader must be able to read off one ledger row: which
