@@ -1490,7 +1490,7 @@ impl PaperTrading {
             // side and what kind of order waits there. The price is the
             // chip's job, and the id only matters once you mean to act on
             // it, so both wait for the open form.
-            let text = if expanded {
+            let mut text = if expanded {
                 format!(
                     "#{} {} {} {} @ {}",
                     order.id.0,
@@ -1507,6 +1507,11 @@ impl PaperTrading {
                     fmt_decimal(order.quantity),
                 )
             };
+            // An order that can remove itself says so: without this, a
+            // retest limit vanishing at its target reads as a glitch.
+            if expanded && let Some(cancel) = order.cancel_at {
+                text.push_str(&format!(" · cancels @ {}", fmt_decimal(cancel)));
+            }
             // The ✕ is painted exactly when the press-side offers it —
             // one value, read twice, never two formulas.
             ctx.chip_tag(y, theme::ACCENT, &text, open.is_some_and(|tag| tag.cancel));
@@ -3010,15 +3015,21 @@ impl PaperTrading {
                         .monospace()
                         .color(side_color(order.side)),
                 );
+                let mut line = format!(
+                    "{} {} @ {}",
+                    kind_short(order.kind),
+                    fmt_decimal(order.quantity),
+                    order.price.map_or_else(String::new, fmt_decimal),
+                );
+                // The self-cancel level rides the row — an order that can
+                // vanish on its own never does so unannounced.
+                if let Some(cancel) = order.cancel_at {
+                    line.push_str(&format!(" · cancels @ {}", fmt_decimal(cancel)));
+                }
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} {} @ {}",
-                        kind_short(order.kind),
-                        fmt_decimal(order.quantity),
-                        order.price.map_or_else(String::new, fmt_decimal),
-                    ))
-                    .monospace()
-                    .color(theme::TEXT_PRIMARY),
+                    egui::RichText::new(line)
+                        .monospace()
+                        .color(theme::TEXT_PRIMARY),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
