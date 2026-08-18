@@ -434,10 +434,10 @@ pub(crate) struct ReportSnapshot<'a> {
     /// `None` — every symbol folder in scope.
     pub(crate) symbol: Option<&'a str>,
     pub(crate) source: SourceFilter,
-    /// The picked dates, when the calendar is what is cutting.
-    pub(crate) range: Option<DateRange>,
-    /// The anchor-relative period, when it is — never both at once.
-    pub(crate) period: Option<ReportPeriod>,
+    /// What cut this report. One value, not a pair of options: the two
+    /// filters are exclusive, and a pair could spell "both" or "neither" —
+    /// states the report has no meaning for.
+    pub(crate) window: ReportWindow,
     /// Saved trades the window keeps out, and those the Source filter does.
     pub(crate) hidden_outside: usize,
     pub(crate) hidden_by_source: usize,
@@ -445,15 +445,23 @@ pub(crate) struct ReportSnapshot<'a> {
     pub(crate) report: &'a PerformanceReport,
 }
 
-impl ReportSnapshot<'_> {
-    /// The window in force, in one phrase — picked dates when the calendar
-    /// is cutting, the anchor-relative period otherwise. The two are never
-    /// both in force, so one phrase can always say which it is.
-    pub(crate) fn window_label(&self) -> String {
-        match (self.range, self.period) {
-            (Some(range), _) => range.label(),
-            (None, Some(period)) => period.phrase(),
-            (None, None) => "nothing".to_owned(),
+/// Which filter is cutting the report. Exclusive by construction: a
+/// picked range takes over from the pills rather than intersecting with
+/// them, so exactly one of these is ever in force.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReportWindow {
+    /// Days the trader picked on the calendar.
+    Dates(DateRange),
+    /// The anchor-relative period pills.
+    Period(ReportPeriod),
+}
+
+impl ReportWindow {
+    /// The window in one phrase — absolute dates, or the pill's wording.
+    pub(crate) fn label(self) -> String {
+        match self {
+            Self::Dates(range) => range.label(),
+            Self::Period(period) => period.phrase(),
         }
     }
 }
@@ -614,6 +622,45 @@ enum LedgerRow<'a> {
     /// The control that reveals the next page of saved history, carrying
     /// how many trades are still held back.
     More(usize),
+}
+
+/// The ledger's totals over every saved trade in scope. Summed when the
+/// folder is read, never on the frame: walking a year of sessions sixty
+/// times a second to print one line is work nobody asked for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LedgerTotals {
+    trades: usize,
+    wins: usize,
+    net: Decimal,
+}
+
+impl LedgerTotals {
+    fn of<'a>(trades: impl Iterator<Item = &'a ClosedTrade>) -> Self {
+        let mut totals = Self::default();
+        for trade in trades {
+            totals.trades += 1;
+            if trade.pnl_points > Decimal::ZERO {
+                totals.wins += 1;
+            }
+            totals.net = totals.net.saturating_add(trade.pnl_points);
+        }
+        totals
+    }
+
+    /// The two sets the strip adds up: what is saved on disk and what this
+    /// session has closed since.
+    fn plus(self, other: Self) -> Self {
+        Self {
+            trades: self.trades + other.trades,
+            wins: self.wins + other.wins,
+            net: self.net.saturating_add(other.net),
+        }
+    }
+
+    /// Whole-percent win rate; `None` when there is nothing to divide by.
+    fn win_rate(self) -> Option<usize> {
+        (self.wins * 100).checked_div(self.trades)
+    }
 }
 
 /// How much saved history the ledger is showing and how much it is
@@ -877,6 +924,8 @@ pub struct PaperTrading {
     /// of sessions must not paint a year of rows to show today's.
     ledger_pages: usize,
     history_cache: Option<LoadedHistory>,
+    /// Totals over the saved history above, summed with the load.
+    saved_totals: LedgerTotals,
     /// Index into the session's closed trades selected in the ledger; the
     /// chart emphasizes that round trip.
     selected_trade: Option<usize>,
@@ -974,6 +1023,7 @@ impl PaperTrading {
             ledger_scope: ReportScope::Symbol,
             ledger_pages: 1,
             history_cache: None,
+            saved_totals: LedgerTotals::default(),
             selected_trade: None,
             bot_listening: false,
             bot_events: Vec::new(),
@@ -1004,6 +1054,7 @@ impl PaperTrading {
         self.journal_path = None;
         self.journal_warned = false;
         self.history_cache = None;
+        self.ledger_pages = 1;
         self.report = None;
         self.report_view = None;
         if self.report_open {
@@ -1064,6 +1115,7 @@ impl PaperTrading {
             self.symbol = symbol.to_owned();
             self.journal_path = None;
             self.history_cache = None;
+            self.ledger_pages = 1;
             self.selected_trade = None;
         }
     }
@@ -2939,10 +2991,20 @@ impl PaperTrading {
             ReportScope::Symbol => Some(self.symbol.as_str()),
             ReportScope::All => None,
         };
-        self.history_cache = Some(load_history(&self.dir, symbol, &self.session_journal_paths));
-        // A fresh read is a fresh list: keeping a deep page across a scope
-        // change would show a page count the new history cannot back.
+        let history = load_history(&self.dir, symbol, &self.session_journal_paths);
+        // The strip under the list sums every saved trade, not the revealed
+        // page, so it is summed once here rather than on every frame.
+        self.saved_totals = LedgerTotals::of(history.rows.iter().map(|row| &row.trade));
+        self.history_cache = Some(history);
+    }
+
+    /// Re-read the folder for a *changed scope* — the refresh button and
+    /// the symbol/scope switches. Unlike [`Self::reload_ledger`] this also
+    /// drops back to the first page: a deep page count cannot survive a
+    /// list it was never counted against.
+    fn rescope_ledger(&mut self) {
         self.ledger_pages = 1;
+        self.reload_ledger();
     }
 
     /// The Trades dock tab: the ledger of closed simulated trades — the
@@ -2993,7 +3055,7 @@ impl PaperTrading {
             });
         });
         if reload {
-            self.reload_ledger();
+            self.rescope_ledger();
         }
 
         ui.horizontal(|ui| {
@@ -3013,12 +3075,23 @@ impl PaperTrading {
                 .mark_timestamp_ms()
                 .zip(self.sim.position().map(|position| position.opened_ms))
                 .map(|(mark, opened)| mark.saturating_sub(opened));
-            draw_open_row(ui, &summary, self.sim.mark_price(), held_ms);
+            let symbol = (!self.symbol.is_empty()).then_some(self.symbol.as_str());
+            draw_open_row(ui, &summary, symbol, self.sim.mark_price(), held_ms);
         }
 
         let session: Vec<(usize, &ClosedTrade)> =
             self.sim.closed_trades().iter().enumerate().rev().collect();
-        let saved: Vec<(&str, &ClosedTrade)> = self
+        let saved_len = self
+            .history_cache
+            .as_ref()
+            .map_or(0, |cache| cache.rows.len());
+        // Only the revealed pages are turned into rows; the rest stay
+        // loaded and counted, which is what the control below them says.
+        // The `take` is the point — a year of sessions must cost the same
+        // per frame as a week of them, so the untouched tail is never even
+        // walked into a Vec.
+        let page = LedgerPage::of(saved_len, self.ledger_pages);
+        let earlier: Vec<(&str, &ClosedTrade)> = self
             .history_cache
             .as_ref()
             .map(|cache| {
@@ -3026,16 +3099,14 @@ impl PaperTrading {
                     .rows
                     .iter()
                     .rev()
+                    .take(page.shown)
                     .map(|row| (row.symbol.as_str(), &row.trade))
                     .collect()
             })
             .unwrap_or_default();
-        // Only the revealed pages are turned into rows; the rest stay
-        // loaded and counted, which is what the control below them says.
-        let page = LedgerPage::of(saved.len(), self.ledger_pages);
-        let earlier = &saved[..page.shown];
+        let earlier = earlier.as_slice();
 
-        if session.is_empty() && saved.is_empty() {
+        if session.is_empty() && saved_len == 0 {
             if self.position_summary().is_none() {
                 ui.add_space(12.0);
                 let headline = match self.ledger_scope {
@@ -3079,7 +3150,7 @@ impl PaperTrading {
             );
         }
         if !earlier.is_empty() {
-            rows.push(LedgerRow::Header("EARLIER SESSIONS", saved.len()));
+            rows.push(LedgerRow::Header("EARLIER SESSIONS", saved_len));
             push_by_day(
                 &mut rows,
                 earlier,
@@ -3092,23 +3163,16 @@ impl PaperTrading {
             rows.push(LedgerRow::More(page.remaining));
         }
 
-        // Totals over everything listed, computed before the scroll so the
-        // strip below can never disagree with the rows above it.
-        let mut total_trades = 0usize;
-        let mut total_wins = 0usize;
-        let mut net = Decimal::ZERO;
-        for trade in session
-            .iter()
-            .map(|(_, trade)| *trade)
-            .chain(saved.iter().map(|(_, trade)| *trade))
-        {
-            total_trades += 1;
-            if trade.pnl_points > Decimal::ZERO {
-                total_wins += 1;
-            }
-            net = net.saturating_add(trade.pnl_points);
-        }
+        // Totals over everything *in scope*, not everything listed: the
+        // rows above are one revealed page and the strip must not swing
+        // every time the trader reveals another. The saved half was summed
+        // when the folder was read; only this session's own trades — a
+        // handful — are counted here.
+        let totals = self
+            .saved_totals
+            .plus(LedgerTotals::of(self.sim.closed_trades().iter()));
 
+        let rows_listed = session.len() + earlier.len();
         let list_height = (ui.available_height() - TOTALS_STRIP_PX).max(LEDGER_ROW_HEIGHT_PX);
         let selected = self.selected_trade;
         // Session rows carry the chart's own instrument; a ledger row that
@@ -3161,20 +3225,31 @@ impl PaperTrading {
 
         ui.separator();
         ui.horizontal(|ui| {
-            let win_rate = (total_wins * 100)
-                .checked_div(total_trades)
+            let win_rate = totals
+                .win_rate()
                 .map_or_else(String::new, |rate| format!(" · {rate}% win"));
+            let scope = if page.remaining > 0 {
+                // The strip counts more than the list shows, so it says so
+                // rather than letting the two look like a contradiction.
+                format!(" · {} listed", rows_listed)
+            } else {
+                String::new()
+            };
             ui.label(
-                egui::RichText::new(format!("{total_trades} trades{win_rate}"))
+                egui::RichText::new(format!("{} trades{win_rate}{scope}", totals.trades))
                     .monospace()
                     .color(theme::TEXT_MUTED),
+            )
+            .on_hover_text(
+                "every trade in scope - this session plus the saved history, whether or not \
+                 the list has revealed it yet",
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(net)))
+                    egui::RichText::new(format!("{} pts", fmt_signed_points(totals.net)))
                         .monospace()
                         .strong()
-                        .color(points_color(net)),
+                        .color(points_color(totals.net)),
                 );
             });
         });
@@ -3238,8 +3313,9 @@ impl PaperTrading {
         Some(ReportSnapshot {
             symbol: self.report_symbol.as_deref(),
             source: view.source,
-            range: view.range,
-            period: view.range.is_none().then_some(view.period),
+            window: view
+                .range
+                .map_or(ReportWindow::Period(view.period), ReportWindow::Dates),
             hidden_outside: view.hidden_outside,
             hidden_by_source: view.hidden_by_source,
             rows: &view.rows,
@@ -3328,9 +3404,11 @@ impl PaperTrading {
         if self.report_days_key != Some(days_key) {
             self.report_days = DayIndex::build(in_scope.iter().map(|row| &row.trade), tz);
             self.report_days_key = Some(days_key);
-        }
-        if let Some(newest) = self.report_days.last() {
-            self.calendar.focus_month(newest);
+            // The days under the grid just changed — a new symbol, a new
+            // Source, another timezone. Follow them: leaving the grid
+            // parked on the month the *previous* scope ended in shows an
+            // empty August for a market that last traded in February.
+            self.calendar.month = self.report_days.last().map(CivilDate::month_start);
         }
 
         // A picked range is an explicit answer to "which days"; it takes
@@ -3375,7 +3453,7 @@ impl PaperTrading {
                 event_code = "PAPER_REPORT_CUT",
                 symbol = snapshot.symbol.unwrap_or("*"),
                 source = snapshot.source.label(),
-                window = %snapshot.window_label(),
+                window = %snapshot.window.label(),
                 trades = snapshot.rows.len(),
                 hidden_outside = snapshot.hidden_outside,
                 hidden_by_source = snapshot.hidden_by_source,
@@ -3412,7 +3490,12 @@ impl PaperTrading {
             })
             .show(ctx, |ui| {
                 reload = self.draw_report_filters(ui);
-                self.draw_report_calendar(ui);
+                self.draw_report_calendar(ui, tz);
+                // The rows above can retire the view — a picked day, a
+                // pill, a cleared range. Re-cutting it here rather than
+                // next frame is what keeps a click from flashing the empty
+                // state and collapsing the window for one frame.
+                self.ensure_report_view(tz);
                 ui.separator();
                 let list_open = self.report_list_open;
                 match &self.report_view {
@@ -3492,7 +3575,7 @@ impl PaperTrading {
                             self.report_symbol = default_symbol;
                             self.report_period = ReportPeriod::All;
                             self.report_source = SourceFilter::Real;
-                            self.calendar.clear();
+                            self.pick_report_dates(DaySelection::None);
                             reload = true;
                         }
                     }
@@ -3609,7 +3692,7 @@ impl PaperTrading {
                 if pill_toggle(ui, period.label(), on, hover).clicked() && !on {
                     // Reaching for a pill is a decision to stop filtering
                     // by date, so it says so rather than doing nothing.
-                    self.calendar.clear();
+                    self.pick_report_dates(DaySelection::None);
                     self.report_period = period;
                     self.report_view = None;
                 }
@@ -3687,7 +3770,7 @@ impl PaperTrading {
                     let mut text = format!(
                         "{} up to {} (newest saved trade, not the wall clock)",
                         view.period.phrase(),
-                        fmt_offset_date(anchor, view.tz),
+                        CivilDate::from_ms(anchor, view.tz).iso(),
                     );
                     if view.hidden_outside > 0 {
                         // "Where did my old trades go" gets a literal
@@ -3721,7 +3804,7 @@ impl PaperTrading {
     /// expanded - the month grid itself. Collapsed, the report keeps the
     /// layout it always had; expanded it answers "which days did I trade,
     /// and what happened on the 12th" without a text field.
-    fn draw_report_calendar(&mut self, ui: &mut egui::Ui) {
+    fn draw_report_calendar(&mut self, ui: &mut egui::Ui, tz: TzOffset) {
         ui.horizontal(|ui| {
             let picked = self.calendar.selection.range();
             let label = match picked {
@@ -3753,8 +3836,7 @@ impl PaperTrading {
                     .on_hover_text("clear the date filter and go back to the period pills")
                     .clicked()
                 {
-                    self.calendar.clear();
-                    self.report_view = None;
+                    self.pick_report_dates(DaySelection::None);
                 }
             } else if self.report_days.is_empty() {
                 ui.label(
@@ -3790,6 +3872,11 @@ impl PaperTrading {
             &self.report_days,
             &mut calendar,
             egui::vec2(CALENDAR_CELL_W_PX, CALENDAR_CELL_H_PX),
+            // Only reached when nothing on disk names a month. The
+            // calendar module is deliberately clock-free, so the host —
+            // which may read a clock — says where "no history at all"
+            // should open.
+            today(tz),
         );
         // The grid reports a pick; applying it is the named action's job,
         // never the paint's — the click and the hook take one path.
@@ -3883,6 +3970,7 @@ impl PaperTrading {
         let summary = crate::paper_home::consolidate_into(&self.dir, &[source]);
         self.show_toast(crate::paper_home::import_toast(&summary));
         self.history_cache = None;
+        self.ledger_pages = 1;
         if self.report_open {
             self.reload_report();
         }
@@ -5589,6 +5677,7 @@ fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
 fn draw_open_row(
     ui: &mut egui::Ui,
     summary: &PositionSummary,
+    symbol: Option<&str>,
     mark: Option<Decimal>,
     held_ms: Option<i64>,
 ) {
@@ -5634,6 +5723,7 @@ fn draw_open_row(
             // No stamp: the open position closes at a time nobody knows
             // yet, and a date on a trade still running would be a guess.
             stamp: None,
+            tag: symbol.map(str::to_owned),
         },
     );
 }
@@ -5650,6 +5740,11 @@ struct RowLines {
     /// and anchoring it opposite the detail means the two can only ever
     /// collide in the middle, where the elision is visible.
     stamp: Option<String>,
+    /// The instrument, riding the empty stretch of the head line between
+    /// the round trip and the points. It sat on the detail line first, and
+    /// the exit reason paid for it in elided characters — "stop …" is not
+    /// a fact, and the room to say "stop loss" was free one line up.
+    tag: Option<String>,
 }
 
 fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
@@ -5668,13 +5763,27 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
         font.clone(),
         theme::TEXT_MUTED,
     );
+    let mut head_right = rect.right() - DETAIL_RIGHT_PAD_PX;
     if let Some(points) = lines.points {
-        painter.text(
-            egui::pos2(rect.right() - 6.0, y1),
-            egui::Align2::RIGHT_CENTER,
+        let galley = painter.layout_no_wrap(
             fmt_signed_points(points),
-            font,
+            font.clone(),
             points_color(points),
+        );
+        let width = galley.size().x;
+        painter.galley(
+            egui::pos2(head_right - width, y1 - galley.size().y / 2.0),
+            galley,
+            points_color(points),
+        );
+        head_right -= width + DETAIL_GAP_PX;
+    }
+    if let Some(tag) = lines.tag {
+        let galley = painter.layout_no_wrap(tag, font.clone(), theme::TEXT_FAINT);
+        painter.galley(
+            egui::pos2(head_right - galley.size().x, y1 - galley.size().y / 2.0),
+            galley,
+            theme::TEXT_FAINT,
         );
     }
     // The detail line and its stamp share one row from opposite ends.
@@ -5765,7 +5874,7 @@ fn draw_ledger_row(
         egui::Rounding::ZERO,
         side_color(trade.side),
     );
-    let detail = ledger_detail(trade, symbol, tz);
+    let detail = ledger_detail(trade, tz);
     draw_row_lines(
         ui.painter(),
         rect,
@@ -5783,7 +5892,9 @@ fn draw_ledger_row(
             ),
             points: Some(trade.pnl_points),
             detail,
-            stamp: Some(CivilDate::from_ms(trade.closed_ms, tz).iso()),
+            // Compact: the day header directly above carries the year.
+            stamp: Some(CivilDate::from_ms(trade.closed_ms, tz).short()),
+            tag: symbol.map(str::to_owned),
         },
     );
     let mut navigate = false;
@@ -5819,24 +5930,18 @@ fn draw_ledger_row(
     }
 }
 
-/// The detail line under a ledger row: the instrument, the closing clock,
-/// how long the trade was held and why it ended. Instrument first — in a
-/// mixed-symbol ledger it is the field that decides whether the rest of
-/// the row is even about the market you are looking at. Pure, so a test
-/// can assert exactly what a trader will read.
-fn ledger_detail(trade: &ClosedTrade, symbol: Option<&str>, tz: TzOffset) -> String {
-    let mut detail = String::new();
-    if let Some(symbol) = symbol {
-        detail.push_str(symbol);
-        detail.push_str(" · ");
-    }
-    detail.push_str(&format!(
+/// The detail line under a ledger row: the closing clock, how long the
+/// trade was held, and why it ended. The instrument rides the head line
+/// (see `RowLines::tag`) and the date the right-hand stamp, so this line
+/// spends every character it has on the reason. Pure, so a test can assert
+/// exactly what a trader will read.
+fn ledger_detail(trade: &ClosedTrade, tz: TzOffset) -> String {
+    format!(
         "{} · {} · {}",
         crate::app::fmt_time(trade.closed_ms, tz),
         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
         trade.exit_reason.as_str().replace('_', " "),
-    ));
-    detail
+    )
 }
 
 /// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
@@ -5980,26 +6085,24 @@ fn fmt_utc_date(timestamp_ms: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-/// `YYYY-MM-DD` in the display timezone — the anchor date on the same
-/// calendar every other trade surface shows; a UTC date here named a day
-/// no displayed trade carried for anyone west of Greenwich after 21:00.
-fn fmt_offset_date(timestamp_ms: i64, tz: TzOffset) -> String {
-    let (year, month, day, ..) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
-/// `YYYY-MM-DD HH:MM` in UTC.
-#[cfg(test)]
-fn fmt_utc_minute(timestamp_ms: i64) -> String {
-    fmt_offset_minute(timestamp_ms, TzOffset::new(0))
-}
-
 /// `YYYY-MM-DD HH:MM` in the display timezone — the equity curve's hover
 /// stamp, on the same clock as every trade row beneath it.
 fn fmt_offset_minute(timestamp_ms: i64, tz: TzOffset) -> String {
     let (year, month, day, hour, minute, _) =
         civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+/// Today's civil date on the display clock. The app layer may read a wall
+/// clock — the engine and the pure modules may not — and this is the one
+/// place it does so for a date: the calendar's fallback when no saved
+/// trade names a month to open on.
+fn today(tz: TzOffset) -> CivilDate {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
+        .unwrap_or(0);
+    CivilDate::from_ms(now_ms, tz)
 }
 
 /// A protective price the ticket's offset away from the average entry:
@@ -6756,7 +6859,15 @@ mod tests {
     #[test]
     fn utc_dates_format_from_the_same_civil_math() {
         assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
-        assert_eq!(fmt_utc_minute(1_773_666_068_000), "2026-03-16 13:01");
+        assert_eq!(
+            fmt_offset_minute(1_773_666_068_000, TzOffset::new(0)),
+            "2026-03-16 13:01"
+        );
+        assert_eq!(
+            fmt_offset_minute(1_773_666_068_000, TzOffset::new(-180)),
+            "2026-03-16 10:01",
+            "the curve's stamp reads on the display clock"
+        );
     }
 
     /// The report answers as data, not only as pixels: the snapshot names
@@ -6798,26 +6909,28 @@ mod tests {
         let snapshot = paper.report_snapshot().expect("a snapshot");
         assert_eq!(snapshot.symbol, Some("WINV26"));
         assert_eq!(snapshot.source, SourceFilter::Real);
-        assert!(snapshot.range.is_none());
-        assert_eq!(snapshot.period, Some(ReportPeriod::All));
+        assert_eq!(snapshot.window, ReportWindow::Period(ReportPeriod::All));
         assert_eq!(snapshot.rows.len(), 2, "the practice run is filtered out");
         assert_eq!(snapshot.hidden_by_source, 1);
         assert_eq!(snapshot.report.net_points, Decimal::from(2));
-        assert_eq!(snapshot.window_label(), "everything saved");
+        assert_eq!(snapshot.window.label(), "everything saved");
 
         // The named action a script would call, then the same read-back.
         paper.pick_report_dates(DaySelection::None.click(day));
         paper.ensure_report_view(tz);
         let snapshot = paper.report_snapshot().expect("a snapshot");
-        assert_eq!(snapshot.range.map(DateRange::label), Some(day.iso()));
-        assert!(
-            snapshot.period.is_none(),
+        assert_eq!(
+            snapshot.window,
+            ReportWindow::Dates(DateRange {
+                start: day,
+                end: day
+            }),
             "a range and a period are never both in force"
         );
         assert_eq!(snapshot.rows.len(), 1);
         assert_eq!(snapshot.rows[0].symbol, "WINV26");
         assert_eq!(snapshot.hidden_outside, 1, "the next day sits outside");
-        assert_eq!(snapshot.window_label(), day.iso(), "and it names itself");
+        assert_eq!(snapshot.window.label(), day.iso(), "and it names itself");
         // The numbers the tiles show come from the very rows handed back.
         let net: Decimal = snapshot
             .rows
@@ -6852,9 +6965,42 @@ mod tests {
         assert_eq!((empty.low, empty.high), (0.0, 0.0));
     }
 
+    /// A revealed page must survive the ledger's own lazy first load.
+    /// `QUANTICK_LEDGER_PAGES` sets the page count during construction,
+    /// long before the Trades tab is first drawn; the load that tab
+    /// triggers used to reset it, so the hook reached page one and the
+    /// state it exists to photograph was unreachable.
+    #[test]
+    fn a_revealed_page_survives_the_ledgers_lazy_first_load() {
+        let dir =
+            std::env::temp_dir().join(format!("quantick-paper-pages-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut paper = PaperTrading::new();
+        paper.dir.clone_from(&dir);
+        paper.set_symbol("PAGEX");
+
+        paper.autostart_ledger_pages(3);
+        assert_eq!(paper.ledger_pages, 3);
+        // What the first `draw_trades_tab` does before painting a row.
+        assert!(paper.history_cache.is_none());
+        paper.reload_ledger();
+        assert_eq!(
+            paper.ledger_pages, 3,
+            "the lazy load must not retire the hook's page count"
+        );
+
+        // A *scope* change is the one thing that does reset it: a deep
+        // page cannot survive a list it was never counted against.
+        paper.rescope_ledger();
+        assert_eq!(paper.ledger_pages, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The rows the ledger builds each frame are bounded by the revealed
-    /// page, not by how much history is on disk. A trader with a year of
-    /// sessions must pay the same per-frame cost as one with a week.
+    /// page, and so is every other per-frame pass it makes. A trader with
+    /// a year of sessions must pay the same per-frame cost as one with a
+    /// week — which means the totals strip cannot walk the history either.
     #[test]
     fn the_ledger_builds_a_bounded_number_of_rows_however_deep_the_history() {
         let tz = TzOffset::new(-180);
@@ -6893,6 +7039,22 @@ mod tests {
         // at once.
         let deeper = LedgerPage::of(items.len(), 2);
         assert_eq!(deeper.shown - page.shown, LEDGER_PAGE_TRADES);
+
+        // And the strip under the list is summed with the load, not on the
+        // frame: the totals are a stored value, so the frame reads them
+        // rather than walking five thousand trades to print one line.
+        let totals = LedgerTotals::of(saved.iter());
+        assert_eq!(totals.trades, 5_000);
+        assert_eq!(totals.wins, 5_000, "every fixture trade is a winner");
+        assert_eq!(totals.net, Decimal::from(5_000));
+        assert_eq!(totals.win_rate(), Some(100));
+        // Nothing saved plus this session's own trades still adds up.
+        assert_eq!(
+            LedgerTotals::default().plus(totals),
+            totals,
+            "an empty half must be the identity"
+        );
+        assert_eq!(LedgerTotals::default().win_rate(), None, "0/0 is not 0%");
     }
 
     /// Everything a trader must be able to read off one ledger row: which
@@ -6905,29 +7067,31 @@ mod tests {
         let mut trade = trade_at(1_773_666_068_000, -25);
         trade.opened_ms = trade.closed_ms - 246_000;
         trade.exit_reason = quantick_sim::ExitReason::TakeProfit;
+        // The detail line spends every character it has on the reason:
+        // the instrument rides the head line and the date the right-hand
+        // stamp, precisely so "take profit" is never cut to "take prof…".
         assert_eq!(
-            ledger_detail(&trade, Some("WINV26"), utc),
-            "WINV26 · 13:01:08 · 4m 06s · take profit"
-        );
-        // Without a symbol in hand the row says nothing rather than
-        // inventing one — an unnamed market is better than a wrong one.
-        assert_eq!(
-            ledger_detail(&trade, None, utc),
+            ledger_detail(&trade, utc),
             "13:01:08 · 4m 06s · take profit"
         );
         assert_eq!(
-            CivilDate::from_ms(trade.closed_ms, utc).iso(),
-            "2026-03-16",
+            CivilDate::from_ms(trade.closed_ms, utc).short(),
+            "16 Mar",
             "the stamp opposite the detail carries the date"
+        );
+        assert_eq!(
+            CivilDate::from_ms(trade.closed_ms, utc).long(),
+            "Mon 16 Mar 2026",
+            "and the day header above it carries the year"
         );
         // The display timezone moves the clock and the stamp together.
         assert_eq!(
-            ledger_detail(&trade, Some("WINV26"), TzOffset::new(-180)),
-            "WINV26 · 10:01:08 · 4m 06s · take profit"
+            ledger_detail(&trade, TzOffset::new(-180)),
+            "10:01:08 · 4m 06s · take profit"
         );
         assert_eq!(
-            CivilDate::from_ms(trade.closed_ms, TzOffset::new(-180)).iso(),
-            "2026-03-16"
+            CivilDate::from_ms(trade.closed_ms, TzOffset::new(-180)).short(),
+            "16 Mar"
         );
     }
 
@@ -7059,7 +7223,7 @@ mod tests {
         // the range must win outright, not intersect.
         paper.report_period = ReportPeriod::Today;
 
-        paper.calendar.selection = paper.calendar.selection.click(first);
+        paper.pick_report_dates(paper.calendar.selection.click(first));
         paper.ensure_report_view(tz);
         let view = paper.report_view.as_ref().expect("a view");
         assert_eq!(view.rows.len(), 1, "one day, one trade");
@@ -7070,7 +7234,7 @@ mod tests {
         assert_eq!(view.hidden_outside, 3, "and it counts what it hides");
         assert_eq!(view.report.net_points, Decimal::from(5), "the tiles agree");
 
-        paper.calendar.selection = paper.calendar.selection.click(first.offset_days(5));
+        paper.pick_report_dates(paper.calendar.selection.click(first.offset_days(5)));
         paper.ensure_report_view(tz);
         let view = paper.report_view.as_ref().expect("a view");
         assert_eq!(view.rows.len(), 3, "both ends of the span are inside");
@@ -7082,7 +7246,7 @@ mod tests {
         assert_eq!(view.report.net_points, Decimal::from(10));
 
         // Clearing hands the window back to the pills, unchanged.
-        paper.calendar.clear();
+        paper.pick_report_dates(DaySelection::None);
         paper.report_period = ReportPeriod::All;
         paper.ensure_report_view(tz);
         let view = paper.report_view.as_ref().expect("a view");
@@ -7105,7 +7269,7 @@ mod tests {
             unreadable_files: 0,
             problem_rows: 0,
         });
-        paper.calendar.selection = paper.calendar.selection.click(day);
+        paper.pick_report_dates(paper.calendar.selection.click(day));
         paper.ensure_report_view(tz);
         let view = paper.report_view.as_ref().expect("a view");
         assert!(view.rows.is_empty());

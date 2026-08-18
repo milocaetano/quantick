@@ -153,6 +153,14 @@ impl CivilDate {
         format!("{year:04}-{month:02}-{day:02}")
     }
 
+    /// `17 Aug` — the compact stamp for a row that already sits under a
+    /// year-qualified day header. Short on purpose: the characters it does
+    /// not spend are characters the exit reason beside it gets to keep.
+    pub(crate) fn short(self) -> String {
+        let (_, month, day) = self.ymd();
+        format!("{day:02} {}", month_abbr(month))
+    }
+
     /// `Mon 17 Aug 2026` — the ledger's day header.
     pub(crate) fn long(self) -> String {
         let (year, month, day) = self.ymd();
@@ -253,22 +261,9 @@ pub(crate) struct DayStat {
 /// Which civil days hold trades, and what each one did. Built once per
 /// history load and per timezone — never per frame: a calendar repainting
 /// at 60 fps must not walk months of history to decide a cell's colour.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct DayIndex {
     days: BTreeMap<i64, DayStat>,
-    tz: TzOffset,
-}
-
-impl Default for DayIndex {
-    /// An empty index cut at UTC. `TzOffset` has no default of its own —
-    /// a timezone is a decision, not a zero — so the empty case states the
-    /// one it stands for rather than inheriting a silent guess.
-    fn default() -> Self {
-        Self {
-            days: BTreeMap::new(),
-            tz: TzOffset::new(0),
-        }
-    }
 }
 
 impl DayIndex {
@@ -276,6 +271,9 @@ impl DayIndex {
     /// the one the ledger, the equity curve and the period filter already
     /// agree on; indexing by open time would put a trade on a day whose
     /// P&L it did not produce.
+    /// The index does not keep `tz`: which timezone it was cut with is the
+    /// caller's cache key (`report_days_key`), because the caller is what
+    /// decides when to rebuild.
     pub(crate) fn build<'a>(trades: impl Iterator<Item = &'a ClosedTrade>, tz: TzOffset) -> Self {
         let mut days: BTreeMap<i64, DayStat> = BTreeMap::new();
         for trade in trades {
@@ -287,13 +285,7 @@ impl DayIndex {
             }
             stat.net = stat.net.saturating_add(trade.pnl_points);
         }
-        Self { days, tz }
-    }
-
-    /// The timezone the index was cut with — a changed display timezone
-    /// moves trades across midnight, so the index must be rebuilt.
-    pub(crate) fn tz(&self) -> TzOffset {
-        self.tz
+        Self { days }
     }
 
     /// What that day holds, or `None` when it holds nothing.
@@ -433,19 +425,6 @@ pub(crate) struct CalendarState {
     pub(crate) selection: DaySelection,
 }
 
-impl CalendarState {
-    /// Park the grid on the month that holds `date`, unless the user has
-    /// already paged somewhere themselves.
-    pub(crate) fn focus_month(&mut self, date: CivilDate) {
-        self.month.get_or_insert(date.month_start());
-    }
-
-    /// Drop the pick and let the period pills take over again.
-    pub(crate) fn clear(&mut self) {
-        self.selection = DaySelection::None;
-    }
-}
-
 /// Read a `YYYY-MM-DD` date, refusing anything that is not one. The
 /// parse must round-trip: `2026-02-30` normalises to March 2nd inside the
 /// civil algorithm, and silently answering a question nobody asked is
@@ -496,11 +475,15 @@ pub(crate) fn draw_month(
     index: &DayIndex,
     state: &mut CalendarState,
     cell: egui::Vec2,
+    fallback: CivilDate,
 ) -> Option<CalendarAction> {
+    // `fallback` comes from the caller because this module is deliberately
+    // clock-free. Without it an empty index fell back to epoch zero and
+    // opened the grid on January 1970 — a month nobody asked about.
     let anchor = state
         .month
         .or_else(|| index.last().map(CivilDate::month_start))
-        .unwrap_or_else(|| CivilDate::from_ms(0, index.tz()).month_start());
+        .unwrap_or_else(|| fallback.month_start());
     state.month = Some(anchor);
     let (year, month, _) = anchor.ymd();
     let mut action = None;
@@ -608,12 +591,10 @@ fn draw_day_cell(
         );
     } else if let Some(stat) = stat {
         // Tinted by the day's outcome: a month's shape is readable before
-        // a single number is.
-        let base = if stat.net >= Decimal::ZERO {
-            theme::BUY
-        } else {
-            theme::SELL
-        };
+        // a single number is. A day that netted exactly zero is neither —
+        // the same verdict `points_color` gives it everywhere else, and
+        // painting a scratch green would be the optimistic lie.
+        let base = crate::paper_trading::points_color(stat.net);
         ui.painter().rect_filled(
             body,
             egui::Rounding::same(3.0),
@@ -644,27 +625,33 @@ fn draw_day_cell(
         egui::FontId::monospace(11.0),
         ink,
     );
-    let hover = match stat {
-        Some(stat) => {
-            ui.painter().text(
-                egui::pos2(body.center().x, body.bottom() - DAY_COUNT_BASELINE_PX),
-                egui::Align2::CENTER_CENTER,
-                format!("{}", stat.trades),
-                egui::FontId::monospace(8.0),
-                theme::TEXT_FAINT,
-            );
-            format!(
-                "{} · {} trade(s) · {}{} pts · {} win",
+    if let Some(stat) = stat {
+        ui.painter().text(
+            egui::pos2(body.center().x, body.bottom() - DAY_COUNT_BASELINE_PX),
+            egui::Align2::CENTER_CENTER,
+            format!("{}", stat.trades),
+            egui::FontId::monospace(8.0),
+            theme::TEXT_FAINT,
+        );
+    }
+    // Built only for the cell under the pointer. Formatting all forty-two
+    // every frame was ~2500 allocations a second on the thread that paints
+    // the chart, for text at most one of them will ever show.
+    let response = response.on_hover_ui(|ui| {
+        ui.label(match stat {
+            // The same signed-points spelling the ledger and the tiles use
+            // — a day cannot net "+12.3456789" here and "+12.35" there.
+            Some(stat) => format!(
+                "{} · {} trade(s) · {} pts · {} win",
                 date.iso(),
                 stat.trades,
-                if stat.net >= Decimal::ZERO { "+" } else { "" },
-                stat.net.normalize(),
+                crate::paper_trading::fmt_signed_points(stat.net),
                 stat.wins,
-            )
-        }
-        None => format!("{} · no trades", date.iso()),
-    };
-    response.on_hover_text(hover).clicked()
+            ),
+            None => format!("{} · no trades", date.iso()),
+        });
+    });
+    response.clicked()
 }
 
 /// How strongly a day with trades is washed with its outcome colour.
@@ -911,6 +898,7 @@ mod tests {
     fn dates_print_the_way_every_surface_reads_them() {
         let date = CivilDate::from_ymd(2026, 8, 17);
         assert_eq!(date.iso(), "2026-08-17");
+        assert_eq!(date.short(), "17 Aug");
         assert_eq!(date.long(), "Mon 17 Aug 2026");
     }
 }
