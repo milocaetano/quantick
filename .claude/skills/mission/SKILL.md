@@ -32,8 +32,9 @@ before it. Step 7 hands over the line to paste.
    | Touches a hot path (per-trade, per-depth, per-frame) | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
    | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius (added vs. edited files) stated in the PR body |
+   | Adds something a trader *does* (an action, a tool, a trade, a lock) | drivable without a mouse — read `arch-review`'s *The second operator* and take its act/read/discover criteria from there, rather than from a summary that drifts. Where the capability class has no registry yet (there is none today for actions like a trade or a platform lock), carving one is part of the work, per `new-extension`'s carve-the-port rule — name it in the plan or state why the capability stays local |
    | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
-   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s six shape dimensions waived — its step 0 bug pass is not, and `pr-gate` still wants the marker, so the skill runs and reports what step 0 found |
+   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s seven shape dimensions waived — its step 0 bug pass is not, and `pr-gate` still wants the marker, so the skill runs and reports what step 0 found |
 
    Present the merged checklist to the user before starting work.
 
