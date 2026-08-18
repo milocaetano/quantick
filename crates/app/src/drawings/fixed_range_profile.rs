@@ -668,10 +668,23 @@ impl DrawingToolImpl for FixedRangeProfile {
                     && value_area.is_some_and(|area| bucket >= area.val && bucket <= area.vah)
             };
             let fill_limit = if outline_active { cut_x } else { None };
+            // A display row spans from the bucket's base price toward its
+            // higher edge — which way that is on screen follows the scale's
+            // orientation, so the rows tile the same price intervals either
+            // way up.
+            let row_edges = |bucket: i64| {
+                let base = ctxt.scale.y(to_f64(profile.bucket_price(bucket)));
+                let far = if ctxt.scale.is_inverted() {
+                    base + height
+                } else {
+                    base - height
+                };
+                (base, far)
+            };
             for (&bucket, level) in profile.levels() {
-                let y_bottom = ctxt.scale.y(to_f64(profile.bucket_price(bucket)));
-                let y_top = y_bottom - height;
-                if y_bottom < chart_rect.top() || y_top > chart_rect.bottom() {
+                let (y_base, y_far) = row_edges(bucket);
+                let (row_top, row_bottom) = (y_base.min(y_far), y_base.max(y_far));
+                if row_bottom < chart_rect.top() || row_top > chart_rect.bottom() {
                     continue;
                 }
                 #[allow(clippy::cast_possible_truncation)]
@@ -699,8 +712,8 @@ impl DrawingToolImpl for FixedRangeProfile {
                     let buy_tip = (left + buy_width).min(fill_tip);
                     painter.rect_filled(
                         egui::Rect::from_min_max(
-                            egui::pos2(left, y_top),
-                            egui::pos2(buy_tip, y_bottom),
+                            egui::pos2(left, row_top),
+                            egui::pos2(buy_tip, row_bottom),
                         ),
                         egui::Rounding::ZERO,
                         theme::BUY.gamma_multiply(alpha),
@@ -708,8 +721,8 @@ impl DrawingToolImpl for FixedRangeProfile {
                     if fill_tip > buy_tip {
                         painter.rect_filled(
                             egui::Rect::from_min_max(
-                                egui::pos2(buy_tip, y_top),
-                                egui::pos2(fill_tip, y_bottom),
+                                egui::pos2(buy_tip, row_top),
+                                egui::pos2(fill_tip, row_bottom),
                             ),
                             egui::Rounding::ZERO,
                             theme::SELL.gamma_multiply(alpha),
@@ -718,8 +731,8 @@ impl DrawingToolImpl for FixedRangeProfile {
                 } else {
                     painter.rect_filled(
                         egui::Rect::from_min_max(
-                            egui::pos2(left, y_top),
-                            egui::pos2(fill_tip, y_bottom),
+                            egui::pos2(left, row_top),
+                            egui::pos2(fill_tip, row_bottom),
                         ),
                         egui::Rounding::ZERO,
                         style.color.gamma_multiply(alpha),
@@ -735,11 +748,14 @@ impl DrawingToolImpl for FixedRangeProfile {
             // filled and outlined halves read as one object.
             if outline_active && let Some(base) = cut_x {
                 let mut segments: Vec<SilhouetteSegment> = Vec::new();
-                let mut previous: Option<(i64, f32, f32)> = None; // bucket, tip x, top y
+                // bucket, tip x, y of the row's far (higher-price) edge —
+                // which is the next row's base edge, either way up.
+                let mut previous: Option<(i64, f32, f32)> = None;
                 for (&bucket, level) in profile.levels() {
-                    let y_bottom = ctxt.scale.y(to_f64(profile.bucket_price(bucket)));
-                    let y_top = y_bottom - height;
-                    if y_bottom < chart_rect.top() || y_top > chart_rect.bottom() {
+                    let (y_base, y_far) = row_edges(bucket);
+                    if y_base.max(y_far) < chart_rect.top()
+                        || y_base.min(y_far) > chart_rect.bottom()
+                    {
                         continue;
                     }
                     #[allow(clippy::cast_possible_truncation)]
@@ -749,43 +765,43 @@ impl DrawingToolImpl for FixedRangeProfile {
                     let ex = (left + width).max(base);
                     let row_in_va = in_va(bucket);
                     match previous {
-                        Some((prev_bucket, prev_ex, prev_top)) if prev_bucket + 1 == bucket => {
+                        Some((prev_bucket, prev_ex, prev_far)) if prev_bucket + 1 == bucket => {
                             // Contiguous rows: one horizontal at the shared
                             // boundary, from tip to tip.
                             segments.push(SilhouetteSegment {
-                                from: egui::pos2(prev_ex, prev_top),
-                                to: egui::pos2(ex, y_bottom),
+                                from: egui::pos2(prev_ex, prev_far),
+                                to: egui::pos2(ex, y_base),
                                 in_va: row_in_va,
                             });
                         }
                         other => {
                             // A gap (or the first row): close the previous
                             // run down to the boundary and open this one.
-                            if let Some((_, prev_ex, prev_top)) = other {
+                            if let Some((_, prev_ex, prev_far)) = other {
                                 segments.push(SilhouetteSegment {
-                                    from: egui::pos2(prev_ex, prev_top),
-                                    to: egui::pos2(base, prev_top),
+                                    from: egui::pos2(prev_ex, prev_far),
+                                    to: egui::pos2(base, prev_far),
                                     in_va: row_in_va,
                                 });
                             }
                             segments.push(SilhouetteSegment {
-                                from: egui::pos2(base, y_bottom),
-                                to: egui::pos2(ex, y_bottom),
+                                from: egui::pos2(base, y_base),
+                                to: egui::pos2(ex, y_base),
                                 in_va: row_in_va,
                             });
                         }
                     }
                     segments.push(SilhouetteSegment {
-                        from: egui::pos2(ex, y_bottom),
-                        to: egui::pos2(ex, y_top),
+                        from: egui::pos2(ex, y_base),
+                        to: egui::pos2(ex, y_far),
                         in_va: row_in_va,
                     });
-                    previous = Some((bucket, ex, y_top));
+                    previous = Some((bucket, ex, y_far));
                 }
-                if let Some((_, prev_ex, prev_top)) = previous {
+                if let Some((_, prev_ex, prev_far)) = previous {
                     segments.push(SilhouetteSegment {
-                        from: egui::pos2(prev_ex, prev_top),
-                        to: egui::pos2(base, prev_top),
+                        from: egui::pos2(prev_ex, prev_far),
+                        to: egui::pos2(base, prev_far),
                         in_va: false,
                     });
                 }

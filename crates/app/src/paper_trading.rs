@@ -2497,10 +2497,14 @@ impl PaperTrading {
         if delta.abs() < CREATE_DECIDE_THRESHOLD_PX {
             return;
         }
-        // On screen, up is negative y; up is the profit side for a long.
+        // The leg is chosen by *price*, not by screen direction: on an
+        // inverted chart up is the loss side for a long, and reading pixels
+        // would hand the pull the wrong leg.
+        let above_entry =
+            scale.price_at(pointer_y) > position.avg_price.to_f64().unwrap_or_default();
         let profit_side = match position.side {
-            Side::Buy => delta < 0.0,
-            Side::Sell => delta > 0.0,
+            Side::Buy => above_entry,
+            Side::Sell => !above_entry,
         };
         self.drag = if profit_side {
             if position.take_profit.is_none() {

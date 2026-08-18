@@ -989,6 +989,11 @@ pub(crate) struct ProjectedLayout<'a> {
     /// the chart. `0.0` means the frame has no lane and the candles own the
     /// whole chart.
     pub(crate) lane_width_px: f32,
+    /// Whether the chart is upside down. The projection speaks in fractions
+    /// of the price window and knows nothing of orientation; the flip happens
+    /// here, at the same boundary where the candles' own scale flips, so the
+    /// map, the bubbles and the bars they sit on turn over together.
+    pub(crate) inverted: bool,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -1012,7 +1017,15 @@ impl<'a> ProjectedLayout<'a> {
             } else {
                 0.0
             },
+            inverted: false,
         }
+    }
+
+    /// The same layout upside down when `inverted` — see the field's note.
+    #[must_use]
+    pub(crate) fn with_inverted(mut self, inverted: bool) -> Self {
+        self.inverted = inverted;
+        self
     }
 
     #[must_use]
@@ -1148,7 +1161,9 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     fn y(self, normalized: f64) -> f32 {
-        self.chart_rect.top() + finite_unit_f64(normalized) as f32 * self.chart_rect.height()
+        let unit = finite_unit_f64(normalized) as f32;
+        let unit = if self.inverted { 1.0 - unit } else { unit };
+        self.chart_rect.top() + unit * self.chart_rect.height()
     }
 
     #[must_use]

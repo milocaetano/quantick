@@ -445,7 +445,7 @@ fn pane_pan_gesture(
             if delta != 0.0 && height > 1.0 {
                 let (lo, hi) = view.resolve(auto);
                 let per_px = (hi - lo) / f64::from(height);
-                view.pan(f64::from(delta) * per_px, auto);
+                view.pan_screen(f64::from(delta), per_px, auto);
             }
         }
     }
@@ -482,13 +482,23 @@ struct PaneGesture {
 ///
 /// `auto` is the range the last frame fitted; `None` means nothing has been
 /// computed to scale yet, and only the reset stays available.
+///
+/// `flips` is the price gutter's privilege: an expanding drag past the flip
+/// threshold turns the chart upside down ([`PriceView::drag_zoom`]), and the
+/// drag's sense mirrors with it — the same downward drag that flattened the
+/// chart grows it again past the flip. Indicator gutters pass `false`: a
+/// pane's values have no upside down. The wheel never flips on either.
+///
+/// Returns the band's response, so the price gutter can hang its context menu
+/// off the very region the gesture owns.
 fn axis_zoom_gesture(
     ui: &egui::Ui,
     id: egui::Id,
     band: egui::Rect,
     view: &mut PriceView,
     auto: Option<(f64, f64)>,
-) {
+    flips: bool,
+) -> egui::Response {
     let response = ui.interact(band, id, egui::Sense::click_and_drag());
     // The cursor is the affordance (audit F5): nothing else on the band says
     // it scales, mirroring the lane divider's own rule that the pointer's
@@ -500,14 +510,22 @@ fn axis_zoom_gesture(
         view.reset();
     }
     let Some(auto) = auto else {
-        return;
+        return response;
     };
     if response.dragged() {
-        // Drag up → compress the span (a taller trace); down → expand it.
-        view.zoom(
-            f64::from(response.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp(),
-            auto,
-        );
+        // Drag up → compress the span (a taller trace); down → expand it —
+        // mirrored once the chart is upside down.
+        let sense = if flips && view.is_inverted() {
+            -1.0
+        } else {
+            1.0
+        };
+        let factor = f64::from(sense * response.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp();
+        if flips {
+            view.drag_zoom(factor, auto);
+        } else {
+            view.zoom(factor, auto);
+        }
     }
     if response.hovered() {
         let scroll = ui.input(|input| input.raw_scroll_delta.y);
@@ -515,6 +533,7 @@ fn axis_zoom_gesture(
             view.zoom(f64::from(-scroll / AXIS_ZOOM_SCROLL_PX).exp(), auto);
         }
     }
+    response
 }
 
 /// Wheel travel that doubles or halves what a time axis shows.
@@ -915,6 +934,10 @@ pub struct ChartPane {
     // right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
     // second time is how two answers start to disagree.
     pub last_chart_rect: Option<egui::Rect>,
+    // The price gutter of the last draw, published for the same reason: the
+    // scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
+    // is really on the axis, not a guess about where the gutter probably is.
+    pub last_price_gutter: Option<egui::Rect>,
     // The automatic tape window at the last draw — the recent bars' typical
     // duration. Only the menu reads it, and only to state what "follows the
     // bars" currently amounts to; the drawing itself is handed the resolved
@@ -1167,6 +1190,7 @@ impl ChartPane {
             viewport: Viewport::new(),
             last_lane_divider_x: None,
             last_chart_rect: None,
+            last_price_gutter: None,
             last_lane_reference_ms: None,
             context_menu_on_tape: false,
             lane_rungs: 0,
@@ -2619,7 +2643,12 @@ impl ChartPane {
         self.history_prefix.clear();
         self.state = ChartState::new(self.current_spec());
         self.viewport = Viewport::new();
+        // Framing dies with the series; orientation is the trader's standing
+        // choice about the view, not about these bars — it survives the way
+        // the drawings do.
+        let inverted = self.price_view.is_inverted();
         self.price_view = PriceView::new();
+        self.price_view.set_inverted(inverted);
         self.last_auto_range = None;
         self.hover_pos = None;
         // Bars queued for the strategies belong to the series that just
@@ -4131,8 +4160,12 @@ impl ChartPane {
                             // Per *band* height: a pane is a fraction of the
                             // chart's, and dividing by the candles' would move
                             // a CVD level by a fraction of the distance the
-                            // pointer travelled.
-                            let delta_value = -f64::from(travel.y / band.rect.height()) * (hi - lo);
+                            // pointer travelled. The sign follows the band's
+                            // orientation — the object tracks the pointer,
+                            // not the price axis.
+                            let sign = if scale.is_inverted() { 1.0 } else { -1.0 };
+                            let delta_value =
+                                sign * f64::from(travel.y / band.rect.height()) * (hi - lo);
                             self.drawings.translate_selected(delta_bar, delta_value);
                             // Market time is what every other pane reads the
                             // object through; a move that left it behind
@@ -4220,7 +4253,8 @@ impl ChartPane {
             {
                 let (lo, hi) = self.price_view.resolve(auto);
                 let price_per_px = (hi - lo) / f64::from(height);
-                self.price_view.pan(f64::from(drag.y) * price_per_px, auto);
+                self.price_view
+                    .pan_screen(f64::from(drag.y), price_per_px, auto);
             }
         }
         // Not while a tool is armed: two placement clicks in a row are two
@@ -4280,7 +4314,8 @@ impl ChartPane {
                 {
                     let (lo, hi) = self.price_view.resolve(auto);
                     let price_per_px = (hi - lo) / f64::from(height);
-                    self.price_view.pan(f64::from(delta.y) * price_per_px, auto);
+                    self.price_view
+                        .pan_screen(f64::from(delta.y), price_per_px, auto);
                 }
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
@@ -4380,13 +4415,32 @@ impl ChartPane {
 
         // Right price gutter: the candles' own axis gesture. It spans their
         // height only — the bands below belong to the panes.
-        axis_zoom_gesture(
+        let price_gutter = axis_zoom_gesture(
             ui,
             self.interaction_id("price_nav"),
             areas.price_gutter,
             &mut self.price_view,
             auto,
+            true,
         );
+        // The axis's own menu: about the scale, not the canvas — the layer
+        // menu stays the canvas's right-click. One entry today; anything else
+        // the axis learns to do belongs here with it.
+        price_gutter.context_menu(|ui| {
+            let mut inverted = self.price_view.is_inverted();
+            if ui
+                .checkbox(&mut inverted, "Inverted chart")
+                .on_hover_text(
+                    "flip the chart upside down — low prices at the top. \
+                     Also reached by dragging the axis down until the bars \
+                     flatten and turn over",
+                )
+                .clicked()
+            {
+                self.price_view.set_inverted(inverted);
+                ui.close_menu();
+            }
+        });
 
         // The same gesture, once per pane, over the gutter band beside it.
         // Keyed by slot *and* pane id: slots are allocated per pane, so a
@@ -4414,6 +4468,7 @@ impl ChartPane {
                 *gutter,
                 &mut view.scale,
                 view.last_auto,
+                false,
             );
             if !body.collapsed {
                 // The body moves the scale the gutter scales. Registered after
@@ -4612,6 +4667,7 @@ impl ChartPane {
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
+        self.last_price_gutter = Some(areas.price_gutter);
         let pane_rects = areas.indicator_panes.clone();
         if total == 0 {
             painter.text(
@@ -4710,8 +4766,9 @@ impl ChartPane {
             return;
         };
         let auto_range = auto_scale.range();
-        let (lo, hi) = self.price_view.resolve(auto_range);
-        let scale = PriceScale::from_range(lo, hi, chart_rect.top(), chart_rect.bottom());
+        let scale = self
+            .price_view
+            .scale(auto_range, chart_rect.top(), chart_rect.bottom());
 
         let cw = self.viewport.candle_width();
         let half = chrome.style.candles.body_half_width(cw);
@@ -4772,6 +4829,7 @@ impl ChartPane {
                 frame,
                 canvas_background,
                 lane_width_px,
+                self.price_view.is_inverted(),
             );
         }
 
@@ -5067,6 +5125,7 @@ impl ChartPane {
                 frame,
                 canvas_background,
                 lane_width_px,
+                self.price_view.is_inverted(),
             );
         }
 
@@ -5519,6 +5578,7 @@ impl ChartPane {
                     .map(|auto| self.price_view.resolve(auto)),
                 top: areas.chart.top(),
                 bottom: areas.chart.bottom(),
+                inverted: self.price_view.is_inverted(),
             },
             &self.indicators,
             areas,
@@ -5655,11 +5715,9 @@ impl ChartPane {
     /// while it has no price range to project against.
     fn last_projection(&self) -> Option<(egui::Rect, f32, usize, PriceScale)> {
         let chart = self.last_chart_area?;
-        let (auto_lo, auto_hi) = self.last_auto_range?;
-        let (lo, hi) = self.price_view.resolve((auto_lo, auto_hi));
-        let scale = PriceScale::from_range(
-            lo,
-            hi,
+        let auto = self.last_auto_range?;
+        let scale = self.price_view.scale(
+            auto,
             self.last_chart_top,
             self.last_chart_top + self.last_chart_height,
         );
