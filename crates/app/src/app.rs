@@ -1685,6 +1685,71 @@ impl QuantickApp {
         if std::env::var("QUANTICK_PAPER_REPORT_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().paper.autostart_report();
         }
+        // The calendar the report grew: reachable open, on a chosen day or
+        // a chosen span, with no clicks at all.
+        if let Ok(spec) = std::env::var("QUANTICK_PAPER_CALENDAR") {
+            match crate::paper_calendar::parse_selection(&spec) {
+                Some(selection) => app.active_tab_mut().paper.autostart_calendar(selection),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "PAPER_CALENDAR_AUTOSTART_UNKNOWN",
+                    spec = %spec,
+                    action = "calendar_left_closed",
+                    "QUANTICK_PAPER_CALENDAR is not 1, YYYY-MM-DD or YYYY-MM-DD..YYYY-MM-DD"
+                ),
+            }
+        }
+        // Which instrument's saved history the ledger lists.
+        if let Ok(spec) = std::env::var("QUANTICK_LEDGER_SCOPE") {
+            let scope = match spec.trim() {
+                "chart" => Some(crate::paper_trading::LedgerScope::Chart),
+                "all" => Some(crate::paper_trading::LedgerScope::All),
+                "" => None,
+                symbol => Some(crate::paper_trading::LedgerScope::Symbol(symbol.to_owned())),
+            };
+            match scope {
+                Some(scope) => app.active_tab_mut().paper.set_ledger_scope(scope),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LEDGER_SCOPE_AUTOSTART_UNKNOWN",
+                    scope = %spec,
+                    action = "ledger_left_on_the_chart",
+                    "QUANTICK_LEDGER_SCOPE wants `chart`, `all`, or a symbol folder name"
+                ),
+            }
+        }
+        // And the ledger past its first page of saved history — a state
+        // only a click on "show older" otherwise reaches.
+        if let Ok(text) = std::env::var("QUANTICK_LEDGER_PAGES") {
+            match text.trim().parse::<usize>() {
+                Ok(pages) if pages >= 1 => {
+                    app.active_tab_mut().paper.autostart_ledger_pages(pages);
+                }
+                _ => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LEDGER_PAGES_AUTOSTART_UNKNOWN",
+                    pages = %text,
+                    action = "ledger_left_on_its_first_page",
+                    "QUANTICK_LEDGER_PAGES wants a whole number of pages, one or more"
+                ),
+            }
+        }
+        // Every day folded shut — the one-line-per-day read, which is
+        // otherwise a click on each header.
+        if std::env::var("QUANTICK_LEDGER_FOLD").is_ok_and(|value| value == "1") {
+            let tz = app.tz;
+            app.active_tab_mut().paper.autostart_folded_days(tz);
+        }
+        // The report's trade list is open by default, so the hook is how a
+        // capture reaches it collapsed.
+        if let Ok(value) = std::env::var("QUANTICK_PAPER_REPORT_LIST") {
+            app.active_tab_mut()
+                .paper
+                .set_report_list_open(value.trim() != "0");
+        }
         // Open on a named canvas layout, through the same path the View menu
         // takes. An env var is an explicit request for this run, so it wins
         // over a feed's declared `default_layout`.
