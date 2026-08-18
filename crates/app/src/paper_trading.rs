@@ -4031,7 +4031,11 @@ impl PaperTrading {
                 // back can I even ask" before the first click is made.
                 ui.label(
                     egui::RichText::new(format!(
-                        "{} day(s) with trades · {} → {}",
+                        // "to", not an arrow: this label is drawn in the
+                        // proportional UI font, which has no glyph for → and
+                        // renders a tofu box in its place (the same reason
+                        // DateRange::label spells its span with a word).
+                        "{} day(s) with trades · {} to {}",
                         self.report_days.len(),
                         oldest.iso(),
                         newest.iso(),
@@ -4301,7 +4305,9 @@ impl PaperTrading {
                     // must not paint over the could-not-save warning.
                     if saved {
                         self.show_toast(format!(
-                            "SIM closed: {} {} → {} pts ({})",
+                            // Same reason as the hover card above: the
+                            // toast is a proportional-font label.
+                            "SIM closed: {} {} for {} pts ({})",
                             position_word(trade.side),
                             fmt_decimal(trade.quantity),
                             fmt_signed_points(trade.pnl_points),
@@ -5031,8 +5037,12 @@ fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
                     paint_list_row(ui.painter(), rect, glyph_w, &cells);
                     // Every fact the columns cannot hold whole, on hover -
                     // including the session source, which is never guessed.
+                    // Spelled with words, not an arrow: a hover card is
+                    // drawn in the proportional UI font, which has no glyph
+                    // for → and paints a tofu box. The arrow survives in the
+                    // painted row above, which is monospace.
                     response.on_hover_text(format!(
-                        "#{} · {} {} · {} → {} · {} pts · {} · held {} · {}",
+                        "#{} · {} {} · {} to {} · {} pts · {} · held {} · {}",
                         ordinal + 1,
                         position_word(trade.side),
                         fmt_decimal(trade.quantity),
