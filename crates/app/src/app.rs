@@ -6314,8 +6314,7 @@ impl QuantickApp {
         // fallback for an object that covers the pane end to end, which clamps
         // against the pane's own right edge — and that path is reachable with
         // a full-height profile on a narrow split. It also keeps the popover
-        // bound honest: the palette is clamped into `reachable`, so a bar
-        // outside it would hang its own palette somewhere it is not.
+        // bound below honest, which is derived from where the bar ends up.
         let position = clamp_into_chart(position, size, reachable);
         // What the popovers are clamped into: the same rectangle *without* the
         // bar's width floor, but never narrower than the bar that was actually
