@@ -136,6 +136,10 @@ const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
 /// on a short bar without swallowing the whole half.
 const MIN_CHIP_PX: f32 = 14.0;
 
+/// Gap between an extreme-ratio badge and the row it describes, in pixels —
+/// just off the bar's end, never on the ladder itself.
+const EXTREME_BADGE_GAP_PX: f32 = 3.0;
+
 /// How far above the chart's bottom edge the per-bar delta totals sit —
 /// clear of the legend line below them.
 const TOTALS_STRIP_OFFSET_Y: f32 = 22.0;
@@ -1118,9 +1122,9 @@ fn draw_bar(
                 Extreme::High => frame.scale.is_inverted(),
             };
             let (align, y) = if outward_down {
-                (egui::Align2::CENTER_TOP, band_bottom + 3.0)
+                (egui::Align2::CENTER_TOP, band_bottom + EXTREME_BADGE_GAP_PX)
             } else {
-                (egui::Align2::CENTER_BOTTOM, band_top - 3.0)
+                (egui::Align2::CENTER_BOTTOM, band_top - EXTREME_BADGE_GAP_PX)
             };
             let text = format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0));
             let galley =

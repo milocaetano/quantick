@@ -3781,6 +3781,19 @@ mod tests {
         );
     }
 
+    /// Orientation flips the price fraction and nothing else: y mirrors
+    /// around the canvas's middle, x — time — never moves.
+    #[test]
+    fn an_inverted_layout_mirrors_normalized_y() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+        let flipped = layout.with_inverted(true);
+        assert_eq!(layout.y(0.25), 100.0);
+        assert_eq!(flipped.y(0.25), 300.0);
+        assert_eq!(flipped.x(0.5), layout.x(0.5), "time never turns over");
+    }
+
     /// The key starts below whatever already owns the canvas's top-left
     /// corner. It used to clear a constant 22 px — the chart header alone —
     /// and printed straight through the indicator chips stacked under it.

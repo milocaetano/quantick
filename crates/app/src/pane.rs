@@ -7471,6 +7471,26 @@ mod tests {
         ));
     }
 
+    /// The drawings read the candles through the band's scale, so the band
+    /// has to carry the chart's orientation: without it a click would anchor
+    /// at the mirror of the price under the pointer.
+    #[test]
+    fn the_price_band_scale_turns_over_with_the_chart() {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        pane.last_auto_range = Some((100.0, 110.0));
+        let areas = test_areas(&pane, TEST_PLOT);
+        let upright = pane.bands(&areas)[0].scale.expect("a range is set");
+        assert!(!upright.is_inverted());
+
+        pane.price_view.set_inverted(true);
+        let scale = pane.bands(&areas)[0].scale.expect("a range is set");
+        assert!(scale.is_inverted(), "the band mirrors the candles");
+        assert!(
+            scale.y(100.0) < scale.y(110.0),
+            "low prices ride at the top of the band"
+        );
+    }
+
     /// Two instances of one kind are told apart by ordinal, in add order.
     #[test]
     fn two_panes_of_the_same_kind_get_different_keys() {
