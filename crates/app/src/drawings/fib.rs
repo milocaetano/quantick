@@ -158,6 +158,8 @@ impl LabelPosition {
 /// How far the level lines run horizontally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Extend {
+    /// Between the anchors and nowhere else — what a fresh retracement opens
+    /// with, so the levels end where the trader stopped dragging.
     Anchors,
     /// Forward from the *last* anchor only — what a fresh extension opens
     /// with (see [`Extend::for_kind`], which is where a new object's span
@@ -174,9 +176,7 @@ pub enum Extend {
     /// on", which is what a target is.
     #[default]
     Forward,
-    /// The whole anchor span *and* the projection — what a fresh retracement
-    /// opens with, so the levels appear under the pointer during the drag
-    /// and still reach current price.
+    /// The whole anchor span *and* the projection onward.
     Right,
     Both,
 }
@@ -186,22 +186,25 @@ impl Extend {
 
     /// The span a fresh object of each kind opens with.
     ///
-    /// **Retracement starts at the first anchor.** A retracement is read
-    /// *across* the leg it measures: the trader drags from the swing low to
-    /// the swing high and watches the levels fill in under the pointer as
-    /// they go. Opening at the last anchor put every line on the far side of
-    /// the cursor, so the whole gesture happened with nothing under the hand
-    /// and the object only became legible after the release — reported from
-    /// the running build. It still runs to the right edge, so the levels
-    /// reach current price; only where they *begin* changes.
+    /// **A retracement lives between its own anchors.** It measures how much
+    /// of one move was given back, so its lines belong to that move: the
+    /// trader drags from the swing low to the swing high and the levels fill
+    /// in the leg under the pointer, ending where the pointer is. Reported
+    /// twice from the running build — first opening at the *last* anchor,
+    /// which put every line on the far side of the cursor during the very
+    /// drag that defines them, then running on to the right edge, which is
+    /// the trader's own words: "a linha deve ir até o ponto onde eu tô
+    /// traçando e não ir para o infinito". Extending it is a choice on the
+    /// Levels tab, and one that can now be saved as the default.
     ///
     /// **Extension keeps projecting from its last anchor.** Its levels are
-    /// where the next leg may reach, so drawing them back over the leg they
-    /// were measured from is backwards on its face.
+    /// where the next leg may reach — a target, ahead of the move — so
+    /// drawing them back over the leg they were measured from is backwards
+    /// on its face.
     #[must_use]
     pub fn for_kind(kind: FibKind) -> Self {
         match kind {
-            FibKind::Retracement => Self::Right,
+            FibKind::Retracement => Self::Anchors,
             FibKind::Extension => Self::Forward,
         }
     }
@@ -1359,10 +1362,11 @@ mod tests {
     /// The drag is the whole reading gesture: press on the swing low, pull up
     /// and to the right, watch the levels fill in the leg under the pointer.
     /// The draft preview completes the geometry with the hovered point, so
-    /// this is exactly the span a half-placed retracement paints — and it has
-    /// to start at the anchor that is already down, not at the cursor.
+    /// this is exactly the span a half-placed retracement paints — from the
+    /// anchor that is already down to where the pointer is now, and no
+    /// further. Both halves were reported from the running build.
     #[test]
-    fn a_retracement_being_dragged_draws_from_the_first_click() {
+    fn a_retracement_being_dragged_spans_the_first_click_to_the_pointer() {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 500.0));
         // Anchor down at x = 200, pointer at x = 620: what the preview holds
         // mid-drag, up and to the right.
@@ -1373,8 +1377,8 @@ mod tests {
             "the levels must begin at the first click, not at the pointer: {left}"
         );
         assert!(
-            (right - chart.right()).abs() < f32::EPSILON,
-            "and still reach current price on the right edge: {right}"
+            (right - 620.0).abs() < f32::EPSILON,
+            "and end under the pointer rather than running to the edge: {right}"
         );
     }
 

@@ -5756,18 +5756,29 @@ impl QuantickApp {
                 // would hand the trader back the very position they discarded.
                 self.inspector_position_dirty = true;
             } else if bar.dragged() {
-                // Where the window actually is, in preference to where it is
-                // remembered: the two differ whenever the pane is too small
-                // for the parked point and the host is drawing a clamped copy.
-                // Dragging the clamped window from the un-clamped point would
-                // make it jump the whole difference on the first pixel of
-                // movement — and the trader is dragging what they can see.
-                let position = ui
-                    .ctx()
-                    .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-                    .map(|rect| rect.min)
-                    .or(self.inspector_pos);
-                match position {
+                // The gesture starts from where the window actually is, in
+                // preference to where it is remembered: the two differ
+                // whenever the pane is too small for the parked point and the
+                // host is drawing a clamped copy. Dragging the clamped window
+                // from the un-clamped point would make it jump the whole
+                // difference on the first pixel — and the trader is dragging
+                // what they can see.
+                if bar.drag_started()
+                    && let Some(drawn) = ui
+                        .ctx()
+                        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                        .map(|rect| rect.min)
+                {
+                    self.inspector_pos = Some(drawn);
+                }
+                // From there the delta accumulates on the *remembered* point,
+                // never on the drawn one. The window is positioned from
+                // `inspector_pos` before this bar is laid out, so the drawn
+                // rect is always one frame behind it: adding this frame's
+                // delta to that rect throws the previous frame's away, and
+                // the popup travels at half the speed of the hand — which is
+                // what "ela treme" was, reported from the running app.
+                match self.inspector_pos {
                     Some(position) => self.place_inspector_by_hand(position + bar.drag_delta()),
                     // No position to move yet — the window has not been laid
                     // out. The hand is still down, so the flag alone records
@@ -13251,22 +13262,20 @@ plot(close)
         }
     }
 
-    /// A Fib level is something price is *going* to meet, so every kind opens
-    /// running to the right edge — a level nobody can see at current price is
-    /// not a level. Where the lines *begin* is the part that differs, and it
-    /// is the tool's question, not one shared default:
+    /// The two Fib tools ask different questions, so they open with different
+    /// spans — this is not one shared default:
     ///
-    /// - a retracement is read across the leg it measures, so it begins at
-    ///   the first anchor and the levels fill in under the pointer during the
-    ///   drag (reported from the running build: starting at the last anchor
-    ///   put every line on the far side of the cursor);
+    /// - a retracement measures how much of *one move* was given back, so its
+    ///   lines live between its own anchors and end where the trader stopped
+    ///   dragging ("a linha deve ir até o ponto onde eu tô traçando e não ir
+    ///   para o infinito", reported from the running build);
     /// - an extension projects what comes *after* its last anchor, so drawing
     ///   its targets back over the measured leg is backwards on its face.
     #[test]
-    fn each_fib_kind_opens_reaching_current_price_from_its_own_start() {
+    fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
         use crate::drawings::fib::{Extend, FibPayload};
         for (tool, expected) in [
-            ("fib-retracement", Extend::Right),
+            ("fib-retracement", Extend::Anchors),
             ("fib-extension", Extend::Forward),
         ] {
             let payload = drawing_tool(tool).default_payload();
@@ -15375,6 +15384,78 @@ plot(close)
             progressive_history: true,
             inspector_position: position,
         }
+    }
+
+    /// Reported from the running app: "a pop Fib Retracement settings, quando
+    /// eu mexo ela e movo ela para algum lugar ela treme."
+    ///
+    /// A drag is many frames, not one. Each frame the popup has to end up
+    /// exactly where the pointer put it — if the position it is drawn at and
+    /// the position the next frame's delta is added to disagree, the window
+    /// oscillates around the pointer instead of following it.
+    #[test]
+    fn dragging_the_popup_follows_the_pointer_without_shaking() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        draw_horizontal_line(&mut app, &ctx, 320.0);
+        open_inspector(&mut app, &ctx);
+
+        let popup = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("the properties popup is open");
+        let grip = egui::pos2(popup.left() + 60.0, popup.top() + 14.0);
+        let start = popup.min;
+
+        // Press, then walk the pointer one step at a time, reading where the
+        // window actually landed on every frame of the gesture.
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(grip), pointer_button(grip, true)],
+        );
+        const STEP: f32 = 8.0;
+        const STEPS: usize = 6;
+        let mut drawn = Vec::with_capacity(STEPS);
+        for step in 1..=STEPS {
+            let at = grip + egui::vec2(STEP * step as f32, STEP * step as f32);
+            run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+            drawn.push(
+                ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+                    .expect("still open")
+                    .min,
+            );
+        }
+        let travel = egui::vec2(STEP * STEPS as f32, STEP * STEPS as f32);
+        let end = grip + travel;
+        run_frame_with_events(&mut app, &ctx, vec![pointer_button(end, false)]);
+        // One more frame: the window is positioned from the remembered point
+        // at the top of a frame, so the last step of a gesture lands on the
+        // frame after it. That single frame of lag is how an immediate-mode
+        // window works; losing *steps* is the bug.
+        run_frame(&mut app, &ctx);
+
+        // Monotonic: every frame of a one-way drag moves the window the same
+        // way the pointer went, never back.
+        for pair in drawn.windows(2) {
+            assert!(
+                pair[1].x >= pair[0].x - 0.5 && pair[1].y >= pair[0].y - 0.5,
+                "the popup went backwards mid-drag: {drawn:?}"
+            );
+        }
+        // Every step arrives: the hand moved `travel`, so the window did too.
+        // It used to arrive at half of it — the delta was being added to the
+        // rect the window was *drawn* at, which is one frame behind the point
+        // the next delta is added to, so each frame discarded the last one.
+        let settled = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
+            .expect("still open")
+            .min;
+        assert!(
+            (settled.x - (start.x + travel.x)).abs() <= 1.0
+                && (settled.y - (start.y + travel.y)).abs() <= 1.0,
+            "the popup should have travelled {travel:?} from {start:?}, settled at {settled:?}"
+        );
     }
 
     /// Put a horizontal line on the chart at that height and leave it there.
