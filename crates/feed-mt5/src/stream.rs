@@ -134,18 +134,28 @@ pub struct HistoryPager(Arc<HistoryPagerState>);
 
 #[derive(Debug, Default)]
 struct HistoryPagerState {
-    /// The pending request, if any: `(count, before_utc_ms)`.
+    /// Queue and gate under **one** lock.
     ///
-    /// A mutex rather than atomics because the two numbers are one request —
-    /// storing them separately would let a session read a fresh `count` against
-    /// a stale cursor and page the same window twice. It is locked once per
-    /// click and once per session wake-up, never per tick.
-    pending: Mutex<Option<(u64, i64)>>,
-    /// Raised while the session is fetching, so a second click is dropped
-    /// rather than queued behind the first.
-    in_flight: AtomicBool,
+    /// Not a mutex for the request and an atomic for the gate: the consumer
+    /// task and the session task run concurrently, and taking a request is
+    /// "clear the queue *and* raise the gate" — one decision. Split across two
+    /// primitives there is a window between them where a click reads a lowered
+    /// gate, queues, and gets sent while the previous page is still coming.
+    /// Locked once per click and once per session wake-up, never per tick.
+    request: Mutex<PagerRequest>,
     /// Wakes the session loop, which is otherwise parked on the socket.
     wake: Notify,
+}
+
+/// What the pager is holding: at most one queued request, and whether a fetch
+/// is already running.
+#[derive(Debug, Default)]
+struct PagerRequest {
+    /// The queued request, if any: `(count, before_utc_ms)`.
+    queued: Option<(u64, i64)>,
+    /// Raised while the session is fetching, so a second click is dropped
+    /// rather than queued behind the first.
+    in_flight: bool,
 }
 
 impl HistoryPager {
@@ -165,10 +175,13 @@ impl HistoryPager {
     /// flight — the caller's cue to leave its loading indicator alone rather
     /// than start a second one.
     pub fn request(&self, count: u64, before_utc_ms: i64) -> bool {
-        if self.0.in_flight.load(Ordering::Acquire) {
-            return false;
+        {
+            let mut held = self.0.request.lock().expect("history pager mutex");
+            if held.in_flight {
+                return false;
+            }
+            held.queued = Some((count, before_utc_ms));
         }
-        *self.0.pending.lock().expect("history pager mutex") = Some((count, before_utc_ms));
         self.0.wake.notify_one();
         true
     }
@@ -176,7 +189,11 @@ impl HistoryPager {
     /// Whether a request is outstanding.
     #[must_use]
     pub fn is_in_flight(&self) -> bool {
-        self.0.in_flight.load(Ordering::Acquire)
+        self.0
+            .request
+            .lock()
+            .expect("history pager mutex")
+            .in_flight
     }
 
     /// Park until a request arrives, then take it.
@@ -188,9 +205,15 @@ impl HistoryPager {
     /// about to write to the socket.
     async fn take_request(&self) -> (u64, i64) {
         loop {
-            if let Some(request) = self.0.pending.lock().expect("history pager mutex").take() {
-                self.0.in_flight.store(true, Ordering::Release);
-                return request;
+            {
+                let mut held = self.0.request.lock().expect("history pager mutex");
+                // Take and raise together. A click landing between the two
+                // would otherwise see a lowered gate and queue behind a page
+                // already on the wire.
+                if let Some(request) = held.queued.take() {
+                    held.in_flight = true;
+                    return request;
+                }
             }
             self.0.wake.notified().await;
         }
@@ -199,28 +222,28 @@ impl HistoryPager {
     /// The fetch is over (delivered, refused, or the session died). Clears the
     /// gate so the next click is heard.
     fn settle(&self) {
-        self.0.in_flight.store(false, Ordering::Release);
-    }
-
-    /// Forget a request that no session will ever answer, and say whether one
-    /// was owed an answer.
-    ///
-    /// Called when a session ends: the click that queued it belongs to a
-    /// terminal connection that is gone, and replaying it against the next one
-    /// would page from a cursor the new session never sent. The return value is
-    /// what keeps the promise of one reply per request — a request still
-    /// *queued* when the socket died was never taken, so the in-flight flag
-    /// alone would miss it and leave a spinner running.
-    fn abandon(&self) -> bool {
-        let queued = self
-            .0
-            .pending
+        self.0
+            .request
             .lock()
             .expect("history pager mutex")
-            .take()
-            .is_some();
-        let taken = self.0.in_flight.swap(false, Ordering::AcqRel);
-        queued || taken
+            .in_flight = false;
+    }
+
+    /// Clear the pager at the end of a session, and say whether anything was
+    /// owed an answer.
+    ///
+    /// Both halves matter. The return value keeps the promise of one reply per
+    /// request — a request still *queued* when the socket died was never taken,
+    /// so the gate alone would miss it and leave a spinner running. And the
+    /// clearing is what keeps that promise from being kept twice: the caller
+    /// answers whatever this reports, so a request left behind would be served
+    /// again by the next session and arrive as a second reply to a click the
+    /// consumer already saw resolved.
+    fn abandon(&self) -> bool {
+        let mut held = self.0.request.lock().expect("history pager mutex");
+        let owed = held.queued.take().is_some() || held.in_flight;
+        held.in_flight = false;
+        owed
     }
 }
 

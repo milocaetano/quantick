@@ -433,6 +433,25 @@ async fn feed_task(
                         if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
                             break;
                         }
+                        if exhausted {
+                            // The terminal reached its own oldest tick for this
+                            // symbol, so the button has nothing left to fetch.
+                            // Withdrawing it is the same rule every other
+                            // affordance follows: never offer what nothing can
+                            // back. A reconnect re-publishes the capability from
+                            // the fresh hello, which is right — a terminal that
+                            // downloaded more history in the meantime has more
+                            // to give.
+                            info!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "MT5_HISTORY_EXHAUSTED",
+                                symbol = %symbol,
+                                action = "withdraw_paging",
+                                "the terminal has no ticks older than the chart now holds"
+                            );
+                            caps_tx.send_modify(|caps| caps.history_paging = false);
+                        }
                     }
                     Some(Mt5Event::Depth(event)) => {
                         // Backpressure rather than dropping: after the opening
@@ -1608,6 +1627,35 @@ mod tests {
         assert_eq!(
             request, "{\"type\":\"load_older\",\"count\":2000,\"before_ms\":4001}",
             "the floor moved with the page"
+        );
+
+        // This time the terminal reports it has nothing older. The button must
+        // stop offering what nothing can back — the same rule the heatmap and
+        // the volume affordances follow.
+        assert!(feed.capabilities.borrow().history_paging);
+        sock.write_all(
+            b"{\"type\":\"history_start\"}\n{\"type\":\"history_end\",\"exhausted\":true}\n",
+        )
+        .await
+        .unwrap();
+        sock.flush().await.unwrap();
+        let Some(FeedEvent::HistoryPrepended(last)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the last page")
+        else {
+            panic!("an empty page is still a page");
+        };
+        assert!(last.is_empty());
+        for _ in 0..50 {
+            if !feed.capabilities.borrow().history_paging {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            !feed.capabilities.borrow().history_paging,
+            "the end of the tape withdraws the button"
         );
     }
 

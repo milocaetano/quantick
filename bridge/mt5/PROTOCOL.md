@@ -314,8 +314,11 @@ to the live tape.
   An empty block is *not* by itself the end, and must not be sent with
   `exhausted` on that basis. A page that failed, or one that crossed a weekend
   without finding anything, returns nothing and has plenty older behind it —
-  retiring the trader's button over a transient is the one mistake here that
-  cannot be undone by clicking again.
+  and **`exhausted` really does retire the button**: quantick withdraws the
+  `history_paging` capability on it, so the chart's "load older" greys out until
+  the next session's hello re-publishes it. That is the right answer for a tape
+  that has genuinely run out, and the one mistake here that cannot be undone by
+  clicking again.
 
 An empty block still sends **both** markers. `history_end` is what stops the
 chart's loading indicator, exactly as `backfill_end` is what resolves its

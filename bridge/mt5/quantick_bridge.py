@@ -161,6 +161,17 @@ LOAD_OLDER_MAX_PAGES = 24
 # here is a socket write measured in gigabytes.
 LOAD_OLDER_MAX_TICKS = 200_000
 
+# How much wider each empty window gets. Crossing a weekend five minutes at a
+# time would spend the page budget on dead air; four is steep enough that the
+# budget below reaches back days, and shallow enough that the first productive
+# window is not wildly larger than the page asked for.
+LOAD_OLDER_WINDOW_GROWTH = 4
+
+# Bytes read from the socket per pass. The inbound direction carries one short
+# JSON object per trader click, so this is never the constraint — it is sized
+# like any read buffer, not like the traffic.
+COMMAND_READ_BYTES = 4096
+
 
 def log(event_code: str, **fields: object) -> None:
     """Emit one structured line, matching what the EA prints to Experts."""
@@ -537,7 +548,7 @@ class Session:
         """
         requests: list[dict] = []
         while select.select([self.sock], [], [], 0)[0]:
-            chunk = self.sock.recv(4096)
+            chunk = self.sock.recv(COMMAND_READ_BYTES)
             if not chunk:
                 # quantick closed its side. The next outbound write raises and
                 # the caller reconnects; there is nothing to decide here.
@@ -601,6 +612,11 @@ class Session:
         while held < wanted and calls < LOAD_OLDER_MAX_PAGES:
             if floor_ms is not None and cursor_ms <= floor_ms:
                 break
+            # Past the epoch there is nothing to ask for, and a terminal that
+            # could not name its oldest tick would otherwise spend the whole
+            # page budget asking about 1970.
+            if cursor_ms <= 0:
+                break
             calls += 1
             # Whole seconds is all copy_ticks_range takes, so the range is
             # rounded outward and the surplus filtered below. Rounding the other
@@ -627,7 +643,9 @@ class Session:
                 # ticks about to be trimmed.
                 window_s = LOAD_OLDER_FIRST_WINDOW_S
             else:
-                window_s = min(window_s * 4, LOAD_OLDER_MAX_WINDOW_S)
+                window_s = min(
+                    window_s * LOAD_OLDER_WINDOW_GROWTH, LOAD_OLDER_MAX_WINDOW_S
+                )
             cursor_ms = from_s * 1000
 
         # Oldest page first, and the surplus trimmed off the *front*: the ticks
