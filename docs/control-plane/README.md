@@ -1,0 +1,36 @@
+# Control plane architecture contract
+
+This directory contains the decisions required before implementation of the
+Quantick control plane can begin. The development plan describes the intended
+outcome and delivery sequence; the files here make the PR 0 decisions
+testable.
+
+## Documents
+
+- [Capability inventory](capability-inventory.md) records every production
+  `QUANTICK_*` surface currently present in `crates/app/src`, its owner, and
+  its migration target.
+- [Control contract](control-contract.md) fixes identifier, schema, revision,
+  authority, limit, tool-surface, determinism, and trade-annotation rules.
+- [ADR 0001](adr-0001-local-transport-and-instance-discovery.md) selects the
+  local transport and running-instance discovery mechanism.
+- [Observer threat model](observer-threat-model.md) defines the assets, trust
+  boundaries, threats, and required controls for the first profile.
+
+## Precedence
+
+The [development plan](../mcp-control-plane-development-plan.md) owns scope and
+ordering. The contract and ADRs in this directory own implementation details.
+If they disagree, implementation stops until the documents are reconciled in a
+reviewed change. Source code, generated schemas, and tests become authoritative
+only after their corresponding implementation pull request lands.
+
+## Change policy
+
+- Decisions are written in English and reviewed in pull requests.
+- A breaking wire-contract change requires a capability version change and a
+  schema snapshot diff.
+- A transport or trust-boundary change requires a new ADR and an updated
+  threat model.
+- A new action must appear in the capability registry. The inventory in this
+  directory is a migration baseline, not a second runtime registry.

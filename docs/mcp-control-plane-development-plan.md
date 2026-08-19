@@ -1,21 +1,20 @@
 # Quantick control plane and MCP development plan
 
-**Status:** Proposal for review, revised after architecture review
+**Status:** Accepted for phased implementation; PR 0 contract in review
 
 **Date:** 2026-08-19
 
-**Authorship:** The first draft was written by Codex. This revision was made by
-Claude (Claude Code) on 2026-08-19, at the repository owner's request, as a
-review of that draft rather than a replacement for it.
+**History:** Codex produced the first draft. Claude Code reviewed and expanded
+it on 2026-08-19 at the repository owner's request. The PR 0 contract review
+then reconciled the plan with the measured source inventory, authority model,
+transport ADR, and observer threat model.
 
-**Why it was revised:** The draft's architecture was accepted as proposed and
-is unchanged. What the review changed is scope, schedule, and six technical
-details, because the draft did not yet satisfy the objective it was written for:
-the owner wants to point at something on a running chart and be understood, and
-to have the assistant answer on the chart rather than only in prose. A read-only
-snapshot API cannot do either. Section 0 lists every change with its reasoning,
-and section 3.1 gives the measurements each change rests on, so a reviewer can
-check the claims instead of trusting them.
+**Why it was revised:** The vendor-neutral control-plane spine was retained, but
+the first draft did not yet satisfy the workflow it was written for. The owner
+wants to point at something on a running chart and be understood, and to have
+the assistant answer on the chart rather than only in prose. A read-only
+snapshot API cannot do both. Section 0 summarizes the changes and section 3.1
+records the source measurements behind them.
 
 **Primary goal:** Let Codex, Claude, and other MCP-compatible clients observe a
 running Quantick instance, understand what the user is pointing at inside it,
@@ -27,10 +26,9 @@ public messages, and contributor-facing artifacts must be written in English.
 
 ## 0. What this revision changed
 
-The first draft's architecture is unchanged: a vendor-neutral control contract,
-MCP as one adapter, a single registry shared with the interface, and authority
-that starts small. The review kept that spine and changed the scope and the
-schedule.
+The retained architecture is a vendor-neutral control contract, MCP as one
+adapter, a single registry shared with the interface, and authority that starts
+small. The review expanded its scope, delivery order, and explicit contracts.
 
 Three gaps against the stated objective:
 
@@ -38,7 +36,8 @@ Three gaps against the stated objective:
   snapshots and a scene tree of controls, but no cursor, selection, or way to
   mark a target, so an agent could read the whole chart and still not know which
   bar the user meant. Section 6.5 adds a resolved cursor, a published selection,
-  and a mark, all inside the observe tier.
+  and human-created marks inside the observe tier. Creating a mark remotely is
+  an annotate action.
 - **Every write deferred, including the harmless ones.** The draft had one write
   cliff. Section 2.6 replaces it with tiers by effect, and PR 5b ships the tier
   that cannot lose the user's work inside the MVP, so the agent can answer on
@@ -49,17 +48,14 @@ Three gaps against the stated objective:
   settings actions. PR 5b makes it explicit, using compile diagnostics that
   already exist.
 
-Six technical corrections, each stated where it belongs: identifiers are
-registry strings rather than enumerations (5.5); schema compatibility is
-enforced by snapshot-tested files (5.6); the frame budget is milliseconds rather
-than a request count (10.2); `wait_for_change` parks off the UI thread and holds
-no request slot (6.4); the MCP tool list is not the capability registry (7.1);
-and the determinism consequence of an agent acting during a replay is a decision
-PR 0 must record (PR 0).
-
-Two smaller ones: a screenshot is correlated with the capture revision rather
-than treated as a bare fallback (section 8), and the adapter never starts the
-application (9.1).
+Contract corrections are stated where they belong: extensible validated IDs
+(5.5); snapshot-tested schema compatibility (5.6); gateway-assigned actor
+identity (5.2); explicit cursor, retry, and `dry_run` semantics (PR 0); MCP tool
+annotations that fail conservatively for generic invocation (7.1); byte and
+time budgets instead of request-count guesses (10.2); and a durable replay trace
+for determinism-affecting actions (PR 0). `wait_for_change` parks off the UI
+thread (6.4), screenshots correlate with semantic captures (section 8), and the
+adapter never starts the application (9.1).
 
 Section 3.1 records the measurements these changes rest on, so the next reviewer
 can check them rather than trust them.
@@ -80,11 +76,16 @@ At the end of the MVP, the workflow will be:
    feed, tabs, panes, visible bars, indicators, drawings, order flow, replay,
    paper trading, health, and recent errors, plus what the cursor is over, what
    is selected, and what the user just marked. It answers from structured data
-   instead of reading pixels.
-6. The agent answers on the chart as well as in prose. It can attach a label,
-   an arrow, a popup, a sound, or a compiled indicator, and then read the
-   result back through the same snapshot the user sees.
-7. When needed, the agent creates an evidence bundle with a stable ID that can
+   instead of reading pixels, subject to the scopes the user granted. Paper
+   state, evidence, user text, diagnostic log access, and screenshots are not
+   granted silently.
+6. If the user grants the `annotator` profile, the agent can also answer on the
+   chart. It can attach a label, an arrow, a popup, a sound, or a compiled
+   indicator, and then read the result back through the same snapshot the user
+   sees.
+7. Observer access remains read-only when the additional profile is not
+   granted.
+8. When needed, the agent creates an evidence bundle with a stable ID that can
    be attached to an investigation, issue, or pull request.
 
 The MVP stops there. It carries no cockpit write that can lose state the user
@@ -146,25 +147,29 @@ When the control plane is disabled or idle, it must introduce:
 ### 2.6 Effect tiers, not one write cliff
 
 "Read" and "write" is too coarse a split to schedule by. Sorting a capability
-by the damage it can do gives three tiers plus one asymmetry, and the tiers,
+by the damage it can do gives four tiers plus one asymmetry, and the tiers,
 not the calendar, decide what may ship together.
 
 | Tier | Examples | Property that sets the tier |
 | --- | --- | --- |
-| Observe | snapshot, chart window, scene, events, cursor, marks | Changes nothing |
-| Annotate and notify | label, arrow, popup, sound, attach a script | Additive, reversible, no money |
+| Observe | snapshot, chart window, scene, events, cursor, human-created marks | A remote call changes no user-visible state |
+| Annotate and notify | agent-created mark, label, arrow, popup, sound, attach a script | No state loss or money; durable additions are reversible |
 | Cockpit | tab, focus, viewport, bar spec, layers | Can discard work done by hand |
 | Financial | paper orders, strategies, then live trading | Moves money or its record |
 
-The observe tier needs no protection. The annotate tier needs attribution and a
-one-action undo. The cockpit tier needs `expected_revision` because the user can
-lose work. The financial tier needs everything in section 9.
+The observe tier needs authentication, explicit data scopes, redaction, and
+rate limits, but no mutation guard. Durable changes in the annotate tier need
+attribution and a one-action undo. Transient notifications need attribution,
+rate limits, and an explicit user grant because a sound cannot literally be
+undone. The cockpit tier needs `expected_revisions` because the user can lose
+work. The financial tier needs everything in section 9.
 
-The asymmetry: an operation that only ever *reduces* authority — lock entries,
-flatten, disarm a strategy, kill switch — cannot create exposure, and refusing
-it has a worse failure mode than allowing it. Such operations may ship with the
-annotate tier even though they touch trading, and section 9.4 states the rule
-that keeps that narrow.
+The asymmetry: an operation that only ever *reduces* authority, such as locking
+entries, flattening, disarming a strategy, or using a kill switch, cannot create
+exposure. Refusing it has a worse failure mode than allowing it. Such operations
+may use a lighter confirmation policy, but they keep their financial effect and
+require an explicit safety permission. They never inherit annotate authority.
+Section 9.4 states the rule that keeps this narrow.
 
 The annotate tier is what makes the loop bidirectional. Without it the control
 plane is a one-way mirror: the agent watches the user and has no way to show
@@ -193,10 +198,11 @@ impressions:
 
 - `ChartState` names egui only in comments, and already carries
   `timeline_revision`. A per-module revision is not new work.
-- The application defines 89 distinct `QUANTICK_*` hooks. Those hooks are
-  already a control plane with three defects: startup only, write only, and
-  unobservable. That list is the starting capability inventory for PR 0, not a
-  guess about scope.
+- The application contains 88 distinct `QUANTICK_*` string literals: 86
+  production surfaces and two test-only store variables. Many production
+  surfaces already resemble a control plane, but they are startup-only,
+  mostly write-only, and unobservable. The PR 0 inventory records each real
+  surface and its migration target.
 - `QuantickApp` has 107 fields and `crates/app/src/app.rs` is roughly 24k
   lines. This is the concrete reason section 12 forbids letting the control
   plane become a general refactor.
@@ -308,7 +314,7 @@ A leaf crate and adapter binary:
 - discovery of one or more running instances;
 - explicit instance selection when more than one is available;
 - mapping registered capabilities to MCP tools and resources;
-- `observer`, `developer`, and `paper` profiles;
+- `observer`, `annotator`, `developer`, and `paper` profiles;
 - guided local configuration for Codex and Claude.
 
 ## 5. Core contracts
@@ -329,7 +335,8 @@ examples
 effect
 risk
 read_only
-idempotent
+idempotency: forbidden | optional | required
+dry_run_supported
 reversible
 destructive
 required_permissions
@@ -355,8 +362,13 @@ client_name
 connection_id
 request_id
 reason
-requested_at_ms
+requested_at_unix_ms
 ```
+
+For remote calls, the gateway constructs the trusted actor fields after
+authentication. A client may supply its self-declared name and an optional
+reason, but it cannot select `actor_kind`, `principal_id`, or `connection_id`.
+Human UI actions receive the same context from the in-process dispatcher.
 
 Drawings, presets, strategies, and orders created by an agent must retain that
 authorship in application state, the interface, and the journal. Authorship
@@ -365,7 +377,7 @@ cannot exist only in an MCP log.
 ### 5.3 Revisions and concurrency
 
 Snapshots carry a monotonic revision for each module and one revision for the
-capture. Future writes accept `expected_revision`. If state changes after an
+capture. Future writes accept `expected_revisions`. If state changes after an
 agent observes it, the operation fails with a structured error instead of
 acting on a stale assumption.
 
@@ -377,10 +389,11 @@ Errors use a predictable shape:
 code
 message
 retryable
-current_revision
-violated_precondition
-details
-next_steps
+current_revisions?
+violated_precondition?
+details?
+next_steps?
+diagnostic_id?
 ```
 
 Error codes are stable and covered by tests, following the conventions already
@@ -407,10 +420,11 @@ expected to contain, not the definition of what it may contain.
 One rule, so that clients can be tolerant readers and the platform can still
 grow:
 
-- Adding a field, a scope, an event kind, or a capability is additive and does
-  not bump a version.
-- Removing a field, renaming one, changing its unit, or changing what a value
-  means is breaking and bumps the capability version.
+- Adding an optional field, a scope, an event kind, or a capability is additive
+  and does not bump a version.
+- Adding a required field, removing or renaming a field, changing its unit, or
+  changing what a value means is breaking. A capability payload change bumps
+  the capability version; an envelope change bumps the protocol version.
 
 Both halves are enforced mechanically. Declared schemas are written to files
 and snapshot-tested, so a breaking change appears as a reviewable diff instead
@@ -515,9 +529,10 @@ agent that has to infer the referent will confidently answer about the wrong
 bar.
 
 Section 3.2 records that no pointer model exists today. Three pieces are
-needed, and all three are observation, not authority: the application reports
-what the human did and changes nothing on the human's behalf. They belong to
-the `observer` profile.
+needed. Reading the resolved cursor, selection, and marks created by the human
+is observation: the application reports what the human did and changes nothing
+on the human's behalf. Those reads belong to the `observer` profile. Creating a
+mark through a remote call belongs to `annotator`.
 
 **A resolved cursor.** Not a coordinate pair. The application already knows how
 to turn a position into meaning during a frame, and the cursor scope publishes
@@ -526,7 +541,7 @@ that meaning:
 ```text
 pane, tab
 screen position
-slot index, bar timestamp_ms, price
+slot index, bar open_time_unix_ms, price
 the bar under the cursor: OHLCV, delta, trade count, progress
 the order-flow cell under the cursor, when a flow layer is on
 the drawing, anchor, or handle under the cursor
@@ -537,10 +552,10 @@ the control under the cursor, by the same stable ID the scene uses
 selected row in a trade history or event table. Drawings already carry a
 selected index internally; this exposes it, with its ID, through the contract.
 
-**A mark.** One hotkey that appends an event carrying the fully resolved target
-above, plus an optional note the user types. This is the primitive that makes
-the rest work. It converts "look at this" from a gesture the agent cannot see
-into a durable, structured referent the agent can quote back. Marks are
+**A human mark.** One hotkey that appends an event carrying the fully resolved
+target above, plus an optional note the user types. This is the primitive that
+makes the rest work. It converts "look at this" from a gesture the agent cannot
+see into a durable, structured referent the agent can quote back. Marks are
 timestamped, ordered, and readable through the same cursor as every other
 event, so an agent calling `wait_for_change` watches the user point in real time
 instead of polling and guessing.
@@ -673,16 +688,16 @@ font, GPU, clipping, and composition defects that neither half can show alone.
   list a thing the agent creates rather than observes.
 
 Profiles map onto the tiers of section 2.6 rather than onto a read and write
-split: `observer` covers the observe tier, including the cursor, selection, and
-marks of section 6.5, because none of it changes anything. `developer` adds the
-annotate tier and cockpit actions. `paper` adds simulated trading. Live trading
-has no profile in this plan.
+split: `observer` covers reads of the cursor, selection, and human-created marks
+from section 6.5. `annotator` adds reversible annotations, notifications,
+remote marks, and script attachment. `developer` adds cockpit actions. `paper`
+adds simulated trading. Live trading has no profile in this plan.
 
 ### 9.2 Future writes
 
 - Use `dry_run` whenever an operation can be validated first.
 - Require an `idempotency_key` for safe retries.
-- Use `expected_revision` to reject stale state.
+- Use `expected_revisions` to reject stale state.
 - Record an audit event for every attempt and result.
 - Match approval requirements to the declared effect.
 - Apply the same validation and confirmation rules as the user interface.
@@ -712,6 +727,9 @@ to stop and it argues instead.
 
 The rule that keeps this from becoming a loophole:
 
+- Risk reduction changes confirmation policy, not the capability's effect.
+  Paper and live operations still require an explicit `paper.safety` or future
+  `live.safety` grant; `observer`, `annotator`, and `developer` never inherit it.
 - An operation qualifies only if every reachable outcome leaves risk equal or
   lower. If any argument value, ordering, or failure path can increase
   exposure, it is not a risk-reducing operation and the exception does not
@@ -724,8 +742,9 @@ The rule that keeps this from becoming a loophole:
 - The audit trail is identical to any other action: actor, reason, timestamp,
   and result.
 
-This is what makes "block my entries" a capability the assistant can be trusted
-with early, while "let me trade again" stays a decision the user makes.
+This is what makes "block my entries" available under a narrow safety grant,
+while "let me trade again" stays under the full authority and confirmation of
+its financial tier.
 
 ## 10. Performance budget
 
@@ -744,15 +763,19 @@ pending or a semantic change needs to be recorded.
 - Aggregate market events before recording them.
 - Spend at most a fixed time budget on control-plane work per frame, stated in
   milliseconds and enforced in code, not as a count of requests.
-- Leave over-budget requests in the bounded queue or return backpressure.
+- Leave work that has not started in the bounded queue or return backpressure
+  when the remaining frame budget is insufficient.
 
 A request count is the wrong unit. One capture of a wide chart window with
 footprints and plot series can cost more than twenty small reads, so a cap of
 "N requests per frame" bounds the wrong quantity and still lets a single
 oversized capture blow a frame. The executor therefore checks a clock against a
-budget and stops, and any capture large enough to exceed the budget is either
-paginated by contract, as section 6.2 already requires, or resumed on the next
-frame.
+budget between requests and scopes. It never pauses one coherent capture and
+resumes it against a different frame. Every allowed capture shape has a measured
+upper bound below the budget; a request that could exceed it is paginated or
+rejected before capture, as section 6.2 requires. An unexpected single-capture
+overrun is recorded as a budget violation and fails the performance test rather
+than returning a mixed-revision result.
 
 The proposed opening budget is 1 ms at p99 with a hard stop well under a 16 ms
 frame. The number is calibrated in PR 2 against a measured baseline, but a
@@ -795,10 +818,10 @@ the work as parallel-safe.
 Deliverables:
 
 - Review and approve this document.
-- Create an initial capability inventory by module. Start from the 89
-  `QUANTICK_*` hooks of section 3.1: each one is an existing action with no
-  name, no result, and no discovery, so the inventory begins as a real list
-  with a migration target rather than as an estimate.
+- Create an initial capability inventory by module. Start from the 86
+  production `QUANTICK_*` surfaces of section 3.1 and identify the two
+  test-only variables separately, so the inventory begins as a measured list
+  with migration targets rather than as an estimate.
 - Add an ADR for local transport and instance discovery.
 - Add a threat model for the `observer` profile, covering the cursor and
   selection scopes of section 6.5. Publishing where the user is looking is
@@ -815,18 +838,11 @@ Deliverables:
 **Determinism.** `CLAUDE.md` makes "same trades in, same bars out" the first
 non-negotiable rule, and an agent acting during a session becomes part of that
 session's input. The event journal is a bounded ring buffer, so it is not a
-durable record of what happened. PR 0 picks one of two answers and writes it
-down:
-
-- agent-initiated actions are recorded into the replay session, so a run driven
-  by an agent stays reproducible; or
-- a session in which an agent acted is documented as not reproducible, and the
-  backtest harness refuses to treat it as a golden fixture.
-
-Either is defensible. Leaving it unstated is not, because the first agent action
-during a recorded replay would silently break the repository's primary
-invariant. Note that the observe tier, including marks, does not raise this
-question at all: it changes no input. Only the annotate tier and beyond do.
+durable record of what happened. PR 0 selects a durable, versioned control
+trace ordered by logical replay time for every determinism-affecting
+non-observe action, regardless of actor. A replay with an unrecorded action is
+ineligible as a deterministic fixture. The full decision is in the control
+contract.
 
 Acceptance criteria:
 
@@ -868,7 +884,7 @@ Acceptance criteria:
 - The crate has no dependency on `app` or domain crates.
 - All four repository checks pass.
 
-### PR 2: Snapshot registry in the application
+### PR 2: Snapshot registry and core application scopes
 
 **Branch:** `feat/control-observer`
 
@@ -878,7 +894,7 @@ Deliverables:
 
 - Add `crates/app/src/control/`.
 - Add a projection registry.
-- Add system, workspace, feed, chart, replay, paper, and health snapshots.
+- Add system, workspace, feed, chart, and health snapshots.
 - Add the cursor and selection scopes of section 6.5. This is where the
   application gains a pointer model it does not have today, so the work is a
   new concept rather than the exposure of an existing one: resolving a position
@@ -888,6 +904,20 @@ Deliverables:
 - Produce a consistent revision for each capture.
 - Measure the baseline and calibrate the per-frame budget of section 10.2.
 - Do not add a socket yet.
+
+After this registry merges, add the remaining snapshot modules in owner-focused
+pull requests that may run alongside PR 3:
+
+- `feat/control-snapshots-analysis`: indicators and drawings;
+- `feat/control-snapshots-orderflow`: tape, footprint, bubbles, heatmap, and L2;
+- `feat/control-snapshots-session`: replay and paper trading.
+- `feat/control-scene`: visible controls, stable IDs, state, bounds, ownership,
+  unavailable reasons, and related capability IDs.
+
+Each module registers through the projection port and touches the integration
+root only to dock itself. The semantic scene must merge before PR 4 exposes
+`quantick_get_scene`; the three domain snapshot branches must merge before the
+MVP evidence acceptance in PR 5c.
 
 Acceptance criteria:
 
@@ -899,9 +929,15 @@ Acceptance criteria:
   contract in silence.
 - A resolved cursor over a known bar reports that bar, verified headlessly
   against a fixture rather than by eye.
+- Chart pagination keeps its original high-water mark when a new live bar
+  appends, but rejects a page after a correction or backfill below that mark.
 - No request means no per-frame cost, measured as `frame_cpu_ms` against
   `origin/main` under the method in section 10.3.
 - No egui type appears in the wire schema.
+
+The same schema, consistency, no-egui, and performance criteria apply to every
+module snapshot pull request. Scene tests also prove stable control IDs across
+frames and explicit unavailable reasons without parsing rendered text.
 
 ### PR 3: Local gateway for the running instance
 
@@ -911,11 +947,12 @@ Acceptance criteria:
 
 Deliverables:
 
-- Implement the loopback or IPC endpoint selected by the ADR.
+- Implement the authenticated loopback TCP endpoint selected by the ADR.
 - Publish an instance descriptor.
 - Create an ephemeral token.
 - Add bounded queues.
-- Execute request and response work on the UI thread.
+- Dispatch only validated, authorized, bounded state access on the UI thread;
+  keep socket I/O, authentication, parsing, and serialization off-thread.
 - Wake or repaint the application when required.
 - Add timeouts, backpressure, and clean shutdown.
 - Support multiple instances in the protocol.
@@ -943,11 +980,14 @@ Deliverables:
 
 - Add the crate and binary.
 - Support STDIO.
-- Add optional Streamable HTTP if the selected SDK is mature enough.
+- Keep Streamable HTTP deferred until its separate transport and authentication
+  review; PR 4 ships STDIO only.
 - Implement the MVP tools except advanced event and evidence support.
 - Add instance selection.
 - Add short, self-contained server instructions.
 - Mark read-only tools correctly in their annotations.
+- Reserve standard output for MCP frames and send redacted diagnostics only to
+  standard error.
 - Add a local configuration generator or setup assistant.
 - Add MCP client smoke tests.
 
@@ -955,8 +995,11 @@ Acceptance criteria:
 
 - Codex and Claude run `describe`, `get_snapshot`, `get_chart_window`, and
   `get_diagnostics` against the same instance.
-- The observer profile exposes no write operation.
+- Under the observer ceiling, `quantick_invoke` is annotated read-only, no
+  registered write capability is available, and attempted write IDs are denied.
 - Disconnecting a client does not change application state.
+- A smoke test proves that startup, errors, and shutdown emit no non-MCP bytes
+  on standard output.
 - All four repository checks pass.
 
 The original plan combined events and evidence bundles in one pull request.
@@ -979,8 +1022,11 @@ Deliverables:
 - Emit selection-change events.
 - Add the mark hotkey of section 6.5: it appends an event carrying the fully
   resolved cursor target plus an optional typed note.
-- Register the hotkey as a named capability, so a mark can also be taken
-  without a keyboard.
+- Add the action-registry port and register `attention.mark.create`; the UI
+  hotkey and deterministic tests use that handler. The gateway keeps it
+  unavailable to remote observer clients.
+- Implement the durable control-trace port selected in PR 0, because the human
+  mark is the first registered non-observe action that can affect replay output.
 
 Acceptance criteria:
 
@@ -991,7 +1037,9 @@ Acceptance criteria:
 - An expired cursor reports `dropped_before`.
 - A parked waiter does not delay any other request, proved by a test that waits
   and reads concurrently.
-- Write requests remain impossible.
+- Remote write requests remain impossible under the observer profile.
+- Replaying a recorded human mark injects it at the same logical replay time;
+  an incomplete or missing trace makes the run fixture-ineligible.
 
 ### PR 5b: The annotate and notify tier
 
@@ -1005,11 +1053,16 @@ ships, the agent can see the chart and has no way to answer on it.
 
 Deliverables:
 
-- Implement the action registry port with the annotate tier as its first
-  consumer, then reuse the same registry in PR 6.
+- Extend the action registry introduced in PR 5a with remotely authorized
+  annotate handlers, then reuse the same registry in PR 6.
+- Expose `attention.mark.create` to the `annotator` profile through the same
+  handler the PR 5a UI hotkey already uses.
 - Add label, arrow, and zone annotations against a resolved chart target,
   attributed to the agent as author and removable in one action.
 - Add popup, toast, and sound notification capabilities.
+- Add independent annotate scopes for attention, chart state, notifications,
+  sound, and scripts. Sound is off by default and notifications have a stricter
+  rate limit than ordinary calls.
 - Add `attach_script`: compile a Quantick Pine source, return structured
   diagnostics on failure, attach the compiled indicator to a pane on success,
   and expose a matching detach.
@@ -1035,8 +1088,10 @@ Acceptance criteria:
   the prior state exactly.
 - No capability in this tier can discard user-created state or affect a
   position, verified by review against the tier table in section 2.6.
-- The determinism decision from PR 0 is honoured by every action here, since
-  this is the first pull request in which an agent changes session input.
+- Notification flood tests prove the per-client rate and burst limits, and a
+  client without the sound scope cannot produce audible output.
+- Every action uses the PR 5a control trace, since this is the first pull request
+  in which a remote agent changes session input.
 
 ### PR 5c: Evidence bundles
 
@@ -1048,15 +1103,17 @@ Deliverables:
 
 - Add consistent captures and a temporary resource.
 - Add redaction, an integrity hash, and a manifest.
-- Add the first semantic scene representation.
+- Consume the semantic scene through its existing projection port.
 - Correlate an optional screenshot with the capture revision, so pixel regions
   map to stable IDs (section 8).
-- Optionally add an explicit export operation.
-- Migrate the `ui-harness` and `visual-qa` skills onto the control plane. Both
-  drive the application through environment variables and read it through
-  window captures today; after PR 3 they can drive it live and read structured
-  state, which is what starts retiring the 89 hooks instead of adding a
-  parallel mechanism beside them.
+- Keep evidence in memory. Disk export is a later cockpit/filesystem action and
+  does not ship under observer or annotator authority.
+- Migrate the observation and evidence side of the `ui-harness` and `visual-qa`
+  skills onto the control plane. They may still use existing deterministic
+  hooks to establish a fixture until the corresponding cockpit handler lands in
+  PR 6, but assertions read structured live state instead of relying only on
+  window captures. Retirement of production hooks starts with the matching PR 6
+  and PR 7 actions, not with the observer gateway.
 
 MVP acceptance criteria:
 
@@ -1066,8 +1123,9 @@ MVP acceptance criteria:
 - The bundle reports omitted information and coverage gaps.
 - A bundle containing a screenshot maps every named control to a region of that
   image.
-- At least one existing validation skill runs against the control plane instead
-  of against environment variables.
+- At least one existing validation skill reads and asserts through the live
+  control plane; its fixture setup may still use an existing deterministic hook
+  until the matching action is available.
 
 ### PR 6: The cockpit tier
 
@@ -1075,10 +1133,13 @@ MVP acceptance criteria:
 
 **Rate class:** Human or agent actions, never trade or frame frequency.
 
-The action registry port itself lands in PR 5b with the annotate tier as its
-first consumer, so this pull request adds no port. It adds the tier that can
-discard work the user did by hand, which is why `expected_revision` and an undo
-path stop being optional here. Once the port has carried two tiers, independent
+The action registry port itself lands in PR 5a for the shared mark handler and
+gains remote annotate consumers in PR 5b, so this pull request adds no port. It
+adds the tier that can discard work the user did by hand, which is why
+`expected_revisions` and either an undo path or an explicit irreversible-change
+flow stop being optional here. Extend the threat model with cockpit subscopes,
+filesystem boundaries, and state-loss confirmation before enabling the
+`developer` profile. Once the port has carried multiple effects, independent
 modules can move into separate pull requests:
 
 1. workspace, tabs, and focus;
@@ -1095,7 +1156,10 @@ Acceptance criteria for every action:
 - The capability has a descriptor in the registry.
 - The actor is recorded.
 - Availability and blocking reasons match the user interface.
-- Undo or rollback is available when the human action already supports it.
+- Relevant `expected_revisions` are required.
+- Reversible actions expose undo or rollback. An irreversible action requires a
+  successful dry run, explicit confirmation, and a recoverable backup when the
+  underlying state can be backed up.
 - An existing hook, if any, calls the same handler.
 
 ### PR 7: Paper trading and strategies
@@ -1106,6 +1170,9 @@ Deliverables:
 
 - Add complete snapshots for orders, queued orders, positions, brackets, P&L,
   and the journal.
+- Extend the threat model with paper subscopes, confirmation, idempotency,
+  simulator failure modes, and the risk-reducing exception before enabling the
+  `paper` profile.
 - Add dry runs for commands.
 - Add strategy arm and disarm operations.
 - Route place, cancel, modify, close, and flatten through the same path as the
@@ -1151,11 +1218,18 @@ Recommended path to the MVP:
 
 ```text
 PR 0 -> PR 1 -> PR 2 -> PR 3 -> PR 4 -> PR 5a -> PR 5b -> PR 5c
+                    +-> semantic scene -> PR 4
+                    |                                      ^
+                    +-> analysis snapshots ----------------+
+                    +-> order-flow snapshots --------------+
+                    +-> replay/paper snapshots -------------+
 ```
 
-Keeping this sequence linear reduces protocol churn. Once the action registry
-is stable, indicator, drawing, replay, and workspace actions can be developed
-in parallel when they do not share files.
+Keeping the contract and registry spine linear reduces protocol churn. After PR
+2, owner-focused snapshot modules may run alongside PR 3. The semantic scene
+merges before PR 4; the remaining modules merge before PR 5c closes the evidence
+acceptance. Once the action registry is stable, indicator, drawing, replay, and
+workspace actions can be developed in parallel when they do not share files.
 
 The ordering inside PR 5 is the one change worth defending. 5a comes first
 because the event cursor is what the pointing channel is built on, and pointing
@@ -1254,8 +1328,8 @@ limitations for another agent to investigate without screenshots.
 ### Scenario E: Authority
 
 Under the observer profile, a write request is absent or rejected. Under a
-future developer profile, a stale action fails, while an accepted action records
-its actor and result.
+future annotator or developer profile, a stale action fails, while an accepted
+action records its actor and result.
 
 ### Scenario F: Multiple instances
 
@@ -1294,7 +1368,7 @@ error messages by hand.
 | Reading ships and answering never does | The annotate tier is inside the MVP (PR 5b) |
 | A cached tool list goes stale or grows unbounded | Named tools plus `invoke` (section 7.1) |
 | A closed enum blocks a future module | IDs are registry strings (section 5.5) |
-| An agent action breaks replay reproducibility | PR 0 records the decision either way |
+| A control action breaks replay reproducibility | Durable control trace ordered by logical replay time; an unrecorded action disqualifies the fixture |
 | Hand-mapped DTOs drift from the contract | Each snapshot validates against its schema |
 | One oversized capture blows a frame | A millisecond budget, not a request count |
 | A long poll starves other requests | Waiters park off the executor (section 6.4) |
@@ -1302,7 +1376,7 @@ error messages by hand.
 | Snapshots consume frame time | Build on demand, limit ranges, and serialize off-thread |
 | The tool list becomes too large | Use profiles, capability search, and module-based exposure |
 | Modules produce an inconsistent snapshot | Capture in one UI-thread pass and attach revisions |
-| A client acts on stale state | Require `expected_revision` |
+| A client acts on stale state | Require `expected_revisions` |
 | A retry duplicates an action | Require `idempotency_key` |
 | Local data leaks | Require opt-in, local endpoints, ephemeral tokens, and redaction |
 | An agent gets a trading shortcut | Reuse UI confirmation and use two phases for live trading |
@@ -1312,14 +1386,16 @@ error messages by hand.
 
 ## 16. Recommended starting decisions
 
-PR 0 should adopt these defaults unless the ADR or threat model finds a
-specific reason to change one:
+PR 0 adopts these defaults, with the details fixed by the control contract,
+ADR, and threat model:
 
 1. **Local first:** Use an authenticated loopback endpoint. Evaluate named
    pipes and Unix sockets in the ADR without blocking the MVP.
 2. **Local MCP over STDIO:** Prefer broad client compatibility and simple
    configuration.
-3. **Observer by default:** Expose no writes in the first release.
+3. **Observer by default:** Expose no writes unless the user grants a stronger
+   profile. Use `annotator` for reversible on-chart answers without cockpit
+   authority.
 4. **Model multiple instances immediately:** Keep this in the contract even if
    the first test runs only one instance.
 5. **Keep evidence in memory:** Make disk export explicit.
@@ -1330,8 +1406,9 @@ specific reason to change one:
 8. **Do not build a plugin VM yet:** The registry is the port. Add a plugin
    runtime only after a second concrete use case requires it.
 9. **Publish attention, not only state:** A resolved cursor, a published
-   selection, and a mark are part of the MVP. Pointing is what makes every
-   later exchange specific.
+   selection, and human-created marks are part of the observer MVP. Remote
+   mark creation is an annotate action. Pointing is what makes every later
+   exchange specific.
 10. **Ship the annotate tier inside the MVP:** Reading without answering leaves
     a one-way mirror. Annotate and notify cannot lose the user's work, so they
     are not the risk that justifies deferring them.
@@ -1346,18 +1423,16 @@ specific reason to change one:
 
 ## 17. Immediate next action
 
-After this plan is reviewed and accepted:
+PR 0 now contains the capability inventory, local transport ADR, observer
+threat model, contract conventions and limits, tool-surface decision, trade
+annotation owner, deterministic control-trace decision, and Codex and Claude
+setup flows.
 
-1. Complete PR 0 in the current worktree with the capability inventory seeded
-   from the 89 existing hooks, the local transport ADR, the observer threat
-   model including the cursor and selection scopes, the tool surface decision,
-   the owner of a trade annotation, and the determinism decision.
-2. Validate the documentation, complete the architecture review, and merge
-   PR 0.
-3. Create `feat/control-contract` in its own worktree.
-4. Implement only `quantick-control`, the fake host and client, and their tests.
-5. Run all four repository checks and the architecture review.
-6. Merge the contract before changing the application.
+1. Validate those documents, complete the architecture review, and merge PR 0.
+2. Create `feat/control-contract` in its own worktree.
+3. Implement only `quantick-control`, the fake host and client, and their tests.
+4. Run all four repository checks and the architecture review.
+5. Merge the contract before changing the application.
 
 This sequence establishes a small, testable boundary before touching the large
 `QuantickApp` state. It also keeps MCP SDK decisions out of domain code.
@@ -1388,6 +1463,8 @@ The MVP is complete when:
 
 ## 19. References
 
+- [PR 0 control-plane contract](control-plane/README.md): Normative decisions,
+  capability inventory, transport ADR, and observer threat model.
 - [`CLAUDE.md`](../CLAUDE.md): Architecture, determinism, dependency direction,
   and the "operable without a hand" rule.
 - [Local architecture review](../.claude/skills/arch-review/SKILL.md): The
@@ -1402,3 +1479,5 @@ The MVP is complete when:
   extensible registry.
 - [OpenAI Model Context Protocol documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli):
   STDIO and Streamable HTTP transports, plus MCP configuration in Codex.
+- [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp): Local
+  STDIO registration, scopes, and server verification.
