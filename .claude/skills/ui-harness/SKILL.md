@@ -118,6 +118,14 @@ Landing with the anchored VWAP goal (`feat/anchored-vwap`):
 
 Once merged, move it into the table above.
 
+Landing with the off-tape trade-marks fix (`fix/trade-marks-off-series`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_REPLAY_RESTART_AFTER=<n>` | the replay seek, scripted: once the session has closed `n` round trips, the transport's own **Restart** is pressed. The recording starts over, the trades stay in the ledger (they happened) and their fills are now at instants no bar on screen covers — the one state where a closed-trade mark can be asked to paint against a tape that has not reached it, and the state the marks used to stack up in. Needs a recording playing (`QUANTICK_REPLAY_DIR` + `QUANTICK_REPLAY_AUTOSTART=1`) and trades to close (`QUANTICK_PAPER_DEMO=1` + `QUANTICK_TRADES_DIR` at scratch); on a live feed there is no timeline to seek and the hook simply waits. Consumed once |
+
+Once merged, move it into the table above.
+
 Landing with the toolbar usability goal (`fix/toolbar-usability`):
 
 | Hook | Reaches |

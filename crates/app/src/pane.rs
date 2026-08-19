@@ -2360,6 +2360,43 @@ impl ChartPane {
         Some(after.saturating_sub(1))
     }
 
+    /// The slot whose bar *covers* market time `ms`, or `None` when this
+    /// pane's tape does not reach that instant at all.
+    ///
+    /// [`Self::slot_at_time`] clamps at both ends — an instant older than the
+    /// series answers slot 0, a newer one the newest slot — which is what a
+    /// drawing anchor being re-hung on the closest bar wants. A mark standing
+    /// for a *fill* wants the opposite answer at those edges: outside the
+    /// window the pane holds, the tape on screen cannot prove the print
+    /// happened, and a mark on the wrong bar is worse than no mark. Without
+    /// it a replay seek — which wipes the bars and keeps the round trips,
+    /// because they happened — stacks every earlier trade on whichever bar
+    /// sits at the edge, and they pile up there as the replay runs on.
+    ///
+    /// The window is the tape's own: the oldest bar's first print to the
+    /// newest bar's last one. Between them `slot_at_time` is already exact,
+    /// so only the two edges are decided here.
+    pub fn covering_slot_at_time(&self, ms: i64) -> Option<usize> {
+        if self.slot_open_time(0)? > ms {
+            return None;
+        }
+        if self.newest_covered_time()? < ms {
+            return None;
+        }
+        self.slot_at_time(ms)
+    }
+
+    /// The newest market time this pane's series covers: the forming bar's
+    /// last print, the newest closed bar's when nothing is forming, and the
+    /// venue prefix's when the tape itself is still empty.
+    pub fn newest_covered_time(&self) -> Option<i64> {
+        self.state
+            .partial()
+            .or_else(|| self.state.bars().last())
+            .or_else(|| self.history_prefix.last())
+            .map(|bar| bar.close_time)
+    }
+
     /// The market time under the right edge of the candles' pane, or `None`
     /// while the view follows live (the right edge is the newest bar by
     /// definition, so there is nothing to remember) or when there are no bars.
@@ -5148,7 +5185,12 @@ impl ChartPane {
         // Closed-trade marks sit between the drawings and the live paper
         // lines: history under the orders that are still working. Only the
         // session's trades paint — the tape on screen proves their fills;
-        // rows loaded from earlier sessions stay in the ledger.
+        // rows loaded from earlier sessions stay in the ledger. And only
+        // where this pane's own bars reach the fill's instant, which is why
+        // the mapping handed over is `covering_slot_at_time` and not the
+        // clamping `slot_at_time`: a trade the tape has not got to yet has
+        // no bar to stand on, and standing it on the edge one is the pile-up
+        // a replay seek used to draw.
         if self.layer_visible(ChartLayer::TradePaint, chrome.style) {
             let frame = crate::trade_paint::TradePaintFrame {
                 painter,
@@ -5162,7 +5204,7 @@ impl ChartPane {
                 &frame,
                 chrome.paper.session_trades(),
                 chrome.paper.selected_trade_index(),
-                |ms| self.slot_at_time(ms),
+                |ms| self.covering_slot_at_time(ms),
                 |slot| self.viewport.x_center(slot, right, total),
             );
         }
@@ -6592,6 +6634,129 @@ mod tests {
             .collect();
         pane.ingest_backfill(&trades);
         pane
+    }
+
+    /// The fixture tape's first print.
+    const TAPE_START_MS: i64 = 1_700_000_000_000;
+
+    /// One print of that tape: a second apart, flat at a hundred.
+    fn print_at(index: u64) -> quantick_engine::Trade {
+        use rust_decimal::Decimal;
+        quantick_engine::Trade {
+            agg_id: index,
+            timestamp_ms: TAPE_START_MS + index as i64 * 1_000,
+            price: Decimal::from(100),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        }
+    }
+
+    /// A pane holding `count` of those prints, `per_bar` of them to a bar —
+    /// the fixture the covering-slot edges are read off.
+    fn pane_of_prints(count: u64, per_bar: u64) -> ChartPane {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(per_bar), "TESTUSDT".to_owned());
+        let trades: Vec<_> = (0..count).map(print_at).collect();
+        pane.ingest_backfill(&trades);
+        pane
+    }
+
+    /// The lookup the trade marks are painted through answers only inside
+    /// the tape: the first print to the last, edges included.
+    #[test]
+    fn a_covering_slot_answers_only_inside_the_tape() {
+        // Ten prints a second apart, four to a bar: two closed bars and a
+        // forming one holding the last two.
+        let pane = pane_of_prints(10, 4);
+        let newest = TAPE_START_MS + 9_000;
+
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS - 1),
+            None,
+            "a millisecond before the first print is not on this tape"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS),
+            Some(0),
+            "the first print itself is"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS + 2_500),
+            Some(0),
+            "so is an instant between two prints of the first bar"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS + 4_000),
+            Some(1),
+            "the second bar opens on its own first print"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(newest),
+            Some(2),
+            "the forming bar answers for its last print"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(newest + 1),
+            None,
+            "a millisecond past it is not covered"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(newest + 3_600_000),
+            None,
+            "and neither is an hour past it"
+        );
+    }
+
+    #[test]
+    fn an_empty_pane_covers_no_instant_at_all() {
+        let pane = pane_of_prints(0, 4);
+        assert_eq!(pane.covering_slot_at_time(TAPE_START_MS), None);
+    }
+
+    /// The other lookup clamps, on purpose: a drawing anchor being re-hung
+    /// wants the closest bar and is told it was clamped. Pinned here so the
+    /// two answers cannot quietly converge.
+    #[test]
+    fn the_clamping_lookup_still_clamps() {
+        let pane = pane_of_prints(10, 4);
+        let newest = TAPE_START_MS + 9_000;
+        assert_eq!(
+            pane.slot_at_time(newest + 3_600_000),
+            Some(2),
+            "an hour past the tape lands on the newest slot"
+        );
+        assert_eq!(
+            pane.slot_at_time(TAPE_START_MS - 3_600_000),
+            Some(0),
+            "an hour before it lands on the oldest"
+        );
+    }
+
+    /// The replay seek's shape: the round trips survive the rebuild (they
+    /// happened), the bars do not. A fill the rebuilt tape has not reached
+    /// gets no bar until it does — instead of parking on the edge one and
+    /// accumulating there as the replay runs on.
+    #[test]
+    fn a_fill_ahead_of_the_tape_waits_for_it() {
+        let fill = TAPE_START_MS + 6_000;
+        let mut pane = pane_of_prints(4, 4);
+        assert_eq!(
+            pane.covering_slot_at_time(fill),
+            None,
+            "the rebuilt tape stops two prints short of the fill"
+        );
+        assert_eq!(
+            pane.slot_at_time(fill),
+            Some(0),
+            "which is exactly where the clamping lookup would have parked it"
+        );
+        for index in 4..8 {
+            pane.ingest_live_trade(&print_at(index));
+        }
+        assert_eq!(
+            pane.covering_slot_at_time(fill),
+            Some(1),
+            "the tape reaches the instant and the bar holding it answers"
+        );
     }
 
     /// A mark placed on the bar at `slot`, shared with the tab's other panes.
