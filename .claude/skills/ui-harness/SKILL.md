@@ -254,6 +254,14 @@ For a screen that represents the user's real setup, enable the trio:
    `QUANTICK_CONFIG` with an alternate `listen_addr`. Close every instance
    you opened when done.
 
+Landing with the MT5 older-history goal (`feat/mt5-load-older`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_LOAD_OLDER=<pages>` | the toolbar's `+ older` button **pressed**, that many times, once the chart has bars to page back from. The button's point is what happens after the click — the prints prepended in front of what is already drawn — so a capture that can only photograph the enabled button proves the affordance exists and nothing about whether it works. Goes through `Tab::request_older_history`, the very function the click calls, so a hooked run drives the loading indicator too. Fires one page per frame and waits for each reply: the feed serves one request at a time, so pressing them together would photograph the refusal path instead of the feature. Waits up to `LOAD_OLDER_HOOK_FRAMES` (~10 s) for a first block, then gives up and logs `LOAD_OLDER_AUTOSTART_GAVE_UP` rather than hanging a capture run on a bridge that never connected. On MetaTrader it needs a bridge that declares `history_paging` (`bridge/mt5/quantick_bridge.py`, not the Expert Advisor); on a feed that cannot page, each press is answered empty and the chart is unchanged |
+
+Once merged, move it into the table above.
+
 ## Adding a new hook
 
 New surface → new `QUANTICK_*` env hook in the same commit: read the var next
