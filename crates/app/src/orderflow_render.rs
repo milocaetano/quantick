@@ -298,12 +298,15 @@ pub(crate) fn theme_bubble_rgb(theme: HeatmapTheme) -> ThemeBubbleRgb {
 /// Vertical nudge, in pixels, that keeps the two sides off the same row.
 ///
 /// Buy aggression lifts the ask, sell aggression hits the bid, so buys sit
-/// slightly above the print and sells slightly below. Screen y grows downward.
-const fn side_offset_y(side: Side, offset: f32) -> f32 {
-    match side {
+/// on the ask's side of the print and sells on the bid's. That is a *price*
+/// direction: `inverted` mirrors the nudge with the chart, or the separation
+/// would assert the opposite book side upside down. Screen y grows downward.
+const fn side_offset_y(side: Side, offset: f32, inverted: bool) -> f32 {
+    let toward_ask = match side {
         Side::Buy => -offset,
         Side::Sell => offset,
-    }
+    };
+    if inverted { -toward_ask } else { toward_ask }
 }
 
 /// Interior alpha of a hollow bubble, as a fraction of the configured fill
@@ -989,6 +992,11 @@ pub(crate) struct ProjectedLayout<'a> {
     /// the chart. `0.0` means the frame has no lane and the candles own the
     /// whole chart.
     pub(crate) lane_width_px: f32,
+    /// Whether the chart is upside down. The projection speaks in fractions
+    /// of the price window and knows nothing of orientation; the flip happens
+    /// here, at the same boundary where the candles' own scale flips, so the
+    /// map, the bubbles and the bars they sit on turn over together.
+    pub(crate) inverted: bool,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -1012,7 +1020,15 @@ impl<'a> ProjectedLayout<'a> {
             } else {
                 0.0
             },
+            inverted: false,
         }
+    }
+
+    /// The same layout upside down when `inverted` — see the field's note.
+    #[must_use]
+    pub(crate) fn with_inverted(mut self, inverted: bool) -> Self {
+        self.inverted = inverted;
+        self
     }
 
     #[must_use]
@@ -1148,7 +1164,9 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     fn y(self, normalized: f64) -> f32 {
-        self.chart_rect.top() + finite_unit_f64(normalized) as f32 * self.chart_rect.height()
+        let unit = finite_unit_f64(normalized) as f32;
+        let unit = if self.inverted { 1.0 - unit } else { unit };
+        self.chart_rect.top() + unit * self.chart_rect.height()
     }
 
     #[must_use]
@@ -1505,7 +1523,15 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
         }
         // Follow the bubble's own vertical nudge, so the carved gap stays
         // centred on the bubble that will be drawn over it.
-        let center = center + egui::vec2(0.0, side_offset_y(trade.side, style.bubbles.side_offset));
+        let center = center
+            + egui::vec2(
+                0.0,
+                side_offset_y(
+                    trade.side,
+                    style.bubbles.side_offset,
+                    context.layout.inverted,
+                ),
+            );
         let r = bubble_radius(
             trade.size,
             style.bubbles.min_radius,
@@ -1675,6 +1701,9 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // price and a lopsided one leans the way its dominant side would.
     // A print is drawn only inside its own pane: one panned off the right of
     // the candles is out of sight, not on top of the tape.
+    // The lean is toward the dominant side's book half — a price direction,
+    // so it mirrors with the chart like side_offset_y does.
+    let lean_sign = if context.layout.inverted { 1.0 } else { -1.0 };
     let center_of = |trade: &AggressionPrimitive| {
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
         let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
@@ -1682,7 +1711,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             .layout
             .pane(trade.x)
             .contains(center)
-            .then(|| center + egui::vec2(0.0, -lean * bubbles.side_offset))
+            .then(|| center + egui::vec2(0.0, lean_sign * lean * bubbles.side_offset))
     };
     // The live lane has room the compressed history does not, which is the
     // whole reason it gets a radius range of its own.
@@ -3225,13 +3254,17 @@ mod tests {
     #[test]
     fn buy_and_sell_bubbles_are_nudged_to_opposite_sides() {
         // Screen y grows downward: buys sit above the print, sells below.
-        assert!(side_offset_y(Side::Buy, 4.0) < 0.0);
-        assert!(side_offset_y(Side::Sell, 4.0) > 0.0);
-        assert_eq!(side_offset_y(Side::Buy, 0.0), 0.0);
+        assert!(side_offset_y(Side::Buy, 4.0, false) < 0.0);
+        assert!(side_offset_y(Side::Sell, 4.0, false) > 0.0);
+        assert_eq!(side_offset_y(Side::Buy, 0.0, false), 0.0);
         assert_eq!(
-            side_offset_y(Side::Buy, 4.0).abs(),
-            side_offset_y(Side::Sell, 4.0).abs()
+            side_offset_y(Side::Buy, 4.0, false).abs(),
+            side_offset_y(Side::Sell, 4.0, false).abs()
         );
+        // The nudge names a book side, not a screen side: upside down it
+        // mirrors with the chart.
+        assert!(side_offset_y(Side::Buy, 4.0, true) > 0.0);
+        assert!(side_offset_y(Side::Sell, 4.0, true) < 0.0);
     }
 
     /// Paint through `draw` off-screen and return the shapes it emitted.
@@ -3299,7 +3332,8 @@ mod tests {
             draw_bubble(
                 painter,
                 BubbleMark {
-                    center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset)),
+                    center: at
+                        + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset, false)),
                     radius,
                     side: Side::Buy,
                     size: PREVIEW_LARGE_PRINT_SIZE,
@@ -3690,7 +3724,8 @@ mod tests {
             draw_bubble(
                 painter,
                 BubbleMark {
-                    center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset)),
+                    center: at
+                        + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset, false)),
                     radius,
                     side: Side::Buy,
                     size: PREVIEW_LARGE_PRINT_SIZE,
@@ -3764,6 +3799,19 @@ mod tests {
             painted(|painter| draw_bubble(painter, mark(big), &solid, &colors)),
             "a buy above the floor must be untouched by the ring setting"
         );
+    }
+
+    /// Orientation flips the price fraction and nothing else: y mirrors
+    /// around the canvas's middle, x — time — never moves.
+    #[test]
+    fn an_inverted_layout_mirrors_normalized_y() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+        let flipped = layout.with_inverted(true);
+        assert_eq!(layout.y(0.25), 100.0);
+        assert_eq!(flipped.y(0.25), 300.0);
+        assert_eq!(flipped.x(0.5), layout.x(0.5), "time never turns over");
     }
 
     /// The key starts below whatever already owns the canvas's top-left
@@ -4380,8 +4428,8 @@ mod tests {
     fn a_pie_leans_with_its_buy_share() {
         let offset = 4.0;
         let lean = |buy_share: f32| -((finite_unit(buy_share) - 0.5) * 2.0) * offset;
-        assert_eq!(lean(1.0), side_offset_y(Side::Buy, offset));
-        assert_eq!(lean(0.0), side_offset_y(Side::Sell, offset));
+        assert_eq!(lean(1.0), side_offset_y(Side::Buy, offset, false));
+        assert_eq!(lean(0.0), side_offset_y(Side::Sell, offset, false));
         assert_eq!(lean(0.5), 0.0);
         assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
     }

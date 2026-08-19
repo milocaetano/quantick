@@ -21,13 +21,17 @@ pub fn to_f64(price: rust_decimal::Decimal) -> f64 {
 /// Vertical price → y-pixel mapping, auto-scaled to a price range.
 ///
 /// `hi` maps to `top` (smaller y, screen coordinates grow downward) and `lo`
-/// maps to `bottom`.
+/// maps to `bottom` — unless the scale is [inverted](Self::with_inverted),
+/// when low prices ride at the top: the trader's upside-down view. Orientation
+/// lives here, at the one place price becomes pixels, so every layer reading
+/// this scale turns over together and none can be flipped alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PriceScale {
     lo: f64,
     hi: f64,
     top: f32,
     bottom: f32,
+    inverted: bool,
 }
 
 impl PriceScale {
@@ -59,6 +63,7 @@ impl PriceScale {
             hi: hi + pad,
             top,
             bottom,
+            inverted: false,
         })
     }
 
@@ -67,7 +72,7 @@ impl PriceScale {
     /// auto-fitting the visible bars.
     #[must_use]
     pub fn from_range(lo: f64, hi: f64, top: f32, bottom: f32) -> Self {
-        // Guard against an inverted or zero span.
+        // Guard against a reversed or zero span.
         let (lo, hi) = if hi > lo {
             (lo, hi)
         } else {
@@ -78,10 +83,29 @@ impl PriceScale {
             hi,
             top,
             bottom,
+            inverted: false,
         }
     }
 
+    /// The same scale turned upside down when `inverted`: `lo` maps to `top`
+    /// and `hi` to `bottom`. `(lo, hi)` stay ordered as prices — orientation
+    /// is how the range meets the screen, not a property of the range.
+    #[must_use]
+    pub fn with_inverted(mut self, inverted: bool) -> Self {
+        self.inverted = inverted;
+        self
+    }
+
+    /// Whether low prices ride at the top of the pane.
+    #[must_use]
+    pub fn is_inverted(&self) -> bool {
+        self.inverted
+    }
+
     /// Pixels per unit of price, computed from the f64 range directly.
+    ///
+    /// Positive either way up: orientation never changes the density, and the
+    /// consumers (row heights, LOD ladders) want a size, not a direction.
     ///
     /// Never derive this by subtracting two `y()` values: `y` returns f32,
     /// and at an index-future price the pixel position of price 0 sits a
@@ -105,8 +129,27 @@ impl PriceScale {
         if span.abs() < f64::EPSILON {
             return f32::midpoint(self.top, self.bottom);
         }
-        let frac = ((self.hi - price) / span) as f32;
+        let frac = if self.inverted {
+            ((price - self.lo) / span) as f32
+        } else {
+            ((self.hi - price) / span) as f32
+        };
         self.top + frac * (self.bottom - self.top)
+    }
+
+    /// The screen band covering the price interval between `a` and `b`
+    /// (either order): `(top_y, bottom_y)` with `top_y <= bottom_y`,
+    /// whichever way up the scale is.
+    ///
+    /// The one way to turn two prices into a rect's vertical edges.
+    /// Hand-rolling `(y(hi), y(lo))` reads correctly upright and produces a
+    /// negative — silently dropped — rect upside down, which is how three
+    /// layers vanished the first time the chart flipped.
+    #[must_use]
+    pub fn band(&self, a: f64, b: f64) -> (f32, f32) {
+        let ya = self.y(a);
+        let yb = self.y(b);
+        (ya.min(yb), ya.max(yb))
     }
 
     /// The price at a given y-pixel — the inverse of [`y`](PriceScale::y), for a
@@ -117,8 +160,12 @@ impl PriceScale {
         if height.abs() < f32::EPSILON {
             return f64::midpoint(self.lo, self.hi);
         }
-        let frac = f64::from((y - self.top) / height); // 0 at top (hi), 1 at bottom (lo)
-        self.hi - frac * (self.hi - self.lo)
+        let frac = f64::from((y - self.top) / height); // 0 at top, 1 at bottom
+        if self.inverted {
+            self.lo + frac * (self.hi - self.lo)
+        } else {
+            self.hi - frac * (self.hi - self.lo)
+        }
     }
 
     /// The padded `(lo, hi)` price range this scale covers.
@@ -285,8 +332,13 @@ pub fn candle_geometry(
 
     let high_y = safe_scaled_y(scale, bar.high);
     let low_y = safe_scaled_y(scale, bar.low);
-    let upper_top = high_y.min(body.top);
-    let lower_bottom = low_y.max(body.bottom);
+    // Screen-space extremes rather than the price names: on an inverted scale
+    // the high's pixel sits *below* the body, and reading "upper" from
+    // `bar.high` alone would drop both wicks.
+    let wick_top = high_y.min(low_y);
+    let wick_bottom = high_y.max(low_y);
+    let upper_top = wick_top.min(body.top);
+    let lower_bottom = wick_bottom.max(body.bottom);
     let upper_wick = (upper_top < body.top).then_some(VerticalSegment {
         x: xc,
         top: upper_top,
@@ -787,6 +839,46 @@ mod tests {
     }
 
     #[test]
+    fn an_inverted_scale_maps_low_to_the_top() {
+        let scale = PriceScale::from_range(100.0, 110.0, 0.0, 100.0).with_inverted(true);
+        assert!(scale.is_inverted());
+        assert!((scale.y(100.0) - 0.0).abs() < 0.001);
+        assert!((scale.y(110.0) - 100.0).abs() < 0.001);
+        assert!((scale.y(105.0) - 50.0).abs() < 0.001);
+        // The range stays ordered as prices; orientation is not a reversal
+        // of the bounds.
+        assert_eq!(scale.range(), (100.0, 110.0));
+        assert!(scale.px_per_price() > 0.0, "density has no orientation");
+    }
+
+    #[test]
+    fn price_at_is_the_inverse_of_y_upside_down() {
+        let scale = PriceScale::from_range(100.0, 110.0, 0.0, 100.0).with_inverted(true);
+        for price in [100.0, 103.0, 107.5, 110.0] {
+            let y = scale.y(price);
+            assert!(
+                (scale.price_at(y) - price).abs() < 1e-6,
+                "price_at(y({price})) != {price}"
+            );
+        }
+    }
+
+    #[test]
+    fn wicks_survive_the_flip() {
+        // high 110 / low 90 around a 100–105 body, upside down: the low's
+        // wick rides above the body on screen, the high's below.
+        let scale = PriceScale::from_range(90.0, 110.0, 0.0, 200.0).with_inverted(true);
+        let bar = ohlc("100.0", "110.0", "90.0", "105.0");
+        let geometry = candle_geometry(&scale, &bar, 50.0, 4.0, 1.0);
+        let upper = geometry.upper_wick.expect("the low's wick, on top");
+        let lower = geometry.lower_wick.expect("the high's wick, below");
+        assert!((upper.top - scale.y(90.0)).abs() < 0.001);
+        assert!((upper.bottom - geometry.body.top).abs() < 0.001);
+        assert!((lower.top - geometry.body.bottom).abs() < 0.001);
+        assert!((lower.bottom - scale.y(110.0)).abs() < 0.001);
+    }
+
+    #[test]
     fn nice_ticks_are_round_and_in_range() {
         let ticks = nice_ticks(100.0, 110.0, 5);
         assert!(!ticks.is_empty());
@@ -1017,6 +1109,7 @@ mod tests {
             hi: f64::INFINITY,
             top: f32::NAN,
             bottom: f32::INFINITY,
+            inverted: false,
         };
         let geometry = candle_geometry(
             &invalid_scale,

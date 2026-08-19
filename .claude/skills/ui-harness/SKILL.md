@@ -149,6 +149,15 @@ Landing with the popup-position goal (`feat/inspector-position-memory`):
 
 Once merged, move it into the table above.
 
+Landing with the inverted chart goal (`feat/inverted-chart`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_INVERTED=1` | the chart **upside down** — low prices at the top — through the very setter the axis menu's "Inverted chart" checkbox calls (`PriceView::set_inverted`), on **both panes** of a split layout so no surface is silently audited the right way up. The state is otherwise reached by a long price-gutter drag to the flip threshold (`FLIP_SPAN_FACTOR`, 40 auto-fit spans) plus a second pull, a gesture no scripted run can perform. Every price-mapped layer turns over together — candles, wicks, axis labels, drawings, footprint, heatmap, bubbles, live strip, paper lines, trade paint — so this is the frame that audits all of them at once. Anything but `1` leaves the chart the right way up |
+| `QUANTICK_CONTEXT_MENU=axis` | the **price axis's own context menu** (the Inverted chart toggle), via the same scripted right-click path as `chart`/`tape` — the click lands on the gutter rect the draw published (`last_price_gutter`), never on a guessed pixel. `scale` is an alias |
+
+Once merged, move these into the table above.
+
 Landing with the parked-context-bar fix (`fix/popup-position-every-tool`):
 
 | Hook | Reaches |

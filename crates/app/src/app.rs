@@ -18,7 +18,6 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
-use crate::chart::PriceScale;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
@@ -649,6 +648,8 @@ enum ContextMenuPane {
     Chart,
     /// The rolling tape, right of it.
     Tape,
+    /// The price gutter — the axis's own menu (Inverted chart).
+    Axis,
 }
 
 impl ContextMenuPane {
@@ -658,6 +659,7 @@ impl ContextMenuPane {
         match value.trim().to_ascii_lowercase().as_str() {
             "chart" | "candles" => Some(Self::Chart),
             "tape" | "lane" => Some(Self::Tape),
+            "axis" | "scale" => Some(Self::Axis),
             _ => None,
         }
     }
@@ -1517,6 +1519,19 @@ impl QuantickApp {
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
         }
+        // The chart upside down, through the very setter the axis menu's
+        // checkbox calls. The inverted frame is otherwise only reachable by
+        // a long axis drag no scripted run can perform. Both panes of a
+        // split layout: the hook exists so one capture audits every
+        // price-mapped surface at once, and a half-inverted frame would
+        // silently audit the time pane the right way up.
+        if std::env::var("QUANTICK_INVERTED").is_ok_and(|value| value.trim() == "1") {
+            let tab = app.active_tab_mut();
+            tab.flow_pane.price_view.set_inverted(true);
+            if let Some(time_pane) = tab.time_pane.as_mut() {
+                time_pane.price_view.set_inverted(true);
+            }
+        }
         // The right-click itself, on the pane it names. The two panes open
         // different menus now, so a capture has to say which canvas it is
         // asking about; the click is delivered through the app's own input
@@ -2095,6 +2110,16 @@ impl QuantickApp {
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
         // with the settings every other tab already carries.
         let cmd_trading = self.active_tab().paper.cmd_trading();
+        // Orientation travels with the working state the new tab inherits —
+        // a market opened to compare against the active one is only
+        // comparable the same way up. Per pane; a pane the source tab does
+        // not have follows its flow chart.
+        let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
+        let time_inverted = self
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
         let mut tab = Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
         self.tabs.push(tab);
@@ -2119,6 +2144,13 @@ impl QuantickApp {
         }
         if let Some(px) = self.scripted_candle_width {
             self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+        }
+        // After the declared layout ran: that is what decides whether the
+        // new tab has a time pane to orient at all.
+        let tab = self.active_tab_mut();
+        tab.flow_pane.price_view.set_inverted(flow_inverted);
+        if let Some(time_pane) = tab.time_pane.as_mut() {
+            time_pane.price_view.set_inverted(time_inverted);
         }
     }
 
@@ -6231,11 +6263,9 @@ impl QuantickApp {
     /// focused pane, which is where the selection lives.
     fn drawing_bbox_on_screen(&self, chart: egui::Rect, index: usize) -> Option<egui::Rect> {
         let total = self.drawing_pane().slots();
-        let (auto_lo, auto_hi) = self.drawing_pane().last_auto_range?;
-        let (lo, hi) = self.drawing_pane().price_view.resolve((auto_lo, auto_hi));
-        let scale = PriceScale::from_range(
-            lo,
-            hi,
+        let auto = self.drawing_pane().last_auto_range?;
+        let scale = self.drawing_pane().price_view.scale(
+            auto,
             self.drawing_pane().last_chart_top,
             self.drawing_pane().last_chart_top + self.drawing_pane().last_chart_height,
         );
@@ -7233,13 +7263,19 @@ impl QuantickApp {
     /// there is no tape menu to open where there is no tape.
     fn scripted_context_menu_pos(&self, pane: ContextMenuPane) -> Option<egui::Pos2> {
         let flow = &self.active_tab().flow_pane;
+        // The axis's menu lives on the gutter, off the canvas entirely — the
+        // draw publishes that band the same way it publishes the divider.
+        if pane == ContextMenuPane::Axis {
+            return Some(flow.last_price_gutter?.center());
+        }
         let rect = flow.last_chart_rect?;
         let divider = flow.last_lane_divider_x;
         let x = match (pane, divider) {
             (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
             (ContextMenuPane::Tape, None) => return None,
-            (ContextMenuPane::Chart, Some(divider)) => (rect.left() + divider) / 2.0,
-            (ContextMenuPane::Chart, None) => rect.center().x,
+            // Axis returned above; anything else is the candles' canvas.
+            (_, Some(divider)) => (rect.left() + divider) / 2.0,
+            (_, None) => rect.center().x,
         };
         Some(egui::pos2(x, rect.center().y))
     }
@@ -8797,6 +8833,7 @@ impl QuantickApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chart::PriceScale;
 
     use rust_decimal::Decimal;
     use tokio::sync::mpsc;
@@ -9445,6 +9482,175 @@ mod tests {
             "and the pane never felt it"
         );
         assert!(pane_is_auto(&app, flow));
+    }
+
+    /// The trader's own gesture for turning the chart over: keep dragging the
+    /// price gutter down and the candles shrink, flatten and flip. The same
+    /// motion carried on grows them upside down, and the opposite pull turns
+    /// the chart back — one continuous loop, no menu needed.
+    #[test]
+    fn dragging_the_price_gutter_through_the_flip_turns_the_chart_over() {
+        let (mut app, _cmd_rx) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+
+        let gutter = app
+            .active_tab()
+            .flow_pane
+            .last_price_gutter
+            .expect("the draw published the gutter");
+        assert!(!app.active_tab().flow_pane.price_view.is_inverted());
+
+        // One violent pull down flattens the chart to the flip threshold —
+        // still upright, whatever the speed of the flick...
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() + egui::vec2(0.0, 600.0),
+        );
+        assert!(
+            !app.active_tab().flow_pane.price_view.is_inverted(),
+            "the first pull only flattens"
+        );
+        // ...and the next pull turns it over.
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() + egui::vec2(0.0, 600.0),
+        );
+        assert!(
+            app.active_tab().flow_pane.price_view.is_inverted(),
+            "the second pull crossed the threshold and flipped the chart"
+        );
+
+        // Upside down, the same downward motion grows the chart back. The
+        // dummy auto range is never read: the flip took manual control.
+        let span = |app: &QuantickApp| {
+            let (lo, hi) = app.active_tab().flow_pane.price_view.resolve((0.0, 0.0));
+            hi - lo
+        };
+        let flat = span(&app);
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() + egui::vec2(0.0, 150.0),
+        );
+        assert!(
+            span(&app) < flat,
+            "inverted, dragging down compresses the span (bigger candles): {flat} -> {}",
+            span(&app)
+        );
+        assert!(app.active_tab().flow_pane.price_view.is_inverted());
+
+        // And the opposite motion shrinks it back to the threshold, where
+        // the following pull turns it upright again.
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 900.0),
+        );
+        drag_chart(
+            &mut app,
+            &ctx,
+            gutter.center(),
+            gutter.center() - egui::vec2(0.0, 300.0),
+        );
+        assert!(
+            !app.active_tab().flow_pane.price_view.is_inverted(),
+            "the way back crosses the same threshold"
+        );
+    }
+
+    /// `QUANTICK_CONTEXT_MENU=axis` reaches the price axis's own menu: the
+    /// scripted right-click lands on the gutter itself, published by the
+    /// draw — never a guess about where the axis probably is.
+    #[test]
+    fn the_axis_menu_hook_lands_on_the_gutter() {
+        assert_eq!(
+            ContextMenuPane::from_env_value("axis"),
+            Some(ContextMenuPane::Axis)
+        );
+        assert_eq!(
+            ContextMenuPane::from_env_value("scale"),
+            Some(ContextMenuPane::Axis)
+        );
+
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ctx = egui::Context::default();
+        assert_eq!(
+            app.scripted_context_menu_pos(ContextMenuPane::Axis),
+            None,
+            "no draw yet, so no gutter to click"
+        );
+        run_frame(&mut app, &ctx);
+        let gutter = app
+            .active_tab()
+            .flow_pane
+            .last_price_gutter
+            .expect("the draw published the gutter");
+        let position = app
+            .scripted_context_menu_pos(ContextMenuPane::Axis)
+            .expect("one frame published it");
+        assert!(gutter.contains(position));
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_rect
+            .expect("the canvas laid out");
+        assert!(
+            position.x > chart.right(),
+            "the axis, not the canvas: {position:?} vs {chart:?}"
+        );
+    }
+
+    /// The discrete way to turn the chart over: right-click on the price
+    /// gutter opens the axis's own menu, with the Inverted chart toggle in
+    /// it. The canvas keeps its layer menu; the axis speaks for the scale.
+    #[test]
+    fn right_clicking_the_price_gutter_offers_inverted_chart() {
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let target = app
+            .active_tab()
+            .flow_pane
+            .last_price_gutter
+            .expect("the draw published the gutter")
+            .center();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(target),
+                egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+        );
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+        // The menu is an egui Area: it lays out on the frame after the click
+        // that opened it, so the settled frame is the one to read.
+        let texts = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            texts.iter().any(|text| text == "Inverted chart"),
+            "the axis menu is on screen: {texts:?}"
+        );
     }
 
     /// A drawing tool takes the *primary button*, never the chart.
@@ -18012,6 +18218,52 @@ plot(close)
         assert!(
             app.active_tab().flow_pane.drawings.items()[0].points[0].price > start.price,
             "ArrowUp raises the price"
+        );
+    }
+
+    /// The arrows speak the screen's language: upside down, ArrowUp still
+    /// moves the object up — which on an inverted chart means a lower price.
+    #[test]
+    fn arrow_nudges_follow_the_screen_when_the_chart_is_inverted() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+        let start = app.active_tab().flow_pane.drawings.items()[0].points[0];
+
+        app.active_tab_mut().flow_pane.price_view.set_inverted(true);
+        // One frame so the bands are re-carved with the new orientation —
+        // the nudge reads the band the last frame published.
+        run_frame(&mut app, &ctx);
+        run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::ArrowUp)]);
+        assert!(
+            app.active_tab().flow_pane.drawings.items()[0].points[0].price < start.price,
+            "upside down, up on screen is a lower price"
+        );
+    }
+
+    /// The time pane a split builds inherits the orientation of the chart it
+    /// splits away from. It is built a frame after the layout change, so the
+    /// boot's `QUANTICK_INVERTED` hook fires before it exists — without the
+    /// inheritance a scripted inverted capture is silently half-inverted.
+    #[test]
+    fn a_time_pane_born_into_an_inverted_tab_opens_upside_down() {
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ctx = egui::Context::default();
+        app.active_tab_mut().flow_pane.price_view.set_inverted(true);
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let time_pane = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split built a time pane");
+        assert!(
+            time_pane.price_view.is_inverted(),
+            "the second view keeps the market the way the trader has it"
         );
     }
 

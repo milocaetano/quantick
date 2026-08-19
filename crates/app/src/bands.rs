@@ -95,6 +95,10 @@ pub struct PriceBand {
     /// Top and bottom of the candles' plot, which the scale maps onto.
     pub top: f32,
     pub bottom: f32,
+    /// Whether the candles are drawn upside down. The band's scale has to
+    /// carry it, or a drawing would anchor at the mirror of the price the
+    /// click named.
+    pub inverted: bool,
 }
 
 /// Carve one chart pane into its bands.
@@ -118,9 +122,9 @@ pub fn carve(
     out.push(Band {
         key: DrawingBand::Price,
         rect: price.rect,
-        scale: price
-            .range
-            .map(|(lo, hi)| PriceScale::from_range(lo, hi, price.top, price.bottom)),
+        scale: price.range.map(|(lo, hi)| {
+            PriceScale::from_range(lo, hi, price.top, price.bottom).with_inverted(price.inverted)
+        }),
         label: Arc::clone(price_label),
         refusal: (price.range.is_none()).then_some(WARMING_BAND_REFUSAL),
     });

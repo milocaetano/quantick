@@ -679,7 +679,8 @@ impl OrderflowView {
     }
 
     /// Draw resting liquidity, coverage gaps and factual liquidity changes
-    /// behind the candle layer.
+    /// behind the candle layer. `inverted` is the candles' own orientation,
+    /// so the map turns over with the bars it sits behind.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_background(
         &self,
@@ -690,6 +691,7 @@ impl OrderflowView {
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
         lane_width_px: f32,
+        inverted: bool,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -698,7 +700,8 @@ impl OrderflowView {
             frame.first_bar_index,
             frame.slot_count,
             lane_width_px,
-        );
+        )
+        .with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(painter, &context);
@@ -708,6 +711,8 @@ impl OrderflowView {
 
     /// Draw factual aggressive prints over the candles. The canvas's key is
     /// not part of this pass — see [`draw_legend`](Self::draw_legend).
+    /// `inverted` is the candles' own orientation, as in
+    /// [`draw_background`](Self::draw_background).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_aggressions(
         &self,
@@ -718,6 +723,7 @@ impl OrderflowView {
         frame: &VisibleOrderflow,
         canvas_background: egui::Color32,
         lane_width_px: f32,
+        inverted: bool,
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -726,7 +732,8 @@ impl OrderflowView {
             frame.first_bar_index,
             frame.slot_count,
             lane_width_px,
-        );
+        )
+        .with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_aggression_bubbles(painter, &context);
@@ -868,11 +875,14 @@ impl OrderflowView {
                 } else {
                     bucket_width
                 };
-                let top = scale.y((row.price_bucket + row_span).to_f64().unwrap_or(f64::NAN));
-                let bottom = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
-                if !top.is_finite() || !bottom.is_finite() {
+                // Ordered on screen, not by price: on an inverted scale the
+                // row's higher edge is the lower pixel.
+                let a = scale.y((row.price_bucket + row_span).to_f64().unwrap_or(f64::NAN));
+                let b = scale.y(row.price_bucket.to_f64().unwrap_or(f64::NAN));
+                if !a.is_finite() || !b.is_finite() {
                     continue;
                 }
+                let (top, bottom) = (a.min(b), a.max(b));
                 let buy_extent = normalized_area_size(row.buy, reference) * half_width;
                 if buy_extent > 0.0 {
                     let rect = egui::Rect::from_min_max(
@@ -2721,6 +2731,7 @@ mod tests {
                             &frame,
                             egui::Color32::BLACK,
                             0.0,
+                            false,
                         );
                     }
                 });

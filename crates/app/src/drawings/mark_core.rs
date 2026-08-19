@@ -141,9 +141,16 @@ fn size_of(ctxt: &DrawContext<'_>) -> f32 {
 ///
 /// `anchor` is the bar's extreme; the whole shape hangs off it in pixels, so
 /// this is also the function that decides "outside the candle" and the one a
-/// test can ask about without a chart.
-pub(super) fn outline(anchor: egui::Pos2, direction: Direction, size_px: f32) -> Vec<egui::Pos2> {
-    let sign = direction.sign();
+/// test can ask about without a chart. `inverted` mirrors the hang: the
+/// anchor is a *price* extreme, and upside down the outside of the candle is
+/// the other screen direction.
+pub(super) fn outline(
+    anchor: egui::Pos2,
+    direction: Direction,
+    size_px: f32,
+    inverted: bool,
+) -> Vec<egui::Pos2> {
+    let sign = direction.sign() * if inverted { -1.0 } else { 1.0 };
     let head = size_px * HEAD_SHARE;
     let head_half = size_px * HEAD_HALF_WIDTH;
     let shaft_half = size_px * SHAFT_HALF_WIDTH;
@@ -173,7 +180,7 @@ pub(super) fn paint(
     let Some(anchor) = points.first() else {
         return;
     };
-    let outline = outline(*anchor, direction, size_of(ctxt));
+    let outline = outline(*anchor, direction, size_of(ctxt), ctxt.scale.is_inverted());
     if ctxt.halo {
         // The halo pass paints stroke geometry only, like every other tool.
         painter.add(egui::Shape::closed_line(
@@ -202,7 +209,7 @@ pub(super) fn hit_test(
         return false;
     };
     let size = size_of(ctxt);
-    let outline = outline(*anchor, direction, size);
+    let outline = outline(*anchor, direction, size, ctxt.scale.is_inverted());
     // The bounding box of the shape, grown by the grab radius. A mark is
     // small and solid; asking a trader to hit a triangle's true edge on a
     // moving chart would make it the hardest object on the canvas to grab.
@@ -220,8 +227,8 @@ mod tests {
     #[test]
     fn an_up_mark_hangs_below_its_anchor_and_a_down_mark_above() {
         let anchor = egui::pos2(100.0, 200.0);
-        let up = outline(anchor, Direction::Up, DEFAULT_MARK_PX);
-        let down = outline(anchor, Direction::Down, DEFAULT_MARK_PX);
+        let up = outline(anchor, Direction::Up, DEFAULT_MARK_PX, false);
+        let down = outline(anchor, Direction::Down, DEFAULT_MARK_PX, false);
         assert!(
             up.iter().all(|point| point.y > anchor.y),
             "an up mark clears the low it hangs from: {up:?}"
@@ -232,11 +239,29 @@ mod tests {
         );
     }
 
+    /// Upside down the anchor's price extreme sits on the other side of the
+    /// candle, so the whole glyph mirrors — without this the stamp paints
+    /// straight across the bar it marks.
+    #[test]
+    fn an_inverted_chart_mirrors_the_hang() {
+        let anchor = egui::pos2(100.0, 200.0);
+        let up = outline(anchor, Direction::Up, DEFAULT_MARK_PX, true);
+        let down = outline(anchor, Direction::Down, DEFAULT_MARK_PX, true);
+        assert!(
+            up.iter().all(|point| point.y < anchor.y),
+            "inverted, the up mark hangs above the low's pixel: {up:?}"
+        );
+        assert!(
+            down.iter().all(|point| point.y > anchor.y),
+            "and the down mark below the high's: {down:?}"
+        );
+    }
+
     #[test]
     fn the_mark_never_touches_the_candle_it_is_about() {
         for direction in [Direction::Up, Direction::Down] {
             let anchor = egui::pos2(0.0, 0.0);
-            let nearest = outline(anchor, direction, MIN_MARK_PX)
+            let nearest = outline(anchor, direction, MIN_MARK_PX, false)
                 .into_iter()
                 .map(|point| (point.y - anchor.y).abs())
                 .fold(f32::INFINITY, f32::min);
@@ -253,8 +278,8 @@ mod tests {
         // input to its geometry is the chosen size, so there is nowhere for
         // a scale factor to enter.
         let anchor = egui::pos2(50.0, 50.0);
-        let small = outline(anchor, Direction::Up, MIN_MARK_PX);
-        let large = outline(anchor, Direction::Up, MAX_MARK_PX);
+        let small = outline(anchor, Direction::Up, MIN_MARK_PX, false);
+        let large = outline(anchor, Direction::Up, MAX_MARK_PX, false);
         let height = |shape: &[egui::Pos2]| {
             shape
                 .iter()
@@ -268,7 +293,7 @@ mod tests {
 
     #[test]
     fn the_arrow_is_a_head_on_a_shaft() {
-        let outline = outline(egui::pos2(0.0, 0.0), Direction::Up, DEFAULT_MARK_PX);
+        let outline = outline(egui::pos2(0.0, 0.0), Direction::Up, DEFAULT_MARK_PX, false);
         assert_eq!(outline.len(), 7, "tip, two shoulders, two waists, two feet");
         let widest = outline
             .iter()

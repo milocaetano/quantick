@@ -1042,14 +1042,18 @@ fn draw_shape_markers(
             continue;
         }
         let cx = x.x(row);
+        // Above/below are *screen* words, so the anchor reads the extents'
+        // screen extremes rather than their price names: upside down the
+        // high's pixel is the bar's bottom edge, and keying off it would
+        // plant the marker inside the candle with above/below swapped.
         let cy = match marker.location {
             MarkerLocation::Absolute => y_of(value),
             MarkerLocation::AboveBar => match bar_extents(row) {
-                Some((high_y, _)) => high_y - MARKER_GAP_PX,
+                Some((a, b)) => a.min(b) - MARKER_GAP_PX,
                 None => continue,
             },
             MarkerLocation::BelowBar => match bar_extents(row) {
-                Some((_, low_y)) => low_y + MARKER_GAP_PX,
+                Some((a, b)) => a.max(b) + MARKER_GAP_PX,
                 None => continue,
             },
         };

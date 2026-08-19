@@ -130,7 +130,15 @@ pub(crate) fn draw(
             CONNECTOR_DASH_PX,
             CONNECTOR_GAP_PX,
         ));
-        draw_entry_mark(&painter, frame.background, entry, trade, color, is_selected);
+        draw_entry_mark(
+            &painter,
+            frame.background,
+            entry,
+            trade,
+            color,
+            is_selected,
+            frame.scale.is_inverted(),
+        );
         draw_exit_mark(&painter, frame.background, exit, color, is_selected);
         marks.push(Mark {
             position: entry,
@@ -189,7 +197,12 @@ fn endpoints(
 }
 
 /// A filled triangle pointing the trade's way, its apex one gap off the
-/// entry price: under the level for a long, above it for a short.
+/// entry price: on the price side below the level for a long, above it for a
+/// short. The glyph mirrors with the chart (`inverted`): this triangle is the
+/// only carrier of trade direction — the hue says win or loss — and a fixed
+/// screen offset would read every long as a short the moment the chart turns
+/// over.
+#[allow(clippy::too_many_arguments)]
 fn draw_entry_mark(
     painter: &egui::Painter,
     background: egui::Color32,
@@ -197,18 +210,16 @@ fn draw_entry_mark(
     trade: &ClosedTrade,
     color: egui::Color32,
     selected: bool,
+    inverted: bool,
 ) {
     let long = trade.side == Side::Buy;
-    let apex_y = if long {
-        at.y + MARKER_GAP_PX
-    } else {
-        at.y - MARKER_GAP_PX
-    };
-    let base_y = if long {
-        apex_y + ENTRY_MARKER_H_PX
-    } else {
-        apex_y - ENTRY_MARKER_H_PX
-    };
+    // +1 points the apex toward higher screen y; the product mirrors the
+    // whole glyph when the chart is upside down.
+    let side_sign = if long { 1.0 } else { -1.0 };
+    let orientation = if inverted { -1.0 } else { 1.0 };
+    let sign = side_sign * orientation;
+    let apex_y = at.y + sign * MARKER_GAP_PX;
+    let base_y = apex_y + sign * ENTRY_MARKER_H_PX;
     let half = ENTRY_MARKER_W_PX / 2.0;
     let points = vec![
         egui::pos2(at.x, apex_y),

@@ -136,6 +136,10 @@ const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
 /// on a short bar without swallowing the whole half.
 const MIN_CHIP_PX: f32 = 14.0;
 
+/// Gap between an extreme-ratio badge and the row it describes, in pixels —
+/// just off the bar's end, never on the ladder itself.
+const EXTREME_BADGE_GAP_PX: f32 = 3.0;
+
 /// How far above the chart's bottom edge the per-bar delta totals sit —
 /// clear of the legend line below them.
 const TOTALS_STRIP_OFFSET_Y: f32 = 22.0;
@@ -746,11 +750,13 @@ fn zones_of(
 }
 
 /// Pixel band of display row `row` (rows are `row_group` of price tall).
+///
+/// Ordered on screen, not by price: on an inverted scale the row's high edge
+/// is the *lower* pixel, and a band handed out as `(high_edge, low_edge)`
+/// would give every rect a negative height.
 fn row_band(frame: &LayerFrame<'_>, row: i64, row_group: f64) -> (f32, f32) {
     let low = row as f64 * row_group;
-    let top = frame.scale.y(low + row_group);
-    let bottom = frame.scale.y(low);
-    (top, bottom)
+    frame.scale.band(low, low + row_group)
 }
 
 fn side_color(side: Side) -> egui::Color32 {
@@ -804,8 +810,13 @@ fn draw_bar(
         && level >= DetailLevel::Profile
         && let (Some(&first), Some(&last)) = (rows.keys().next(), rows.keys().next_back())
     {
-        let (_, bar_bottom) = row_band(frame, first, row_group);
-        let (bar_top, _) = row_band(frame, last, row_group);
+        // Composed from both rows' screen bands, not from the price names:
+        // upside down the highest bucket renders lowest, and reading "top"
+        // off it would hand the rect a negative height.
+        let (first_top, first_bottom) = row_band(frame, first, row_group);
+        let (last_top, last_bottom) = row_band(frame, last, row_group);
+        let bar_top = first_top.min(last_top);
+        let bar_bottom = first_bottom.max(last_bottom);
         let reach = (frame.half - 1.0).max(1.0);
         painter.rect_filled(
             egui::Rect::from_min_max(
@@ -1076,10 +1087,7 @@ fn draw_bar(
     // beside a merged row must be that row's own number. The "x" suffix
     // keeps it out of the price vocabulary.
     if level == DetailLevel::Detailed && frame.config.extreme_ratio_badge {
-        for (extreme, align, offset) in [
-            (Extreme::Low, egui::Align2::CENTER_TOP, 3.0),
-            (Extreme::High, egui::Align2::CENTER_BOTTOM, -3.0),
-        ] {
+        for extreme in [Extreme::Low, Extreme::High] {
             let cell = match extreme {
                 Extreme::Low => rows.iter().next(),
                 Extreme::High => rows.iter().next_back(),
@@ -1108,10 +1116,18 @@ fn draw_bar(
             } else {
                 Side::Sell
             };
-            let low = row as f64 * row_group;
-            let y = match extreme {
-                Extreme::Low => frame.scale.y(low) + offset,
-                Extreme::High => frame.scale.y(low + row_group) + offset,
+            // The badge sits *outside* the bar's extent — which end of the row
+            // that is on screen follows the scale's orientation, so the chip
+            // never lands on the ladder it is describing.
+            let (band_top, band_bottom) = row_band(frame, row, row_group);
+            let outward_down = match extreme {
+                Extreme::Low => !frame.scale.is_inverted(),
+                Extreme::High => frame.scale.is_inverted(),
+            };
+            let (align, y) = if outward_down {
+                (egui::Align2::CENTER_TOP, band_bottom + EXTREME_BADGE_GAP_PX)
+            } else {
+                (egui::Align2::CENTER_BOTTOM, band_top - EXTREME_BADGE_GAP_PX)
             };
             let text = format!("{:.1}x", ratio_value.to_f64().unwrap_or(0.0));
             let galley =
@@ -1153,8 +1169,13 @@ fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
 }
 
 fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
-    let (top, _) = row_band(frame, mark.high_bucket, row_group);
-    let (_, bottom) = row_band(frame, mark.low_bucket, row_group);
+    // Composed from both rows' screen bands: upside down the high bucket
+    // renders below the low one, and reading "top" off it would hand both
+    // rects a negative height (see the Split backdrop above).
+    let (high_top, high_bottom) = row_band(frame, mark.high_bucket, row_group);
+    let (low_top, low_bottom) = row_band(frame, mark.low_bucket, row_group);
+    let top = high_top.min(low_top);
+    let bottom = high_bottom.max(low_bottom);
     let left = (frame.x_center)(mark.first_slot) - frame.half;
     let right = (frame.x_center)(mark.last_slot) + frame.half;
     // A zone is memory: it outlives its bars to the right edge as a hairline,
