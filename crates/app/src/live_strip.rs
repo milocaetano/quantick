@@ -141,6 +141,7 @@ mod tests {
             x: 0.5,
             y: 0.5,
             size: 0.5,
+            folded_marks: 0,
         }
     }
 

@@ -4896,7 +4896,7 @@ impl QuantickApp {
             heatmap_effective_grouping = %book.effective_grouping,
             heatmap_effective_grouping_multiple = book.effective_grouping_multiple,
             heatmap_dropped_cells = book.dropped_cells,
-            heatmap_dropped_aggressions = book.dropped_aggressions,
+            heatmap_folded_aggressions = book.folded_aggressions,
             heatmap_dropped_liquidity_events = book.dropped_liquidity_events,
             heatmap_projection_ms = book.projection_ms,
             heatmap_live_ms = book.live_ms,
@@ -4970,7 +4970,7 @@ impl QuantickApp {
             );
         }
         if book.dropped_cells > 0
-            || book.dropped_aggressions > 0
+            || book.folded_aggressions > 0
             || book.dropped_liquidity_events > 0
         {
             tracing::warn!(
@@ -4979,7 +4979,7 @@ impl QuantickApp {
                 event_code = "HEATMAP_PROJECTION_CAPPED",
                 symbol = self.active_tab().symbol.as_str(),
                 dropped_cells = book.dropped_cells,
-                dropped_aggressions = book.dropped_aggressions,
+                folded_aggressions = book.folded_aggressions,
                 dropped_liquidity_events = book.dropped_liquidity_events,
                 action = "increase_grouping_or_reduce_retention",
                 "heatmap primitive cap was reached"

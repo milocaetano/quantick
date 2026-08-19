@@ -418,11 +418,13 @@ impl OrderflowView {
     /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
-        // Either pane: this instant is the tape's anchor, so answering it from
-        // the candles' own switch would make hiding the map over the candles
-        // delete the tape itself — the band, its bubbles and its strip — which
-        // is the opposite of each pane answering for its own canvas.
-        if !self.config.depth_visible_anywhere() {
+        // Any flow layer, not the depth map: this instant is the tape's
+        // anchor, and asking the *map* for it made the tape a hostage of L2.
+        // Switching both maps off used to delete the band, its bubbles, its
+        // strip and the menu that configures it — and a feed that streams no
+        // book never had a tape at all, in any configuration. Each pane
+        // answers for its own canvas; the tape answers for its own existence.
+        if !self.config.any_layer_enabled() {
             return None;
         }
         self.sync_published();
@@ -1958,20 +1960,23 @@ impl OrderflowView {
                         // bubble layer draws them — the live strip reads the
                         // same ones. Calling them "bubbles" while none is on
                         // screen would report a layer that is off.
-                        let (noun, drawn) = if self.config.show_aggressions {
-                            ("bubbles", "not drawn")
+                        let noun = if self.config.show_aggressions {
+                            "bubbles"
                         } else {
-                            ("clusters (bubble layer off)", "dropped from the frame")
+                            "clusters (bubble layer off)"
                         };
                         ui.label(format!(
                             "{} {noun} projected · {} aggressions retained",
                             health.projection_aggressions, health.aggression_count
                         ));
-                        if health.dropped_aggressions > 0 {
+                        if health.folded_aggressions > 0 {
                             ui.small(format!(
-                                "{} above the primitive cap were {drawn}",
-                                health.dropped_aggressions
-                            ));
+                                "{} folded into a neighbour to fit the frame —                                  every contract they carried is still drawn",
+                                health.folded_aggressions
+                            ))
+                            .on_hover_text(
+                                "the frame draws a bounded number of bubbles, split                                  between the candles and the tape so neither can crowd                                  the other out. Over that budget the marks merge — the                                  candles fold their smallest together, the tape folds                                  its oldest — and a merged bubble carries the exact                                  summed quantity and says how many marks it stands for.                                  Nothing is discarded",
+                            );
                         }
                         if ui
                             .button("reset bubble visuals")
@@ -2241,10 +2246,27 @@ mod tests {
             "the tape still draws the map, so the lane still has an anchor"
         );
 
-        // Both panes clear: nothing is drawing the map anywhere, and the lane
-        // stands down as it always did.
+        // Both maps clear, and the tape is still a tape. This is the line the
+        // old assertion had backwards: it demanded `None` here, which is a
+        // trader switching two map layers off and watching the whole band —
+        // bubbles, time axis and the menu that configures it — disappear.
         view.set_lane_depth_visible(false);
         assert!(!view.config.depth_visible_anywhere());
+        view.config.live_lane.show_aggressions = true;
+        assert!(
+            view.config.lane_aggressions_drawn(),
+            "the tape draws its bubbles off the trade stream, map or no map"
+        );
+        assert!(
+            view.config.any_layer_enabled(),
+            "the tape is still reading, so the live edge may not be gated shut              (that the edge itself comes from prints is proven in `history` and              `orderflow_engine`)"
+        );
+
+        // Only when nothing at all is on does the lane stand down.
+        view.config.live_lane.show_aggressions = false;
+        view.config.show_aggressions = false;
+        view.config.projection_demand = false;
+        assert!(!view.config.any_layer_enabled());
         assert_eq!(view.live_end_ms(), None);
     }
 

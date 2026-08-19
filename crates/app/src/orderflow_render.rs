@@ -4101,6 +4101,7 @@ mod tests {
                 x,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
         }
 
@@ -4199,6 +4200,7 @@ mod tests {
                 x: 0.5,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
             painted(|painter| {
                 draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -4271,6 +4273,7 @@ mod tests {
                 x,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
             painted(|painter| {
                 draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -4340,6 +4343,7 @@ mod tests {
                 x,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
         }
 
