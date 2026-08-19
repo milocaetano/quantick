@@ -287,6 +287,18 @@ impl TickMapper {
         utc_ms.saturating_add(self.offset_ms)
     }
 
+    /// A server-time instant in UTC, the same conversion
+    /// [`map`](Self::map) applies to a tick's own timestamp.
+    ///
+    /// For the timestamps the bridge reports *about* a block rather than inside
+    /// one — how far back a search reached. Those never pass through `map`, and
+    /// converting them anywhere else would read an offset this mapper may have
+    /// refreshed since.
+    #[must_use]
+    pub fn to_utc_ms(&self, server_ms: i64) -> i64 {
+        server_ms.saturating_sub(self.offset_ms)
+    }
+
     /// Map one tick. Updates the tick-rule state and the stats ledger.
     pub fn map(&mut self, tick: &Tick) -> MapOutcome {
         match self.tape {

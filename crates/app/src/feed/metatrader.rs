@@ -49,7 +49,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
     BookCaptureSwitch, HistoryPager, Mt5Error, Mt5Event, Mt5Status, ServerConfig, SideMode,
@@ -255,8 +255,8 @@ async fn feed_task(
     // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
     // what was already streamed live; only strictly-newer trades pass.
     let mut last_forwarded_ms = i64::MIN;
-    // Oldest trade timestamp forwarded to the UI, and the cursor every "load
-    // older" pages back from.
+    // Oldest trade timestamp forwarded to the UI: the floor a page's overlap is
+    // trimmed against.
     //
     // Tracked here rather than asked of the chart because this is the only
     // place that sees every trade *before* the UI decides what to keep: a tab
@@ -264,13 +264,32 @@ async fn feed_task(
     // point and re-fetch what it just dropped, forever. `None` until something
     // has been forwarded — there is no "older than nothing".
     let mut oldest_forwarded_ms: Option<i64> = None;
+    // Where the *next* page is asked from — deliberately not the same number.
+    //
+    // A page can move the search hours and yield no trades at all: a pre-open
+    // stretch is thousands of quote-only ticks that map to nothing, and a
+    // window over a closed market holds none to begin with. Paging from the
+    // oldest *trade* would re-request that identical window on every click and
+    // the trader could never get past it. So this follows whichever is older,
+    // the oldest trade in hand or how far the bridge said it searched.
+    let mut paging_floor_ms: Option<i64> = None;
+    // Whether a request is outstanding with no reply yet.
+    //
+    // The chart counts loads: `Tab::request_older_history` begins one for every
+    // command it queues, and only a `HistoryPrepended` ends one. So every
+    // command must be answered exactly once, including the ones no bridge will
+    // ever serve — a session that died holding one, a listener that never came
+    // back. This flag is what lets those be answered from here.
+    let mut page_outstanding = false;
     // The candle block the bridge pushed, kept for whoever asks later.
     //
-    // Every other provider fetches history when the pane requests it. MetaTrader
-    // cannot be asked anything — MQL5 sockets are one-way, so the bridge decides
-    // when to send and simply does. Holding the block here is what lets this
-    // provider answer the same `FetchOhlcv` as the others: the request does not
-    // reach a venue, it reads what already arrived.
+    // Every other provider fetches candles when the pane requests them. Nothing
+    // on MetaTrader answers that: the back-channel carries one message and it is
+    // for ticks, the Expert Advisor never reads its socket at all, and no bridge
+    // implements a candle request — so the block arrives when the bridge decides
+    // and simply does. Holding it here is what lets this provider answer the
+    // same `FetchOhlcv` as the others: the request does not reach a venue, it
+    // reads what already arrived.
     let mut candles: Option<OhlcvBlock> = None;
     // How many times the candle answer has changed. The boolean capability is a
     // latch — it rises with the first block and cannot fall — so an empty first
@@ -327,6 +346,32 @@ async fn feed_task(
                             // nobody keeps.
                             Mt5Status::Lost { .. } => {
                                 bridge_connected.store(false, Ordering::Relaxed);
+                                // A click can land in the gap between a session
+                                // clearing its pager and this status arriving:
+                                // `bridge_connected` still reads true, so the
+                                // request is queued against a connection that is
+                                // already gone. Nothing downstream will ever
+                                // answer it, and the chart counts loads — so it
+                                // is answered here.
+                                if page_outstanding {
+                                    page_outstanding = false;
+                                    warn!(
+                                        target: "quantick::app",
+                                        schema_version = 1_u8,
+                                        event_code = "MT5_LOAD_OLDER_REFUSED",
+                                        symbol = %symbol,
+                                        reason = "session_lost",
+                                        action = "answer_empty",
+                                        "the bridge went away with a page request outstanding"
+                                    );
+                                    if tx
+                                        .send(FeedEvent::HistoryPrepended(Vec::new()))
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
                                 FeedNotice::reconnecting(
                                     "the MetaTrader bridge disconnected — reconnecting",
                                 )
@@ -360,6 +405,7 @@ async fn feed_task(
                                 last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
                                 oldest_forwarded_ms =
                                     earlier(oldest_forwarded_ms, Some(trade.timestamp_ms));
+                                paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
                                 if tx.send(FeedEvent::Live(trade)).await.is_err() {
                                     break;
                                 }
@@ -383,12 +429,21 @@ async fn feed_task(
                                 oldest_forwarded_ms,
                                 batch.iter().map(|t| t.timestamp_ms).min(),
                             );
+                            paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
                             if tx.send(FeedEvent::HistoryPrepended(batch)).await.is_err() {
                                 break;
                             }
                         }
                     }
-                    Some(Mt5Event::HistoryPage { trades, exhausted }) => {
+                    Some(Mt5Event::HistoryPage {
+                        trades,
+                        exhausted,
+                        scanned_to_utc_ms,
+                    }) => {
+                        // The reply this request was owed. Cleared before
+                        // anything can fail, so no later `break` leaves the
+                        // flag set on a task that is ending.
+                        page_outstanding = false;
                         // The answer to one click. Empty is a legitimate answer
                         // and still has to be forwarded: `HistoryPrepended` is
                         // what stops the chart's loading indicator, so an empty
@@ -401,6 +456,7 @@ async fn feed_task(
                             symbol = %symbol,
                             count = trades.len(),
                             exhausted,
+                            scanned_to_utc_ms = ?scanned_to_utc_ms,
                             "a page of older ticks is ready to prepend"
                         );
                         // Only trades strictly older than the chart's oldest
@@ -429,6 +485,15 @@ async fn feed_task(
                         oldest_forwarded_ms = earlier(
                             oldest_forwarded_ms,
                             older.iter().map(|t| t.timestamp_ms).min(),
+                        );
+                        // The search cursor follows the *search*, so a page that
+                        // crossed hours of quote-only ticks and mapped none of
+                        // them still moves the next click past them. A bridge
+                        // that reports nothing leaves this on the trades, which
+                        // is the old behaviour and no worse than it.
+                        paging_floor_ms = earlier(
+                            earlier(paging_floor_ms, oldest_forwarded_ms),
+                            scanned_to_utc_ms,
                         );
                         if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
                             break;
@@ -543,6 +608,7 @@ async fn feed_task(
                         // ahead, and `min` keeps it there.
                         oldest_forwarded_ms =
                             earlier(oldest_forwarded_ms, Some(trade.timestamp_ms));
+                        paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
                         if tx.send(FeedEvent::Live(trade)).await.is_err() {
                             break; // UI gone
                         }
@@ -552,6 +618,31 @@ async fn feed_task(
                         // free themselves when the holder goes away), a fatal
                         // crash, or shutdown. Whatever happens, UI commands
                         // keep being served so no loader hangs on a dead feed.
+                        //
+                        // Including the one already in the pager. A session that
+                        // ends cleanly answers its own outstanding request; a
+                        // task that *panicked* never reached that code, and the
+                        // pager it left behind is gone with it. Either way the
+                        // chart is still counting a load nobody will end.
+                        if page_outstanding {
+                            page_outstanding = false;
+                            warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "MT5_LOAD_OLDER_REFUSED",
+                                symbol = %symbol,
+                                reason = "listener_ended",
+                                action = "answer_empty",
+                                "the bridge listener ended with a page request outstanding"
+                            );
+                            if tx
+                                .send(FeedEvent::HistoryPrepended(Vec::new()))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
                         match (&mut server).await {
                             Ok(Err(e)) => {
                                 error!(
@@ -623,17 +714,19 @@ async fn feed_task(
                     // `answer_command` to serve from anywhere, which is why the
                     // bind-retry and dead-listener paths can share it.
                     Some(FeedCommand::LoadOlder { count }) => {
-                        if !request_older_history(
+                        match request_older_history(
                             &symbol,
                             count,
-                            oldest_forwarded_ms,
+                            paging_floor_ms,
                             &history_pager,
                             bridge_connected.load(Ordering::Relaxed),
                             &tx,
                         )
                         .await
                         {
-                            break; // UI gone
+                            RequestOutcome::Asked => page_outstanding = true,
+                            RequestOutcome::AnsweredHere => {}
+                            RequestOutcome::UiGone => break,
                         }
                     }
                     Some(cmd) => {
@@ -734,31 +827,53 @@ struct OhlcvBlock {
     complete: bool,
 }
 
+/// What became of one "load older" command.
+///
+/// Three outcomes and no boolean, because the caller has to tell two of them
+/// apart: a request the bridge will answer later leaves a reply owed, and one
+/// answered on the spot does not.
+enum RequestOutcome {
+    /// On the wire. The reply arrives later as an [`Mt5Event::HistoryPage`].
+    Asked,
+    /// Already answered from here — nothing will page, and the caller owes
+    /// nothing further.
+    AnsweredHere,
+    /// The UI is gone; stop.
+    UiGone,
+}
+
 /// Put one "load older" in front of the running bridge session.
 ///
-/// Returns false when the UI is gone, like every other command handler here.
-///
-/// The reply is not produced here: it arrives later as an [`Mt5Event::HistoryPage`]
-/// once the bridge has answered. What *is* produced here is the reply for every
-/// case where no bridge will answer at all — no session, nothing charted to
-/// page back from — because the chart starts a loading indicator the moment it
-/// asks, and the only thing that stops it is a `HistoryPrepended`.
+/// Every command leaves here either asked or answered, never neither. The chart
+/// *counts* loads — `Tab::request_older_history` begins one per queued command
+/// and only a `HistoryPrepended` ends one — so a command that produced no reply
+/// leaves the count permanently above zero and the "loading history…" overlay
+/// on the chart for the rest of the session.
 async fn request_older_history(
     symbol: &str,
     count: usize,
-    oldest_forwarded_ms: Option<i64>,
+    paging_floor_ms: Option<i64>,
     pager: &HistoryPager,
     bridge_connected: bool,
     tx: &mpsc::Sender<FeedEvent>,
-) -> bool {
-    let refusal = match oldest_forwarded_ms {
-        _ if !bridge_connected => Some("no_bridge_session"),
+) -> RequestOutcome {
+    let (before_utc_ms, refusal) = match paging_floor_ms {
+        _ if !bridge_connected => (0, Some("no_bridge_session")),
         // Nothing has been charted, so there is no "older" to name. This is the
         // ordinary state of a chart between opening and the bridge's first
         // block, not an error.
-        None => Some("nothing_charted_yet"),
-        Some(_) => None,
+        None => (0, Some("nothing_charted_yet")),
+        // Bound rather than unwrapped: a cursor that silently defaulted would
+        // send the bridge walking back from the end of time, and the compiler
+        // is a better guarantee than the comment saying it cannot happen.
+        Some(floor) => (floor, None),
     };
+    // A page already in flight refuses this one, and a refused click is
+    // answered like any other unservable one. It is tempting to stay silent and
+    // let the outstanding reply cover both, but the chart counted two loads and
+    // will only ever see one reply.
+    let refusal = refusal
+        .or_else(|| (!pager.request(count as u64, before_utc_ms)).then_some("already_pending"));
     if let Some(reason) = refusal {
         info!(
             target: "quantick::app",
@@ -770,28 +885,17 @@ async fn request_older_history(
             action = "answer_empty",
             "cannot page older history right now; answering the request empty"
         );
-        return tx
+        return if tx
             .send(FeedEvent::HistoryPrepended(Vec::new()))
             .await
-            .is_ok();
+            .is_ok()
+        {
+            RequestOutcome::AnsweredHere
+        } else {
+            RequestOutcome::UiGone
+        };
     }
-    let before_utc_ms = oldest_forwarded_ms.unwrap_or(i64::MAX);
-    if !pager.request(count as u64, before_utc_ms) {
-        // A page is already being fetched. Deliberately *not* answered: the
-        // outstanding request's reply is what resolves the chart's one loading
-        // indicator, and a second empty reply would clear it while the real
-        // block was still coming.
-        debug!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MT5_LOAD_OLDER_ALREADY_PENDING",
-            symbol,
-            requested = count,
-            action = "drop",
-            "a page is already in flight; dropping this click"
-        );
-    }
-    true
+    RequestOutcome::Asked
 }
 
 /// Answer one UI command. Returns false when the UI is gone.
@@ -1656,6 +1760,197 @@ mod tests {
         assert!(
             !feed.capabilities.borrow().history_paging,
             "the end of the tape withdraws the button"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_load_older_is_answered_exactly_once() {
+        // The chart *counts* loads: `Tab::request_older_history` begins one for
+        // every command it queues, and only a `HistoryPrepended` ends one. A
+        // click the pager drops — because one page is already being walked —
+        // must therefore still be answered, or the count never returns to zero
+        // and "loading history…" stays on the chart for the rest of the
+        // session.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19195".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        async fn connect() -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                match tokio::net::TcpStream::connect("127.0.0.1:19195").await {
+                    Ok(s) => return s,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+            panic!("could not reach the feed listener");
+        }
+
+        fn tick(seq: u64, time_ms: i64, last: &str) -> String {
+            format!(
+                "{{\"type\":\"tick\",\"seq\":{seq},\"time_ms\":{time_ms},\"bid\":\"0\",\
+                 \"ask\":\"0\",\"last\":\"{last}\",\"volume\":1,\"flags\":1080}}\n"
+            )
+        }
+        const HELLO: &str = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"WIN$N\",\"broker_symbol\":\"WINQ26\",\"digits\":0,",
+            "\"server_utc_offset_s\":0,\"history_paging\":true}\n",
+        );
+
+        let mut sock = connect().await;
+        let mut script = String::from(HELLO);
+        script.push_str("{\"type\":\"backfill_start\"}\n");
+        script.push_str(&tick(1, 5_000, "100"));
+        script.push_str(&tick(2, 5_001, "101"));
+        script.push_str("{\"type\":\"backfill_end\"}\n");
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+        let Some(FeedEvent::HistoryPrepended(_)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the opening block")
+        else {
+            panic!("expected the opening block");
+        };
+
+        // Two clicks, back to back. The first goes out; the second cannot,
+        // because the bridge has not answered yet.
+        feed.commands
+            .send(FeedCommand::LoadOlder { count: 2_000 })
+            .await
+            .unwrap();
+        let _first = read_request(&mut sock).await;
+        feed.commands
+            .send(FeedCommand::LoadOlder { count: 2_000 })
+            .await
+            .unwrap();
+
+        // The dropped click is answered from the app layer, immediately.
+        let Some(FeedEvent::HistoryPrepended(dropped)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("the dropped click was never answered: the spinner would never stop")
+        else {
+            panic!("expected an empty prepend for the dropped click");
+        };
+        assert!(dropped.is_empty());
+
+        // And the real page still arrives, so the count reaches zero rather
+        // than going negative or stalling at one.
+        let mut script = String::from("{\"type\":\"history_start\"}\n");
+        script.push_str(&tick(3, 4_000, "99"));
+        script.push_str(&tick(4, 4_001, "98"));
+        script.push_str("{\"type\":\"history_end\"}\n");
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+        let Some(FeedEvent::HistoryPrepended(page)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the page")
+        else {
+            panic!("expected the page");
+        };
+        assert_eq!(page.len(), 1, "the page's first print has no predecessor");
+    }
+
+    #[tokio::test]
+    async fn a_page_that_maps_to_nothing_still_moves_the_next_request() {
+        // Pre-open on WIN$N is thousands of quote-only ticks: the bridge walks
+        // hours and the mapper produces no trades at all. Paging from the
+        // oldest *trade* would re-request the identical window on every click
+        // and the trader could never get past it, so the bridge reports how far
+        // it searched and the cursor follows that.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19196".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        async fn connect() -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                match tokio::net::TcpStream::connect("127.0.0.1:19196").await {
+                    Ok(s) => return s,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+            panic!("could not reach the feed listener");
+        }
+
+        fn tick(seq: u64, time_ms: i64, last: &str) -> String {
+            format!(
+                "{{\"type\":\"tick\",\"seq\":{seq},\"time_ms\":{time_ms},\"bid\":\"0\",\
+                 \"ask\":\"0\",\"last\":\"{last}\",\"volume\":1,\"flags\":1080}}\n"
+            )
+        }
+        const HELLO: &str = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"WIN$N\",\"broker_symbol\":\"WINQ26\",\"digits\":0,",
+            "\"server_utc_offset_s\":0,\"history_paging\":true}\n",
+        );
+
+        let mut sock = connect().await;
+        let mut script = String::from(HELLO);
+        script.push_str("{\"type\":\"backfill_start\"}\n");
+        script.push_str(&tick(1, 9_000, "100"));
+        script.push_str(&tick(2, 9_001, "101"));
+        script.push_str("{\"type\":\"backfill_end\"}\n");
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+        let Some(FeedEvent::HistoryPrepended(_)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the opening block")
+        else {
+            panic!("expected the opening block");
+        };
+
+        feed.commands
+            .send(FeedCommand::LoadOlder { count: 2_000 })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_request(&mut sock).await,
+            "{\"type\":\"load_older\",\"count\":2000,\"before_ms\":9001}"
+        );
+
+        // An empty page — the bridge searched back to 3 000 and mapped nothing.
+        sock.write_all(
+            b"{\"type\":\"history_start\"}\n\
+              {\"type\":\"history_end\",\"exhausted\":false,\"scanned_to_ms\":3000}\n",
+        )
+        .await
+        .unwrap();
+        sock.flush().await.unwrap();
+        let Some(FeedEvent::HistoryPrepended(empty)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the empty page")
+        else {
+            panic!("expected the empty page");
+        };
+        assert!(empty.is_empty());
+
+        // The next click must reach past the searched stretch, not into it.
+        feed.commands
+            .send(FeedCommand::LoadOlder { count: 2_000 })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_request(&mut sock).await,
+            "{\"type\":\"load_older\",\"count\":2000,\"before_ms\":3000}",
+            "an empty page that searched hours must still advance the cursor"
         );
     }
 

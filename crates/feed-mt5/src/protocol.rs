@@ -164,6 +164,22 @@ pub enum BridgeMsg {
         /// retire the button over a transient.
         #[serde(default)]
         exhausted: bool,
+        /// The oldest instant the walk actually reached, in **server time** —
+        /// not the oldest tick sent, the oldest point searched.
+        ///
+        /// The two differ constantly and the difference is what keeps paging
+        /// moving. A stretch of quote-only ticks maps to no trades at all, and
+        /// a window that held nothing maps to nothing either; in both cases the
+        /// block is empty while the search moved hours. A consumer paging from
+        /// its oldest *trade* would ask for the identical window again and
+        /// again, and the trader would click forever against a pre-open session
+        /// that never yields a print.
+        ///
+        /// **Absent means "no further than what you got"** — a bridge that
+        /// predates the field leaves the consumer paging from its oldest trade,
+        /// exactly as before.
+        #[serde(default)]
+        scanned_to_ms: Option<i64>,
     },
     /// The bridge is going away on purpose (EA removed, terminal closing).
     Bye {
@@ -469,12 +485,16 @@ mod tests {
         };
         assert_eq!(count_hint, Some(2000));
 
-        let BridgeMsg::HistoryEnd { exhausted } =
-            parse_line(r#"{"type":"history_end","exhausted":true}"#).expect("end parses")
+        let BridgeMsg::HistoryEnd {
+            exhausted,
+            scanned_to_ms,
+        } = parse_line(r#"{"type":"history_end","exhausted":true,"scanned_to_ms":1784824200000}"#)
+            .expect("end parses")
         else {
             panic!("expected history_end");
         };
         assert!(exhausted, "the bridge said the terminal has nothing older");
+        assert_eq!(scanned_to_ms, Some(1_784_824_200_000));
     }
 
     #[test]
@@ -491,12 +511,18 @@ mod tests {
         };
         assert_eq!(count_hint, None);
 
-        let BridgeMsg::HistoryEnd { exhausted } =
-            parse_line(r#"{"type":"history_end"}"#).expect("bare end parses")
+        let BridgeMsg::HistoryEnd {
+            exhausted,
+            scanned_to_ms,
+        } = parse_line(r#"{"type":"history_end"}"#).expect("bare end parses")
         else {
             panic!("expected history_end");
         };
         assert!(!exhausted, "absent must not read as 'nothing older exists'");
+        assert_eq!(
+            scanned_to_ms, None,
+            "absent must not read as 'the search reached the epoch'"
+        );
     }
 
     #[test]

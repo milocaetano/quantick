@@ -290,7 +290,7 @@ implementations of one boundary is one too many to trust.
 
 ```json
 {"type":"history_start","count_hint":2000}
-{"type":"history_end","exhausted":true}
+{"type":"history_end","exhausted":true,"scanned_to_ms":1784824200000}
 ```
 
 The answer to one `load_older`. The ticks between the markers are ordinary
@@ -305,13 +305,38 @@ everything already charted. A bridge that reused the backfill markers would have
 quantick prepend the opening window on every reconnect and append a paged block
 to the live tape.
 
-- `count_hint` — *optional*, like `backfill_start`'s.
+- `count_hint` — *optional*, like `backfill_start`'s. A bridge that walks the
+  terminal before it knows the count should send `history_start` **first and
+  bare**, then walk: the search is the slow part, the feed drops a session it
+  has heard nothing from for its read timeout, and a bridge that waits until it
+  can fill in a count spends that whole wait silent.
+- `scanned_to_ms` — *optional*: the oldest instant the search actually
+  **reached**, in server time. Not the oldest tick sent — the two come apart
+  constantly, and the difference is what keeps paging moving.
+
+  A stretch of quote-only ticks maps to no trades at all; a window over a closed
+  market holds nothing to begin with. In both cases the block is empty while the
+  search moved hours. A consumer paging from its oldest *trade* would then ask
+  for the identical window on the next click, forever — a trader clicking into a
+  pre-open session would never get past it. quantick pages from this instead,
+  falling back to its oldest trade when the field is absent (which is what a
+  bridge predating it gets, unchanged).
+
+  Report only what was **delivered**. A bridge that found more than `count` and
+  trimmed the surplus has not delivered what it searched past, so it reports the
+  oldest tick it actually sent — otherwise the consumer skips over history that
+  never crossed the wire.
 - `exhausted` — *optional*. `true` means the terminal has **nothing older at
   all** for this symbol: the walk reached the first tick the terminal holds.
   **Absent means "there may be more"**, so a bridge that cannot tell simply
   never claims the end and the trader keeps a live button.
 
-  An empty block is *not* by itself the end, and must not be sent with
+  Same trimming rule as `scanned_to_ms`: a walk that reached the terminal's
+  floor but trimmed its surplus has **not** delivered the end of the tape, and
+  must not claim it. Both halves are needed — the floor reached, and nothing
+  dropped.
+
+  An empty block is *not* by itself the end either, and must not be sent with
   `exhausted` on that basis. A page that failed, or one that crossed a weekend
   without finding anything, returns nothing and has plenty older behind it —
   and **`exhausted` really does retire the button**: quantick withdraws the

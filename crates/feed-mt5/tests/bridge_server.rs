@@ -183,7 +183,10 @@ async fn a_page_of_older_ticks_comes_back_for_the_asking() {
     script.push_str("{\"type\":\"history_end\",\"exhausted\":false}\n");
     sock.write_all(script.as_bytes()).await.unwrap();
 
-    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+    let Mt5Event::HistoryPage {
+        trades, exhausted, ..
+    } = next_event(&mut rx).await
+    else {
         panic!("expected the page, not a live print");
     };
     assert_eq!(trades.len(), 2, "the first tick has no side context");
@@ -280,7 +283,10 @@ async fn an_empty_page_still_answers_and_can_report_the_end_of_the_tape() {
     .await
     .unwrap();
 
-    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+    let Mt5Event::HistoryPage {
+        trades, exhausted, ..
+    } = next_event(&mut rx).await
+    else {
         panic!("an empty page is still a page");
     };
     assert!(trades.is_empty());
@@ -308,7 +314,10 @@ async fn a_bridge_that_cannot_page_is_never_written_to() {
     assert!(!history_paging, "an absent field is a no, never a maybe");
 
     assert!(pager.request(2_000, 1_784_835_100_000));
-    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+    let Mt5Event::HistoryPage {
+        trades, exhausted, ..
+    } = next_event(&mut rx).await
+    else {
         panic!("the request must be answered even though nothing was asked");
     };
     assert!(trades.is_empty());
@@ -331,11 +340,17 @@ async fn a_bridge_that_cannot_page_is_never_written_to() {
     assert_eq!(trade.side, Side::Buy);
 
     let mut byte = [0_u8; 1];
-    let quiet = tokio::time::timeout(Duration::from_millis(200), sock.read(&mut byte)).await;
-    assert!(
-        quiet.is_err(),
-        "the feed wrote to a bridge that never said it reads"
-    );
+    match tokio::time::timeout(Duration::from_millis(200), sock.read(&mut byte)).await {
+        // Nothing arrived within the window: the feed stayed silent, which is
+        // the whole claim.
+        Err(_elapsed) => {}
+        // A clean close would also read as "no bytes", so it is named rather
+        // than folded into the silence: the session ending is a different
+        // failure from the feed writing, and they must not look alike.
+        Ok(Ok(0)) => panic!("the feed closed the session instead of leaving it alone"),
+        Ok(Ok(_)) => panic!("the feed wrote to a bridge that never said it reads"),
+        Ok(Err(e)) => panic!("socket error while proving the feed stayed silent: {e}"),
+    }
 }
 
 #[tokio::test]
@@ -356,7 +371,10 @@ async fn a_session_that_dies_holding_a_request_still_answers_it() {
     let _request = read_line(&mut sock).await;
     drop(sock); // the terminal closed, mid-answer
 
-    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+    let Mt5Event::HistoryPage {
+        trades, exhausted, ..
+    } = next_event(&mut rx).await
+    else {
         panic!("a session that dies owing an answer still owes it");
     };
     assert!(trades.is_empty());

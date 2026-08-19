@@ -172,6 +172,19 @@ LOAD_OLDER_WINDOW_GROWTH = 4
 # like any read buffer, not like the traffic.
 COMMAND_READ_BYTES = 4096
 
+# Longest inbound line accepted before the buffer is dropped. Every command this
+# protocol has is under 100 bytes; the cap exists because *something* has to
+# bound a buffer fed by a socket. The feed guards the mirror-image case with
+# MAX_LINE_BYTES for the same reason — without it any local process that writes
+# bytes and no newline grows this until the bridge dies, taking the trader's
+# tick stream with it.
+MAX_COMMAND_LINE_BYTES = 64 * 1024
+
+# Reads one pass may make before returning to the pumps. A peer streaming
+# without pause would otherwise keep `select` readable forever and starve the
+# tick, book and heartbeat pumps that share this loop.
+MAX_COMMAND_READS = 16
+
 
 def log(event_code: str, **fields: object) -> None:
     """Emit one structured line, matching what the EA prints to Experts."""
@@ -540,14 +553,19 @@ class Session:
             self.serve_load_older(count, before_ms)
 
     def read_requests(self) -> list[dict]:
-        """Every complete NDJSON line quantick has sent, decoded.
+        """Every complete NDJSON command quantick has sent, decoded.
 
-        A line that does not decode is skipped and counted rather than taken as
-        a broken connection: the inbound direction carries a trader's clicks,
-        and one unreadable click must not cost the session its tick stream.
+        Anything that does not survive the trip is skipped and logged rather
+        than taken as a broken connection: the inbound direction carries a
+        trader's clicks, and one unreadable click must not cost the session its
+        tick stream. Two bounds keep that promise from being turned against the
+        bridge — a line that never ends, and a peer that never stops — because
+        the socket accepts whatever dialled the port.
         """
         requests: list[dict] = []
-        while select.select([self.sock], [], [], 0)[0]:
+        reads = 0
+        while reads < MAX_COMMAND_READS and select.select([self.sock], [], [], 0)[0]:
+            reads += 1
             chunk = self.sock.recv(COMMAND_READ_BYTES)
             if not chunk:
                 # quantick closed its side. The next outbound write raises and
@@ -560,9 +578,29 @@ class Session:
                 if not text:
                     continue
                 try:
-                    requests.append(json.loads(text))
+                    decoded = json.loads(text)
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
                     log("BRIDGE_UNDECODABLE_COMMAND", error=str(error), action="skip")
+                    continue
+                # `json.loads` accepts bare numbers, strings, lists and null.
+                # None of them has `.get`, and reaching for it would raise past
+                # every `except` in the session loop and end the bridge.
+                if not isinstance(decoded, dict):
+                    log(
+                        "BRIDGE_UNDECODABLE_COMMAND",
+                        error=f"expected an object, got {type(decoded).__name__}",
+                        action="skip",
+                    )
+                    continue
+                requests.append(decoded)
+            if len(self.inbox) > MAX_COMMAND_LINE_BYTES:
+                log(
+                    "BRIDGE_COMMAND_LINE_TOO_LONG",
+                    bytes_held=len(self.inbox),
+                    cap=MAX_COMMAND_LINE_BYTES,
+                    action="drop_buffer",
+                )
+                self.inbox = b""
         return requests
 
     def serve_load_older(self, count: int, before_ms: int) -> None:
@@ -570,14 +608,29 @@ class Session:
 
         Always sends both markers, even around an empty block: quantick shows a
         spinner from the moment it asks, and `history_end` is what stops it.
+
+        The opening marker goes out *before* the walk, not after. The walk is
+        the slow part — up to `LOAD_OLDER_MAX_PAGES` blocking terminal calls,
+        and on the first click of a session a reach for the very oldest tick on
+        disk — and the feed drops a session it has heard nothing from for its
+        read timeout. Announcing first means the wait is spent inside a block
+        the feed knows is coming, and the heartbeats below keep it that way.
         """
         wanted = max(1, min(count, LOAD_OLDER_MAX_TICKS))
         started = time.monotonic()
-        ticks, exhausted, calls = self.walk_back(wanted, before_ms)
-        self.send({"type": "history_start", "count_hint": len(ticks)})
+        # No count_hint: it is optional precisely so a bridge that has not
+        # counted yet can still frame the block.
+        self.send({"type": "history_start"})
+        ticks, exhausted, scanned_to_ms, calls = self.walk_back(wanted, before_ms)
         for tick in ticks:
             self.send_tick(tick)
-        self.send({"type": "history_end", "exhausted": exhausted})
+        self.send(
+            {
+                "type": "history_end",
+                "exhausted": exhausted,
+                "scanned_to_ms": scanned_to_ms,
+            }
+        )
         log(
             "BRIDGE_LOAD_OLDER_SERVED",
             symbol=self.symbol,
@@ -585,12 +638,13 @@ class Session:
             sent=len(ticks),
             before_ms=before_ms,
             oldest_ms=int(ticks[0]["time_msc"]) if len(ticks) else None,
+            scanned_to_ms=scanned_to_ms,
             exhausted=exhausted,
             terminal_calls=calls,
             elapsed_ms=int((time.monotonic() - started) * 1000),
         )
 
-    def walk_back(self, wanted: int, before_ms: int) -> tuple[list, bool, int]:
+    def walk_back(self, wanted: int, before_ms: int) -> tuple[list, bool, int, int]:
         """Collect up to `wanted` ticks from before `before_ms`.
 
         Walks backwards in windows rather than asking for one wide range: the
@@ -601,9 +655,24 @@ class Session:
         not history to search five minutes at a time.
 
         Returns the ticks ascending, whether the terminal has nothing older,
-        and how many calls it took.
+        how far back the search actually reached, and how many calls it took.
+
+        The third value is the one that keeps paging moving. It is the oldest
+        instant *searched*, not the oldest tick returned, and the two come apart
+        constantly: a page trimmed to `wanted` drops what it found beyond it,
+        and a pre-open stretch is thousands of ticks that map to no trades at
+        all. A consumer paging from its oldest trade would ask for the same
+        window forever; paging from this always advances.
         """
         floor_ms = self.earliest_tick_ms()
+        # An exchange tape's quote updates outnumber its prints, and quantick
+        # discards every tick without a LAST bit. Asking for trades only makes
+        # the page size mean what its label says ("trades per load") instead of
+        # delivering a fraction of it. A broker-quoted symbol prints nothing, so
+        # there the quotes *are* the data and all ticks are wanted.
+        flags = (
+            mt5.COPY_TICKS_TRADE if self.tape == "trades" else mt5.COPY_TICKS_ALL
+        )
         pages: list = []
         held = 0
         cursor_ms = before_ms
@@ -623,7 +692,7 @@ class Session:
             # way would silently drop every tick sharing the cursor's second.
             to_s = -(-cursor_ms // 1000)
             from_s = max(0, cursor_ms // 1000 - window_s)
-            found = mt5.copy_ticks_range(self.symbol, from_s, to_s, mt5.COPY_TICKS_ALL)
+            found = mt5.copy_ticks_range(self.symbol, from_s, to_s, flags)
             if found is None:
                 log(
                     "BRIDGE_LOAD_OLDER_FAILED",
@@ -647,18 +716,35 @@ class Session:
                     window_s * LOAD_OLDER_WINDOW_GROWTH, LOAD_OLDER_MAX_WINDOW_S
                 )
             cursor_ms = from_s * 1000
+            # The walk can take seconds and nothing else runs while it does. A
+            # heartbeat here is what keeps the feed from declaring the bridge
+            # silent mid-answer and dropping the session the answer belongs to.
+            self.maybe_heartbeat()
 
         # Oldest page first, and the surplus trimmed off the *front*: the ticks
         # nearest the chart are the ones the trader is about to look at.
         ticks = [tick for page in reversed(pages) for tick in page]
-        if len(ticks) > wanted:
-            ticks = ticks[len(ticks) - wanted :]
-        # "Nothing older exists" is only ever claimed against the terminal's own
-        # floor. Running out of pages means the walk stopped, not that the tape
-        # did, and saying otherwise would retire the trader's button over a
-        # quiet stretch.
-        exhausted = floor_ms is not None and cursor_ms <= floor_ms
-        return ticks, exhausted, calls
+        trimmed = max(0, len(ticks) - wanted)
+        if trimmed:
+            ticks = ticks[trimmed:]
+
+        # "Nothing older exists" needs both halves: the walk reached the
+        # terminal's own floor, *and* everything it found is in this block.
+        # Without the second half a dense window that overshot `wanted` would
+        # claim the end of the tape while the ticks proving otherwise were the
+        # ones just trimmed — and quantick retires the button on this flag, so
+        # the trader could not click their way back to them.
+        exhausted = floor_ms is not None and cursor_ms <= floor_ms and trimmed == 0
+
+        # Same reasoning for how far the search reached: after a trim the walk's
+        # cursor is behind ticks that were dropped, so reporting it would let
+        # the consumer skip past history it never received. What it can honestly
+        # claim then is the oldest tick actually sent.
+        if trimmed:
+            scanned_to_ms = int(ticks[0]["time_msc"])
+        else:
+            scanned_to_ms = cursor_ms
+        return ticks, exhausted, scanned_to_ms, calls
 
     def earliest_tick_ms(self) -> int | None:
         """The oldest tick the terminal holds for this symbol, or None.

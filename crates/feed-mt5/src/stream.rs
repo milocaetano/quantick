@@ -177,7 +177,12 @@ impl HistoryPager {
     pub fn request(&self, count: u64, before_utc_ms: i64) -> bool {
         {
             let mut held = self.0.request.lock().expect("history pager mutex");
-            if held.in_flight {
+            // Queued counts as busy, not just in flight. The session task runs
+            // on another thread and may not have woken yet, so a click that
+            // only checked the gate would quietly overwrite the previous
+            // click's request — two asks, one answer, and a consumer counting
+            // replies left one short forever.
+            if held.in_flight || held.queued.is_some() {
                 return false;
             }
             held.queued = Some((count, before_utc_ms));
@@ -219,14 +224,17 @@ impl HistoryPager {
         }
     }
 
-    /// The fetch is over (delivered, refused, or the session died). Clears the
-    /// gate so the next click is heard.
-    fn settle(&self) {
-        self.0
-            .request
-            .lock()
-            .expect("history pager mutex")
-            .in_flight = false;
+    /// The fetch is over (delivered, refused, or abandoned). Clears the gate so
+    /// the next click is heard, and reports whether a fetch was actually
+    /// running.
+    ///
+    /// The report is what tells a caller whether it still owes a reply. Callers
+    /// that already know they do can ignore it.
+    fn settle_owed(&self) -> bool {
+        let mut held = self.0.request.lock().expect("history pager mutex");
+        let owed = held.in_flight;
+        held.in_flight = false;
+        owed
     }
 
     /// Clear the pager at the end of a session, and say whether anything was
@@ -393,6 +401,14 @@ pub enum Mt5Event {
         /// [`protocol::BridgeMsg::HistoryEnd`] for why an empty block alone
         /// does not mean this.
         exhausted: bool,
+        /// How far back the search actually reached, in **UTC** milliseconds,
+        /// when the bridge said.
+        ///
+        /// Distinct from the oldest trade in `trades`, and the difference is
+        /// what keeps paging moving over stretches that map to nothing — a
+        /// pre-open session of quote-only ticks, or a window that held none at
+        /// all. See [`protocol::BridgeMsg::HistoryEnd::scanned_to_ms`].
+        scanned_to_utc_ms: Option<i64>,
     },
 }
 
@@ -726,6 +742,20 @@ async fn identify<R: tokio::io::AsyncRead + Unpin>(source: R) -> PeerIdentity {
     }
 }
 
+/// Trades one paged block may hold before it stops growing.
+///
+/// The bridge is the side this crate cannot vouch for — the same reasoning
+/// behind [`MAX_BARS_PER_BLOCK`] for candles, and more pressing here: a candle
+/// block arrives once per session, a page can be opened again on every click.
+/// A peer that opens `history_start` and never stops would otherwise grow this
+/// vector until the feed task dies and takes the chart with it.
+///
+/// Sized well above any honest page: the consumer's own step tops out at 50 000
+/// (the toolbar's `DragValue` range) and the Python bridge caps itself at
+/// 200 000, so a block reaching this ceiling is a bridge that is not answering
+/// the question it was asked.
+const MAX_TRADES_PER_PAGE: usize = 250_000;
+
 /// A page of older ticks under construction, and the live tape's tick-rule
 /// context waiting for it to finish.
 ///
@@ -737,6 +767,10 @@ struct PagedBlock {
     trades: Vec<Trade>,
     /// What the tick rule was reading before the block opened.
     resume: PriceContext,
+    /// Trades dropped because the block hit [`MAX_TRADES_PER_PAGE`]. Reported
+    /// once at the end rather than per tick, so a runaway bridge cannot turn
+    /// the log into the second denial of service.
+    over_cap: u64,
 }
 
 /// What woke the session loop: something the bridge said, or something the
@@ -1008,9 +1042,14 @@ async fn serve_connection(
     tokio::pin!(pending_request);
 
     let end = loop {
-        // One wait covers both directions. The timeout is the bridge-liveness
-        // one it has always been: a trader's click does not reset it, and a
-        // bridge that goes silent while a page is outstanding is still lost.
+        // One wait covers both directions, under the bridge-liveness timeout.
+        //
+        // The timeout is rebuilt each pass, so a wake from *either* branch
+        // restarts it: a click buys a silent bridge one more `read_timeout`
+        // before it is declared lost. That is a bounded and rare extension — a
+        // click is a human action, and the pager allows one outstanding at a
+        // time — not an indefinite one, which is why the timeout stays out here
+        // rather than being tracked against the read alone.
         let input = tokio::time::timeout(config.read_timeout, async {
             tokio::select! {
                 // Biased so a busy tape cannot starve the click: this branch is
@@ -1021,10 +1060,15 @@ async fn serve_connection(
                     pending_request.set(config.history_pager.take_request());
                     SessionInput::Request { count, before_utc_ms }
                 }
-                // `next_line` is cancel-safe: its only await is `fill_buf`,
-                // which neither consumes from the reader nor appends to the
-                // partial-line buffer before returning, and the reader outlives
-                // this `select!`. A lost poll therefore loses no bytes.
+                // `next_line` is cancel-safe, and the reader outlives this
+                // `select!` so the state it keeps is still there next pass.
+                // Its awaits are all `fill_buf`, and every byte it takes from
+                // the `BufReader` is appended to the partial-line buffer in the
+                // same synchronous step that consumes it — including the
+                // multi-`fill_buf` path a line longer than the buffer takes.
+                // So a cancelled poll leaves the two exactly as consistent as
+                // an uncancelled one: nothing consumed is unrecorded, and
+                // nothing recorded is unconsumed.
                 line = lines.next_line() => SessionInput::Line(line),
             }
         })
@@ -1062,11 +1106,12 @@ async fn serve_connection(
                     // still owed the one reply every request gets, or its
                     // spinner runs forever.
                     PageRequestOutcome::Refused => {
-                        config.history_pager.settle();
+                        config.history_pager.settle_owed();
                         if tx
                             .send(Mt5Event::HistoryPage {
                                 trades: Vec::new(),
                                 exhausted: false,
+                                scanned_to_utc_ms: None,
                             })
                             .await
                             .is_err()
@@ -1154,7 +1199,13 @@ async fn serve_connection(
                     // and a paged tick delivered as live would append history to
                     // the front of the tape.
                     match (page.as_mut(), backfill.as_mut()) {
-                        (Some(block), _) => block.trades.push(trade),
+                        (Some(block), _) => {
+                            if block.trades.len() < MAX_TRADES_PER_PAGE {
+                                block.trades.push(trade);
+                            } else {
+                                block.over_cap = block.over_cap.saturating_add(1);
+                            }
+                        }
                         (None, Some(buf)) => buf.push(trade),
                         (None, None) => {
                             if tx.send(Mt5Event::Live(trade)).await.is_err() {
@@ -1224,11 +1275,13 @@ async fn serve_connection(
                     // Nobody asked. Collect it anyway rather than letting its
                     // ticks fall through as live prints — the block is history,
                     // and charting it at the front of the tape is the one
-                    // outcome worse than dropping it.
+                    // outcome worse than dropping it. Logged under the same
+                    // code as the matching end: one condition, one thing to
+                    // grep for, both halves of the event findable.
                     warn!(
                         target: "quantick::feed",
                         schema_version = 1_u8,
-                        event_code = "MT5_PROTOCOL_VIOLATION",
+                        event_code = "MT5_HISTORY_PAGE_UNSOLICITED",
                         action = "collect_and_discard",
                         "history_start with no request outstanding"
                     );
@@ -1253,23 +1306,60 @@ async fn serve_connection(
                 page = Some(PagedBlock {
                     trades: Vec::new(),
                     resume: mapper.take_price_context(),
+                    over_cap: 0,
                 });
             }
-            Ok(BridgeMsg::HistoryEnd { exhausted }) => {
-                let Some(PagedBlock { trades, resume }) = page.take() else {
+            Ok(BridgeMsg::HistoryEnd {
+                exhausted,
+                scanned_to_ms,
+            }) => {
+                let Some(PagedBlock {
+                    trades,
+                    resume,
+                    over_cap,
+                }) = page.take()
+                else {
+                    // The start went missing — an undecodable line ahead of it
+                    // is enough. The block's ticks have already been charted as
+                    // live, which cannot be undone here; what must not also
+                    // happen is the pager staying latched. Without settling,
+                    // `request` refuses every later click for the rest of the
+                    // session and the button silently stops working.
                     warn!(
                         target: "quantick::feed",
                         schema_version = 1_u8,
                         event_code = "MT5_PROTOCOL_VIOLATION",
-                        action = "ignore",
-                        "history_end without a history_start; ignoring it"
+                        action = "settle_and_answer_empty",
+                        "history_end without a history_start; its ticks went out as live"
                     );
+                    if config.history_pager.settle_owed()
+                        && tx
+                            .send(Mt5Event::HistoryPage {
+                                trades: Vec::new(),
+                                exhausted: false,
+                                scanned_to_utc_ms: None,
+                            })
+                            .await
+                            .is_err()
+                    {
+                        break ConnEnd::UiGone;
+                    }
                     continue;
                 };
                 // The live tape resumes from the price it left off at, never
                 // from wherever the page ended.
                 mapper.restore_price_context(resume);
-                if !config.history_pager.is_in_flight() {
+                if over_cap > 0 {
+                    warn!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_HISTORY_PAGE_TRUNCATED",
+                        cap = MAX_TRADES_PER_PAGE as u64,
+                        dropped = over_cap,
+                        "a page exceeded the per-block cap; the surplus was dropped"
+                    );
+                }
+                if !config.history_pager.settle_owed() {
                     warn!(
                         target: "quantick::feed",
                         schema_version = 1_u8,
@@ -1286,11 +1376,19 @@ async fn serve_connection(
                     event_code = "MT5_HISTORY_PAGE_END",
                     trades = trades.len(),
                     exhausted,
+                    scanned_to_ms = ?scanned_to_ms,
                     "page of older ticks complete"
                 );
-                config.history_pager.settle();
+                // Converted here, where the offset lives, for the same reason
+                // the outbound cursor is: the consumer speaks UTC and this is
+                // the one place that tracks what the terminal's clock is doing.
+                let scanned_to_utc_ms = scanned_to_ms.map(|ms| mapper.to_utc_ms(ms));
                 if tx
-                    .send(Mt5Event::HistoryPage { trades, exhausted })
+                    .send(Mt5Event::HistoryPage {
+                        trades,
+                        exhausted,
+                        scanned_to_utc_ms,
+                    })
                     .await
                     .is_err()
                 {
@@ -1425,6 +1523,7 @@ async fn serve_connection(
             .send(Mt5Event::HistoryPage {
                 trades: Vec::new(),
                 exhausted: false,
+                scanned_to_utc_ms: None,
             })
             .await;
     }
