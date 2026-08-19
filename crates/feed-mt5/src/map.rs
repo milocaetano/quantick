@@ -196,6 +196,17 @@ pub struct TickMapper {
     pub stats: MapStats,
 }
 
+/// The tick rule's memory: the last price it saw and the last side it decided.
+///
+/// Opaque on purpose — it exists to be parked and put back around a block of
+/// out-of-order history, never to be inspected or constructed. See
+/// [`TickMapper::take_price_context`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PriceContext {
+    price: Option<Decimal>,
+    side: Option<Side>,
+}
+
 impl TickMapper {
     /// A mapper for one session with the given side policy and the hello's
     /// `server_utc_offset_s`, for a venue that prints trades.
@@ -232,6 +243,48 @@ impl TickMapper {
     /// across a DST change on brokers that observe one).
     pub fn set_server_utc_offset_s(&mut self, offset_s: i64) {
         self.offset_ms = offset_s.saturating_mul(1000);
+    }
+
+    /// Take the tick-rule's memory out, leaving the mapper with none.
+    ///
+    /// Exists for paged history. The tick rule reads a side out of the price
+    /// *before* this one, and a page fetched on demand is a run of ticks from
+    /// hours ago arriving after the live tape — classifying its first print
+    /// against the newest price on the chart would invent a side out of a
+    /// comparison between two unrelated moments. Emptying the memory makes that
+    /// print what it honestly is: one with no predecessor in hand, dropped and
+    /// counted like the first print of any session.
+    ///
+    /// Pair with [`restore_price_context`](Self::restore_price_context) around
+    /// the block: the live tape resumes from the price it left off at, not from
+    /// wherever the page ended.
+    pub fn take_price_context(&mut self) -> PriceContext {
+        PriceContext {
+            price: self.prev_price.take(),
+            side: self.prev_side.take(),
+        }
+    }
+
+    /// Put back a context taken by
+    /// [`take_price_context`](Self::take_price_context).
+    pub fn restore_price_context(&mut self, context: PriceContext) {
+        self.prev_price = context.price;
+        self.prev_side = context.side;
+    }
+
+    /// The inverse of what [`map`](Self::map) does to a timestamp: UTC
+    /// milliseconds back into the server-time epoch the terminal speaks.
+    ///
+    /// Exists for the back-channel. Asking for ticks older than a point on the
+    /// chart means naming that point in the terminal's own clock, and this
+    /// mapper is the one place that knows the current offset — a caller doing
+    /// the arithmetic itself would be reading an offset a heartbeat may have
+    /// refreshed since. Saturating on both ends, like the forward direction,
+    /// because the offset arrives from a bridge any local process can
+    /// impersonate.
+    #[must_use]
+    pub fn to_server_ms(&self, utc_ms: i64) -> i64 {
+        utc_ms.saturating_add(self.offset_ms)
     }
 
     /// Map one tick. Updates the tick-rule state and the stats ledger.

@@ -1,16 +1,23 @@
 //! The QuantickBridge wire protocol: newline-delimited JSON over a local TCP
-//! socket, bridge → feed.
+//! socket.
 //!
-//! This module is the pure, deterministic decode layer: one text line in, one
-//! [`BridgeMsg`] out. No I/O, no clocks, no state — fully unit-testable. The
-//! full protocol contract (message order, field semantics, versioning) lives in
-//! `bridge/mt5/PROTOCOL.md`; this file is its executable counterpart.
+//! The stream is bridge → feed for everything the terminal *volunteers*, and
+//! feed → bridge for the one thing it has to be *asked* for: ticks older than
+//! what the chart already holds ([`FeedMsg::LoadOlder`]). A bridge that never
+//! reads its socket is unaffected — it simply does not declare
+//! [`Hello::history_paging`], and the feed never writes.
+//!
+//! This module is the pure, deterministic codec layer: one text line in, one
+//! [`BridgeMsg`] out; one [`FeedMsg`] in, one text line out. No I/O, no clocks,
+//! no state — fully unit-testable. The full protocol contract (message order,
+//! field semantics, versioning) lives in `bridge/mt5/PROTOCOL.md`; this file is
+//! its executable counterpart.
 //!
 //! Prices travel as strings (exact decimal digits, formatted by the bridge with
 //! the symbol's `digits`), mirroring how Binance ships prices — no float
 //! round-trips between the terminal and the engine.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The protocol schema version this decoder understands. A bridge announcing a
 /// different `schema` in its hello is refused — never half-parsed.
@@ -126,11 +133,90 @@ pub enum BridgeMsg {
         #[serde(default)]
         partial: bool,
     },
+    /// A block of ticks *older* than the chart's oldest follows — the answer
+    /// to a [`FeedMsg::LoadOlder`], and the one block the feed asked for.
+    ///
+    /// Deliberately not [`BackfillStart`](Self::BackfillStart). That block is
+    /// the session's opening window and arrives unasked exactly once; this one
+    /// arrives on demand, repeatedly, and lands *before* everything already
+    /// charted rather than after it. A consumer that folded the two would
+    /// prepend the opening window on a reconnect and append a paged block to
+    /// the live tape — both wrong, and both invisible once the bars are drawn.
+    HistoryStart {
+        /// How many ticks the bridge intends to send, if it knows.
+        #[serde(default)]
+        count_hint: Option<u64>,
+    },
+    /// End of the paged block; the ticks between the markers are complete.
+    HistoryEnd {
+        /// Whether the terminal has nothing older left to serve.
+        ///
+        /// The honest end of the tape: set when the bridge searched back as far
+        /// as the terminal keeps ticks and found none. **Absent means "there may
+        /// be more"**, so a bridge predating the field simply never claims the
+        /// end — the trader keeps a live button and gets empty blocks, which is
+        /// the behaviour without this flag at all.
+        ///
+        /// Note what it is *not*: an empty block is not by itself the end. A
+        /// terminal that failed a page, or one that was still downloading
+        /// history, returns nothing and has plenty older — telling the trader
+        /// "that is all there is" on the strength of one empty answer would
+        /// retire the button over a transient.
+        #[serde(default)]
+        exhausted: bool,
+    },
     /// The bridge is going away on purpose (EA removed, terminal closing).
     Bye {
         /// Why, e.g. `"deinit"`.
         reason: String,
     },
+}
+
+/// One message from the feed *to* the bridge — the whole of the back-channel.
+///
+/// Kept a separate enum from [`BridgeMsg`] rather than a shared one because
+/// the two directions are not symmetric and never will be: the terminal
+/// volunteers ticks, books, candles and heartbeats, and the feed asks for
+/// exactly one thing. A shared enum would invite a consumer to match on
+/// variants that can only ever arrive from the other side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FeedMsg {
+    /// "Send me up to `count` ticks from before `before_ms`."
+    ///
+    /// Only ever written to a session whose hello declared
+    /// [`Hello::history_paging`]; see that field for why silence is not
+    /// permission.
+    LoadOlder {
+        /// How many ticks the chart wants. A bound, not a promise — the bridge
+        /// sends what the terminal has and says so with
+        /// [`BridgeMsg::HistoryEnd`].
+        count: u64,
+        /// Exclusive upper bound, in **server time** epoch milliseconds — the
+        /// timestamp of the oldest tick the chart holds.
+        ///
+        /// Server time because every other timestamp in this protocol is, and
+        /// a single message in the opposite direction is a poor place to
+        /// introduce a second clock. The consumer names the point in UTC and
+        /// [`crate::TickMapper::to_server_ms`] converts it, so the offset is
+        /// read in the one place that tracks its heartbeat refreshes.
+        before_ms: i64,
+    },
+}
+
+/// Encode one [`FeedMsg`] as the NDJSON line to write to the socket, newline
+/// included.
+///
+/// # Panics
+///
+/// Never in practice: the enum holds only integers and unit-like tags, so
+/// serialization has no failure mode. The `expect` documents that rather than
+/// pushing a `Result` no caller could act on.
+#[must_use]
+pub fn encode_line(msg: &FeedMsg) -> String {
+    let mut line = serde_json::to_string(msg).expect("a FeedMsg is plain integers and a tag");
+    line.push('\n');
+    line
 }
 
 /// What a venue actually prints for a symbol — the honest answer to "is there
@@ -207,6 +293,17 @@ pub struct Hello {
     /// instead of waiting for a block that is never coming.
     #[serde(default)]
     pub rates: Option<bool>,
+    /// Whether this session reads its socket and answers
+    /// [`FeedMsg::LoadOlder`] with a [`BridgeMsg::HistoryStart`] block.
+    ///
+    /// `None` or `Some(false)` means the transport is push-only for this
+    /// session — an older bridge, or one whose terminal cannot serve the
+    /// request — and the feed must not write to the socket: a bridge that
+    /// never reads would fill its receive buffer and eventually stall the
+    /// terminal thread that writes ticks. Absent is therefore not "probably
+    /// fine to try", it is a hard "do not".
+    #[serde(default)]
+    pub history_paging: Option<bool>,
 }
 
 /// One tick. `time_ms` is **server-time** epoch milliseconds (see [`Hello`]).
@@ -359,6 +456,111 @@ pub fn parse_line(line: &str) -> Result<BridgeMsg, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_paged_history_block_parses_from_its_two_markers() {
+        // Verbatim from PROTOCOL.md. The markers bracket ordinary `tick`
+        // messages — the block is distinguished by what encloses it, not by a
+        // different tick shape, so the mapper stays one code path.
+        let BridgeMsg::HistoryStart { count_hint } =
+            parse_line(r#"{"type":"history_start","count_hint":2000}"#).expect("start parses")
+        else {
+            panic!("expected history_start");
+        };
+        assert_eq!(count_hint, Some(2000));
+
+        let BridgeMsg::HistoryEnd { exhausted } =
+            parse_line(r#"{"type":"history_end","exhausted":true}"#).expect("end parses")
+        else {
+            panic!("expected history_end");
+        };
+        assert!(exhausted, "the bridge said the terminal has nothing older");
+    }
+
+    #[test]
+    fn a_paged_block_that_claims_nothing_is_neither_exhausted_nor_counted() {
+        // Both fields are optional, so a bridge that knows neither how many it
+        // will send nor whether it reached the end still frames a valid block.
+        // The defaults are the cautious ones: no count promised, and the tape
+        // is *not* declared finished — retiring the button on a bridge that
+        // never said "that is all" would strand history the terminal has.
+        let BridgeMsg::HistoryStart { count_hint } =
+            parse_line(r#"{"type":"history_start"}"#).expect("bare start parses")
+        else {
+            panic!("expected history_start");
+        };
+        assert_eq!(count_hint, None);
+
+        let BridgeMsg::HistoryEnd { exhausted } =
+            parse_line(r#"{"type":"history_end"}"#).expect("bare end parses")
+        else {
+            panic!("expected history_end");
+        };
+        assert!(!exhausted, "absent must not read as 'nothing older exists'");
+    }
+
+    #[test]
+    fn a_hello_without_history_paging_does_not_claim_it() {
+        // The compatibility case that matters most: every bridge shipped before
+        // the back-channel existed. It must still establish a session, and it
+        // must not be written to — a bridge that never reads its socket would
+        // have the feed's request sit in a receive buffer forever.
+        let BridgeMsg::Hello(hello) = parse_line(
+            r#"{"type":"hello","schema":1,"bridge":"quantick-mt5-bridge","bridge_version":"0.2.0","symbol":"WIN$N","broker_symbol":"WINQ26","digits":0,"server_utc_offset_s":-10800}"#,
+        )
+        .expect("a pre-paging hello parses")
+        else {
+            panic!("expected hello");
+        };
+        assert_eq!(hello.history_paging, None);
+
+        let BridgeMsg::Hello(pager) = parse_line(
+            r#"{"type":"hello","schema":1,"bridge":"quantick-mt5-bridge","bridge_version":"0.3.0","symbol":"WIN$N","broker_symbol":"WINQ26","digits":0,"server_utc_offset_s":-10800,"history_paging":true}"#,
+        )
+        .expect("a paging hello parses")
+        else {
+            panic!("expected hello");
+        };
+        assert_eq!(pager.history_paging, Some(true));
+    }
+
+    #[test]
+    fn the_load_older_line_is_one_line_and_says_what_it_wants() {
+        let line = encode_line(&FeedMsg::LoadOlder {
+            count: 2000,
+            before_ms: 1_784_824_300_802,
+        });
+        assert_eq!(
+            line, "{\"type\":\"load_older\",\"count\":2000,\"before_ms\":1784824300802}\n",
+            "this exact line is what PROTOCOL.md documents and the bridge parses"
+        );
+        // NDJSON framing: exactly one newline, and it terminates the line. A
+        // second one would frame an empty message the bridge has to skip.
+        assert_eq!(line.matches('\n').count(), 1);
+        assert!(line.ends_with('\n'));
+    }
+
+    #[test]
+    fn the_back_channel_type_tag_matches_the_python_bridge() {
+        // Same treatment as the batch bound below: the wire name lives on both
+        // sides, and a rename on one side would look like a bridge that ignores
+        // the trader's clicks rather than like a protocol break.
+        let bridge = include_str!("../../../bridge/mt5/quantick_bridge.py");
+        let declared = bridge
+            .lines()
+            .find_map(|line| line.strip_prefix("LOAD_OLDER_TYPE = "))
+            .expect("the bridge declares the message type at module level")
+            .trim()
+            .trim_matches('"');
+        let line = encode_line(&FeedMsg::LoadOlder {
+            count: 1,
+            before_ms: 0,
+        });
+        assert!(
+            line.contains(&format!("\"type\":\"{declared}\"")),
+            "the bridge answers `{declared}`; this feed sends {line}"
+        );
+    }
 
     #[test]
     fn the_batch_bound_matches_the_python_bridge() {

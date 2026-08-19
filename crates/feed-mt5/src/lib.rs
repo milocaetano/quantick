@@ -32,7 +32,7 @@
 //! | Incremental order-book updates | terminal republishes whole DOM images; diffed into snapshot + deltas | [`depth`] |
 //! | Book update ids | synthetic, monotonic, generation-scoped | [`depth`], `quantick_orderbook::SnapshotDiffer` |
 //! | Full book depth | coverage always labelled `Limited`, never `Full` | [`depth`] |
-//! | Older-history paging | unsupported; requests answered empty + logged | app layer |
+//! | Older-history paging | a back-channel the bridge opts into; unsupported sessions answer empty | [`stream::HistoryPager`], [`protocol::FeedMsg`] |
 //! | A tape at all (broker CFDs print none) | bridge declares [`protocol::TapeKind`]; quotes chart as one-unit synthetic prints, counted apart | [`map`] |
 //!
 //! # AI-first diagnosis
@@ -52,6 +52,12 @@
 //! | `MT5_SCHEMA_MISMATCH` | bridge too old/new | recompile the EA from this repo |
 //! | `MT5_SYMBOL_MISMATCH` | EA runs on another symbol's chart | attach it to the configured symbol |
 //! | `MT5_HELLO_OK` | session established | — |
+//! | `MT5_HISTORY_PAGING_AVAILABLE`/`_UNSUPPORTED` | whether "load older" works on this session | update the bridge if unsupported |
+//! | `MT5_LOAD_OLDER_REQUESTED` | a page was asked for | — |
+//! | `MT5_LOAD_OLDER_UNSUPPORTED` | asked a bridge that cannot page; answered empty | update the bridge |
+//! | `MT5_HISTORY_PAGE_START`/`_END` | the page block; `_END` carries `exhausted` | `exhausted` = terminal has nothing older |
+//! | `MT5_HISTORY_PAGE_UNSOLICITED` | a page nobody asked for; discarded | bridge/feed version skew |
+//! | `MT5_HISTORY_PAGE_UNANSWERED` | session died holding a request; answered empty | see the paired `MT5_BRIDGE_LOST` |
 //! | `MT5_BACKFILL_START`/`_END` | history block | — |
 //! | `MT5_PARTIAL_BACKFILL_DISCARDED` | session died mid-history | next connection re-sends it |
 //! | `MT5_RATES_START` | candle block incoming | — |
@@ -92,14 +98,14 @@ pub mod stream;
 
 pub use bridge_log::{BridgeReport, BridgeSeverity, report_for_line};
 pub use depth::{BookMapper, BookStats};
-pub use map::{DropReason, MapOutcome, MapStats, SideMode, SideSource, TickMapper};
+pub use map::{DropReason, MapOutcome, MapStats, PriceContext, SideMode, SideSource, TickMapper};
 pub use protocol::{
-    BridgeMsg, Hello, MAX_BARS_PER_RATE_LINE, ParseError, RateChunk, RateRow, SCHEMA_VERSION,
-    TapeKind, Tick, parse_line,
+    BridgeMsg, FeedMsg, Hello, MAX_BARS_PER_RATE_LINE, ParseError, RateChunk, RateRow,
+    SCHEMA_VERSION, TapeKind, Tick, encode_line, parse_line,
 };
 pub use rates::{RateMapper, RateStats};
 pub use session::{SeqAnomaly, SeqTracker};
 pub use stream::{
-    BookCaptureSwitch, BoundedLine, BoundedLineReader, DEFAULT_LISTEN_ADDR, MAX_LINE_BYTES,
-    Mt5Error, Mt5Event, Mt5Status, ServerConfig, run_bridge_server,
+    BookCaptureSwitch, BoundedLine, BoundedLineReader, DEFAULT_LISTEN_ADDR, HistoryPager,
+    MAX_LINE_BYTES, Mt5Error, Mt5Event, Mt5Status, ServerConfig, run_bridge_server,
 };

@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 
 use quantick_engine::Side;
 use quantick_feed_mt5::{
-    BookCaptureSwitch, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind, run_bridge_server,
+    BookCaptureSwitch, HistoryPager, Mt5Event, Mt5Status, ServerConfig, SideMode, TapeKind,
+    run_bridge_server,
 };
 use quantick_orderbook::{DepthEvent, DepthStatus};
 
@@ -24,6 +25,7 @@ fn test_config(symbol: &str) -> ServerConfig {
         hello_timeout: Duration::from_millis(500),
         read_timeout: Duration::from_millis(1000),
         book_capture: BookCaptureSwitch::new(),
+        history_pager: HistoryPager::new(),
     }
 }
 
@@ -102,6 +104,317 @@ fn tick(seq: u64, last: &str, volume: u64) -> String {
          \"last\":\"{last}\",\"volume\":{volume},\"flags\":1080}}\n",
         1_784_824_300_000_i64 + seq as i64
     )
+}
+
+/// A hello from a bridge that reads its socket and answers `load_older`.
+fn hello_that_pages(symbol: &str) -> String {
+    format!(
+        "{{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",\
+         \"symbol\":\"{symbol}\",\"broker_symbol\":\"WINQ26\",\"digits\":0,\
+         \"server_utc_offset_s\":-10800,\"history_paging\":true}}\n"
+    )
+}
+
+/// One tick at an explicit server-time millisecond, for the paged blocks whose
+/// whole point is landing before what the chart holds.
+fn tick_at(seq: u64, time_ms: i64, last: &str, volume: u64) -> String {
+    format!(
+        "{{\"type\":\"tick\",\"seq\":{seq},\"time_ms\":{time_ms},\"bid\":\"0\",\"ask\":\"0\",\
+         \"last\":\"{last}\",\"volume\":{volume},\"flags\":1080}}\n"
+    )
+}
+
+/// Read one NDJSON line the feed wrote back to the bridge.
+async fn read_line(sock: &mut TcpStream) -> String {
+    let mut line = Vec::new();
+    let mut byte = [0_u8; 1];
+    loop {
+        let read = tokio::time::timeout(Duration::from_secs(2), sock.read(&mut byte))
+            .await
+            .expect("timed out waiting for a request from the feed")
+            .expect("socket error reading the request");
+        assert_eq!(read, 1, "the feed closed the socket mid-request");
+        if byte[0] == b'\n' {
+            return String::from_utf8(line).expect("the feed writes UTF-8");
+        }
+        line.push(byte[0]);
+    }
+}
+
+#[tokio::test]
+async fn a_page_of_older_ticks_comes_back_for_the_asking() {
+    // The whole round trip: the consumer asks, the request crosses the socket
+    // in the terminal's own clock, and the block that comes back is delivered
+    // as one page rather than as live prints.
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+
+    let Mt5Event::Status(Mt5Status::Connected { history_paging, .. }) = next_event(&mut rx).await
+    else {
+        panic!("expected a connected status");
+    };
+    assert!(history_paging, "the hello declared it");
+
+    // The consumer names its cursor in UTC. A B3 server stamps ticks in its own
+    // wall time encoded as epoch (UTC−3), so the same instant is three hours
+    // *behind* on the wire — and the paged ticks below are stamped in that
+    // clock too, which is the whole reason the conversion happens here and not
+    // in the consumer.
+    assert!(pager.request(2_000, 1_784_835_100_000));
+    let request = read_line(&mut sock).await;
+    assert_eq!(
+        request, "{\"type\":\"load_older\",\"count\":2000,\"before_ms\":1784824300000}",
+        "the cursor crosses in server time, converted once, by the session"
+    );
+
+    let mut script = String::new();
+    script.push_str("{\"type\":\"history_start\",\"count_hint\":2}\n");
+    // Two ticks well before the cursor. The first has no tick-rule context and
+    // is dropped by the mapper, exactly as in any other block.
+    script.push_str(&tick_at(1, 1_784_824_290_000, "177795", 3));
+    script.push_str(&tick_at(2, 1_784_824_291_000, "177800", 1));
+    script.push_str(&tick_at(3, 1_784_824_292_000, "177790", 2));
+    script.push_str("{\"type\":\"history_end\",\"exhausted\":false}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+
+    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+        panic!("expected the page, not a live print");
+    };
+    assert_eq!(trades.len(), 2, "the first tick has no side context");
+    assert_eq!(trades[0].timestamp_ms, 1_784_824_291_000 + 10_800_000);
+    assert_eq!(trades[0].side, Side::Buy, "uptick");
+    assert_eq!(trades[1].side, Side::Sell, "downtick");
+    assert!(!exhausted, "the bridge did not claim the end of the tape");
+    assert!(
+        !pager.is_in_flight(),
+        "the answer settles the pager, so the next click is heard"
+    );
+}
+
+#[tokio::test]
+async fn a_page_is_classified_against_itself_and_the_live_tape_resumes_unchanged() {
+    // The tick rule reads a side out of the price *before* this one. A page is
+    // a run of prints from hours ago arriving after the live tape, so both
+    // seams need care: its first print has no predecessor in hand, and the live
+    // print after the block must be compared against the live price, not
+    // against whatever the page happened to end on.
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    let mut script = hello_that_pages("WIN$N");
+    // Live tape climbing: 100 → 101. The chart's newest price is 101.
+    script.push_str(&tick_at(1, 1_784_824_300_000, "100", 1));
+    script.push_str(&tick_at(2, 1_784_824_301_000, "101", 1));
+    sock.write_all(script.as_bytes()).await.unwrap();
+
+    let _connected = next_event(&mut rx).await;
+    let Mt5Event::Live(_first) = next_event(&mut rx).await else {
+        panic!("expected the first mapped live print");
+    };
+
+    assert!(pager.request(10, 1_784_835_100_000));
+    let _request = read_line(&mut sock).await;
+
+    // The page sits far below the live tape. Were its first print compared
+    // against the live 101 it would read as a heavy sell; it has no
+    // predecessor at all, and is dropped and counted instead.
+    let mut script = String::from("{\"type\":\"history_start\"}\n");
+    script.push_str(&tick_at(3, 1_784_824_200_000, "90", 1));
+    script.push_str(&tick_at(4, 1_784_824_201_000, "91", 1));
+    script.push_str("{\"type\":\"history_end\",\"exhausted\":false}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+
+    let Mt5Event::HistoryPage { trades, .. } = next_event(&mut rx).await else {
+        panic!("expected the page");
+    };
+    assert_eq!(trades.len(), 1, "the page's first print has no predecessor");
+    assert_eq!(
+        trades[0].side,
+        Side::Buy,
+        "90 → 91 inside the page is an uptick, whatever the live tape is doing"
+    );
+
+    // And the live tape carries on from 101, not from the page's 91. A print
+    // at 100 is a downtick; had the context leaked it would read as a buy.
+    sock.write_all(tick_at(5, 1_784_824_302_000, "100", 1).as_bytes())
+        .await
+        .unwrap();
+    let Mt5Event::Live(resumed) = next_event(&mut rx).await else {
+        panic!("expected the live print after the page");
+    };
+    assert_eq!(
+        resumed.side,
+        Side::Sell,
+        "the live tape resumed from 101, so 100 is a downtick"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_page_still_answers_and_can_report_the_end_of_the_tape() {
+    // The terminal has nothing older. The block is empty and the markers still
+    // frame it — an unanswered request is a spinner that never stops — and
+    // `exhausted` distinguishes "nothing left" from "nothing this time".
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    assert!(pager.request(500, 1_784_835_100_000));
+    let _request = read_line(&mut sock).await;
+    sock.write_all(
+        b"{\"type\":\"history_start\",\"count_hint\":0}\n{\"type\":\"history_end\",\"exhausted\":true}\n",
+    )
+    .await
+    .unwrap();
+
+    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+        panic!("an empty page is still a page");
+    };
+    assert!(trades.is_empty());
+    assert!(exhausted, "the terminal reported nothing older exists");
+}
+
+#[tokio::test]
+async fn a_bridge_that_cannot_page_is_never_written_to() {
+    // The compatibility case. A bridge whose hello predates the back-channel
+    // must not receive a byte: it never reads, so the request would sit in its
+    // receive buffer and eventually block the thread sending ticks. The
+    // consumer is still answered, because a request that goes unanswered is a
+    // spinner that outlives the click.
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello("WIN$N").as_bytes()).await.unwrap();
+
+    let Mt5Event::Status(Mt5Status::Connected { history_paging, .. }) = next_event(&mut rx).await
+    else {
+        panic!("expected a connected status");
+    };
+    assert!(!history_paging, "an absent field is a no, never a maybe");
+
+    assert!(pager.request(2_000, 1_784_835_100_000));
+    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+        panic!("the request must be answered even though nothing was asked");
+    };
+    assert!(trades.is_empty());
+    assert!(
+        !exhausted,
+        "refusing to ask says nothing about whether history exists"
+    );
+
+    // And nothing crossed the socket. The bridge proves it by streaming on:
+    // a session that had been written to would still work, but a session that
+    // *was not* is what this asserts, so the read below must find its own
+    // request-shaped silence.
+    let mut script = String::new();
+    script.push_str(&tick(1, "177795", 3));
+    script.push_str(&tick(2, "177800", 1));
+    sock.write_all(script.as_bytes()).await.unwrap();
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("expected the live print");
+    };
+    assert_eq!(trade.side, Side::Buy);
+
+    let mut byte = [0_u8; 1];
+    let quiet = tokio::time::timeout(Duration::from_millis(200), sock.read(&mut byte)).await;
+    assert!(
+        quiet.is_err(),
+        "the feed wrote to a bridge that never said it reads"
+    );
+}
+
+#[tokio::test]
+async fn a_session_that_dies_holding_a_request_still_answers_it() {
+    // The spinner-forever case. The bridge takes the request and disappears
+    // without a block; the consumer must still get its one reply.
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    assert!(pager.request(2_000, 1_784_835_100_000));
+    let _request = read_line(&mut sock).await;
+    drop(sock); // the terminal closed, mid-answer
+
+    let Mt5Event::HistoryPage { trades, exhausted } = next_event(&mut rx).await else {
+        panic!("a session that dies owing an answer still owes it");
+    };
+    assert!(trades.is_empty());
+    assert!(!exhausted);
+    assert!(
+        !pager.is_in_flight(),
+        "the next session must find the pager clear, not stuck mid-fetch"
+    );
+}
+
+#[tokio::test]
+async fn one_request_at_a_time_and_a_page_nobody_asked_for_is_dropped() {
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    assert!(pager.request(2_000, 1_784_835_100_000));
+    let _request = read_line(&mut sock).await;
+    // A trader leaning on the button. The second click is dropped rather than
+    // queued: pages answered minutes apart would land in front of bars the
+    // earlier ones already drew.
+    assert!(
+        !pager.request(2_000, 1_784_835_100_000),
+        "a second request while one is in flight is refused"
+    );
+
+    sock.write_all(
+        b"{\"type\":\"history_start\"}\n{\"type\":\"history_end\",\"exhausted\":false}\n",
+    )
+    .await
+    .unwrap();
+    let Mt5Event::HistoryPage { .. } = next_event(&mut rx).await else {
+        panic!("expected the answer to the first request");
+    };
+
+    // Now a block nobody asked for. Its ticks are history; charting them at the
+    // front of the live tape is the one outcome worse than dropping them.
+    let mut script = String::new();
+    script.push_str("{\"type\":\"history_start\"}\n");
+    script.push_str(&tick_at(9, 1_784_824_200_000, "177700", 5));
+    script.push_str(&tick_at(10, 1_784_824_201_000, "177710", 5));
+    script.push_str("{\"type\":\"history_end\",\"exhausted\":false}\n");
+    // Followed by a live print, so the test has something to wait for that
+    // proves the unsolicited block produced nothing of its own.
+    script.push_str(&tick(1, "177795", 3));
+    script.push_str(&tick(2, "177800", 1));
+    sock.write_all(script.as_bytes()).await.unwrap();
+
+    let Mt5Event::Live(trade) = next_event(&mut rx).await else {
+        panic!("the unsolicited page must produce no event at all");
+    };
+    assert_eq!(trade.side, Side::Buy);
 }
 
 #[tokio::test]

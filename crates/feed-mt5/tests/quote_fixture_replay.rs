@@ -26,8 +26,8 @@ use tokio::sync::mpsc;
 
 use quantick_engine::{Side, Trade};
 use quantick_feed_mt5::{
-    BookCaptureSwitch, BridgeMsg, MapOutcome, Mt5Event, Mt5Status, ServerConfig, SideMode,
-    TapeKind, TickMapper, parse_line, run_bridge_server,
+    BookCaptureSwitch, BridgeMsg, HistoryPager, MapOutcome, Mt5Event, Mt5Status, ServerConfig,
+    SideMode, TapeKind, TickMapper, parse_line, run_bridge_server,
 };
 
 const FIXTURE: &str = include_str!("fixtures/us500_quote_ticks.ndjson");
@@ -151,6 +151,7 @@ async fn tcp_replay_of_a_quote_venue_equals_the_pure_mapper() {
         hello_timeout: Duration::from_secs(2),
         read_timeout: Duration::from_secs(2),
         book_capture: BookCaptureSwitch::new(),
+        history_pager: HistoryPager::new(),
     };
     tokio::spawn(async move {
         let _ = run_bridge_server(config, tx).await;
@@ -176,6 +177,7 @@ async fn tcp_replay_of_a_quote_venue_equals_the_pure_mapper() {
             Mt5Event::Rates { bars, .. } => panic!("unexpected {} candles", bars.len()),
             // Only one client ever dials this listener.
             Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
+            Mt5Event::HistoryPage { .. } => panic!("nothing asked this fixture for older ticks"),
         }
     }
 

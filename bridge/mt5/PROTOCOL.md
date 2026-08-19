@@ -2,8 +2,20 @@
 
 Newline-delimited JSON (NDJSON, UTF-8) over a local TCP socket. The **bridge
 dials out** (MQL5 sockets are client-only); the quantick feed listens
-(default `127.0.0.1:9100`). One connection = one session. The stream is
-one-way: bridge → feed.
+(default `127.0.0.1:9100`). One connection = one session.
+
+Almost everything travels bridge → feed: the terminal volunteers ticks, book
+images, candles and heartbeats, and the feed only listens. The one exception is
+history the chart has scrolled past the start of — nothing volunteers that,
+because nothing knows the trader wants it until they ask. So a bridge may
+declare `history_paging` in its hello, and a bridge that does gets written to:
+one `load_older` line in, one `history_start` … `history_end` block back.
+
+**A bridge that does not declare it is never written to.** This is not
+politeness: a peer that never reads fills its receive buffer, and in the Expert
+Advisor a full buffer eventually blocks the terminal thread that sends ticks —
+so a chart asking for history would stop the chart. Silence is a hard "do not",
+not "probably fine to try".
 
 **One port carries one symbol.** A listener serves a single session at a time
 and refuses the `hello` of any other symbol, so streaming several symbols means
@@ -32,6 +44,22 @@ rates_end
 tick | book | heartbeat × …  live, until the session ends
 bye                          optional clean goodbye
 ```
+
+and, interleaved with the live phase, on a bridge that declared
+`history_paging`:
+
+```
+                             ◀─ load_older            feed → bridge, one at a time
+history_start                one block per request, in order
+  tick × N                   older than the request's `before_ms`, ascending
+history_end
+```
+
+The feed keeps **one request outstanding at a time** and answers a click that
+arrives while one is in flight by dropping it, so a bridge never has to
+correlate replies with requests — the next block it sends is always the answer
+to the last line it read. A session that ends holding a request is answered
+with an empty block by the feed itself; the trader's spinner stops either way.
 
 A session lasts until the connection ends; the feed then goes back to
 accepting. While one is being served, **a second connection to the same port is
@@ -75,6 +103,12 @@ this as an ordinary disconnect and retries on its own schedule; the feed logs
 - `tick_size` — *optional*, `SYMBOL_TRADE_TICK_SIZE` as an exact decimal
   string. The instrument's real price grid (WIN: `"5"`), so the consumer does
   not render liquidity on rows that can never hold any.
+- `history_paging` — *optional*, `true` when this session **reads its socket**
+  and answers `load_older`. **Absent means no**, and absent is what every bridge
+  written before the back-channel says, so they keep working unchanged: the feed
+  never writes to them, and quantick disables the chart's "load older" affordance
+  rather than offering a button that returns nothing. See the warning at the top
+  for why the feed will not just try.
 - `rates` — *optional*, `true` when this session sends the historical candle
   block below. **Absent means no candles**: an older bridge, the Expert Advisor
   (which does not implement them), or `--rates-months 0`. The feed reports the
@@ -226,6 +260,67 @@ its read timeout (default 30 s) presumes the bridge dead.
 Bracket the historical block. An empty block still sends both markers —
 `backfill_end` is the "history is done" signal.
 
+### load_older (feed → bridge)
+
+```json
+{"type":"load_older","count":2000,"before_ms":1784824300802}
+```
+
+The only message that travels this way. Sent when the trader asks the chart for
+more history than it holds, and only to a session whose hello declared
+`history_paging`.
+
+- `count` — how many ticks the chart wants. A bound, not a promise: the bridge
+  sends what the terminal has and says so with `history_end`. A bridge should
+  cap it against its own limit (the Python bridge: 200 000) rather than trust
+  it — the number comes from a field a trader can type into.
+- `before_ms` — **exclusive** upper bound, in server time (see hello): the
+  timestamp of the oldest tick the chart holds. Every tick in the answer must be
+  strictly older. Server time because every other timestamp in this protocol is;
+  quantick converts from UTC on the way out, where the live offset is tracked.
+
+Note the unit mismatch the bridge has to absorb: `CopyTicksRange` takes whole
+seconds, so a bridge asking for `before_ms / 1000` would drop every tick sharing
+that second and one asking for the second *containing* it must filter the
+surplus by millisecond. The Python bridge rounds the range outward and filters
+(`walk_back`); the feed drops any overlap that survives anyway, because two
+implementations of one boundary is one too many to trust.
+
+### history_start / tick / history_end
+
+```json
+{"type":"history_start","count_hint":2000}
+{"type":"history_end","exhausted":true}
+```
+
+The answer to one `load_older`. The ticks between the markers are ordinary
+`tick` messages — same shape, same `seq` counter, continuing monotonically — so
+the mapping stays one code path. They are *history*, and the markers are the
+only thing that says so.
+
+Deliberately **not** `backfill_start`/`backfill_end`. That block is the session's
+opening window: it arrives unasked, exactly once, and lands at the front of an
+empty chart. This one arrives on demand, repeatedly, and lands *before*
+everything already charted. A bridge that reused the backfill markers would have
+quantick prepend the opening window on every reconnect and append a paged block
+to the live tape.
+
+- `count_hint` — *optional*, like `backfill_start`'s.
+- `exhausted` — *optional*. `true` means the terminal has **nothing older at
+  all** for this symbol: the walk reached the first tick the terminal holds.
+  **Absent means "there may be more"**, so a bridge that cannot tell simply
+  never claims the end and the trader keeps a live button.
+
+  An empty block is *not* by itself the end, and must not be sent with
+  `exhausted` on that basis. A page that failed, or one that crossed a weekend
+  without finding anything, returns nothing and has plenty older behind it —
+  retiring the trader's button over a transient is the one mistake here that
+  cannot be undone by clicking again.
+
+An empty block still sends **both** markers. `history_end` is what stops the
+chart's loading indicator, exactly as `backfill_end` is what resolves its
+opening load.
+
 ### bye
 
 ```json
@@ -248,6 +343,17 @@ Clean goodbye (EA removed, terminal closing). Anything after it is ignored.
   (`MT5_SESSION_BUSY`), the running session unaffected.
 - A session that dies mid-backfill, or mid-candle-block, discards the partial
   block; the next connection re-sends it.
+- A session that dies mid-**page**, or holding a request it never sent, has that
+  request answered with an empty block by the feed. The request is *not*
+  replayed against the next session: it names a cursor that session never sent.
+- A `history_start`/`history_end` block nobody asked for is collected and
+  discarded rather than charted — its ticks are history, and charting history at
+  the front of the live tape is the one outcome worse than dropping it.
+- A `load_older` a bridge cannot parse is skipped and counted
+  (`BRIDGE_UNDECODABLE_COMMAND` / `BRIDGE_MALFORMED_COMMAND`), the session
+  survives. One unreadable click must not cost the trader their tick stream —
+  but note the consequence: no block comes back, so the feed's request stays
+  outstanding until the read timeout ends the session and answers it empty.
 - A `rate` batch arriving outside a `rates_start`/`rates_end` pair is dropped
   and counted: it has no declared interval, and guessing one would misdate
   every candle in it.
@@ -263,4 +369,11 @@ version bumps, so the two sides can be upgraded independently:
   the cost of that visible-but-harmless case small — a quarter of M1 candles is
   ~440 warnings rather than 130 000.
 - **Old bridge, new feed.** No `rates` in the hello, so the feed reports no
-  candle history and the time pane says so rather than waiting.
+  candle history and the time pane says so rather than waiting. No
+  `history_paging` either, so the feed never writes to the socket and the chart
+  disables "load older" — the behaviour that build had before the back-channel
+  existed, unchanged.
+- **New bridge, old feed.** A feed predating the back-channel never sends
+  `load_older`, so the bridge's reader simply never has anything to read and its
+  `history_start`/`history_end` path never runs. The extra hello field lands in
+  the "unknown fields are ignored" rule.

@@ -1,0 +1,68 @@
+# GOAL — MT5 pagina histórico de ticks sob demanda
+
+**Missão**: dar ao feed MetaTrader paginação de histórico de ticks — o botão
+"older" busca mais ticks para trás no terminal, como o MetaTrader faz — e fazer
+o bloco inicial cobrir o pregão do dia em vez de uma janela curta.
+
+Branch: `feat/mt5-load-older` · worktree `../quantick-worktrees/feat-mt5-load-older`
+
+## Por que
+
+Hoje o protocolo do bridge é **uma via só** (bridge → feed), então não existe
+como pedir mais histórico:
+
+- `crates/app/src/feed/metatrader.rs:605` responde todo `LoadOlder` com um bloco
+  vazio e loga `MT5_LOAD_OLDER_UNSUPPORTED`.
+- `crates/app/src/config.rs:115` declara `history_paging: false`, o que desabilita
+  o grupo inteiro na toolbar (`crates/app/src/toolbar.rs:615`).
+- `bridge/mt5/QuantickBridge.mq5:29` manda 30 minutos de ticks no connect;
+  `bridge/mt5/quantick_bridge.py` manda 720 min com teto de 200k ticks — um dia
+  de WIN passa de 1M prints, então o teto corta os mais antigos.
+
+## Decisões tomadas com o Camilo (2026-08-19)
+
+- **Bridge alvo: Python** (`quantick_bridge.py`). O EA MQL5 não entra nesta
+  missão; ele apenas não declara a capacidade e segue como hoje.
+- **Backfill inicial cobre o pregão do dia**, além do "older".
+
+## Critérios de aceitação
+
+### Específicos
+
+1. [ ] Protocolo ganha um canal **feed→bridge** aditivo dentro do schema 1
+       (comando do feed + bloco `history_*` do bridge). `bridge/mt5/PROTOCOL.md`,
+       `crates/feed-mt5/src/protocol.rs` e seus testes verbatim mudam juntos.
+2. [ ] `quantick_bridge.py` lê o socket, atende o pedido com `copy_ticks_range`
+       para trás do tick mais antigo já enviado, e responde **bloco vazio quando
+       não há mais nada** — nunca silêncio, o loader sempre resolve.
+3. [ ] **Bridge antigo continua funcionando**: a capacidade é declarada no
+       `hello`; ausente, o botão fica desabilitado exatamente como hoje.
+4. [ ] `metatrader.rs` para de responder vazio incondicionalmente; `history_paging`
+       sobe pelo watch de capabilities da sessão (como `ohlcv_generation` já faz),
+       nunca chutado do `ProviderKind`.
+5. [ ] Backfill inicial do Python cobre o pregão do dia; o truncamento continua
+       visível no log em vez de implícito.
+6. [ ] Ticks paginados chegam como `FeedEvent::HistoryPrepended`, ordenados e sem
+       duplicar o retido — a mesma regra de overlap por tempo do reconnect.
+7. [ ] Segunda implementação de bridge (fake, em teste) exercita: pede older →
+       prepend; pede sem histórico → vazio → loader resolve; bridge sem a
+       capacidade → botão desabilitado.
+
+### Gates injetados
+
+8.  [ ] Quatro checks verdes após rebase em `main`, mais `ruff check --select F`
+        sobre `bridge/mt5/` e `python3 tools/mt5/test_export_session.py`.
+9.  [ ] Impacto de performance **declarado por taxa** (per-trade / per-frame /
+        raro) no plano, com número medindo o parse por tick.
+10. [ ] `new-extension`: porta nomeada, edições de registro, blast radius
+        (adicionados vs. editados) no corpo do PR.
+11. [ ] `ui-harness` hook para a toolbar com paginação habilitada + `visual-qa` +
+        `trader-ux-review` sem Blocker aberto. `LoadOlder` segue drivable sem mouse.
+12. [ ] `arch-review` rodado, Blocker/Should-fix resolvidos ou deferidos no corpo
+        do PR; **PR aberto** (merge é do Camilo, nunca meu).
+
+## Fora de escopo
+
+- Paginação no EA MQL5 (decisão acima).
+- Paginação de candles (`rates_*`) — outro bloco, outra missão.
+- Qualquer mudança no engine ou na construção de barras.
