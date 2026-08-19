@@ -199,6 +199,19 @@ impl SharedPicks {
     }
 }
 
+/// Which of a restored tab's panes open with their indicator legend folded.
+///
+/// A named pair rather than two positional bools: `restore_canvas(.., true,
+/// false)` at the call site says nothing about which chart is which, and the
+/// two panes are exactly the thing a reader would have to guess.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegendFold {
+    /// The flow pane's legend.
+    pub flow: bool,
+    /// The time pane's legend, when the tab has one.
+    pub time: bool,
+}
+
 pub struct Tab {
     /// Stable for as long as the tab is open, and never reused. The indicator
     /// state file names one of these (see `QuantickApp::persisted_tab`), and
@@ -336,6 +349,10 @@ pub struct Tab {
     /// time-showing `default_layout`); once the pane exists, its own header
     /// owns the interval and this is never read again.
     time_pane_opening_interval_ms: i64,
+    /// Whether the time pane opens with its indicator legend folded, for the
+    /// same reason the interval above is stashed: a restored workspace names
+    /// the fold a frame before the pane it belongs to exists.
+    time_pane_opening_legend_collapsed: bool,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by [`Self::apply_pending_layout`] on the following frame.
     pending_time_pane: bool,
@@ -411,6 +428,7 @@ impl Tab {
             time_pane: None,
             time_pane_id: pane_ids.1,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
+            time_pane_opening_legend_collapsed: false,
             pending_time_pane: false,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
@@ -991,6 +1009,7 @@ impl Tab {
         }
         self.pending_time_pane = false;
         let mut pane = ChartPane::time(self.time_pane_id, self.time_pane_opening_interval_ms);
+        pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.seed_from(
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
@@ -1436,6 +1455,7 @@ impl Tab {
         split_fraction: Option<f32>,
         focus: Option<PaneSide>,
         time_interval_ms: Option<i64>,
+        legends: LegendFold,
     ) {
         if let Some(ms) = time_interval_ms {
             self.time_pane_opening_interval_ms = ms;
@@ -1446,6 +1466,18 @@ impl Tab {
         }
         if let Some(side) = focus {
             self.focus = side;
+        }
+        self.flow_pane.legend_collapsed = legends.flow;
+        // The time pane may not exist yet. `set_layout` only *arms* it
+        // (`pending_time_pane`); `apply_pending_layout` builds it a frame
+        // later, which is the very reason the opening interval above is
+        // stashed rather than assigned. Writing the fold here alone would
+        // write it to `None` and the pane would open expanded — and the next
+        // `capture_arrangement` would then persist that `false` over the
+        // trader's choice.
+        self.time_pane_opening_legend_collapsed = legends.time;
+        if let Some(time) = self.time_pane.as_mut() {
+            time.legend_collapsed = legends.time;
         }
     }
 

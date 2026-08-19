@@ -331,18 +331,25 @@ the only path:
   (`Ctrl+R`), Close Replay, Exit.
 - **View** — Layout ▸ Flow / Timeframe / Timeframe + Flow (§11; what the
   canvas shows is a view concern, and the entries name the charts they
-  show), dock show/hide (`Ctrl+B`), each dock tab, sub-pane collapse-all,
-  perf readings on/off, timezone.
+  show), dock show/hide (`Ctrl+B`), collapse/show the indicator legend on the
+  focused chart (`Ctrl+L`; the entry names the chart when the split is open),
+  each dock tab, sub-pane collapse-all, perf readings on/off, timezone.
 - **Insert** — indicators (natives + library), drawing tools (§9).
 - **Tools** — appearance dialog, future: script library folder, alerts.
 - **Help** — replay file format…, future: Pine dialect reference,
   shortcut list.
 
 Shortcut map currently implemented:
-`Esc/1` pointer · `2` crosshair · `Ctrl+R` replay browser · `Ctrl+B` dock · `Space`
-play/pause while replaying · `+`/`−` replay speed · `Ctrl+T` new tab ·
-`Ctrl+W` close tab · `Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs. Single letters
-stay free of modifiers (no text inputs live on the chart).
+`Esc/1` pointer · `2` crosshair · `Ctrl+R` replay browser · `Ctrl+B` dock ·
+`Ctrl+L` fold the indicator legend · `Space` play/pause while replaying ·
+`+`/`−` replay speed · `Ctrl+T` new tab · `Ctrl+W` close tab ·
+`Ctrl+Tab`/`Ctrl+Shift+Tab` cycle tabs.
+
+Single letters stay free of modifiers where the chart itself answers them —
+but that freedom belongs to the *toolbox*: bare letters arm drawing tools, and
+the trading hotkeys are Shift+letter. A chrome switch takes Ctrl+letter, which
+is why the legend fold is `Ctrl+L` and not `L`: a chrome control borrowing a
+bare letter would arm a tool for every trader who learned it there.
 
 ## 11. Workspace tabs and split view
 

@@ -201,6 +201,20 @@ pub struct SavedTab {
     /// The time pane's interval, when the tab had one.
     #[serde(default)]
     pub time_bars: Option<String>,
+    /// Whether the flow pane's on-chart indicator legend was folded to its
+    /// count puck.
+    ///
+    /// Per pane, like the bar rules above and for the same reason: the corner
+    /// pressure that makes a trader fold one chart's legend is not on the
+    /// other. Absent means expanded — a workspace written before the fold
+    /// existed opens exactly as it closed.
+    #[serde(default)]
+    pub flow_legend_collapsed: bool,
+    /// Whether the time pane's legend was folded. See
+    /// [`Self::flow_legend_collapsed`]; a tab that never showed the split
+    /// simply never had one to fold.
+    #[serde(default)]
+    pub time_legend_collapsed: bool,
 }
 
 /// The single-instance chrome around the tabs.
@@ -929,6 +943,8 @@ mod tests {
                     focus: Some(SavedFocus::Flow),
                     flow_bars: "tick:50".to_owned(),
                     time_bars: Some("time:1m".to_owned()),
+                    flow_legend_collapsed: false,
+                    time_legend_collapsed: false,
                 },
                 SavedTab {
                     feed: "binance".to_owned(),
@@ -938,6 +954,8 @@ mod tests {
                     focus: None,
                     flow_bars: "dollar:500000".to_owned(),
                     time_bars: None,
+                    flow_legend_collapsed: false,
+                    time_legend_collapsed: false,
                 },
             ],
             chrome: Some(SavedChrome {
@@ -1260,6 +1278,8 @@ mod tests {
             focus: None,
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
+            flow_legend_collapsed: false,
+            time_legend_collapsed: false,
         });
         workspace.tabs.push(SavedTab {
             feed: "binance".to_owned(),
@@ -1269,6 +1289,8 @@ mod tests {
             focus: None,
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
+            flow_legend_collapsed: false,
+            time_legend_collapsed: false,
         });
         let restored = workspace.restore(&catalogue());
         assert_eq!(
@@ -1399,6 +1421,8 @@ mod tests {
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
+                    flow_legend_collapsed: false,
+                    time_legend_collapsed: false,
                 },
                 SavedTab {
                     feed: "binance".to_owned(),
@@ -1408,6 +1432,8 @@ mod tests {
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
+                    flow_legend_collapsed: false,
+                    time_legend_collapsed: false,
                 },
             ],
             chrome: None,
@@ -1436,6 +1462,8 @@ mod tests {
                 focus: None,
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
             }],
             chrome: None,
         });

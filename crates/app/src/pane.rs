@@ -869,6 +869,13 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
+    /// Whether this pane's on-chart indicator legend is folded to its count
+    /// puck. Per pane, not per window: a split is two readings of the same
+    /// market, and the corner pressure that makes a trader fold the flow
+    /// pane's legend — bubbles, book, the position HUD — is not on the time
+    /// pane at all. Expanded by default, which is what every chart did before
+    /// the fold existed.
+    pub legend_collapsed: bool,
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
@@ -1174,6 +1181,7 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
+            legend_collapsed: false,
             live_strip_visible: false,
             footprint_visible: false,
             footprint_override: None,
@@ -5181,7 +5189,10 @@ impl ChartPane {
         let hud_here = chrome.paper_owns_input && chrome.paper.position_summary().is_some();
         let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
             + crate::indicator_legend::hud_offset_px(hud_here)
-            + crate::indicator_legend::stack_height_px(self.indicators.all());
+            + crate::indicator_legend::stack_height_px(
+                self.indicators.all(),
+                self.legend_collapsed,
+            );
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
         {

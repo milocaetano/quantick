@@ -163,10 +163,32 @@ pub fn inline(ui: &mut egui::Ui, label: &str) {
 /// The one loading overlay: every active task as a spinner + label row on a
 /// shared backdrop, centred at the top of `area` so it never covers the
 /// symbol header on the left or the book status badge on the right.
+///
+/// It draws in a layer of its own, above the chart's floating chrome. Painted
+/// straight onto the canvas it sat *underneath* anything the panes put in an
+/// `egui::Area` — the indicator legend is one, and on a split canvas the
+/// legend's corner lands right where this backdrop is centred, so the message
+/// was being read through a card on top of it. A statement about the app
+/// still working is not something to half-hide behind chrome, and it is gone
+/// again in seconds, so it takes the front.
 pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
     if !tracker.any_active() {
         return;
     }
+    // A layer rather than an `egui::Area`: an area is laid out from the
+    // previous frame's state and paints nothing on the frame it first
+    // appears, which is precisely the frame a wait begins — the overlay would
+    // arrive late every time, and `a_rebuilt_chart_still_paints_itself` says
+    // so. `with_layer_id` keeps the drawing immediate and only moves it up.
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("loading_overlay"));
+    ui.with_layer_id(layer, |ui| {
+        ui.set_clip_rect(area);
+        draw_rows(ui, area, tracker);
+    });
+}
+
+/// The overlay's rows, in whatever layer the caller put them in.
+fn draw_rows(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
     let font = egui::FontId::proportional(LABEL_FONT_SIZE);
     let painter = ui.painter().clone();
     let galleys: Vec<_> = tracker
