@@ -8187,7 +8187,7 @@ impl QuantickApp {
                         "jump-to-trade refused: the flow chart has no bar for the fills"
                     );
                     tab.paper.show_toast(
-                        "This trade is off the flow chart's tape - there is no bar to centre on."
+                        "This trade is outside the bars on the flow chart - nothing to centre on."
                             .to_owned(),
                     );
                 }

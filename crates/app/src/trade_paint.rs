@@ -13,6 +13,9 @@
 //! there — marks at the start of the day for fills the tape has not reached.
 //! How many were left off is said in the corner, beside the cap's own count:
 //! an empty chart under a switched-on layer must not read as a lost ledger.
+//! That line says "bars", not "tape": the canvas has a surface *called* the
+//! tape, and a trader reading the corner must not think the count is about
+//! that lane.
 //!
 //! The encoding is scannable for outcomes: marks and connectors take the
 //! *outcome* colour (win/loss/scratch), while direction is carried by
@@ -169,7 +172,7 @@ pub(crate) fn draw(
                 note.push_str(" · ");
             }
             use std::fmt::Write as _;
-            let _ = write!(note, "{off_tape} off the tape on screen");
+            let _ = write!(note, "{off_tape} off the bars on screen");
         }
         painter.text(
             frame.chart_rect.left_bottom() + egui::vec2(8.0, -24.0),
@@ -525,7 +528,7 @@ mod tests {
             assert!(out.polygons.is_empty(), "{name}: a mark was painted");
             assert_eq!(
                 out.texts,
-                vec!["trade paint: 1 off the tape on screen".to_owned()],
+                vec!["trade paint: 1 off the bars on screen".to_owned()],
                 "{name}: the chart did not say what it left off"
             );
         }
@@ -562,7 +565,7 @@ mod tests {
         let out = painted_over(&trades, None, tape(160, 400));
         assert_eq!(
             out.texts,
-            vec!["trade paint: 160 off the tape on screen".to_owned()],
+            vec!["trade paint: 160 off the bars on screen".to_owned()],
             "a hundred marks fit under the cap of 200, and the rest are named"
         );
         assert_eq!(
@@ -579,7 +582,7 @@ mod tests {
         let out = painted_over(&trades, None, tape(100, 500));
         assert_eq!(
             out.texts,
-            vec!["trade paint: 200 of 400 shown · 100 off the tape on screen".to_owned()],
+            vec!["trade paint: 200 of 400 shown · 100 off the bars on screen".to_owned()],
             "the corner reports both reasons a round trip is not on screen"
         );
     }
