@@ -16,28 +16,52 @@ use smallvec::SmallVec;
 
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX,
-    IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
+    IconDots, IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
 };
 
-/// The retracement icon the way TradingView draws it: the two-anchor trend
-/// diagonal with the horizontal levels it spans. The `ROWS` glyph it
-/// replaces read as a generic list, not as levels hung on a move.
+/// The retracement icon, drawn as the gesture it is: the ladder of levels
+/// with the two-anchor leg pulled across it, and the leg's two ends marked.
+///
+/// The marked ends are the part that carries the meaning. Without them the
+/// glyph is a stack of lines with a slash through it — which is also what an
+/// extension looks like, and what the `ROWS` glyph both tools used to share
+/// looked like. Two dots against three is how the eye tells the two Fib
+/// tools apart in the flyout at a glance, which is exactly how every drawing
+/// platform draws them.
+/// The leg itself, named once: the strokes draw it and the dots mark its
+/// ends, so nudging the glyph cannot leave the anchors behind on the old line.
+const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.06, 0.84), (0.60, 0.16)];
+
 pub(super) const FIB_RETRACEMENT_ICON: IconStrokes = &[
-    &[(0.10, 0.18), (0.90, 0.18)],
-    &[(0.10, 0.52), (0.90, 0.52)],
-    &[(0.10, 0.86), (0.90, 0.86)],
-    &[(0.16, 0.86), (0.84, 0.18)],
+    &[(0.30, 0.16), (0.98, 0.16)],
+    &[(0.30, 0.50), (0.98, 0.50)],
+    &[(0.30, 0.84), (0.98, 0.84)],
+    RETRACEMENT_LEG,
 ];
 
-/// The extension icon: the retracement ladder plus the projected level past
-/// the move — shorter, because it hangs beyond the anchor leg.
+/// The two ends of the leg the retracement is dragged across. They sit on the
+/// outer levels because that is where they really are: the anchors *are* 0
+/// and 1, and every other line hangs between them.
+pub(super) const FIB_RETRACEMENT_DOTS: IconDots = RETRACEMENT_LEG;
+
+/// The extension icon: the same ladder under the *three*-anchor path —
+/// impulse, pullback, projection origin — because that is the gesture, and
+/// the third dot is what says so.
+/// The extension's three-anchor path, named once for the same reason as
+/// [`RETRACEMENT_LEG`].
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)];
+
 pub(super) const FIB_EXTENSION_ICON: IconStrokes = &[
-    &[(0.34, 0.12), (0.90, 0.12)],
-    &[(0.10, 0.42), (0.90, 0.42)],
-    &[(0.10, 0.68), (0.90, 0.68)],
-    &[(0.10, 0.90), (0.90, 0.90)],
-    &[(0.16, 0.90), (0.84, 0.42)],
+    &[(0.30, 0.16), (0.98, 0.16)],
+    &[(0.30, 0.50), (0.98, 0.50)],
+    &[(0.30, 0.84), (0.98, 0.84)],
+    EXTENSION_LEG,
 ];
+
+/// The three anchors of the trend-based extension — impulse, pullback and the
+/// origin the projection hangs from. Three dots against two is what tells the
+/// two Fib rows apart in the flyout at icon size.
+pub(super) const FIB_EXTENSION_DOTS: IconDots = EXTENSION_LEG;
 
 /// The one rail family both Fib tools declare, shared here so the two
 /// members can never drift onto different family ids.
@@ -46,6 +70,7 @@ pub(super) const FIB_FAMILY: ToolFamily = ToolFamily {
     title: "Fibonacci",
     icon: egui_phosphor::regular::ROWS,
     icon_strokes: FIB_RETRACEMENT_ICON,
+    icon_dots: FIB_RETRACEMENT_DOTS,
 };
 
 /// Ratios closer than this are the same level; a duplicate is rejected.
@@ -133,8 +158,12 @@ impl LabelPosition {
 /// How far the level lines run horizontally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Extend {
+    /// Between the anchors and nowhere else — what a fresh retracement opens
+    /// with, so the levels end where the trader stopped dragging.
     Anchors,
-    /// The default: forward from the *last* anchor only.
+    /// Forward from the *last* anchor only — what a fresh extension opens
+    /// with (see [`Extend::for_kind`], which is where a new object's span
+    /// is decided; this `Default` only answers for a value nobody set).
     ///
     /// A Fib level is something price is going to meet, so it has to be drawn
     /// where price is — to the right of the swing that defined it. Levels
@@ -147,13 +176,38 @@ pub enum Extend {
     /// on", which is what a target is.
     #[default]
     Forward,
-    /// The whole anchor span *and* the projection.
+    /// The whole anchor span *and* the projection onward.
     Right,
     Both,
 }
 
 impl Extend {
     const ALL: [Self; 4] = [Self::Anchors, Self::Forward, Self::Right, Self::Both];
+
+    /// The span a fresh object of each kind opens with.
+    ///
+    /// **A retracement lives between its own anchors.** It measures how much
+    /// of one move was given back, so its lines belong to that move: the
+    /// trader drags from the swing low to the swing high and the levels fill
+    /// in the leg under the pointer, ending where the pointer is. Reported
+    /// twice from the running build — first opening at the *last* anchor,
+    /// which put every line on the far side of the cursor during the very
+    /// drag that defines them, then running on to the right edge, which is
+    /// the trader's own words: "a linha deve ir até o ponto onde eu tô
+    /// traçando e não ir para o infinito". Extending it is a choice on the
+    /// Levels tab, and one that can now be saved as the default.
+    ///
+    /// **Extension keeps projecting from its last anchor.** Its levels are
+    /// where the next leg may reach — a target, ahead of the move — so
+    /// drawing them back over the leg they were measured from is backwards
+    /// on its face.
+    #[must_use]
+    pub fn for_kind(kind: FibKind) -> Self {
+        match kind {
+            FibKind::Retracement => Self::Anchors,
+            FibKind::Extension => Self::Forward,
+        }
+    }
 
     #[must_use]
     fn describe(self) -> &'static str {
@@ -313,7 +367,7 @@ impl FibPayload {
             log_scale: false,
             label_mode: LabelMode::default(),
             label_position: LabelPosition::default(),
-            extend: Extend::default(),
+            extend: Extend::for_kind(kind),
             revision: 0,
             cache: RefCell::new(LabelCache::default()),
         }
@@ -1056,6 +1110,40 @@ pub(super) fn draw_levels_tab(
         drawing.points.swap(0, 1);
         edited = true;
     }
+
+    // The same two calls the Style tab makes, offered on the tab where the
+    // configuration is actually built. A trader who has just laid out their
+    // levels and colours is standing exactly where "and from now on" is worth
+    // asking; sending them to another tab for it is how this ended up being
+    // redone every single session.
+    ui.separator();
+    ui.horizontal(|ui| {
+        // Named, because "Set as default" sits four rows up and means the
+        // neighbouring thing: that one promotes a preset the trader *named*,
+        // this one takes the setup in front of them as it stands. Without the
+        // words in front, two buttons a thumb apart read as the same button.
+        ui.label(egui::RichText::new("New objects").small());
+        if ui
+            .small_button("Save as default")
+            .on_hover_text("New objects of this tool open with these levels, colours and labels")
+            .clicked()
+        {
+            super::save_tool_default(host, drawing);
+        }
+        if super::has_saved_default(host, drawing.tool)
+            && ui
+                .small_button("Reset to factory")
+                .on_hover_text(concat!(
+                    "New objects go back to the built-in levels and ",
+                    "colours. Clears the default preset choice too; ",
+                    "saved presets are kept"
+                ))
+                .clicked()
+        {
+            super::reset_tool_default(host, drawing.tool);
+        }
+    });
+
     edited
 }
 
@@ -1269,5 +1357,46 @@ mod tests {
         payload.touch();
         let after = labels_for(&payload, 200.0, 100.0, 100.0, false);
         assert!(after.labels[0].starts_with("top"));
+    }
+
+    /// The drag is the whole reading gesture: press on the swing low, pull up
+    /// and to the right, watch the levels fill in the leg under the pointer.
+    /// The draft preview completes the geometry with the hovered point, so
+    /// this is exactly the span a half-placed retracement paints — from the
+    /// anchor that is already down to where the pointer is now, and no
+    /// further. Both halves were reported from the running build.
+    #[test]
+    fn a_retracement_being_dragged_spans_the_first_click_to_the_pointer() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 500.0));
+        // Anchor down at x = 200, pointer at x = 620: what the preview holds
+        // mid-drag, up and to the right.
+        let dragging = [egui::pos2(200.0, 420.0), egui::pos2(620.0, 90.0)];
+        let (left, right) = level_span(&dragging, chart, Extend::for_kind(FibKind::Retracement));
+        assert!(
+            (left - 200.0).abs() < f32::EPSILON,
+            "the levels must begin at the first click, not at the pointer: {left}"
+        );
+        assert!(
+            (right - 620.0).abs() < f32::EPSILON,
+            "and end under the pointer rather than running to the edge: {right}"
+        );
+    }
+
+    /// The other kind asks the other question: an extension's targets are
+    /// what comes after its last anchor, so they must not paint back over the
+    /// leg they were measured from.
+    #[test]
+    fn an_extension_still_projects_from_its_last_anchor() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 500.0));
+        let placed = [
+            egui::pos2(200.0, 420.0),
+            egui::pos2(400.0, 90.0),
+            egui::pos2(620.0, 260.0),
+        ];
+        let (left, _) = level_span(&placed, chart, Extend::for_kind(FibKind::Extension));
+        assert!(
+            (left - 620.0).abs() < f32::EPSILON,
+            "an extension starts where its projection origin is: {left}"
+        );
     }
 }

@@ -129,10 +129,21 @@ impl DrawingToolImpl for Text {
     fn supports_stroke_width(&self) -> bool {
         false
     }
-    /// The one tool placed empty: its words are its content, and the field
-    /// that takes them is in the panel. Placing a note and being shown only
-    /// style icons leaves the trader with a grey "Note" and no way in.
-    fn opens_settings_on_place(&self) -> bool {
+    /// The one tool placed empty: its words are its content, so it takes the
+    /// caret on the chart the moment it lands. Placing a note and being shown
+    /// only style icons left the trader with a grey "Note" and no way in.
+    fn inline_text<'a>(&self, payload: &'a dyn DrawingPayload) -> Option<&'a str> {
+        payload
+            .as_any()
+            .downcast_ref::<TextPayload>()
+            .map(|payload| payload.text.as_str())
+    }
+    fn set_inline_text(&self, payload: &mut dyn DrawingPayload, text: String) {
+        if let Some(payload) = payload.as_any_mut().downcast_mut::<TextPayload>() {
+            payload.text = text;
+        }
+    }
+    fn holds_text(&self) -> bool {
         true
     }
     /// …and what the width slot offers instead: the type size, so the size
@@ -199,7 +210,10 @@ impl DrawingToolImpl for Text {
     ) {
         // The halo pass widens strokes; type has none, and a second draw of
         // the same glyphs would only smear them.
-        if ctxt.halo {
+        //
+        // The editor holding these words paints them itself, so the object
+        // stands down while it is open — see `DrawContext::content_editing`.
+        if ctxt.halo || ctxt.content_editing {
             return;
         }
         let Some(anchor) = points.first() else {

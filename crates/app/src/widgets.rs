@@ -144,6 +144,7 @@ pub fn icon_paint(
 pub struct IconButton<'a> {
     glyph: &'a str,
     strokes: crate::drawings::IconStrokes,
+    dots: crate::drawings::IconDots,
     size: IconSize,
     active: bool,
     enabled: bool,
@@ -160,6 +161,7 @@ impl<'a> IconButton<'a> {
         Self {
             glyph,
             strokes: &[],
+            dots: &[],
             size,
             active: false,
             enabled: true,
@@ -170,12 +172,23 @@ impl<'a> IconButton<'a> {
         }
     }
 
-    /// Paint these vector strokes instead of the glyph when non-empty —
-    /// registry data from [`crate::drawings::IconStrokes`], so the button
-    /// stays one code path for every tool.
+    /// Paint this vector icon instead of the glyph when its strokes are
+    /// non-empty — registry data from [`crate::drawings::IconStrokes`] and
+    /// [`crate::drawings::IconDots`], so the button stays one code path for
+    /// every tool.
+    ///
+    /// Strokes and dots arrive together on purpose. They are two halves of
+    /// one drawing, and a caller that could ask for the lines alone would
+    /// paint a Fib retracement that reads exactly like the extension beside
+    /// it — the anchors are what tells them apart.
     #[must_use]
-    pub fn strokes(mut self, strokes: crate::drawings::IconStrokes) -> Self {
+    pub fn vector_icon(
+        mut self,
+        strokes: crate::drawings::IconStrokes,
+        dots: crate::drawings::IconDots,
+    ) -> Self {
         self.strokes = strokes;
+        self.dots = dots;
         self
     }
 
@@ -256,7 +269,7 @@ impl<'a> IconButton<'a> {
             } else {
                 let box_rect =
                     egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(self.size.glyph));
-                paint_icon_strokes(painter, box_rect, self.strokes, paint.glyph);
+                paint_vector_icon(painter, box_rect, self.strokes, self.dots, paint.glyph);
             }
             if self.active
                 && let Some(edge) = self.marker_edge
@@ -288,27 +301,44 @@ impl<'a> IconButton<'a> {
 /// Phosphor regular glyph at the rail's glyph size.
 const ICON_STROKE_WIDTH_PX: f32 = 1.4;
 
+/// Radius of an icon's anchor dot, in pixels at the rail's glyph size. Small
+/// enough to read as a handle on the leg rather than as a sixth level line.
+const ICON_DOT_RADIUS_PX: f32 = 1.9;
+
 /// Paint a vector icon: each polyline's unit-square points scaled into
-/// `rect`. A handful of line segments — cheaper than tesselating a text
-/// glyph, so safe on the per-frame rail.
-pub fn paint_icon_strokes(
+/// `rect`, then the anchor dots over them. A handful of line segments and at
+/// most three tiny circles — cheaper than tesselating a text glyph, so safe
+/// on the per-frame rail.
+pub fn paint_vector_icon(
     painter: &egui::Painter,
     rect: egui::Rect,
     strokes: crate::drawings::IconStrokes,
+    dots: crate::drawings::IconDots,
     color: egui::Color32,
 ) {
+    let at = |(x, y): (f32, f32)| {
+        egui::pos2(
+            rect.left() + x * rect.width(),
+            rect.top() + y * rect.height(),
+        )
+    };
     let stroke = egui::Stroke::new(ICON_STROKE_WIDTH_PX, color);
     for polyline in strokes {
-        let points: Vec<egui::Pos2> = polyline
-            .iter()
-            .map(|(x, y)| {
-                egui::pos2(
-                    rect.left() + x * rect.width(),
-                    rect.top() + y * rect.height(),
-                )
-            })
-            .collect();
+        // `Shape::line` and its `Vec`, deliberately, even for the two-point
+        // strokes that make up most of an icon: `line_segment` would avoid
+        // the allocation, but a rail icon in the armed accent then counts as
+        // a drawing stroke everywhere the tests measure what a tool painted
+        // by filtering `Shape::LineSegment` on the drawing colour. Trading a
+        // handful of two-element `Vec`s per frame for that ambiguity is the
+        // wrong side of the bargain — this is chrome, painted a dozen times
+        // a frame, not the per-trade path.
+        let points: Vec<egui::Pos2> = polyline.iter().copied().map(at).collect();
         painter.add(egui::Shape::line(points, stroke));
+    }
+    // Over the strokes: the leg passes through its own anchors, and a dot
+    // half-hidden under a level line stops reading as an anchor at all.
+    for &dot in dots {
+        painter.circle_filled(at(dot), ICON_DOT_RADIUS_PX, color);
     }
 }
 

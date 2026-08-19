@@ -27,7 +27,7 @@ use crate::chart::{self, PriceScale};
 use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
 use crate::drawings::{
-    self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings, PresetHost,
+    self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings,
 };
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
@@ -768,15 +768,15 @@ fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
 pub struct PaneChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
-    /// Raised when a tool that arrives empty was just placed, so the host
-    /// opens the settings panel for it.
+    /// Raised when a tool whose content is words was just placed, so the
+    /// host puts the caret in the object it just made.
     ///
-    /// Selecting a drawing raises the context bar, not the panel — but a
-    /// text note has no *content* until someone types it, and the field that
-    /// takes those words lives in the panel. Placing one and being shown a
-    /// row of style icons leaves the trader with an object that says "Note"
-    /// in grey and no way to make it say anything else.
-    pub open_settings: &'a mut bool,
+    /// Selecting a drawing raises the context bar, which is everything a
+    /// note needs *except* somewhere to type. This is that somewhere, and it
+    /// is on the chart: a note typed in a panel is read with the eye crossing
+    /// the screen between keystrokes, and until the first word lands the
+    /// object under the pointer just says "Note" in grey.
+    pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
     /// The symbol to name while the series is still empty.
@@ -1025,6 +1025,11 @@ pub struct ChartPane {
     // Drawing placement/movement state. Anchors are chart coordinates; only
     // the current hover and press position are transient pixels.
     pub drawing_hover: Option<ChartPoint>,
+    /// The object whose *content* is being edited off-canvas right now —
+    /// the on-chart note editor's subject. Told to the pane by the host each
+    /// frame, because the editor is chrome and lives above the canvas; the
+    /// object it holds the words for must not paint them twice.
+    pub content_editing: Option<usize>,
     /// The band the next anchor would land in, as the input pass resolved it.
     /// The draw pass puts the accent hairline on its top edge — one band at a
     /// time, and none at all when no tool is armed.
@@ -1194,6 +1199,7 @@ impl ChartPane {
             strategy_cleanup: Vec::new(),
             drawings: Drawings::default(),
             drawing_hover: None,
+            content_editing: None,
             drawing_band_hint: None,
             drawing_press_position: None,
             drawing_press_started_empty: false,
@@ -3404,20 +3410,13 @@ impl ChartPane {
         point: ChartPoint,
         chrome: &mut PaneChrome<'_>,
     ) {
-        // A new object starts from the user's explicit default preset when
-        // one is set; existing objects are never touched by that choice.
+        // A new object starts from whatever the trader told the app to
+        // remember for this tool — assembled in one place, so the click path
+        // and the scripted one open the same object. Existing objects are
+        // never touched by that choice.
         let presets = chrome.presets;
         let completed = self.drawings.place_with(tool, band, point, |tool| {
-            let style = presets
-                .default_style(tool.id())
-                .unwrap_or_else(|| tool.default_style());
-            let mut payload = tool.default_payload();
-            if let Some(name) = presets.default_preset(tool.id())
-                && let Some(value) = presets.load_custom_preset(tool.id(), &name)
-            {
-                payload.import_preset(&value);
-            }
-            drawings::NewDrawing { style, payload }
+            drawings::new_drawing_from_defaults(presets, tool)
         });
         if completed {
             // One-shot by default; the toolbox repeat pin keeps the tool
@@ -3425,8 +3424,17 @@ impl ChartPane {
             if !chrome.toolrail.repeat() {
                 chrome.toolrail.arm(Tool::Pointer);
             }
-            if tool.opens_settings_on_place() {
-                *chrome.open_settings = true;
+            // A tool whose content is words asks for the caret, not for a
+            // panel — see `PaneChrome::begin_text_edit`.
+            //
+            // The object stands down here rather than waiting for the host to
+            // notice next frame: the placement happens *inside* the canvas
+            // pass, so a note placed by click would otherwise paint its grey
+            // placeholder under the field that opens over it, for the one
+            // frame between the two.
+            if tool.holds_text() {
+                self.content_editing = self.drawings.selected();
+                *chrome.begin_text_edit = true;
             }
             self.drawing_hover = None;
         }
@@ -3476,6 +3484,7 @@ impl ChartPane {
                     style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
+                    content_editing: false,
                 };
                 drawing
                     .tool
@@ -3512,6 +3521,7 @@ impl ChartPane {
                     style: drawing.style,
                     selected: self.drawings.selected() == Some(index),
                     halo: false,
+                    content_editing: false,
                 };
                 drawing
                     .tool
@@ -3560,6 +3570,7 @@ impl ChartPane {
             style: drawing.style,
             selected: self.drawings.selected() == Some(drawing_index),
             halo: false,
+            content_editing: false,
         };
         anchor_hit(&drawing.tool.handles(band.rect, &projected, &ctxt), pos)
     }
@@ -3612,6 +3623,7 @@ impl ChartPane {
                 style: drawing.style,
                 selected: true,
                 halo: false,
+                content_editing: false,
             };
             let to = self.drawing_screen_point(target, history_right, total, scale);
             drawing
@@ -3991,6 +4003,26 @@ impl ChartPane {
                     })
                 };
                 self.drawings.select(selected);
+                // A note under the pointer takes a double click: its words
+                // *are* the object, so pointing at one and double clicking
+                // asks to type in it — the same reading as double clicking a
+                // curve to open its settings. It is read here rather than in
+                // the free-chart branch above because a click on an object
+                // starts a translate gesture, which is exactly what clears
+                // that branch's `primary_free`. Without this, fixing a typo
+                // meant hunting for a field in a panel that placing a note no
+                // longer opens.
+                if chart.double_clicked()
+                    && let Some(index) = selected
+                    && self
+                        .drawings
+                        .items()
+                        .get(index)
+                        .is_some_and(|drawing| drawing.tool.holds_text() && !drawing.locked)
+                {
+                    self.content_editing = Some(index);
+                    *chrome.begin_text_edit = true;
+                }
             }
             // Drag initiation reads the raw press (an `interact` per object
             // would be unbounded work), so it must honour the chrome gate
@@ -5769,6 +5801,7 @@ impl ChartPane {
                 style: drawing.style,
                 selected: source.drawings.selected() == Some(index),
                 halo: false,
+                content_editing: false,
             };
             // Handle drags cross the pane boundary as "move anchor N", so a
             // tool whose handles are not its anchors — a channel's rail
@@ -5940,6 +5973,12 @@ impl ChartPane {
                     style,
                     selected,
                     halo: false,
+                    // The object lives on `source`, so that is the pane that knows
+                    // whether its words are in an editor right now. Left
+                    // hardcoded, a shared note being typed kept painting its
+                    // old words on the companion chart — the same double
+                    // render the editor stands the original down to avoid.
+                    content_editing: source.content_editing == Some(index),
                 };
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.
@@ -6076,6 +6115,7 @@ impl ChartPane {
                 style,
                 selected,
                 halo: false,
+                content_editing: self.content_editing == Some(index),
             };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
@@ -6137,6 +6177,7 @@ impl ChartPane {
                 style: draft.style,
                 selected: false,
                 halo: false,
+                content_editing: false,
             };
             draft
                 .tool
@@ -6880,7 +6921,7 @@ mod tests {
         let mut toolrail = crate::toolrail::ToolRail::new();
         let presets =
             drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
-        let mut open_settings = false;
+        let mut begin_text_edit = false;
         let style = crate::style::ChartStyle::default();
         let mut paper = crate::paper_trading::PaperTrading::new();
         let footprint = crate::footprint_config::FootprintConfig::default();
@@ -6898,7 +6939,7 @@ mod tests {
                 let mut chrome = PaneChrome {
                     toolrail: &mut toolrail,
                     presets: &presets,
-                    open_settings: &mut open_settings,
+                    begin_text_edit: &mut begin_text_edit,
                     style: &style,
                     tz: crate::timezone::TzOffset::default(),
                     symbol: "TESTUSDT",

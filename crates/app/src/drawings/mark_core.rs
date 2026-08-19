@@ -29,6 +29,7 @@ pub(super) const MARKS_FAMILY: ToolFamily = ToolFamily {
     title: "Marks",
     icon: egui_phosphor::regular::ARROW_FAT_UP,
     icon_strokes: &[],
+    icon_dots: &[],
 };
 
 /// Gap between the candle's extreme and the tip of the mark, in pixels, so

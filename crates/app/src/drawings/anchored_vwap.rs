@@ -787,6 +787,7 @@ mod tests {
             style: DrawingStyle::default(),
             selected: false,
             halo: false,
+            content_editing: false,
         };
         let y = scale.y(100.0);
         // On the line at slot 10 and slot 12.

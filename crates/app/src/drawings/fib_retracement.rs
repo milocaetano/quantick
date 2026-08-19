@@ -24,6 +24,9 @@ impl DrawingToolImpl for FibRetracement {
     fn icon_strokes(&self) -> super::IconStrokes {
         fib::FIB_RETRACEMENT_ICON
     }
+    fn icon_dots(&self) -> super::IconDots {
+        fib::FIB_RETRACEMENT_DOTS
+    }
     fn hover_text(&self) -> &'static str {
         "Fib retracement - click two points or drag (F)"
     }
@@ -79,8 +82,11 @@ impl DrawingToolImpl for FibRetracement {
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
         (
             vec![egui::pos2(100.0, 100.0), egui::pos2(250.0, 200.0)],
-            // Right of the last anchor: see `fib_extension`.
-            egui::pos2(300.0, 150.0),
+            // Between the anchors, on the 50 % line halfway down the leg:
+            // that is where a retracement's levels live now, so it is where
+            // one is grabbed. Right of the last anchor there is nothing to
+            // hit any more — see `Extend::for_kind`.
+            egui::pos2(175.0, 150.0),
         )
     }
 }

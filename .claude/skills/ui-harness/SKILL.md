@@ -178,6 +178,15 @@ Landing with the tape-configuration goal (`feat/tape-own-config`):
 
 Once merged, move them into the table above.
 
+Landing with the drawing-defaults goal (`feat/fib-defaults-and-inline-text`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_TEXT_NOTE=1` | a note placed in the middle of the window with its **on-chart editor open** — the field where the words will be read, caret already in it, with the selection's context bar beside it. The editor exists only between a placement and the next click elsewhere, so no click-free launch could photograph it; the hook goes through the same two calls a click makes (`place_with` then `begin_inline_text_edit`), never a parallel path |
+| `QUANTICK_DRAWING_INSPECTOR_TAB=<style\|extra\|coordinates>` | which tab the properties panel opens on. `extra` is the tool-owned one — a Fib's **Levels** editor, where the ratios, the per-level colours and the two default controls ("Save as default" / "Reset to factory") live. Pair with `QUANTICK_DRAWING_INSPECTOR=1` and `QUANTICK_DRAWINGS_DEMO_SELECT=fib-retracement`. An unknown value leaves the default tab rather than guessing |
+
+Once merged, move them into the table above.
+
 Landing with the tape-switch goal (`feat/tape-chart-switch`):
 
 | Hook | Reaches |
