@@ -616,7 +616,10 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
         .on_hover_text("fetch older trades and prepend them")
-        .on_disabled_hover_text("this feed only streams forward; it cannot page older trades");
+        .on_disabled_hover_text(
+            "no older trades to fetch: this feed only streams forward, or its \
+             history is already all here",
+        );
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
@@ -894,7 +897,8 @@ fn draw_overflow(
                     egui::Button::new(format!("{} Load older", icons::PLUS)),
                 )
                 .on_disabled_hover_text(
-                    "this feed only streams forward; it cannot page older trades",
+                    "no older trades to fetch: this feed only streams forward, or \
+                     its history is already all here",
                 );
             if load.clicked() {
                 actions.push(ToolbarAction::LoadOlder);

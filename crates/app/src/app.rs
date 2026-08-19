@@ -104,6 +104,15 @@ const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
 /// whether it still fits above the anchor.
 const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
 const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
+/// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
+///
+/// It cannot fire at startup: paging asks for trades older than the ones on
+/// screen, and at launch there are none — the feed would refuse the request as
+/// `nothing_charted_yet`. So the hook waits for the first block to land, and
+/// gives up rather than hanging a capture run on a bridge that never connects.
+/// About ten seconds at 60 fps, which is longer than any bridge takes to say
+/// hello and shorter than a person's patience with a frozen window.
+const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
 
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
@@ -855,6 +864,9 @@ pub struct QuantickApp {
     // Scripted-validation hook: place one of every registered drawing on the
     // flow pane as soon as it has bars to anchor them to. Consumed once.
     pending_drawing_demo: bool,
+    /// Pages of older history the `QUANTICK_LOAD_OLDER` hook still owes, and
+    /// the frame budget it has left to wait for a chart to ask from.
+    pending_load_older: Option<(usize, u32)>,
     // Scripted-validation hook: one fixed-range volume profile straddling the
     // venue-prefix seam (when there is one). Consumed once.
     pending_frvp_demo: bool,
@@ -1265,6 +1277,7 @@ impl QuantickApp {
             inspector_last_selection: None,
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
+            pending_load_older: None,
             pending_frvp_demo: false,
             pending_avwap_demo: false,
             pending_replay_restart: None,
@@ -1446,6 +1459,16 @@ impl QuantickApp {
             .ok()
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|trades| *trades > 0);
+        // Pages of older trades fetched at launch — the "+ older" button
+        // pressed, without a hand. The button's whole point is what it does
+        // *after* the click, and the bars it prepends are the surface: a
+        // capture that can only photograph the enabled button proves the
+        // affordance exists and nothing about whether it works.
+        app.pending_load_older = std::env::var("QUANTICK_LOAD_OLDER")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|pages| *pages > 0)
+            .map(|pages| (pages, LOAD_OLDER_HOOK_FRAMES));
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -7548,6 +7571,47 @@ impl QuantickApp {
         }
     }
 
+    /// The `QUANTICK_LOAD_OLDER` hook: press "+ older" this many times, once
+    /// the chart has something to page back from.
+    ///
+    /// Goes through [`Tab::request_older_history`] — the very function the
+    /// toolbar button calls — rather than reaching for the feed command itself,
+    /// so a run under this hook exercises the trader's path including its
+    /// loading indicator, and cannot drift from it.
+    ///
+    /// One page per frame at most: the pages are answered asynchronously and
+    /// the feed serves one request at a time, so firing them together would
+    /// have every page after the first refused and answered empty — a capture
+    /// of the drop path rather than of the feature.
+    fn apply_load_older(&mut self) {
+        let Some((pages, budget)) = self.pending_load_older else {
+            return;
+        };
+        if self.active_tab().flow_pane.slots() == 0 {
+            // Nothing charted yet. Wait, but not forever.
+            self.pending_load_older = budget.checked_sub(1).map(|left| (pages, left));
+            if self.pending_load_older.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_AUTOSTART_GAVE_UP",
+                    pages,
+                    frames_waited = LOAD_OLDER_HOOK_FRAMES,
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER found no bars to page back from"
+                );
+            }
+            return;
+        }
+        if self.active_tab().loading.is_active(LoadingTask::History) {
+            // The previous page is still coming. Asking now would be refused
+            // and answered empty, which is not what the hook is for.
+            return;
+        }
+        self.active_tab_mut().request_older_history();
+        self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
+    }
+
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
     /// the flow pane, spread across the visible bars, the last one selected
     /// so the inspector is on screen too.
@@ -8535,6 +8599,7 @@ impl QuantickApp {
         self.drain_tabs();
         self.apply_scripted_view();
         self.apply_drawing_demo();
+        self.apply_load_older();
         self.apply_drawing_draft();
         self.apply_text_note_hook();
         self.apply_venue_history_demo();
@@ -10796,6 +10861,70 @@ plot(close)
             });
         app.active_tab_mut().tape_mut().flush_for_test();
         assert_eq!(app.active_tab_mut().tape_mut().health().active_levels, 2);
+    }
+
+    #[test]
+    fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
+        // The hook cannot fire at startup: paging asks for trades older than
+        // the ones on screen, and at launch there are none — the feed would
+        // refuse it as `nothing_charted_yet` and the capture would photograph
+        // the refusal path rather than the feature.
+        let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
+        // Whatever startup queued is not what this test is about.
+        while cmd_rx.try_recv().is_ok() {}
+        app.pending_load_older = Some((2, 3));
+        app.apply_load_older();
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "nothing is charted yet, so nothing may be asked for"
+        );
+        assert_eq!(
+            app.pending_load_older,
+            Some((2, 2)),
+            "it waits, spending one frame of its budget"
+        );
+
+        // Give up rather than hang a capture run on a bridge that never came:
+        // the budget counts down one frame at a time and then the hook is done.
+        for _ in 0..3 {
+            app.apply_load_older();
+        }
+        assert_eq!(app.pending_load_older, None, "the budget is finite");
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "and it gave up quietly rather than asking from nothing"
+        );
+
+        // With bars, it presses — through the button's own function, so the
+        // loading indicator the trader sees is the one a hooked run drives.
+        let (mut app, mut cmd_rx) = app_with_history(200);
+        while cmd_rx.try_recv().is_ok() {}
+        app.active_tab_mut().loading.end(LoadingTask::History);
+        app.pending_load_older = Some((2, 10));
+        app.apply_load_older();
+        assert!(
+            matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
+            "the first page is asked for"
+        );
+        assert_eq!(app.pending_load_older, Some((1, 10)), "one still owed");
+
+        // One at a time: the feed serves one request per session, so firing
+        // the second before the first is answered would have it refused and
+        // answered empty.
+        app.apply_load_older();
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "a page is still in flight; the hook waits for it"
+        );
+        assert_eq!(app.pending_load_older, Some((1, 10)));
+
+        app.active_tab_mut().loading.end(LoadingTask::History);
+        app.apply_load_older();
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(FeedCommand::LoadOlder { .. })
+        ));
+        assert_eq!(app.pending_load_older, None, "both pages asked for");
     }
 
     #[test]

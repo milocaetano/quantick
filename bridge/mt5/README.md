@@ -46,13 +46,23 @@ python bridge/mt5/quantick_bridge.py --symbol WINQ26
 
 Options worth knowing:
 `--port` (default 9100), `--backfill-minutes` (720 — a whole B3 session),
-`--backfill-max-ticks` (200 000; the newest win and the log says how many were
+`--backfill-max-ticks` (1 000 000; the newest win and the log says how many were
 left behind), `--no-book`, `--book-poll-ms` (5), `--utc-offset-s`.
 
 The terminal keeps far more history than you would guess — a probe on
 2026-07-24 found 1.25 M ticks for that day alone and 36 M over 30 days, with a
 full day returning in under a second. The cap exists for what happens after:
-every backfilled tick becomes a line on the socket and a bar on the chart.
+every backfilled tick becomes a line on the socket and a bar on the chart, so
+the opening block is sized to hold a trading day rather than every day the
+terminal keeps.
+
+**Reaching further back.** This bridge answers quantick's *load older* button:
+click it and the chart asks for ticks from before its oldest, this bridge walks
+the terminal backwards and sends them, and they land in front of what is
+already drawn. So the cap above is a pace, not a ceiling — whatever it left
+behind is one click away. The Expert Advisor does not implement this; quantick
+disables the button rather than offering one that returns nothing. The wire
+details are in `PROTOCOL.md` (`load_older`, `history_start`/`history_end`).
 
 The one thing it will refuse to do is guess: MetaTrader stamps everything in
 server wall time and exposes no server clock to outside processes, so the
@@ -86,7 +96,10 @@ event-accurate book updates.
    resolved as `MT5_ENDPOINT_RESOLVED`, then `MT5_LISTENING`.
 2. Open a chart of the symbol quantick expects (e.g. **WIN$N**) and drag
    `QuantickBridge` onto it. Inputs: host/port, backfill minutes (default 30),
-   heartbeat seconds, plus the depth pair below.
+   heartbeat seconds, plus the depth pair below. Raise the backfill minutes if
+   you want the chart to open on the whole session: unlike the Python bridge,
+   the EA cannot be asked for more afterwards, so what it sends on connect is
+   what that session has.
 3. The Experts tab prints `BRIDGE_SESSION_STARTED` with the backfill count;
    quantick logs `MT5_HELLO_OK` and the chart populates.
 

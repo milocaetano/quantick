@@ -25,3 +25,10 @@ crates/app/indicators-state.toml
 footprint-settings.toml
 footprint-presets.toml
 indicator-presets.toml
+
+# The *live* goal file `mission` writes. It describes the session in progress
+# and cites line numbers that same session is changing, so it is stale before
+# it is read. The `GOAL-archive-<slug>.md` it becomes at the end is tracked
+# (21 of them are) — that one is a record of a shipped change, this one is
+# scratch.
+.claude/GOAL.md
