@@ -223,6 +223,23 @@ impl ReplayLink {
     }
 }
 
+#[cfg(test)]
+impl ReplayLink {
+    /// A link with no worker behind it: the status a fresh playhead over
+    /// `session` publishes, and nothing releasing trades.
+    ///
+    /// For tests that need a tab to believe a recording is its source —
+    /// `replay.is_some()` is the one flag the rest of the UI reads — without
+    /// spawning playback and waiting on a thread.
+    pub(crate) fn for_test(session: Session) -> Self {
+        let playhead = Playhead::new(&session.trades, PlaybackConfig::default());
+        Self {
+            status: Arc::new(ReplayStatus::new(&playhead)),
+            session: Arc::new(session),
+        }
+    }
+}
+
 /// Start playing `request` on a background thread.
 ///
 /// The returned handle carries the same channels a live feed does, plus a
