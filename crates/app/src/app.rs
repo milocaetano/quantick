@@ -6850,15 +6850,20 @@ impl QuantickApp {
     }
 
     /// Carry out what the replay interface asked for.
-    fn apply_replay_action(&mut self, action: ReplayAction) {
+    /// Whether the action reached its destination. Only a transport control
+    /// can fail to — see the drop below — and the one caller that gets a
+    /// single shot at it (the scripted seek) reads this before spending it.
+    fn apply_replay_action(&mut self, action: ReplayAction) -> bool {
         match action {
             ReplayAction::Open(request) => {
                 let (tab, config) = self.active_with_config();
                 tab.open_replay(config, *request);
+                true
             }
             ReplayAction::Close => {
                 let (tab, config) = self.active_with_config();
                 tab.close_replay(config);
+                true
             }
             ReplayAction::Control(control) => {
                 // A dropped transport click is not worth a retry queue: the
@@ -6875,7 +6880,9 @@ impl QuantickApp {
                         reason = %e,
                         "transport command not queued"
                     );
+                    return false;
                 }
+                true
             }
         }
     }
@@ -7601,8 +7608,13 @@ impl QuantickApp {
         if tab.replay.is_none() || tab.paper.session_trades().len() < after {
             return;
         }
-        self.pending_replay_restart = None;
-        self.apply_replay_action(ReplayAction::Control(ReplayControl::Restart));
+        // Spent only once the transport took it. A hook that cleared itself
+        // on a dropped command would leave the capture photographing an
+        // un-seeked timeline while the harness believed otherwise; the next
+        // frame simply tries again.
+        if self.apply_replay_action(ReplayAction::Control(ReplayControl::Restart)) {
+            self.pending_replay_restart = None;
+        }
     }
 
     /// The `QUANTICK_STRATEGY_DEMO` hook: a named rectangle over the recent
@@ -8132,16 +8144,22 @@ impl QuantickApp {
             self.active_tab_mut().restart_book_capture();
         }
         if let Some(action) = dock_response.replay_action {
-            self.apply_replay_action(action);
+            // A click that lost its slot has the trader's next click behind
+            // it; only the one-shot hook below cares about the answer.
+            let _ = self.apply_replay_action(action);
         }
         // The ledger's jump-to-trade: center the flow pane on the round
         // trip's midpoint, the object manager's own "select and centre".
         //
         // The covering lookup, the same one the marks are painted through:
-        // a trade the bars on screen do not reach has nowhere to be centred
-        // on, and scrolling to the clamped edge instead would land the
-        // trader on a bar holding no mark and no explanation. Saying so is
-        // the whole of the handling — the row stays in the ledger.
+        // a trade the flow chart's bars do not reach has nowhere to be
+        // centred on, and scrolling to the clamped edge instead would land
+        // the trader on a bar holding no mark and no explanation. Saying so
+        // is the whole of the handling — the row stays in the ledger.
+        //
+        // The message names the flow chart rather than "the chart": in a
+        // split tab the time pane keeps its own, longer window, so the same
+        // round trip can be off this one and painted on that one.
         if let Some((opened, closed)) = dock_response.navigate_to_trade {
             let tab = self.active_tab_mut();
             let covered = tab
@@ -8157,10 +8175,22 @@ impl QuantickApp {
                         pane.viewport.center_on_bar(mid, area.width(), slots);
                     }
                 }
-                None => tab.paper.show_toast(
-                    "This trade is off the tape on screen - the chart has no bar for it."
-                        .to_owned(),
-                ),
+                None => {
+                    // Said as an event as well as on screen: an operator
+                    // driving the ledger without eyes on the toast must be
+                    // able to tell a refusal from a silent no-op.
+                    tracing::info!(
+                        target: "quantick::app",
+                        event_code = "TRADE_NAVIGATE_OFF_TAPE",
+                        opened_ms = opened,
+                        closed_ms = closed,
+                        "jump-to-trade refused: the flow chart has no bar for the fills"
+                    );
+                    tab.paper.show_toast(
+                        "This trade is off the flow chart's tape - there is no bar to centre on."
+                            .to_owned(),
+                    );
+                }
             }
         }
         if dock_response.pick_trades_dir {
@@ -12122,7 +12152,11 @@ plot(close)
             "one closed round trip to paint"
         );
 
-        let shapes = |app: &mut QuantickApp| -> usize {
+        // Convex polygons only — the entry triangles and the exit diamonds.
+        // Counting the whole frame would ride on the price range still
+        // easing after the rebuild, and a gridline more or less between two
+        // measurements is not what this test is about.
+        let marks = |app: &mut QuantickApp| -> usize {
             with_flow_pane(app, |pane, chrome| {
                 let output = ctx.run(
                     egui::RawInput {
@@ -12136,13 +12170,19 @@ plot(close)
                         });
                     },
                 );
-                output.shapes.len()
+                output
+                    .shapes
+                    .iter()
+                    .filter(|shape| matches!(shape.shape, egui::epaint::Shape::Path(_)))
+                    .count()
             })
         };
-        // One frame to settle the ranges a draw computes for the next one.
+        // Frames to settle the ranges a draw computes for the next one.
         let settled = |app: &mut QuantickApp| {
-            let _ = shapes(app);
-            shapes(app)
+            for _ in 0..3 {
+                let _ = marks(app);
+            }
+            marks(app)
         };
 
         // The seek: the bars go, the round trip stays, and the tape refills
@@ -12175,10 +12215,90 @@ plot(close)
         let covered = settled(&mut app);
         switch_layer(&mut app, ChartLayer::TradePaint, false);
         let covered_off = settled(&mut app);
-        assert!(
-            covered > covered_off,
+        assert_eq!(
+            covered - covered_off,
+            2,
             "the marks did not come back once the tape covered them: {covered} vs {covered_off}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A one-print recording on disk, read back through the replay crate's
+    /// own loader — the cheapest honest recording a test can hand a tab.
+    fn recording_at(dir: &std::path::Path) -> quantick_replay::Session {
+        std::fs::create_dir_all(dir).expect("the scratch folder is writable");
+        let mut text =
+            quantick_replay::format::write_header(&quantick_replay::format::WriteHeader {
+                symbol: "TESTUSDT".to_owned(),
+                timezone: quantick_replay::UtcOffset::UTC,
+                side_source: "venue".to_owned(),
+                source: None,
+            });
+        quantick_replay::format::write_trade(
+            &mut text,
+            &trade(2),
+            None,
+            quantick_replay::UtcOffset::UTC,
+        );
+        let path = dir.join("20260316.csv");
+        std::fs::write(&path, text).expect("the recording is written");
+        quantick_replay::Session::load(&path, quantick_replay::ParseOptions::default())
+            .expect("the recording this test just wrote parses")
+    }
+
+    /// With a recording playing and the round trips closed, the scripted
+    /// seek presses Restart once — and only once, whatever the next frame
+    /// finds.
+    #[test]
+    fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
+        let (mut app, evt_tx, mut cmd_rx, _book_tx) = test_app();
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-replay-restart-hook-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let journal = dir.join("journal");
+        app.active_tab_mut().paper.redirect_history_dir(journal);
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        while cmd_rx.try_recv().is_ok() {}
+        app.pending_replay_restart = Some(1);
+
+        // No round trip yet: the hook waits rather than seeking an empty
+        // ledger, which would photograph nothing it exists to show.
+        app.apply_replay_restart();
+        assert_eq!(
+            app.pending_replay_restart,
+            Some(1),
+            "the seek fired before a trade had closed"
+        );
+
+        // One round trip, then the seek.
+        evt_tx
+            .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperBuy);
+        evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        app.apply_toolbar_action(ToolbarAction::PaperClose);
+        evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
+        app.active_tab_mut().drain_feed_with_clock(|| 0);
+        assert_eq!(app.active_tab().paper.session_trades().len(), 1);
+
+        app.apply_replay_restart();
+        assert_eq!(app.pending_replay_restart, None, "the hook is consumed");
+        assert!(
+            matches!(
+                cmd_rx.try_recv(),
+                Ok(FeedCommand::Replay(ReplayControl::Restart))
+            ),
+            "the transport was asked for its own Restart"
+        );
+
+        // A second frame asks for nothing: an env var is a request for this
+        // run, not a standing rule.
+        app.apply_replay_restart();
+        assert!(cmd_rx.try_recv().is_err(), "the seek repeated itself");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -11,6 +11,8 @@
 //! happened) and rebuilds the bars under them, so without this every earlier
 //! trade would be clamped onto whichever bar sits at the edge and accumulate
 //! there — marks at the start of the day for fills the tape has not reached.
+//! How many were left off is said in the corner, beside the cap's own count:
+//! an empty chart under a switched-on layer must not read as a lost ledger.
 //!
 //! The encoding is scannable for outcomes: marks and connectors take the
 //! *outcome* colour (win/loss/scratch), while direction is carried by
@@ -99,8 +101,10 @@ pub(crate) fn draw(
     let mut marks: Vec<Mark<'_>> = Vec::new();
     let mut drawn = 0usize;
     let mut withheld = 0usize;
+    let mut off_tape = 0usize;
     for (index, trade) in trades.iter().enumerate().rev() {
         let Some(points) = endpoints(frame, trade, &slot_at_time, &x_at_slot) else {
+            off_tape += 1;
             continue;
         };
         let (entry, exit) = points;
@@ -148,11 +152,29 @@ pub(crate) fn draw(
             trade,
         });
     }
-    if withheld > 0 {
+    // Both ways a round trip can fail to reach the screen are said out loud
+    // — the cap, and the tape not covering the fill. An empty chart with the
+    // layer switched *on* is otherwise indistinguishable from the layer being
+    // off, from a bug, or from the trades having been lost; after a replay
+    // seek that is every trade of the session at once. Nothing is allocated
+    // on a frame with nothing to report.
+    if withheld > 0 || off_tape > 0 {
+        let mut note = String::from("trade paint: ");
+        if withheld > 0 {
+            use std::fmt::Write as _;
+            let _ = write!(note, "{drawn} of {} shown", drawn + withheld);
+        }
+        if off_tape > 0 {
+            if withheld > 0 {
+                note.push_str(" · ");
+            }
+            use std::fmt::Write as _;
+            let _ = write!(note, "{off_tape} off the tape on screen");
+        }
         painter.text(
             frame.chart_rect.left_bottom() + egui::vec2(8.0, -24.0),
             egui::Align2::LEFT_BOTTOM,
-            format!("trade paint: {drawn} of {} shown", drawn + withheld),
+            note,
             egui::FontId::proportional(10.0),
             theme::TEXT_FAINT,
         );
@@ -488,11 +510,11 @@ mod tests {
         );
     }
 
-    /// The rule itself: a fill the bars on screen do not reach paints
-    /// nothing — not a mark, not a connector, not half a round trip.
+    /// The rule itself: a fill the bars on screen do not reach paints no
+    /// mark — not a triangle, not a diamond, not half a round trip — and
+    /// says so instead of leaving an empty chart to explain itself.
     #[test]
     fn a_trade_the_tape_does_not_cover_paints_nothing() {
-        let nothing = painted_over(&[], None, tape(10, 30));
         for (name, round_trip) in [
             ("older than the oldest bar", trade(2, 5, 5)),
             ("newer than the newest print", trade(40, 50, 5)),
@@ -500,16 +522,18 @@ mod tests {
             ("entry on the tape, exit past it", trade(20, 40, 5)),
         ] {
             let out = painted_over(&[round_trip], None, tape(10, 30));
-            assert_eq!(
-                out.shapes, nothing.shapes,
-                "{name}: the chart drew something it cannot prove"
-            );
             assert!(out.polygons.is_empty(), "{name}: a mark was painted");
+            assert_eq!(
+                out.texts,
+                vec!["trade paint: 1 off the tape on screen".to_owned()],
+                "{name}: the chart did not say what it left off"
+            );
         }
     }
 
     /// One end covered is not half a trade — a connector to a bar the fill
-    /// has nothing to do with is the lie the rule exists to refuse.
+    /// has nothing to do with is the lie the rule exists to refuse — and an
+    /// unpainted mark answers no pointer.
     #[test]
     fn an_off_tape_trade_cannot_be_hovered_either() {
         // The pixel the entry mark would have occupied had it been clamped
@@ -519,30 +543,44 @@ mod tests {
             Some(egui::pos2(41.0, 202.0)),
             tape(10, 30),
         );
+        let text = out.texts.join(" ");
         assert!(
-            out.texts.is_empty(),
+            !text.contains("LONG"),
             "an unpainted mark still answered the pointer: {:?}",
             out.texts
         );
     }
 
     /// The cap counts paint, not ledger rows: trades the tape does not
-    /// cover were never candidates, so they cannot be "withheld".
+    /// cover were never candidates, so they are reported as what they are
+    /// rather than as "withheld".
     #[test]
     fn the_cap_counts_only_what_the_tape_covers() {
         let trades: Vec<ClosedTrade> = (0..260).map(|index| trade(index, index + 1, 1)).collect();
         // The rebuilt tape holds the last hundred round trips; the other
         // hundred and sixty are off it.
         let out = painted_over(&trades, None, tape(160, 400));
-        assert!(
-            out.texts.is_empty(),
-            "a hundred marks fit under the cap of 200: {:?}",
-            out.texts
+        assert_eq!(
+            out.texts,
+            vec!["trade paint: 160 off the tape on screen".to_owned()],
+            "a hundred marks fit under the cap of 200, and the rest are named"
         );
         assert_eq!(
             out.polygons.len(),
             200,
             "two marks each for the hundred the tape proves"
+        );
+    }
+
+    /// Both counts at once: the cap bit *and* the tape fell short.
+    #[test]
+    fn the_notice_carries_the_cap_and_the_tape_together() {
+        let trades: Vec<ClosedTrade> = (0..500).map(|index| trade(index, index + 1, 1)).collect();
+        let out = painted_over(&trades, None, tape(100, 500));
+        assert_eq!(
+            out.texts,
+            vec!["trade paint: 200 of 400 shown · 100 off the tape on screen".to_owned()],
+            "the corner reports both reasons a round trip is not on screen"
         );
     }
 }

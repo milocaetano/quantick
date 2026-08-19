@@ -2373,28 +2373,44 @@ impl ChartPane {
     /// because they happened — stacks every earlier trade on whichever bar
     /// sits at the edge, and they pile up there as the replay runs on.
     ///
-    /// The window is the tape's own: the oldest bar's first print to the
-    /// newest bar's last one. Between them `slot_at_time` is already exact,
-    /// so only the two edges are decided here.
+    /// The window is [`Self::covered_window`]'s. Between its two ends
+    /// `slot_at_time` is already exact, so only the edges are decided here.
+    ///
+    /// Third of three deliberately different answers to one lookup, and the
+    /// list is meant to stay at three. [`Self::slot_at_time`] clamps at both
+    /// ends; `slot_of_time` refuses the old end but lets the new one *run on*
+    /// past the newest bar, because a trend line pointing into the future
+    /// belongs there; this one refuses both, because a fill does not happen
+    /// in the future and did not happen before the tape began.
+    ///
+    /// One instant per call. A caller asking about many instants against one
+    /// cut of the series — the trade paint, twice per closed round trip per
+    /// frame — takes `covered_window` itself and tests against the two
+    /// numbers, rather than re-deriving them thousands of times a second on
+    /// the paint path.
     pub fn covering_slot_at_time(&self, ms: i64) -> Option<usize> {
-        if self.slot_open_time(0)? > ms {
-            return None;
-        }
-        if self.newest_covered_time()? < ms {
+        let (oldest, newest) = self.covered_window()?;
+        if ms < oldest || ms > newest {
             return None;
         }
         self.slot_at_time(ms)
     }
 
-    /// The newest market time this pane's series covers: the forming bar's
-    /// last print, the newest closed bar's when nothing is forming, and the
-    /// venue prefix's when the tape itself is still empty.
-    pub fn newest_covered_time(&self) -> Option<i64> {
-        self.state
+    /// The stretch of market time this pane's bars cover, both ends
+    /// inclusive: the oldest bar's open to the newest bar's last print.
+    ///
+    /// The oldest bar is the venue prefix's first candle when there is a
+    /// prefix, so the lower end is that candle's open rather than a print —
+    /// which is what "the chart reaches back this far" means to someone
+    /// reading the screen, candles or prints. `None` for a pane with no bars.
+    fn covered_window(&self) -> Option<(i64, i64)> {
+        let newest = self
+            .state
             .partial()
             .or_else(|| self.state.bars().last())
             .or_else(|| self.history_prefix.last())
-            .map(|bar| bar.close_time)
+            .map(|bar| bar.close_time)?;
+        Some((self.slot_open_time(0)?, newest))
     }
 
     /// The market time under the right edge of the candles' pane, or `None`
@@ -2550,6 +2566,9 @@ impl ChartPane {
     /// store is written, where a clamp would silently move the trader's mark
     /// onto data it has nothing to do with. Same lookup, opposite answer at
     /// the edges, on purpose.
+    ///
+    /// Also not [`Self::covering_slot_at_time`], which refuses the future end
+    /// as well: a drawing may point past the newest bar, a fill may not.
     fn slot_of_time(&self, time: i64) -> Option<f32> {
         // Past the newest bar first: on a time chart that space has an exact
         // clock, and asking `slot_at_time` there would clamp a future anchor
@@ -5200,11 +5219,18 @@ impl ChartPane {
                 pointer: self.hover_pos,
                 tz: chrome.tz,
             };
+            // The window once, not once per fill: `draw` asks about every
+            // closed round trip of the session, twice each, every frame.
+            let covered = self.covered_window();
             crate::trade_paint::draw(
                 &frame,
                 chrome.paper.session_trades(),
                 chrome.paper.selected_trade_index(),
-                |ms| self.covering_slot_at_time(ms),
+                |ms| {
+                    covered
+                        .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)
+                        .and_then(|_| self.slot_at_time(ms))
+                },
                 |slot| self.viewport.x_center(slot, right, total),
             );
         }
@@ -6703,6 +6729,51 @@ mod tests {
             pane.covering_slot_at_time(newest + 3_600_000),
             None,
             "and neither is an hour past it"
+        );
+    }
+
+    /// A pane whose venue candles are all it has yet: the window is the
+    /// prefix's own, so an instant inside it still finds its candle. A
+    /// session fill cannot land there in practice — a fill needs a print,
+    /// and a print puts a bar on the tape — but the lookup answers for the
+    /// bars a pane holds, whoever cut them.
+    #[test]
+    fn a_venue_prefix_covers_its_own_instants() {
+        use rust_decimal::Decimal;
+        let mut pane = pane_of_prints(0, 4);
+        pane.history_prefix = (0..2)
+            .map(|index: i64| quantick_engine::Bar {
+                open_time: TAPE_START_MS - 120_000 + index * 60_000,
+                close_time: TAPE_START_MS - 61_000 + index * 60_000,
+                open: Decimal::from(100),
+                high: Decimal::from(100),
+                low: Decimal::from(100),
+                close: Decimal::from(100),
+                buy_volume: Decimal::ONE,
+                sell_volume: Decimal::ZERO,
+                trade_count: 1,
+            })
+            .collect();
+
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS - 121_000),
+            None,
+            "before the oldest venue candle"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS - 90_000),
+            Some(0),
+            "inside the first one"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS - 30_000),
+            Some(1),
+            "inside the second"
+        );
+        assert_eq!(
+            pane.covering_slot_at_time(TAPE_START_MS),
+            None,
+            "and past the newest candle, where the tape has not started yet"
         );
     }
 
