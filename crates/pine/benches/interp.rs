@@ -21,6 +21,12 @@ const FLOW_SCRIPT: &str = "//@version=5\nindicator(\"flow\")\nfast = ta.ema(clos
 /// rather than on a sketch of it.
 const FORCE_BAR: &str = include_str!("../tests/corpus/ok/force_bar.pine");
 
+/// The embedded `exhaustion_reversal.pine`, byte for byte. Its per-bar work
+/// is a state machine plus three hoisted kernels — no loops, no dynamic
+/// history offsets — so this number says what the arm-and-fade shape costs
+/// when written that way instead of as a scan back over the window.
+const EXHAUSTION_REVERSAL: &str = include_str!("../tests/corpus/ok/exhaustion_reversal.pine");
+
 fn make_bars(n: usize) -> Vec<IndicatorBar> {
     (0..n)
         .map(|i| {
@@ -75,4 +81,5 @@ fn main() {
     bench("ema.pine", EMA_SCRIPT, &bars);
     bench("flow.pine", FLOW_SCRIPT, &bars);
     bench("force_bar", FORCE_BAR, &bars);
+    bench("exh_reversal", EXHAUSTION_REVERSAL, &bars);
 }
