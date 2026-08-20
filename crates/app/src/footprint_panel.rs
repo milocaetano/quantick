@@ -175,6 +175,17 @@ pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
             // window is small on purpose.
             if config.style == FootprintStyle::Cluster {
                 ui.indent("cluster_knobs", |ui| {
+                    // Said here, not only in the hover: a trader who has just
+                    // picked this style is no longer hovering over it, and
+                    // getting a different style than the one selected — with
+                    // only a legend line to explain it — reads as a bug.
+                    ui.label(
+                        egui::RichText::new(
+                            "three numbers a row needs a wide candle: below about                              120 px this draws \"both sides\" instead, and the                              chart legend names both",
+                        )
+                        .size(10.5)
+                        .color(theme::TEXT_MUTED),
+                    );
                     changed |= ui
                         .checkbox(&mut config.cluster_show_total, "row total column")
                         .on_hover_text(

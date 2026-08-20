@@ -1475,13 +1475,20 @@ const _: () = assert!(
 /// rather than maximised: 16, 22, 32, 40, 56, 78 in L*. Step 1 sits at 22
 /// because [`theme::TEXT_MUTED`] stops clearing 4.5:1 above L* 23, and the two
 /// quiet steps keep the muted ink.
+///
+/// The top step takes nearly all the chroma its lightness allows, and that is
+/// deliberate rather than incidental: a first pass at this table held it back
+/// and landed on C* 22 — within half a unit of the washed-out colour the whole
+/// rewrite was meant to replace. The defect had survived its own fix, at the
+/// one step that carries the heat. Lightness is untouched by the correction,
+/// so every ink ratio is identical.
 const HEAT_SELL: [egui::Color32; HEAT_STEP_COUNT] = [
     egui::Color32::from_rgb(0x51, 0x0E, 0x16),
     egui::Color32::from_rgb(0x6A, 0x11, 0x1A),
     egui::Color32::from_rgb(0x95, 0x15, 0x20),
     egui::Color32::from_rgb(0xBD, 0x12, 0x17),
     egui::Color32::from_rgb(0xFE, 0x38, 0x00),
-    egui::Color32::from_rgb(0xE6, 0xB7, 0xA1),
+    egui::Color32::from_rgb(0xFD, 0xAF, 0x89),
 ];
 /// See [`HEAT_SELL`]. The buy ramp walks 191° to 170°, away from the sell hue
 /// at every step so the two can never converge.
@@ -1491,7 +1498,7 @@ const HEAT_BUY: [egui::Color32; HEAT_STEP_COUNT] = [
     egui::Color32::from_rgb(0x11, 0x55, 0x4E),
     egui::Color32::from_rgb(0x0D, 0x6A, 0x5F),
     egui::Color32::from_rgb(0x00, 0x98, 0x80),
-    egui::Color32::from_rgb(0x81, 0xD0, 0xB6),
+    egui::Color32::from_rgb(0x29, 0xD9, 0xAE),
 ];
 
 /// The step at and above which the ink turns dark. See [`HEAT_LUMINANCE`].
@@ -1666,13 +1673,21 @@ fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32, step:
     if row_height < BEVEL_MIN_ROW_PX || rect.width() < BEVEL_MIN_CELL_PX {
         return;
     }
-    // Snapped to whole pixels before anything is drawn. The rect arrives on a
-    // fraction — the row band is a price-to-y projection — and a bevel is the
-    // one thing that cannot survive being antialiased across two rows, because
-    // the edge carrying the relief is the same width as the blur.
+    // Snapped to whole *device* pixels before anything is drawn. The rect
+    // arrives on a fraction — the row band is a price-to-y projection — and a
+    // bevel is the one thing that cannot survive being antialiased across two
+    // rows, because the edge carrying the relief is exactly as wide as the
+    // blur would be.
+    //
+    // Device pixels, not egui points: at 125% or 150% display scaling a whole
+    // point is 1.25 or 1.5 physical pixels, so rounding before the scale is
+    // applied lands the edge back on a fraction — which is the very thing this
+    // is here to avoid, and it would only show on the machines that scale.
+    let scale = painter.ctx().pixels_per_point().max(f32::EPSILON);
+    let snap = |v: f32| (v * scale).round() / scale;
     let rect = egui::Rect::from_min_max(
-        egui::pos2(rect.left().round(), rect.top().round()),
-        egui::pos2(rect.right().round(), rect.bottom().round()),
+        egui::pos2(snap(rect.left()), snap(rect.top())),
+        egui::pos2(snap(rect.right()), snap(rect.bottom())),
     );
     let (face, lit_top) = if step >= BEVEL_SHADOW_FROM_STEP {
         (BEVEL_SHADOW, false)
@@ -2040,6 +2055,13 @@ fn draw_legend(
     // whose threshold is secret reads as arbitrary.
     if level > DetailLevel::Off && !min_qty.is_zero() {
         text.push_str(&format!(" · min qty {}", fmt_qty(min_qty)));
+    }
+    // What the cell colours mean. A six-step scale with no key is a chart
+    // asking to be guessed at: bright could be "a lot" or "imbalanced", and
+    // the two lead to opposite trades. Same rule as the rows and the floor —
+    // a mark whose meaning is secret reads as arbitrary.
+    if style == crate::footprint_config::FootprintStyle::Cluster && level >= DetailLevel::Detailed {
+        text.push_str(" · heat: cell volume vs the screen");
     }
     if aggregated_any {
         text.push_str(" · coarsened bars hidden");
