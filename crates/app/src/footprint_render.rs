@@ -232,6 +232,9 @@ pub struct FootprintLod {
     /// The adaptive imbalance floor and the state it was computed from:
     /// `(closed bar count, capture group)`. See [`Self::adaptive_floor`].
     floor: Option<(usize, Decimal, Decimal)>,
+    /// The heat ramp's cuts and the visible window they describe:
+    /// `(first slot, last slot, closed bar count)`. See [`Self::heat_scale`].
+    heat: Option<(usize, usize, usize, Option<HeatScale>)>,
 }
 
 impl FootprintLod {
@@ -308,6 +311,33 @@ impl FootprintLod {
         let floor = compute();
         self.floor = Some((bars, group, floor));
         floor
+    }
+
+    /// The heat ramp's cuts, recomputed only when the window they describe
+    /// moves.
+    ///
+    /// The cuts are a fact about the ladders on screen, not about the frame.
+    /// Computing them per frame means allocating and sorting every visible
+    /// cell at 60 Hz for an answer that changes when the trader pans, zooms or
+    /// a bar closes — the same trade [`Self::adaptive_floor`] makes, and for
+    /// the same reason. The key is what the answer depends on: which slots are
+    /// visible, and whether a bar has closed under them.
+    fn heat_scale(
+        &mut self,
+        visible: (usize, usize),
+        bars: usize,
+        compute: impl FnOnce() -> Option<HeatScale>,
+    ) -> Option<HeatScale> {
+        if let Some((first, last, cached_bars, scale)) = self.heat
+            && first == visible.0
+            && last == visible.1
+            && cached_bars == bars
+        {
+            return scale;
+        }
+        let scale = compute();
+        self.heat = Some((visible.0, visible.1, bars, scale));
+        scale
     }
 
     /// The display multiple, with the same dead band the level has: the
@@ -676,9 +706,13 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // the newest closed bars. Folded here rather than per bar so the ramp
     // compares bars against each other — which is the reading alternative bars
     // exist to give — and only for the one style that draws it.
-    let heat = (style == crate::footprint_config::FootprintStyle::Cluster)
-        .then(|| heat_scale(visible_ladders().map(|(_, fp)| fp)))
-        .flatten();
+    let heat = if style == crate::footprint_config::FootprintStyle::Cluster {
+        lod.heat_scale((start, end), frame.footprints.len(), || {
+            heat_scale(visible_ladders().map(|(_, fp)| regroup(fp, k)))
+        })
+    } else {
+        None
+    };
 
     let mut cells_left = CELL_BUDGET;
     let mut aggregated_any = false;
@@ -1406,7 +1440,7 @@ fn draw_poc_line(frame: &LayerFrame<'_>, x_from: f32, x_to: f32, row: i64, row_g
 /// a colour every frame is how a pixel moves between two identical frames; the
 /// depth map already owns the "continuous gradient" channel on this same
 /// screen; and steps can be counted, which a gradient cannot.
-const HEAT_STEP_COUNT: usize = HEAT_LUMINANCE.len();
+const HEAT_STEP_COUNT: usize = 6;
 /// The cuts and the colours describe the same ramp from two sides, and only
 /// agree by construction: every cut opens a step, and the floor below the
 /// first cut is free. Adding a colour without a cut leaves one unreachable.
@@ -1415,16 +1449,50 @@ const _: () = assert!(
     "the heat ramp needs exactly one more colour than it has cuts"
 );
 
-/// Target relative luminance per step. Deliberately *not* evenly spaced.
+/// The heat ramp, one colour per step, darkest first.
 ///
-/// Between `L = 0.115` and `L = 0.202` neither available ink reaches 4.5:1 —
-/// [`theme::TEXT_PRIMARY`] has run out of headroom above and
-/// [`theme::CHIP_INK`] has not gained it below. That band is unusable, so the
-/// ramp steps over it: `0.100` sits just under, `0.260` just over. The jump
-/// from step 3 to step 4 is the largest in the ramp precisely because it is
-/// where the ink flips, which turns the one irregularity in the scale into
-/// its most distinguishable boundary.
-const HEAT_LUMINANCE: [f32; 6] = [0.010, 0.024, 0.050, 0.100, 0.260, 0.620];
+/// **Derived, then written down.** Each entry was resolved in CIELCh — a
+/// chosen lightness, a chosen hue, and the most chroma that lightness and hue
+/// can hold inside sRGB — and pasted here as a literal. Three things follow
+/// from doing it that way rather than mixing toward black and white at paint
+/// time:
+///
+/// - **Chroma is an input.** A linear mix toward a neutral is a mix with grey,
+///   so it launders the colour out at both ends: the old top sell step had
+///   thrown away 68% of its base hue's chroma, and that vividness is exactly
+///   what the reference charts get their heat from. Here the top step carries
+///   more chroma than the token it came from.
+/// - **The hue is free to travel.** Heat reads as a drift toward orange, and a
+///   mix toward white cannot drift. The sell ramp walks 24° to 52°, ending on
+///   an orange still 41° away from [`crate::theme::AMBER`], which stays
+///   reserved for provenance. Yellow is never reached: at this lightness it
+///   would land on AMBER's own hue.
+/// - **No arithmetic at paint time.** No binary search, no float compared per
+///   cell, and the ramp is bit-exact for ever — a search in `f32` can walk an
+///   8-bit level the day anything upstream of it moves.
+///
+/// Lightness is the ladder the ink rule reads, so it is the one axis chosen
+/// rather than maximised: 16, 22, 32, 40, 56, 78 in L*. Step 1 sits at 22
+/// because [`theme::TEXT_MUTED`] stops clearing 4.5:1 above L* 23, and the two
+/// quiet steps keep the muted ink.
+const HEAT_SELL: [egui::Color32; HEAT_STEP_COUNT] = [
+    egui::Color32::from_rgb(0x51, 0x0E, 0x16),
+    egui::Color32::from_rgb(0x6A, 0x11, 0x1A),
+    egui::Color32::from_rgb(0x95, 0x15, 0x20),
+    egui::Color32::from_rgb(0xBD, 0x12, 0x17),
+    egui::Color32::from_rgb(0xFE, 0x38, 0x00),
+    egui::Color32::from_rgb(0xE6, 0xB7, 0xA1),
+];
+/// See [`HEAT_SELL`]. The buy ramp walks 191° to 170°, away from the sell hue
+/// at every step so the two can never converge.
+const HEAT_BUY: [egui::Color32; HEAT_STEP_COUNT] = [
+    egui::Color32::from_rgb(0x0A, 0x2D, 0x2B),
+    egui::Color32::from_rgb(0x0D, 0x3B, 0x38),
+    egui::Color32::from_rgb(0x11, 0x55, 0x4E),
+    egui::Color32::from_rgb(0x0D, 0x6A, 0x5F),
+    egui::Color32::from_rgb(0x00, 0x98, 0x80),
+    egui::Color32::from_rgb(0x81, 0xD0, 0xB6),
+];
 
 /// The step at and above which the ink turns dark. See [`HEAT_LUMINANCE`].
 const HEAT_INK_FLIP_STEP: usize = 4;
@@ -1450,19 +1518,35 @@ const CLUSTER_GUTTER_PX: f32 = 3.0;
 /// high enough that the two sides separate from the plate at a glance.
 const BIDASK_BAR_ALPHA: f32 = 0.62;
 
-/// The bevel's two faces. Fixed, never derived from the fill underneath.
+/// The bevel's two faces.
 ///
-/// Derived values would scale the highlight with the base and fade it out at
-/// exactly the ends of the ramp where it has to carry the relief. Fixed, the
-/// two are complementary by construction: on dark steps the white edge does
-/// the work and the shadow disappears, on light steps the shadow does and the
-/// highlight disappears. At no step do both vanish — the better of the two is
-/// never under +11 L\*, four times the just-noticeable difference.
-const BEVEL_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgba_premultiplied(46, 46, 46, 46);
-const BEVEL_SHADOW: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 102);
-const BEVEL_PX: f32 = 1.0;
-/// Under this row height the bevel is fringe rather than relief: the two
-/// faces plus the row's own inset leave under 4 px of actual cell.
+/// Complementary by construction, and the asymmetry is the design rather than
+/// a compromise: on a dark cell the white edge does all the work and the
+/// shadow has nowhere to go, on a light cell the reverse. Measured in L*, the
+/// highlight buys +19 on the floor step and +0.4 on the top one; the shadow
+/// buys +5 on the floor and +29 on the top. So only the face that can be seen
+/// is drawn — painting both always meant painting one for nothing.
+///
+/// Raising the alpha does not rescue the losing face: even at full opacity,
+/// white over the top step is worth +17 L* — the cell simply turns white.
+/// Which is why this is a choice of face, not a choice of number.
+const BEVEL_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgba_premultiplied(56, 56, 56, 56);
+const BEVEL_SHADOW: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 120);
+/// The step at and above which the shadow carries the relief instead of the
+/// highlight. Shares the ink flip's boundary because both answer the same
+/// question: is this cell light or dark.
+const BEVEL_SHADOW_FROM_STEP: usize = HEAT_INK_FLIP_STEP;
+/// Thickness of a bevel face, in pixels.
+///
+/// Two, not one. A one-pixel rect lands between two device pixels wherever the
+/// row band falls on a fraction — which is always, the band being a
+/// price-to-y projection — and antialiasing then spreads it until nothing is
+/// left: measured, the top step's highlight arrived at +0.26 L* against a
+/// theoretical +2.98, well under a just-noticeable difference of ~2.3.
+const BEVEL_PX: f32 = 2.0;
+/// Under this cell width the bevel is more edge than cell.
+const BEVEL_MIN_CELL_PX: f32 = 16.0;
+
 const BEVEL_MIN_ROW_PX: f32 = 10.0;
 
 /// The heat ramp's scale: where each step's boundary falls, in quantity, for
@@ -1492,9 +1576,9 @@ const HEAT_PERCENTILES: [usize; 5] = [45, 68, 83, 93, 98];
 /// key that means whatever it likes.
 type HeatScale = [f64; 5];
 
-fn heat_scale<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Option<HeatScale> {
-    let mut sides: Vec<f64> = ladders
-        .flat_map(|fp| fp.levels().values())
+fn heat_scale(rows: impl Iterator<Item = BTreeMap<i64, FootprintLevel>>) -> Option<HeatScale> {
+    let mut sides: Vec<f64> = rows
+        .flat_map(|rows| rows.into_values().collect::<Vec<_>>())
         .flat_map(|level| {
             [
                 level.buy.to_f64().unwrap_or(0.0),
@@ -1503,6 +1587,10 @@ fn heat_scale<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Option<Hea
         })
         .filter(|volume| *volume > 0.0)
         .collect();
+    // Display rows, not capture buckets. Cutting the raw grid and colouring
+    // the merged one is a scale for a different chart: a drawn cell is the sum
+    // of `k` buckets, so the same cut lands at a different place in the
+    // distribution at every zoom and every instrument tick.
     if sides.is_empty() {
         return None;
     }
@@ -1520,36 +1608,13 @@ fn heat_step(qty: Decimal, scale: Option<HeatScale>) -> usize {
     scale.iter().filter(|cut| value >= **cut).count()
 }
 
-/// The fill for a step, resolved from the side's own token toward black or
-/// white until it hits that step's target luminance. The hues are the app's;
-/// only their weight is the ramp's.
+/// The fill for a step: a table lookup, and deliberately nothing more.
 fn heat_fill(side: Side, step: usize) -> egui::Color32 {
-    let base = theme::side_color(side);
-    let target = HEAT_LUMINANCE[step.min(HEAT_LUMINANCE.len() - 1)];
-    let base_luminance = relative_luminance(base);
-    let toward = if target < base_luminance {
-        egui::Color32::BLACK
-    } else {
-        egui::Color32::WHITE
+    let ramp = match side {
+        Side::Buy => HEAT_BUY,
+        Side::Sell => HEAT_SELL,
     };
-    // Binary search on the mix: the channel-space mix is monotonic in
-    // luminance, so twenty steps land well inside a single 8-bit level.
-    let (mut low, mut high) = (0.0_f32, 1.0_f32);
-    for _ in 0..20 {
-        let mid = f32::midpoint(low, high);
-        if relative_luminance(mix_toward(base, toward, mid)) < target {
-            if toward == egui::Color32::WHITE {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        } else if toward == egui::Color32::WHITE {
-            high = mid;
-        } else {
-            low = mid;
-        }
-    }
-    mix_toward(base, toward, f32::midpoint(low, high))
+    ramp[step.min(ramp.len() - 1)]
 }
 
 /// The ink for a step. A function of the *step*, never of the colour: no
@@ -1564,19 +1629,9 @@ fn heat_ink(step: usize) -> egui::Color32 {
     }
 }
 
-fn mix_toward(from: egui::Color32, to: egui::Color32, amount: f32) -> egui::Color32 {
-    let amount = amount.clamp(0.0, 1.0);
-    let channel = |from: u8, to: u8| -> u8 {
-        (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8
-    };
-    egui::Color32::from_rgb(
-        channel(from.r(), to.r()),
-        channel(from.g(), to.g()),
-        channel(from.b(), to.b()),
-    )
-}
-
-/// WCAG relative luminance of an opaque colour.
+/// WCAG relative luminance of an opaque colour. Test-only now that the
+/// ramp is a table: what it guards is the contract, not the construction.
+#[cfg(test)]
 fn relative_luminance(color: egui::Color32) -> f32 {
     let linear = |channel: u8| -> f32 {
         let value = f32::from(channel) / 255.0;
@@ -1607,20 +1662,38 @@ fn contrast_ratio(a: egui::Color32, b: egui::Color32) -> f32 {
 /// and they cost 57% more. Rects rather than strokes, because a stroke goes
 /// through the tessellator's feathering, and feathering is exactly what blurs
 /// a one-pixel edge into nothing.
-fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32) {
-    if row_height < BEVEL_MIN_ROW_PX {
+fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32, step: usize) {
+    if row_height < BEVEL_MIN_ROW_PX || rect.width() < BEVEL_MIN_CELL_PX {
         return;
     }
-    painter.rect_filled(
-        egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + BEVEL_PX)),
-        egui::Rounding::ZERO,
-        BEVEL_HIGHLIGHT,
+    // Snapped to whole pixels before anything is drawn. The rect arrives on a
+    // fraction — the row band is a price-to-y projection — and a bevel is the
+    // one thing that cannot survive being antialiased across two rows, because
+    // the edge carrying the relief is the same width as the blur.
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(rect.left().round(), rect.top().round()),
+        egui::pos2(rect.right().round(), rect.bottom().round()),
     );
-    painter.rect_filled(
-        egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - BEVEL_PX), rect.max),
-        egui::Rounding::ZERO,
-        BEVEL_SHADOW,
-    );
+    let (face, lit_top) = if step >= BEVEL_SHADOW_FROM_STEP {
+        (BEVEL_SHADOW, false)
+    } else {
+        (BEVEL_HIGHLIGHT, true)
+    };
+    // Two edges meeting at a corner, not two opposite bars: relief is read at
+    // the corner, and a top and a bottom with no sides read as a rule.
+    let (horizontal, vertical) = if lit_top {
+        (
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + BEVEL_PX)),
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.left() + BEVEL_PX, rect.bottom())),
+        )
+    } else {
+        (
+            egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - BEVEL_PX), rect.max),
+            egui::Rect::from_min_max(egui::pos2(rect.right() - BEVEL_PX, rect.top()), rect.max),
+        )
+    };
+    painter.rect_filled(horizontal, egui::Rounding::ZERO, face);
+    painter.rect_filled(vertical, egui::Rounding::ZERO, face);
 }
 
 /// How wide one cluster column is, given the body width it shares.
@@ -1738,8 +1811,12 @@ fn draw_cluster_row(
     let painter = frame.painter;
     let reach = (frame.half - 1.0).max(1.0);
     let inset = crate::footprint_config::CANDLE_LANE_PX;
-    let top = geometry.top + 0.5;
-    let bottom = geometry.bottom - 0.5;
+    // No inset: a half pixel a side became a four-pixel seam in a sixteen-pixel
+    // row once antialiasing had spread both edges — a quarter of the row given
+    // to gaps, which reads as a black grid rather than as raised cells. The
+    // bevel is what separates one row from the next here.
+    let top = geometry.top;
+    let bottom = geometry.bottom;
     let columns = cluster_columns(frame.config);
     let column_width = cluster_column_px_from(2.0 * reach, columns);
     let bevel = frame.config.cluster_bevel && level == DetailLevel::Detailed;
@@ -1778,13 +1855,23 @@ fn draw_cluster_row(
         let step = heat_step(qty, heat);
         painter.rect_filled(rect, egui::Rounding::ZERO, heat_fill(side, step));
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height);
+            paint_bevel(painter, rect, geometry.row_height, step);
         }
         if imbalanced {
+            // The outline flips with the ink, and for the same reason. A
+            // side's lightened ink is *darker* than the ramp's top steps —
+            // measured, 1.27:1 — so the mark that says "look here" was
+            // vanishing into the cell it was meant to ring, precisely on the
+            // busiest rows.
+            let outline = if step >= HEAT_INK_FLIP_STEP {
+                theme::CHIP_INK
+            } else {
+                theme::ink(side)
+            };
             painter.rect_stroke(
                 rect.shrink(0.5),
                 egui::Rounding::ZERO,
-                egui::Stroke::new(1.5_f32, theme::ink(side)),
+                egui::Stroke::new(1.5_f32, outline),
             );
         }
         if frame.config.show_numbers && !qty.is_zero() {
@@ -1826,7 +1913,7 @@ fn draw_cluster_row(
             PROFILE_COLOR.gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
         );
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height);
+            paint_bevel(painter, rect, geometry.row_height, 0);
         }
         if frame.config.show_numbers {
             painter.text(
@@ -2169,7 +2256,7 @@ mod tests {
             })
             .collect();
         let ladder = ladder_of(&quantities);
-        let scale = heat_scale(std::iter::once(&ladder)).expect("a scale");
+        let scale = heat_scale(std::iter::once(regroup(&ladder, 1))).expect("a scale");
 
         let mut population = [0_usize; HEAT_STEP_COUNT];
         for qty in &quantities {
@@ -2200,7 +2287,7 @@ mod tests {
     fn the_heat_scale_is_monotonic() {
         let quantities: Vec<Decimal> = (1..=200).map(Decimal::from).collect();
         let ladder = ladder_of(&quantities);
-        let scale = heat_scale(std::iter::once(&ladder)).expect("a scale");
+        let scale = heat_scale(std::iter::once(regroup(&ladder, 1))).expect("a scale");
         for pair in scale.windows(2) {
             assert!(pair[1] >= pair[0], "cuts not ascending: {scale:?}");
         }
@@ -2242,30 +2329,96 @@ mod tests {
         }
     }
 
-    /// No step lands in the band where neither ink works.
+    /// Both ink boundaries are forced, not chosen.
     ///
-    /// Between `L = 0.115` (where `TEXT_PRIMARY` runs out of headroom) and
-    /// `L = 0.202` (where `CHIP_INK` gains it) there is no readable ink at
-    /// all. The ramp steps over that gap deliberately, which is why its
-    /// luminance targets are not evenly spaced — and why a well-meant
-    /// "smooth out the ramp" would break it silently.
+    /// The ink rule is three-valued — muted, primary, dark — and boundaries in
+    /// a rule are only honest when something makes them fall where they do.
+    /// Maximum contrast is deliberately *not* the goal: a quiet cell keeps a
+    /// quiet number, so the ramp and the digits agree instead of arguing. What
+    /// has to hold is that neither boundary could move without breaking AA,
+    /// which is what makes them arithmetic rather than taste.
     #[test]
-    fn no_heat_step_lands_in_the_unreadable_band() {
-        let forbidden = 0.115..0.202;
-        for step in 0..HEAT_STEP_COUNT {
-            for side in [Side::Buy, Side::Sell] {
-                let luminance = relative_luminance(heat_fill(side, step));
+    fn both_ink_boundaries_are_forced_by_contrast() {
+        for side in [Side::Buy, Side::Sell] {
+            // Dark ink is unusable below its flip, and the only usable one at
+            // and above it — so the boundary sits exactly where it must.
+            for step in 0..HEAT_INK_FLIP_STEP {
+                let fill = heat_fill(side, step);
                 assert!(
-                    !forbidden.contains(&luminance),
-                    "step {step} on {side:?} sits at L={luminance:.3}, inside the unreadable band"
+                    contrast_ratio(theme::CHIP_INK, fill) < AA,
+                    "step {step} on {side:?}: dark ink would already work, so the flip is late"
                 );
             }
+            for step in HEAT_INK_FLIP_STEP..HEAT_STEP_COUNT {
+                let fill = heat_fill(side, step);
+                assert!(
+                    contrast_ratio(theme::TEXT_PRIMARY, fill) < AA,
+                    "step {step} on {side:?}: light ink still works, so the flip is early"
+                );
+            }
+            // And muted ink runs out exactly where the ramp stops using it:
+            // that is why step 1 sits at L* 22 rather than anywhere brighter.
+            let last_muted = heat_fill(side, HEAT_INK_MUTED_BELOW_STEP - 1);
+            let first_primary = heat_fill(side, HEAT_INK_MUTED_BELOW_STEP);
+            assert!(
+                contrast_ratio(theme::TEXT_MUTED, last_muted) >= AA,
+                "{side:?}: the last muted step is already unreadable"
+            );
+            assert!(
+                contrast_ratio(theme::TEXT_MUTED, first_primary) < AA,
+                "{side:?}: muted ink would still work one step further up"
+            );
         }
-        // The flip is where the ramp crosses the band, not an arbitrary index.
-        let below = relative_luminance(heat_fill(Side::Buy, HEAT_INK_FLIP_STEP - 1));
-        let above = relative_luminance(heat_fill(Side::Buy, HEAT_INK_FLIP_STEP));
-        assert!(below < forbidden.start, "step below the flip: L={below:.3}");
-        assert!(above > forbidden.end, "step above the flip: L={above:.3}");
+    }
+
+    /// The heat ramp never reaches the hues the app reserves.
+    ///
+    /// [`theme::AMBER`] means \"not live\" and [`theme::POC`] is a line inside
+    /// these very candles. The ramp heats toward orange deliberately — that is
+    /// where the reference charts get their warmth — and orange is on the far
+    /// side of red, not next door to yellow. This pins the distance so a later
+    /// \"make the top a bit warmer\" cannot quietly collide with either.
+    #[test]
+    fn the_heat_ramp_stays_clear_of_the_reserved_hues() {
+        let hue = |color: egui::Color32| -> f32 {
+            let (r, g, b) = (
+                f32::from(color.r()) / 255.0,
+                f32::from(color.g()) / 255.0,
+                f32::from(color.b()) / 255.0,
+            );
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            let span = max - min;
+            if span <= f32::EPSILON {
+                return 0.0;
+            }
+            let h = if max == r {
+                60.0 * (((g - b) / span) % 6.0)
+            } else if max == g {
+                60.0 * ((b - r) / span + 2.0)
+            } else {
+                60.0 * ((r - g) / span + 4.0)
+            };
+            (h + 360.0) % 360.0
+        };
+        let separation = |a: f32, b: f32| -> f32 {
+            let d = (a - b).abs() % 360.0;
+            d.min(360.0 - d)
+        };
+        const MIN_SEPARATION_DEG: f32 = 25.0;
+        for reserved in [theme::AMBER, theme::POC] {
+            let reserved_hue = hue(reserved);
+            for step in 0..HEAT_STEP_COUNT {
+                for side in [Side::Buy, Side::Sell] {
+                    let fill = heat_fill(side, step);
+                    let gap = separation(hue(fill), reserved_hue);
+                    assert!(
+                        gap >= MIN_SEPARATION_DEG,
+                        "step {step} on {side:?} sits {gap:.0}° from a reserved hue"
+                    );
+                }
+            }
+        }
     }
 
     /// The cluster's total column carries a silhouette instead of a heat step,
@@ -2697,6 +2850,36 @@ mod tests {
         assert_eq!(calls.get(), 2, "a bar closed");
         floor(&mut lod, 51, dec("5"));
         assert_eq!(calls.get(), 3, "the capture grid moved");
+    }
+
+    /// The heat cuts describe the window, so a frame that changes nothing
+    /// about the window must not pay for them again.
+    ///
+    /// Per frame this walks every visible cell, allocates and sorts — cheap
+    /// once, at 60 Hz a waste, and the same reason the imbalance floor is
+    /// cached beside it. Panning, zooming or closing a bar are the three
+    /// things that genuinely move the answer.
+    #[test]
+    fn the_heat_cuts_are_computed_once_per_window_not_per_frame() {
+        let mut lod = FootprintLod::default();
+        let calls = std::cell::Cell::new(0);
+        let cuts: HeatScale = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let scale = |lod: &mut FootprintLod, visible: (usize, usize), bars: usize| {
+            lod.heat_scale(visible, bars, || {
+                calls.set(calls.get() + 1);
+                Some(cuts)
+            })
+        };
+        assert_eq!(scale(&mut lod, (10, 40), 100), Some(cuts));
+        assert_eq!(scale(&mut lod, (10, 40), 100), Some(cuts));
+        assert_eq!(scale(&mut lod, (10, 40), 100), Some(cuts));
+        assert_eq!(calls.get(), 1, "frames must not recompute the cuts");
+        scale(&mut lod, (11, 41), 100);
+        assert_eq!(calls.get(), 2, "the window panned");
+        scale(&mut lod, (11, 60), 100);
+        assert_eq!(calls.get(), 3, "the window zoomed");
+        scale(&mut lod, (11, 60), 101);
+        assert_eq!(calls.get(), 4, "a bar closed under it");
     }
 
     /// The bar's delta is the sum of its rows', and a bar balanced at
